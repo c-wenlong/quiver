@@ -667,13 +667,18 @@ actor GatedShell: ShellEnvironmentReading {
     private var gate: CheckedContinuation<Void, Never>?
     private var nextID = 0
     private var parkers: [Int: CheckedContinuation<Bool, Never>] = [:]
+    /// What a read reports once released.
+    private var reply: [String: String]? = ["OPENAI_ORG": "org-test"]
+
+    /// What the next released read reports.
+    func reply(_ environment: [String: String]?) { reply = environment }
 
     func freshEnvironment() async -> [String: String]? {
         let parked = parkers
         parkers = [:]
         for parker in parked.values { parker.resume(returning: true) }
         await withCheckedContinuation { gate = $0 }
-        return ["OPENAI_ORG": "org-test"]
+        return reply
     }
 
     /// True once the shell is parked on its gate, false after ten
@@ -816,6 +821,35 @@ struct FakeShell: ShellEnvironmentReading {
         await shell.release()
         await load.value
         #expect(model.rows.map(\.status) == [.notLoaded, .notLoaded, .loaded])
+    }
+
+    /// A save changes the file a new terminal sources, so the shell is
+    /// read again: the row shows the stale verdict first, then settles
+    /// on what a new terminal would now get.
+    @Test func aSaveRereadsTheShell() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "keysreread-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appending(path: ".api_keys")
+        try "export A_KEY=v1\n".write(to: url, atomically: true, encoding: .utf8)
+        let shell = GatedShell()
+        await shell.reply(["A_KEY": "v1"])
+        let model = APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir), shell: shell,
+                                 checkCache: APIKeyCheckStore(url: dir.appending(path: "checks.json")),
+                                 defaults: UserDefaults(suiteName: "keysreread-\(UUID().uuidString)")!)
+        let load = Task { await model.load() }
+        #expect(await shell.waitForPark())
+        await shell.release()
+        await load.value
+        #expect(model.rows.first?.status == .loaded)
+
+        try await model.set(name: "B_KEY", value: "v2", provider: "")
+        // The stale read still stands while the reread is parked.
+        #expect(model.rows.last?.status == .notLoaded)
+        #expect(await shell.waitForPark())
+        await shell.reply(["A_KEY": "v1", "B_KEY": "v2"])
+        await shell.release()
+        await model.shellReread?.value
+        #expect(model.rows.map(\.status) == [.loaded, .loaded])
     }
 
     @Test func anUnreadableShellLeavesTheStatusUnknown() async throws {
