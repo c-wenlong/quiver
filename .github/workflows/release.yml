@@ -1,7 +1,10 @@
 # Release pipeline.
 #
 # Builds an sdist and a wheel from a `v*` tag, checks the metadata renders,
-# and attaches both files to the matching GitHub release.
+# and attaches both files to the matching GitHub release.  The `macos-app`
+# job builds Quiver.app on a macOS 26 runner, signs and notarizes it when
+# the secrets below are configured, and attaches the DMG plus a Sparkle
+# `appcast.xml` the same way.
 #
 # It does NOT create the release and it does NOT merge or tag anything: the
 # maintainer publishes the release by hand, and this workflow only attaches
@@ -110,9 +113,208 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  macos-app:
+    # Runs beside `build`, not after it: the app shares only the tag with
+    # the Python dists, so a wheel failure should not hold up a 10-minute
+    # Swift build.  `attach-to-release` still gates on both.
+    name: Build, sign and notarize the macOS app
+    runs-on: macos-26
+    #
+    # Required secrets (repo Settings -> Secrets and variables -> Actions):
+    #   MACOS_CERTIFICATE            base64 of the .p12 export of the
+    #                                "Developer ID Application" certificate
+    #                                (Keychain Access -> export with the
+    #                                private key; base64 -i cert.p12)
+    #   MACOS_CERTIFICATE_PASSWORD   the .p12 export password
+    #   KEYCHAIN_PASSWORD            password for the throwaway CI keychain;
+    #                                any string, lives only inside the run
+    #   NOTARY_APPLE_ID              the Apple ID that owns the Developer ID
+    #   NOTARY_PASSWORD              an app-specific password for that Apple
+    #                                ID (appleid.apple.com -> Sign-In and
+    #                                Security -> App-Specific Passwords),
+    #                                NOT the account password
+    #   NOTARY_TEAM_ID               the 10-character Apple team ID
+    # Optional repository variable:
+    #   SIGNING_IDENTITY             explicit codesign identity, e.g.
+    #                                "Developer ID Application: Name (TEAMID)";
+    #                                defaults to whatever MACOS_CERTIFICATE
+    #                                imported
+    #
+    # With no MACOS_CERTIFICATE the job still compiles the prod bundle
+    # ad-hoc (`QUIVER_SIGN_IDENTITY=-`), which keeps the scaffold honest
+    # before the secrets exist; signing, notarization, the DMG and the
+    # release upload all stay off.
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Same fully-qualified tag ref as the build job.  Full history:
+          # build-app.sh stamps versions from `git describe`, which reads
+          # 0.0.0 on a shallow checkout.
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Import the signing certificate
+        id: cert
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          if [ -z "$MACOS_CERTIFICATE" ]; then
+            echo "::notice::MACOS_CERTIFICATE is not set; building the app ad-hoc. Signing, notarization and release upload are skipped."
+            echo "have_cert=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/quiver-signing.keychain-db"
+          p12="$RUNNER_TEMP/quiver-cert.p12"
+          # The secret is the base64 text of the exported .p12.
+          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode -o "$p12"
+          # A throwaway keychain keeps the release private key out of the
+          # runner's login keychain and lets the cleanup step drop it whole.
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          # Make it the default so codesign and find-identity search it,
+          # and unlock it so no later step hits a locked-keychain failure.
+          security default-keychain -s "$keychain"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          # Import cert + private key; -T grants codesign access to it.
+          security import "$p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          # The partition list is what lets codesign use the key
+          # non-interactively; without it signing fails with "User
+          # interaction is not allowed" on a headless runner.
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$keychain"
+          rm -f "$p12"
+          identity="$(security find-identity -v -p codesigning "$keychain" \
+            | sed -n 's/.*"\(Developer ID Application: [^"]*\)"/\1/p' | head -n 1)"
+          if [ -z "$identity" ]; then
+            echo "::error::MACOS_CERTIFICATE did not contain a 'Developer ID Application' identity."
+            exit 1
+          fi
+          echo "sign_identity=$identity" >> "$GITHUB_OUTPUT"
+          echo "have_cert=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build Quiver.app
+        env:
+          QUIVER_CHANNEL: prod
+          # An explicit SIGNING_IDENTITY variable wins, then the identity
+          # the certificate step imported, then `-`: the forced ad-hoc
+          # signature that lets this job validate the prod build before
+          # the secrets exist.  With no identity at all a prod build fails
+          # loudly inside build-app.sh, so `-` keeps the scaffold green.
+          QUIVER_SIGN_IDENTITY: ${{ vars.SIGNING_IDENTITY || steps.cert.outputs.sign_identity || '-' }}
+        run: app/script/build-app.sh release
+
+      - name: Report the signature
+        # Shows in the log what the bundle was actually signed with; the
+        # unsigned scaffold run prints "Signature=adhoc" here.
+        run: codesign -dvvv app/build/Quiver.app || true
+
+      - name: Notarize and staple
+        if: steps.cert.outputs.have_cert == 'true'
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+        run: |
+          if [ -z "$NOTARY_APPLE_ID" ] || [ -z "$NOTARY_PASSWORD" ] || [ -z "$NOTARY_TEAM_ID" ]; then
+            echo "::error::A signed build needs NOTARY_APPLE_ID, NOTARY_PASSWORD and NOTARY_TEAM_ID; Gatekeeper rejects a signed-but-unnotarized app."
+            exit 1
+          fi
+          # notarytool accepts the zipped .app; --keepParent puts
+          # Quiver.app at the zip root, which is the layout it wants.
+          zip="$RUNNER_TEMP/Quiver.zip"
+          ditto -c -k --keepParent app/build/Quiver.app "$zip"
+          # Apple ID + app-specific password auth.  The App Store Connect
+          # API-key form (--key/--key-id/--issuer) is the alternative if
+          # the account ever moves to one.
+          xcrun notarytool submit "$zip" \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --password "$NOTARY_PASSWORD" \
+            --team-id "$NOTARY_TEAM_ID" \
+            --wait
+          # Writes Apple's ticket into the bundle so Gatekeeper passes it
+          # even on a Mac that is offline at first launch.
+          xcrun stapler staple app/build/Quiver.app
+
+      - name: Build the DMG
+        if: steps.cert.outputs.have_cert == 'true'
+        run: |
+          mkdir -p app/build/macos-app
+          # Stage the app next to an /Applications symlink so the DMG
+          # opens as a drag-to-install window; hdiutil keeps the link.
+          staging="$RUNNER_TEMP/dmg"
+          mkdir -p "$staging"
+          ditto app/build/Quiver.app "$staging/Quiver.app"
+          ln -s /Applications "$staging/Applications"
+          hdiutil create -volname Quiver -srcfolder "$staging" \
+            -ov -format UDZO "app/build/macos-app/Quiver-${RELEASE_TAG#v}.dmg"
+          ls -lh app/build/macos-app/
+
+      - name: Write the Sparkle appcast
+        if: steps.cert.outputs.have_cert == 'true'
+        env:
+          GH_REPO: ${{ github.repository }}
+        run: |
+          app="app/build/Quiver.app"
+          dmg="Quiver-${RELEASE_TAG#v}.dmg"
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
+          build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")"
+          size="$(stat -f %z "app/build/macos-app/$dmg")"
+          url="https://github.com/$GH_REPO/releases/download/$RELEASE_TAG/$dmg"
+          # sparkle:edSignature is a placeholder: a real signature needs
+          # Sparkle's sign_update tool and the app's EdDSA key, which the
+          # Sparkle integration PR introduces.  Until then the feed is
+          # structural only and Sparkle would reject the enclosure.
+          cat > app/build/macos-app/appcast.xml <<APPCAST
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+            <channel>
+              <title>Quiver updates</title>
+              <link>https://github.com/$GH_REPO/releases</link>
+              <description>Most recent Quiver release.</description>
+              <language>en</language>
+              <item>
+                <title>Quiver $version</title>
+                <pubDate>$(date -u '+%a, %d %b %Y %H:%M:%S +0000')</pubDate>
+                <sparkle:shortVersionString>$version</sparkle:shortVersionString>
+                <sparkle:version>$build</sparkle:version>
+                <enclosure url="$url"
+                  sparkle:edSignature="REPLACE_VIA_sign_update"
+                  length="$size" type="application/octet-stream" />
+              </item>
+            </channel>
+          </rss>
+          APPCAST
+
+      - name: Stage a notice when the build is unsigned
+        # Keeps the `macos-app` artifact non-empty so attach-to-release's
+        # download step works before the signing secrets exist.
+        if: steps.cert.outputs.have_cert != 'true'
+        run: |
+          mkdir -p app/build/macos-app
+          printf 'Unsigned prod build: MACOS_CERTIFICATE is not configured.\n' \
+            > app/build/macos-app/UNSIGNED.txt
+
+      - name: Upload the app artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-app
+          path: app/build/macos-app/
+          if-no-files-found: error
+
+      - name: Drop the signing keychain
+        # The runner is disposable, but the keychain holds the release
+        # private key, so take it down anyway.
+        if: always() && steps.cert.outputs.have_cert == 'true'
+        run: |
+          security default-keychain -s login.keychain
+          security delete-keychain "$RUNNER_TEMP/quiver-signing.keychain-db" || true
+
   attach-to-release:
     name: Attach artifacts to the GitHub release
-    needs: [build]
+    needs: [build, macos-app]
     runs-on: ubuntu-latest
     permissions:
       # Only this job gets a writable token, and only for release assets.
@@ -125,6 +327,12 @@ jobs:
           name: dist
           path: dist/
 
+      - name: Download the macOS app artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: macos-app
+          path: macos-app/
+
       - name: Upload to the release, if one exists
         # Deliberately does not create the release.  If the maintainer has not
         # written the notes yet, this leaves a notice and the files stay on the
@@ -133,9 +341,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
+          # dist/ holds the sdist + wheel; macos-app/ holds the DMG and
+          # appcast.xml, or just an UNSIGNED notice when the signing
+          # secrets are not configured.  The glob picks up real assets only.
+          shopt -s nullglob
+          assets=(dist/* macos-app/*.dmg macos-app/appcast.xml)
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" dist/* --clobber
-            echo "Attached $(ls dist | tr '\n' ' ')to release $RELEASE_TAG"
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+            echo "Attached ${assets[*]} to release $RELEASE_TAG"
           else
             echo "::notice::No published GitHub release for $RELEASE_TAG yet. Publish the release, then re-run this workflow to attach the artifacts."
           fi
