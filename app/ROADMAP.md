@@ -119,7 +119,7 @@ Phases in order. Phase 4 can run alongside 1 to 3.
 
 **Phase 1. Bundle `swe` inside the app**
 - [x] python-build-standalone CPython 3.13 plus `src/quiver` at `Contents/Resources/swe`, used when Settings names no `swe` ([#371](https://github.com/c-wenlong/quiver/pull/371))
-- [ ] Check Droid limits with the bundled Python. `rate_limits.py` loads `libcrypto` through ctypes and falls back to an unversioned dylib.
+- [x] Check Droid limits with the bundled Python. `rate_limits.py` loads `libcrypto` through ctypes and falls back to an unversioned dylib. ([#413](https://github.com/c-wenlong/quiver/pull/413))
 
 **Phase 2. First-run setup**
 - [x] `swe setup --apply` seeds `~/.quiver` and links AGENTS.md, skills and hooks. `--adopt=<file>` and `--starred=a,b` added ([#373](https://github.com/c-wenlong/quiver/pull/373)).
