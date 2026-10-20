@@ -281,6 +281,35 @@ import Testing
         #expect(events[0].inputTokens == 2_000)
     }
 
+    /// The cleanup matches the event's identity, not the profile that
+    /// read it: a row profile A stored under the old counts scheme is
+    /// removed when profile B re-imports the same account's event.
+    @Test func anOldSchemeRowFromAnotherProfileIsCleanedUp() async throws {
+        let temp = try TempDir()
+        let ledger = try Ledger(directory: temp.path("cache"))
+        let removedProfile = "/t/cursor-gone/desktop"
+        let stale = LedgerRecord(
+            key: "cursor-feed:uid-1:1791700000500:composer-1:conv-1:1000:50",
+            authoritative: true,
+            event: UsageEvent(
+                harness: "cursor", accountHome: removedProfile, sessionId: "conv-1",
+                model: "composer-1", timestamp: Date(timeIntervalSince1970: 1791700000.5),
+                inputTokens: 1_000, outputTokens: 50))
+        try await ledger.ingest([stale])
+        // The same account read through this profile — even with the same
+        // counts, the new key differs from the counts-bearing old one.
+        try await ledger.ingest([CursorUsageFeed.record(
+            for: CursorUsageEvent(
+                timestamp: 1791700000.5, model: "composer-1",
+                kind: "USAGE_EVENT_KIND_INCLUDED", conversationId: "conv-1", headless: false,
+                inputTokens: 1_000, outputTokens: 50,
+                cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: nil),
+            accountKey: "uid-1", accountHome: account)])
+        let events = await ledger.events(in: allTime)
+        #expect(events.count == 1)
+        #expect(events[0].accountHome == account)
+    }
+
     @Test func theWindowStartsAt180DaysThenOverlapsTwo() async throws {
         let temp = try TempDir()
         let ledger = try Ledger(directory: temp.path("cache"))

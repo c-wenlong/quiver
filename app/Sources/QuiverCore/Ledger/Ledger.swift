@@ -329,7 +329,12 @@ public actor Ledger {
                 report.filesUnchanged += 1
                 return
             }
-            if saved.inode == info.inode, info.size >= saved.offset, Self.fingerprintsMatch(saved, path: path) {
+            // Resuming is appends only: a file read to its end already
+            // (`offset == size`) whose stamps moved is a rewrite, and
+            // resuming at EOF would read nothing and re-stamp the cursor
+            // over an edit the head/middle/tail samples cannot see.
+            if saved.inode == info.inode, info.size > saved.offset,
+               Self.fingerprintsMatch(saved, path: path) {
                 start = saved.offset
                 state = saved.state
             } else {

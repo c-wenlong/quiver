@@ -54,6 +54,7 @@ final class LedgerStore {
     private var selectDim: Statement!
     private var insertDim: Statement!
     private var deleteSameEvent: Statement!
+    private var deleteSameEventAnyProfile: Statement!
 
     struct DimKey: Hashable {
         var harness, account, session, cwd, model, tier: String
@@ -131,6 +132,16 @@ final class LedgerStore {
             "INSERT INTO dims (harness, account, session, cwd, model, tier) VALUES (?, ?, ?, ?, ?, ?)")
         deleteSameEvent = try db.prepare(
             "DELETE FROM events WHERE dim = ? AND ts = ? AND key != ? AND msg IS NULL")
+        // For accounts several profiles can read (the Cursor feed when
+        // swe names an account_id), the same event's stale rows sit under
+        // whichever profile imported them — dims.account names the reader,
+        // not the account — so the match drops it and keeps the rest of
+        // the event's identity.
+        deleteSameEventAnyProfile = try db.prepare("""
+            DELETE FROM events WHERE ts = ? AND key != ? AND msg IS NULL AND dim IN (
+                SELECT id FROM dims
+                WHERE harness = ? AND session = ? AND cwd = ? AND model = ? AND tier = ?)
+            """)
     }
 
     /// A schema mismatch drops the tables below and the next scan rebuilds
@@ -207,9 +218,18 @@ final class LedgerStore {
             // behind — the Cursor feed once keyed on the token counts it
             // reported, so a correction keyed a new row — remove it or the
             // correction double-counts.
-            try deleteSameEvent.bind([
-                .int(dim), .double(record.event.timestamp.timeIntervalSince1970), .int(key),
-            ]).run()
+            let e = record.event
+            if record.accountSpansProfiles {
+                try deleteSameEventAnyProfile.bind([
+                    .double(e.timestamp.timeIntervalSince1970), .int(key),
+                    .text(e.harness), .text(e.sessionId), .text(e.cwd ?? ""),
+                    .text(e.model), .text(e.serviceTier ?? ""),
+                ]).run()
+            } else {
+                try deleteSameEvent.bind([
+                    .int(dim), .double(e.timestamp.timeIntervalSince1970), .int(key),
+                ]).run()
+            }
         }
         return true
     }

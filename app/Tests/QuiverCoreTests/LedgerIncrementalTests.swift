@@ -193,6 +193,38 @@ func claudeLine(
         #expect(await s.total() == 22)
     }
 
+    /// The samples leave blind spots, so a fully read file that changes
+    /// without growing cannot resume at its end: nothing would be read and
+    /// the edit would never reach the ledger. It rescans instead.
+    @Test func aFullyReadFileWithAHiddenEditRescans() async throws {
+        let s = try Setup()
+        let lines = claudeLine(message: "m1", padding: 6_000)
+            + claudeLine(message: "m2", output: 40, padding: 6_000)
+            + claudeLine(message: "m3", padding: 6_000)
+        try s.write(lines)
+        try await s.ledger.scan(roots: s.roots)
+        #expect(await s.total() == 11 + 41 + 11)
+
+        // The edit lands between the middle and tail samples: the same
+        // length, so size, both end samples and the middle all still match.
+        var text = lines
+        let marker = #""output_tokens":40"#
+        let at = try #require(text.range(of: marker))
+        let byteOffset = text.utf8.distance(from: text.startIndex, to: at.lowerBound)
+        let size = text.utf8.count
+        // Outside every sample: after the head, outside the centered
+        // middle block, before the tail.
+        #expect(byteOffset >= 4_096)
+        #expect(byteOffset < (size - 4_096) / 2 || byteOffset >= (size + 4_096) / 2)
+        #expect(byteOffset < size - 4_096)
+        text.replaceSubrange(at, with: #""output_tokens":90"#)
+        try s.write(text)
+
+        let report = try await s.ledger.scan(roots: s.roots)
+        #expect(report.filesRescanned == 1)
+        #expect(await s.total() == 11 + 91 + 11)
+    }
+
     /// A cursor whose saved tail reaches past its offset underflowed the
     /// fingerprint arithmetic. It fails the check and the file rescans.
     @Test func aMalformedCursorFailsClosedInsteadOfCrashing() async throws {

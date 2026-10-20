@@ -229,6 +229,10 @@ public actor CursorUsageFeed {
             "\(event.conversationId ?? "")"
         return LedgerRecord(
             key: key, messageId: nil, authoritative: true,
+            // A real account_id in the key means a sibling profile's stale
+            // row is the same event; keyed by profile home instead, each
+            // profile's rows belong to it alone.
+            accountSpansProfiles: accountKey != accountHome,
             event: UsageEvent(
                 harness: harness, accountHome: accountHome, sessionId: session,
                 model: event.model,
