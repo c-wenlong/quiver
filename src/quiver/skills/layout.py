@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from quiver.configuration import CorruptConfigurationError
 from quiver.paths import CONFIG_DIR, SKILL_LINKS_FILE, expand_user
 from quiver.skills.catalogs import load_skill_catalogs, count_skill_md
 
@@ -79,12 +80,26 @@ def load_link_records() -> list[dict]:
         data = json.loads(SKILL_LINKS_FILE.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError, RecursionError):
         return []
-    links = data.get("links", [])
+    # A parsed list/scalar is not a links file: answer empty for reads and
+    # let save_link_records' own parse check decide whether overwriting is
+    # safe.
+    links = data.get("links", []) if isinstance(data, dict) else []
     return links if isinstance(links, list) else []
 
 
 def save_link_records(links: list[dict]) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    if SKILL_LINKS_FILE.exists():
+        # The callers above read the file, drop the labels they are
+        # replacing, and write the rest back — overwriting a file that
+        # cannot be parsed would silently erase every record it holds.
+        try:
+            json.loads(SKILL_LINKS_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError, RecursionError) as exc:
+            raise CorruptConfigurationError(
+                f"{SKILL_LINKS_FILE}: cannot be read ({exc});"
+                " refusing to overwrite it"
+            ) from exc
     tmp = SKILL_LINKS_FILE.with_suffix(".tmp")
     payload = {"links": links, "updated": datetime.now().isoformat()}
     tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
