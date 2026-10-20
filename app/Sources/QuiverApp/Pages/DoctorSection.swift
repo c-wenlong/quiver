@@ -1,45 +1,32 @@
 import QuiverCore
 import SwiftUI
 
-struct DoctorPage: View {
+/// Settings › Doctor: the `swe doctor` report, each finding with its fix
+/// button. Refresh and retry live on the state cards, so they are there
+/// whenever the section is.
+struct DoctorSection: View {
     @Environment(AppModel.self) private var app
     @State private var model: DoctorModel?
     /// The findings card folds past this many rows.
     private static let foldLimit = 8
+    /// ⌘R re-runs the checks on every state card, like the old page header.
+    private static let refreshShortcut = KeyboardShortcut("r", modifiers: .command)
     @State private var showsAll = false
 
     var body: some View {
-        Page(title: "Doctor", subtitle: "Checks on PATH, Node and drift between quiver and your harnesses.") {
-            Button("Refresh", systemImage: "arrow.clockwise") { Task { await model?.load() } }
-                .iconButton()
-                .disabled(isLoading)
-                .keyboardShortcut("r", modifiers: .command)
-                .help("Run the checks again (⌘R)")
-        } content: {
+        Group {
             switch model?.state ?? .idle {
             case .idle, .loading:
                 LoadingCard(text: "Running checks…")
             case .failed(let message):
-                ErrorCard(message: message)
+                ErrorCard(message: message, actionTitle: "Try again",
+                          actionShortcut: Self.refreshShortcut, action: reload)
             case .loaded(let report) where report.findings.isEmpty:
-                EmptyCard(text: "Everything checks out.", icon: "checkmark.seal")
+                EmptyCard(text: "Everything checks out.", icon: "checkmark.seal",
+                          actionTitle: "Check again", actionShortcut: Self.refreshShortcut,
+                          action: reload)
             case .loaded(let report):
-                let shown = RowFold.visible(report.findings, limit: Self.foldLimit, expanded: showsAll)
-                Card(title: report.findings.count == 1 ? "1 finding" : "\(report.findings.count) findings") {
-                    ForEach(shown) { finding in
-                        if let model { FindingRow(finding: finding, model: model) }
-                        if finding != shown.last { Divider().overlay(Theme.border) }
-                    }
-                    if RowFold.hiddenCount(total: report.findings.count, limit: Self.foldLimit) > 0 {
-                        Divider().overlay(Theme.border)
-                        ExpandRow(isExpanded: showsAll,
-                                  hidden: RowFold.hiddenCount(total: report.findings.count, limit: Self.foldLimit),
-                                  help: (expand: "Show every finding", collapse: "Show only the first \(Self.foldLimit)"),
-                                  edge: .inset) {
-                            withAnimation(.easeOut(duration: Theme.fadeDuration)) { showsAll.toggle() }
-                        }
-                    }
-                }
+                findingsCard(report)
             }
         }
         .task(id: app.swePath) {
@@ -49,11 +36,43 @@ struct DoctorPage: View {
         }
     }
 
+    private func reload() {
+        Task { await model?.load() }
+    }
+
     private var isLoading: Bool {
         switch model?.state ?? .idle {
         case .idle, .loading: true
         case .loaded, .failed: false
         }
+    }
+
+    private func findingsCard(_ report: DoctorReport) -> some View {
+        let shown = RowFold.visible(report.findings, limit: Self.foldLimit, expanded: showsAll)
+        return Card(title: report.findings.count == 1 ? "1 finding" : "\(report.findings.count) findings",
+                    accessory: { refreshButton }) {
+            ForEach(shown) { finding in
+                if let model { FindingRow(finding: finding, model: model) }
+                if finding != shown.last { Divider().overlay(Theme.border) }
+            }
+            if RowFold.hiddenCount(total: report.findings.count, limit: Self.foldLimit) > 0 {
+                Divider().overlay(Theme.border)
+                ExpandRow(isExpanded: showsAll,
+                          hidden: RowFold.hiddenCount(total: report.findings.count, limit: Self.foldLimit),
+                          help: (expand: "Show every finding", collapse: "Show only the first \(Self.foldLimit)"),
+                          edge: .inset) {
+                    withAnimation(.easeOut(duration: Theme.fadeDuration)) { showsAll.toggle() }
+                }
+            }
+        }
+    }
+
+    private var refreshButton: some View {
+        Button("Refresh", systemImage: "arrow.clockwise", action: reload)
+            .iconButton()
+            .disabled(isLoading)
+            .keyboardShortcut(Self.refreshShortcut)
+            .help("Run the checks again (⌘R)")
     }
 }
 

@@ -150,6 +150,7 @@ private struct SettingsSectionView: View {
             case .providers: ProvidersSection()
             case .services: ServicesCard(model: app.services)
             case .paths: pathsCard
+            case .doctor: DoctorSection()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -753,6 +754,7 @@ private struct LoginItemRow: View {
 /// Version · Doctor · Service status, 12/16 muted, centred under the page.
 private struct SettingsFooter: View {
     @Environment(AppModel.self) private var app
+    @AppStorage("settingsSection") private var settingsSection = ""
 
     private var version: String {
         let info = Bundle.main.infoDictionary
@@ -763,7 +765,10 @@ private struct SettingsFooter: View {
         HStack(spacing: 8) {
             Text("Quiver \(version)")
             Text("·")
-            FooterLink(title: "Doctor", symbol: AppSection.doctor.symbol) { app.selection = .doctor }
+            FooterLink(title: "Doctor", symbol: SettingsSection.doctor.symbol) {
+                settingsSection = SettingsSection.doctor.rawValue
+                app.selection = .settings
+            }
             Text("·")
             FooterLink(title: "Service status", symbol: AppSection.serviceStatus.symbol) { app.selection = .serviceStatus }
         }
