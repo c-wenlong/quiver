@@ -675,8 +675,7 @@ private struct DropdownRowHover: ViewModifier {
 /// the catalog: a known provider fixes the variable name (a pick when it
 /// has several) and offers the page that hands out keys; "Custom provider"
 /// takes an OpenAI-compatible base URL, lists its models for a searchable
-/// pick and writes `X_BASE_URL`, `X_API_KEY` and `X_MODEL`; "Other
-/// provider" keeps the free-text provider and variable fields. On an
+/// pick and writes `X_BASE_URL`, `X_API_KEY` and `X_MODEL`. On an
 /// existing key the provider and the variable name edit as before: a
 /// rename, a move and a new value save together. Saving a non-empty
 /// value tests it first; a rejection shows instead of saving until
@@ -707,7 +706,7 @@ private struct KeyEditor: View {
     @State private var error: String?
     @State private var working = false
     /// The new-key pick: "" nothing yet, "custom" the endpoint path,
-    /// "other" the free-text path, else an `APIKeyProvider.id`.
+    /// else an `APIKeyProvider.id`.
     @State private var providerChoice = ""
     /// The variable a multi-variable provider saves under.
     @State private var envVarChoice = ""
@@ -768,7 +767,7 @@ private struct KeyEditor: View {
         self.remove = remove
     }
 
-    /// The picked provider on a new key, nil for "custom", "other" or none.
+    /// The picked provider on a new key, nil for "custom" or none yet.
     private var picked: APIKeyProvider? {
         draft.isNew ? APIKeyProviders.provider(forID: providerChoice) : nil
     }
@@ -793,10 +792,9 @@ private struct KeyEditor: View {
         if let picked {
             return APIKeyProviders.heading(for: picked, in: rows)
         }
-        // An existing key keeps an empty provider (it is ungrouped); a
-        // new one gets the OTHER group.
-        let provider = draft.provider.trimmingCharacters(in: .whitespaces)
-        return draft.isNew && provider.isEmpty ? "OTHER" : provider
+        // Only an edit reaches here: the provider field's text, "" for
+        // ungrouped.
+        return draft.provider.trimmingCharacters(in: .whitespaces)
     }
 
     private var nameProblem: String? {
@@ -808,9 +806,10 @@ private struct KeyEditor: View {
         return nil
     }
 
-    /// The free-text variable field shows: an "other" new key or any edit.
+    /// The free-text variable field shows on edits only: a new key
+    /// always takes a catalog or custom variable name.
     private var freeFormName: Bool {
-        !draft.isNew || providerChoice == "other"
+        !draft.isNew
     }
 
     /// The env-var prefix the provider name gives: "SoCLaaS" → SOCLAAS.
@@ -935,12 +934,11 @@ private struct KeyEditor: View {
     }
 
     /// The catalog picker a new key starts with: the built-ins, then
-    /// "Custom provider" for an OpenAI-compatible endpoint, then the
-    /// free-text "Other provider".
+    /// "Custom provider" for an OpenAI-compatible endpoint.
     private var providerPicker: some View {
         FormField("Provider") {
             PopoverSelect(options: APIKeyProviders.all.map { ($0.id, $0.name, $0.logo) }
-                              + [("custom", "Custom provider", nil), ("other", "Other provider", nil)],
+                              + [("custom", "Custom provider", nil)],
                           selection: $providerChoice,
                           title: providerChoice.isEmpty ? "Choose a provider" : nil)
             .onChange(of: providerChoice) {
@@ -1012,39 +1010,44 @@ private struct KeyEditor: View {
         }
     }
 
-    /// The fetched ids the field's text leaves, capped so the sheet
-    /// doesn't grow past the screen.
+    /// The fetched ids the field's text leaves; scrolling bounds the
+    /// height, so the whole list stays reachable.
     private var filteredModels: [CustomProvider.Model] {
         let query = model.trimmingCharacters(in: .whitespaces).lowercased()
-        let hits = query.isEmpty ? fetchedModels
-            : fetchedModels.filter {
-                $0.id.lowercased().contains(query) || $0.label.lowercased().contains(query)
-            }
-        return Array(hits.prefix(8))
+        guard !query.isEmpty else { return fetchedModels }
+        return fetchedModels.filter {
+            $0.id.lowercased().contains(query) || $0.label.lowercased().contains(query)
+        }
     }
+
+    /// Seven rows (~32 pt each) show before the dropdown scrolls.
+    private static let modelListHeight: CGFloat = 7 * 32
 
     /// The dropdown itself: label on the left, id beside it when the
     /// endpoint names its models something else.
     private var modelDropdown: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(filteredModels) { item in
-                Button { model = item.id; pickedModel = item.id; modelListOpen = false } label: {
-                    HStack(spacing: 8) {
-                        Text(item.label).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                        if item.label != item.id {
-                            Text(item.id).font(Theme.caption).foregroundStyle(Theme.textMuted)
-                                .lineLimit(1).truncationMode(.middle)
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(filteredModels) { item in
+                    Button { model = item.id; pickedModel = item.id; modelListOpen = false } label: {
+                        HStack(spacing: 8) {
+                            Text(item.label).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                            if item.label != item.id {
+                                Text(item.id).font(Theme.caption).foregroundStyle(Theme.textMuted)
+                                    .lineLimit(1).truncationMode(.middle)
+                            }
+                            Spacer(minLength: 8)
                         }
-                        Spacer(minLength: 8)
+                        .padding(.horizontal, 10).padding(.vertical, 7)
+                        .contentShape(.rect)
                     }
-                    .padding(.horizontal, 10).padding(.vertical, 7)
-                    .contentShape(.rect)
+                    .plainButton(cornerRadius: 0)
+                    .modifier(DropdownRowHover())
                 }
-                .plainButton(cornerRadius: 0)
-                .modifier(DropdownRowHover())
             }
+            .padding(.vertical, 4)
         }
-        .padding(.vertical, 4)
+        .frame(maxHeight: Self.modelListHeight)
         .background(Theme.field, in: .rect(cornerRadius: Theme.fieldRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.fieldRadius).strokeBorder(Theme.border, lineWidth: 1))
         .padding(.top, 4)
@@ -1138,10 +1141,10 @@ private struct KeyEditor: View {
         }
     }
 
-    /// Free text plus the existing groups: the edit path's provider row,
-    /// and the name an "Other provider" key files under.
+    /// The group the key files under: edit-only now, free text plus the
+    /// existing groups so a key can move or go ungrouped.
     private var providerField: some View {
-        FormField(draft.isNew ? "Provider name" : "Provider") {
+        FormField("Provider") {
             HStack(spacing: 8) {
                 // Another group's name moves the key to the end of it.
                 TextField("ANTHROPIC", text: $draft.provider).quiverField()
