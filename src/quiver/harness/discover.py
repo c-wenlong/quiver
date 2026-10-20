@@ -75,9 +75,14 @@ def _path_dirs(path_env: str | None, home: Path) -> list[Path]:
             resolved = Path(entry).resolve()
         except Exception:
             continue
-        if resolved not in seen and resolved.is_dir():
-            seen.add(resolved)
-            dirs.append(resolved)
+        try:
+            if resolved not in seen and resolved.is_dir():
+                seen.add(resolved)
+                dirs.append(resolved)
+        except OSError:
+            # is_dir() propagates EACCES when an ancestor of the resolved
+            # PATH entry lacks search permission.
+            continue
     return dirs
 
 

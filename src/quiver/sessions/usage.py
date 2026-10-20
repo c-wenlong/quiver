@@ -59,8 +59,10 @@ def _load_cached_counts(days: int | None) -> dict[str, int] | None:
         return None
     try:
         cached_at = float(entry.get("cached_at", 0))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         # A hand-edited cache that will not parse is a miss, not a crash.
+        # OverflowError: json happily stores a 400-digit integer that
+        # float() cannot convert.
         return None
     if not math.isfinite(cached_at) or time.time() - cached_at > _counts_ttl():
         return None
