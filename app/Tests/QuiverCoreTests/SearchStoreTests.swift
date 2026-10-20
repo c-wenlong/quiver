@@ -133,9 +133,9 @@ import Testing
             stat: stat(mtimeMs: 1_500, sizeBytes: 900), byteOffset: 640,
             sessionRowID: session,
             messages: [
-                SearchMessage(role: "user", ts: "2026-10-01T09:00:00Z", userText: "hello world"),
-                SearchMessage(role: "assistant", ts: "2026-10-01T09:00:01Z", assistantText: "hi there"),
-                SearchMessage(role: "tool", toolText: "ran ls", identifiers: "ls"),
+                SearchMessageRow(role: "user", ts: "2026-10-01T09:00:00Z", userText: "hello world"),
+                SearchMessageRow(role: "assistant", ts: "2026-10-01T09:00:01Z", assistantText: "hi there"),
+                SearchMessageRow(role: "tool", toolText: "ran ls", identifiers: "ls"),
             ])
 
         #expect(written)
@@ -164,7 +164,7 @@ import Testing
         #expect(try store.commitFile(
             path: path, expected: SearchFileFence(sessionRowID: session, byteOffset: 200),
             stat: stat(), byteOffset: 300, sessionRowID: session,
-            messages: [SearchMessage(role: "user", userText: "hello")]) == false)
+            messages: [SearchMessageRow(role: "user", userText: "hello")]) == false)
         // A first read that expected no row is fenced the same way.
         #expect(try store.commitFile(
             path: path, expected: nil,
@@ -182,7 +182,7 @@ import Testing
 
         #expect(try store.commitFile(
             path: path, expected: nil, stat: stat(), byteOffset: 10,
-            sessionRowID: session, messages: [SearchMessage(role: "user", userText: "hi")],
+            sessionRowID: session, messages: [SearchMessageRow(role: "user", userText: "hi")],
             updating: fields))
 
         #expect(try store.sessionRow(session)?.fields == fields)
@@ -209,8 +209,8 @@ import Testing
             path: path, expected: SearchFileFence(sessionRowID: old, byteOffset: 10),
             stat: stat(), byteOffset: 20, sessionRowID: old,
             messages: [
-                SearchMessage(role: "user", userText: "hello"),
-                SearchMessage(role: "assistant", assistantText: "hi"),
+                SearchMessageRow(role: "user", userText: "hello"),
+                SearchMessageRow(role: "assistant", assistantText: "hi"),
             ])
 
         let fresh = try #require(try store.replaceSession(
@@ -238,7 +238,7 @@ import Testing
         let old = try store.createSession(fields)
         try store.commitFile(
             path: path, expected: nil, stat: stat(), byteOffset: 20, sessionRowID: old,
-            messages: (0..<300).map { SearchMessage(role: "user", userText: "word\($0)") })
+            messages: (0..<300).map { SearchMessageRow(role: "user", userText: "word\($0)") })
         _ = try store.replaceSession(
             for: path, expected: SearchFileFence(sessionRowID: old, byteOffset: 20),
             fields: fields)
@@ -276,8 +276,8 @@ import Testing
         try store.commitFile(
             path: "/t/one.jsonl", expected: nil, stat: stat(), byteOffset: 20,
             sessionRowID: session,
-            messages: [SearchMessage(role: "user", userText: "hi"),
-                       SearchMessage(role: "assistant", assistantText: "hey")])
+            messages: [SearchMessageRow(role: "user", userText: "hi"),
+                       SearchMessageRow(role: "assistant", assistantText: "hey")])
         try store.setFileState("/t/bad.jsonl", .failed, atMtimeMs: 3)
 
         let status = try store.status()

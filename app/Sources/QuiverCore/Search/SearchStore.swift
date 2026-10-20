@@ -98,7 +98,7 @@ public struct SearchSession: Equatable, Sendable {
 /// Fill the one column the role searches under (user, assistant or tool
 /// text); `identifiers` carries the split form of the same text — camelCase,
 /// snake_case and path pieces — so code tokens match.
-public struct SearchMessage: Equatable, Sendable {
+public struct SearchMessageRow: Equatable, Sendable {
     public var role: String
     public var ts: String?
     public var userText: String
@@ -395,7 +395,7 @@ public final class SearchStore {
         stat: SearchFileStat,
         byteOffset: Int64,
         sessionRowID: Int64?,
-        messages: [SearchMessage],
+        messages: [SearchMessageRow],
         updating fields: SearchSessionFields? = nil
     ) throws -> Bool {
         if sessionRowID == nil && (!messages.isEmpty || fields != nil) {
@@ -428,7 +428,7 @@ public final class SearchStore {
     /// Rows in `messages` and the FTS rows with the same ids, in the caller's
     /// transaction, so a message is never present in one and absent in the
     /// other.
-    private func insertMessages(under sessionRowID: Int64, _ messages: [SearchMessage]) throws {
+    private func insertMessages(under sessionRowID: Int64, _ messages: [SearchMessageRow]) throws {
         guard !messages.isEmpty else { return }
         let insertMessage = try db.prepare(
             "INSERT INTO messages(session_row_id, role, ts) VALUES (?, ?, ?)")
