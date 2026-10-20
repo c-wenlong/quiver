@@ -1,0 +1,320 @@
+import Foundation
+import Observation
+
+/// Which surface of the selected repo the Repositories page shows.
+public enum RepoTab: String, CaseIterable, Identifiable, Sendable {
+    case pulls, issues, actions, pages, releases, tags, branches
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .pulls: "Pull requests"
+        case .issues: "Issues"
+        case .actions: "Actions"
+        case .pages: "Pages"
+        case .releases: "Releases"
+        case .tags: "Tags"
+        case .branches: "Branches"
+        }
+    }
+}
+
+/// All seven surfaces' state for one pinned repo. Each loads on first
+/// visit and is re-fetched by refresh and the page's poll loop; a surface
+/// that was never asked for stays `.idle` rather than reading as empty.
+public struct RepoBoard: Equatable, Sendable {
+    public var pulls: Loadable<[GhPr]> = .idle
+    public var issues: Loadable<[GhIssue]> = .idle
+    public var runs: Loadable<[GhRun]> = .idle
+    /// nil inside `.loaded` means the repo has no Pages site.
+    public var pages: Loadable<GhPages?> = .idle
+    public var releases: Loadable<[GhRelease]> = .idle
+    public var tags: Loadable<[GhTag]> = .idle
+    /// Branches plus the default-branch name `swe gh branches` reports.
+    public var branches: Loadable<[GhBranch]> = .idle
+
+    /// Mark the tab's surface failed — used when the `swe` call itself
+    /// threw, before any per-repo entry could be read.
+    mutating func fail(_ tab: RepoTab, message: String) {
+        switch tab {
+        case .pulls: pulls = .failed(message)
+        case .issues: issues = .failed(message)
+        case .actions: runs = .failed(message)
+        case .pages: pages = .failed(message)
+        case .releases: releases = .failed(message)
+        case .tags: tags = .failed(message)
+        case .branches: branches = .failed(message)
+        }
+    }
+}
+
+/// The GitHub pages' store: the `gh` probe, the pin list, one board per
+/// repo, and the notifications inbox. Everything goes through `swe gh`;
+/// GitHub failures arrive as typed statuses, not thrown errors, so a
+/// dead `gh` leaves the page showing the last good rows it had.
+@MainActor
+@Observable
+public final class GitHubModel {
+    /// The `gh` probe from the last overview or surface read. nil until
+    /// the first reply lands; `.unavailable`/`.authRequired` mean the
+    /// pages show a setup card instead of empty lists.
+    public private(set) var env: GhEnv?
+    /// A reply was received at all — distinguishes "not asked yet" from
+    /// "asked, gh is broken".
+    public private(set) var probed = false
+    /// env reads throw only on a broken swe; the message for that case.
+    public private(set) var probeError: String?
+
+    public private(set) var pins: [PinnedRepo] = []
+    /// The repo the Repositories page shows, a pin name.
+    public var selected: String?
+    public var tab: RepoTab = .pulls
+
+    public private(set) var boards: [String: RepoBoard] = [:]
+    /// Which (repo, tab) is mid-fetch, so rows keep their last data
+    /// while a spinner shows on the tab.
+    public private(set) var loading: Set<BoardKey> = []
+
+    public private(set) var inbox: Loadable<[GhNotification]> = .idle
+    /// Newest inbox fetch time; the page polls on a timer and shows
+    /// "updated Ns ago" from it.
+    public private(set) var inboxFetchedAt: Date?
+    /// A pin search in the Add sheet, newest query wins.
+    public private(set) var searchResults: [RepoHit] = []
+    public private(set) var searching = false
+    public private(set) var searchError: String?
+
+    /// A mutation in flight — add or remove — keyed by repo name so two
+    /// taps on the same repo can't run concurrently.
+    public private(set) var mutating: Set<String> = []
+    public private(set) var pinError: String?
+
+    public struct BoardKey: Hashable, Sendable {
+        public var repo: String
+        public var tab: RepoTab
+        public init(repo: String, tab: RepoTab) {
+            self.repo = repo
+            self.tab = tab
+        }
+    }
+
+    /// When each board field was last filled; a surface older than
+    /// `staleAfter` refetches when it becomes visible.
+    private var fetched: [BoardKey: Date] = [:]
+    private var generation = 0
+    private let now: () -> Date
+    private let staleAfter: TimeInterval
+
+    public init(now: @escaping () -> Date = Date.init, staleAfter: TimeInterval = 60) {
+        self.now = now
+        self.staleAfter = staleAfter
+    }
+
+    /// The env is unusable when the probe says so — surface reads can
+    /// still succeed after a probe `upstream-error` (the probe failed,
+    /// not the login), so only the two certain states gate.
+    public var envBlocked: String? {
+        guard let env else { return probeError }
+        switch env.status {
+        case .ok: return nil
+        case .unavailable:
+            return "GitHub CLI (gh) isn't installed. Install it, then run gh auth login."
+        case .authRequired:
+            return "Not signed in to GitHub. Run gh auth login, then refresh."
+        case .upstreamError:
+            return nil
+        }
+    }
+
+    /// First load: probe + pins. Keeps the selection if it is still pinned.
+    public func load(swe: SweClient) async {
+        do {
+            let overview = try await swe.ghOverview()
+            env = overview.github
+            probed = true
+            probeError = nil
+            pins = overview.repos.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            if selected == nil || !pins.contains(where: { $0.name == selected }) {
+                selected = pins.first?.name
+            }
+        } catch is CancellationError {
+        } catch {
+            probed = true
+            probeError = error.localizedDescription
+        }
+    }
+
+    /// Load whatever the page is looking at unless it was fetched recently.
+    public func loadIfStale(swe: SweClient) async {
+        if !probed { await load(swe: swe) }
+        guard let repo = selected else { return }
+        let key = BoardKey(repo: repo, tab: tab)
+        if let at = fetched[key], now().timeIntervalSince(at) < staleAfter { return }
+        await loadTab(tab, repo: repo, swe: swe)
+    }
+
+    /// Manual refresh always fetches, even inside the stale window.
+    public func refresh(swe: SweClient) async {
+        if !probed { await load(swe: swe) }
+        guard let repo = selected else { return }
+        await loadTab(tab, repo: repo, swe: swe)
+    }
+
+    /// Fetch one surface of one repo into its board slot. The reply's
+    /// entry for `repo` decides ok/failed; a missing entry is a failure,
+    /// not an empty list.
+    public func loadTab(_ tab: RepoTab, repo: String, swe: SweClient) async {
+        let key = BoardKey(repo: repo, tab: tab)
+        guard !loading.contains(key) else { return }
+        loading.insert(key)
+        defer { loading.remove(key) }
+        do {
+            switch tab {
+            case .pulls:
+                apply(try await swe.ghPullRequests(repo: repo), to: key, \.pulls) { $0.pullRequests ?? [] }
+            case .issues:
+                apply(try await swe.ghIssues(repo: repo), to: key, \.issues) { $0.issues ?? [] }
+            case .actions:
+                apply(try await swe.ghRuns(repo: repo), to: key, \.runs) { $0.runs ?? [] }
+            case .pages:
+                apply(try await swe.ghPages(repo: repo), to: key, \.pages) { $0.pages }
+            case .releases:
+                apply(try await swe.ghReleases(repo: repo), to: key, \.releases) { $0.releases ?? [] }
+            case .tags:
+                apply(try await swe.ghTags(repo: repo), to: key, \.tags) { $0.tags ?? [] }
+            case .branches:
+                apply(try await swe.ghBranches(repo: repo), to: key, \.branches) { $0.branches ?? [] }
+            }
+        } catch is CancellationError {
+        } catch {
+            var board = boards[repo] ?? RepoBoard()
+            board.fail(tab, message: error.localizedDescription)
+            boards[repo] = board
+        }
+    }
+
+    /// The board for `repo`, always non-nil so views can read directly.
+    public func board(for repo: String) -> RepoBoard {
+        boards[repo] ?? RepoBoard()
+    }
+
+    /// The GitHub notifications inbox; refetches when stale or forced.
+    public func loadInbox(swe: SweClient, force: Bool = false) async {
+        if case .loading = inbox { return }
+        if !force, case .loaded = inbox,
+           let at = inboxFetchedAt, now().timeIntervalSince(at) < staleAfter { return }
+        // First read shows the spinner; later polls keep the rows.
+        if case .idle = inbox { inbox = .loading }
+        let next: Loadable<[GhNotification]>
+        do {
+            let reply = try await swe.ghInbox()
+            env = reply.github
+            probed = true
+            next = reply.status == "ok"
+                ? .loaded(reply.notifications)
+                : .failed("GitHub returned \(reply.status)")
+        } catch is CancellationError {
+            return
+        } catch {
+            next = .failed(error.localizedDescription)
+        }
+        inbox = next
+        if case .loaded = next { inboxFetchedAt = now() }
+    }
+
+    /// Search repos to pin. A new query supersedes the one in flight.
+    public func search(_ query: String, swe: SweClient) async {
+        generation += 1
+        let mine = generation
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { searchResults = []; searchError = nil; return }
+        searching = true
+        defer { if mine == generation { searching = false } }
+        do {
+            let reply = try await swe.ghSearchRepos(trimmed)
+            if mine == generation { searchResults = reply.results; searchError = nil }
+        } catch is CancellationError {
+        } catch {
+            if mine == generation { searchError = error.localizedDescription }
+        }
+    }
+
+    /// Pin a repo. `swe gh repo add` verifies it exists first; the reply's
+    /// `pinned` list is authoritative. Returns the repo's normalised
+    /// `owner/name` on success so the caller can select it.
+    @discardableResult
+    public func addRepo(_ input: String, swe: SweClient) async -> String? {
+        let name = input.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, !mutating.contains(name) else { return nil }
+        mutating.insert(name)
+        defer { mutating.remove(name) }
+        do {
+            let reply = try await swe.ghAddRepo(name)
+            pins = reply.pinned.sorted().map { PinnedRepo(name: $0, addedAt: now()) }
+            pinError = nil
+            return reply.repo
+        } catch {
+            pinError = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// Unpin a repo; its board is dropped with it.
+    public func removeRepo(_ name: String, swe: SweClient) async -> Bool {
+        guard !mutating.contains(name) else { return false }
+        mutating.insert(name)
+        defer { mutating.remove(name) }
+        do {
+            let reply = try await swe.ghRemoveRepo(name)
+            pins = reply.pinned.sorted().map { PinnedRepo(name: $0, addedAt: now()) }
+            boards[name] = nil
+            if selected == name { selected = pins.first?.name }
+            pinError = nil
+            return true
+        } catch {
+            pinError = error.localizedDescription
+            return false
+        }
+    }
+
+    // MARK: - internals
+
+    /// Pull the entry for the repo out of a surface reply and write it to
+    /// the board slot `path`. `.ok` loads the rows; any other status —
+    /// or no entry at all — is a failure carrying swe's `error`.
+    private func apply<Entry: GhEntryFields, Row: Equatable & Sendable>(
+        _ reply: GhResults<Entry>, to key: BoardKey,
+        _ path: WritableKeyPath<RepoBoard, Loadable<Row>>,
+        rows: (Entry) -> Row
+    ) {
+        env = reply.github
+        probed = true
+        let value: Loadable<Row>
+        if let entry = reply.results.first(where: { $0.repo == key.repo }) {
+            value = entry.status == .ok
+                ? .loaded(rows(entry))
+                : .failed(entry.error ?? entry.status.rawValue)
+        } else {
+            value = .failed("swe returned no result for \(key.repo)")
+        }
+        var board = boards[key.repo] ?? RepoBoard()
+        board[keyPath: path] = value
+        boards[key.repo] = board
+        if case .loaded = value { fetched[key] = now() }
+    }
+}
+
+/// What every per-repo results entry shares; lets `apply` treat the
+/// seven entry types uniformly.
+public protocol GhEntryFields {
+    var repo: String { get }
+    var status: GhEntryStatus { get }
+    var error: String? { get }
+}
+extension GhPrEntry: GhEntryFields {}
+extension GhIssueEntry: GhEntryFields {}
+extension GhRunEntry: GhEntryFields {}
+extension GhPagesEntry: GhEntryFields {}
+extension GhReleaseEntry: GhEntryFields {}
+extension GhTagEntry: GhEntryFields {}
+extension GhBranchEntry: GhEntryFields {}
+extension GhPrStatusEntry: GhEntryFields {}

@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "data": {
+    "github": {
+      "status": "ok",
+      "login": "c-wenlong",
+      "error": null
+    },
+    "repos": [
+      {
+        "name": "c-wenlong/quiver",
+        "added_at": 1792528202
+      }
+    ]
+  }
+}
