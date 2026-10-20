@@ -972,10 +972,11 @@ public final class APIKeysModel {
     ///   Dashscope's China vs international endpoints), the catalogue
     ///   probe narrows to just that endpoint;
     /// - on any other host, the file points the key at a custom
-    ///   endpoint, so it asks `{base}/models` with the provider's own
-    ///   auth — the catalogue host would see a key it was never meant
-    ///   for. OpenRouter's canonical `OPENROUTER_BASE_URL` narrows to
-    ///   the same `/key` check rather than the public `/models`.
+    ///   endpoint, so it asks `{base}/models` as a bearer token, the
+    ///   same request the model fetch and the pre-save test send —
+    ///   the catalogue host would see a key it was never meant for.
+    ///   OpenRouter's canonical `OPENROUTER_BASE_URL` narrows to the
+    ///   same `/key` check rather than the public `/models`.
     /// - an unparseable base is no check at all, never a fall back.
     private func probe(for name: String) -> APIKeyProbe? {
         let catalogProbe = APIKeyProbe.probe(forName: name)
@@ -990,7 +991,7 @@ public final class APIKeysModel {
             }
             guard let url = CustomProvider.modelsURL(base) else { return nil }
             return APIKeyProbe(hosts: [url], method: "GET", body: nil,
-                               auth: catalogProbe.auth, worksOnBadRequest: false)
+                               auth: .bearer, worksOnBadRequest: false)
         }
         return CustomProvider.probe(baseURL: base)
     }

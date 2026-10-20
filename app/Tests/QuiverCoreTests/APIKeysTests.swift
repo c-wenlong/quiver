@@ -1132,21 +1132,26 @@ struct FakeShell: ShellEnvironmentReading {
         #expect(transport.requests.first?.url?.absoluteString == "https://soclaas.test/v1/models")
     }
 
-    /// A custom provider may reuse a catalogue name: "OpenAI" writes
-    /// OPENAI_API_KEY, and its sibling OPENAI_BASE_URL must own the
-    /// check. Picking the catalogue probe would send the key to
-    /// api.openai.com, a host it was never meant for.
+    /// A custom provider may reuse a catalogue name: "Anthropic" writes
+    /// ANTHROPIC_API_KEY, and its sibling ANTHROPIC_BASE_URL must own
+    /// the check. Picking the catalogue probe would send the key to
+    /// api.anthropic.com, a host it was never meant for; and the custom
+    /// endpoint answers the same bearer request the pre-save test sent,
+    /// not x-api-key.
     @Test func aCatalogueNameWithABaseURLChecksTheCustomEndpoint() async throws {
         let transport = FakeTransport()
         transport.reply(200, body: Data(#"{"data":[]}"#.utf8))
         let (model, _) = try model(text: """
             # Custom
-            export OPENAI_BASE_URL="https://proxy.test/v1"
-            export OPENAI_API_KEY="clsk-x"
+            export ANTHROPIC_BASE_URL="https://proxy.test/v1"
+            export ANTHROPIC_API_KEY="clsk-x"
             """, transport: transport)
         await model.load()
-        await model.check(name: "OPENAI_API_KEY")
-        #expect(transport.requests.first?.url?.absoluteString == "https://proxy.test/v1/models")
+        await model.check(name: "ANTHROPIC_API_KEY")
+        let request = try #require(transport.requests.first)
+        #expect(request.url?.absoluteString == "https://proxy.test/v1/models")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer clsk-x")
+        #expect(request.value(forHTTPHeaderField: "x-api-key") == nil)
     }
 
     /// A sibling base URL that restates the catalogue's own host keeps
