@@ -151,9 +151,16 @@ def _from_codex_toml(home: Path) -> list[Plugin]:
     except OSError:
         return []
     found = []
-    for ref, flag in re.findall(
-        r'\[plugins\."([^"]+)"\]\s*\nenabled\s*=\s*(true|false)', text
+    # ``enabled`` need not be the block's first key — match the header,
+    # then look for the flag anywhere inside that table's own lines.
+    for m in re.finditer(
+        r'^\[plugins\."([^"]+)"\][^\n]*\n(.*?)(?=^\s*\[|\Z)',
+        text, re.M | re.S,
     ):
+        ref, body = m.groups()
+        flag = re.search(r'(?m)^\s*enabled\s*=\s*(true|false)\b', body)
+        if flag is None:
+            continue
         name, market = _split_ref(ref)
         cache = home / ".codex" / "plugins" / "cache" / market / name
         root = None
@@ -163,7 +170,7 @@ def _from_codex_toml(home: Path) -> list[Plugin]:
         found.append(Plugin(
             harness="codex", name=name, marketplace=market,
             version=root.name if root else "",
-            enabled=flag == "true", path=root,
+            enabled=flag.group(1) == "true", path=root,
             components=count_components(root),
         ))
     return found

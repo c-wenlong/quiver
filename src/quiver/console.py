@@ -101,7 +101,10 @@ def fill_ansi(text: str, width: int) -> str:
 # only kind quiver emits itself, but strings arriving from transcripts,
 # titles, and filenames can carry any of them.
 _ESCAPES_RE = re.compile(
-    r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\|$)"   # OSC … BEL / ST / unterminated
+    # OSC … BEL / ST / unterminated. ``\x9c`` is the C1 spelling of ST:
+    # without it in both places the pattern ate straight through the
+    # terminator and swallowed whatever text followed.
+    r"\x1b\][^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c|$)"
     r"|\x1b\[[0-?]*[ -/]*[@-~]"              # CSI params + intermediates + final
     r"|\x1b[()#%][0-9A-Za-z]"                # charset/designation escapes
     r"|\x1b[@-Z\\-_]"                        # ESC X, and any two-byte escape
@@ -214,6 +217,85 @@ def cellpad(text: str, width: int) -> str:
     return text + " " * max(0, width - cell_len(text))
 
 
+def _char_cells(ch: str) -> int:
+    """Cell width of one character; the cheap half of ``cell_len``."""
+    if unicodedata.combining(ch) or ch == "\u200d":
+        return 0
+    if "\ufe00" <= ch <= "\ufe0f":
+        return 0
+    if "\U0001f3fb" <= ch <= "\U0001f3ff":
+        return 0
+    if "\U000e0020" <= ch <= "\U000e007f":
+        return 0
+    if "\U0001f1e6" <= ch <= "\U0001f1ff":
+        return 2
+    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
+def _take_cells(text: str, budget: int) -> str:
+    """Longest head of ``text`` fitting ``budget`` terminal cells."""
+    used = 0
+    out: list[str] = []
+    for ch in text:
+        w = _char_cells(ch)
+        if used + w > budget:
+            break
+        used += w
+        out.append(ch)
+    return "".join(out)
+
+
+def _take_cells_end(text: str, budget: int) -> str:
+    """Longest tail of ``text`` fitting ``budget`` terminal cells."""
+    used = 0
+    out: list[str] = []
+    for ch in reversed(text):
+        w = _char_cells(ch)
+        if used + w > budget:
+            break
+        used += w
+        out.append(ch)
+    tail = "".join(reversed(out))
+    # A combining mark or joiner at the cut edge renders against the
+    # ellipsis — drop leading zero-width chars left dangling.
+    while tail and _char_cells(tail[0]) == 0:
+        tail = tail[1:]
+    return tail
+
+
+def truncate_cells(text: str, n: int) -> str:
+    """``truncate`` measured in terminal cells, so wide glyphs fit.
+
+    Cutting a CJK string by code points either leaves a glyph hanging
+    half a cell past the column or — worse — lets the cell overflow and
+    push every column after it right.
+    """
+    if n <= 0:
+        return ""
+    if cell_len(text) <= n:
+        return text
+    if n <= 3:
+        return _take_cells(text, n)
+    return _take_cells(text, n - 3) + "..."
+
+
+def elide_cells(text: str, width: int) -> str:
+    """``elide`` measured in terminal cells, keeping both ends."""
+    if width <= 0:
+        return ""
+    if cell_len(text) <= width:
+        return text
+    if width == 1:
+        return "\u2026"
+    keep = width - 1                    # one cell for the ellipsis
+    head = (keep + 1) // 2              # bias to the head on an odd split
+    tail = keep - head
+    return (
+        _take_cells(text, head) + "\u2026"
+        + (_take_cells_end(text, tail) if tail else "")
+    )
+
+
 def lpad(text: str, width: int) -> str:
     return strip_ansi(text) + " " * (width - visible_len(text))
 
@@ -224,7 +306,7 @@ def rpad(text: str, width: int) -> str:
 
 def cpad(color: str, text: str, width: int) -> str:
     plain = strip_ansi(text)
-    return c(color, plain + " " * (width - len(plain)))
+    return c(color, plain + " " * max(0, width - cell_len(plain)))
 
 
 def terminal_width(default: int = 146) -> int:

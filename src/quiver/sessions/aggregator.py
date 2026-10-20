@@ -170,6 +170,11 @@ def get_all_sessions(limit=10, agent=None, cwd=None, use_cache=False) -> list[Se
         # since many sessions share the same base path
         realpath_cache: dict[str, str] = {}
         for session in sessions:
+            # An empty path realpaths to the process cwd — matching every
+            # --here — and a relative one resolves against wherever the
+            # command ran. Neither is proof the session lived there.
+            if not session.path or not os.path.isabs(session.path):
+                continue
             if session.path not in realpath_cache:
                 realpath_cache[session.path] = os.path.realpath(session.path)
 

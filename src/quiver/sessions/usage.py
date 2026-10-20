@@ -88,10 +88,14 @@ def _save_cached_counts(days: int | None, counts: dict[str, int],
     try:
         data = _read_cache()
         windows = dict(data.get("windows") or {})
+        # Union, don't replace: a second pass fed entirely by the sessions
+        # cache parses nothing and reports no failures — overwriting the
+        # list would forget which transcripts were actually broken.
+        prior = windows.get(_window_key(days), {}).get("broken") or []
         windows[_window_key(days)] = {
             "cached_at": time.time(),
             "counts": counts,
-            "broken": sorted(broken or ()),
+            "broken": sorted(set(broken or ()) | set(prior)),
         }
         SESSION_COUNTS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp = SESSION_COUNTS_CACHE_FILE.with_suffix(".tmp")
