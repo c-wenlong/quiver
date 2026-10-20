@@ -138,6 +138,7 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSDesktopFolderUsageDescription</key><string>Quiver runs swe and reads session folders, some of which live in your Desktop folder.</string>
   <key>NSDocumentsFolderUsageDescription</key><string>Quiver runs swe and reads session folders, some of which live in your Documents folder.</string>
+  <key>NSAppleEventsUsageDescription</key><string>Quiver opens your terminal to run a sign-in or resume a session.</string>
 </dict>
 </plist>
 PLIST
