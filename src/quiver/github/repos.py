@@ -6,7 +6,9 @@ repo from ``--repo=owner/name`` or from the git remote of the working
 directory it runs in.
 """
 
+import contextlib
 import json
+import os
 import re
 import subprocess
 import time
@@ -79,17 +81,32 @@ def repo_at(path: Path | None) -> str | None:
 
 
 def load_pinned(path: Path | None = None) -> list[dict]:
-    """Pinned repos as ``[{name, added_at}]``, oldest first."""
+    """Pinned repos as ``[{name, added_at}]``, oldest first.
+
+    A hand-edited or half-written file degrades to ``[]`` instead of
+    crashing a command — entries need a string ``name``, and ``added_at``
+    is coerced to an int so ``repo list`` never blows up on a bad value.
+    """
     path = path or paths.GITHUB_FILE
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, UnicodeError, json.JSONDecodeError):
         return []
-    repos = data.get("repos")
-    if not isinstance(repos, list):
+    if not isinstance(data, dict):
         return []
-    return [r for r in repos if isinstance(r, dict)
-            and isinstance(r.get("name"), str)]
+    pinned = data.get("repos")
+    if not isinstance(pinned, list):
+        return []
+    out = []
+    for entry in pinned:
+        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+            continue
+        try:
+            added_at = int(entry.get("added_at") or 0)
+        except (TypeError, ValueError):
+            added_at = 0
+        out.append({"name": entry["name"], "added_at": added_at})
+    return out
 
 
 def save_pinned(repos: list[dict], path: Path | None = None) -> None:
@@ -98,20 +115,43 @@ def save_pinned(repos: list[dict], path: Path | None = None) -> None:
     paths.atomic_write_text(path, json.dumps(body, indent=2) + "\n")
 
 
+@contextlib.contextmanager
+def _locked(path: Path):
+    """Exclusive lock beside the store so overlapping `repo add`/`remove`
+    calls can't drop each other's change."""
+    try:
+        import fcntl
+    except ImportError:  # non-POSIX: best effort without a lock
+        yield
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path.parent / (path.name + ".lock"),
+                 os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
 def add_pinned(name: str, path: Path | None = None) -> list[dict]:
-    repos = load_pinned(path)
-    if not any(r["name"].lower() == name.lower() for r in repos):
-        repos.append({"name": name, "added_at": int(time.time())})
-        save_pinned(repos, path)
-    return repos
+    path = path or paths.GITHUB_FILE
+    with _locked(path):
+        pinned = load_pinned(path)
+        if not any(r["name"].lower() == name.lower() for r in pinned):
+            pinned.append({"name": name, "added_at": int(time.time())})
+            save_pinned(pinned, path)
+        return pinned
 
 
 def remove_pinned(name: str, path: Path | None = None) -> tuple[list[dict], bool]:
-    repos = load_pinned(path)
-    kept = [r for r in repos if r["name"].lower() != name.lower()]
-    if len(kept) != len(repos):
-        save_pinned(kept, path)
-    return kept, len(kept) != len(repos)
+    path = path or paths.GITHUB_FILE
+    with _locked(path):
+        pinned = load_pinned(path)
+        kept = [r for r in pinned if r["name"].lower() != name.lower()]
+        if len(kept) != len(pinned):
+            save_pinned(kept, path)
+        return kept, len(kept) != len(pinned)
 
 
 def resolve(repo_arg: str | None, cwd: Path | None = None) -> list[str]:

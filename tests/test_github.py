@@ -112,6 +112,15 @@ class TestPinnedStore(unittest.TestCase):
         self.store.write_text('{"repos": "nope"}')
         self.assertEqual(repos.load_pinned(self.store), [])
 
+    def test_bad_shapes_degrade(self):
+        self.store.write_text("[]")
+        self.assertEqual(repos.load_pinned(self.store), [])
+        self.store.write_text(json.dumps({"repos": [
+            "nope", {"name": 42}, {"name": "o/r", "added_at": "bad"},
+        ]}))
+        self.assertEqual(repos.load_pinned(self.store),
+                         [{"name": "o/r", "added_at": 0}])
+
 
 class TestResolve(unittest.TestCase):
     def setUp(self):
@@ -201,6 +210,28 @@ class TestGhWrapper(unittest.TestCase):
         self.assertTrue(env.installed)
         self.assertTrue(env.authenticated)
         self.assertEqual(env.login, "octocat")
+
+    def test_probe_env_timeout_is_not_auth_required(self):
+        def run(cmd, **kw):
+            raise subprocess.TimeoutExpired("gh", 20)
+        with patch("shutil.which", return_value="/usr/bin/gh"), \
+             patch("subprocess.run", run):
+            env = gh.probe_env()
+        self.assertEqual(env.status, "upstream-error")
+        self.assertIn("timed out", env.error)
+
+    def test_dns_failure_is_upstream_not_not_found(self):
+        run = _gh_run({"x": _Proc(returncode=1,
+                                  stderr="Could not resolve host")})
+        with patch("subprocess.run", run):
+            self.assertEqual(gh.run_gh(["x"]).status, "upstream-error")
+
+    def test_graphql_missing_repo_is_not_found(self):
+        run = _gh_run({"x": _Proc(
+            returncode=1,
+            stderr="Could not resolve to a Repository with the name 'o/r'")})
+        with patch("subprocess.run", run):
+            self.assertEqual(gh.run_gh(["x"]).status, "not-found")
 
 
 class TestShaping(unittest.TestCase):
@@ -667,6 +698,77 @@ class TestCommands(unittest.TestCase):
         payload = json.loads(out)["data"]
         self.assertEqual(payload["status"], "upstream-error")
         self.assertEqual(payload["notifications"], [])
+
+    def test_inbox_flattens_pages(self):
+        page1 = [{"id": str(i), "subject": {"title": f"n{i}"},
+                  "repository": {}, "unread": False} for i in range(100)]
+
+        def run(cmd, **kw):
+            joined = " ".join(cmd)
+            if "&page=2" in joined:
+                return _Proc(stdout=json.dumps([
+                    {"id": "100", "subject": {"title": "extra"},
+                     "repository": {}, "unread": False}]))
+            if "&page=1" in joined:
+                return _Proc(stdout=json.dumps(page1))
+            return _Proc(returncode=1, stderr="unstubbed")
+        rc, out, _ = self._run_cli(["inbox", "--limit=150", "--json"], run=run)
+        notes = json.loads(out)["data"]["notifications"]
+        self.assertEqual(len(notes), 101)  # 100 + 1; no page=3 stubbed
+
+    def test_pages_build_fetch_failure_is_kept(self):
+        def run(cmd, **kw):
+            joined = " ".join(cmd)
+            if joined.endswith("pages/builds/latest"):
+                return _Proc(returncode=1, stderr="rate limited")
+            if joined.endswith("repos/o/r/pages"):
+                return _Proc(stdout=json.dumps(
+                    {"html_url": "https://o.github.io/r"}))
+            return _Proc(returncode=1, stderr="unstubbed")
+        rc, out, _ = self._run_cli(["pages", "--repo=o/r", "--json"], run=run)
+        build = json.loads(out)["data"]["results"][0]["pages"]["latest_build"]
+        self.assertEqual(build["status"], "fetch-failed")
+        self.assertIn("rate limited", build["error"])
+
+    def test_pr_status_failure_keeps_fields(self):
+        run = _gh_run({
+            "pr status": _Proc(returncode=1, stderr="HTTP 404 Not Found"),
+        })
+        rc, out, _ = self._run_cli(
+            ["pr", "status", "--repo=o/r", "--json"], run=run)
+        entry = json.loads(out)["data"]["results"][0]
+        self.assertEqual(entry["status"], "not-found")
+        self.assertIsNone(entry["current_branch"])
+        self.assertEqual(entry["authored"], [])
+        self.assertEqual(entry["review_requested"], [])
+
+    def test_repo_search_honors_limit(self):
+        seen = {}
+
+        def run(cmd, **kw):
+            joined = " ".join(cmd)
+            if "search repos" in joined:
+                seen["argv"] = joined
+            return _Proc(stdout="[]")
+        rc, out, _ = self._run_cli(
+            ["repo", "search", "q", "--limit=7"], run=run)
+        self.assertEqual(rc, 0)
+        self.assertIn("--limit 7", seen["argv"])
+
+    def test_json_errors_leave_stdout_clean(self):
+        run = _gh_run({
+            "repo view": _Proc(returncode=1, stderr="Could not resolve to a "
+                               "Repository with the name 'o/r'"),
+        })
+        rc, out, err = self._run_cli(["repo", "add", "o/r", "--json"], run=run)
+        self.assertEqual(rc, 1)
+        self.assertNotIn("Cannot reach", out)
+        self.assertIn("Cannot reach", err)
+        rc, out, err = self._run_cli(["pr", "--repo=o/r", "--state=nah",
+                                      "--json"], run=run)
+        self.assertEqual(rc, 1)
+        self.assertEqual(out.strip(), "")
+        self.assertIn("--state", err)
 
     def test_inbox_env_blocked(self):
         env = gh.GhEnv(installed=True, authenticated=False)
