@@ -132,6 +132,8 @@ public struct ScanReport: Sendable, Equatable {
     public var filesUnchanged = 0
     /// Files read from the start again because they were replaced or truncated.
     public var filesRescanned = 0
+    /// Files the search index committed this pass, when an indexer is set.
+    public var filesIndexed = 0
     /// Lines over the size limit that were skipped.
     public var skippedLines = 0
     public var databasesRead = 0
@@ -174,6 +176,15 @@ public actor Ledger {
     /// accidental sessions").
     public nonisolated func setHidesTrivialSessions(_ hides: Bool) {
         trivialGate.withLock { $0 = hides }
+    }
+
+    /// The search index the scan also feeds. Nil leaves the feature off —
+    /// scans then cost nothing for it. Set once at startup; the indexer runs
+    /// only inside this actor's calls.
+    private var indexer: SearchIndexer?
+
+    public func setIndexer(_ indexer: SearchIndexer?) {
+        self.indexer = indexer
     }
 
     /// The daily copies `backUpIfDue` takes.
@@ -260,6 +271,20 @@ public actor Ledger {
             report.databasesRead += try scanSource(database, kind: HarnessMark("devin").name,
                                                    scan: DatabaseSources.scanDevin, report: &report)
         }
+        if let indexer {
+            // Devin's transcripts are pretty-printed ATIF documents beside
+            // `sessions.db`, not JSONL — they feed the index only, never the
+            // ledger's records, so the loop runs only while an indexer is set.
+            for database in roots.devinDatabases {
+                let transcripts = database.deletingLastPathComponent()
+                    .appendingPathComponent("transcripts")
+                for file in Self.files(under: transcripts, suffix: ".json") {
+                    if Task.isCancelled { throw CancellationError() }
+                    indexWholeFile(file, harness: .devin, indexer: indexer, report: &report)
+                    await Task.yield()
+                }
+            }
+        }
         for home in roots.piHomes {
             for file in Self.jsonlFiles(under: home.appendingPathComponent("agent/sessions")) {
                 if Task.isCancelled { throw CancellationError() }
@@ -289,7 +314,45 @@ public actor Ledger {
                 await Task.yield()
             }
         }
+        if let indexer {
+            // A failed drain must not fail the scan: whatever is left
+            // orphaned is found by the next pass's drain.
+            do { try indexer.finishScan() } catch {
+                report.notes.append("Index drain failed: \(error.localizedDescription)")
+            }
+        }
         return report
+    }
+
+    /// One index-pure transcript a database does not cover: read whole into
+    /// the index, feeding no ledger records. Failures mark the file failed
+    /// and become a note, like a bad transcript in `scanFile`.
+    private func indexWholeFile(
+        _ url: URL, harness: SearchDecoder.Harness, indexer: SearchIndexer, report: inout ScanReport
+    ) {
+        let path = url.resolvingSymlinksInPath().path
+        guard let info = FileInfo(path: path) else { return }
+        let stat = SearchFileStat(
+            ino: Int64(info.inode), mtimeMs: info.modified * 1000, sizeBytes: Int64(info.size))
+        switch indexer.readNeed(path: path, stat: stat, ledgerOffset: nil) {
+        case .current, .skip:
+            return
+        case .append, .whole:
+            break
+        }
+        do {
+            // Tens of MB of pretty-printed JSON in one blob is fine — the
+            // decoder treats the document as one line.
+            let data = try Data(contentsOf: URL(fileURLWithPath: path))
+            indexer.beginFile(path: path, harness: harness)
+            indexer.consume(line: data)
+            if try indexer.finishFile(path: path, stat: stat, byteOffset: Int64(info.size)) {
+                report.filesIndexed += 1
+            }
+        } catch {
+            indexer.failFile(path: path, mtimeMs: stat.mtimeMs)
+            report.notes.append("Index failed \(path): \(error.localizedDescription)")
+        }
     }
 
     /// One database source. A failure reading the source becomes a note and
@@ -316,6 +379,9 @@ public actor Ledger {
         let path = url.resolvingSymlinksInPath().path
         guard seen.insert(path).inserted, let info = FileInfo(path: path) else { return }
         let saved = try store.cursor(for: path)
+        let indexStat = SearchFileStat(
+            ino: Int64(info.inode), mtimeMs: info.modified * 1000, sizeBytes: Int64(info.size))
+        let indexNeed = indexer?.readNeed(path: path, stat: indexStat, ledgerOffset: saved?.offset) ?? .skip
 
         var start: UInt64 = 0
         var state: Data?
@@ -324,8 +390,11 @@ public actor Ledger {
             // (a backup restore, a `touch -r` stamp) still moves it, so the
             // fast path no longer trusts the stamp alone. Cursors written
             // before it was recorded keep the check they were saved under.
+            // A `.whole` index need forfeits the fast path: the index is
+            // behind on a span of its own and must read the file again.
             if saved.inode == info.inode, saved.size == info.size, saved.modified == info.modified,
-               (saved.changed ?? info.changed) == info.changed, saved.offset == info.size {
+               (saved.changed ?? info.changed) == info.changed, saved.offset == info.size,
+               indexNeed != .whole {
                 report.filesUnchanged += 1
                 return
             }
@@ -333,8 +402,10 @@ public actor Ledger {
             // (`offset == size`) whose stamps moved is a rewrite, and
             // resuming at EOF would read nothing and re-stamp the cursor
             // over an edit the head/middle/tail samples cannot see.
+            // A `.whole` index need upgrades an append to a rescan: the index
+            // is behind on a span the appended lines cannot reach.
             if saved.inode == info.inode, info.size > saved.offset,
-               Self.fingerprintsMatch(saved, path: path) {
+               Self.fingerprintsMatch(saved, path: path), indexNeed != .whole {
                 start = saved.offset
                 state = saved.state
             } else {
@@ -342,15 +413,27 @@ public actor Ledger {
             }
         }
 
+        // The index consumes the same read when it owes one: `.append` takes
+        // the appended lines, `.whole` the file. `.current` and `.skip` never
+        // enter the closure. A local binding keeps the line closure
+        // nonisolated — capturing `self` here would flag every other capture.
+        let indexer = (indexNeed == .append || indexNeed == .whole) ? self.indexer : nil
+        if let indexer {
+            indexer.beginFile(path: path, harness: P.searchHarness,
+                              appending: indexNeed == .append && start > 0)
+        }
         var lineParser = P(file: url, accountHome: accountHome, savedState: state)
         let store = self.store
+        var endOffset: UInt64 = info.size
         try store.db.execute("BEGIN IMMEDIATE")
         do {
             let result = try reader.read(URL(fileURLWithPath: path), from: start) { line in
                 for record in lineParser.records(fromLine: line) {
                     try store.upsert(record)
                 }
+                indexer?.consume(line: line)
             }
+            endOffset = result.endOffset
             let head = Self.hashRange(path: path, from: 0, length: min(Self.fingerprintBytes, result.endOffset))
             let tailLength = min(Self.fingerprintBytes, result.endOffset)
             let tail = Self.hashRange(path: path, from: result.endOffset - tailLength, length: tailLength)
@@ -375,10 +458,25 @@ public actor Ledger {
             // permissions, a bad block. One bad transcript must not take
             // every harness's scan down with it, so like a skipped source
             // it becomes a note. Its cursor is left unsaved, so the next
-            // scan retries it.
+            // scan retries it. The index counts the failure too — that is
+            // what holds an unreadable transcript out after enough tries.
             store.rollback()
+            indexer?.failFile(path: path, mtimeMs: indexStat.mtimeMs)
             report.notes.append("Skipped \(path): \(error.localizedDescription)")
             return
+        }
+        // The index commits outside the ledger's transaction: a failure
+        // there marks the file `failed` and earns a note, never an aborted
+        // scan.
+        if let indexer {
+            do {
+                if try indexer.finishFile(path: path, stat: indexStat, byteOffset: Int64(endOffset)) {
+                    report.filesIndexed += 1
+                }
+            } catch {
+                indexer.failFile(path: path, mtimeMs: indexStat.mtimeMs)
+                report.notes.append("Index failed \(path): \(error.localizedDescription)")
+            }
         }
         report.filesRead += 1
     }
@@ -809,12 +907,15 @@ struct FileInfo {
 /// lines (Codex's running model and totals) saves it with the file's cursor,
 /// so an appended file resumes with the right state.
 protocol FileLogParser {
+    /// The decoder the search index feeds the same lines to.
+    static var searchHarness: SearchDecoder.Harness { get }
     init(file: URL, accountHome: String, savedState: Data?)
     mutating func records(fromLine line: Data) -> [LedgerRecord]
     func savedState() -> Data?
 }
 
 struct ClaudeFileParser: FileLogParser {
+    static let searchHarness: SearchDecoder.Harness = .claude
     let accountHome: String
     init(file: URL, accountHome: String, savedState: Data?) { self.accountHome = accountHome }
     func records(fromLine line: Data) -> [LedgerRecord] {
