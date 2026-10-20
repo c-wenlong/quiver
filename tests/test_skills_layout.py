@@ -1,11 +1,18 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from quiver.skills.layout import enumerate_skill_roots, layout_groups, sync_link_records_from_filesystem
-from quiver.skills.link_ops import SkillLayoutError, link_skill_root, move_skill, unlink_skill_root
+from quiver.skills.link_ops import (
+    SkillLayoutError,
+    find_skill_directory,
+    link_skill_root,
+    move_skill,
+    unlink_skill_root,
+)
 
 
 class SkillsLayoutTest(unittest.TestCase):
@@ -45,6 +52,140 @@ class SkillsLayoutTest(unittest.TestCase):
             unlink_skill_root("codex", home=home, mkdir=True)
             self.assertFalse(codex.is_symlink())
             self.assertTrue(codex.is_dir())
+
+    def test_link_replaces_a_dangling_symlink(self):
+        # exists() is False on a dangling link, so the old code fell
+        # through to symlink_to() and died with FileExistsError even
+        # though the path was only a broken link.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            shared = home / ".quiver" / "skills"
+            shared.mkdir(parents=True)
+            codex = home / ".codex" / "skills"
+            codex.parent.mkdir(parents=True)
+            codex.symlink_to(home / ".codex" / "gone")
+
+            link_skill_root("codex", "shared", home=home)
+            self.assertTrue(codex.is_symlink())
+            self.assertEqual(codex.resolve(), shared.resolve())
+
+    def test_unlink_removes_a_dangling_symlink(self):
+        # The inverse bug: exists() reported "does not exist" for a broken
+        # link, so `swe skills unlink` could never remove one.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            codex = home / ".codex" / "skills"
+            codex.parent.mkdir(parents=True)
+            codex.symlink_to(home / ".codex" / "gone")
+
+            unlink_skill_root("codex", home=home)
+            self.assertFalse(os.path.lexists(codex))
+
+    def test_move_from_a_literal_path_root(self):
+        # --from takes a root ref, so a path must work like a label.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            foo = home / ".foo" / "skills"
+            codex = home / ".codex" / "skills"
+            foo.mkdir(parents=True)
+            codex.mkdir(parents=True)
+            self._write_skill(foo, "move-me", "move-me")
+
+            src, dest = move_skill("move-me", str(foo), "codex", home=home)
+            self.assertFalse(src.exists())
+            self.assertTrue((dest / "SKILL.md").exists())
+
+    def test_move_from_a_discovered_root_label(self):
+        # ~/.foo/skills is found by the on-disk scan but has no builtin
+        # label; the label `swe find skills` reports must still resolve.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            foo = home / ".foo" / "skills"
+            codex = home / ".codex" / "skills"
+            foo.mkdir(parents=True)
+            codex.mkdir(parents=True)
+            self._write_skill(foo, "move-me", "move-me")
+
+            src, dest = move_skill("move-me", "foo", "codex", home=home)
+            self.assertFalse(src.exists())
+            self.assertTrue((dest / "SKILL.md").exists())
+
+    def test_move_from_a_symlinked_root_by_path(self):
+        # foo/skills -> shared, so its skills are reported under "shared";
+        # only containment under the resolved root finds them via the
+        # link's own path.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            shared = home / ".quiver" / "skills"
+            codex = home / ".codex" / "skills"
+            shared.mkdir(parents=True)
+            codex.mkdir(parents=True)
+            self._write_skill(shared, "move-me", "move-me")
+            foo = home / ".foo" / "skills"
+            foo.parent.mkdir(parents=True)
+            foo.symlink_to(shared)
+
+            src, dest = move_skill("move-me", str(foo), "codex", home=home)
+            self.assertFalse(src.exists())
+            self.assertTrue((dest / "SKILL.md").exists())
+
+    def test_move_from_a_path_ignores_same_label_roots(self):
+        # ~/.foo/skills and ~/.config/foo/skills both carry the label
+        # "foo"; an explicit path must still mean exactly one root.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            foo = home / ".foo" / "skills"
+            other = home / ".config" / "foo" / "skills"
+            codex = home / ".codex" / "skills"
+            for root in (foo, other, codex):
+                root.mkdir(parents=True)
+            self._write_skill(foo, "move-me", "move-me")
+            self._write_skill(other, "move-me", "move-me")
+
+            src, dest = move_skill("move-me", str(foo), "codex", home=home)
+            self.assertFalse(src.exists())
+            self.assertTrue((dest / "SKILL.md").exists())
+            # The same-named skill under the other "foo" root is untouched.
+            self.assertTrue((other / "move-me" / "SKILL.md").exists())
+
+    def test_move_reports_a_broken_destination_symlink(self):
+        # The broken-link check ran after the exists() check, so it could
+        # never fire: a dangling --to root read as "does not exist".
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            shared = home / ".quiver" / "skills"
+            shared.mkdir(parents=True)
+            self._write_skill(shared, "move-me", "move-me")
+            codex = home / ".codex" / "skills"
+            codex.parent.mkdir(parents=True)
+            codex.symlink_to(home / ".codex" / "gone")
+
+            with self.assertRaises(SkillLayoutError) as ctx:
+                move_skill("move-me", "shared", "codex", home=home)
+            self.assertIn("broken", str(ctx.exception))
+            self.assertTrue((shared / "move-me" / "SKILL.md").exists())
+
+    def test_move_reports_a_missing_destination_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            shared = home / ".quiver" / "skills"
+            shared.mkdir(parents=True)
+            self._write_skill(shared, "move-me", "move-me")
+
+            # kilo is a known label whose root is not on disk.
+            with self.assertRaises(SkillLayoutError) as ctx:
+                move_skill("move-me", "shared", "kilo", home=home)
+            self.assertIn("does not exist", str(ctx.exception))
+            self.assertTrue((shared / "move-me" / "SKILL.md").exists())
+
+    def test_find_skill_directory_with_an_unresolvable_scope(self):
+        # A scope that resolves to nothing answers "No skill matching",
+        # not the resolver's "Unknown skill root" error.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            with self.assertRaises(SkillLayoutError) as ctx:
+                find_skill_directory("x", "bogus", home=home, cwd=home)
+            self.assertIn("No skill matching", str(ctx.exception))
 
     def test_move_skill_between_unlinked_roots(self):
         with tempfile.TemporaryDirectory() as tmp:
