@@ -200,8 +200,10 @@ class CmdListGhostRowTest(unittest.TestCase):
     def test_ghost_row_renders_with_a_placeholder_command(self):
         output = _run_cmd_list()
         row = _row_for_tool(output, "ghost-tool")
-        self.assertIsNotNone(row)
         self.assertIn("ghost-tool", strip_ansi(row))
+        # The promised placeholder for a command-less row, not an empty
+        # cell or a probed name.
+        self.assertIn("—", strip_ansi(row))
 
 
 class CmdListHeaderTest(unittest.TestCase):
