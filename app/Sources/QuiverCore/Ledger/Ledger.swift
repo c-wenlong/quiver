@@ -267,6 +267,16 @@ public actor Ledger {
             report.databasesRead += try scanSource(database, kind: HarnessMark("opencode").name,
                                                    scan: DatabaseSources.scanOpenCode, report: &report)
         }
+        if let indexer {
+            // OpenCode keeps its sessions inside the database, not in files
+            // of their own: each indexes under a synthetic `<db>#<id>`
+            // path, read whole whenever its stat moves.
+            for database in roots.openCodeDatabases
+            where FileManager.default.fileExists(atPath: database.path) {
+                try indexOpenCodeSessions(database, indexer: indexer, report: &report)
+                await Task.yield()
+            }
+        }
         for database in roots.devinDatabases where FileManager.default.fileExists(atPath: database.path) {
             report.databasesRead += try scanSource(database, kind: HarnessMark("devin").name,
                                                    scan: DatabaseSources.scanDevin, report: &report)
@@ -352,6 +362,91 @@ public actor Ledger {
         } catch {
             indexer.failFile(path: path, mtimeMs: stat.mtimeMs)
             report.notes.append("Index failed \(path): \(error.localizedDescription)")
+        }
+    }
+
+    /// OpenCode's sessions live inside `opencode.db`: each is indexed under
+    /// a synthetic `<dbPath>#<sessionId>` path whose stat is the session's
+    /// last-activity time and message count, so a session re-reads only
+    /// when its content actually grew. A synthetic read is always whole —
+    /// a row in a container has no byte offset the index could resume from.
+    ///
+    /// The database is opened read-only for the whole pass, like
+    /// `scanSource` opens it for its one read: a database that will not
+    /// enumerate — locked mid-rebuild, a schema this build does not know —
+    /// becomes one note instead of aborting the scan, and a session that
+    /// fails its own read is held out after three failures like a file.
+    private func indexOpenCodeSessions(
+        _ url: URL, indexer: SearchIndexer, report: inout ScanReport
+    ) throws {
+        let dbPath = url.resolvingSymlinksInPath().path
+        let source: SQLiteDatabase
+        let sessions: [SearchOpenCode.Session]
+        do {
+            source = try SQLiteDatabase(readOnly: url)
+            sessions = try SearchOpenCode.sessions(in: source)
+        } catch {
+            report.notes.append(
+                "Skipped \(HarnessMark("opencode").name)'s database (\(url.path)): \(error.localizedDescription)")
+            return
+        }
+        var live: Set<String> = []
+        live.reserveCapacity(sessions.count)
+        for session in sessions {
+            if Task.isCancelled { throw CancellationError() }
+            let path = SearchOpenCode.syntheticPath(dbPath: dbPath, sessionID: session.id)
+            live.insert(path)
+            let stat = session.stat
+            switch indexer.readNeed(path: path, stat: stat, ledgerOffset: nil) {
+            case .current, .skip:
+                continue
+            case .append, .whole:
+                // No ledger offset ever passes in, so `readNeed` never
+                // answers `.append`; a whole read covers either case.
+                break
+            }
+            do {
+                let messages = try SearchOpenCode.messages(in: source, sessionID: session.id)
+                let fields = SearchSessionFields(
+                    agent: "opencode", sessionID: session.id, filePath: path,
+                    title: SearchOpenCode.title(of: session, messages: messages),
+                    cwd: session.directory, cwdKey: session.directory,
+                    createdAt: SearchOpenCode.iso(ms: session.timeCreatedMs),
+                    updatedAt: SearchOpenCode.iso(ms: session.lastActivityMs),
+                    messageCount: messages.count)
+                if try indexer.finishSession(path: path, stat: stat,
+                                             fields: fields, messages: messages) {
+                    report.filesIndexed += 1
+                }
+            } catch {
+                // Like a bad transcript in `scanFile`: the failure records
+                // against the stat — three at one stat holds the session
+                // out — and the rest of the database still indexes.
+                indexer.failFile(path: path, mtimeMs: stat.mtimeMs)
+                report.notes.append("Index failed \(path): \(error.localizedDescription)")
+            }
+        }
+        retireStaleSyntheticSessions(dbPath: dbPath, live: live, indexer: indexer, report: &report)
+    }
+
+    /// Rows for sessions the enumeration no longer returns — the synthetic
+    /// equivalent of a transcript file deleted from its directory. Only a
+    /// complete, non-empty enumeration retires anything: a database that
+    /// listed zero sessions proves nothing about the ids it holds (Orca's
+    /// census rule in `session-search-synthetic-sources.ts`), and a failed
+    /// enumeration never reaches here.
+    private func retireStaleSyntheticSessions(
+        dbPath: String, live: Set<String>, indexer: SearchIndexer, report: inout ScanReport
+    ) {
+        guard !live.isEmpty else { return }
+        let prefix = dbPath + "#"
+        do {
+            for row in try indexer.store.files()
+            where row.path.hasPrefix(prefix) && !live.contains(row.path) {
+                try indexer.store.removeFile(row.path)
+            }
+        } catch {
+            report.notes.append("Index retire failed \(dbPath): \(error.localizedDescription)")
         }
     }
 

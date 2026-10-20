@@ -282,6 +282,27 @@ public final class SearchStore {
             """).bind([.text(state.rawValue), .text(path)]).run()
     }
 
+    /// Deletes `path`'s row and the session it pointed at, in one
+    /// transaction — a source proven gone. Its messages stop answering at
+    /// once (every retrieval joins `sessions`) and the orphan drain
+    /// reclaims them in its own bounded passes, the same lifecycle a
+    /// `replaceSession` leaves behind. Orca's writer calls this
+    /// `removeFile`.
+    public func removeFile(_ path: String) throws {
+        try db.execute("BEGIN IMMEDIATE")
+        do {
+            if let sessionRowID = try fileFence(for: path)?.sessionRowID {
+                try db.prepare("DELETE FROM sessions WHERE id = ?")
+                    .bind([.int(sessionRowID)]).run()
+            }
+            try db.prepare("DELETE FROM files WHERE path = ?").bind([.text(path)]).run()
+            try db.execute("COMMIT")
+        } catch {
+            try? db.execute("ROLLBACK")
+            throw error
+        }
+    }
+
     // MARK: - Sessions
 
     /// Inserts a `sessions` row and returns its id. `sessionID` and `title`
