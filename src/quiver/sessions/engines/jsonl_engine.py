@@ -137,22 +137,6 @@ def _parse_nested(base: str, config: JsonlParserConfig) -> list[Session]:
                         sess = _session_from_jsonl(latest, config, fallback_path)
                         if sess:
                             sessions.append(sess)
-                    elif fallback_path or config.default_path:
-                        # Preserve legacy behavior: project dir with no jsonl still counts
-                        mtime = get_mtime(proj)
-                        if mtime > 0:
-                            path = fallback_path or config.default_path or ""
-                            if path or not config.require_path:
-                                sessions.append(
-                                    Session(
-                                        timestamp=mtime,
-                                        agent=config.agent,
-                                        path=path,
-                                        title="",
-                                        session_id="",
-                                        tool_name=config.tool_name,
-                                    )
-                                )
     except Exception as exc:
         # Still caught: one broken harness must not take down the rest.
         # Recorded so it reads as an error rather than as no history.
