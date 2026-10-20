@@ -51,6 +51,7 @@ struct TrendChart: View {
         switch metric {
         case .ram: ComputeSummary.bytes(UInt64(max(0, value) * Double(UInt64(1) << 30)))
         case .cpu, .gpu: "\(ComputePage.cpu(value))%"
+        case .temperature: TemperatureChart.formatted(value)
         }
     }
 

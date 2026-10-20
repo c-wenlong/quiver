@@ -103,9 +103,9 @@ import Testing
 
     // MARK: Compute tab
 
-    @Test func computeChartsDefaultToRamCpuGpu() {
+    @Test func computeChartsDefaultToRamCpuGpuTemperature() {
         let popup = ComputePopup(defaults: defaults())
-        #expect(popup.visibleMetrics == [.ram, .cpu, .gpu])
+        #expect(popup.visibleMetrics == [.ram, .cpu, .gpu, .temperature])
     }
 
     @Test func computeChartsReorderHideAndRoundTrip() {
@@ -114,11 +114,12 @@ import Testing
         popup.moveMetric("gpu", before: "ram")
         popup.metrics.setShown(false, "cpu")
         popup.moveMetric("ram", before: nil)
+        popup.metrics.setShown(false, "temperature")
         popup.harnesses.setShown(false, "cursor")
         popup.harnesses.move("codex", before: "claude", in: ["claude", "codex", "cursor"])
         popup.save(to: store)
         let read = ComputePopup(defaults: store)
-        #expect(read.allMetrics == [.gpu, .cpu, .ram])
+        #expect(read.allMetrics == [.gpu, .cpu, .temperature, .ram])
         #expect(read.visibleMetrics == [.gpu, .ram])
         #expect(read.harnesses.visible(["claude", "codex", "cursor"]) == ["codex", "claude"])
     }
@@ -150,6 +151,17 @@ import Testing
         history.append("claude", point(t0, gb: 1, cpu: 10, gpu: nil))
         #expect(history.total(of: .gpu, harnesses: ["claude"]) == nil)
         #expect(history.total(of: .ram, harnesses: ["claude"]) == 1)
+    }
+
+    @Test func temperatureIsNotAPerHarnessSum() {
+        var history = ComputeHistory()
+        history.append("claude", point(t0, gb: 1, cpu: 10, gpu: 1))
+        history.appendTemperature(TemperaturePoint(at: t0, values: [.cpu: 60, .ssd: 40]))
+        // Whole-Mac readings have no harness total, and no TrendPoint
+        // ever carries a temperature for a line to draw.
+        #expect(history.total(of: .temperature, harnesses: ["claude"]) == nil)
+        #expect(!TrendMetric.temperature.reads(point(t0, gb: 1, cpu: 1, gpu: 1)))
+        #expect(TrendMetric(rawValue: "temperature") == .temperature)
     }
 
     @Test func aTickWithNothingRunningZeroesTheTotal() {

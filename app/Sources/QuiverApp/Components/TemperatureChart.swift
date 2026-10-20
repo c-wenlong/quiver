@@ -32,6 +32,10 @@ struct TemperatureChart: View {
     @State private var bubbleSize: CGSize = .zero
 
     private var model: ComputeModel { app.compute }
+    /// The popup's stacked size: the same trailing edge and tick counts as
+    /// the compact TrendChart, so a shared hover rule lines up across the
+    /// charts, and no line-end names (the legend names every line).
+    private var compact: Bool { height < 120 }
 
     private var points: [TemperaturePoint] {
         model.history.temperatureWindow(interval: model.trendInterval)
@@ -168,8 +172,10 @@ struct TemperatureChart: View {
                         .symbolSize(16)
                         .annotation(position: .trailing, alignment: .center, spacing: 6,
                                     overflowResolution: .init(x: .disabled, y: .disabled)) {
-                            Text(component.title)
-                                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                            if !compact {
+                                Text(component.title)
+                                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                            }
                         }
                 }
             }
@@ -180,16 +186,19 @@ struct TemperatureChart: View {
         }
         .chartXScale(domain: domain)
         .chartYScale(domain: yDomain)
-        .chartXAxis { AxisMarks(values: .automatic(desiredCount: 6)) }
+        .chartXAxis { AxisMarks(values: .automatic(desiredCount: compact ? 4 : 6)) }
         .chartYAxis {
             // The scale sits on the left, so the line names at the right
             // ends have the trailing edge to themselves.
-            AxisMarks(position: .leading, values: .automatic(desiredCount: 5)) { value in
+            AxisMarks(position: .leading, values: .automatic(desiredCount: compact ? 3 : 5)) { value in
                 AxisGridLine()
                 AxisValueLabel { Text("\(Int((value.as(Double.self) ?? 0).rounded())) °C") }
             }
         }
-        .padding(.trailing, 64)
+        // Compact matches TrendChart's trailing edge, so a hover rule at
+        // one time sits at the same x on every stacked chart; the names
+        // it makes room for are skipped at this height anyway.
+        .padding(.trailing, compact ? 16 : 64)
         .frame(height: height)
         .chartOverlay { proxy in hoverOverlay(proxy, points: points, shown: shown) }
     }
