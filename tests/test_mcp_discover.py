@@ -575,6 +575,65 @@ class ShieldCredentialsTest(unittest.TestCase):
             self.assertEqual(res.added, ["good"])
             self.assertEqual(load_secrets(home), {})
 
+    def test_a_literal_next_to_a_reference_is_still_shielded(self):
+        # `session=${SESSION}; refresh=literal-secret` has a reference in
+        # it, but the refresh literal would still land in versioned
+        # mcp.json if the whole value were skipped. The reference stays,
+        # the literal moves into the store.
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+        from quiver.mcp.secrets import load_secrets, resolve
+
+        with contextlib.ExitStack() as stack:
+            home, path = self._hub(stack)
+            apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"headers": {
+                        "Cookie": "session=${SESSION}; "
+                                  "refresh=literal-secret-99"}})])
+            hub = json.loads(path.read_text())["mcpServers"]["svc"]
+            cookie = hub["headers"]["Cookie"]
+            self.assertNotIn("literal-secret-99", cookie)
+            self.assertIn("session=${SESSION}", cookie)
+            self.assertIn("refresh=${", cookie)
+            resolved = resolve(hub, home=home)
+            # ${SESSION} is not in the store, so it passes through; the
+            # stored refresh literal resolves back to the real value.
+            self.assertEqual(
+                resolved["headers"]["Cookie"],
+                "session=${SESSION}; refresh=literal-secret-99")
+            self.assertIn("literal-secret-99", load_secrets(home).values())
+
+    def test_an_opaque_literal_next_to_a_reference_skips_the_server(self):
+        # A credential-shaped run that is not a k=v segment (no safe way
+        # to isolate it) keeps the whole server out of the hub.
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+
+        with contextlib.ExitStack() as stack:
+            _home, path = self._hub(stack)
+            res = apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"headers": {
+                        "Authorization":
+                            "Bearer ${TOKEN} abc123def456ghi789jkl012"}}),
+                McpFinding(
+                    name="ok", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"command": "npx", "env": {}})])
+            servers = json.loads(path.read_text())["mcpServers"]
+            self.assertNotIn("svc", servers)
+            self.assertIn("ok", servers)
+            self.assertEqual(res.added, ["ok"])
+
 
 class ServerSummaryScrubTest(unittest.TestCase):
     """discover --json must obey the same secrecy contract as list --json."""

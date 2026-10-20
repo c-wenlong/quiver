@@ -368,19 +368,57 @@ def shield_credentials(server: dict, home: Path | None = None) -> tuple[dict | N
             f"{hint}: plaintext credential moved to the secrets store ({ref})")
         return ref
 
+    def shield_embedded(hint: str, value: str) -> str | None:
+        """Shield literal credentials mixed into a value holding ``${NAME}``.
+
+        A whole ``prefix-${TOKEN}`` style value keeps its reference (storing
+        it wholesale would leave the inner ``${TOKEN}`` unexpanded in every
+        synced config), but a literal sitting next to a reference —
+        ``Cookie: session=${SESSION}; refresh=literal-secret`` — must still
+        move into the store. ``k=v`` segments joined by ``;`` or ``&`` are
+        taken apart so each credential-named segment's literal stores
+        separately. Returns ``None`` when the non-reference remainder still
+        looks credential-shaped but cannot be taken apart safely.
+        """
+        pieces = re.split(r"([;&])", value)
+        for i, piece in enumerate(pieces):
+            key, eq, val = piece.partition("=")
+            # The field was already declared credential-shaped by its
+            # name, so every literal k=v segment holds a credential: a
+            # `refresh=` pair is not matched by _SECRET_FLAG_RE, but its
+            # value still must not reach versioned mcp.json.
+            if eq and val and not _REF_RE.search(val):
+                ref = stash(key.strip(), val)
+                if ref is None:
+                    return None
+                pieces[i] = f"{key}={ref}"
+        rebuilt = "".join(pieces)
+        remainder = _REF_RE.sub("", rebuilt)
+        if any(
+            _looks_opaque(tok)
+            for tok in re.split(r"[^A-Za-z0-9_\-=.%~+]+", remainder)
+        ):
+            return None
+        return rebuilt
+
     env = out.get("env")
     if isinstance(env, dict):
         shielded = dict(env)
         for key, value in env.items():
             if (isinstance(value, str) and value
-                    and _SECRET_FLAG_RE.search(str(key))
-                    and not _REF_RE.search(value)):
-                # A value already embedding ${NAME} resolves only once:
-                # storing "prefix-${TOKEN}" as a new secret would leave the
-                # inner reference unexpanded in every synced config.
-                ref = stash(str(key), value)
-                if ref is not None:
-                    shielded[key] = ref
+                    and _SECRET_FLAG_RE.search(str(key))):
+                if not _REF_RE.search(value):
+                    ref = stash(str(key), value)
+                    if ref is not None:
+                        shielded[key] = ref
+                else:
+                    new_value = shield_embedded(str(key), value)
+                    if new_value is None:
+                        blocked.append(
+                            f"{key}: credential literal mixed with a "
+                            "${NAME} reference cannot be stored safely")
+                    elif new_value != value:
+                        shielded[key] = new_value
         out["env"] = shielded
 
     headers = out.get("headers")
@@ -392,15 +430,31 @@ def shield_credentials(server: dict, home: Path | None = None) -> tuple[dict | N
             scheme = _SCHEME_VALUE_RE.fullmatch(value)
             if scheme:
                 token = scheme.group(1)
-                if _REF_RE.search(token):
-                    continue
-                ref = stash(str(key), token)
-                if ref is not None:
-                    shielded[key] = f"{value[: -len(token)]}{ref}"
-            elif _SECRET_FLAG_RE.search(str(key)) and not _REF_RE.search(value):
-                ref = stash(str(key), value)
-                if ref is not None:
-                    shielded[key] = ref
+                if not _REF_RE.search(token):
+                    ref = stash(str(key), token)
+                    if ref is not None:
+                        shielded[key] = f"{value[: -len(token)]}{ref}"
+                else:
+                    new_token = shield_embedded(str(key), token)
+                    if new_token is None:
+                        blocked.append(
+                            f"{key}: credential literal mixed with a "
+                            "${NAME} reference cannot be stored safely")
+                    elif new_token != token:
+                        shielded[key] = f"{value[: -len(token)]}{new_token}"
+            elif _SECRET_FLAG_RE.search(str(key)):
+                if not _REF_RE.search(value):
+                    ref = stash(str(key), value)
+                    if ref is not None:
+                        shielded[key] = ref
+                else:
+                    new_value = shield_embedded(str(key), value)
+                    if new_value is None:
+                        blocked.append(
+                            f"{key}: credential literal mixed with a "
+                            "${NAME} reference cannot be stored safely")
+                    elif new_value != value:
+                        shielded[key] = new_value
         out["headers"] = shielded
 
     url = out.get("url")
@@ -418,12 +472,21 @@ def shield_credentials(server: dict, home: Path | None = None) -> tuple[dict | N
                 if not pair:
                     continue
                 key, eq, value = pair.partition("=")
-                if (eq and value and _SECRET_FLAG_RE.search(key)
-                        and not _REF_RE.search(value)):
-                    ref = stash(key, value)
-                    if ref is not None:
-                        value = ref
-                        touched = True
+                if eq and value and _SECRET_FLAG_RE.search(key):
+                    if not _REF_RE.search(value):
+                        ref = stash(key, value)
+                        if ref is not None:
+                            value = ref
+                            touched = True
+                    else:
+                        new_value = shield_embedded(key, value)
+                        if new_value is None:
+                            blocked.append(
+                                f"{key}: credential literal mixed with a "
+                                "${NAME} reference cannot be stored safely")
+                        elif new_value != value:
+                            value = new_value
+                            touched = True
                 pairs.append(key + eq + value)
             if touched:
                 out["url"] = urlunsplit(
