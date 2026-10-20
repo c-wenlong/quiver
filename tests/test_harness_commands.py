@@ -177,6 +177,35 @@ def _pin_columns(test):
 
 
 
+class CmdListGhostRowTest(unittest.TestCase):
+    """#383: state-only registry rows must render, not KeyError on `command`.
+
+    The stars shim deliberately stores {"state": "starred", "pin": n} rows
+    for harnesses not yet registered; swe list used to die reading
+    info["command"] on them.
+    """
+
+    def setUp(self):
+        _pin_columns(self)
+        _setup_patches(self, stars=["ghost-tool"])
+        reg = copy.deepcopy(_REGISTRY)
+        reg["ghost-tool"] = {"state": "starred", "pin": 1}
+        p = patch(
+            "quiver.harness.commands.load_registry",
+            return_value=reg,
+        )
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_ghost_row_renders_with_a_placeholder_command(self):
+        output = _run_cmd_list()
+        row = _row_for_tool(output, "ghost-tool")
+        self.assertIn("ghost-tool", strip_ansi(row))
+        # The promised placeholder for a command-less row, not an empty
+        # cell or a probed name.
+        self.assertIn("—", strip_ansi(row))
+
+
 class CmdListHeaderTest(unittest.TestCase):
     """Header / separator alignment invariants (the migration's main payoff)."""
 
