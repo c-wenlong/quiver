@@ -63,10 +63,9 @@ jobs:
           # this equals `github.ref`, so both entry points check out the same
           # thing.
           ref: refs/tags/${{ env.RELEASE_TAG }}
-          # Full history so `git describe --tags` in app/script/build-app.sh
-          # sees every tag; the default depth-1 checkout has only this tag's
-          # commit, describe falls back to 0.0.0 and the app stamps itself
-          # with the wrong version.
+          # Full history: the Python job only builds dists, but the macOS
+          # app job joins this workflow and `git describe --tags` in
+          # app/script/build-app.sh needs every tag; depth 1 stamps 0.0.0.
           fetch-depth: 0
 
       - name: Set up Python 3.13
