@@ -427,6 +427,11 @@ def run_setup_wizard(
                     home=home,
                     quick=quick,
                 )
+            except (EOFError, KeyboardInterrupt):
+                # Ctrl-D / Ctrl-C must reach the outer handler, which stops
+                # the run at 130. Swallowing them here marked every
+                # remaining stage failed yet still exited 0.
+                raise
             except Exception as exc:
                 print(c("red", f"  {SECTION_LABELS[key]} failed: {exc}"))
                 outcome = StageOutcome(

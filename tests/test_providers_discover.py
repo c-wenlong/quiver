@@ -529,10 +529,10 @@ class CommandsSmokeTest(unittest.TestCase):
                 with redirect_stdout(buf):
                     cmd_list([])
                 output = buf.getvalue()
-            self.assertIn("No keys directory", output)
+            self.assertIn("No key store", output)
             # Advisory must come AFTER the table footer (i.e. printing
             # preserves the order: title → header → rows → footer → advisory).
-            idx_notice = output.find("No keys directory")
+            idx_notice = output.find("No key store")
             idx_table = output.find("─" * 10)
             self.assertGreater(idx_table, 0)
             self.assertGreater(idx_notice, idx_table)
