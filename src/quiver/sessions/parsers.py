@@ -858,7 +858,7 @@ def parse_pi():
             title_from_event=title_from_event,
             tail_title_from_event=tail_title_from_event,
             title_max_len=50,
-            one_session_per_file=False,
+            one_session_per_file=True,
             session_id_from_path=lambda fp: fp,  # historical: full path as id
             require_path=True,
         )
