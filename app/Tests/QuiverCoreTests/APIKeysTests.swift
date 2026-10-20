@@ -1035,3 +1035,131 @@ struct FakeShell: ShellEnvironmentReading {
         #expect(APIKeyProviderLogo.logoID(for: "") == nil)
     }
 }
+
+/// The custom-provider path: several variables under one heading, a
+/// `{base}/models` probe for keys whose BASE_URL sits beside them, and
+/// the picker's model fetch.
+@MainActor
+@Suite struct APIKeysCustomProviderTests {
+    private func model(text: String, transport: FakeTransport) throws -> (APIKeysModel, URL) {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "keyscustom-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appending(path: ".api_keys")
+        try text.write(to: url, atomically: true, encoding: .utf8)
+        return (APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups")),
+                             shell: FakeShell(environment: [:]),
+                             checker: APIKeyChecker(transport: transport),
+                             checkCache: APIKeyCheckStore(url: dir.appending(path: "checks.json")),
+                             defaults: UserDefaults(suiteName: "keyscustom-\(UUID().uuidString)")!), url)
+    }
+
+    @Test func setAllWritesEveryVariableUnderOneHeading() async throws {
+        let (model, url) = try model(text: "# OPENAI\nexport OPENAI_API_KEY=\"o\"\n",
+                                     transport: FakeTransport())
+        await model.load()
+        try await model.setAll(CustomProvider.entries(
+            prefix: "SOCLAAS", baseURL: "https://soclaas.test/v1", key: "clsk-x", model: "m1"),
+            provider: "SoCLaaS", tested: .works, testedName: "SOCLAAS_API_KEY")
+        let text = try String(contentsOf: url, encoding: .utf8)
+        #expect(text == """
+            # OPENAI
+            export OPENAI_API_KEY="o"
+
+            # SoCLaaS
+            export SOCLAAS_BASE_URL="https://soclaas.test/v1"
+            export SOCLAAS_API_KEY="clsk-x"
+            export SOCLAAS_MODEL="m1"
+            """ + "\n")
+        let key = try #require(model.rows.first { $0.name == "SOCLAAS_API_KEY" })
+        #expect(key.provider == "SoCLaaS")
+        #expect(model.check(for: key)?.result == .works)
+    }
+
+    @Test func aCustomKeyChecksAgainstItsBaseURL() async throws {
+        let transport = FakeTransport()
+        transport.reply(200, body: Data(#"{"data":[]}"#.utf8))
+        let (model, _) = try model(text: """
+            # SoCLaaS
+            export SOCLAAS_BASE_URL="https://soclaas.test/v1"
+            export SOCLAAS_API_KEY="clsk-x"
+            """, transport: transport)
+        await model.load()
+        await model.check(name: "SOCLAAS_API_KEY")
+        let request = try #require(transport.requests.first)
+        #expect(request.url?.absoluteString == "https://soclaas.test/v1/models")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer clsk-x")
+        #expect(model.checks["SOCLAAS_API_KEY"]?.result == .works)
+    }
+
+    @Test func aBaseURLOnItsOwnHasNoCheck() async throws {
+        let transport = FakeTransport()
+        let (model, _) = try model(text: """
+            # SoCLaaS
+            export SOCLAAS_BASE_URL="https://soclaas.test/v1"
+            """, transport: transport)
+        await model.load()
+        await model.check(name: "SOCLAAS_BASE_URL")
+        #expect(transport.requests.isEmpty)
+        guard case .noCheck = model.checks["SOCLAAS_BASE_URL"]?.result else {
+            Issue.record("expected noCheck, got \(String(describing: model.checks["SOCLAAS_BASE_URL"]))")
+            return
+        }
+    }
+
+    @Test func aSavedCustomKeyTestsAgainstItsBaseURL() async throws {
+        let transport = FakeTransport()
+        transport.reply(401, body: Data(#"{"error":{"message":"bad key"}}"#.utf8))
+        let (model, _) = try model(text: """
+            export SOCLAAS_BASE_URL="https://soclaas.test/v1"
+            """, transport: transport)
+        await model.load()
+        let result = await model.test(name: "SOCLAAS_API_KEY", value: "clsk-bad")
+        guard case .rejected(let status, _) = result else {
+            Issue.record("expected rejected, got \(result)")
+            return
+        }
+        #expect(status == 401)
+        #expect(transport.requests.first?.url?.absoluteString == "https://soclaas.test/v1/models")
+    }
+
+    @Test func testWithABaseURLNeedsNoSavedSibling() async throws {
+        let transport = FakeTransport()
+        transport.reply(200)
+        let (model, _) = try model(text: "", transport: transport)
+        await model.load()
+        let result = await model.test(key: "clsk-x", baseURL: "https://soclaas.test/v1")
+        #expect(result == .works)
+        #expect(transport.requests.first?.url?.absoluteString == "https://soclaas.test/v1/models")
+    }
+
+    @Test func modelsFetchesAndParsesTheList() async throws {
+        let transport = FakeTransport()
+        transport.reply(200, body: Data(#"{"data":[{"id":"m1"},{"id":"m2","display_name":"M Two"}]}"#.utf8))
+        let (model, _) = try model(text: "", transport: transport)
+        await model.load()
+        let models = try await model.models(baseURL: "https://soclaas.test/v1", key: "clsk-x")
+        #expect(models.map(\.id) == ["m1", "m2"])
+        #expect(models[1].label == "M Two")
+        let request = try #require(transport.requests.first)
+        #expect(request.url?.absoluteString == "https://soclaas.test/v1/models")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer clsk-x")
+    }
+
+    @Test func modelsSurfacesTheEndpointsAnswer() async throws {
+        let transport = FakeTransport()
+        transport.reply(401, body: Data(#"{"error":{"message":"nope"}}"#.utf8))
+        let (model, _) = try model(text: "", transport: transport)
+        await model.load()
+        await #expect(throws: CustomProvider.FetchError.http(401, "nope")) {
+            try await model.models(baseURL: "https://soclaas.test/v1", key: "clsk-x")
+        }
+    }
+
+    @Test func modelsRefusesABadBaseURL() async throws {
+        let (model, _) = try model(text: "", transport: FakeTransport())
+        await model.load()
+        await #expect(throws: CustomProvider.FetchError.badBaseURL) {
+            try await model.models(baseURL: "not a url", key: "k")
+        }
+    }
+}

@@ -296,7 +296,7 @@ public struct APIKeysFile: Equatable, Sendable {
     /// Short words of letters and digits with light punctuation: "Anthropic",
     /// "Kimi (Moonshot AI)", "ZAI (01.ai)". A key is one long word, and a
     /// commented-out line has `=`, `:`, quotes or an `export NAME`.
-    static func isLabel(_ text: String) -> Bool {
+    public static func isLabel(_ text: String) -> Bool {
         guard !text.isEmpty, text.count <= 60, text.contains(where: \.isLetter),
               text.allSatisfy({ $0.isLetter || $0.isNumber || $0 == " " || "().,&/-".contains($0) }),
               !text.split(separator: " ").contains(where: { $0.count >= 16 }),
@@ -768,6 +768,23 @@ public final class APIKeysModel {
         recordTested(tested, name: name, value: value)
     }
 
+    /// Writes several variables under one heading in a single save — the
+    /// custom-provider path writes BASE_URL, API_KEY and MODEL together,
+    /// and a failed write drops none or all of them. `tested` is the
+    /// verdict `testedName` earned, recorded like a `set` keeps it.
+    public func setAll(_ entries: [(name: String, value: String)], provider: String,
+                       tested: APIKeyCheckResult? = nil, testedName: String? = nil) async throws {
+        var edited = file
+        for entry in entries {
+            try edited.set(name: entry.name, value: entry.value, provider: provider)
+        }
+        try write(edited)
+        if let testedName, let tested,
+           let entry = entries.first(where: { $0.name == testedName }) {
+            recordTested(tested, name: testedName, value: entry.value)
+        }
+    }
+
     public func remove(name: String) async throws {
         var edited = file
         try edited.remove(name: name)
@@ -828,7 +845,7 @@ public final class APIKeysModel {
         guard checking.isEmpty else { return }
         var work: [(name: String, value: String, probe: APIKeyProbe)] = []
         for row in rows where !row.value.isEmpty {
-            if let probe = APIKeyProbe.probe(forName: row.name) {
+            if let probe = probe(for: row.name) {
                 work.append((row.name, row.value, probe))
                 checking.insert(row.name)
             } else {
@@ -871,7 +888,7 @@ public final class APIKeysModel {
     public func check(name: String) async {
         guard let row = rows.first(where: { $0.name == name }), !row.value.isEmpty,
               !checking.contains(name) else { return }
-        guard let probe = APIKeyProbe.probe(forName: name) else {
+        guard let probe = probe(for: name) else {
             checks[name] = APIKeyCheck(result: .noCheck(APIKeyProbe.noCheckReason(forName: name)),
                                        checkedAt: Date(), value: row.value, salt: checkSalt)
             saveChecks()
@@ -893,13 +910,61 @@ public final class APIKeysModel {
     /// limiter as a row check. Persists nothing: a save that wants the
     /// result kept passes it back as `tested`.
     public func test(name: String, value: String) async -> APIKeyCheckResult {
-        guard let probe = APIKeyProbe.probe(forName: name) else {
+        guard let probe = probe(for: name) else {
             return .noCheck(APIKeyProbe.noCheckReason(forName: name))
         }
         await slots.acquire()
         let result = await checker.check(key: value, probe: probe)
         await slots.release()
         return result
+    }
+
+    /// Test a custom-provider key before it is saved: `GET {base}/models`
+    /// with the key as a bearer token, through the same limiter.
+    public func test(key: String, baseURL: String) async -> APIKeyCheckResult {
+        guard let probe = CustomProvider.probe(baseURL: baseURL) else {
+            return .noCheck("the base URL isn't a valid http(s) URL")
+        }
+        await slots.acquire()
+        let result = await checker.check(key: key, probe: probe)
+        await slots.release()
+        return result
+    }
+
+    /// The models an OpenAI-compatible endpoint serves, for the custom
+    /// provider's picker: `GET {base}/models` with the key as a bearer
+    /// token. Doesn't share the check limiter; a fetch is the user's own
+    /// request, not a sweep.
+    public func models(baseURL: String, key: String) async throws -> [CustomProvider.Model] {
+        guard let url = CustomProvider.modelsURL(baseURL) else {
+            throw CustomProvider.FetchError.badBaseURL
+        }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 15
+        let (body, response): (Data, HTTPURLResponse)
+        do {
+            (body, response) = try await checker.transport.send(request)
+        } catch {
+            throw CustomProvider.FetchError.unreachable(error.localizedDescription)
+        }
+        guard (200..<300).contains(response.statusCode) else {
+            throw CustomProvider.FetchError.http(
+                response.statusCode, APIKeyProbe.errorMessage(in: body, key: key))
+        }
+        return CustomProvider.models(in: body)
+    }
+
+    /// The probe a check sends a key to: the catalog's when it knows the
+    /// name, else — for `X_API_KEY` with a sibling `X_BASE_URL` in the
+    /// file — a live `{base}/models` aimed at the custom endpoint.
+    private func probe(for name: String) -> APIKeyProbe? {
+        if let probe = APIKeyProbe.probe(forName: name) { return probe }
+        let suffix = "_API_KEY"
+        guard name.hasSuffix(suffix), name.count > suffix.count else { return nil }
+        let baseName = name.dropLast(suffix.count) + "_BASE_URL"
+        guard let baseURL = rows.first(where: { $0.name == baseName })?.value else { return nil }
+        return CustomProvider.probe(baseURL: baseURL)
     }
 
     /// Store the verdict a pre-save test reached, so the row shows it
