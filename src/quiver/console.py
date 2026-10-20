@@ -163,53 +163,68 @@ def visible_len(text: str) -> int:
     return len(strip_ansi(text))
 
 
-def cell_len(text: str) -> int:
-    """Terminal cells the text occupies, not the characters in it.
+def _cells(text: str):
+    """Yield ``(char, cells)`` pairs under the same rules cell_len sums.
 
-    len() counts a CJK glyph and a combining accent as one each; the
-    terminal draws them as two cells and zero. Padding by len() pushed the
-    pickers' columns right whenever a label contained either. Emoji are
-    mostly East-Asian "W" and so measure 2 here — joined sequences
-    (family emoji, skin tones, flags) still render as one glyph, so the
-    joiner, variation selectors, skin-tone modifiers, tag bytes, and the
-    second regional indicator of a flag pair add nothing.
+    Shared so a cut measures exactly what the render later occupies:
+    joined sequences (family emoji, skin tones, flags) render as one
+    glyph, so the joiner, variation selectors, skin-tone modifiers, tag
+    bytes, and the second regional indicator of a flag pair add nothing —
+    while VS16 *promotes* a neutral-width glyph (a heart, a digit) into
+    the two-cell emoji presentation.
     """
-    width = 0
     joined = False   # next glyph is merged into the previous by ZWJ
     last_ri = False  # previous char was a regional indicator
     prev = ""        # last glyph that earned cells
-    for ch in strip_ansi(text):
+    for ch in text:
         if unicodedata.combining(ch):
+            yield ch, 0
             continue
         if ch == "\u200d":  # ZWJ: the next glyph merges with the last
             joined = True
+            yield ch, 0
             continue
         if "\ufe00" <= ch <= "\ufe0f":          # variation selectors
             # VS16 promotes an ambiguous/neutral-width glyph (a heart,
             # a digit) into the two-cell emoji presentation.
             if (ch == "\ufe0f" and prev and ord(prev) > 0x7F
                     and unicodedata.east_asian_width(prev) in ("N", "A")):
-                width += 1
+                yield ch, 1
+            else:
+                yield ch, 0
             continue
         if "\U0001f3fb" <= ch <= "\U0001f3ff":  # skin tones
+            yield ch, 0
             continue
         if "\U000e0020" <= ch <= "\U000e007f":  # tag bytes (waving flags)
+            yield ch, 0
             continue
         if "\U0001f1e6" <= ch <= "\U0001f1ff":  # regional indicators
             if last_ri:  # second half of a flag pair adds no cells
                 last_ri = False
-                continue
-            last_ri = True
-            prev = ch
-            width += 2
+                yield ch, 0
+            else:
+                last_ri = True
+                prev = ch
+                yield ch, 2
             continue
         last_ri = False
         if joined:
             joined = False
+            yield ch, 0
             continue
         prev = ch
-        width += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
-    return width
+        yield ch, 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
+def cell_len(text: str) -> int:
+    """Terminal cells the text occupies, not the characters in it.
+
+    len() counts a CJK glyph and a combining accent as one each; the
+    terminal draws them as two cells and zero. Padding by len() pushed the
+    pickers' columns right whenever a label contained either.
+    """
+    return sum(w for _ch, w in _cells(strip_ansi(text)))
 
 
 def cellpad(text: str, width: int) -> str:
@@ -236,8 +251,7 @@ def _take_cells(text: str, budget: int) -> str:
     """Longest head of ``text`` fitting ``budget`` terminal cells."""
     used = 0
     out: list[str] = []
-    for ch in text:
-        w = _char_cells(ch)
+    for ch, w in _cells(text):
         if used + w > budget:
             break
         used += w
@@ -247,15 +261,13 @@ def _take_cells(text: str, budget: int) -> str:
 
 def _take_cells_end(text: str, budget: int) -> str:
     """Longest tail of ``text`` fitting ``budget`` terminal cells."""
-    used = 0
-    out: list[str] = []
-    for ch in reversed(text):
-        w = _char_cells(ch)
-        if used + w > budget:
-            break
-        used += w
-        out.append(ch)
-    tail = "".join(reversed(out))
+    # Measured from the back with the same sequence rules — a per-char
+    # reverse scan undercounts a VS16 promotion and would hand back a tail
+    # wider than the budget.
+    i = len(text)
+    while i > 0 and cell_len(text[i - 1:]) <= budget:
+        i -= 1
+    tail = text[i:]
     # A combining mark or joiner at the cut edge renders against the
     # ellipsis — drop leading zero-width chars left dangling.
     while tail and _char_cells(tail[0]) == 0:

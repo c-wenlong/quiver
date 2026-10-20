@@ -634,6 +634,12 @@ def _claude_live_session_ids() -> set:
     return out
 
 
+# A "working" state older than this is a killed job that never wrote its
+# final state, not a day-long run — bound it so listings stop saying
+# ACTIVE forever. Terminal states (blocked/done/failed) age fine.
+_JOB_WORKING_STALE_S = 24 * 3600
+
+
 def _claude_job_states() -> dict:
     """sessionId -> bg-job state from ``~/.claude/jobs/*/state.json``."""
     out = {}
@@ -647,8 +653,15 @@ def _claude_job_states() -> dict:
         if not isinstance(data, dict):
             continue
         sid, state = data.get("sessionId"), data.get("state")
-        if sid and state in ("working", "blocked", "done", "failed"):
-            out[sid] = state
+        if not (sid and state in ("working", "blocked", "done", "failed")):
+            continue
+        if state == "working":
+            try:
+                if time.time() - os.path.getmtime(path) > _JOB_WORKING_STALE_S:
+                    continue
+            except OSError:
+                continue
+        out[sid] = state
     return out
 
 
