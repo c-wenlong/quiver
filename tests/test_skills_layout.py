@@ -355,6 +355,32 @@ class SkillsLayoutTest(unittest.TestCase):
             # Untouched: the corrupt file is still there to fix by hand.
             self.assertEqual(links_file.read_text(), "{corrupt")
 
+    def test_unlink_preflights_the_records_file_before_unlinking(self):
+        """A corrupt skill_links.json used to surface only after the
+        symlink was already gone, leaving the root missing on retry."""
+        from quiver.configuration import CorruptConfigurationError
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            config_dir = home / ".config" / "swe"
+            config_dir.mkdir(parents=True)
+            links_file = config_dir / "skill_links.json"
+            links_file.write_text("{corrupt", encoding="utf-8")
+            shared = home / ".quiver" / "skills"
+            shared.mkdir(parents=True)
+            codex = home / ".codex" / "skills"
+            codex.parent.mkdir(parents=True)
+            codex.symlink_to(shared)
+
+            with patch("quiver.skills.layout.SKILL_LINKS_FILE", links_file), patch(
+                "quiver.skills.layout.CONFIG_DIR", config_dir
+            ):
+                with self.assertRaises(CorruptConfigurationError):
+                    unlink_skill_root("codex", home=home)
+
+            # The link still stands: nothing moved, so a fixed file can retry.
+            self.assertTrue(codex.is_symlink())
+
     def test_save_link_records_overwrites_a_foreign_json_value(self):
         """A parseable non-dict file holds no records to lose."""
         from quiver.skills.layout import save_link_records

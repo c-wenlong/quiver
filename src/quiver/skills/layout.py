@@ -87,19 +87,29 @@ def load_link_records() -> list[dict]:
     return links if isinstance(links, list) else []
 
 
+def check_link_records_writable() -> None:
+    """Raise when skill_links.json exists but cannot be parsed.
+
+    Callers read the records, drop the labels they are replacing, and
+    write the rest back, so an unreadable file must fail before any of
+    that — and, for the link commands, before the symlink itself moves:
+    a failed record save after unlink() would leave the skills root
+    gone with nothing to show why.
+    """
+    if not SKILL_LINKS_FILE.exists():
+        return
+    try:
+        json.loads(SKILL_LINKS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError) as exc:
+        raise CorruptConfigurationError(
+            f"{SKILL_LINKS_FILE}: cannot be read ({exc});"
+            " refusing to overwrite it"
+        ) from exc
+
+
 def save_link_records(links: list[dict]) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    if SKILL_LINKS_FILE.exists():
-        # The callers above read the file, drop the labels they are
-        # replacing, and write the rest back — overwriting a file that
-        # cannot be parsed would silently erase every record it holds.
-        try:
-            json.loads(SKILL_LINKS_FILE.read_text(encoding="utf-8"))
-        except (OSError, ValueError, RecursionError) as exc:
-            raise CorruptConfigurationError(
-                f"{SKILL_LINKS_FILE}: cannot be read ({exc});"
-                " refusing to overwrite it"
-            ) from exc
+    check_link_records_writable()
     tmp = SKILL_LINKS_FILE.with_suffix(".tmp")
     payload = {"links": links, "updated": datetime.now().isoformat()}
     tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -330,6 +340,7 @@ def resolve_root_ref(ref: str, home: Path | None = None, cwd: Path | None = None
 def sync_link_records_from_filesystem(home: Path | None = None) -> list[str]:
     """Persist observed harness symlinks into skill_links.json."""
     home = home or Path.home()
+    check_link_records_writable()
     harness_labels = {label for label, _ in HARNESS_ROOTS}
     updated: list[str] = []
     for entry in enumerate_skill_roots(home=home):
