@@ -463,6 +463,72 @@ class ShieldCredentialsTest(unittest.TestCase):
             hub = json.loads(path.read_text())["mcpServers"]["svc"]
             self.assertEqual(hub["env"], {"API_KEY": "${API_KEY}", "COLOR": "blue"})
 
+    def test_same_literal_reuses_the_existing_secret_name(self):
+        # Two fields carrying the same token share one store entry rather
+        # than minting NAME and NAME_2.
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+        from quiver.mcp.secrets import load_secrets
+
+        with contextlib.ExitStack() as stack:
+            home, path = self._hub(stack)
+            apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"url": "https://h/mcp?key=same-token-value",
+                            "env": {"API_KEY": "same-token-value"}})])
+            hub = json.loads(path.read_text())["mcpServers"]["svc"]
+            self.assertEqual(hub["env"]["API_KEY"], "${API_KEY}")
+            self.assertIn("key=${API_KEY}", hub["url"])
+            self.assertEqual(load_secrets(home)["API_KEY"], "same-token-value")
+
+    def test_malformed_url_and_bare_query_pairs_do_not_crash_shielding(self):
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+
+        with contextlib.ExitStack() as stack:
+            _home, path = self._hub(stack)
+            apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    # A query pair with no `=` and a non-str header value
+                    # used to be uncovered edge cases.
+                    server={"url": "https://h/mcp?key=&flag&token=TOKEN9",
+                            "headers": {"X-Api-Key": 42,
+                                        "Authorization": "Bearer ${AUTH}"}})])
+            hub = json.loads(path.read_text())["mcpServers"]["svc"]
+            self.assertIn("token=${TOKEN}", hub["url"])
+            self.assertIn("flag", hub["url"])
+            self.assertEqual(hub["headers"]["X-Api-Key"], 42)
+            # A scheme-prefixed value whose token is already a ref is left.
+            self.assertEqual(hub["headers"]["Authorization"], "Bearer ${AUTH}")
+
+    def test_a_secret_name_collision_gets_a_suffix(self):
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+        from quiver.mcp.secrets import load_secrets, set_secret
+
+        with contextlib.ExitStack() as stack:
+            home, path = self._hub(stack)
+            set_secret("API_KEY", "other-value", home)
+            apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"env": {"API_KEY": "new-different-value"}})])
+            hub = json.loads(path.read_text())["mcpServers"]["svc"]
+            self.assertEqual(hub["env"]["API_KEY"], "${API_KEY_2}")
+            self.assertEqual(load_secrets(home)["API_KEY_2"], "new-different-value")
+            self.assertEqual(load_secrets(home)["API_KEY"], "other-value")
+
 
 class ServerSummaryScrubTest(unittest.TestCase):
     """discover --json must obey the same secrecy contract as list --json."""
