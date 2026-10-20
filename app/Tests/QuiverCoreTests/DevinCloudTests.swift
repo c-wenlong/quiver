@@ -416,6 +416,34 @@ private final class Changes: Sendable {
         #expect(await sync.lastError?.contains("more pages") == true)
     }
 
+    @Test func aPagePromisingMoreWithoutACursorFailsAndKeepsTheStore() async throws {
+        let dir = try TempDir()
+        let api = FakeDevinAPI()
+        standardRoutes(api)
+        let sync = sync(api, dir: dir)
+        await sync.sync()
+        #expect(await sync.sessions.count == 2)
+        // Devin says another page exists but hands no cursor to reach it:
+        // keeping the partial list would drop the sessions behind it.
+        api.route("/v3/organizations/\(org)/sessions",
+                  #"{"items":[\#(session("s3", title: "New", created: 1_791_900_000, updated: 1_791_900_100))],"has_next_page":true,"end_cursor":null}"#)
+        await sync.sync()
+        #expect(await sync.sessions.map(\.id) == ["s1", "s2"])
+        #expect(await sync.lastError?.contains("more pages") == true)
+    }
+
+    @Test func aMessagePagePromisingMoreWithoutACursorFailsTheSync() async throws {
+        let dir = try TempDir()
+        let api = FakeDevinAPI()
+        standardRoutes(api)
+        api.route("/v3/organizations/\(org)/sessions/s1/messages",
+                  #"{"items":[{"event_id":"e","source":"devin","message":"x","created_at":1791000000}],"has_next_page":true,"end_cursor":null}"#)
+        let sync = sync(api, dir: dir)
+        await sync.sync()
+        #expect(await sync.sessions.isEmpty)
+        #expect(await sync.lastError?.contains("more pages") == true)
+    }
+
     @Test func removingTheTokenClearsTheErrorButKeepsTheSessions() async throws {
         let dir = try TempDir()
         let api = FakeDevinAPI()

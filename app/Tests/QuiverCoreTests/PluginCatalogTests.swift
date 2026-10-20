@@ -444,6 +444,18 @@ func decodedInventory() throws -> [Skill] {
         #expect(sources[1].countLine(searching: false) == "1 marketplace · 4 plugins")
     }
 
+    @Test func anOpenedPluginFollowsItsRefAcrossAReload() async throws {
+        let model = PluginCatalogModel()
+        await model.load(swe: SweClient(runner: catalogRunner()))
+        let index = try #require(model.index)
+        // drawer lives under the hub source; the lookup a detail view
+        // makes after a reload finds it by ref.
+        #expect(index.entry(for: "drawer@kit")?.row.plugin.name == "drawer")
+        #expect(index.entry(for: "nobody@kit") == nil)
+        // A plugin under two sources resolves to the first in order.
+        #expect(index.entry(for: "vercel@official")?.id == "claude/vercel@official")
+    }
+
     @Test func sourcesComeInOrderAndNoPluginIsLost() {
         func plugin(_ name: String, _ market: String, _ states: [String: PluginHarnessState]) -> CatalogPlugin {
             CatalogPlugin(name: name, marketplace: market, harnesses: states)

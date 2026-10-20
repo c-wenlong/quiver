@@ -482,6 +482,44 @@ import Testing
         #expect(signaller.signalled.isEmpty)
     }
 
+    @MainActor @Test func aRecycledPidIsNotMarkedStillRunning() async {
+        // SIGTERM went to the process that was pid 10. The pid is then
+        // recycled onto a different process, which was never signalled
+        // and must not inherit the still-running mark.
+        final class Flip: ProcessSampling, ProcessSignaller, @unchecked Sendable {
+            let tables: [[ProcessSample]]
+            private var calls = 0
+            private let lock = NSLock()
+            var signalled: [(Int32, Int32)] = []
+            init(_ tables: [[ProcessSample]]) { self.tables = tables }
+            func sample() -> [ProcessSample] {
+                lock.lock()
+                defer { lock.unlock() }
+                calls += 1
+                return tables[min(calls, tables.count) - 1]
+            }
+            func signal(_ pid: Int32, _ sig: Int32) -> Bool { signalled.append((pid, sig)); return true }
+        }
+        let signalled = Self.proc(10, 1, path: "/opt/homebrew/bin/claude", started: Self.youngStart)
+        let recycled = Self.proc(10, 1, path: "/opt/homebrew/bin/claude", started: Self.now)
+        let kept = Self.proc(11, 1, path: "/opt/homebrew/bin/claude", started: Self.youngStart)
+        // refresh sees the originals; quit samples them again and
+        // signals; the refresh quit ends with shows pid 10 recycled.
+        let fake = Flip([[signalled, kept], [signalled, kept], [recycled, kept]])
+        // The clock runs a minute ahead so the five-second mark has
+        // passed: a matching process reports still running, the
+        // recycled pid does not.
+        let model = ComputeModel(sampler: fake, matchers: { [Self.claude] }, signaller: fake,
+                                 clock: { .now.addingTimeInterval(60) }, selfPID: 99)
+        await model.loadMatchers()
+        await model.refresh()
+        await model.quit([.process(signalled, harness: "claude"),
+                          .process(kept, harness: "claude")])
+        #expect(fake.signalled.map(\.0) == [10, 11])
+        #expect(model.processes["claude"]?.first { $0.sample.pid == 10 }?.stillRunning == false)
+        #expect(model.processes["claude"]?.first { $0.sample.pid == 11 }?.stillRunning == true)
+    }
+
     // MARK: Earlier-launch leftovers
 
     static let appMain = "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"

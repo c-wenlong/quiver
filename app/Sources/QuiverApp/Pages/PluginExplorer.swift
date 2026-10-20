@@ -35,9 +35,18 @@ struct PluginExplorer: View {
         case .failed(let message):
             ErrorCard(message: message)
         case .loaded:
-            if let opened, let index = model.index,
-               let market = index.catalog.marketplaces.first(where: { $0.name == opened.row.plugin.marketplace }) {
-                PluginDetailView(entry: opened, market: market, home: home) { self.opened = nil }
+            if let opened, let index = model.index {
+                // A reload swaps the index wholesale, so the opened plugin
+                // is re-derived by ref — like SkillsPage follows its row —
+                // or the detail keeps showing a version the catalog no
+                // longer has.
+                let entry = index.entry(for: opened.row.plugin.ref) ?? opened
+                if let market = index.catalog.marketplaces
+                    .first(where: { $0.name == entry.row.plugin.marketplace }) {
+                    PluginDetailView(entry: entry, market: market, home: home) { self.opened = nil }
+                } else {
+                    content(index)
+                }
             } else if let index = model.index {
                 content(index)
             } else {
