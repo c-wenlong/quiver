@@ -608,6 +608,47 @@ class ShieldCredentialsTest(unittest.TestCase):
                 "session=${SESSION}; refresh=literal-secret-99")
             self.assertIn("literal-secret-99", load_secrets(home).values())
 
+    def test_an_env_segment_literal_next_to_a_reference_is_stored(self):
+        # Same rule inside env: `a=${T}; b=literal` keeps the reference
+        # and stores only the b literal.
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+        from quiver.mcp.secrets import load_secrets
+
+        with contextlib.ExitStack() as stack:
+            home, path = self._hub(stack)
+            apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"env": {"API_KEY": "a=${T}; b=literal-9x"}})])
+            hub = json.loads(path.read_text())["mcpServers"]["svc"]
+            value = hub["env"]["API_KEY"]
+            self.assertNotIn("literal-9x", value)
+            self.assertIn("a=${T}", value)
+            self.assertIn("b=${", value)
+            self.assertIn("literal-9x", load_secrets(home).values())
+
+    def test_an_unstorable_segment_literal_skips_the_server(self):
+        # A k=v segment whose literal can't be a secrets-file line blocks
+        # the server rather than writing it half-shielded.
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+
+        with contextlib.ExitStack() as stack:
+            _home, path = self._hub(stack)
+            apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"env": {"API_KEY": "a=${T}; key=line1\nline2"}})])
+            servers = json.loads(path.read_text())["mcpServers"]
+            self.assertNotIn("svc", servers)
+
     def test_an_opaque_literal_next_to_a_reference_skips_the_server(self):
         # A credential-shaped run that is not a k=v segment (no safe way
         # to isolate it) keeps the whole server out of the hub.
