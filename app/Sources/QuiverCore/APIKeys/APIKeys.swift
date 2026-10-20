@@ -747,9 +747,7 @@ public final class APIKeysModel {
         // Show the file now; the shell can take seconds to start.
         shellRead = false
         rebuild()
-        environment = await shell.freshEnvironment()
-        shellRead = true
-        rebuild()
+        await readShell()
         refreshSourcing()
     }
 
@@ -1040,23 +1038,29 @@ public final class APIKeysModel {
     /// The reread a save started, kept so a test can await the rows
     /// settling on the fresh environment.
     var shellReread: Task<Void, Never>?
-    /// Serials rereads so an older one landing late can't win.
-    private var shellRereads = 0
+    /// Serials shell reads so the newest always lands last: a read asked
+    /// for before a save describes a file that no longer exists.
+    private var shellReads = 0
 
-    /// A save makes the shell reading stale — the file a new terminal
-    /// sources just changed — so every write asks the shell again and
-    /// only the newest read may land. `shellRead` false means a load is
-    /// mid-flight and already owns the answer.
+    /// Reads the login shell's environment once and rebuilds on it.
+    /// load() and the post-save reread both go through here; only the
+    /// newest request's answer lands, so a save during a load can't be
+    /// clobbered by the load's older answer.
+    private func readShell() async {
+        shellReads += 1
+        let serial = shellReads
+        let fresh = await shell.freshEnvironment()
+        guard serial == shellReads else { return }
+        environment = fresh
+        shellRead = true
+        rebuild()
+    }
+
+    /// A save changes the file a new terminal sources, so the last read
+    /// is stale the moment the write lands — ask the shell again. The
+    /// serial drops any older read still in flight, including a load's.
     private func rereadShell() {
-        guard shellRead else { return }
-        shellRereads += 1
-        let serial = shellRereads
-        shellReread = Task {
-            let fresh = await shell.freshEnvironment()
-            guard serial == shellRereads, shellRead else { return }
-            environment = fresh
-            rebuild()
-        }
+        shellReread = Task { await readShell() }
     }
 
     private func readFile() {

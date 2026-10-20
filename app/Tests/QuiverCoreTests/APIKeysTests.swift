@@ -662,9 +662,10 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
     }
 }
 
-/// A shell that answers only when released.
+/// A shell that answers only when released. Reads park in arrival
+/// order so overlapping requests can be let through one at a time.
 actor GatedShell: ShellEnvironmentReading {
-    private var gate: CheckedContinuation<Void, Never>?
+    private var gates: [CheckedContinuation<Void, Never>] = []
     private var nextID = 0
     private var parkers: [Int: CheckedContinuation<Bool, Never>] = [:]
     /// What a read reports once released.
@@ -677,17 +678,17 @@ actor GatedShell: ShellEnvironmentReading {
         let parked = parkers
         parkers = [:]
         for parker in parked.values { parker.resume(returning: true) }
-        await withCheckedContinuation { gate = $0 }
+        await withCheckedContinuation { gates.append($0) }
         return reply
     }
 
-    /// True once the shell is parked on its gate, false after ten
-    /// seconds. Checking the gate and parking the caller happen in one
-    /// actor step, so the park can never be missed and the caller
-    /// stranded until the timeout.
+    /// True once a read is parked, false after ten seconds. Checking
+    /// the park and parking the caller happen in one actor step, so
+    /// the park can never be missed and the caller stranded until the
+    /// timeout.
     func waitForPark() async -> Bool {
         await withCheckedContinuation { cont in
-            if gate != nil {
+            if !gates.isEmpty {
                 cont.resume(returning: true)
                 return
             }
@@ -698,14 +699,23 @@ actor GatedShell: ShellEnvironmentReading {
         }
     }
 
-    /// The timeout resumes only its own waiter, and only if the shell
-    /// has not already parked.
+    /// The timeout resumes only its own waiter, and only if a read has
+    /// not already parked.
     private func expire(_ id: Int) async {
         try? await Task.sleep(for: .seconds(10))
         parkers.removeValue(forKey: id)?.resume(returning: false)
     }
 
-    func release() { gate?.resume(); gate = nil }
+    /// Lets every parked read through.
+    func release() {
+        for gate in gates { gate.resume() }
+        gates = []
+    }
+
+    /// Lets only the longest-parked read through; the rest stay waiting.
+    func releaseNext() {
+        if !gates.isEmpty { gates.removeFirst().resume() }
+    }
 }
 
 /// A shell that reports a fixed environment.
@@ -845,6 +855,37 @@ struct FakeShell: ShellEnvironmentReading {
         try await model.set(name: "B_KEY", value: "v2", provider: "")
         // The stale read still stands while the reread is parked.
         #expect(model.rows.last?.status == .notLoaded)
+        #expect(await shell.waitForPark())
+        await shell.reply(["A_KEY": "v1", "B_KEY": "v2"])
+        await shell.release()
+        await model.shellReread?.value
+        #expect(model.rows.map(\.status) == [.loaded, .loaded])
+    }
+
+    /// A save while load() is still waiting on the shell gets a read of
+    /// its own: the load's answer predates the write and is dropped, so
+    /// the saved key doesn't stay Not loaded on the stale answer.
+    @Test func aSaveDuringLoadGetsItsOwnShellRead() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "keysoverlap-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appending(path: ".api_keys")
+        try "export A_KEY=v1\n".write(to: url, atomically: true, encoding: .utf8)
+        let shell = GatedShell()
+        await shell.reply(["A_KEY": "v1"])
+        let model = APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir), shell: shell,
+                                 checkCache: APIKeyCheckStore(url: dir.appending(path: "checks.json")),
+                                 defaults: UserDefaults(suiteName: "keysoverlap-\(UUID().uuidString)")!)
+        let load = Task { await model.load() }
+        #expect(await shell.waitForPark())
+
+        // The write lands while the load's read is still parked, so
+        // that read can only describe the file before the save.
+        try await model.set(name: "B_KEY", value: "v2", provider: "")
+        await shell.releaseNext()
+        await load.value
+        #expect(model.rows.last?.status == .checking)
+
+        // The save's own read is the one that settles the rows.
         #expect(await shell.waitForPark())
         await shell.reply(["A_KEY": "v1", "B_KEY": "v2"])
         await shell.release()
