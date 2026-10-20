@@ -96,7 +96,8 @@ public final class ModelsModel {
         }
     }
 
-    /// Which models the chart and table list.
+    /// Which models the chart and table list while no search is running.
+    /// A query replaces it: searching reads the whole catalog instead.
     public enum Scope: String, CaseIterable, Identifiable, Sendable {
         case yoursPlusTop, yours, top25
 
@@ -173,9 +174,23 @@ public final class ModelsModel {
     public var period: OverviewPeriod = .month
     /// The harnesses whose models show; empty means every harness. While
     /// any is picked, only models those harnesses ran are rows: the
-    /// leaderboard padding is nobody's usage, so it drops out. Not
-    /// persisted.
+    /// leaderboard padding is nobody's usage, so it drops out. Under a
+    /// search the filter still scopes the usage numbers but no longer
+    /// limits which catalog rows show. Not persisted.
     public var harnessFilter: Set<String> = []
+    /// The search box's text. A non-empty value swaps the scoped board
+    /// for a catalog-wide match: every AA family a name matches, plus
+    /// LiteLLM price keys no AA model claims. Not persisted.
+    public var query = "" { didSet { rebuild() } }
+    /// Whether the query is driving the row list — the scope picker's
+    /// population (yours, top 10, top 25) no longer applies.
+    public var searching: Bool { !Self.normalized(query).isEmpty }
+    /// LiteLLM-only matches dropped by `searchLimit`, for the page's
+    /// "+N more" note.
+    public private(set) var searchOverflow = 0
+    /// LiteLLM-only rows a search lists before the rest count as
+    /// overflow: bare-name hits rank first.
+    static let searchLimit = 60
     /// Whether the chart or the table shows.
     public enum ViewMode: String, Sendable { case chart, table }
     public var viewMode: ViewMode = .chart
@@ -183,8 +198,9 @@ public final class ModelsModel {
     public private(set) var rows: [Row] = []
     public private(set) var harnessOptions: [String] = []
     public private(set) var unmatched: [Unmatched] = []
-    /// Every AA model, for the link sheet's searchable list.
-    public private(set) var allModels: [AALanguageModel] = []
+    /// Every AA model, for the link sheet's searchable list and the
+    /// page's own search.
+    public private(set) var allModels: [AALanguageModel] = [] { didSet { matchIndex = nil } }
     public private(set) var isLoading = false
     public private(set) var isRefreshing = false
     /// When the models feed last landed.
@@ -199,7 +215,7 @@ public final class ModelsModel {
     private let transport: any HTTPTransport
     /// `~/.quiver/config/model-links.json`.
     private let linksURL: URL
-    private var links: [String: String] = [:]
+    private var links: [String: String] = [:] { didSet { matchIndex = nil } }
     /// The period's per-model-per-harness usage; overridable in tests.
     private let slices: @Sendable (DateInterval) async -> [ModelUsage]
     /// The price catalog the ledger charges with; nil leaves used rows
@@ -208,6 +224,12 @@ public final class ModelsModel {
     private var pricingCatalog: PricingCatalog?
     /// Current LiteLLM rows per AA model id, from the catalog join.
     private var catalogPrices: [String: [CatalogDatabase.PriceRow]] = [:]
+    /// Current LiteLLM rows no alias links to an AA model: the search's
+    /// price-only side.
+    private var unmatchedPrices: [CatalogDatabase.PriceRow] = []
+    /// The parse index over `allModels` and `links`, built once and
+    /// reused across per-keystroke rebuilds; nilled when either changes.
+    private var matchIndex: ModelMatcher.Index?
     private let now: () -> Date
     private let calendar: Calendar
     /// The usage the last load saw, kept so the scope/metric pickers can
@@ -392,7 +414,7 @@ public final class ModelsModel {
 
     /// The matcher answer for a logged name, for hover cards elsewhere.
     public func resolve(_ logged: String) -> AALanguageModel? {
-        ModelMatcher.match(logged, in: allModels, links: links)
+        matcherIndex?.match(logged)?.model
     }
 
     /// A logged name's card data for other pages' hovers: the AA model it
@@ -414,11 +436,18 @@ public final class ModelsModel {
                    listPrice: listPrice(logged: logged, aa: aa))
     }
 
-    /// Reads the ledger's catalog and the catalog join's current prices.
+    /// Reads the ledger's catalog and the catalog join's current prices,
+    /// both halves: the keys an AA model claims and the LiteLLM-only
+    /// tail the search lists on its own.
     private func loadPrices() async {
         pricingCatalog = await pricing()
         let database = store.database
-        catalogPrices = await Task.detached { database.currentPricesByModel() }.value
+        let prices = await Task.detached {
+            (models: database.currentPricesByModel(),
+             unmatched: database.currentPricesUnmatched())
+        }.value
+        catalogPrices = prices.models
+        unmatchedPrices = prices.unmatched
     }
 
     /// The list price a row shows: the ledger's entry for `logged` when it
@@ -436,6 +465,15 @@ public final class ModelsModel {
         guard let best = rows.min(by: { rank($0) < rank($1) }) else { return nil }
         return ListPrice(key: best.key, source: .liteLLM, input: best.input * 1e6, output: best.output * 1e6,
                          cacheRead: best.cacheRead * 1e6, cacheWrite: best.cacheWrite * 1e6)
+    }
+
+    /// The parse of `allModels` and `links` `match` calls share; built on
+    /// first use and dropped when either input changes.
+    private var matcherIndex: ModelMatcher.Index? {
+        if matchIndex == nil, !allModels.isEmpty {
+            matchIndex = ModelMatcher.Index(models: allModels, links: links)
+        }
+        return matchIndex
     }
 
     /// The effort and mode words a parsed name carried, display-cased.
@@ -497,12 +535,13 @@ public final class ModelsModel {
         var pricedNames: [String: String] = [:]
         // One index for every name: `ModelMatcher.match` re-parses the
         // whole AA list per call, which held the main thread over a second
-        // with a month of usage.
-        let index = ModelMatcher.Index(models: allModels, links: links)
+        // with a month of usage. The cached index survives per-keystroke
+        // rebuilds; `didSet` on `allModels` or `links` drops it.
+        let index = matcherIndex
         // Sorted, so which alias names a merged row (on a token tie) and
         // the order rows enter the sort don't follow dictionary order.
         for (logged, entry) in byModel.sorted(by: { $0.key < $1.key }) {
-            let aa = index.match(logged)?.model
+            let aa = index?.match(logged)?.model
             let parsed = ModelMatcher.parse(logged)
             guard let aa else {
                 // Unmatched names only surface in the warning popover.
@@ -552,6 +591,69 @@ public final class ModelsModel {
                        costPercentile: CostPercentile.rank(of: model, in: allModels),
                        listPrice: listPrice(logged: nil, aa: model))
         }
+
+        // A query swaps the scoped board for a catalog-wide match: every
+        // AA family a name, slug or lab hits — one headline row each,
+        // reusing the used row when it ran — then LiteLLM price keys no
+        // AA model claims. `searching` is what the toolbar reads.
+        let needle = Self.normalized(query)
+        if !needle.isEmpty {
+            var seen: Set<String> = []
+            var pool: [Row] = []
+            for model in allModels where Self.matches(needle, model) {
+                let headline = index?.match(model.name)?.model ?? model
+                guard seen.insert(headline.id).inserted else { continue }
+                pool.append(leaderboardRow(headline))
+            }
+            // A price key can name an AA model its name can't reach:
+            // "moonshot/kimi-k3" finds Kimi K3 through the alias join.
+            for (id, keys) in catalogPrices
+            where keys.contains(where: { Self.matches(needle, $0.key) }) {
+                guard let entry = allModels.first(where: { $0.id == id }) else { continue }
+                let headline = index?.match(entry.name)?.model ?? entry
+                guard seen.insert(headline.id).inserted else { continue }
+                pool.append(leaderboardRow(headline))
+            }
+            // A logged name can match while its AA name doesn't: a
+            // manual link or a proxy alias.
+            for row in used {
+                guard let id = row.aa?.id, seen.insert(id).inserted,
+                      Self.matches(needle, row.logged) else { continue }
+                pool.append(row)
+            }
+            var result = Self.sort(pool, by: metric)
+            // Used names no AA entry covers are rows too when they match.
+            for un in unmatched where Self.matches(needle, un.model) {
+                guard seen.insert("unmatched:\(un.model)").inserted else { continue }
+                result.append(Row(logged: un.model, aa: nil,
+                                  harnesses: byModel[un.model]?.harnesses ?? [],
+                                  tokens: un.tokens,
+                                  listPrice: listPrice(logged: un.model, aa: nil)))
+            }
+            // The LiteLLM-only tail, capped; the bare name decides which
+            // hits lead, the overflow count becomes the page's footnote.
+            let lite = unmatchedPrices
+                .filter { Self.matches(needle, $0.key) }
+                .sorted { Self.liteRank(needle, $0.key) < Self.liteRank(needle, $1.key) }
+            var shown = 0
+            for price in lite where shown < Self.searchLimit {
+                guard seen.insert("unmatched:\(price.key)").inserted,
+                      index?.match(price.key) == nil else { continue }
+                shown += 1
+                result.append(Row(logged: price.key, aa: nil,
+                                  listPrice: listPrice(logged: price.key, aa: nil)
+                                      ?? ListPrice(key: price.key, source: .liteLLM,
+                                                   input: price.input * 1e6,
+                                                   output: price.output * 1e6,
+                                                   cacheRead: price.cacheRead * 1e6,
+                                                   cacheWrite: price.cacheWrite * 1e6)))
+            }
+            searchOverflow = lite.count - shown
+            rows = result
+            return
+        }
+        searchOverflow = 0
+
         let all: [Row]
         switch scope {
         case .yoursPlusTop:
@@ -605,6 +707,35 @@ public final class ModelsModel {
                 return (a.tokens, a.logged) > (b.tokens, b.logged)
             }
         }
+    }
+
+    /// Search compares the alphanumeric skeleton: "kimi k3" hits
+    /// "Kimi K3", "kimi-k3" and "us.moonshotai.kimi-k3" alike.
+    static func normalized(_ name: String) -> String {
+        name.lowercased().filter { $0.isLetter || $0.isNumber }
+    }
+
+    /// An AA model matches on its name, its slug or its lab.
+    private static func matches(_ needle: String, _ model: AALanguageModel) -> Bool {
+        normalized(model.name).contains(needle)
+            || normalized(model.slug).contains(needle)
+            || normalized(model.creatorName).contains(needle)
+            || normalized(model.creatorSlug).contains(needle)
+    }
+
+    /// A logged name or LiteLLM key matches anywhere, provider prefix
+    /// and reseller tags included.
+    private static func matches(_ needle: String, _ key: String) -> Bool {
+        normalized(key).contains(needle)
+    }
+
+    /// LiteLLM-only hits rank a bare-name exact match first, then a
+    /// bare-name prefix, then anything the key merely contains; shorter
+    /// keys lead inside each so "kimi-k3" beats "vendor/kimi-k3-eu".
+    private static func liteRank(_ needle: String, _ key: String) -> (Int, Int, String) {
+        let bare = normalized(PricingCatalog.bareName(key))
+        let group = bare == needle ? 0 : bare.hasPrefix(needle) ? 1 : bare.contains(needle) ? 2 : 3
+        return (group, key.count, key)
     }
 }
 

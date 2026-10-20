@@ -85,6 +85,10 @@ private struct ModelsContent: View {
                            selection: Binding(get: { model.scope },
                                               set: { model.set(scope: $0) }),
                            width: nil)
+                    .disabled(model.searching)
+                    .help(model.searching
+                          ? "Searching the whole catalog. Clear the search to pick a scope."
+                          : "")
                 MultiSelectMenu(allTitle: "All harnesses",
                                 options: model.harnessOptions.map {
                                     (value: $0, title: HarnessMark($0).name, icon: $0)
@@ -101,6 +105,8 @@ private struct ModelsContent: View {
             }
             .fixedSize()
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { controlsWidth = $0 }
+            SearchField(prompt: "Search the whole catalog", text: $model.query)
+                .frame(minWidth: Self.searchMinWidth)
             Spacer(minLength: 8)
             if let updatedAt = model.updatedAt, roomForStamp {
                 Text("Updated \(updatedAt.formatted(.relative(presentation: .named)))")
@@ -119,14 +125,18 @@ private struct ModelsContent: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { toolbarWidth = $0 }
     }
 
-    /// Whether the stamp fits beside the controls and the buttons. The
-    /// clusters are fixedSize, so their rendered width is their ideal.
+    /// The search field's floor: below it the stamp gives up its room.
+    static let searchMinWidth: CGFloat = 140
+
+    /// Whether the stamp fits beside the controls, the search field's
+    /// floor and the buttons. The clusters are fixedSize, so their
+    /// rendered width is their ideal.
     private var roomForStamp: Bool {
         guard let updatedAt = model.updatedAt else { return false }
         let text = "Updated \(updatedAt.formatted(.relative(presentation: .named)))"
         let stamp = (text as NSString)
             .size(withAttributes: [.font: NSFont.systemFont(ofSize: 12)]).width
-        return controlsWidth + 8 + stamp + 8 + trailingWidth <= toolbarWidth
+        return controlsWidth + 8 + Self.searchMinWidth + 8 + stamp + 8 + trailingWidth <= toolbarWidth
     }
 
     /// The freshness stamp lives here too, for when the row drops it.
@@ -154,7 +164,11 @@ private struct ModelsContent: View {
     // MARK: - Content
 
     @ViewBuilder private var content: some View {
-        if !model.hasLoaded && model.allModels.isEmpty {
+        // A search with hits shows them even when the AA feed is empty:
+        // LiteLLM-only keys need no benchmarks.
+        if model.searching && !model.rows.isEmpty {
+            results
+        } else if !model.hasLoaded && model.allModels.isEmpty {
             // Before the first key check `hasKey` is false: wait for it
             // rather than flash the no-key card on every launch.
             LoadingCard(text: "Loading benchmarks…")
@@ -166,19 +180,38 @@ private struct ModelsContent: View {
                 LoadingCard(text: "Fetching benchmarks…")
             } else if let error = model.refreshError {
                 ErrorCard(message: "Couldn't fetch benchmarks: \(error)")
+            } else if model.searching {
+                EmptyCard(text: "No model or LiteLLM price key matches.",
+                          icon: "magnifyingglass")
             } else {
                 EmptyCard(text: "No benchmark data yet.", icon: "cube.transparent")
             }
         } else if model.rows.isEmpty {
-            if model.usagePending {
+            if model.searching {
+                EmptyCard(text: "No model or LiteLLM price key matches.",
+                          icon: "magnifyingglass")
+            } else if model.usagePending {
                 LoadingCard(text: "Reading your usage…")
             } else {
                 EmptyCard(text: emptyText, icon: "chart.bar")
             }
         } else {
+            results
+        }
+    }
+
+    /// The chart or table, plus the overflow note when a search had to
+    /// cap the LiteLLM-only tail.
+    private var results: some View {
+        VStack(alignment: .leading, spacing: 8) {
             switch model.viewMode {
             case .chart: ChartCard(model: model)
             case .table: TableCard(model: model)
+            }
+            if model.searchOverflow > 0 {
+                Text("+\(model.searchOverflow) more LiteLLM keys match. Tighten the query to list them.")
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    .padding(.horizontal, 4)
             }
         }
     }
