@@ -54,11 +54,30 @@ def load_secrets(home: Path | None = None) -> dict[str, str]:
         m = _EXPORT_RE.match(line)
         if not m:
             continue
-        name, raw = m.group(1), m.group(2).strip()
+        name, raw = m.group(1), _strip_inline_comment(m.group(2).strip())
         if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
             raw = raw[1:-1]
         out[name] = raw
     return out
+
+
+def _strip_inline_comment(raw: str) -> str:
+    """Drop a trailing unquoted `` # comment`` from an export value.
+
+    ``export KEY=value # note`` used to load ``value # note`` — the broken
+    string then resolved ``${KEY}`` into every harness config a sync wrote.
+    A ``#`` starts a comment only after whitespace and outside quotes.
+    """
+    quote = ""
+    for i, ch in enumerate(raw):
+        if quote:
+            if ch == quote:
+                quote = ""
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "#" and i > 0 and raw[i - 1] in " \t":
+            return raw[:i].rstrip()
+    return raw
 
 
 def resolve(value, secrets: dict[str, str] | None = None, home: Path | None = None):
@@ -275,6 +294,107 @@ def scrub_args(args, secrets: dict[str, str] | None = None) -> list[str]:
             arg = f"{assign.group(1)}={_hide(assign.group(2))}"
         out.append(arg)
     return out
+
+
+def _secret_hint(raw: str) -> str:
+    """A field name normalised to a valid store name: ``X-Api-Key`` → ``X_API_KEY``."""
+    hint = re.sub(r"[^A-Za-z0-9_]", "_", raw).upper()
+    if not hint or hint[0].isdigit():
+        hint = "MCP_" + hint if hint else "MCP_SECRET"
+    return hint
+
+
+def _store_literal(hint: str, value: str, secrets: dict[str, str],
+                   home: Path | None = None) -> str:
+    """Move one plaintext credential into the store; return its ``${NAME}``."""
+    for n, v in secrets.items():
+        if v == value:
+            return f"${{{n}}}"
+    base = _secret_hint(hint)
+    name = base
+    i = 2
+    while name in secrets:
+        name = f"{base}_{i}"
+        i += 1
+    set_secret(name, value, home)
+    secrets[name] = value
+    return f"${{{name}}}"
+
+
+def shield_credentials(server: dict, home: Path | None = None) -> tuple[dict, list[str]]:
+    """Move credential-shaped literals in a canonical server dict into the
+    secrets store; return (shielded copy, notes).
+
+    ``swe mcp discover --apply`` copies harness values into the versioned
+    hub file. ``redact()`` only substitutes values already in the store, so
+    a literal ``env.API_KEY = "sk-live"`` — the common case — landed in
+    ``mcp.json`` in plaintext, one ``git add`` from a commit. Fields named
+    like credentials that are not already ``${NAME}`` references are moved
+    into the store and replaced by the reference. Shielding is
+    output-equivalent: ``resolve()`` reproduces the same value in every
+    harness config a sync writes.
+    """
+    secrets = load_secrets(home)
+    out = dict(server)
+    notes: list[str] = []
+
+    def stash(hint: str, value: str) -> str:
+        ref = _store_literal(hint, value, secrets, home)
+        notes.append(
+            f"{hint}: plaintext credential moved to the secrets store ({ref})")
+        return ref
+
+    env = out.get("env")
+    if isinstance(env, dict):
+        shielded = dict(env)
+        for key, value in env.items():
+            if (isinstance(value, str) and value
+                    and _SECRET_FLAG_RE.search(str(key))
+                    and not _REF_ONLY_RE.fullmatch(value)):
+                shielded[key] = stash(str(key), value)
+        out["env"] = shielded
+
+    headers = out.get("headers")
+    if isinstance(headers, dict):
+        shielded = dict(headers)
+        for key, value in headers.items():
+            if not isinstance(value, str) or not value or _REF_ONLY_RE.fullmatch(value):
+                continue
+            scheme = _SCHEME_VALUE_RE.fullmatch(value)
+            if scheme:
+                token = scheme.group(1)
+                if _REF_ONLY_RE.fullmatch(token):
+                    continue
+                shielded[key] = f"{value[: -len(token)]}{stash(str(key), token)}"
+            elif _SECRET_FLAG_RE.search(str(key)):
+                shielded[key] = stash(str(key), value)
+        out["headers"] = shielded
+
+    url = out.get("url")
+    if isinstance(url, str) and url:
+        from urllib.parse import urlsplit, urlunsplit
+
+        try:
+            parts = urlsplit(url)
+        except ValueError:
+            parts = None
+        if parts and parts.query:
+            pairs = []
+            touched = False
+            for pair in parts.query.split("&"):
+                if not pair:
+                    continue
+                key, eq, value = pair.partition("=")
+                if (eq and value and _SECRET_FLAG_RE.search(key)
+                        and not _REF_ONLY_RE.fullmatch(value)):
+                    value = stash(key, value)
+                    touched = True
+                pairs.append(key + eq + value)
+            if touched:
+                out["url"] = urlunsplit(
+                    (parts.scheme, parts.netloc, parts.path,
+                     "&".join(pairs), parts.fragment))
+    return out, notes
 
 
 def store_env(home: Path | None = None) -> dict[str, str]:

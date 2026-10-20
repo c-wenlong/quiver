@@ -68,6 +68,27 @@ class SetSecretTest(unittest.TestCase):
         secrets.set_secret("A", "fresh", home=self.home)
         self.assertEqual(secrets.load_secrets(self.home)["A"], "fresh")
 
+    def test_inline_comments_are_not_part_of_the_value(self):
+        # `export KEY=value # note` used to load "value # note" — resolving
+        # ${KEY} into every harness config a sync wrote, still "resolved".
+        from quiver.mcp import secrets
+
+        path = self._file()
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            "export A=v1 # a note\n"
+            "export B='v2' # a note\n"
+            'export C="v3" # a note\n'
+            "export D=v4#not-a-comment\n"
+            "export E='a # b'\n"
+        )
+        got = secrets.load_secrets(self.home)
+        self.assertEqual(got["A"], "v1")
+        self.assertEqual(got["B"], "v2")
+        self.assertEqual(got["C"], "v3")
+        self.assertEqual(got["D"], "v4#not-a-comment")
+        self.assertEqual(got["E"], "a # b")
+
     def test_writes_through_a_symlinked_store(self):
         from quiver.mcp import secrets
 
