@@ -789,6 +789,48 @@ struct FakeShell: ShellEnvironmentReading {
         #expect(model.sourcing == .sourced)
         #expect(FileManager.default.fileExists(atPath: home.appending(path: "dots/.zshrc").path))
     }
+
+    /// A save mid-load drops the load's read, so the sourcing check it
+    /// runs afterwards sees no shell environment at all; when the
+    /// save's own read lands with ZDOTDIR in it, the check reruns
+    /// against the file that environment actually names.
+    @Test func sourcingFollowsTheLandingReadsEnvironment() async throws {
+        let home = FileManager.default.temporaryDirectory
+            .appending(path: "keysource-\(UUID().uuidString)")
+        let keys = home.appending(path: ".quiver/secrets/providers/.api_keys")
+        try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try "export A_KEY=v1\n".write(to: keys, atomically: true, encoding: .utf8)
+        // ZDOTDIR's .zshrc sources the file; the plain ~/.zshrc doesn't.
+        let dots = home.appending(path: "dots")
+        try FileManager.default.createDirectory(at: dots, withIntermediateDirectories: true)
+        try (ShellStartup.sourceLine(for: keys, home: home) + "\n")
+            .write(to: dots.appending(path: ".zshrc"), atomically: true, encoding: .utf8)
+        try "export OTHER=1\n".write(to: home.appending(path: ".zshrc"),
+                                    atomically: true, encoding: .utf8)
+        let shell = GatedShell()
+        await shell.reply(["A_KEY": "v1", "ZDOTDIR": dots.path])
+        let model = APIKeysModel(
+            store: APIKeysStore(url: keys, backupDirectory: home.appending(path: "backups")),
+            shell: shell,
+            checkCache: APIKeyCheckStore(url: home.appending(path: "checks.json")),
+            defaults: UserDefaults(suiteName: "keysource-\(UUID().uuidString)")!,
+            shellName: "/bin/zsh", home: home, environment: [:])
+        let load = Task { await model.load() }
+        #expect(await shell.waitForPark())
+
+        try await model.set(name: "B_KEY", value: "v2", provider: "")
+        await shell.releaseNext()
+        await load.value
+        // The dropped read leaves no shell env, so the check ran on the
+        // wrong file; the save's own read puts it right when it lands.
+        #expect(model.sourcing == .notSourced(file: home.appending(path: ".zshrc")))
+        #expect(await shell.waitForPark())
+        await shell.reply(["A_KEY": "v1", "B_KEY": "v2", "ZDOTDIR": dots.path])
+        await shell.release()
+        await model.shellReread?.value
+        #expect(model.sourcing == .sourced)
+    }
 }
 
 @MainActor

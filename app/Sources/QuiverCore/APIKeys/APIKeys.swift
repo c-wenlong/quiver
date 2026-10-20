@@ -1045,7 +1045,9 @@ public final class APIKeysModel {
     /// Reads the login shell's environment once and rebuilds on it.
     /// load() and the post-save reread both go through here; only the
     /// newest request's answer lands, so a save during a load can't be
-    /// clobbered by the load's older answer.
+    /// clobbered by the load's older answer. Sourcing recomputes on the
+    /// landing read too: the startup file it checks follows ZDOTDIR,
+    /// which only the shell's own environment knows.
     private func readShell() async {
         shellReads += 1
         let serial = shellReads
@@ -1053,6 +1055,7 @@ public final class APIKeysModel {
         guard serial == shellReads else { return }
         environment = fresh
         shellRead = true
+        refreshSourcing()
         rebuild()
     }
 
