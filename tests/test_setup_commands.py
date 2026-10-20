@@ -321,9 +321,17 @@ class SetupLinksTest(_SetupHarness):
                 self.assertIn("config dir gone", str(payload[key]))
 
     def test_starred_failure_lands_in_errors_not_a_traceback(self):
-        code, out, _ = self._run(["--apply", "--json", "--starred=claude"])
-        # _set_starred is patched per-test below; this happy path must not
-        # invent an errors key.
+        # Happy path must not invent an errors key. The registry and stars
+        # live under module-level paths that Path.home() cannot redirect,
+        # so load/save are mocked — without this the test would rewrite
+        # the developer's real ~/.quiver/config/harness.json.
+        from quiver.harness import registry
+
+        saved = {}
+        with patch.object(registry, "load_registry", lambda: {}), \
+                patch.object(registry, "save_registry",
+                             lambda tools: saved.__setitem__("reg", tools)):
+            code, out, _ = self._run(["--apply", "--json", "--starred=claude"])
         self.assertEqual(code, 0)
         self.assertNotIn("errors", json.loads(out)["data"]["applied"])
 
