@@ -39,6 +39,12 @@ class _SetupHarness(unittest.TestCase):
         home_patch = patch.object(Path, "home", staticmethod(lambda: self.home))
         home_patch.start()
         self.addCleanup(home_patch.stop)
+        # PATH is stubbed so the developer's own installs cannot leak in: a
+        # binary that resolves is install evidence (#68), and every harness
+        # in these tests is meant to be absent until its dir is made by hand.
+        which_patch = patch("quiver.init.layout.shutil.which", return_value=None)
+        which_patch.start()
+        self.addCleanup(which_patch.stop)
 
     def _run(self, args, findings=(), mcp=(), hints=(), apply_map=None):
         """Run cmd_setup with discovery mocked and stdin forced non-tty."""

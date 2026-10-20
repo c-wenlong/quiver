@@ -316,7 +316,9 @@ public final class CalendarModel {
         var days: [DateInterval] = []
         var day = calendar.startOfDay(for: range.start)
         while day < range.end {
-            let next = calendar.date(byAdding: .day, value: 1, to: day) ?? day
+            // A nil or non-advancing day-add must stop the walk, or this
+            // loops forever on a calendar that cannot answer.
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day), next > day else { break }
             days.append(DateInterval(start: max(day, range.start), end: min(next, range.end)))
             day = next
         }
@@ -513,9 +515,13 @@ public final class CalendarModel {
         let covered = self.days(in: span)
         nextRead += 1
         let readID = nextRead
-        let task = Task(priority: priority) { [providers, projects] () -> String? in
-            let widened = DateInterval(start: span.start.addingTimeInterval(-Self.edgeLookout),
-                                       end: span.end.addingTimeInterval(Self.edgeLookout))
+        // Detached so the provider reads and the project resolution
+        // behind `group` — `.git` walks and the `swe` lookup — run off
+        // the main actor; `store` alone hops back.
+        let lookout = Self.edgeLookout
+        let task = Task.detached(priority: priority) { [providers, projects] () -> String? in
+            let widened = DateInterval(start: span.start.addingTimeInterval(-lookout),
+                                       end: span.end.addingTimeInterval(lookout))
             var good: [Int: [ActivityBlock]] = [:]
             var failed: String?
             await withTaskGroup(of: (Int, Result<[ActivityBlock], Error>, TimeInterval).self) { group in
@@ -543,8 +549,11 @@ public final class CalendarModel {
                     }
                 }
             }
-            self.store(good, days: covered, read: readID, stale: failed != nil,
-                       fetched: self.now())
+            // `now` is a closure kept on the actor: the call, not the
+            // closure itself, hops back for the fetch timestamp.
+            let fetched = await MainActor.run { self.now() }
+            await self.store(good, days: covered, read: readID, stale: failed != nil,
+                             fetched: fetched)
             return failed
         }
         for day in covered { inFlight[dayKey(day)] = task }

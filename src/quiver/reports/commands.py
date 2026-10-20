@@ -302,6 +302,12 @@ def _generate(cadence: str, args: list[str], input_fn: Callable[[str], str] = in
         start_ms, end_ms, start_label, end_label, advance = _source_period(
             cadence, parsed, store
         )
+        if start_ms > end_ms:
+            # The cursor already covers the whole completed period, so a
+            # rerun inside it has nothing new. SessionQuery would reject
+            # the inverted range before we could say so.
+            print(c("dim", f"  No new sessions since the previous {cadence} report."))
+            return 0
         query = SessionQuery(
             start_ms=start_ms,
             end_ms=end_ms,
@@ -327,7 +333,14 @@ def _generate(cadence: str, args: list[str], input_fn: Callable[[str], str] = in
             if preview.over_budget
             else "  Continue? [y/N]: "
         )
-        approval = input_fn(prompt)
+        try:
+            approval = input_fn(prompt)
+        except (EOFError, KeyboardInterrupt):
+            # stdin at EOF (a redirected or scheduled run) or Ctrl-C/D at
+            # the approval prompt: treat as "no", like the wizard's 130.
+            print()
+            print(c("dim", "  Report cancelled; no model calls were started."))
+            return 130
         result = pipeline.run(ApprovedReportPlan(preview, approval))
     except ReportApprovalError:
         print(c("dim", "  Report cancelled; no model calls were started."))
@@ -385,13 +398,15 @@ def _followup(args: list[str]) -> int:
         return _report_help()
     ledger = FollowUpLedger()
     action = args[0]
-    # expand only where flags exist — edit's args[2:] is free text, so a
-    # literal --harness=x there must stay part of the note, not become a pair.
+    # expand only flags the action actually consumes — edit's args[2:] is
+    # free text, so a literal --harness=x there must stay part of the note,
+    # not become a pair. add's note is free text too: expanding --harness
+    # (which only work consumes) split `--harness=x` into two words inside
+    # the note and ate note text that contained it.
     if action in {"add", "work"}:
+        value_flags = {"--project"} if action == "add" else {"--harness"}
         try:
-            args = [action] + expand_value_flags(
-                args[1:], {"--project", "--harness"}
-            )
+            args = [action] + expand_value_flags(args[1:], value_flags)
         except ValueError as exc:
             print(c("red", f"  {exc}"))
             return 1
@@ -440,6 +455,12 @@ def _followup(args: list[str]) -> int:
             return int(work_on_follow_up(item, mode=mode, harness=harness) or 0)
         else:
             raise ValueError(f"Unknown follow-up action: {action}")
+    except (EOFError, KeyboardInterrupt):
+        # Ctrl-D/C or a redirected stdin at the work prompts is a cancel,
+        # not a crash — the wizard's convention is exit 130.
+        print()
+        print(c("dim", "  Cancelled."))
+        return 130
     except (KeyError, ValueError, FollowUpWorkError, MalformedReportStateError) as exc:
         print(c("red", f"  {exc}"))
         return 1

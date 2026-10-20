@@ -131,6 +131,86 @@ func fixture(_ name: String) throws -> Data {
             _ = try await client.harnesses(withUsage: false)
         }
     }
+
+    @Test func aMalformedRateLimitDegradesThatRowOnly() async throws {
+        // codex's reading is not an object at all; gemini's has garbage
+        // inside it. Neither may cost the page or the good row.
+        let doc = Data(#"""
+        {"schema": 1, "data": {"harnesses": [
+         {"name": "claude", "command": "claude", "description": "d",
+          "aliases": [], "tags": [], "state": "starred",
+          "rate_limit": {"status": "ok", "used_percent": 28,
+                         "remaining_percent": 72, "limit_reached": false,
+                         "window": "5h"}},
+         {"name": "codex", "command": "codex", "description": "d",
+          "aliases": [], "tags": [], "state": "active",
+          "rate_limit": "oops"},
+         {"name": "gemini", "command": "gemini", "description": "d",
+          "aliases": [], "tags": [], "state": "active",
+          "rate_limit": {"status": "bogus", "used_percent": "x",
+                         "remaining_percent": null, "limit_reached": "?"}}]}}
+        """#.utf8)
+        let harnesses = try await SweClient(
+            runner: FakeRunner(.init(status: 0, stdout: doc, stderr: "")))
+            .harnesses(withUsage: false)
+        #expect(harnesses.map(\.name) == ["claude", "codex", "gemini"])
+        #expect(harnesses[0].rateLimit?.usedPercent == 28)
+        // Not an object: no reading at all rather than a made-up one.
+        #expect(harnesses[1].rateLimit == nil)
+        let degraded = try #require(harnesses[2].rateLimit)
+        #expect(degraded.status == .timeout)   // unreadable -> the unread state
+        #expect(degraded.usedPercent == 0)
+        #expect(degraded.remainingPercent == 100)
+        #expect(degraded.limitReached == false)
+    }
+
+    @Test func anExtremeUsedPercentCannotTrapTheDerivedFallback() async throws {
+        // Int.min is a valid Int, so it decodes — and 100 - Int.min traps
+        // if the missing remaining_percent is derived without clamping.
+        // try? catches decode errors, never arithmetic.
+        let doc = Data(#"""
+        {"schema": 1, "data": {"harnesses": [
+         {"name": "claude", "command": "claude", "description": "d",
+          "aliases": [], "tags": [], "state": "active",
+          "rate_limit": {"status": "ok", "used_percent": -9223372036854775808,
+                         "limit_reached": false}},
+         {"name": "codex", "command": "codex", "description": "d",
+          "aliases": [], "tags": [], "state": "active",
+          "rate_limit": {"status": "ok", "used_percent": 250}}]}}
+        """#.utf8)
+        let harnesses = try await SweClient(
+            runner: FakeRunner(.init(status: 0, stdout: doc, stderr: "")))
+            .harnesses(withUsage: false)
+        #expect(harnesses.map(\.name) == ["claude", "codex"])
+        #expect(harnesses[0].rateLimit?.remainingPercent == 100)
+        #expect(harnesses[1].rateLimit?.remainingPercent == 0)
+        #expect(harnesses[1].rateLimit?.limitReached == true)
+    }
+
+    @Test func aBrokenHarnessRowIsDroppedNotFatal() async throws {
+        let doc = Data(#"""
+        {"schema": 1, "data": {"harnesses": [
+         {"name": "claude", "command": "claude", "description": "d",
+          "aliases": [], "tags": [], "state": "active"},
+         {"name": 5},
+         {"name": "codex", "command": "codex", "description": "d",
+          "aliases": [], "tags": [], "state": "active"}]}}
+        """#.utf8)
+        let harnesses = try await SweClient(
+            runner: FakeRunner(.init(status: 0, stdout: doc, stderr: "")))
+            .harnesses(withUsage: false)
+        #expect(harnesses.map(\.name) == ["claude", "codex"])
+    }
+
+    @Test func aNewerSchemaIsNamedEvenWhenThePayloadIsBad() async throws {
+        // The single-pass decode throws on the payload, but the header is
+        // still readable, so the answer is the schema mismatch, not junk.
+        let doc = Data(#"{"schema": 2, "data": "x"}"#.utf8)
+        let client = SweClient(runner: FakeRunner(.init(status: 0, stdout: doc, stderr: "")))
+        await #expect(throws: SweError.unsupportedSchema(2)) {
+            _ = try await client.harnesses(withUsage: false)
+        }
+    }
 }
 
 @Suite struct SweLocationTests {

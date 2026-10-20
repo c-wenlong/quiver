@@ -339,7 +339,9 @@ public actor DevinCloudSync {
     }
 
     /// Every page, or `incomplete` past `maxPages`: a partial list would
-    /// drop the sessions it didn't reach from the store.
+    /// drop the sessions it didn't reach from the store. A page that says
+    /// more follow but hands no cursor is incomplete the same way: the
+    /// sessions behind it cannot be reached.
     private func listSessions(org: String, user: String, token: String) async throws -> [SessionItem] {
         var items: [SessionItem] = []
         var after: String?
@@ -350,7 +352,8 @@ public actor DevinCloudSync {
             let page = try await get(Page<SessionItem>.self,
                                      path: "/v3/organizations/\(org)/sessions", query: query, token: token)
             items += page.items
-            guard page.hasNextPage == true, let next = page.endCursor else { return items }
+            guard page.hasNextPage == true else { return items }
+            guard let next = page.endCursor else { throw SyncError.incomplete }
             after = next
         }
         throw SyncError.incomplete
@@ -366,7 +369,8 @@ public actor DevinCloudSync {
                                      path: "/v3/organizations/\(org)/sessions/\(session)/messages",
                                      query: query, token: token)
             times += page.items.map { DevinCloud.date($0.createdAt) }
-            guard page.hasNextPage == true, let next = page.endCursor else { return times.sorted() }
+            guard page.hasNextPage == true else { return times.sorted() }
+            guard let next = page.endCursor else { throw SyncError.incomplete }
             after = next
         }
         // Partial times would be reused until the session changes again.

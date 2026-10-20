@@ -144,8 +144,8 @@ jobs:
     #
     # With no MACOS_CERTIFICATE the job still compiles the prod bundle
     # ad-hoc (`QUIVER_SIGN_IDENTITY=-`), which keeps the scaffold honest
-    # before the secrets exist; signing, notarization, the DMG and the
-    # release upload all stay off.
+    # before the secrets exist; make-dmg.sh still runs, but to a scratch
+    # path, so signing, notarization and the release upload stay off.
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -213,45 +213,35 @@ jobs:
         # unsigned scaffold run prints "Signature=adhoc" here.
         run: codesign -dvvv app/build/Quiver.app || true
 
-      - name: Notarize and staple
+      - name: Notarize, sign and package the DMG
+        # One script owns the whole post-build path: staple the .app,
+        # stage the image, sign the DMG, submit it and staple it. The
+        # same script runs locally; this step just hands it the CI
+        # credential form.
         if: steps.cert.outputs.have_cert == 'true'
         env:
+          QUIVER_SIGN_IDENTITY: ${{ vars.SIGNING_IDENTITY || steps.cert.outputs.sign_identity }}
           NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
         run: |
-          if [ -z "$NOTARY_KEY" ] || [ -z "$NOTARY_KEY_ID" ] || [ -z "$NOTARY_ISSUER" ]; then
-            echo "::error::A signed build needs NOTARY_KEY, NOTARY_KEY_ID and NOTARY_ISSUER; Gatekeeper rejects a signed-but-unnotarized app."
-            exit 1
-          fi
-          # The .p8 lands in the runner temp dir and leaves with it.
-          keyfile="$RUNNER_TEMP/AuthKey_$NOTARY_KEY_ID.p8"
-          printf '%s' "$NOTARY_KEY" | base64 --decode > "$keyfile"
-          # notarytool accepts the zipped .app; --keepParent puts
-          # Quiver.app at the zip root, which is the layout it wants.
-          zip="$RUNNER_TEMP/Quiver.zip"
-          ditto -c -k --keepParent app/build/Quiver.app "$zip"
-          xcrun notarytool submit "$zip" \
-            --key "$keyfile" --key-id "$NOTARY_KEY_ID" \
-            --issuer "$NOTARY_ISSUER" --wait
-          rm -f "$keyfile"
-          # Writes Apple's ticket into the bundle so Gatekeeper passes it
-          # even on a Mac that is offline at first launch.
-          xcrun stapler staple app/build/Quiver.app
-
-      - name: Build the DMG
-        if: steps.cert.outputs.have_cert == 'true'
-        run: |
           mkdir -p app/build/macos-app
-          # Stage the app next to an /Applications symlink so the DMG
-          # opens as a drag-to-install window; hdiutil keeps the link.
-          staging="$RUNNER_TEMP/dmg"
-          mkdir -p "$staging"
-          ditto app/build/Quiver.app "$staging/Quiver.app"
-          ln -s /Applications "$staging/Applications"
-          hdiutil create -volname Quiver -srcfolder "$staging" \
-            -ov -format UDZO "app/build/macos-app/Quiver-${RELEASE_TAG#v}.dmg"
+          app/script/make-dmg.sh app/build/Quiver.app \
+            "app/build/macos-app/Quiver-${RELEASE_TAG#v}.dmg"
           ls -lh app/build/macos-app/
+
+      - name: Exercise the DMG path on the unsigned build
+        # No certificate: the release DMG stays off, but make-dmg.sh still
+        # runs end-to-end ad-hoc so a broken script shows up on the tag
+        # build rather than on the first signed release. The image goes
+        # to RUNNER_TEMP, never into the artifact, so an unsigned DMG can
+        # not reach a release by accident.
+        if: steps.cert.outputs.have_cert != 'true'
+        run: |
+          app/script/make-dmg.sh app/build/Quiver.app "$RUNNER_TEMP/Quiver.dmg"
+          mkdir -p app/build/macos-app
+          printf 'Unsigned prod build: MACOS_CERTIFICATE is not configured.\n' \
+            > app/build/macos-app/UNSIGNED.txt
 
       - name: Build the Sparkle appcast
         if: steps.cert.outputs.have_cert == 'true'
@@ -279,15 +269,6 @@ jobs:
             --download-url-prefix "https://github.com/$GH_REPO/releases/download/$RELEASE_TAG/" \
             app/build/macos-app
           xmllint --noout app/build/macos-app/appcast.xml
-
-      - name: Stage a notice when the build is unsigned
-        # Keeps the `macos-app` artifact non-empty so attach-to-release's
-        # download step works before the signing secrets exist.
-        if: steps.cert.outputs.have_cert != 'true'
-        run: |
-          mkdir -p app/build/macos-app
-          printf 'Unsigned prod build: MACOS_CERTIFICATE is not configured.\n' \
-            > app/build/macos-app/UNSIGNED.txt
 
       - name: Upload the app artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

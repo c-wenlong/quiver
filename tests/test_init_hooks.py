@@ -91,8 +91,23 @@ class PlanHooksTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             _hook(home, "droid", "guard.sh")
-            [status] = plan_hooks(home)
+            # Binary evidence counts too (#68): stub PATH or a machine
+            # with droid installed reads the same dirs as installed.
+            with mock.patch("quiver.init.layout.shutil.which", return_value=None):
+                [status] = plan_hooks(home)
             self.assertEqual((status.state, status.detail), ("skipped", "harness not installed"))
+
+    def test_binary_on_path_links_hooks_when_no_dir_exists(self):
+        # #68: a Nix-profile droid has never run, so ~/.factory is absent —
+        # dir evidence alone used to skip it as "harness not installed".
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            _hook(home, "droid", "guard.sh")
+            which = lambda name: "/fake/bin/droid" if name == "droid" else None
+            with mock.patch("quiver.init.layout.shutil.which", side_effect=which):
+                [status] = plan_hooks(home)
+            self.assertEqual(status.state, "create")
+            self.assertEqual(status.path, home / ".factory/hooks/guard.sh")
 
     def test_identical_plain_copy_is_absorbed_not_left_alone(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -198,11 +213,14 @@ class HookRootSafetyTest(unittest.TestCase):
             home = _home(tmp)
             _hook(home, "claude", "guard.py")
             _registry(home, {"claude": {"capabilities": {"hooks": {"supported": True, "root": "~/elsewhere"}}}})
-            [status] = plan_hooks(home)
-            self.assertEqual((status.state, status.detail), ("skipped", "harness not installed"))
-            (home / "elsewhere").mkdir()
-            [status] = plan_hooks(home)
-            self.assertEqual(status.state, "create")
+            # This pins the dir rule, not the PATH rule: stub which or a
+            # machine with claude installed answers "installed" via binary.
+            with mock.patch("quiver.init.layout.shutil.which", return_value=None):
+                [status] = plan_hooks(home)
+                self.assertEqual((status.state, status.detail), ("skipped", "harness not installed"))
+                (home / "elsewhere").mkdir()
+                [status] = plan_hooks(home)
+                self.assertEqual(status.state, "create")
 
     def test_deep_root_counts_its_own_parent(self):
         with tempfile.TemporaryDirectory() as tmp:

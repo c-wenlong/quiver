@@ -215,5 +215,53 @@ jobs:
       - name: Unit tests
         run: swift test
 
-      - name: Bundle Quiver.app
+      - name: Bundle Quiver.app (debug)
         run: ./script/build-app.sh debug
+
+      - name: Bundle Quiver.app (release)
+        # The shipping configuration is compiled too: a release-only
+        # error or a broken bundle would otherwise surface first on a
+        # tag build in release.yml. QUIVER_SIGN_IDENTITY=- forces ad-hoc
+        # signing, so the step needs no certificate. The Python tarball
+        # is already in QUIVER_PYTHON_CACHE from the debug build.
+        env:
+          QUIVER_SIGN_IDENTITY: "-"
+        run: ./script/build-app.sh release
+
+      - name: Smoke-test the bundled app
+        # Exercises the bundle end to end, post-signing, against a
+        # throwaway HOME: the embedded swe (the build-time probe ran
+        # before codesign touched it), then the GUI binary itself.
+        run: |
+          test_home="$(mktemp -d)"
+          swe="build/Quiver.app/Contents/Resources/swe/bin/swe"
+          HOME="$test_home" "$swe" --help >/dev/null
+          HOME="$test_home" "$swe" version --json
+          # A GUI app that is still alive after 20 s has loaded its
+          # frameworks, Python and signature fine. A zombie child still
+          # answers kill -0, so check the process state before reaping.
+          HOME="$test_home" build/Quiver.app/Contents/MacOS/Quiver &
+          pid=$!
+          sleep 20
+          case "$(ps -o stat= -p "$pid" 2>/dev/null)" in
+            ""|*Z*)
+              if wait "$pid"; then status=0; else status=$?; fi
+              if [ "$status" -ne 0 ]; then
+                echo "::error::Quiver.app exited $status within 20 s of launch"
+                exit 1
+              fi
+              echo "Quiver.app exited cleanly before the timeout"
+              ;;
+            *)
+              kill "$pid" 2>/dev/null || true
+              wait "$pid" 2>/dev/null || true
+              echo "Quiver.app launched and stayed up"
+              ;;
+          esac
+
+      - name: Package a DMG
+        # Runs the same script release.yml calls, end to end ad-hoc, so a
+        # broken DMG path fails on the PR instead of at tag time.
+        run: |
+          ./script/make-dmg.sh build/Quiver.app "${RUNNER_TEMP}/Quiver-ci.dmg"
+          hdiutil verify "${RUNNER_TEMP}/Quiver-ci.dmg"

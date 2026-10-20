@@ -31,7 +31,12 @@ def _home(tmp: str, registry: dict | None) -> Path:
 
 def _init(home: Path) -> str:
     out = StringIO()
-    with mock.patch.object(Path, "home", staticmethod(lambda: home)), redirect_stdout(out):
+    # PATH is stubbed so the developer's own installs cannot leak in: a
+    # binary that resolves is install evidence (#68), and every harness in
+    # these tests is meant to be absent from the machine.
+    with mock.patch.object(Path, "home", staticmethod(lambda: home)), \
+            mock.patch("quiver.init.layout.shutil.which", return_value=None), \
+            redirect_stdout(out):
         init_commands.cmd_init(["--check", "--full"])
     return re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue())
 

@@ -138,6 +138,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Resumed Codex threads are one session again.** Every `codex resume`
+  writes another `rollout-<iso>-<thread>_<rollout>.jsonl`, and the parser
+  keyed each file on the trailing uuid — the resume's own rollout id, which
+  the session index, the thread store and `codex resume` have never heard
+  of. The thread uuid is the first one, so `swe session` now folds every
+  resume into the thread's single row (the newest file stands for it),
+  emits a resume hint `codex resume` can resolve, and finds the thread's
+  real name. Index records written after the rollout's own timestamp no
+  longer feed the rename check, and a resume that only re-states the live
+  name can't stretch its rename window — resumes stopped reading as renames.
+
 - **Quiver's main window goes fullscreen.** A SwiftUI `Window` scene
   marks its NSWindow `.fullScreenNone`, so Enter Full Screen stayed off
   the green button's tiles and ⌃⌘F even though the window resized. The
@@ -186,6 +197,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in the app's own `~/.quiver/accounts/harness-names.json` and shows in
   Accounts, the menu bar and widgets only, so the Harnesses page keeps the
   harness's display name. The card's Open app/Terminal buttons are icons now.
+
+- **A fresh Linux + Nix install bootstraps cleanly.** Six first-run bugs
+  together made a new machine look broken: any invocation — even a failed
+  unknown command — created `~/.quiver/config/harness.json` before it was
+  asked for anything (a read now stays a read; `save_registry` is the one
+  scaffolder), `swe init` skipped harnesses that had never run yet because
+  a config dir was the only install evidence (a binary on PATH counts now,
+  so Nix/uv installs like `crush` get their `~/.config/crush` links, hooks
+  included), `swe doctor` reported npm's global bin as the bare prefix when
+  `<prefix>/bin` did not exist yet (the POSIX convention is the answer,
+  unconditionally), `swe list` and `swe check` disagreed about the same
+  registry because archived rows counted in one and vanished in the other
+  (both now print the active count plus the shelved one, and an empty
+  registry is a deliberate empty state instead of a header over 0/0), and
+  `swe discover --apply-all` archived a home-scan find like `hermes` even
+  when its binary probed a live version (the probe result, not the source,
+  decides now; a find the confidence floor refuses is named with its
+  remedy instead of silently dropped). Old seeded registry rows are left
+  alone on upgrade — nothing in the file tells them from hand-authored
+  ones, so deleting them could erase real entries; `swe discover
+  --apply-all` after a `swe remove` remains the way to reset them.
 
 - **Setup and provider fixes.** `swe setup` stops the wizard at Ctrl-D
   (exit 130) instead of marking every remaining stage failed and exiting

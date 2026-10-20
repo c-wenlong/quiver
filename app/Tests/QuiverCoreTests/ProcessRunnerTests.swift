@@ -94,6 +94,91 @@ import Testing
     }
 }
 
+@Suite struct ProcessRunnerTimeoutTests {
+    let env = ["PATH": "/usr/bin:/bin"]
+
+    @Test func aRunThatNeverFinishesIsStoppedAtTheDeadline() async throws {
+        let runner = ProcessRunner(executable: "/bin/sh", environment: env)
+        let started = Date()
+        await #expect(throws: SweError.timedOut) {
+            try await runner.run(["-c", "exec sleep 30"], input: nil,
+                                 timeout: .milliseconds(500))
+        }
+        // The bound catches a hang, not latency: it sits under the
+        // child's 30s sleep, so a broken timeout still fails while a
+        // starved CI runner cannot trip it.
+        #expect(Date().timeIntervalSince(started) < 20)
+    }
+
+    @Test func aGrandchildHoldingThePipeStillTimesOut() async throws {
+        // sh exits at once, but the sleep it spawned keeps the stdout
+        // pipe open, so the readers would wait on EOF forever. The
+        // deadline resumes the call anyway.
+        let runner = ProcessRunner(executable: "/bin/sh", environment: env)
+        let started = Date()
+        await #expect(throws: SweError.timedOut) {
+            try await runner.run(["-c", "sleep 30 & exit 0"], input: nil,
+                                 timeout: .milliseconds(500))
+        }
+        #expect(Date().timeIntervalSince(started) < 20)
+    }
+
+    @Test func aTimeoutStopsTheWholeCommandTree() async throws {
+        // The child reports the pid of a sleep it spawned, then waits on
+        // it. Stopping only the direct child would leave the sleep
+        // running — the rebuild case is `bash` under a timed-out
+        // `build-app.sh` leaving `swift build` alive.
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let pidFile = dir.appending(path: "child.pid")
+        let runner = ProcessRunner(executable: "/bin/sh", environment: env)
+        let task = Task {
+            try await runner.run(
+                ["-c", "sleep 60 & echo $! > '\(pidFile.path)'; wait"],
+                input: nil, timeout: .milliseconds(500))
+        }
+        // Poll rather than guess when the grandchild exists.
+        let startDeadline = Date().addingTimeInterval(10)
+        while !FileManager.default.fileExists(atPath: pidFile.path), Date() < startDeadline {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        let grandchild = pid_t(
+            try String(contentsOf: pidFile, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines))
+        try #require(grandchild != nil && grandchild! > 0)
+
+        await #expect(throws: SweError.timedOut) { try await task.value }
+
+        // The orphan is dead already, but launchd reaps it on its own
+        // schedule — poll the pid instead of sleeping a guessed delay.
+        let reapDeadline = Date().addingTimeInterval(10)
+        while kill(grandchild!, 0) == 0, Date() < reapDeadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(kill(grandchild!, 0) != 0)
+    }
+
+    @Test func aQuickRunInsideItsDeadlineAnswers() async throws {
+        let runner = ProcessRunner(executable: "/bin/sh", environment: env)
+        let result = try await runner.run(["-c", "echo hi"], input: nil,
+                                          timeout: .seconds(10))
+        #expect(String(decoding: result.stdout, as: UTF8.self) == "hi\n")
+    }
+
+    @Test func aTimeoutRidesThroughTheProtocolOverload() async throws {
+        // The two-argument requirement forwards to the bounded one, so
+        // every existing call site is covered without naming a deadline.
+        let runner = ProcessRunner(executable: "/bin/sh", environment: env,
+                                   defaultTimeout: .milliseconds(500))
+        let started = Date()
+        await #expect(throws: SweError.timedOut) {
+            try await runner.run(["-c", "exec sleep 30"], input: nil)
+        }
+        #expect(Date().timeIntervalSince(started) < 20)
+    }
+}
+
 @Suite struct LoginShellTimeoutTests {
     @Test func aShellThatHangsFallsBackWithinTheTimeLimit() async throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)

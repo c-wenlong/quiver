@@ -54,22 +54,26 @@ public struct KeychainCLI: SecretReading {
     private let timeout: Duration
 
     public init(
-        runner: CommandRunning = ProcessRunner(
-            executable: KeychainCLI.securityPath, environment: ProcessInfo.processInfo.environment),
+        runner: (any CommandRunning)? = nil,
         timeout: Duration = .seconds(5)
     ) {
-        self.runner = runner
+        self.runner = runner ?? ProcessRunner(
+            executable: KeychainCLI.securityPath,
+            environment: ProcessInfo.processInfo.environment,
+            defaultTimeout: timeout)
         self.timeout = timeout
     }
 
     /// The item's password, or nil when it is missing, the keychain refused,
     /// or `security` did not answer in time (a locked keychain can prompt).
+    /// The group bound stays even when a swapped-in runner ignores the
+    /// deadline.
     public func genericPassword(service: String, account: String) async -> String? {
         let runner = self.runner
         let timeout = self.timeout
         let arguments = ["find-generic-password", "-s", service, "-a", account, "-w"]
         let result: CommandResult? = await withTaskGroup(of: CommandResult?.self) { group in
-            group.addTask { try? await runner.run(arguments) }
+            group.addTask { try? await runner.run(arguments, input: nil, timeout: timeout) }
             group.addTask {
                 try? await Task.sleep(for: timeout)
                 return nil
@@ -84,39 +88,16 @@ public struct KeychainCLI: SecretReading {
     }
 }
 
-extension KeychainCLI: SecretStoring {
-    /// `security`'s exit code when the item is not in the keychain.
-    static let itemNotFoundStatus: Int32 = 44
-
-    /// Upserts the item. `security` takes the value only through `-w` on
-    /// argv; the arguments go nowhere near a log.
-    public func setGenericPassword(service: String, account: String, value: String) async throws {
-        let result = try await runner.run([
-            "add-generic-password", "-U", "-s", service, "-a", account,
-            "-w", value, "-T", Self.securityPath])
-        guard result.status == 0 else {
-            throw SweError.commandFailed(status: result.status, message: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-    }
-
-    /// Removes the item; one that was never there is already removed.
-    public func deleteGenericPassword(service: String, account: String) async throws {
-        let result = try await runner.run(["delete-generic-password", "-s", service, "-a", account])
-        guard result.status == 0 || result.status == Self.itemNotFoundStatus else {
-            throw SweError.commandFailed(status: result.status, message: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-    }
-}
-
 /// Quiver's own keychain items, written and read in-process through the
 /// Security framework.
 ///
-/// `KeychainCLI.setGenericPassword` can take the value only on
-/// `security`'s argv, where `ps` can see it. For Quiver-owned items the
-/// in-process API is also the quiet one: an item this process wrote reads
-/// back without a prompt, while asking `security` for it may prompt.
-/// Claude Code's credentials stay on `KeychainCLI` for the inverse
-/// reason — `security` wrote them, so SecItem would prompt on every read.
+/// `security add-generic-password` can take the value only through `-w`
+/// on its argv, where `ps` can see it — so writes happen here, never
+/// through `KeychainCLI`. For Quiver-owned items the in-process API is
+/// also the quiet one: an item this process wrote reads back without a
+/// prompt, while asking `security` for it may prompt. Claude Code's
+/// credentials stay on `KeychainCLI` for the inverse reason — `security`
+/// wrote them, so SecItem would prompt on every read.
 /// The three Security calls behind `SecItemKeychain`, as a seam tests
 /// fake. C functions are not `Sendable`-friendly to store directly, so
 /// each is a closure over the real call.
@@ -135,10 +116,10 @@ struct SecItemCalls: Sendable {
 
 /// Quiver's own service keys, through Security.framework.
 ///
-/// `KeychainCLI`'s `security add-generic-password -w` puts the value on
-/// argv, where `ps` can see it; SecItem calls carry it in memory. The
-/// reverse of KeychainCLI's read caveat applies too: items the app writes
-/// here read back in-process without a prompt.
+/// Writing through `security` (`add-generic-password -w`) would put the
+/// value on argv, where `ps` can see it; SecItem calls carry it in
+/// memory. The reverse of KeychainCLI's read caveat applies too: items
+/// the app writes here read back in-process without a prompt.
 ///
 /// Reads ask for `kSecUseAuthenticationUIFail`: an item written by
 /// `security` before the switch (or a locked keychain) can wait forever

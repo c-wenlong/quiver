@@ -225,6 +225,32 @@ class TranscriptReaderTest(_HomeCase):
         self.assertEqual(transcript.messages, [])
         self.assertIn("not found", transcript.error)
 
+    def test_empty_session_id_never_reads_newest_unrelated_file(self):
+        # Pi legitimately emits sessions with session_id=""; the mtime
+        # fallback used to hand them whichever project transcript was
+        # newest and attribute its content to the empty session.
+        older = self._jsonl(
+            ".pi/agent/sessions/--work-a--/aaa.jsonl",
+            [
+                {"type": "session", "cwd": "/work/a"},
+                {"type": "message", "message": {"role": "user", "content": "project a"}},
+            ],
+        )
+        newer = self._jsonl(
+            ".pi/agent/sessions/--work-b--/bbb.jsonl",
+            [
+                {"type": "session", "cwd": "/work/b"},
+                {"type": "message", "message": {"role": "user", "content": "project b"}},
+            ],
+        )
+        os.utime(older, (1, 1))
+        os.utime(newer, (2, 2))
+
+        transcript = read_transcript(_session("pi", ""))
+        self.assertFalse(transcript.readable)
+        self.assertEqual(transcript.messages, [])
+        self.assertIn("not found", transcript.error)
+
     def test_claude_drops_local_command_caveat_and_keeps_tool_outcome(self):
         self._jsonl(
             ".claude/projects/-work-project/claude-1.jsonl",
