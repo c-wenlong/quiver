@@ -386,6 +386,229 @@ private struct ModelBrandLogo: View {
     }
 }
 
+// MARK: - Compute
+
+/// The Compute widget: a row per running harness with what it cost at the
+/// newest trend tick, and the Mac's temperature lines below. The whole
+/// thing dims and dates once the last tick ages past the widgets' stale
+/// line, so a widget left up while Quiver is off reads as old, not live.
+public struct ComputeView: View {
+    public var snapshot: WidgetSnapshot
+    public var now: Date
+    /// The size to draw for. Previews outside WidgetKit set it themselves;
+    /// the real widget leaves it nil and the environment answers.
+    public var family: WidgetFamily?
+    @Environment(\.widgetFamily) private var envFamily
+
+    public init(snapshot: WidgetSnapshot, now: Date, family: WidgetFamily? = nil) {
+        self.snapshot = snapshot
+        self.now = now
+        self.family = family
+    }
+
+    var effectiveFamily: WidgetFamily { family ?? envFamily }
+
+    /// A row's height: the medium's single line, the small's name over
+    /// its figures.
+    static func rowHeight(compact: Bool) -> CGFloat { compact ? 27 : 14 }
+    /// The tightest spacing two rows can take.
+    static func minGap(compact: Bool) -> CGFloat { compact ? 5 : 3 }
+
+    /// What the top and bottom of the widget reserve: the medium pays a
+    /// header and a footer line, the small pays only its two-line footer.
+    static func labelHeight(compact: Bool) -> CGFloat { compact ? 24 : 28 }
+
+    /// The rows `height` holds under the header and footer lines.
+    static func rows(for height: CGFloat, compact: Bool) -> Int {
+        let gap = minGap(compact: compact)
+        let room = height - labelHeight(compact: compact) - gap * 2
+        return max(1, Int((room + gap) / (rowHeight(compact: compact) + gap)))
+    }
+
+    /// The spacing `count` rows spread over `height`, like `LimitsView`'s:
+    /// tight when it must be, up to 8 when there is room to spare.
+    static func rowSpacing(for height: CGFloat, count: Int, compact: Bool) -> CGFloat {
+        guard count > 1 else { return 0 }
+        let reserved = labelHeight(compact: compact) + minGap(compact: compact) * 2
+        return min(8, (height - reserved - CGFloat(count) * rowHeight(compact: compact))
+                   / CGFloat(count - 1))
+    }
+
+    /// The temperatures the user charts, newest reading per component,
+    /// in the components' fixed order.
+    static func temperatures(_ section: WidgetSnapshot.ComputeSection) -> [(component: ThermalComponent, celsius: Double)] {
+        ThermalComponent.allCases.compactMap { component in
+            section.temperatures[component.rawValue].map { (component, $0) }
+        }
+    }
+
+    public var body: some View {
+        let compact = effectiveFamily == .systemSmall
+        let compute = snapshot.compute
+        let old = compute?.isOld(now: now) ?? false
+        GeometryReader { geo in
+            VStack(alignment: .leading, spacing: 0) {
+                if let compute {
+                    content(compute, height: geo.size.height, compact: compact)
+                } else {
+                    note("Quiver has not written compute figures yet.")
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .opacity(old ? 0.5 : 1)
+        }
+    }
+
+    /// The rows over the temperature line, or the reason there are none.
+    @ViewBuilder
+    private func content(_ compute: WidgetSnapshot.ComputeSection,
+                         height: CGFloat, compact: Bool) -> some View {
+        let rows = compute.harnesses
+        let temps = Self.temperatures(compute)
+        if rows.isEmpty {
+            note(compute.sampledAt == nil
+                 ? "Collecting, the first points arrive shortly."
+                 : "Nothing a starred harness runs is up right now.")
+            Spacer(minLength: 0)
+            footer(compute, temps: temps, compact: compact)
+        } else {
+            let hasGPU = !compact && rows.contains { $0.gpuPercent != nil }
+            let count = min(rows.count, Self.rows(for: height, compact: compact))
+            if !compact { ComputeColumns(hasGPU: hasGPU) }
+            VStack(alignment: .leading,
+                   spacing: Self.rowSpacing(for: height, count: count, compact: compact)) {
+                ForEach(rows.prefix(count)) { row in
+                    if compact {
+                        ComputeLineCompact(row: row)
+                    } else {
+                        ComputeLine(row: row, hasGPU: hasGPU)
+                    }
+                }
+            }
+            Spacer(minLength: 2)
+            footer(compute, temps: temps, compact: compact)
+        }
+    }
+
+    /// The temperature lines plus the figures' age. The age always shows,
+    /// so a frozen timeline can never pass an old sample off as live.
+    @ViewBuilder
+    private func footer(_ compute: WidgetSnapshot.ComputeSection,
+                        temps: [(component: ThermalComponent, celsius: Double)],
+                        compact: Bool) -> some View {
+        if !temps.isEmpty || compute.sampledAt != nil {
+            // The small's footer fits about two temperatures; past that
+            // it counts the rest rather than cut a sensor name in half.
+            let shown = compact ? temps.prefix(2) : temps.prefix(temps.count)
+            let tempsText = shown.map { "\($0.component.title) \(Int($0.celsius.rounded())) °C" }
+                .joined(separator: " · ")
+                + (shown.count < temps.count ? " · +\(temps.count - shown.count)" : "")
+            let age = compute.sampledAt.map { "as of \(UsageFormat.ago($0, now: now))" }
+            Group {
+                if compact {
+                    // The small has no room for temps and age side by
+                    // side, so they stack and the temps get a full line.
+                    VStack(alignment: .leading, spacing: 1) {
+                        if !temps.isEmpty { Text(tempsText).lineLimit(1) }
+                        if let age { Text(age).foregroundStyle(Palette.textSecondary) }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    HStack(spacing: 4) {
+                        if !temps.isEmpty { Text(tempsText).lineLimit(1) }
+                        Spacer(minLength: 0)
+                        if let age { Text(age).foregroundStyle(Palette.textSecondary) }
+                    }
+                }
+            }
+            .font(.system(size: 10).monospacedDigit())
+            .frame(height: compact ? 24 : 14, alignment: .center)
+        }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11)).foregroundStyle(Palette.textSecondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+/// The column labels over a compute row's figures: RAM always, GPU only
+/// when a row read it and the widget is not the small one.
+private struct ComputeColumns: View {
+    var hasGPU: Bool
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Spacer(minLength: 0)
+            Group {
+                Text("RAM").frame(width: ComputeLine.bytesWidth, alignment: .trailing)
+                Text("CPU").frame(width: ComputeLine.percentWidth, alignment: .trailing)
+                if hasGPU { Text("GPU").frame(width: ComputeLine.percentWidth, alignment: .trailing) }
+            }
+            .font(.system(size: 9)).foregroundStyle(Palette.textSecondary)
+        }
+        .frame(height: 14, alignment: .center)
+    }
+}
+
+/// One running harness: its logo and name, then its share of the Mac.
+private struct ComputeLine: View {
+    var row: WidgetSnapshot.ComputeSection.Row
+    var hasGPU: Bool
+
+    /// "14.21 GB" fits; "CPU 102%" the same.
+    static let bytesWidth: CGFloat = 56
+    static let percentWidth: CGFloat = 38
+
+    var body: some View {
+        HStack(spacing: 5) {
+            HarnessLogo(harness: row.harness, size: 12)
+            Text(UsageFormat.harness(row.harness))
+                .font(.system(size: 11, weight: .medium)).lineLimit(1)
+            Spacer(minLength: 4)
+            Group {
+                Text(ComputeSummary.bytes(row.memoryBytes))
+                    .frame(width: Self.bytesWidth, alignment: .trailing)
+                Text("\(ComputeSummary.percent(row.cpuPercent))%")
+                    .frame(width: Self.percentWidth, alignment: .trailing)
+                if hasGPU {
+                    Text(row.gpuPercent.map { "\(ComputeSummary.percent($0))%" } ?? "-")
+                        .frame(width: Self.percentWidth, alignment: .trailing)
+                }
+            }
+            .font(.system(size: 11).monospacedDigit())
+            .widgetAccentable()
+        }
+        .frame(height: ComputeView.rowHeight(compact: false))
+    }
+}
+
+/// The small widget's row: the name on its own line, the figures under
+/// it where they cannot squeeze the name out.
+private struct ComputeLineCompact: View {
+    var row: WidgetSnapshot.ComputeSection.Row
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 5) {
+                HarnessLogo(harness: row.harness, size: 12)
+                Text(UsageFormat.harness(row.harness))
+                    .font(.system(size: 11, weight: .medium)).lineLimit(1)
+            }
+            // The GB unit marks RAM; the percents keep the medium's
+            // column order, CPU then GPU.
+            Text("\(ComputeSummary.bytes(row.memoryBytes)) · \(ComputeSummary.percent(row.cpuPercent))%"
+                 + (row.gpuPercent.map { " · \(ComputeSummary.percent($0))%" } ?? ""))
+                .font(.system(size: 10).monospacedDigit())
+                .foregroundStyle(Palette.textSecondary)
+                .lineLimit(1)
+                .padding(.leading, 17)
+        }
+        .frame(height: ComputeView.rowHeight(compact: true), alignment: .top)
+    }
+}
+
 // MARK: - Preview data
 
 extension WidgetSnapshot {
@@ -425,6 +648,17 @@ extension WidgetSnapshot {
                          usedPercent: 32, resetsAt: now + 90_000, fetchedAt: now, isStale: false),
         ]
         return make(activity: activity, models: models, limits: limits,
+                    compute: WidgetSnapshot.ComputeSection(
+                        sampledAt: now,
+                        harnesses: [
+                            .init(harness: "claude", memoryBytes: 13_400_000_000,
+                                  cpuPercent: 87, gpuPercent: 34),
+                            .init(harness: "codex", memoryBytes: 3_100_000_000,
+                                  cpuPercent: 12, gpuPercent: 4),
+                            .init(harness: "cursor", memoryBytes: 1_900_000_000,
+                                  cpuPercent: 4, gpuPercent: nil),
+                        ],
+                        temperatures: ["cpu": 61, "gpu": 58, "ssd": 34, "battery": 33]),
                     selection: WidgetSelection(), now: now, calendar: calendar)
     }
 }

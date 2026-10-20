@@ -18,7 +18,8 @@ struct WidgetsPage: View {
     private var snapshot: WidgetSnapshot {
         let style = app.widgetHarnessStyle
         return app.limits.widgetSnapshot(overview: app.overview, selection: app.widgetSelection,
-                                         harnessOrder: style.order, harnessColors: style.colors)
+                                         harnessOrder: style.order, harnessColors: style.colors,
+                                         compute: app.widgetCompute)
     }
 
     /// The tab's widget, falling back to the first for a stored kind that
@@ -163,6 +164,25 @@ private struct WidgetCard: View {
             WidgetSurface(size: Self.medium, snapshot: snapshot) {
                 ModelsView(snapshot: $0)
             }
+        case "compute":
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 16) {
+                    WidgetSurface(size: Self.medium, snapshot: snapshot) {
+                        ComputeView(snapshot: $0, now: now, family: .systemMedium)
+                    }
+                    WidgetSurface(size: Self.small, snapshot: snapshot) {
+                        ComputeView(snapshot: $0, now: now, family: .systemSmall)
+                    }
+                }
+                FlowLayout(spacing: 16, lineSpacing: 16) {
+                    WidgetSurface(size: Self.medium, snapshot: snapshot) {
+                        ComputeView(snapshot: $0, now: now, family: .systemMedium)
+                    }
+                    WidgetSurface(size: Self.small, snapshot: snapshot) {
+                        ComputeView(snapshot: $0, now: now, family: .systemSmall)
+                    }
+                }
+            }
         default: EmptyView()
         }
     }
@@ -240,10 +260,12 @@ private struct WidgetCard: View {
 
     /// Every harness the widget's switch list offers: ones with usage in
     /// the Overview data plus any its hidden set still names, in the
-    /// Settings order.
+    /// Settings order. The Compute widget's list also takes the starred
+    /// harnesses swe knows, since a running one may have no usage yet.
     private func usageHarnesses(for widget: WidgetSelection.Widget) -> [String] {
         var names = Set((app.overview?.activityRows ?? []).map(\.harness))
         names.formUnion((app.overview?.recentRows ?? []).map(\.harness))
+        if widget == .compute { names.formUnion(app.compute.matchers.map(\.harness)) }
         let listed = app.widgetSelection.listedHarnesses(withUsage: names, for: widget)
         return app.providers.ordered(Array(listed))
     }

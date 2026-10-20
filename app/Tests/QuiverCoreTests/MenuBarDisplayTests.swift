@@ -120,8 +120,9 @@ private var today: UsageTotals {
 }
 
 @Suite struct WidgetCatalogTests {
-    @Test func listsTheFourWidgetsByTheirKinds() {
-        #expect(WidgetCatalog.all.map(\.kind) == ["limits", "summary", "heatmap", "models"])
-        #expect(WidgetCatalog.all.map(\.title) == ["Usage limits", "Usage summary", "Activity heatmap", "Top models"])
+    @Test func listsTheWidgetsByTheirKinds() {
+        #expect(WidgetCatalog.all.map(\.kind) == ["limits", "summary", "heatmap", "models", "compute"])
+        #expect(WidgetCatalog.all.map(\.title) == ["Usage limits", "Usage summary", "Activity heatmap",
+                                                  "Top models", "Compute"])
     }
 }

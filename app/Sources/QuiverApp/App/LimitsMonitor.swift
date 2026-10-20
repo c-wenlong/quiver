@@ -70,32 +70,55 @@ final class LimitsMonitor {
     /// The snapshot the widgets would show now, under `selection`. The
     /// Desktop widgets tab previews this, so it matches what a settings
     /// change writes. `harnessOrder` is the Settings order for the
-    /// summary's per-harness lines, `harnessColors` their hex colours.
+    /// summary's per-harness lines, `harnessColors` their hex colours,
+    /// `compute` the Compute widget's already-filtered section.
     func widgetSnapshot(overview: OverviewModel?, selection: WidgetSelection,
                         harnessOrder: [String] = [], harnessColors: [String: String] = [:],
+                        compute: WidgetSnapshot.ComputeSection? = nil,
                         now: Date = .now) -> WidgetSnapshot {
         WidgetSnapshot.make(
             activity: overview?.activityRows ?? [], models: overview?.recentRows ?? [],
-            limits: readings, selection: selection,
+            limits: readings, compute: compute, selection: selection,
             harnessOrder: harnessOrder, harnessColors: harnessColors,
             now: now, calendar: .current)
     }
 
+    /// The closest two WidgetKit pushes may sit. The file takes every
+    /// write, but each `reloadAllTimelines` spends a little of the day's
+    /// reload budget: one per change spent it inside a few hours, and the
+    /// widgets froze on their last timeline entry ("45m ago" forever).
+    /// The timeline's own reads keep the widgets fresh between pushes.
+    static let reloadFloor: TimeInterval = 15 * 60
+    @ObservationIgnored private var lastWidgetReloadAt: Date?
+
+    /// Whether a write should also ask WidgetKit to redraw: on the first
+    /// write, on a forced one (a settings change the user just made), or
+    /// once the floor has passed since the last push.
+    func shouldPushWidgets(force: Bool, now: Date) -> Bool {
+        if force { return true }
+        guard let last = lastWidgetReloadAt else { return true }
+        return now.timeIntervalSince(last) >= Self.reloadFloor
+    }
+
     /// Rewrite the widgets' file when what they show has changed, and ask
-    /// WidgetKit to redraw.
+    /// WidgetKit to redraw, throttled so the reload budget lasts the day.
     func writeWidgets(overview: OverviewModel?, selection: WidgetSelection,
                       harnessOrder: [String] = [], harnessColors: [String: String] = [:],
-                      now: Date = .now) {
+                      compute: WidgetSnapshot.ComputeSection? = nil,
+                      force: Bool = false, now: Date = .now) {
         let snapshot = widgetSnapshot(overview: overview, selection: selection,
                                       harnessOrder: harnessOrder, harnessColors: harnessColors,
-                                      now: now)
+                                      compute: compute, now: now)
         var comparable = snapshot
         comparable.generatedAt = lastWidgetSnapshot?.generatedAt ?? now
         guard comparable != lastWidgetSnapshot else { return }
         do {
             try widgets.write(snapshot)
             lastWidgetSnapshot = snapshot
-            WidgetCenter.shared.reloadAllTimelines()
+            if shouldPushWidgets(force: force, now: now) {
+                WidgetCenter.shared.reloadAllTimelines()
+                lastWidgetReloadAt = now
+            }
         } catch {
             // The widgets keep their last file; nothing else depends on it.
         }

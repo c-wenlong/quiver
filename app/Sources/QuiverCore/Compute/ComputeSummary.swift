@@ -476,4 +476,9 @@ public enum ComputeSummary {
         formatter.countStyle = .memory
         return formatter.string(fromByteCount: Int64(count))
     }
+
+    /// Whole percent once it is two digits, one decimal below it.
+    public static func percent(_ percent: Double) -> String {
+        percent.formatted(.number.precision(.fractionLength(percent >= 10 ? 0 : 1)))
+    }
 }

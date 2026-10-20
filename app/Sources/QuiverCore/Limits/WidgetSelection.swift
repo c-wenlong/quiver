@@ -103,13 +103,13 @@ public struct SourceSelection: Equatable, Sendable {
 }
 
 /// The desktop widgets' own settings: which limit sources and windows the
-/// Usage limits widget shows, and which harnesses the three usage widgets
+/// Usage limits widget shows, and which harnesses the per-harness widgets
 /// count. A harness shows until switched off, so one added later is on.
 public struct WidgetSelection: Equatable, Sendable {
-    /// A widget that counts per-harness usage. Its raw value ends the
+    /// A widget that lists per-harness figures. Its raw value ends the
     /// `widgetHarnesses` key, and matches its `WidgetCatalog` kind.
     public enum Widget: String, CaseIterable, Sendable {
-        case summary, heatmap, models
+        case summary, heatmap, models, compute
     }
 
     /// The Usage limits widget's sources and windows, in the dragged order.
