@@ -101,9 +101,16 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
     path = _config_path(path)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        return _copy_mapping(data) if isinstance(data, dict) else {}
     except (FileNotFoundError, OSError, UnicodeError, json.JSONDecodeError):
         return {}
-    return _copy_mapping(data) if isinstance(data, dict) else {}
+    except RecursionError as exc:
+        # JSON nested deeper than the interpreter limit parses as far as
+        # json.loads gets, then kills deepcopy too — a valid file we cannot
+        # represent is corrupt for our purposes, never silently empty.
+        raise CorruptConfigurationError(
+            f"Cannot parse JSON in {path}: nesting too deep"
+        ) from exc
 
 
 def parse_json_object(text: str, path: Path) -> dict[str, Any]:
@@ -150,7 +157,7 @@ def _assert_existing_file_is_safe(path: Path) -> None:
         return
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise CorruptConfigurationError(
             f"Refusing to overwrite malformed configuration at {path}"
         ) from exc
@@ -262,7 +269,7 @@ def parse_config_value(text: str) -> Any:
 
     try:
         value = json.loads(text)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         return text
     # Objects make shell updates too easy to misapply.  Nested configuration is
     # addressed with dotted keys; scalars and arrays are the supported values.
@@ -391,9 +398,17 @@ def check_config(path: Path | None = None) -> list[ConfigIssue]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         return [ConfigIssue("", f"cannot read valid JSON from {path}: {exc}")]
+    except RecursionError as exc:
+        return [ConfigIssue(
+            "", f"cannot read valid JSON from {path}: nesting too deep")]
     if not isinstance(data, dict):
         return [ConfigIssue("", "configuration must be a JSON object")]
-    return validate_config(data)
+    try:
+        return validate_config(data)
+    except RecursionError:
+        # The file parsed but is nested too deep for the validators to
+        # walk — report it like any other malformed configuration.
+        return [ConfigIssue("", "configuration is nested too deep to validate")]
 
 
 def select_editor(env: Mapping[str, str] | None = None) -> list[str]:

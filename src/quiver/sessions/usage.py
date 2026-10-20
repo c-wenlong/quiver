@@ -1,6 +1,7 @@
 """Session usage counters for harness sorting."""
 
 import json
+import math
 import os
 import time
 
@@ -46,7 +47,7 @@ def _window_key(days: int | None) -> str:
 def _read_cache() -> dict:
     try:
         data = json.loads(SESSION_COUNTS_CACHE_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError, RecursionError):
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -56,7 +57,14 @@ def _load_cached_counts(days: int | None) -> dict[str, int] | None:
     entry = (_read_cache().get("windows") or {}).get(_window_key(days))
     if not isinstance(entry, dict):
         return None
-    if time.time() - float(entry.get("cached_at", 0)) > _counts_ttl():
+    try:
+        cached_at = float(entry.get("cached_at", 0))
+    except (TypeError, ValueError, OverflowError):
+        # A hand-edited cache that will not parse is a miss, not a crash.
+        # OverflowError: json happily stores a 400-digit integer that
+        # float() cannot convert.
+        return None
+    if not math.isfinite(cached_at) or time.time() - cached_at > _counts_ttl():
         return None
     counts = entry.get("counts")
     if not isinstance(counts, dict):
@@ -68,7 +76,11 @@ def _load_cached_counts(days: int | None) -> dict[str, int] | None:
         # honest as a fresh one for the whole day the entry lives.
         _CACHED_BROKEN.clear()
         _CACHED_BROKEN.update(str(b) for b in broken)
-    return {str(k): int(v) for k, v in counts.items()}
+    try:
+        return {str(k): int(v) for k, v in counts.items()}
+    except (TypeError, ValueError, OverflowError):
+        # int() on a float("inf") from the cache raises OverflowError.
+        return None
 
 
 def _save_cached_counts(days: int | None, counts: dict[str, int],

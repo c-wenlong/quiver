@@ -31,7 +31,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from quiver.find.plugin_drift import _harness_env
-from quiver.paths import cache_dir_for
+from quiver.paths import cache_dir_for, expand_user
 from quiver.plugins.models import ActionResult
 from quiver.plugins.catalog import ACTIONABLE, READERS, _public
 
@@ -175,7 +175,7 @@ def marketplace_source(source: str, home: Path) -> str:
     source = source.strip()
     if source.startswith("-") or not source:
         raise ActionError(f"not a marketplace source: {source!r}; use {_SOURCE_FORMS}")
-    folder = Path(source).expanduser()
+    folder = expand_user(source)
     # A path-looking source is a folder or nothing: `./plugins` must not
     # pass as the GitHub repo "./plugins".
     looks_like_path = source.startswith(("/", "~", "."))

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from quiver.console import c, elide
 from quiver.json_output import emit
+from quiver.paths import expand_user
 from quiver.skills.catalog_discover import apply_skill_catalog_findings, discover_skill_catalogs
 from quiver.skills.models import CatalogRow
 from quiver.skills.help_text import print_skills_catalog_help, print_skills_discover_help
@@ -22,7 +23,7 @@ _CATALOG_SUBCOMMANDS = frozenset({"list", "ls", "add", "remove", "rm", "help", "
 def _looks_like_catalog_path(arg: str) -> bool:
     if arg in (".", ".."):
         return True
-    expanded = Path(arg).expanduser()
+    expanded = expand_user(arg)
     if expanded.exists():
         return True
     return arg.startswith(("/", "~", "."))

@@ -30,7 +30,10 @@ class OffPathHit:
 
 
 def _expand(path: str) -> Path:
-    return Path(os.path.expanduser(path)).expanduser()
+    # os.path.expanduser leaves an unresolvable ``~user`` literal instead
+    # of raising; the trailing Path.expanduser this used to chain turned
+    # that literal into a RuntimeError.
+    return Path(os.path.expanduser(path))
 
 
 def path_entries() -> list[str]:
@@ -126,13 +129,27 @@ def nvm_bin_dirs(home: Path | None = None) -> list[Path]:
     home = home or Path.home()
     nvm_dir = Path(os.environ.get("NVM_DIR", home / ".nvm"))
     versions = nvm_dir / "versions" / "node"
-    if not versions.is_dir():
-        return []
     dirs: list[Path] = []
-    for child in sorted(versions.iterdir()):
+    try:
+        # is_dir() propagates EACCES when a parent lacks search
+        # permission — that belongs in the same "cannot see" bucket as
+        # an iterdir() failure, so both live inside the guard.
+        if not versions.is_dir():
+            return []
+        children = sorted(versions.iterdir())
+    except OSError:
+        # An unreadable nvm dir means "no nvm installs we can see",
+        # not a crash for the command that asked.
+        return []
+    for child in children:
         bin_dir = child / "bin"
-        if bin_dir.is_dir():
-            dirs.append(bin_dir)
+        try:
+            if bin_dir.is_dir():
+                dirs.append(bin_dir)
+        except OSError:
+            # Same story one level down: a version dir we can list but
+            # not stat through is skipped like a missing bin/.
+            continue
     return dirs
 
 
@@ -162,7 +179,8 @@ def search_dirs_for_command(command: str, home: Path | None = None) -> list[OffP
                 if resolved not in seen:
                     seen.add(resolved)
                     hits.append(OffPathHit(command=command, path=resolved, source=source))
-        except OSError:
+        except (OSError, RuntimeError):
+            # RuntimeError: resolve() reports a symlink loop that way.
             continue
     return hits
 

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from quiver.init.layout import _looks_like_backup
+from quiver.paths import expand_user
 
 
 @dataclass
@@ -108,7 +109,7 @@ def tool_views(hub: dict) -> list[ToolView]:
         # so sync works without per-tool code. Most of those files do not
         # exist, and listing 20 harnesses as "missing 33 servers" when they
         # have no MCP config at all buries the ones that really are behind.
-        on_disk = bool(path) and Path(str(path)).expanduser().exists()
+        on_disk = bool(path) and expand_user(path).exists()
         if not on_disk and not servers:
             continue
         path = str(path or "")

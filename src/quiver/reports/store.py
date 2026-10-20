@@ -55,7 +55,8 @@ def _read_json(path: Path, default: Any) -> Any:
         return default
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError,
+            RecursionError) as exc:
         raise MalformedReportStateError(path) from exc
 
 

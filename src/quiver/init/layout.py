@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from quiver import paths as _paths
+from quiver.configuration import CorruptConfigurationError
 from quiver.harness.catalog import HARNESS_CATALOG
 
 # The layout itself is defined in quiver.paths so runtime code and this
@@ -608,18 +609,33 @@ ARCHIVED_DETAIL = "archived in harness.json"
 
 
 def load_registry(home: Path) -> dict:
-    """harness.json under ``home``, read-only; {} when absent or unreadable.
+    """harness.json under ``home``, read-only; {} only when absent.
 
     Not ``harness.registry.load_registry``: that resolves the file against the
     real home at import time and seeds one when it is missing, and init must
     neither read the wrong machine's registry in a test nor write one here.
+
+    Raises :class:`CorruptConfigurationError` when the file exists but will
+    not parse: callers hand this dict to ``register()`` and link-state
+    writes, and an ``{}`` read would let the next save erase every saved
+    pin, archive, and alias.
     """
     path = _paths.config_dir_for(home) / "harness.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return {}
-    return data if isinstance(data, dict) else {}
+    except (OSError, ValueError, RecursionError) as exc:
+        raise CorruptConfigurationError(
+            f"{path}: cannot read the registry ({exc});"
+            " fix or remove the file"
+        ) from exc
+    if not isinstance(data, dict):
+        raise CorruptConfigurationError(
+            f"{path}: top level is {type(data).__name__}, not an object;"
+            " fix or remove the file"
+        )
+    return data
 
 
 def aliases_of(entry) -> list[str]:
