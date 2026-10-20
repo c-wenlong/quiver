@@ -580,18 +580,13 @@ def _fetch_rate_limits(refresh: bool, tool_names: set[str], wait: bool = False,
 def _kept_fields(previous: dict | None) -> dict:
     """Fields a re-add carries over from the entry it replaces.
 
-    ``swe add`` rewrites a whole entry; the human name and a chosen
-    colour are user decisions, so a re-add must not erase them.
+    ``swe add`` rewrites a whole entry; state, pins, capabilities and
+    any other field the command does not own are user decisions, so a
+    re-add must not erase them.
     """
     previous = previous or {}
-    kept = {}
-    name = display_name(previous)
-    if name:
-        kept["display_name"] = name
-    colour = previous.get("primary_color")
-    if colour:
-        kept["primary_color"] = colour
-    return kept
+    owned = {"command", "description", "version", "tags", "aliases", "added"}
+    return {k: v for k, v in previous.items() if k not in owned}
 
 
 def cmd_list(args):
@@ -977,6 +972,7 @@ def cmd_list(args):
     # place and can leave a dangling escape.
     tag_str = elide("  ".join(all_tags), max(20, terminal_width() - 10))
     print(f"  {c('dim', 'tags:')}  {c('cyan', tag_str)}\n")
+    return 0
 
 
 def _registry_state(name: str) -> str:
@@ -1265,14 +1261,15 @@ def _add_interactive(args: list[str]) -> int:
             return 1
         if choice in ("", "y", "yes"):
             action = "Updated" if draft["name"] in tools else "Added"
+            previous = tools.get(draft["name"]) or {}
             tools[draft["name"]] = {
                 "command": draft["command"],
                 "description": draft["description"],
                 "version": version,
                 "tags": tags_list,
                 "aliases": aliases_list,
-                "added": datetime.now().isoformat(),
-                **_kept_fields(tools.get(draft["name"])),
+                "added": previous.get("added") or datetime.now().isoformat(),
+                **_kept_fields(previous),
             }
             save_registry(tools)
             saved_status = c("green", "installed") if installed else c("yellow", "not yet in PATH")
@@ -1320,9 +1317,11 @@ def cmd_add(args):
     tools = load_registry()
     name = args[0]
     command = args[1]
-    desc = ""
-    tags = ["agentic", "coding"]
-    aliases: list[str] = []
+    # None means "not supplied": re-adding keeps the saved description,
+    # while an explicit `--description=` or empty positional clears it.
+    desc: str | None = None
+    tags: list[str] | None = None
+    aliases: list[str] | None = None
     no_replace = False
 
     i = 2
@@ -1362,30 +1361,37 @@ def cmd_add(args):
         return 1
     # An alias another harness answers to would redirect `swe use` and
     # `swe remove` for that name.
-    collision = _alias_collision(tools, name, aliases)
+    collision = _alias_collision(tools, name, aliases or [])
     if collision:
         print(c("red", f"  {collision}"), file=refusal)
         return 1
 
     action = "Updated" if name in tools else "Added"
+    previous = tools.get(name) or {}
     tools[name] = {
         "command": command,
-        "description": desc,
-        "version": None,
-        "tags": tags,
-        "aliases": aliases,
-        "added": datetime.now().isoformat(),
-        **_kept_fields(tools.get(name)),
+        "description": desc if desc is not None else previous.get("description", ""),
+        # The stored version belongs to the probed binary: pointing the
+        # entry at a different command must not keep the old one.
+        "version": previous.get("version") if previous.get("command") == command else None,
+        "tags": tags if tags is not None else previous.get("tags", ["agentic", "coding"]),
+        "aliases": aliases if aliases is not None else previous.get("aliases", []),
+        "added": previous.get("added") or datetime.now().isoformat(),
+        **_kept_fields(previous),
     }
     save_registry(tools)
     installed = is_installed(command)
+    saved_aliases = tools[name]["aliases"]
+    saved_tags = tools[name]["tags"]
     if json_view:
         return emit({"name": name, "command": command,
                      "action": action.lower(), "installed": installed,
-                     "aliases": aliases, "tags": tags})
+                     "aliases": saved_aliases, "tags": saved_tags})
     status = c("green", "installed") if installed else c("yellow", "not yet in PATH")
-    alias_str = f"  aliases: {', '.join(aliases)}" if aliases else ""
+    alias_str = f"  aliases: {', '.join(saved_aliases)}" if saved_aliases else ""
     print(f"  {c('green', '✓')} {action} '{name}' → '{command}' ({status}){alias_str}")
+    if tools[name].get("state") == "archived":
+        print(c("dim", "  still archived — `swe hs star` brings it back"))
 
 
 def cmd_remove(args):
@@ -1993,24 +1999,21 @@ def cmd_install(args):
     aliases = list(entry.get("aliases") or catalog.get("aliases") or [])
     colour = entry.get("primary_color") or catalog.get("primary_color")
 
+    previous = tools.get(reg_name, {})
     entry = {
+        **previous,
         "command": cmd_name,
         "description": desc,
-        "version": ver,
+        "version": ver or (
+            previous.get("version")
+            if previous.get("command") == cmd_name else None
+        ),
         "tags": tags,
         "aliases": aliases,
     }
     if colour:
         entry["primary_color"] = colour
     if reg_name in tools:
-        # Preserve display name / notes / added if present
-        prev = tools[reg_name]
-        for keep in ("display_name", "notes", "added"):
-            if keep in prev and keep not in entry:
-                entry[keep] = prev[keep]
-        entry["description"] = desc or prev.get("description", "")
-        entry["tags"] = tags or prev.get("tags", [])
-        entry["aliases"] = aliases or prev.get("aliases", [])
         action = "Updated"
     else:
         entry["added"] = datetime.now().isoformat()
