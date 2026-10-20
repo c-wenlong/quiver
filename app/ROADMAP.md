@@ -139,15 +139,15 @@ Phases in order. Phase 4 can run alongside 1 to 3.
 - [x] Services: Sessions and Models say when a Devin or Artificial Analysis key is needed, and link to Settings › Services and the token page. ([#406](https://github.com/c-wenlong/quiver/pull/406))
 
 **Phase 4. Release pipeline**
-- [ ] Build releases with `QUIVER_CHANNEL=prod`, and hide the channel picker and Rebuild in prod builds.
+- [x] Prod builds hide the channel picker and Rebuild ([#409](https://github.com/c-wenlong/quiver/pull/409)). Releases build with `QUIVER_CHANNEL=prod` once the release job below exists.
 - [ ] Sign with Developer ID, hardened runtime and `--timestamp` (`build-app.sh` only finds Apple Development identities). Check what entitlements the bundled Python needs (ctypes). Then notarize and staple.
 - [ ] A macOS 26 release job that builds, signs, notarizes, makes the DMG and attaches it to the GitHub release. The release workflow builds only the Python wheel today.
-- [ ] Version stamps come from `git describe`, which reads `0.0.0` on a shallow CI checkout. Fetch tags or pass the version in.
+- [x] Version stamps come from `git describe`, which reads `0.0.0` on a shallow CI checkout. Fetch tags or pass the version in. ([#411](https://github.com/c-wenlong/quiver/pull/411))
 - [ ] Universal build (arm64 and x86_64), Python included, or say Apple Silicon only on the download page. macOS 26 is the floor either way.
 - [ ] In-app updates (Sparkle and an appcast). Today Settings only links to the releases page.
-- [ ] `NSAppleEventsUsageDescription` (Sign in, Resume and Run in Terminal use `osascript`).
-- [ ] Keychain writes pass the secret on `security`'s argv (`UsageProduction.swift`). Use stdin or the Security framework.
-- [ ] The release check calls the `c-wenlong/quiver` releases API, so the repo has to be public.
+- [x] `NSAppleEventsUsageDescription` (Sign in, Resume and Run in Terminal use `osascript`). ([#412](https://github.com/c-wenlong/quiver/pull/412))
+- [x] Keychain writes pass the secret on `security`'s argv (`UsageProduction.swift`). Use stdin or the Security framework. ([#410](https://github.com/c-wenlong/quiver/pull/410))
+- [x] The release check calls the `c-wenlong/quiver` releases API, so the repo has to be public. (the repo is public)
 
 **Phase 5. Polish**
 - [ ] First ledger scan: show files done out of total, and partial results. A heavy user waits minutes behind a spinner.

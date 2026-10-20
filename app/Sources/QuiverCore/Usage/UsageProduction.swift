@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 /// The network, through an ephemeral session that keeps nothing: no cookies,
 /// no response cache, no stored credentials, and no redirects followed, so a
@@ -104,6 +105,121 @@ extension KeychainCLI: SecretStoring {
         guard result.status == 0 || result.status == Self.itemNotFoundStatus else {
             throw SweError.commandFailed(status: result.status, message: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
         }
+    }
+}
+
+/// Quiver's own keychain items, written and read in-process through the
+/// Security framework.
+///
+/// `KeychainCLI.setGenericPassword` can take the value only on
+/// `security`'s argv, where `ps` can see it. For Quiver-owned items the
+/// in-process API is also the quiet one: an item this process wrote reads
+/// back without a prompt, while asking `security` for it may prompt.
+/// Claude Code's credentials stay on `KeychainCLI` for the inverse
+/// reason — `security` wrote them, so SecItem would prompt on every read.
+/// The three Security calls behind `SecItemKeychain`, as a seam tests
+/// fake. C functions are not `Sendable`-friendly to store directly, so
+/// each is a closure over the real call.
+struct SecItemCalls: Sendable {
+    var copyMatching: @Sendable (CFDictionary, UnsafeMutablePointer<CFTypeRef?>) -> OSStatus
+    var update: @Sendable (CFDictionary, CFDictionary) -> OSStatus
+    var add: @Sendable (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus
+    var delete: @Sendable (CFDictionary) -> OSStatus
+
+    static let live = SecItemCalls(
+        copyMatching: { SecItemCopyMatching($0, $1) },
+        update: { SecItemUpdate($0, $1) },
+        add: { SecItemAdd($0, $1) },
+        delete: { SecItemDelete($0) })
+}
+
+/// Quiver's own service keys, through Security.framework.
+///
+/// `KeychainCLI`'s `security add-generic-password -w` puts the value on
+/// argv, where `ps` can see it; SecItem calls carry it in memory. The
+/// reverse of KeychainCLI's read caveat applies too: items the app writes
+/// here read back in-process without a prompt.
+///
+/// Reads ask for `kSecUseAuthenticationUIFail`: an item written by
+/// `security` before the switch (or a locked keychain) can wait forever
+/// on a consent prompt, and a page load must not hang on it. Such a read
+/// answers nil.
+///
+/// Writes and deletes are explicit user actions — the Save or Remove a
+/// person just clicked — so they may prompt. One consent puts Quiver on
+/// the item's access list, which is how a key saved before the switch
+/// becomes readable again: the first save after the upgrade prompts
+/// once, and reads stop returning nil for it from then on.
+public struct SecItemKeychain: SecretStoring {
+    private let calls: SecItemCalls
+
+    public init() { calls = .live }
+    init(calls: SecItemCalls) { self.calls = calls }
+
+    /// The item's password, or nil when it is missing, the keychain
+    /// refused, the read would have prompted, or the value is not UTF-8.
+    public func genericPassword(service: String, account: String) async -> String? {
+        var item: CFTypeRef?
+        var query = Self.query(service: service, account: account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        let status = calls.copyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let data = item as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Upserts the item: update first, add when it is not there yet. The
+    /// value rides in the query dictionary, never on a tool's argv.
+    public func setGenericPassword(service: String, account: String, value: String) async throws {
+        // Explicit save: the consent prompt is acceptable here, and one
+        // consent on an item written by `security` grants Quiver access.
+        var query = Self.query(service: service, account: account, interactive: true)
+        let data = Data(value.utf8)
+        switch calls.update(query as CFDictionary,
+                            [kSecValueData as String: data] as CFDictionary) {
+        case errSecSuccess:
+            return
+        case errSecItemNotFound:
+            query[kSecValueData as String] = data
+            try Self.check(calls.add(query as CFDictionary, nil))
+        case let status:
+            throw Self.error(status)
+        }
+    }
+
+    /// Removes the item; one that was never there is already removed.
+    public func deleteGenericPassword(service: String, account: String) async throws {
+        let status = calls.delete(Self.query(service: service, account: account,
+                                             interactive: true) as CFDictionary)
+        if status != errSecItemNotFound {
+            try Self.check(status)
+        }
+    }
+
+    private static func query(service: String, account: String,
+                              interactive: Bool = false) -> [String: Any] {
+        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                    kSecAttrService as String: service,
+                                    kSecAttrAccount as String: account]
+        if !interactive {
+            // Never put up a consent prompt on a read: it can wait
+            // forever while a page is trying to load.
+            query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
+        }
+        return query
+    }
+
+    /// What a failed SecItem call throws: `commandFailed` with Security's
+    /// own message for the status, which never contains the value. The
+    /// seam tests exercise without touching a keychain.
+    static func error(_ status: OSStatus) -> SweError {
+        let message = SecCopyErrorMessageString(status, nil) as? String
+            ?? "The keychain answered with an error."
+        return .commandFailed(status: status, message: message)
+    }
+
+    private static func check(_ status: OSStatus) throws {
+        if status != errSecSuccess { throw error(status) }
     }
 }
 
