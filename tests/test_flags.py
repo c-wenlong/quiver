@@ -404,6 +404,41 @@ class BareFlagRejectionTest(unittest.TestCase):
             _run(cmd_add, ["demo", "demo-cmd", "--description="])
         self.assertEqual(save.call_args[0][0]["demo"]["description"], "")
 
+    def test_install_onto_a_new_command_drops_the_old_version(self):
+        # Same rule as cmd_add: when --command points the entry at a
+        # different binary and no version probe returns a value, the old
+        # binary's version must not survive on the saved entry.
+        import subprocess as sp
+
+        from quiver.harness.installers import Installer
+
+        existing = {"demo": {"command": "old-bin", "version": "9.9"}}
+        done = sp.CompletedProcess(args=[], returncode=0)
+
+        def fake_which(tool):
+            return "/usr/bin/brew" if tool == "brew" else None
+
+        with patch(
+            "quiver.harness.commands.load_registry_readonly",
+            return_value=existing,
+        ), patch(
+            "quiver.harness.commands.load_registry",
+            return_value=dict(existing),
+        ), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch(
+            "quiver.harness.installers.installers_for",
+            return_value=[Installer("brew", "demo-pkg")],
+        ), patch(
+            "quiver.harness.commands.shutil.which", side_effect=fake_which
+        ), patch(
+            "quiver.harness.commands.subprocess.run", return_value=done
+        ):
+            _run(cmd_install, ["demo", "--via=brew", "--command=new-bin"])
+        saved = save.call_args[0][0]["demo"]
+        self.assertEqual(saved["command"], "new-bin")
+        self.assertIsNone(saved["version"])
+
     def test_adding_a_new_harness_sets_no_display_name(self):
         with patch("quiver.harness.commands.load_registry", return_value={}), patch(
             "quiver.harness.commands.save_registry"

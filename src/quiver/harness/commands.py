@@ -1997,11 +1997,15 @@ def cmd_install(args):
     aliases = list(entry.get("aliases") or catalog.get("aliases") or [])
     colour = entry.get("primary_color") or catalog.get("primary_color")
 
+    previous = tools.get(reg_name, {})
     entry = {
-        **tools.get(reg_name, {}),
+        **previous,
         "command": cmd_name,
         "description": desc,
-        "version": ver or tools.get(reg_name, {}).get("version"),
+        "version": ver or (
+            previous.get("version")
+            if previous.get("command") == cmd_name else None
+        ),
         "tags": tags,
         "aliases": aliases,
     }
