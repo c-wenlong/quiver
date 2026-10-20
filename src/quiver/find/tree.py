@@ -15,7 +15,7 @@ from quiver.init.layout import (
     INSTRUCTION_TARGETS,
     _looks_like_backup,
     classify_skill_root,
-    skill_folder_names,
+    skill_folder_scan,
     discover_skill_roots,
     inspect,
     skill_root_label,
@@ -58,6 +58,16 @@ def _skill_names(root: Path) -> list[str]:
     )
 
 
+def count_skills_checked(root: Path) -> tuple[int, bool]:
+    """(count, complete) — ``complete=False`` when the walk hit its cap.
+
+    A capped count is a lower bound: printing it bare would claim the tree
+    holds fewer skills than it does.
+    """
+    names, complete = skill_folder_scan(root)
+    return len(names), complete
+
+
 def count_skills(root: Path) -> int:
     """Distinct skill folders under ``root`` at any depth, following symlinks.
 
@@ -66,7 +76,7 @@ def count_skills(root: Path) -> int:
     double-count: ~/.pane/skills keeps a fetched copy under .sources alongside
     the expanded one, 155 files for 61 actual skills.
     """
-    return len(skill_folder_names(root))
+    return count_skills_checked(root)[0]
 
 
 def _lands_on(path: Path, target: Path | None, canonical: Path) -> bool:
@@ -122,7 +132,13 @@ def skills_tree(home: Path | None = None) -> tuple[Path, list[Node]]:
         kind, target = _describe(path)
         count = 0
         if kind == "directory":
-            count = count_skills(path)
+            count, complete = count_skills_checked(path)
+            if not complete:
+                # A capped scan only saw part of the tree: the number is a
+                # lower bound, and showing it bare would claim the rest of
+                # the skills do not exist.
+                note = "count is a lower bound (scan hit the directory cap)"
+                detail = f"{detail} · {note}" if detail else note
         nodes.append(Node(skill_root_label(path, home), path, kind, state,
                           target, count, detail))
     return shared, nodes

@@ -295,21 +295,31 @@ def skill_root_label(
     return owner[1:] if owner.startswith(".") else owner
 
 
-def _skill_mds(root: Path) -> dict[str, list[Path]]:
-    """dir-name -> its SKILL.md paths for every skill folder under ``root``.
+# os.walk with followlinks has no depth or size bound: a skills root holding
+# a symlink to $HOME would otherwise scan the whole home. Same cap as the
+# plugin drift check (find/plugin_drift.py's MAX_ENTRIES).
+_WALK_DIR_CAP = 20_000
+
+
+def _skill_mds(root: Path) -> tuple[dict[str, list[Path]], bool]:
+    """(dir-name -> SKILL.md paths, complete) for skill folders under ``root``.
 
     One name can map to several folders — ``live/alpha`` and
     ``.sources/alpha`` are different skills that happen to share a name,
     and keeping only the last one seen would let an unchecked private
     copy hide behind a matching one. The walk follows symlinks but
     de-duplicates by (dev, ino), so a link into a vendor repo is seen
-    exactly once.
+    exactly once, and stops at _WALK_DIR_CAP visited directories so a
+    link cycle or a link out to a huge tree cannot make init scan it
+    all. A capped scan returns ``complete=False``: callers that decide
+    deletion must treat a partial view as "unknown", never as
+    "everything matched".
     """
     import os
 
     out: dict[str, list[Path]] = {}
     if not root.is_dir():
-        return out
+        return out, True
     seen: set[tuple[int, int]] = set()
     for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
         try:
@@ -322,9 +332,24 @@ def _skill_mds(root: Path) -> dict[str, list[Path]]:
             dirnames[:] = []
             continue
         seen.add(key)
+        if len(seen) > _WALK_DIR_CAP:
+            # Break, not just prune: clearing dirnames skips this dir's
+            # children but os.walk still visits every queued sibling.
+            return out, False
         if "SKILL.md" in filenames:
             out.setdefault(Path(dirpath).name, []).append(Path(dirpath) / "SKILL.md")
-    return out
+    return out, True
+
+
+def skill_folder_scan(root: Path) -> tuple[set[str], bool]:
+    """(skill folder names, complete) — see ``_skill_mds`` for the walk rules.
+
+    ``complete=False`` means the directory cap cut the walk short: the names
+    are a lower bound, not a listing, and callers that print a count must
+    say so rather than presenting the partial scan as finished.
+    """
+    mds, complete = _skill_mds(root)
+    return set(mds), complete
 
 
 def skill_folder_names(root: Path) -> set[str]:
@@ -334,7 +359,7 @@ def skill_folder_names(root: Path) -> set[str]:
     links into a vendor repo and disagreed with what `swe find` reported for
     the same directory.
     """
-    return set(_skill_mds(root))
+    return skill_folder_scan(root)[0]
 
 
 def _tree_is_empty(root: Path) -> bool:
@@ -451,7 +476,12 @@ def classify_skill_root(path: Path, home: Path | None = None) -> tuple[str, str]
             return "conflict", "real file, needs --force"
         return "create", ""
 
-    mds = _skill_mds(path)
+    mds, complete = _skill_mds(path)
+    if not complete:
+        # A capped scan saw only part of the tree: a unique skill could be
+        # sitting past the cap, invisible to the checks below. "keep" is
+        # the only answer a partial view can support.
+        return "keep", "scan hit the directory cap"
     if not mds:
         # Files that are not skills are user data: report the root rather
         # than deleting it. Only a genuinely empty tree is absorbable.
@@ -459,7 +489,9 @@ def classify_skill_root(path: Path, home: Path | None = None) -> tuple[str, str]
             return "keep", "files but no skills"
         return "absorb", "empty"
 
-    shared_mds = _skill_mds(shared)
+    shared_mds, shared_complete = _skill_mds(shared)
+    if not shared_complete:
+        return "keep", "shared skill scan hit the directory cap"
     unique = set(mds) - set(shared_mds)
     if not unique:
         # A name match is not a copy match: every private copy of a shared

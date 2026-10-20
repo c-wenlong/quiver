@@ -197,6 +197,110 @@ class PlanMigrationTest(unittest.TestCase):
             self.assertIn("something_new.json", dest)
             self.assertEqual(dest["something_new.json"].parent, paths.config_dir_for(home))
 
+    def test_mcp_json_lands_at_the_hub_path(self):
+        # The MCP hub is ~/.quiver/mcp.json — routing it into config/
+        # stranded every server where no reader looks.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _legacy_home(tmp, extra={"mcp.json": '{"mcpServers":{}}'})
+            plan = plan_migration(home)
+            dest = {src.name: dst for src, dst in plan.moved}
+            self.assertEqual(dest["mcp.json"], paths.mcp_source_file_for(home))
+
+    def test_dotfiles_are_moved_not_dropped(self):
+        # A user notes file in the old root is data, not .DS_Store.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _legacy_home(tmp, extra={".notes": "remember this"})
+            plan = plan_migration(home)
+            dest = {src.name: dst for src, dst in plan.moved}
+            self.assertEqual(
+                dest[".notes"], paths.config_dir_for(home) / ".notes")
+            self.assertNotIn(".notes", {p.name for p in plan.dropped})
+            apply_migration(plan)
+            self.assertEqual(
+                (paths.config_dir_for(home) / ".notes").read_text(),
+                "remember this")
+
+    def test_env_lands_under_sealed_secrets_not_versioned_config(self):
+        # config/ is the tree a user versions — a stray .env there is one
+        # `git add .` from a committed key. Credential files move into the
+        # sealed secrets/ instead.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _legacy_home(tmp, extra={".env": "TOKEN=x"})
+            plan = plan_migration(home)
+            dest = {src.name: dst for src, dst in plan.moved}
+            self.assertEqual(
+                dest[".env"], paths.secrets_dir_for(home) / ".env")
+            apply_migration(plan)
+            self.assertEqual(
+                (paths.secrets_dir_for(home) / ".env").read_text(), "TOKEN=x")
+            # Sealed at apply time: the move cannot outrun the .gitignore
+            # that keeps it out of the hub's git.
+            self.assertTrue(
+                (paths.secrets_dir_for(home) / ".gitignore").is_file())
+
+    def test_env_stays_at_source_when_secrets_is_a_symlink(self):
+        # Moving through a linked secrets/ would drop the key into a
+        # foreign directory the seal refuses to protect.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _legacy_home(tmp, extra={".env": "TOKEN=x"})
+            secrets_dir = paths.secrets_dir_for(home)
+            secrets_dir.parent.mkdir(parents=True, exist_ok=True)
+            secrets_dir.symlink_to(home / "foreign")
+            plan = apply_migration(plan_migration(home))
+            self.assertIn(secrets_dir / ".env", plan.skipped)
+            # The credential was not moved through the link; it stays in
+            # the legacy root for the user to deal with.
+            self.assertFalse((home / "foreign" / ".env").exists())
+            self.assertTrue((home / ".config" / "swe" / ".env").is_file())
+
+    def test_a_dangling_symlink_at_the_destination_is_not_replaced(self):
+        # exists() misses dangling links; shutil.move would swap the user's
+        # dotfiles link for a standalone file.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _legacy_home(tmp, extra={"mcp.json": '{"mcpServers":{}}'})
+            dest = paths.mcp_source_file_for(home)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.symlink_to(home / "dotfiles" / "mcp.json")
+            plan = apply_migration(plan_migration(home))
+            self.assertIn(dest, plan.skipped)
+            self.assertTrue(dest.is_symlink())
+            self.assertEqual(dest.readlink(), home / "dotfiles" / "mcp.json")
+            self.assertTrue((home / ".config" / "swe" / "mcp.json").is_file())
+
+    def test_envrc_lands_under_sealed_secrets_not_versioned_config(self):
+        # direnv files hold credentials exactly like .env; routing them to
+        # config/ puts a key in the tree a user versions.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _legacy_home(tmp, extra={".envrc": "export KEY=x"})
+            plan = plan_migration(home)
+            dest = {src.name: dst for src, dst in plan.moved}
+            self.assertEqual(
+                dest[".envrc"], paths.secrets_dir_for(home) / ".envrc")
+            apply_migration(plan)
+            self.assertEqual(
+                (paths.secrets_dir_for(home) / ".envrc").read_text(),
+                "export KEY=x")
+            self.assertTrue(
+                (paths.secrets_dir_for(home) / ".gitignore").is_file())
+
+    def test_a_relative_symlink_moves_with_its_target_reanchored(self):
+        # ../../dotfiles/mcp.json resolved inside the legacy root, but the
+        # same bytes under the hub root would point outside the home. The
+        # moved link must point at where the old one reached.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _legacy_home(tmp)
+            real = home / "dotfiles" / "mcp.json"
+            real.parent.mkdir()
+            real.write_text('{"mcpServers":{}}')
+            link = home / ".config" / "swe" / "mcp.json"
+            link.symlink_to(Path("..") / ".." / "dotfiles" / "mcp.json")
+            plan = apply_migration(plan_migration(home))
+            dest = paths.mcp_source_file_for(home)
+            self.assertIn((link, dest), plan.moved)
+            self.assertTrue(dest.is_symlink())
+            self.assertEqual(dest.resolve(), real.resolve())
+            self.assertFalse(link.exists())
+
     def test_drop_list_and_move_lists_do_not_overlap(self):
         self.assertEqual(set(DROP) & set(CONFIG_FILES), set())
         self.assertEqual(set(DROP) & set(CACHE_FILES), set())
@@ -263,6 +367,20 @@ class ApplyMigrationTest(unittest.TestCase):
             home = _legacy_home(tmp)
             apply_migration(plan_migration(home), remove_source=False)
             self.assertTrue((home / ".config" / "swe").is_dir())
+
+    def test_a_symlinked_dir_in_the_drop_list_unlinks_not_crashes(self):
+        # rmtree on a symlinked dir raises OSError mid-apply and strands a
+        # half-migrated tree: the link is removed, the target untouched.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _legacy_home(tmp)
+            outside = home / "elsewhere"
+            outside.mkdir()
+            (outside / "keep.txt").write_text("keep me")
+            (home / ".config" / "swe" / "archive").symlink_to(
+                outside, target_is_directory=True)
+            apply_migration(plan_migration(home))
+            self.assertFalse((home / ".config" / "swe" / "archive").exists())
+            self.assertTrue((outside / "keep.txt").is_file())
 
 
 class GitignoreTest(unittest.TestCase):
@@ -441,6 +559,50 @@ class MoveSecretsTest(unittest.TestCase):
             self.assertEqual(move_secrets(home), [])
             self.assertFalse(paths.secrets_dir_for(home).exists())
 
+    def test_a_symlinked_secrets_dir_is_never_sealed_or_written_through(self):
+        # Path ops follow links: sealing a symlinked secrets/ used to chmod
+        # 0700 and plant a catch-all .gitignore in a foreign directory.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            outside = home / "foreign"
+            outside.mkdir()
+            paths.secrets_dir_for(home).parent.mkdir(parents=True, exist_ok=True)
+            paths.secrets_dir_for(home).symlink_to(
+                outside, target_is_directory=True)
+            _keys(home / ".api_keys")
+            notes = move_secrets(home)
+            self.assertIn("left alone", " ".join(notes))
+            self.assertFalse((outside / ".gitignore").exists())
+            self.assertFalse((outside / "providers" / ".api_keys").exists())
+            self.assertEqual(outside.stat().st_mode & 0o777, 0o755)
+            self.assertFalse((home / ".api_keys").is_symlink())
+
+    def test_a_dangling_secrets_symlink_still_warns(self):
+        # is_dir() follows the link, so a dangling one used to skip the
+        # seal call entirely — the credential move was dropped silently.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            secrets_dir = paths.secrets_dir_for(home)
+            secrets_dir.parent.mkdir(parents=True, exist_ok=True)
+            secrets_dir.symlink_to(home / "gone")
+            _keys(home / ".api_keys")
+            notes = move_secrets(home)
+            self.assertIn("left alone", " ".join(notes))
+            # The key file was not moved anywhere through the dead link.
+            self.assertTrue((home / ".api_keys").is_file())
+            self.assertFalse((home / ".api_keys").is_symlink())
+
+    def test_a_regular_file_at_secrets_path_warns_and_skips(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            secrets_dir = paths.secrets_dir_for(home)
+            secrets_dir.parent.mkdir(parents=True, exist_ok=True)
+            secrets_dir.write_text("not a dir")
+            _keys(home / ".api_keys")
+            notes = move_secrets(home)
+            self.assertIn("left alone", " ".join(notes))
+            self.assertTrue((home / ".api_keys").is_file())
+
 
 class CmdInitMigrationTest(unittest.TestCase):
     def _run(self, home, args):
@@ -489,6 +651,20 @@ class CmdInitMigrationTest(unittest.TestCase):
             (home / ".claude").mkdir()
             self._run(home, [])
             self.assertTrue((home / ".quiver" / ".gitignore").is_file())
+
+    def test_a_dangling_scaffold_symlink_is_not_written_through(self):
+        # exists() is false for a dangling link, so the AGENTS.md seed used
+        # to follow it and create the file at the link's target.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".claude").mkdir()
+            target = home / "foreign" / "AGENTS.md"
+            paths.agents_file_for(home).parent.mkdir(parents=True)
+            paths.agents_file_for(home).symlink_to(target)
+            code, _out = self._run(home, [])
+            self.assertIn(code, (0, 1))
+            self.assertFalse(target.exists(), "seed wrote through a symlink")
+            self.assertTrue(paths.agents_file_for(home).is_symlink())
 
 
 if __name__ == "__main__":
