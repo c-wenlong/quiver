@@ -101,6 +101,11 @@ def mcp_source_file_for(home: Path | None = None) -> Path:
     return quiver_dir_for(home) / "mcp.json"
 
 
+def github_file_for(home: Path | None = None) -> Path:
+    """The pinned-repo store behind `swe gh` and the app's GitHub section."""
+    return config_dir_for(home) / "github.json"
+
+
 def backups_dir_for(home: Path | None = None) -> Path:
     return quiver_dir_for(home) / BACKUPS_SUBDIR
 
@@ -186,6 +191,7 @@ MCP_SOURCE_FILE = mcp_source_file_for()
 SKILL_CATALOGS_FILE = CONFIG_DIR / "skill_catalogs.json"
 SKILL_LINKS_FILE = CONFIG_DIR / "skill_links.json"
 PROVIDERS_REGISTRY_FILE = CONFIG_DIR / "providers.json"
+GITHUB_FILE = CONFIG_DIR / "github.json"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 # Regenerable state: delete any of these and quiver rebuilds them.
