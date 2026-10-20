@@ -23,9 +23,19 @@
 # Accessibility) against the app's signing identity. An ad-hoc signature
 # changes with every build, so each rebuild would ask again. The script
 # therefore signs with a stable identity when it can find one:
-#   QUIVER_SIGN_IDENTITY="Apple Development: …"  # or a certificate hash
-# else the first "Apple Development" identity in the keychain, else ad-hoc
-# (CI, or a Mac without a certificate). QUIVER_SIGN_IDENTITY=- forces ad-hoc.
+#   QUIVER_SIGN_IDENTITY="Developer ID Application: …"  # or a certificate hash
+# else the first keychain identity for the channel: "Developer ID
+# Application" under QUIVER_CHANNEL=prod, "Apple Development" under dev.
+# A dev build with no identity falls back to ad-hoc (CI, or a Mac without
+# a certificate); a prod build stops instead — a release without a
+# Developer ID cannot ship. QUIVER_SIGN_IDENTITY=- still forces ad-hoc,
+# which is how CI builds prod before the certificate exists.
+#
+# Prod signatures also set the hardened runtime (required before Apple
+# will notarize) and a secure timestamp, so they keep verifying after
+# the certificate expires. QUIVER_NOTARY_PROFILE=… (a `notarytool
+# store-credentials` keychain profile) notarizes and staples after
+# signing.
 set -euo pipefail
 
 config="${1:-release}"
@@ -180,28 +190,71 @@ PLIST
 
 identity="${QUIVER_SIGN_IDENTITY:-}"
 if [ -z "$identity" ]; then
-  # Optional: a failed lookup falls back to ad-hoc rather than stopping the
-  # build. A failure signing with an identity that was found, or one asked
-  # for in QUIVER_SIGN_IDENTITY, still stops it.
+  # Optional: a failed lookup falls back to ad-hoc for dev rather than
+  # stopping the build; prod has no fallback and stops below. A failure
+  # signing with an identity that was found, or one asked for in
+  # QUIVER_SIGN_IDENTITY, still stops either channel.
   if identities="$(security find-identity -v -p codesigning 2>&1)"; then
+    if [ "$channel" = "prod" ]; then
+      cert_label="Developer ID Application: "
+    else
+      cert_label="Apple Development: "
+    fi
     identity="$(printf '%s\n' "$identities" \
-      | sed -n 's/^ *[0-9][0-9]*) \([0-9A-F]\{40\}\) "Apple Development: .*/\1/p' | head -n 1)"
+      | sed -n "s/^ *[0-9][0-9]*) \([0-9A-F]\{40\}\) \"$cert_label.*/\1/p" | head -n 1)"
   else
     echo "build-app: couldn't list signing identities: $identities" >&2
   fi
 fi
-if [ -z "$identity" ] || [ "$identity" = "-" ]; then
+if [ "$identity" = "-" ]; then
+  echo "build-app: ad-hoc signing; privacy grants won't survive a rebuild" >&2
+elif [ -z "$identity" ]; then
+  if [ "$channel" = "prod" ]; then
+    echo "build-app: prod needs a \"Developer ID Application\" identity and none" >&2
+    echo "was found; a release cannot fall back to ad-hoc. Install the certificate," >&2
+    echo "pass QUIVER_SIGN_IDENTITY, or set QUIVER_SIGN_IDENTITY=- to force an" >&2
+    echo "unsigned build anyway." >&2
+    exit 1
+  fi
   echo "build-app: ad-hoc signing; privacy grants won't survive a rebuild" >&2
   identity="-"
+fi
+# Prod signs for Gatekeeper: every Mach-O gets the hardened runtime (a
+# notarization prerequisite) and a secure timestamp, so the signature
+# keeps verifying after the certificate expires. Dev builds keep plain
+# signatures: --timestamp needs Apple's timestamp server, which a dev
+# machine may be offline from, and ad-hoc signatures can't carry one.
+sign_opts=()
+if [ "$channel" = "prod" ] && [ "$identity" != "-" ]; then
+  sign_opts=(--options runtime --timestamp)
 fi
 # Inside out: the bundled Python's binaries, the extension with its sandbox,
 # then the app around them. The Python sits in Resources, where codesign
 # would only hash its binaries as data, so each is signed as code first.
+# ${arr[@]+...}: bash 3.2 reads a bare empty "${arr[@]}" under set -u as
+# unbound, so the expansion is guarded.
 find "$bundle/Contents/Resources/swe" -type f | while IFS= read -r file; do
   if file -b "$file" | grep -q '^Mach-O'; then
-    codesign --force --sign "$identity" "$file" >/dev/null
+    codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} "$file" >/dev/null
   fi
 done
-codesign --force --sign "$identity" --entitlements "$here/script/QuiverWidgets.entitlements" "$appex" >/dev/null
-codesign --force --sign "$identity" "$bundle" >/dev/null
+codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} \
+  --entitlements "$here/script/QuiverWidgets.entitlements" "$appex" >/dev/null
+# Hardened runtime audit for the app itself (see the commit for the full
+# list): the bundled libcrypto is re-signed here with the same identity,
+# which is all library validation asks, so no entitlements file is needed.
+codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} "$bundle" >/dev/null
+
+# Notarize and staple when a `notarytool store-credentials` keychain
+# profile is named. The zip exists only for the submission; stapler
+# writes the ticket onto the bundle itself so Gatekeeper passes it
+# offline. A DMG step added later calls notarytool the same way.
+if [ -n "${QUIVER_NOTARY_PROFILE:-}" ]; then
+  notary_zip="$(mktemp -d)/Quiver.zip"
+  ditto -c -k --keepParent "$bundle" "$notary_zip"
+  xcrun notarytool submit "$notary_zip" \
+    --keychain-profile "$QUIVER_NOTARY_PROFILE" --wait
+  xcrun stapler staple "$bundle"
+  rm -f "$notary_zip"
+fi
 echo "$bundle"
