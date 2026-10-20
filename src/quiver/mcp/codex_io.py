@@ -58,11 +58,18 @@ _MCP_HEADER_RE = re.compile(
 
 
 def _is_mcp_header(stripped_line: str) -> bool:
-    """True for a ``[mcp_servers…]`` table header (``.``/``]`` next char)."""
-    if not stripped_line.startswith("[mcp_servers"):
-        return False
-    rest = stripped_line[len("[mcp_servers"):]
-    return not rest or rest[0] in (".", "]")
+    """True for a ``[mcp_servers…]`` table header (``.``/``]`` next char).
+
+    ``[[mcp_servers.x]]`` array-of-tables headers count too: they still
+    declare mcp_servers content, and leaving them in pre/post let the
+    strict loader read the file as "no mcp region" — which a later
+    discover --prune then deleted real entries over.
+    """
+    for prefix in ("[mcp_servers", "[[mcp_servers"):
+        if stripped_line.startswith(prefix):
+            rest = stripped_line[len(prefix):]
+            return not rest or rest[0] in (".", "]")
+    return False
 
 
 def _table_headers(lines: list[str]) -> list[int]:

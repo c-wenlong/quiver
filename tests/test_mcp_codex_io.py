@@ -442,6 +442,26 @@ class CodexCorruptRegionTest(unittest.TestCase):
                 save_codex_servers({"x": {"command": "node"}}, p)
             self.assertEqual(p.read_text(), original)
 
+    ARRAY = 'model = "gpt-5.5"\n\n[[mcp_servers.a]]\ncommand = "node"\n'
+
+    def test_load_raises_on_array_of_tables_in_file(self):
+        # The splitter must route [[mcp_servers.a]] into the region — it
+        # used to fall into `post` and read as zero servers, which a
+        # discover --prune could then "clean up".
+        with tempfile.TemporaryDirectory() as td:
+            p = pathlib.Path(td) / "codex.toml"
+            p.write_text(self.ARRAY)
+            with self.assertRaises(CorruptConfigurationError):
+                load_codex_servers(p)
+
+    def test_save_refuses_over_array_of_tables(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = pathlib.Path(td) / "codex.toml"
+            p.write_text(self.ARRAY)
+            with self.assertRaises(CorruptConfigurationError):
+                save_codex_servers({"x": {"command": "node"}}, p)
+            self.assertEqual(p.read_text(), self.ARRAY)
+
     def test_tool_loader_degrades_on_corrupt_region(self):
         # get_tool_loader is a read path: warn + empty, like JSON tools.
         with tempfile.TemporaryDirectory() as td:
