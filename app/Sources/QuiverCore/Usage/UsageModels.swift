@@ -90,9 +90,10 @@ public protocol SecretReading: Sendable {
     func genericPassword(service: String, account: String) async -> String?
 }
 
-/// Reads, writes and deletes generic-password items. Values pass through
-/// argv on write (`security` has no stdin for `-w`), so a run's arguments
-/// must never be logged.
+/// Reads, writes and deletes generic-password items. Where the value
+/// travels is the implementation's choice: `KeychainCLI` puts it on
+/// `security`'s argv (a run's arguments must never be logged), while
+/// `SecItemKeychain` keeps it in-process.
 public protocol SecretStoring: SecretReading {
     func setGenericPassword(service: String, account: String, value: String) async throws
     func deleteGenericPassword(service: String, account: String) async throws

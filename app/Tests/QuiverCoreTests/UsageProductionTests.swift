@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Testing
 @testable import QuiverCore
 
@@ -35,6 +36,33 @@ import Testing
 
     @Test func theRealToolRunsSecurity() {
         #expect(KeychainCLI.securityPath == "/usr/bin/security")
+    }
+}
+
+/// SecItemKeychain's OSStatus mapping: the thrown error is a
+/// commandFailed carrying Security's message for the code, never a
+/// stored value. The keychain itself stays out of tests.
+@Suite struct SecItemKeychainTests {
+    @Test func aStatusBecomesCommandFailedWithSecuritysMessage() {
+        let error = SecItemKeychain.error(errSecAuthFailed)
+        guard case .commandFailed(let status, let message) = error else {
+            Issue.record("expected commandFailed, got \(error)")
+            return
+        }
+        #expect(status == errSecAuthFailed)
+        #expect(!message.isEmpty)
+    }
+
+    @Test func everyStatusMapsToSomeMessage() {
+        // SecCopyErrorMessageString knows the common codes; the fallback
+        // covers the rest, so a failure is never a blank error.
+        for status in [errSecSuccess, errSecItemNotFound, errSecNotAvailable] {
+            guard case .commandFailed(_, let message) = SecItemKeychain.error(status) else {
+                Issue.record("expected commandFailed for \(status)")
+                continue
+            }
+            #expect(!message.isEmpty)
+        }
     }
 }
 

@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 /// The network, through an ephemeral session that keeps nothing: no cookies,
 /// no response cache, no stored credentials, and no redirects followed, so a
@@ -104,6 +105,75 @@ extension KeychainCLI: SecretStoring {
         guard result.status == 0 || result.status == Self.itemNotFoundStatus else {
             throw SweError.commandFailed(status: result.status, message: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
         }
+    }
+}
+
+/// Quiver's own keychain items, written and read in-process through the
+/// Security framework.
+///
+/// `KeychainCLI.setGenericPassword` can take the value only on
+/// `security`'s argv, where `ps` can see it. For Quiver-owned items the
+/// in-process API is also the quiet one: an item this process wrote reads
+/// back without a prompt, while asking `security` for it may prompt.
+/// Claude Code's credentials stay on `KeychainCLI` for the inverse
+/// reason — `security` wrote them, so SecItem would prompt on every read.
+public struct SecItemKeychain: SecretStoring {
+    public init() {}
+
+    /// The item's password, or nil when it is missing, the keychain
+    /// refused, or the value is not UTF-8 text.
+    public func genericPassword(service: String, account: String) async -> String? {
+        var item: CFTypeRef?
+        var query = Self.query(service: service, account: account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let data = item as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Upserts the item: update first, add when it is not there yet. The
+    /// value rides in the query dictionary, never on a tool's argv.
+    public func setGenericPassword(service: String, account: String, value: String) async throws {
+        var query = Self.query(service: service, account: account)
+        let data = Data(value.utf8)
+        switch SecItemUpdate(query as CFDictionary,
+                             [kSecValueData as String: data] as CFDictionary) {
+        case errSecSuccess:
+            return
+        case errSecItemNotFound:
+            query[kSecValueData as String] = data
+            try Self.check(SecItemAdd(query as CFDictionary, nil))
+        case let status:
+            throw Self.error(status)
+        }
+    }
+
+    /// Removes the item; one that was never there is already removed.
+    public func deleteGenericPassword(service: String, account: String) async throws {
+        let status = SecItemDelete(Self.query(service: service, account: account) as CFDictionary)
+        if status != errSecItemNotFound {
+            try Self.check(status)
+        }
+    }
+
+    private static func query(service: String, account: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: service,
+         kSecAttrAccount as String: account]
+    }
+
+    /// What a failed SecItem call throws: `commandFailed` with Security's
+    /// own message for the status, which never contains the value. The
+    /// seam tests exercise without touching a keychain.
+    static func error(_ status: OSStatus) -> SweError {
+        let message = SecCopyErrorMessageString(status, nil) as? String
+            ?? "The keychain answered with an error."
+        return .commandFailed(status: status, message: message)
+    }
+
+    private static func check(_ status: OSStatus) throws {
+        if status != errSecSuccess { throw error(status) }
     }
 }
 
