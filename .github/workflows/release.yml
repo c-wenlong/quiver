@@ -345,7 +345,7 @@ jobs:
           # appcast.xml, or just an UNSIGNED notice when the signing
           # secrets are not configured.  The glob picks up real assets only.
           shopt -s nullglob
-          assets=(dist/* macos-app/*.dmg macos-app/appcast.xml)
+          assets=(dist/* macos-app/*.dmg macos-app/appcast*.xml)
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
             echo "Attached ${assets[*]} to release $RELEASE_TAG"
