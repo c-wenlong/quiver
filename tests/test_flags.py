@@ -317,6 +317,128 @@ class BareFlagRejectionTest(unittest.TestCase):
             _run(cmd_add, ["demo", "demo-cmd"])
         self.assertEqual(save.call_args[0][0]["demo"]["primary_color"], "#112233")
 
+    def test_re_adding_keeps_state_pin_capabilities_and_unknown_fields(self):
+        # A re-add must never silently drop registry vocabulary (state, pin,
+        # capabilities) or user fields the command does not own.
+        existing = {
+            "demo": {
+                "command": "demo-cmd",
+                "description": "ma description",
+                "state": "starred",
+                "pin": 2,
+                "capabilities": {"skills": {"supported": True, "root": "~/.demo/skills"}},
+                "notes": "à garder",
+                "discovered_via": "init",
+                "custom_field": "x",
+                "tags": ["custom-tag"],
+                "aliases": ["dd"],
+                "version": "9.9",
+                "added": "2020-01-01T00:00:00",
+            }
+        }
+        with patch("quiver.harness.commands.load_registry", return_value=existing), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch(
+            "quiver.harness.commands.is_installed", return_value=True
+        ):
+            _run(cmd_add, ["demo", "demo-cmd"])
+        saved = save.call_args[0][0]["demo"]
+        self.assertEqual(saved["command"], "demo-cmd")
+        self.assertEqual(saved["state"], "starred")
+        self.assertEqual(saved["pin"], 2)
+        self.assertEqual(saved["capabilities"]["skills"]["root"], "~/.demo/skills")
+        self.assertEqual(saved["notes"], "à garder")
+        self.assertEqual(saved["discovered_via"], "init")
+        self.assertEqual(saved["custom_field"], "x")
+        self.assertEqual(saved["description"], "ma description")
+        self.assertEqual(saved["tags"], ["custom-tag"])
+        self.assertEqual(saved["aliases"], ["dd"])
+        self.assertEqual(saved["version"], "9.9")
+        self.assertEqual(saved["added"], "2020-01-01T00:00:00")
+
+    def test_re_adding_archived_entry_keeps_state_and_notes_it(self):
+        existing = {"demo": {"command": "old", "state": "archived"}}
+        with patch("quiver.harness.commands.load_registry", return_value=existing), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch(
+            "quiver.harness.commands.is_installed", return_value=True
+        ):
+            _, out = _run(cmd_add, ["demo", "demo-cmd"])
+        self.assertEqual(save.call_args[0][0]["demo"]["state"], "archived")
+        self.assertIn("still archived", out)
+
+    def test_re_adding_with_explicit_tags_overrides_only_tags(self):
+        existing = {
+            "demo": {"command": "old", "state": "starred", "tags": ["custom-tag"]}
+        }
+        with patch("quiver.harness.commands.load_registry", return_value=existing), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch(
+            "quiver.harness.commands.is_installed", return_value=True
+        ):
+            _run(cmd_add, ["demo", "demo-cmd", "--tags=nouveau"])
+        saved = save.call_args[0][0]["demo"]
+        self.assertEqual(saved["tags"], ["nouveau"])
+        self.assertEqual(saved["state"], "starred")
+
+    def test_re_adding_a_different_command_drops_the_stale_version(self):
+        # The stored version belongs to the probed binary: re-adding to
+        # point at another command must not show the old binary's version.
+        existing = {"demo": {"command": "old-bin", "version": "9.9"}}
+        with patch("quiver.harness.commands.load_registry", return_value=existing), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch(
+            "quiver.harness.commands.is_installed", return_value=True
+        ):
+            _run(cmd_add, ["demo", "new-bin"])
+        self.assertIsNone(save.call_args[0][0]["demo"]["version"])
+
+    def test_re_adding_with_empty_description_clears_it(self):
+        # `--description=` is an explicit clear, not "not supplied".
+        existing = {"demo": {"command": "demo-cmd", "description": "old text"}}
+        with patch("quiver.harness.commands.load_registry", return_value=existing), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch(
+            "quiver.harness.commands.is_installed", return_value=True
+        ):
+            _run(cmd_add, ["demo", "demo-cmd", "--description="])
+        self.assertEqual(save.call_args[0][0]["demo"]["description"], "")
+
+    def test_install_onto_a_new_command_drops_the_old_version(self):
+        # Same rule as cmd_add: when --command points the entry at a
+        # different binary and no version probe returns a value, the old
+        # binary's version must not survive on the saved entry.
+        import subprocess as sp
+
+        from quiver.harness.installers import Installer
+
+        existing = {"demo": {"command": "old-bin", "version": "9.9"}}
+        done = sp.CompletedProcess(args=[], returncode=0)
+
+        def fake_which(tool):
+            return "/usr/bin/brew" if tool == "brew" else None
+
+        with patch(
+            "quiver.harness.commands.load_registry_readonly",
+            return_value=existing,
+        ), patch(
+            "quiver.harness.commands.load_registry",
+            return_value=dict(existing),
+        ), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch(
+            "quiver.harness.installers.installers_for",
+            return_value=[Installer("brew", "demo-pkg")],
+        ), patch(
+            "quiver.harness.commands.shutil.which", side_effect=fake_which
+        ), patch(
+            "quiver.harness.commands.subprocess.run", return_value=done
+        ):
+            _run(cmd_install, ["demo", "--via=brew", "--command=new-bin"])
+        saved = save.call_args[0][0]["demo"]
+        self.assertEqual(saved["command"], "new-bin")
+        self.assertIsNone(saved["version"])
+
     def test_adding_a_new_harness_sets_no_display_name(self):
         with patch("quiver.harness.commands.load_registry", return_value={}), patch(
             "quiver.harness.commands.save_registry"

@@ -462,7 +462,10 @@ def apply_findings(
                 "archived_at": datetime.now().isoformat(),
                 "usage": "none",
             }
-        registry[finding.name] = entry
+        # Merge, never rebuild: if a key collision ever slips past the
+        # resolve() guard above, the existing entry's state, pin and
+        # capabilities survive instead of being silently dropped.
+        registry[finding.name] = {**registry.get(finding.name, {}), **entry}
         added.append(finding.name)
     if added:
         save_registry(registry)
