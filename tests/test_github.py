@@ -520,6 +520,22 @@ class TestCommands(unittest.TestCase):
         note = json.loads(out)["data"]["notifications"][0]
         self.assertEqual(note["url"], "https://github.com/o/r/issues/4")
 
+    def test_inbox_all_asks_for_read_rows(self):
+        seen = {}
+
+        def run(cmd, **kw):
+            joined = " ".join(cmd)
+            if "api notifications" in joined:
+                seen["url"] = joined
+            return _Proc(stdout="[]")
+        rc, out, _ = self._run_cli(["inbox", "--all", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        self.assertIn("notifications?all=true", seen["url"])
+        # Without --all the endpoint stays unread-only.
+        seen.clear()
+        self._run_cli(["inbox", "--json"], run=run)
+        self.assertNotIn("all=true", seen["url"])
+
     def test_unknown_subcommand(self):
         rc, out, _ = self._run_cli(["bogus"])
         self.assertEqual(rc, 1)

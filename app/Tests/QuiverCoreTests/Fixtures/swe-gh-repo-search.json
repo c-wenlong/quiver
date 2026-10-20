@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "data": {
+    "query": "quiver",
+    "results": [
+      {
+        "name": "keplr-io/quiver",
+        "description": "Interactive convnet features visualization for Keras",
+        "stars": 1784,
+        "updated_at": "2026-08-26T09:30:01Z",
+        "url": "https://github.com/keplr-io/quiver"
+      },
+      {
+        "name": "varkor/quiver",
+        "description": "A modern commutative diagram editor for the web.",
+        "stars": 3635,
+        "updated_at": "2026-10-20T14:05:33Z",
+        "url": "https://github.com/varkor/quiver"
+      },
+      {
+        "name": "google/quiver-dart",
+        "description": "A set of utility libraries for Dart",
+        "stars": 1064,
+        "updated_at": "2026-09-25T16:19:25Z",
+        "url": "https://github.com/google/quiver-dart"
+      }
+    ]
+  }
+}

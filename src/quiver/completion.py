@@ -304,6 +304,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--repo", "Repo as owner/name or a github.com URL"),
         ("--state", "Row state filter (open/closed/…)"),
         ("--limit", "Rows to fetch"),
+        ("--all", "Include read notifications (inbox)"),
         ("--web", "Open the github.com page instead"),
         ("--json", "Print the {schema, data} envelope"),
     ],

@@ -42,7 +42,7 @@ and the fixture that pins the shape. Fixtures live under
 | `swe gh releases [--repo=R] [--limit=N] --json` | `GhResults` — per-repo `releases: [GhRelease]` | |
 | `swe gh tags [--repo=R] [--limit=N] --json` | `GhResults` — per-repo `tags: [GhTag]` | |
 | `swe gh branches [--repo=R] [--limit=N] --json` | `GhResults` — per-repo `branches: [GhBranch]` plus `default_branch` | |
-| `swe gh inbox [--limit=N] --json` | `{"github": GhEnv, "status", "notifications": [GhNotification]}` — `gh api notifications`, not per-repo | |
+| `swe gh inbox [--all] [--limit=N] --json` | `{"github": GhEnv, "status", "notifications": [GhNotification]}` — `gh api notifications`, not per-repo; `--all` adds `all=true` so read rows come back too (default is unread-only) | |
 
 ## Shape notes
 

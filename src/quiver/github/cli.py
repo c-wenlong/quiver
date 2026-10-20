@@ -389,8 +389,10 @@ def _fetch_branches(repo: str, limit: int) -> dict:
     return out
 
 
-def _fetch_inbox(limit: int) -> dict:
-    result = _gh_paginated("notifications", limit)
+def _fetch_inbox(limit: int, fetch_all: bool = False) -> dict:
+    # Without all=true the API only returns unread notifications.
+    path = "notifications?all=true" if fetch_all else "notifications"
+    result = _gh_paginated(path, limit)
     if result.status != "ok":
         return {"status": result.status, "notifications": [],
                 "error": result.error or result.status}
@@ -817,7 +819,8 @@ def _parse_common(rest: list[str],
     except ValueError as exc:
         print(c("red", str(exc)), file=error_stream(json_view))
         return None
-    opts = {"repo": None, "state": None, "limit": None, "web": False}
+    opts = {"repo": None, "state": None, "limit": None,
+            "web": False, "all": False}
     pos = []
     i = 0
     while i < len(args):
@@ -826,6 +829,9 @@ def _parse_common(rest: list[str],
             i += 2
         elif args[i] == "--web":
             opts["web"] = True
+            i += 1
+        elif args[i] == "--all":
+            opts["all"] = True
             i += 1
         else:
             pos.append(args[i])
@@ -986,7 +992,7 @@ def _cmd_inbox(rest: list[str], json_view: bool) -> int:
     if opts["web"]:
         _open_web("inbox", [])
         return 0
-    payload = _fetch_inbox(_limit(opts, 50))
+    payload = _fetch_inbox(_limit(opts, 50), fetch_all=opts["all"])
     if json_view:
         return emit({"github": _env_payload(env), **payload})
     _render_inbox(payload)

@@ -1,0 +1,113 @@
+{
+  "schema": 1,
+  "data": {
+    "github": {
+      "status": "ok",
+      "login": "c-wenlong",
+      "error": null
+    },
+    "status": "ok",
+    "notifications": [
+      {
+        "id": "26505461514",
+        "repo": "octocat/sources",
+        "title": "site workflow run, Attempt #2 failed for main branch",
+        "type": "CheckSuite",
+        "reason": "ci_activity",
+        "unread": true,
+        "updated_at": "2026-10-20T20:01:05Z",
+        "url": "https://github.com/octocat/sources"
+      },
+      {
+        "id": "26504956578",
+        "repo": "octocat/sources",
+        "title": "site workflow run failed for main branch",
+        "type": "CheckSuite",
+        "reason": "ci_activity",
+        "unread": true,
+        "updated_at": "2026-10-20T19:37:17Z",
+        "url": "https://github.com/octocat/sources"
+      },
+      {
+        "id": "26502401930",
+        "repo": "c-wenlong/algo-notes",
+        "title": "CI workflow run failed for feature-rename branch",
+        "type": "CheckSuite",
+        "reason": "ci_activity",
+        "unread": true,
+        "updated_at": "2026-10-20T17:53:57Z",
+        "url": "https://github.com/c-wenlong/algo-notes"
+      },
+      {
+        "id": "26502295403",
+        "repo": "octocat/mockups",
+        "title": "Pages workflow run failed for main branch",
+        "type": "CheckSuite",
+        "reason": "ci_activity",
+        "unread": true,
+        "updated_at": "2026-10-20T17:49:36Z",
+        "url": "https://github.com/octocat/mockups"
+      },
+      {
+        "id": "26502176052",
+        "repo": "octocat/mockups",
+        "title": "Pages workflow run failed for nav-parity branch",
+        "type": "CheckSuite",
+        "reason": "ci_activity",
+        "unread": true,
+        "updated_at": "2026-10-20T17:44:46Z",
+        "url": "https://github.com/octocat/mockups"
+      },
+      {
+        "id": "26501720175",
+        "repo": "octocat/mockups",
+        "title": "Pages workflow run failed for main branch",
+        "type": "CheckSuite",
+        "reason": "ci_activity",
+        "unread": true,
+        "updated_at": "2026-10-20T17:26:00Z",
+        "url": "https://github.com/octocat/mockups"
+      },
+      {
+        "id": "26501659078",
+        "repo": "c-wenlong/algo-notes",
+        "title": "CI workflow run failed for feature-rename branch",
+        "type": "CheckSuite",
+        "reason": "ci_activity",
+        "unread": true,
+        "updated_at": "2026-10-20T17:23:31Z",
+        "url": "https://github.com/c-wenlong/algo-notes"
+      },
+      {
+        "id": "26501656277",
+        "repo": "c-wenlong/algo-notes",
+        "title": "CI workflow run failed for feature-rename branch",
+        "type": "CheckSuite",
+        "reason": "ci_activity",
+        "unread": true,
+        "updated_at": "2026-10-20T17:23:24Z",
+        "url": "https://github.com/c-wenlong/algo-notes"
+      },
+      {
+        "id": "26501595697",
+        "repo": "octocat/mockups",
+        "title": "Pages workflow run failed for refero-flip branch",
+        "type": "CheckSuite",
+        "reason": "ci_activity",
+        "unread": true,
+        "updated_at": "2026-10-20T17:21:00Z",
+        "url": "https://github.com/octocat/mockups"
+      },
+      {
+        "id": "26501344349",
+        "repo": "octocat/mockups",
+        "title": "Pages workflow run failed for refero-flip branch",
+        "type": "CheckSuite",
+        "reason": "ci_activity",
+        "unread": true,
+        "updated_at": "2026-10-20T17:11:17Z",
+        "url": "https://github.com/octocat/mockups"
+      }
+    ]
+  }
+}
