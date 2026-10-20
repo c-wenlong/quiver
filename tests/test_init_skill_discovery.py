@@ -318,6 +318,53 @@ class ClassifyTest(unittest.TestCase):
             state, _detail = classify_skill_root(root, home)
             self.assertEqual(state, "keep")
 
+    def test_same_name_same_size_helper_is_kept(self):
+        # Sizes matching is not content matching: an edited helper with the
+        # same length used to pass _same_skill and get absorbed.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            shared = home / ".quiver" / "skills"
+            (shared / "alpha" / "helper.sh").write_text("#!/bin/sh\n")
+            root = home / ".pane" / "skills"
+            _skill(root, "alpha")
+            _skill(root, "beta")
+            (root / "alpha" / "helper.sh").write_text("#!/bin/xx\n")
+            state, _detail = classify_skill_root(root, home)
+            self.assertEqual(state, "keep")
+
+    def test_second_folder_with_same_name_is_checked(self):
+        # live/alpha matching shared must not hide a different
+        # .sources/alpha — _skill_mds used to keep only one path per name.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            root = home / ".pane" / "skills"
+            _skill(root, "beta")
+            _skill(root / "live", "alpha")
+            _skill(root / ".sources", "alpha", "private fork")
+            state, _detail = classify_skill_root(root, home)
+            self.assertEqual(state, "keep")
+
+    def test_files_beside_shared_skills_are_kept(self):
+        # alpha is a shared copy, but notes.txt beside it is user data the
+        # absorb removal would delete.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            root = home / ".pane" / "skills"
+            _skill(root, "alpha")
+            (root / "notes.txt").write_text("mine\n")
+            state, detail = classify_skill_root(root, home)
+            self.assertEqual(state, "keep")
+            self.assertIn("files", detail)
+
+    def test_symlink_cycle_in_empty_tree_terminates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            root = home / ".pane" / "skills"
+            root.mkdir(parents=True)
+            (root / "loop").symlink_to(root)
+            state, _detail = classify_skill_root(root, home)
+            self.assertEqual(state, "absorb")
+
     def test_nonempty_dir_without_skills_is_kept(self):
         # "Absorb empty" must mean empty: files that are not skills are
         # user data, never silently deleted.
