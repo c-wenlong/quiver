@@ -101,6 +101,7 @@ public struct ProcessRunner: CommandRunning {
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 let once = ResumeOnce(continuation)
+                let deadline = DeadlineBox()
                 // One reader per pipe, each reading to EOF, and the result is
                 // assembled only once both readers and the exit are in. A
                 // callback-per-chunk reader can still be holding bytes when
@@ -118,7 +119,12 @@ public struct ProcessRunner: CommandRunning {
                     group.leave()
                 }
                 group.enter()
-                process.terminationHandler = { _ in group.leave() }
+                process.terminationHandler = { _ in
+                    group.leave()
+                    // A timed-out run reports the stop as soon as the
+                    // child is actually gone, not when the pipes drain.
+                    if deadline.isExpired { once.resume(throwing: SweError.timedOut) }
+                }
                 // No child started: close our write ends so the readers see
                 // EOF and finish, and leave the exit entry the termination
                 // handler will never leave, so the group does not leak.
@@ -150,21 +156,28 @@ public struct ProcessRunner: CommandRunning {
                         try? inputPipe.fileHandleForWriting.close()
                     }
                 }
-                // A hung child — or one that already exited while a
-                // grandchild still holds the pipes open — must not wedge
-                // the caller forever: past the deadline the run throws.
-                // The readers finish whenever the pipes finally close;
-                // the group's late notify is then a no-op.
+                // A hung run must not wedge the caller forever: past the
+                // deadline the whole command tree is stopped — a child
+                // like `bash` leaves `swift build` running otherwise —
+                // and the call throws once the run's own process is gone
+                // (the termination handler may report it sooner). A
+                // grandchild holding the pipes open can't delay that:
+                // the readers finish whenever the pipes finally close.
                 DispatchQueue.global().asyncAfter(deadline: .now() + timeout.timeInterval) {
-                    if process.isRunning {
-                        process.terminate()
-                        // SIGTERM is a request; a child that ignores it is
-                        // killed outright a moment later.
-                        DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(2)) {
-                            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                        }
+                    deadline.expire()
+                    if process.isRunning { process.terminate() }
+                    Self.stopDescendants(of: process.processIdentifier, signal: SIGTERM)
+                    // SIGTERM is a request; anything that ignores it, and
+                    // any descendant spawned meanwhile, is killed
+                    // outright a moment later.
+                    DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(2)) {
+                        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                        Self.stopDescendants(of: process.processIdentifier, signal: SIGKILL)
+                        // SIGKILL cannot be ignored, so this waits out the
+                        // kernel's reaping rather than a live child.
+                        process.waitUntilExit()
+                        once.resume(throwing: SweError.timedOut)
                     }
-                    once.resume(throwing: SweError.timedOut)
                 }
                 group.notify(queue: .global()) {
                     once.resume(CommandResult(
@@ -178,6 +191,38 @@ public struct ProcessRunner: CommandRunning {
             gate.cancel()
         }
     }
+
+    /// Sends `signal` to every process under `pid`, walking the tree with
+    /// `proc_listchildpids`. A pid that exits between listing and the
+    /// signal just answers ESRCH. Children may outlive their parent —
+    /// a `bash` script's `swift build` survives bash's own terminate —
+    /// so a timeout sweeps the descendants too.
+    private static func stopDescendants(of pid: pid_t, signal: Int32) {
+        var seen: Set<pid_t> = [pid]
+        var queue = [pid]
+        while let parent = queue.popLast() {
+            var buffer = [pid_t](repeating: 0, count: 512)
+            let bytes = proc_listchildpids(parent, &buffer,
+                                         Int32(MemoryLayout<pid_t>.stride * buffer.count))
+            guard bytes > 0 else { continue }
+            for child in buffer.prefix(Int(bytes) / MemoryLayout<pid_t>.stride)
+            where seen.insert(child).inserted {
+                kill(child, signal)
+                queue.append(child)
+            }
+        }
+    }
+}
+
+/// Set when a run passes its deadline; read by the termination handler
+/// to report the stop as soon as the child is gone.
+private final class DeadlineBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var expired = false
+
+    var isExpired: Bool { lock.withLock { expired } }
+
+    func expire() { lock.withLock { expired = true } }
 }
 
 /// The one place a run's cancel and its launch meet. Both take the lock, so

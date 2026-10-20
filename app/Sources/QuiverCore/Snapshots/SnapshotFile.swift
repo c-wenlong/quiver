@@ -64,6 +64,7 @@ public actor SnapshotFile<Content: SnapshotContent>: SnapshotStoring {
         if fd >= 0 {
             flock(fd, exclusive ? LOCK_EX : LOCK_SH)
             defer { close(fd) }   // closing drops the flock
+            return try body()
         }
         return try body()
     }

@@ -242,7 +242,9 @@ public struct RateLimit: Codable, Sendable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         status = (try? c.decode(Status.self, forKey: .status)) ?? .timeout
         usedPercent = (try? c.decode(Int.self, forKey: .usedPercent)) ?? 0
-        remainingPercent = (try? c.decode(Int.self, forKey: .remainingPercent)) ?? (100 - usedPercent)
+        // The derived fallback is clamped first: 100 - Int.min traps.
+        remainingPercent = (try? c.decode(Int.self, forKey: .remainingPercent))
+            ?? (100 - min(max(usedPercent, 0), 100))
         limitReached = (try? c.decode(Bool.self, forKey: .limitReached)) ?? (usedPercent >= 100)
         resetAt = (try? c.decodeIfPresent(Date.self, forKey: .resetAt)) ?? nil
         window = (try? c.decodeIfPresent(String.self, forKey: .window)) ?? nil

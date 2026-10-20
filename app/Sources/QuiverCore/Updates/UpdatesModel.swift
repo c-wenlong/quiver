@@ -183,14 +183,20 @@ public final class UpdatesModel {
             result = try await rebuildRunner.run(
                 ["QUIVER_BUILD_DIR=\(buildDir.path)", "bash", script],
                 input: nil, timeout: .seconds(30 * 60))
-        } catch SweError.timedOut {
-            try? FileManager.default.removeItem(at: buildDir)
-            rebuildState = .failed("The build timed out after 30 minutes and was stopped.")
-            return
         } catch {
             try? FileManager.default.removeItem(at: buildDir)
-            rebuildState = .failed("The build could not be started: "
-                + error.localizedDescription)
+            // A checkout change while the build ran discards the whole
+            // outcome — a stale failure must not land on the new row.
+            guard self.checkout == startedCheckout else {
+                rebuildState = .idle
+                return
+            }
+            if error as? SweError == .timedOut {
+                rebuildState = .failed("The build timed out after 30 minutes and was stopped.")
+            } else {
+                rebuildState = .failed("The build could not be started: "
+                    + error.localizedDescription)
+            }
             return
         }
         guard self.checkout == startedCheckout else {

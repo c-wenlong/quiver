@@ -123,6 +123,42 @@ import Testing
         #expect(Date().timeIntervalSince(started) < 20)
     }
 
+    @Test func aTimeoutStopsTheWholeCommandTree() async throws {
+        // The child reports the pid of a sleep it spawned, then waits on
+        // it. Stopping only the direct child would leave the sleep
+        // running — the rebuild case is `bash` under a timed-out
+        // `build-app.sh` leaving `swift build` alive.
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let pidFile = dir.appending(path: "child.pid")
+        let runner = ProcessRunner(executable: "/bin/sh", environment: env)
+        let task = Task {
+            try await runner.run(
+                ["-c", "sleep 60 & echo $! > '\(pidFile.path)'; wait"],
+                input: nil, timeout: .milliseconds(500))
+        }
+        // Poll rather than guess when the grandchild exists.
+        let startDeadline = Date().addingTimeInterval(10)
+        while !FileManager.default.fileExists(atPath: pidFile.path), Date() < startDeadline {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        let grandchild = pid_t(
+            try String(contentsOf: pidFile, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines))
+        try #require(grandchild != nil && grandchild! > 0)
+
+        await #expect(throws: SweError.timedOut) { try await task.value }
+
+        // The orphan is dead already, but launchd reaps it on its own
+        // schedule — poll the pid instead of sleeping a guessed delay.
+        let reapDeadline = Date().addingTimeInterval(10)
+        while kill(grandchild!, 0) == 0, Date() < reapDeadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(kill(grandchild!, 0) != 0)
+    }
+
     @Test func aQuickRunInsideItsDeadlineAnswers() async throws {
         let runner = ProcessRunner(executable: "/bin/sh", environment: env)
         let result = try await runner.run(["-c", "echo hi"], input: nil,

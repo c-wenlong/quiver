@@ -164,6 +164,29 @@ func fixture(_ name: String) throws -> Data {
         #expect(degraded.limitReached == false)
     }
 
+    @Test func anExtremeUsedPercentCannotTrapTheDerivedFallback() async throws {
+        // Int.min is a valid Int, so it decodes — and 100 - Int.min traps
+        // if the missing remaining_percent is derived without clamping.
+        // try? catches decode errors, never arithmetic.
+        let doc = Data(#"""
+        {"schema": 1, "data": {"harnesses": [
+         {"name": "claude", "command": "claude", "description": "d",
+          "aliases": [], "tags": [], "state": "active",
+          "rate_limit": {"status": "ok", "used_percent": -9223372036854775808,
+                         "limit_reached": false}},
+         {"name": "codex", "command": "codex", "description": "d",
+          "aliases": [], "tags": [], "state": "active",
+          "rate_limit": {"status": "ok", "used_percent": 250}}]}}
+        """#.utf8)
+        let harnesses = try await SweClient(
+            runner: FakeRunner(.init(status: 0, stdout: doc, stderr: "")))
+            .harnesses(withUsage: false)
+        #expect(harnesses.map(\.name) == ["claude", "codex"])
+        #expect(harnesses[0].rateLimit?.remainingPercent == 100)
+        #expect(harnesses[1].rateLimit?.remainingPercent == 0)
+        #expect(harnesses[1].rateLimit?.limitReached == true)
+    }
+
     @Test func aBrokenHarnessRowIsDroppedNotFatal() async throws {
         let doc = Data(#"""
         {"schema": 1, "data": {"harnesses": [
