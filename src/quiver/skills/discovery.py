@@ -4,6 +4,7 @@ import os
 import re
 from pathlib import Path
 
+from quiver.paths import expand_user
 from quiver.skills.catalogs import load_skill_catalogs
 from quiver.skills.layout import SHARED_REL, shared_scopes_for_skill
 
@@ -41,7 +42,7 @@ def skill_roots(home: Path | None = None, cwd: Path | None = None) -> list[tuple
 
     for entry in load_skill_catalogs():
         label = entry.get("label", "catalog")
-        path = Path(entry.get("path", "")).expanduser()
+        path = expand_user(entry.get("path", ""))
         candidates.append((label, path))
 
     roots: list[tuple[str, Path]] = []

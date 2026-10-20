@@ -19,6 +19,7 @@ from quiver.init.commands import (
     run_init,
 )
 from quiver.init.layout import agents_file, registry_name
+from quiver.paths import expand_user
 
 
 def cmd_harness(args):
@@ -130,7 +131,7 @@ def cmd_setup(args):
     starred_args = [arg for arg in args if arg.startswith("--starred=")]
     args = [arg for arg in args
             if not arg.startswith(("--adopt=", "--starred="))]
-    adopt = Path(adopt_args[-1].split("=", 1)[1]).expanduser() if adopt_args else None
+    adopt = expand_user(adopt_args[-1].split("=", 1)[1]) if adopt_args else None
     starred = None
     if starred_args:
         value = starred_args[-1].split("=", 1)[1]

@@ -16,6 +16,7 @@ beats matching the XDG spec here.
 that still has one can be migrated by ``swe init --migrate``.
 """
 
+import os
 from pathlib import Path
 
 from quiver import DATA_DIR_NAME
@@ -228,6 +229,20 @@ SECRETS_GITIGNORE_BODY = """# Credential values. Never versioned, whatever ../.g
 def legacy_config_dir() -> Path | None:
     """The old ~/.config/swe root, if this machine still has one."""
     return LEGACY_CONFIG_DIR if LEGACY_CONFIG_DIR.is_dir() else None
+
+
+def expand_user(value: "str | Path") -> "Path":
+    """``Path(value).expanduser()`` minus the ``~user`` ``RuntimeError``.
+
+    ``Path.expanduser`` raises ``RuntimeError`` when the named account does
+    not exist, so a ``~missing-user/...`` recorded in a registry root,
+    catalog entry, session record or flag value took the whole command down
+    with a traceback. ``os.path.expanduser`` leaves an unresolvable
+    ``~user`` literal instead — the path then probes as missing, which is
+    the answer every caller was built for. ``~`` and ``~/`` still expand,
+    and a ``~user`` that does exist still resolves to its home.
+    """
+    return Path(os.path.expanduser(str(value)))
 
 
 def atomic_write_text(path: "Path", text: str, *, private: bool = False) -> None:

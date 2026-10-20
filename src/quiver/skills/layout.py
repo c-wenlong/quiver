@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from quiver.paths import CONFIG_DIR, SKILL_LINKS_FILE
+from quiver.paths import CONFIG_DIR, SKILL_LINKS_FILE, expand_user
 from quiver.skills.catalogs import load_skill_catalogs, count_skill_md
 
 
@@ -77,7 +77,7 @@ def _expand(home: Path, rel: Path) -> Path:
 def load_link_records() -> list[dict]:
     try:
         data = json.loads(SKILL_LINKS_FILE.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+    except (FileNotFoundError, json.JSONDecodeError, OSError, RecursionError):
         return []
     links = data.get("links", [])
     return links if isinstance(links, list) else []
@@ -164,7 +164,7 @@ def all_skill_root_candidates(
     candidates.append(("project", cwd / ".cursor" / "skills"))
     for entry in load_skill_catalogs():
         label = str(entry.get("label", "catalog"))
-        path = Path(str(entry.get("path", ""))).expanduser()
+        path = expand_user(str(entry.get("path", "")))
         candidates.append((label, path))
     return candidates
 
@@ -191,9 +191,11 @@ def enumerate_skill_roots(
         entry.canonical_label = canonical
         if entry.kind == "symlink" and entry.link_target is not None:
             try:
-                target_resolved = entry.link_target.expanduser().resolve()
+                target_resolved = expand_user(entry.link_target).resolve()
                 entry.link_target_label = resolved_to_label.get(target_resolved)
-            except OSError:
+            except (OSError, RuntimeError):
+                # RuntimeError: resolve() reports a symlink loop that way,
+                # and a link target can itself be literal ``~user`` text.
                 entry.link_target_label = None
         elif entry.label != canonical:
             entry.link_target_label = canonical
@@ -281,7 +283,7 @@ def resolve_root_ref(ref: str, home: Path | None = None, cwd: Path | None = None
             f"Pass a known root ({', '.join(known[:8])}...) "
             f"or an explicit path like ./{ref}."
         )
-    path = Path(ref).expanduser()
+    path = expand_user(ref)
     if not path.is_absolute():
         path = Path.cwd() / path
     for label, candidate in all_skill_root_candidates(home, cwd):

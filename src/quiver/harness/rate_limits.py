@@ -117,11 +117,15 @@ def _parse_retry_after_to_seconds(ra_value) -> float | None:
     s = ra_value.strip()
     if not s:
         return None
-    # Numeric seconds (RFC 7231 §7.1.3 first form).
+    # Numeric seconds (RFC 7231 §7.1.3 first form). A header of
+    # ``Retry-After: inf`` parses to a float that returns here and
+    # later kills ``int(retry // 60)`` with OverflowError.
     try:
-        return max(0.0, float(s))
+        seconds = float(s)
     except (TypeError, ValueError):
         pass
+    else:
+        return max(0.0, seconds) if math.isfinite(seconds) else None
     # IMF-fixdate (RFC 7231 §7.1.3 second form).
     try:
         dt = datetime.datetime.strptime(
@@ -268,7 +272,12 @@ def _fetch_json(
             return None
     except ssl.SSLError:
         pass  # fall through to retry
-    except (json.JSONDecodeError, OSError, TimeoutError):
+    except (ValueError, RecursionError, OSError, TimeoutError):
+        # ValueError covers both parse failures: a non-UTF-8 body dies in
+        # decode() as UnicodeDecodeError, a non-JSON body in json.loads()
+        # as JSONDecodeError. RecursionError is a deeply nested but valid
+        # body. All three mean the reply could not be read, same as a
+        # network failure — not a traceback at the caller.
         return None
 
     # Retry with a bundled CA store, still fully verified. Without one
@@ -284,8 +293,11 @@ def _fetch_json(
     except urllib.error.HTTPError as exc:
         handle_http_error(exc)
         return None
-    except (urllib.error.URLError, json.JSONDecodeError, OSError, TimeoutError,
-            ssl.SSLError):
+    except (urllib.error.URLError, ValueError, RecursionError, OSError,
+            TimeoutError, ssl.SSLError):
+        # Same body-parse coverage as the first attempt: decode()
+        # (UnicodeDecodeError) and json.loads() (JSONDecodeError, a
+        # ValueError) must not escape as tracebacks.
         return None
 
 
@@ -315,7 +327,7 @@ def _fetch_codex() -> RateLimitInfo | None:
     try:
         with open(auth_path) as f:
             auth = json.load(f)
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError, RecursionError):
         return None
 
     tokens = auth.get("tokens") or {}
@@ -350,8 +362,11 @@ def _fetch_codex() -> RateLimitInfo | None:
     elif isinstance(reset_at, (int, float)) and not isinstance(reset_at, bool):
         # ``bool`` subclasses ``int`` in Python — guard explicitly so a
         # pathological ``reset_at: True`` payload can't silently become
-        # ``1.0``.
-        reset_at = float(reset_at)
+        # ``1.0``. A 400-digit JSON int overflows float().
+        try:
+            reset_at = float(reset_at)
+        except OverflowError:
+            reset_at = 0.0
     else:
         reset_at = 0.0
     window_seconds = primary.get("limit_window_seconds", 0)
@@ -442,8 +457,9 @@ def _derive_copilot_fields(premium: dict) -> tuple[int, bool]:
     else:
         try:
             used_raw = int(round(100 - float(raw)))
-        except (TypeError, ValueError):
-            # Malformed (e.g. string with "%" suffix). Don't crash.
+        except (TypeError, ValueError, OverflowError):
+            # Malformed (e.g. string with "%" suffix, or an inf payload).
+            # Don't crash.
             used_percent = 0
         else:
             used_percent = max(0, min(100, used_raw))
@@ -451,7 +467,7 @@ def _derive_copilot_fields(premium: dict) -> tuple[int, bool]:
     has_quota = bool(premium.get("has_quota", True))
     try:
         entitlement = int(premium.get("entitlement", 0) or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         entitlement = 0
     limit_reached = (not has_quota) or (entitlement > 0 and used_percent >= 100)
 
@@ -655,7 +671,7 @@ def _read_claude_credentials_file() -> dict | None:
         try:
             with open(creds_path) as f:
                 creds = json.load(f)
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError, RecursionError):
             creds = None
         if isinstance(creds, dict):
             oauth = creds.get("claudeAiOauth") or {}
@@ -691,7 +707,7 @@ def _read_claude_keychain_credentials() -> dict | None:
         return None
     try:
         creds = json.loads(raw)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         return None
     if not isinstance(creds, dict):
         return None
@@ -708,7 +724,7 @@ def _claude_expires_at_seconds(oauth: dict) -> float:
     try:
         expires_at = float(expires_at)
         return expires_at / 1000 if expires_at > 100_000_000_000 else expires_at
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0.0
 
 
@@ -822,7 +838,8 @@ def _load_claude_state() -> tuple[RateLimitInfo | None, float, str, float]:
         retry_at = float(raw.get("retry_at") or 0)
         fingerprint = raw.get("credential_fingerprint") or ""
         fetched_at = float(raw.get("fetched_at") or 0)
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+    except (OSError, ValueError, TypeError, OverflowError,
+            json.JSONDecodeError, RecursionError):
         return None, 0.0, "", 0.0
     if not fetched_at or time.time() - fetched_at > _STALE_CACHE_TTL:
         info = None
@@ -941,7 +958,7 @@ def _fetch_claude() -> RateLimitInfo | None:
             continue
         try:
             utilization = float(window.get("utilization"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
         if utilization > best_utilization:
             best_window_key = key
@@ -1208,7 +1225,7 @@ def _decrypt_droid_auth_file() -> str | None:
 
     try:
         obj = json.loads(pt.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except (json.JSONDecodeError, UnicodeDecodeError, RecursionError):
         return None
     if not isinstance(obj, dict):
         return None
@@ -1463,7 +1480,7 @@ def _fetch_droid() -> RateLimitInfo | None:
                 continue
             try:
                 used = max(0, min(100, int(round(float(raw)))))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 # Malformed payload — skip rather than crash ``swe list``.
                 continue
             window_samples[win_key].append((
@@ -1539,7 +1556,7 @@ def _get_freebuff_access_token() -> str | None:
     try:
         with open(credentials_path) as file:
             credentials = json.load(file)
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError, RecursionError):
         return None
 
     default = credentials.get("default")
@@ -1576,7 +1593,7 @@ def _parse_freebuff_quota(data: dict) -> RateLimitInfo | None:
         try:
             total_units = float(quota.get("limit"))
             used_units = float(quota.get("recentCount"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
         remaining_units = max(0.0, total_units - used_units)
         reset_at = quota.get("resetAt")
@@ -1587,7 +1604,7 @@ def _parse_freebuff_quota(data: dict) -> RateLimitInfo | None:
         try:
             remaining_units = float(referral.get("weeklySessionsRemaining"))
             total_units = float(referral.get("qualifiedCount"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
         reset_at = referral.get("resetAt")
 
@@ -1760,7 +1777,7 @@ def _cursor_token_claims(token: str) -> dict | None:
         payload = token.split(".")[1]
         payload += "=" * (-len(payload) % 4)
         claims = json.loads(base64.urlsafe_b64decode(payload))
-    except (IndexError, ValueError):
+    except (IndexError, ValueError, RecursionError):
         return None
     return claims if isinstance(claims, dict) else None
 
@@ -1787,7 +1804,7 @@ def _cursor_ms_to_epoch(value) -> float:
             return 0.0
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0.0
     if not math.isfinite(number) or number <= 0:
         return 0.0
@@ -1812,7 +1829,7 @@ def _parse_cursor_usage(data: dict) -> RateLimitInfo | None:
     for name, label in _CURSOR_BUCKETS:
         try:
             percent = float(plan.get(name))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
         if not math.isfinite(percent):
             continue
@@ -1890,7 +1907,7 @@ def _cursor_on_demand(spend: dict | None, hard: dict | None) -> dict:
             return None
         try:
             result = float(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
         return result if math.isfinite(result) else None
 
@@ -2103,13 +2120,18 @@ def _usage_event_fields(event: dict) -> dict | None:
             return 0
         try:
             number = int(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            # OverflowError: int() on a float("inf") parsed from 1e999.
             return 0
         return number if number > 0 else 0
 
     cents = usage.get("totalCents")
     cost = None
-    if isinstance(cents, (int, float)) and not isinstance(cents, bool):
+    if (
+        isinstance(cents, (int, float))
+        and not isinstance(cents, bool)
+        and math.isfinite(cents)
+    ):
         cost = float(cents) / 100
     conversation = event.get("conversationId")
     return {
@@ -2175,7 +2197,7 @@ def fetch_cursor_usage_events(
     if since is not None:
         try:
             start = max(start, min(float(since), now))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             pass
 
     status = "ok"
@@ -2292,7 +2314,9 @@ def _read_devin_credentials(path: str | None = None) -> tuple[str, str] | None:
     import tomllib
     try:
         data = tomllib.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, tomllib.TOMLDecodeError):
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError, RecursionError):
+        # RecursionError: a credentials file nested past the parser's
+        # depth limit is unreadable — same verdict as malformed TOML.
         return None
     key = data.get("windsurf_api_key")
     if not isinstance(key, str) or not key.strip():
@@ -2313,7 +2337,7 @@ def _devin_unix_to_epoch(value) -> float:
             return 0.0
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0.0
     if not math.isfinite(number) or number <= 0:
         return 0.0
@@ -2344,7 +2368,7 @@ def _parse_devin_status(data: dict) -> RateLimitInfo | None:
     try:
         micros = float(plan.get("overageBalanceMicros"))
         extra_usage_usd = round(micros / 1_000_000, 2) if math.isfinite(micros) and micros >= 0 else None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         extra_usage_usd = None
 
     best_label = ""
@@ -2365,7 +2389,7 @@ def _parse_devin_status(data: dict) -> RateLimitInfo | None:
         else:
             try:
                 remaining = float(remaining)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 continue
             if not math.isfinite(remaining):
                 continue
@@ -2393,7 +2417,7 @@ def _parse_devin_status(data: dict) -> RateLimitInfo | None:
     try:
         total = float(info.get("monthlyPromptCredits"))
         remaining = float(plan.get("availablePromptCredits"))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if not (
         math.isfinite(total) and math.isfinite(remaining)
@@ -2505,8 +2529,13 @@ def _load_cached(
         with open(RATE_LIMITS_CACHE_FILE) as f:
             data = json.load(f)
         ttl = _CACHE_TTL if ttl is None else ttl
-        cached_at = data.get("cached_at", 0)
-        if time.time() - cached_at > ttl:
+        try:
+            cached_at = float(data.get("cached_at", 0))
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not math.isfinite(cached_at) or time.time() - cached_at > ttl:
+            # inf lands here as "never stale" — an unparseable or
+            # non-finite envelope timestamp is a miss, not a keep.
             return None
         limits = data.get("limits", {})
         updated_at = data.get("updated_at", {})
@@ -2520,9 +2549,9 @@ def _load_cached(
         for name, raw in limits.items():
             try:
                 ts = float(updated_at.get(name, cached_at))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 continue
-            if now - ts <= ttl:
+            if math.isfinite(ts) and now - ts <= ttl:
                 fresh_limits[name] = raw
                 fresh_at[name] = ts
         return fresh_limits, fresh_at
@@ -2548,14 +2577,18 @@ def _load_cached_no_data(ttl: float | None = None) -> set[str]:
         with open(RATE_LIMITS_CACHE_FILE) as f:
             data = json.load(f)
         ttl = _CACHE_TTL if ttl is None else ttl
-        if time.time() - data.get("cached_at", 0) > ttl:
+        cached_at = data.get("cached_at", 0)
+        if not isinstance(cached_at, (int, float)) or not math.isfinite(cached_at):
+            return set()
+        if time.time() - cached_at > ttl:
             return set()
         names = data.get("no_data", [])
         if isinstance(names, dict):
             now = time.time()
             return {
                 name for name, ts in names.items()
-                if isinstance(ts, (int, float)) and now - ts <= ttl
+                if isinstance(ts, (int, float)) and math.isfinite(ts)
+                and now - ts <= ttl
             }
         return set(names) if isinstance(names, list) else set()
     except Exception:
@@ -2629,13 +2662,15 @@ def _load_stale_cached() -> tuple[dict[str, dict], dict[str, float]]:
                 continue
             try:
                 provider_updated_at = float(timestamps.get(name, cached_at))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 continue
-            if time.time() - provider_updated_at <= _STALE_CACHE_TTL:
+            if (math.isfinite(provider_updated_at)
+                    and time.time() - provider_updated_at <= _STALE_CACHE_TTL):
                 usable[name] = raw
                 usable_timestamps[name] = provider_updated_at
         return usable, usable_timestamps
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+    except (OSError, ValueError, TypeError, json.JSONDecodeError,
+            RecursionError):
         return {}, {}
 
 

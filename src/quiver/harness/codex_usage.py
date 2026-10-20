@@ -44,7 +44,7 @@ def _read_message(proc, buffer: bytearray, deadline: float):
             del buffer[: newline + 1]
             try:
                 return json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):
                 continue
         remaining = deadline - time.monotonic()
         if remaining <= 0:

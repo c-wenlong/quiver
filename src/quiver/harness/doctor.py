@@ -30,10 +30,18 @@ def collect_findings(env, preferred, which_npm, nvm_dirs, orphans, drift) -> lis
             "npm.global-bin", "error",
             f"npm global bin {env.global_bin} is not on PATH",
             f'export PATH="{env.global_bin}:$PATH"'))
-    if preferred and which_npm and Path(preferred).resolve() != Path(which_npm).resolve():
-        findings.append(DoctorFinding(
-            "npm.preferred", "info",
-            f"which npm is {which_npm}; swe prefers {preferred}"))
+    if preferred and which_npm:
+        try:
+            differs = (Path(preferred).resolve()
+                       != Path(which_npm).resolve())
+        except (OSError, RuntimeError):
+            # A symlink loop or hostile PATH entry must not kill the
+            # report — compare the raw strings instead.
+            differs = preferred != which_npm
+        if differs:
+            findings.append(DoctorFinding(
+                "npm.preferred", "info",
+                f"which npm is {which_npm}; swe prefers {preferred}"))
     if nvm_dirs and not any(is_dir_on_path(d) for d in nvm_dirs):
         findings.append(DoctorFinding(
             "nvm", "warning",

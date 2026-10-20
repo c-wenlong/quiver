@@ -30,7 +30,10 @@ class OffPathHit:
 
 
 def _expand(path: str) -> Path:
-    return Path(os.path.expanduser(path)).expanduser()
+    # os.path.expanduser leaves an unresolvable ``~user`` literal instead
+    # of raising; the trailing Path.expanduser this used to chain turned
+    # that literal into a RuntimeError.
+    return Path(os.path.expanduser(path))
 
 
 def path_entries() -> list[str]:
@@ -129,7 +132,13 @@ def nvm_bin_dirs(home: Path | None = None) -> list[Path]:
     if not versions.is_dir():
         return []
     dirs: list[Path] = []
-    for child in sorted(versions.iterdir()):
+    try:
+        children = sorted(versions.iterdir())
+    except OSError:
+        # An unreadable nvm dir means "no nvm installs we can see",
+        # not a crash for the command that asked.
+        return []
+    for child in children:
         bin_dir = child / "bin"
         if bin_dir.is_dir():
             dirs.append(bin_dir)
@@ -162,7 +171,8 @@ def search_dirs_for_command(command: str, home: Path | None = None) -> list[OffP
                 if resolved not in seen:
                     seen.add(resolved)
                     hits.append(OffPathHit(command=command, path=resolved, source=source))
-        except OSError:
+        except (OSError, RuntimeError):
+            # RuntimeError: resolve() reports a symlink loop that way.
             continue
     return hits
 

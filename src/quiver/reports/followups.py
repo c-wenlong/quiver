@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 
+from quiver.paths import expand_user
 from quiver.reports.models import FOLLOW_UP_STATUSES, FollowUp, utc_now
 from quiver.reports.store import (
     MalformedReportStateError,
@@ -19,7 +20,7 @@ from quiver.reports.store import (
 
 def _normalized_identity(text: str, project_root: str) -> str:
     normalized_text = re.sub(r"\s+", " ", text).strip().casefold()
-    normalized_root = str(Path(project_root).expanduser()).rstrip("/").casefold()
+    normalized_root = str(expand_user(project_root)).rstrip("/").casefold()
     return f"{normalized_root}\0{normalized_text}"
 
 
@@ -82,7 +83,7 @@ class FollowUpLedger:
         if status is not None:
             items = (item for item in items if item.status == status)
         if project_root is not None:
-            wanted = str(Path(project_root).expanduser())
+            wanted = str(expand_user(project_root))
             items = (item for item in items if item.project_root == wanted)
         return sorted(items, key=lambda item: (item.status != "open", item.created_at, item.id))
 
@@ -100,7 +101,7 @@ class FollowUpLedger:
         clean_text = text.strip()
         if not clean_text:
             raise ValueError("follow-up text must not be empty")
-        clean_root = str(Path(project_root).expanduser())
+        clean_root = str(expand_user(project_root))
         follow_up_id = stable_follow_up_id(clean_text, clean_root)
         index = self._load_index()
         existing = index.get(follow_up_id)
@@ -161,7 +162,7 @@ class FollowUpLedger:
             item,
             text=text.strip() if text is not None else item.text,
             project_root=(
-                str(Path(project_root).expanduser()) if project_root is not None else item.project_root
+                str(expand_user(project_root)) if project_root is not None else item.project_root
             ),
             context=context if context is not None else item.context,
             blockers=list(dict.fromkeys(blockers)) if blockers is not None else item.blockers,

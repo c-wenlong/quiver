@@ -617,7 +617,7 @@ def load_registry(home: Path) -> dict:
     path = _paths.config_dir_for(home) / "harness.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return {}
     return data if isinstance(data, dict) else {}
 

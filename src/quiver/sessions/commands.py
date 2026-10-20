@@ -570,9 +570,18 @@ def _resume_session(session) -> int:
     if not os.path.exists(session.path):
         print(c("red", f"Directory not found: {sanitize(session.path)}"))
         return 1
+    if not os.path.isdir(session.path):
+        # A session can record a transcript file rather than its project
+        # directory; chdir on it raises NotADirectoryError.
+        print(c("red", f"Not a directory: {sanitize(session.path)}"))
+        return 1
 
     print(c("cyan", f"Resuming {sanitize(session.agent)} session..."))
-    os.chdir(session.path)
+    try:
+        os.chdir(session.path)
+    except OSError as exc:
+        print(c("red", f"Cannot enter {sanitize(session.path)}: {exc.strerror or exc}"))
+        return 1
 
     cmd_args = _resume_cmd_args(session)
     from quiver.harness.commands import cmd_use

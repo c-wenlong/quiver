@@ -18,6 +18,7 @@ from quiver.configuration import (
 )
 from quiver.console import c
 from quiver.flags import expand_value_flags
+from quiver.paths import expand_user
 from quiver.reports.followups import FollowUpLedger
 from quiver.reports.pipeline import (
     ApprovedReportPlan,
@@ -234,7 +235,7 @@ def _warnings_command(manifest_path: Path | str) -> str:
 
 
 def _print_report_warnings(path: str) -> int:
-    manifest_path = Path(path).expanduser()
+    manifest_path = expand_user(path)
     if manifest_path.suffix == ".md":
         manifest_path = manifest_path.with_suffix(".json")
     if manifest_path.suffix != ".json":
