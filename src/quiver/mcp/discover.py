@@ -232,13 +232,15 @@ class MergeResult:
         return bool(self.added or self.updated or self.pruned)
 
 
-def _shielded(server: dict) -> dict:
+def _shielded(server: dict) -> dict | None:
     """Move credential-shaped literals into the store before a hub write.
 
     redact() only swaps values the store already holds, so a literal
     ``env.API_KEY`` would land in the versioned hub file in plaintext.
     Every move is reported on stderr — the run stays honest and --json
-    output clean.
+    output clean. Returns None when a credential could not be stored:
+    a half-shielded entry would still leak the failing literal, so the
+    server is left out of the hub instead.
     """
     shielded, notes = shield_credentials(server)
     for note in notes:
@@ -264,11 +266,15 @@ def apply_mcp_findings(findings: list[McpFinding], prune: bool = False) -> Merge
     for finding in findings:
         if finding.status == "new":
             if finding.name not in servers:
-                servers[finding.name] = _shielded(finding.server)
-                added.append(finding.name)
+                shielded = _shielded(finding.server)
+                if shielded is not None:
+                    servers[finding.name] = shielded
+                    added.append(finding.name)
         elif finding.status == "changed":
-            servers[finding.name] = _shielded(finding.server)
-            updated.append(finding.name)
+            shielded = _shielded(finding.server)
+            if shielded is not None:
+                servers[finding.name] = shielded
+                updated.append(finding.name)
         elif finding.status == "orphaned":
             orphaned.append(finding.name)
             if prune:

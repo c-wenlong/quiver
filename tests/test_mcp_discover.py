@@ -529,6 +529,52 @@ class ShieldCredentialsTest(unittest.TestCase):
             self.assertEqual(load_secrets(home)["API_KEY_2"], "new-different-value")
             self.assertEqual(load_secrets(home)["API_KEY"], "other-value")
 
+    def test_a_value_embedding_a_reference_is_left_alone(self):
+        # redact() can hand discover "prefix-${TOKEN}"; storing that whole
+        # string under a new name would leave ${TOKEN} unexpanded — resolve
+        # substitutes once.
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+
+        with contextlib.ExitStack() as stack:
+            _home, path = self._hub(stack)
+            apply_mcp_findings([
+                McpFinding(
+                    name="svc", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"env": {"API_KEY": "prefix-${TOKEN}"}})])
+            hub = json.loads(path.read_text())["mcpServers"]["svc"]
+            self.assertEqual(hub["env"]["API_KEY"], "prefix-${TOKEN}")
+
+    def test_an_unstorable_credential_skips_the_server_not_the_run(self):
+        # A multiline value (a PEM block) can't be a secrets-file line:
+        # the rest of the findings still apply, this one is reported and
+        # kept out of the hub rather than written half-shielded.
+        import contextlib
+        import json
+
+        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+        from quiver.mcp.secrets import load_secrets
+
+        with contextlib.ExitStack() as stack:
+            home, path = self._hub(stack)
+            res = apply_mcp_findings([
+                McpFinding(
+                    name="bad", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"env": {"API_KEY": "-----BEGIN-----\nline2\n-----END-----"}}),
+                McpFinding(
+                    name="good", tools=("claude",), status="new",
+                    source_tool="claude",
+                    server={"command": "npx", "env": {}})])
+            servers = json.loads(path.read_text())["mcpServers"]
+            self.assertIn("good", servers)
+            self.assertNotIn("bad", servers)
+            self.assertEqual(res.added, ["good"])
+            self.assertEqual(load_secrets(home), {})
+
 
 class ServerSummaryScrubTest(unittest.TestCase):
     """discover --json must obey the same secrecy contract as list --json."""

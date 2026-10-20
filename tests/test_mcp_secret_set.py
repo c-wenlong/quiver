@@ -81,6 +81,7 @@ class SetSecretTest(unittest.TestCase):
             'export C="v3" # a note\n'
             "export D=v4#not-a-comment\n"
             "export E='a # b'\n"
+            'export F="a \\" # b"\n'
         )
         got = secrets.load_secrets(self.home)
         self.assertEqual(got["A"], "v1")
@@ -88,6 +89,9 @@ class SetSecretTest(unittest.TestCase):
         self.assertEqual(got["C"], "v3")
         self.assertEqual(got["D"], "v4#not-a-comment")
         self.assertEqual(got["E"], "a # b")
+        # \" inside a double-quoted value is escaped, not the end of it:
+        # scanning past it used to clip the value to `a \`.
+        self.assertEqual(got["F"], 'a \\" # b')
 
     def test_writes_through_a_symlinked_store(self):
         from quiver.mcp import secrets
