@@ -4,8 +4,16 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from quiver.configuration import CorruptConfigurationError
 from quiver.harness.catalog import HARNESS_CATALOG
-from quiver.harness.registry import alias_map, load_registry, resolve, save_registry
+from quiver.harness.registry import (
+    alias_map,
+    load_registry,
+    load_registry_readonly,
+    resolve,
+    save_registry,
+    starred_names,
+)
 
 
 class HarnessRegistryTest(unittest.TestCase):
@@ -65,6 +73,89 @@ class HarnessRegistryTest(unittest.TestCase):
                 loaded = load_registry()
                 self.assertIn("mytool", loaded)
                 self.assertEqual(resolve(loaded, "mt"), "mytool")
+
+
+class RegistryRobustnessTest(unittest.TestCase):
+    """#383: malformed entries error cleanly; state-only rows stay readable."""
+
+    def _config_dir(self, tmp):
+        config_dir = Path(tmp) / ".quiver" / "config"
+        config_dir.mkdir(parents=True)
+        return config_dir
+
+    def _patches(self, config_dir):
+        return (
+            patch("quiver.harness.registry.CONFIG_DIR", config_dir),
+            patch("quiver.harness.registry.HARNESS_FILE", config_dir / "harness.json"),
+            patch("quiver.harness.registry.TOOLS_FILE", config_dir / "tools.json"),
+            patch("quiver.harness.registry.STARS_FILE", config_dir / "stars.json"),
+            patch("quiver.harness.registry.ARCHIVE_FILE", config_dir / "archived.json"),
+        )
+
+    def test_non_object_entry_raises_controlled_error(self):
+        """`{"claude": "oops"}` used to reach callers that then died on
+        ``entry.get(...)`` with a bare AttributeError."""
+        with tempfile.TemporaryDirectory() as tmp:
+            config_dir = self._config_dir(tmp)
+            (config_dir / "harness.json").write_text(
+                json.dumps({"claude": "oops", "codex": {"command": "codex"}}))
+            patches = self._patches(config_dir)
+            for p in patches:
+                p.start()
+            try:
+                with self.assertRaises(CorruptConfigurationError) as ctx:
+                    load_registry()
+            finally:
+                for p in patches:
+                    p.stop()
+            self.assertIn("claude", str(ctx.exception))
+
+    def test_readonly_path_validates_legacy_tools_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_dir = self._config_dir(tmp)
+            (config_dir / "tools.json").write_text(json.dumps({"claude": 42}))
+            patches = self._patches(config_dir)
+            for p in patches:
+                p.start()
+            try:
+                with self.assertRaises(CorruptConfigurationError):
+                    load_registry_readonly()
+            finally:
+                for p in patches:
+                    p.stop()
+
+    def test_starred_names_tolerates_a_non_numeric_pin(self):
+        reg = {
+            "alpha": {"command": "a", "state": "starred", "pin": "oops"},
+            "beta": {"command": "b", "state": "starred", "pin": 2},
+        }
+        # Used to TypeError sorting str against int; a bad pin sorts as 0.
+        self.assertEqual(starred_names(reg), ["alpha", "beta"])
+
+    def test_migration_keeps_a_star_for_a_name_tools_does_not_know(self):
+        """State-only rows are a feature of the stars shim (star before the
+        harness is registered); migration must carry them, and the readers
+        must tolerate the missing command."""
+        with tempfile.TemporaryDirectory() as tmp:
+            config_dir = self._config_dir(tmp)
+            (config_dir / "tools.json").write_text(
+                json.dumps({"claude": {"command": "claude"}}))
+            (config_dir / "stars.json").write_text(
+                json.dumps(["claude", "ghost-tool"]))
+            patches = self._patches(config_dir)
+            for p in patches:
+                p.start()
+            try:
+                reg = load_registry()
+            finally:
+                for p in patches:
+                    p.stop()
+            self.assertEqual(reg["claude"]["state"], "starred")
+            self.assertEqual(reg["ghost-tool"]["state"], "starred")
+            self.assertEqual(reg["ghost-tool"]["pin"], 2)
+            self.assertEqual(starred_names(reg), ["claude", "ghost-tool"])
+            # Readers that keyed on entry["command"] must not crash on the ghost.
+            self.assertEqual(reg["ghost-tool"].get("command"), None)
 
 
 if __name__ == "__main__":
