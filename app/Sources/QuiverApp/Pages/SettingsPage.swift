@@ -247,14 +247,16 @@ private struct SettingsSectionView: View {
                        }) {
                 EmptyView()
             }
-            SettingsDivider()
-            SettingRow(title: "Updates from",
-                       detail: "This build defaults to \(app.updates.build.channel.title).") {
-                Tabs(options: UpdateChannel.allCases.map { ($0, $0.title) },
-                     selection: Binding(get: { app.updates.channel },
-                                        set: { app.updates.setChannel($0) }))
-            }
-            if app.updates.channel == .dev {
+            // Prod builds ship to users: no channel picker, no checkout,
+            // no Rebuild, whatever a stored dev override says.
+            if app.updates.showsDevControls {
+                SettingsDivider()
+                SettingRow(title: "Updates from",
+                           detail: "This build defaults to \(app.updates.build.channel.title).") {
+                    Tabs(options: UpdateChannel.allCases.map { ($0, $0.title) },
+                         selection: Binding(get: { app.updates.channel },
+                                            set: { app.updates.setChannel($0) }))
+                }
                 SettingsDivider()
                 PathRow(title: "Source checkout",
                         placeholder: "~/code/quiver",
