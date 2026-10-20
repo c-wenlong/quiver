@@ -55,7 +55,7 @@ Two things stand between "code complete" and "shipping":
    | `MACOS_CERTIFICATE` | base64 of `.p12` export of *Developer ID Application: Wenlong Chen (MAK855QGSV)* — Keychain Access › My Certificates › export **with** private key |
    | `MACOS_CERTIFICATE_PASSWORD` | the `.p12` export password |
    | `KEYCHAIN_PASSWORD` | any string (throwaway CI keychain) |
-   | `NOTARY_KEY` | `base64 -i ~/Downloads/AuthKey_2JD7N46XV7.p8` |
+   | `NOTARY_KEY` | `base64 -i ".admin/[1] Passwords/AuthKey_2JD7N46XV7.p8"` |
    | `NOTARY_KEY_ID` | `2JD7N46XV7` |
    | `NOTARY_ISSUER` | the UUID above |
    | `SPARKLE_PRIVATE_KEY` | contents of `~/.quiver/secrets/sparkle-ed25519.txt` (0600, already exported) |
