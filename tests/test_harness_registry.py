@@ -31,12 +31,14 @@ class HarnessRegistryTest(unittest.TestCase):
         tools = {"claude": {"aliases": ["cc"]}}
         self.assertIsNone(resolve(tools, "missing"))
 
-    def test_load_registry_creates_empty_file_when_missing(self):
-        """A new registry starts empty; only discovery may put rows in it.
+    def test_load_registry_reads_empty_without_writing(self):
+        """A missing registry reads as empty and stays missing.
 
-        Seeding from the catalogue would list harnesses that are not
-        installed on this machine, each with a description, and once with a
-        version constant that no command had probed.
+        A read used to write {} to disk just so a file existed: every
+        invocation then created ~/.quiver, including a failing unknown
+        command that fell through to the full help — anything wanting to
+        place content at that path had to land before the first swe run.
+        Only a writer creates the file now, via save_registry.
         """
         with tempfile.TemporaryDirectory() as tmp:
             config_dir = Path(tmp) / ".quiver" / "config"
@@ -46,8 +48,20 @@ class HarnessRegistryTest(unittest.TestCase):
             ), patch("quiver.harness.registry.TOOLS_FILE", config_dir / "tools.json"):
                 tools = load_registry()
                 self.assertEqual(tools, {})
-                self.assertTrue(registry_file.exists())
-                self.assertEqual(json.loads(registry_file.read_text()), {})
+                self.assertFalse(registry_file.exists())
+                self.assertFalse(config_dir.exists())
+
+    def test_save_registry_is_the_scaffolder(self):
+        """load's counterpart: the write path still makes the directory."""
+        with tempfile.TemporaryDirectory() as tmp:
+            config_dir = Path(tmp) / ".quiver" / "config"
+            registry_file = config_dir / "harness.json"
+            with patch("quiver.harness.registry.CONFIG_DIR", config_dir), patch(
+                "quiver.harness.registry.HARNESS_FILE", registry_file
+            ), patch("quiver.harness.registry.TOOLS_FILE", config_dir / "tools.json"):
+                save_registry({"claude": {"command": "claude"}})
+                self.assertTrue(registry_file.is_file())
+                self.assertEqual(load_registry(), {"claude": {"command": "claude"}})
 
     def test_catalog_carries_no_version(self):
         """Versions come from probing a binary, never from a constant."""

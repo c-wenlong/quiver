@@ -281,7 +281,11 @@ class LinkStatesTest(unittest.TestCase):
     def test_uninstalled_harness_is_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _fake_home(tmp)  # no ~/.gemini
-            self.assertEqual(link_states(home)["gemini"]["agents"], "skipped")
+            # PATH must not leak the developer's own installs in: a machine
+            # with gemini installed counts it installed by binary, which is
+            # the answer this test asserts stays "skipped".
+            with mock.patch("quiver.init.layout.shutil.which", return_value=None):
+                self.assertEqual(link_states(home)["gemini"]["agents"], "skipped")
 
     def test_legacy_agents_alias_is_not_a_harness(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -459,6 +463,65 @@ class ChainLandsOnCanonicalTest(unittest.TestCase):
 
             status = inspect("claude", Path(".claude/CLAUDE.md"), canonical, home)
             self.assertEqual(status.state, "relink")
+
+
+class InstalledByBinaryTest(unittest.TestCase):
+    """#68: a binary on PATH is install evidence; a config dir only proves
+    first run.
+
+    The ``~/.config/<tool>`` shape (crush, opencode, kilo, devin) used to
+    read as "harness not installed" because the directory itself was the
+    evidence — so a fresh Linux + Nix install, binary present but nothing
+    launched yet, was skipped by `swe init` entirely.
+    """
+
+    @staticmethod
+    def _which(name: str):
+        return f"/fake/bin/{name}" if name == "crush" else None
+
+    def test_binary_on_path_plans_create_with_no_dirs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".quiver" / "skills").mkdir(parents=True)
+            with mock.patch("quiver.init.layout.shutil.which",
+                            side_effect=self._which):
+                instructions, skills = plan(home, registry={})
+            inst = {s.label: s for s in instructions}
+            self.assertEqual(inst["crush"].state, "create")
+            self.assertEqual(inst["crush"].path, home / ".config/crush/CRUSH.md")
+            skill = {str(s.path.relative_to(home)): s for s in skills}
+            self.assertEqual(skill[".config/crush/skills"].state, "create")
+
+    def test_init_links_a_never_run_crush(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            with mock.patch("quiver.init.layout.shutil.which",
+                            side_effect=self._which):
+                with mock.patch.object(Path, "home", staticmethod(lambda: home)):
+                    buf = io.StringIO()
+                    with redirect_stdout(buf):
+                        code = init_commands.cmd_init([])
+            self.assertEqual(code, 0)
+            # The whole ~/.config/crush tree is made, like ~/.gemini is.
+            link = home / ".config/crush/CRUSH.md"
+            self.assertTrue(link.is_symlink())
+            self.assertEqual(link.resolve(), agents_file(home).resolve())
+            skills_link = home / ".config/crush/skills"
+            self.assertTrue(skills_link.is_symlink())
+            self.assertEqual(skills_link.resolve(), skills_dir(home).resolve())
+
+    def test_missing_binary_and_no_dirs_stays_skipped(self):
+        # The floor did not move: no binary and no evidence is still
+        # "harness not installed", never a littered directory.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".quiver" / "skills").mkdir(parents=True)
+            with mock.patch("quiver.init.layout.shutil.which", return_value=None):
+                instructions, skills = plan(home, registry={})
+            inst = {s.label: s for s in instructions}
+            self.assertEqual(inst["crush"].state, "skipped")
+            self.assertEqual(inst["crush"].detail, "harness not installed")
+            self.assertFalse(any("crush" in s.label for s in skills))
 
 
 class CmdInitViewTest(unittest.TestCase):

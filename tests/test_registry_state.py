@@ -157,16 +157,18 @@ class RegistryStateTest(unittest.TestCase):
                       "legacy tools.json should be untouched, still holding claude")
         self.assertTrue(self.tools_file.exists(), "legacy file must be left alone, not moved")
 
-    def test_no_files_at_all_writes_an_empty_registry(self):
+    def test_no_files_at_all_reads_empty_without_writing(self):
         """Nothing on disk means nothing registered, not a stock lineup.
 
-        The file is still created, so later writes have somewhere to land
-        and `load_registry_if_present` can tell "never initialised" from
-        "initialised and empty".
+        A bare read must not scaffold: load_registry runs inside read-only
+        commands too, and creating the file here is what made a failed or
+        version-only invocation litter a fresh machine with ~/.quiver
+        (#68). save_registry is the write path; it owns the scaffolding.
         """
         reg = registry.load_registry()
         self.assertEqual(reg, {})
-        self.assertTrue(self.harness_file.exists())
+        self.assertFalse(self.harness_file.exists())
+        self.assertFalse(self.config_dir.exists())
 
     # -- save/load stability -------------------------------------------------
 

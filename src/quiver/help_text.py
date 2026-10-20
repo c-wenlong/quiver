@@ -1,7 +1,7 @@
 """CLI help text and help command."""
 
 from quiver.console import c
-from quiver.harness.registry import load_registry
+from quiver.harness.registry import load_registry_readonly
 from quiver.harness.tools import is_installed
 from quiver.paths import HARNESS_FILE
 
@@ -687,7 +687,7 @@ def cmd_help(args):
     n_inst = 0
     n_total = 0
     try:
-        tools = load_registry()
+        tools = load_registry_readonly()
         n_total = len(tools)
         n_inst = sum(1 for i in tools.values()
                      if i.get("command") and is_installed(i["command"]))

@@ -78,6 +78,50 @@ class VersionCommandTest(unittest.TestCase):
                 self.assertIn("swe version", out)
 
 
+class FirstRunScaffoldingTest(unittest.TestCase):
+    """#68: a failing command must not create ~/.quiver.
+
+    Unknown commands fall through to the full help, whose registry count
+    used to come from a loader that wrote an empty harness.json as a side
+    effect — so even `swe --bogus` scaffolded ~/.quiver before the user
+    asked for anything, and a config restore had to beat the first run.
+    """
+
+    def _fresh_registry_paths(self, home: pathlib.Path):
+        config = home / ".quiver" / "config"
+        return (
+            mock.patch("quiver.harness.registry.CONFIG_DIR", config),
+            mock.patch("quiver.harness.registry.HARNESS_FILE", config / "harness.json"),
+            mock.patch("quiver.harness.registry.TOOLS_FILE", config / "tools.json"),
+        )
+
+    def _run_with_fresh_paths(self, home: pathlib.Path, argv):
+        patches = self._fresh_registry_paths(home)
+        for p in patches:
+            p.start()
+        try:
+            return _run_main(argv)
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_unknown_command_does_not_scaffold_quiver_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = pathlib.Path(tmp)
+            status, out, err = self._run_with_fresh_paths(home, ["bogus-cmd"])
+            self.assertEqual(status, 1)
+            self.assertIn("Unknown command: 'bogus-cmd'", out)
+            self.assertFalse((home / ".quiver").exists())
+
+    def test_version_does_not_scaffold_quiver_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = pathlib.Path(tmp)
+            status, out, _err = self._run_with_fresh_paths(home, ["--version"])
+            self.assertEqual(status, 0)
+            self.assertEqual(out, f"swe {quiver.__version__}\n")
+            self.assertFalse((home / ".quiver").exists())
+
+
 class VersionCompletionTest(unittest.TestCase):
     def test_version_is_in_primary_completions(self):
         from quiver.completion import _PRIMARY_COMMANDS

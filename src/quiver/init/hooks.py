@@ -33,6 +33,7 @@ from quiver.init.layout import (
     LinkStatus,
     archived_names,
     archived_override,
+    command_on_path,
     hooks_dir,
     is_linkignored,
     load_linkignore,
@@ -127,17 +128,27 @@ def _inside(path: Path, parent: Path) -> bool:
         return False
 
 
-def classify_hook(label: str, dest: Path, source: Path, home: Path) -> LinkStatus:
+def classify_hook(
+    label: str,
+    dest: Path,
+    source: Path,
+    home: Path,
+    *,
+    installed: bool | None = None,
+) -> LinkStatus:
     """Classify one hook destination without touching the filesystem.
 
     Differs from ``layout.inspect`` in two ways. The harness counts as
-    installed when its config directory exists, since the hooks directory
-    itself is often absent until the first hook. And a plain file with the
-    same bytes as the source is ``absorb``, not left alone: a copy where the
-    link should be is exactly how edits end up in an unversioned file, and
-    replacing it loses nothing.
+    installed when its config directory exists or its command resolves on
+    PATH, since a binary in a Nix profile never makes ``~/.claude`` — the
+    caller passes the combined answer as ``installed``. And a plain file
+    with the same bytes as the source is ``absorb``, not left alone: a
+    copy where the link should be is exactly how edits end up in an
+    unversioned file, and replacing it loses nothing.
     """
-    if not _installed(dest.parent, home):
+    if installed is None:
+        installed = _installed(dest.parent, home)
+    if not installed:
         return LinkStatus(label, dest, "skipped", "harness not installed", source)
 
     if dest.is_symlink():
@@ -198,6 +209,11 @@ def plan_hooks(
         if not harness_dir.is_dir() or name.startswith(".") or name in _SKIP_NAMES:
             continue
         root, why = hook_root(registry, name, home)
+        # A dir that exists proves the harness; so does its binary on PATH.
+        # Dir evidence alone read a fresh Nix/uv install — nothing run yet,
+        # no config dirs — as "harness not installed" and skipped it.
+        installed = root is not None and (
+            _installed(root, home) or command_on_path(name, registry))
         for source in hook_sources(harness_dir):
             if root is None:
                 # Nowhere to put it: report the source so the user can see
@@ -215,7 +231,7 @@ def plan_hooks(
             else:
                 # An archived harness is unmanaged: leave its hooks alone
                 # too. A hook already linked stays linked, as for skills.
-                status = classify_hook(name, dest, source, home)
+                status = classify_hook(name, dest, source, home, installed=installed)
                 archived_override(status, archived)
                 statuses.append(status)
     return statuses
