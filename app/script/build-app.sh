@@ -121,6 +121,17 @@ if [ -n "$(git -C "$here" status --porcelain 2>/dev/null || echo "")" ]; then
 else
   dirty=false
 fi
+# Sparkle keys ship only in prod builds: a dev build has no release to
+# compare against and could not verify a signature without SUPublicEDKey
+# either, so it never starts the updater. The feed is the appcast attached
+# to the latest GitHub release; the EdDSA public key pairs with the private
+# key that signs each release's appcast (Sparkle's generate_keys/sign_update).
+sparkle_plist=""
+if [ "$channel" = "prod" ]; then
+  sparkle_plist='  <key>SUFeedURL</key><string>https://github.com/c-wenlong/quiver/releases/latest/download/appcast.xml</string>
+  <key>SUPublicEDKey</key><string>'"${QUIVER_SUPUBLICEDKEY:-g22OIueAUiWwAy7NNP8kSh8Pgr5cufLqh4Ssgos1PBE=}"'</string>
+'
+fi
 describe_xml="$(xml_escape "$describe")"
 channel_xml="$(xml_escape "$channel")"
 commit_xml="$(xml_escape "$commit")"
@@ -149,7 +160,7 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
   <key>NSDesktopFolderUsageDescription</key><string>Quiver runs swe and reads session folders, some of which live in your Desktop folder.</string>
   <key>NSDocumentsFolderUsageDescription</key><string>Quiver runs swe and reads session folders, some of which live in your Documents folder.</string>
   <key>NSAppleEventsUsageDescription</key><string>Quiver opens your terminal to run a sign-in or resume a session.</string>
-</dict>
+${sparkle_plist}</dict>
 </plist>
 PLIST
 
@@ -187,6 +198,17 @@ cat > "$appex/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+# Sparkle.framework: QuiverApp links it and finds it through
+# @executable_path/../Frameworks. Without it the app cannot launch, so a
+# missing copy stops the build rather than shipping a dead app.
+frameworks="$bundle/Contents/Frameworks"
+mkdir -p "$frameworks"
+if [ ! -d "$bindir/Sparkle.framework" ]; then
+  echo "build-app: Sparkle.framework missing from $bindir" >&2
+  exit 1
+fi
+cp -R "$bindir/Sparkle.framework" "$frameworks/"
 
 identity="${QUIVER_SIGN_IDENTITY:-}"
 if [ -z "$identity" ]; then
@@ -238,6 +260,20 @@ find "$bundle/Contents/Resources/swe" -type f | while IFS= read -r file; do
     codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} "$file" >/dev/null
   fi
 done
+# Embedded frameworks sign inside-out like swe: loose Mach-O files first
+# (Sparkle's Autoupdate, the XPC helpers' binaries), then the nested
+# bundles around them (Downloader.xpc, Installer.xpc, Updater.app), then
+# the framework itself. find -depth orders children before parents.
+find "$frameworks" -type f | while IFS= read -r file; do
+  if file -b "$file" | grep -q '^Mach-O'; then
+    codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} "$file" >/dev/null
+  fi
+done
+find "$frameworks" -depth -type d \
+  \( -name '*.xpc' -o -name '*.app' -o -name '*.framework' \) \
+  | while IFS= read -r inner; do
+    codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} "$inner" >/dev/null
+  done
 codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} \
   --entitlements "$here/script/QuiverWidgets.entitlements" "$appex" >/dev/null
 # Hardened runtime audit for the app itself (see the commit for the full
