@@ -334,6 +334,45 @@ class SkillsLayoutTest(unittest.TestCase):
             self.assertNotIn("codex", synced)
             self.assertEqual(json.loads(links_file.read_text())["links"], [])
 
+    def test_save_link_records_refuses_a_corrupt_file(self):
+        """Reads degrade to [] but a write must not commit that []."""
+        from quiver.configuration import CorruptConfigurationError
+        from quiver.skills.layout import load_link_records, save_link_records
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config_dir = Path(tmp) / ".config" / "swe"
+            config_dir.mkdir(parents=True)
+            links_file = config_dir / "skill_links.json"
+            links_file.write_text("{corrupt", encoding="utf-8")
+
+            with patch("quiver.skills.layout.SKILL_LINKS_FILE", links_file), patch(
+                "quiver.skills.layout.CONFIG_DIR", config_dir
+            ):
+                self.assertEqual(load_link_records(), [])
+                with self.assertRaises(CorruptConfigurationError):
+                    save_link_records([{"label": "x"}])
+
+            # Untouched: the corrupt file is still there to fix by hand.
+            self.assertEqual(links_file.read_text(), "{corrupt")
+
+    def test_save_link_records_overwrites_a_foreign_json_value(self):
+        """A parseable non-dict file holds no records to lose."""
+        from quiver.skills.layout import save_link_records
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config_dir = Path(tmp) / ".config" / "swe"
+            config_dir.mkdir(parents=True)
+            links_file = config_dir / "skill_links.json"
+            links_file.write_text("[1, 2]", encoding="utf-8")
+
+            with patch("quiver.skills.layout.SKILL_LINKS_FILE", links_file), patch(
+                "quiver.skills.layout.CONFIG_DIR", config_dir
+            ):
+                save_link_records([{"label": "x", "path": "/p",
+                                    "target": "/t", "kind": "symlink"}])
+            self.assertEqual(
+                json.loads(links_file.read_text())["links"][0]["label"], "x")
+
 
 if __name__ == "__main__":
     unittest.main()
