@@ -1248,6 +1248,58 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(proxy.aa == nil && proxy.tokens == 40)
     }
 
+    @Test func aQueryMatchesEveryNameAMergedRowFolded() async throws {
+        // "grok-4.7" and "grok-4.7-fast" share one row under the dominant
+        // name; a query hitting only the other name still finds the row.
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("grok", "Grok 4.7 (xhigh)", "grok-4-7-xhigh",
+                  creator: "xai", intelligence: 46),
+        ])
+        let model = makeModel(dir: dir, slices: [
+            slice("grok-4.7", "grok", tokens: 100),
+            slice("grok-4.7-fast", "cursor", tokens: 50),
+        ])
+        await model.load()
+        model.query = "grok 4.7 fast"
+        #expect(model.rows.map(\.aa?.id) == ["grok"])
+        #expect(model.rows[0].tokens == 150)
+        #expect(model.rows[0].harnesses == ["grok", "cursor"])
+    }
+
+    @Test func aUsedNameThatIsALiteLLMKeyShowsOnce() async throws {
+        // The usage row already shows "wisp-9"; the price tail must not
+        // list it again or count it as overflow.
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("opus", "Claude Opus 5.5", "claude-opus-5-5",
+                  creator: "anthropic", intelligence: 70),
+        ])
+        let store = ArtificialAnalysisStore(directory: dir.path("aa"))
+        let priceEntry: [String: Any] = ["input_cost_per_token": 1e-06,
+                                         "output_cost_per_token": 5e-06]
+        try store.database.recordPrices(["wisp-9": priceEntry], at: Date(), url: nil, sha: nil)
+        store.database.rebuildAliases()
+        let used = [slice("wisp-9", "pi", tokens: 60)]
+        let model = ModelsModel(store: store, keyReader: { "key" }, transport: StubHTTP(),
+                                linksURL: dir.path("config/model-links.json"),
+                                slices: { _ in used },
+                                pricing: {
+                                    PricingCatalog(liteLLMEntries: ["wisp-9":
+                                        ["input_cost_per_token": 1e-06,
+                                         "output_cost_per_token": 5e-06]],
+                                                   overrides: [:])
+                                },
+                                now: { Date(timeIntervalSince1970: 1_800_000_000) },
+                                calendar: Calendar(identifier: .gregorian))
+        await model.load(allowRefresh: false)
+        model.query = "wisp"
+        #expect(model.rows.map(\.logged) == ["wisp-9"])
+        #expect(model.rows[0].tokens == 60)
+        #expect(model.rows[0].listPrice?.key == "wisp-9")
+        #expect(model.searchOverflow == 0)
+    }
+
     @Test func aQueryCapsTheLiteLLMTailAndCountsTheRest() async throws {
         let dir = try TempDir()
         try writeLLMs(dir, [
