@@ -209,7 +209,7 @@ private struct ModelsContent: View {
             case .table: TableCard(model: model)
             }
             if model.searchOverflow > 0 {
-                Text("+\(model.searchOverflow) more matches. Tighten the query to list them.")
+                Text("+\(model.searchOverflow) more LiteLLM keys match. Tighten the query to list them.")
                     .font(Theme.caption).foregroundStyle(Theme.textMuted)
                     .padding(.horizontal, 4)
             }
@@ -586,14 +586,9 @@ struct TableCard: View {
                 VStack(spacing: 0) {
                     header(columns)
                     Divider().overlay(Theme.border)
-                    // Rows build lazily against the page's vertical
-                    // scroll: a broad search can list a hundred of them,
-                    // and each carries icons, hover tips and a gradient.
-                    LazyVStack(spacing: 0) {
-                        ForEach(model.rows) { row in
-                            TableRow(row: row, model: model, columns: columns)
-                            Divider().overlay(Theme.rowDivider)
-                        }
+                    ForEach(model.rows) { row in
+                        TableRow(row: row, model: model, columns: columns)
+                        Divider().overlay(Theme.rowDivider)
                     }
                 }
                 .frame(width: columns.total, alignment: .leading)

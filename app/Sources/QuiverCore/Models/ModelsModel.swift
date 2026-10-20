@@ -195,17 +195,12 @@ public final class ModelsModel {
     /// Whether the query is driving the row list — the scope picker's
     /// population (yours, top 10, top 25) no longer applies.
     public var searching: Bool { !Self.normalized(query).isEmpty }
-    /// Matches a search didn't list — LiteLLM-only keys over
-    /// `searchLimit` plus rows over `searchResultLimit` — for the
-    /// page's "+N more" note.
+    /// LiteLLM-only matches dropped by `searchLimit`, for the page's
+    /// "+N more" note.
     public private(set) var searchOverflow = 0
     /// LiteLLM-only rows a search lists before the rest count as
     /// overflow: bare-name hits rank first.
     static let searchLimit = 60
-    /// Rows a search lists at all. A broad query can hit hundreds of
-    /// models; drawing them all stalls the page, and a finder past the
-    /// first screenful should tighten the query anyway.
-    static let searchResultLimit = 100
     /// Whether the chart or the table shows.
     public enum ViewMode: String, Sendable { case chart, table }
     public var viewMode: ViewMode = .chart
@@ -276,9 +271,6 @@ public final class ModelsModel {
     /// the name, so `parsedCache` never expires.
     private var matchCache: [String: (model: AALanguageModel, linked: Bool)?] = [:]
     private var parsedCache: [String: ModelMatcher.Parsed] = [:]
-    /// Times the index actually parsed a name; flat across repeat
-    /// queries proves the memoization works.
-    private(set) var matcherMisses = 0
     /// The lookup tables `allModels`, `catalogPrices` and
     /// `unmatchedPrices` fill once: the id join, the normalized
     /// haystacks a query scans, and the percentile every row reads.
@@ -542,7 +534,6 @@ public final class ModelsModel {
     /// name, then the answer is a dictionary read.
     private func cachedMatch(_ name: String) -> (model: AALanguageModel, linked: Bool)? {
         if let cached = matchCache[name] { return cached }
-        matcherMisses += 1
         let result = matcherIndex?.match(name)
         matchCache[name] = result
         return result
@@ -737,13 +728,15 @@ public final class ModelsModel {
                                   listPrice: listPrice(logged: un.model, aa: nil)))
             }
             // The LiteLLM-only tail, capped; the bare name decides which
-            // hits lead. Keys already shown — as a usage row or through
-            // the alias join — don't count toward either side.
+            // hits lead, the overflow count becomes the page's footnote.
+            // Keys already shown — as a usage row or through the alias
+            // join — don't count toward either side.
             let lite = liteHay
                 .filter { $0.hay.contains(needle) }
                 .filter { !seen.contains("unmatched:\($0.row.key)")
                           && cachedMatch($0.row.key) == nil }
                 .sorted { Self.liteRank(needle, $0) < Self.liteRank(needle, $1) }
+            searchOverflow = max(0, lite.count - Self.searchLimit)
             for hit in lite.prefix(Self.searchLimit) {
                 let price = hit.row
                 result.append(Row(logged: price.key, aa: nil,
@@ -754,12 +747,7 @@ public final class ModelsModel {
                                                    cacheRead: price.cacheRead * 1e6,
                                                    cacheWrite: price.cacheWrite * 1e6)))
             }
-            // The board caps too: past the first screenful the page's
-            // footnote counts the rest and asks for a tighter query.
-            let shown = result.prefix(Self.searchResultLimit)
-            searchOverflow = lite.count - min(lite.count, Self.searchLimit)
-                + result.count - shown.count
-            rows = Array(shown)
+            rows = result
             return
         }
         searchOverflow = 0
