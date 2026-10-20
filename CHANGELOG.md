@@ -187,6 +187,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Accounts, the menu bar and widgets only, so the Harnesses page keeps the
   harness's display name. The card's Open app/Terminal buttons are icons now.
 
+- **Setup and provider fixes.** `swe setup` stops the wizard at Ctrl-D
+  (exit 130) instead of marking every remaining stage failed and exiting
+  0; `swe setup --apply --json` reports a failed apply step inside the
+  `applied.errors` list and still emits its JSON envelope, so a run that
+  half-applied no longer reads as success to the app. `swe providers`
+  messages name the real key store: a missing default store asks for one
+  `export NAME=<key>` line per provider rather than a file-per-provider
+  directory, and `swe providers remove` says which export line it left
+  alone. `swe providers add` refuses a flag token as the provider name,
+  and a `providers.json` entry that is not an object raises
+  CorruptConfigurationError naming the row instead of crashing mid-merge.
+
 ### Added
 
 - **A docs site** at <https://c-wenlong.github.io/quiver/>, built with

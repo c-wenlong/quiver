@@ -277,13 +277,19 @@ def cmd_list(args: list[str]) -> int:
     no_dir = not keys_dir.exists()
 
     if no_dir:
-        print(
-            c(
-                "yellow",
-                f"  No keys directory at {keys_dir_display}. "
-                f"Create it and add a file per provider holding just the key.",
+        if api_keys_dir is None:
+            # The default store is a single shell-export file — the same
+            # file the app's key editor writes.
+            advice = (
+                "Create it with one  export NAME=<key>  line per provider; "
+                "`swe providers info <name>` shows each NAME."
             )
-        )
+        else:
+            advice = (
+                "Create it as a directory holding one bare-key file per "
+                "provider, or as a single file of  export NAME=<key>  lines."
+            )
+        print(c("yellow", f"  No key store at {keys_dir_display}. {advice}"))
     if no_keys:
         print(
             c(
@@ -465,6 +471,15 @@ def cmd_add(args: list[str]) -> int:
         return 1
 
     name = args[0]
+    if not name.strip() or name.startswith("-"):
+        # ``swe providers add --env=FOO_API_KEY`` used to register a provider
+        # literally named "--env".
+        print(
+            c("red",
+              f"  Provider name {name!r} is not valid — give the name first, "
+              "then flags like --env=NAME.")
+        )
+        return 1
     description = ""
     url = ""
     key_filename = name
@@ -596,16 +611,25 @@ def cmd_remove(args: list[str]) -> int:
         return 1
 
     key_filename = providers[name].get("key_filename") or name
+    env_vars = providers[name].get("env_vars") or []
     del providers[name]
     removed_list = providers.setdefault("_removed", [])
     if name not in removed_list:
         removed_list.append(name)
     save_registry(providers)
     print(f"  {c('green', '✓')} Removed '{name}' from registry.")
+    store = default_keys_dir()
+    if store.is_dir():
+        # Directory layout: the key is a bare file named by key_filename.
+        kept = f"Your {_display_keys_dir(store)}/{key_filename} file"
+    else:
+        # Shell-export layout: the key is an export line inside the file.
+        which = f"{env_vars[0]} export" if env_vars else "key"
+        kept = f"Your {which} line in {_display_keys_dir(store)}"
     print(
         c(
             "dim",
-            f"  (Your {default_keys_dir()}/{key_filename} file is untouched — only the registry entry was removed.)",
+            f"  ({kept} is untouched — only the registry entry was removed.)",
         )
     )
     print(

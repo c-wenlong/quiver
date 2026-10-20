@@ -18,7 +18,7 @@ from quiver.init.commands import (
     check_adoptable,
     run_init,
 )
-from quiver.init.layout import LinkIgnoreError, agents_file, registry_name
+from quiver.init.layout import agents_file, registry_name
 
 
 def cmd_harness(args):
@@ -187,11 +187,41 @@ def cmd_setup(args):
         return 1
 
     home = Path.home()
-    harness_findings = discover_harnesses()
-    new_harness = [f for f in harness_findings if f.status == "new" and f.confidence == "high"]
-    mcp_findings = discover_mcp_servers()
-    new_mcp = [f for f in mcp_findings if f.status == "new"]
-    skill_hints = skills_symlink_hints(home=home)
+    try:
+        harness_findings = discover_harnesses()
+        new_harness = [f for f in harness_findings if f.status == "new" and f.confidence == "high"]
+        mcp_findings = discover_mcp_servers()
+        new_mcp = [f for f in mcp_findings if f.status == "new"]
+        skill_hints = skills_symlink_hints(home=home)
+    except (EOFError, KeyboardInterrupt):
+        raise
+    except Exception as exc:
+        if not json_out:
+            raise
+        # The app's decoder contract holds on failed runs too: emit a
+        # well-formed envelope with the error as data rather than a bare
+        # traceback on stdout.
+        print(c("red", f"  setup failed: {exc}"), file=sys.stderr)
+        data = {"harness": [], "mcp": [], "skills": []}
+        if apply:
+            data["applied"] = {
+                "harness": [],
+                "mcp": [],
+                "skills": [],
+                "errors": [str(exc)],
+                "links": {"adopted": None},
+            }
+        else:
+            data["instructions"] = {
+                "agents_file": str(agents_file(home)),
+                "agents_file_exists": False,
+                "agents_file_customised": False,
+                "rows": [],
+                "adopt_candidates": [],
+                "error": str(exc),
+            }
+        emit(data)
+        return 1
     actionable_skills = [h for h in skill_hints if h.action in ("create_shared", "symlink")]
 
     if json_out:
@@ -211,9 +241,12 @@ def cmd_setup(args):
         else:
             data["instructions"] = _instructions_preview(home)
         emit(data)
-        # Linking that stopped part way is not a finished setup, even though
-        # what came before it was applied and is reported above.
-        return 1 if data.get("applied", {}).get("links", {}).get("error") else 0
+        # An apply step or a linking pass that stopped part way is not a
+        # finished setup, even though what came before it was applied and
+        # is reported above.
+        applied = data.get("applied", {})
+        failed = applied.get("errors") or applied.get("links", {}).get("error")
+        return 1 if failed else 0
 
     print(f"\n{c('bold', 'quiver setup')}\n")
 
@@ -270,6 +303,9 @@ def cmd_setup(args):
         if linked:
             parts.append(f"{len(linked)} link(s)")
         print(c("green", f"  ✓ Applied: {', '.join(parts) or 'nothing'}"))
+        apply_errors = applied.get("errors", [])
+        for err in apply_errors:
+            print(c("red", f"  ! {err}"))
         if links.get("adopted"):
             print(c("green", f"  ✓ AGENTS.md started from {links['adopted']}"))
         for row in links.get("rows", []):
@@ -278,6 +314,9 @@ def cmd_setup(args):
         if links.get("error"):
             print(c("red", f"  {links['error']}"))
             print(c("dim", "  Nothing was linked. Fix that, then run swe setup --apply again.\n"))
+            return 1
+        if apply_errors:
+            print(c("dim", "  Fix the errors above, then run swe setup --apply again.\n"))
             return 1
         print(c("dim", "  Next: `swe list`  ·  `swe check`  ·  `swe mcp list`  ·  `swe skills`\n"))
         return 0
@@ -294,9 +333,17 @@ def cmd_setup(args):
             print()
             return 130
         if answer in ("y", "yes"):
-            added_h = apply_findings(new_harness, min_confidence="high")[0] if new_harness else []
-            added_m = apply_mcp_findings(new_mcp).added if new_mcp else []
-            added_s = apply_skills_symlink_hints(actionable_skills, home=home)
+            try:
+                added_h = apply_findings(new_harness, min_confidence="high")[0] if new_harness else []
+                added_m = apply_mcp_findings(new_mcp).added if new_mcp else []
+                added_s = apply_skills_symlink_hints(actionable_skills, home=home)
+            except (EOFError, KeyboardInterrupt):
+                raise
+            except Exception as exc:
+                print(c("red", f"\n  Apply stopped part way: {exc}"))
+                print(c("dim", "  What already landed stays applied. Fix that, "
+                              "then run swe setup --apply.\n"))
+                return 1
             print(c("green", f"\n  ✓ Harness: {', '.join(added_h) or '—'}"))
             print(c("green", f"  ✓ MCP: {', '.join(added_m) or '—'}"))
             print(c("green", f"  ✓ Skills: {', '.join(added_s) or '—'}"))
@@ -317,24 +364,48 @@ def _apply_all(new_harness, new_mcp, actionable_skills, home: Path,
     (no --force) and new skills folders are registered only when their
     owner has a command or catalog entry.
     """
-    applied = {
-        "harness": apply_findings(new_harness, min_confidence="high")[0] if new_harness else [],
-        "mcp": apply_mcp_findings(new_mcp).added if new_mcp else [],
-        "skills": apply_skills_symlink_hints(actionable_skills, home=home),
-    }
+    applied: dict = {"harness": [], "mcp": [], "skills": []}
+    errors: list[str] = []
+    # Every step reports into ``applied`` or ``errors`` rather than raising:
+    # a failed write after earlier steps landed must still reach the caller
+    # as data. Under --json the SetupApplied envelope is owed even (read:
+    # especially) on the runs that went wrong, or the app's decoder sees a
+    # bare traceback instead of a reply.
+    steps = (
+        ("harness", lambda: apply_findings(new_harness, min_confidence="high")[0]
+         if new_harness else []),
+        ("mcp", lambda: apply_mcp_findings(new_mcp).added if new_mcp else []),
+        ("skills", lambda: apply_skills_symlink_hints(actionable_skills, home=home)),
+    )
+    for key, step in steps:
+        try:
+            applied[key] = step()
+        except (EOFError, KeyboardInterrupt):
+            raise
+        except Exception as exc:
+            errors.append(f"{key}: {exc}")
     if starred is not None:
-        applied["starred"] = _set_starred(starred)
+        try:
+            applied["starred"] = _set_starred(starred)
+        except (EOFError, KeyboardInterrupt):
+            raise
+        except Exception as exc:
+            errors.append(f"starred: {exc}")
     links: dict = {"adopted": None}
     try:
         if adopt is not None:
             adopt_instructions(home, adopt)
             links["adopted"] = str(adopt)
         run = run_init(home, evidence_only=True, quiet=True)
-    except (LinkIgnoreError, ValueError) as exc:
+    except (EOFError, KeyboardInterrupt):
+        raise
+    except Exception as exc:
         links["error"] = str(exc)
     else:
         links["scaffold"] = run.scaffold
         links["rows"] = run.rows_json()
+    if errors:
+        applied["errors"] = errors
     applied["links"] = links
     return applied
 
@@ -354,7 +425,12 @@ def _instructions_preview(home: Path) -> dict:
     }
     try:
         run = run_init(home, check_only=True, quiet=True)
-    except LinkIgnoreError as exc:
+    except (EOFError, KeyboardInterrupt):
+        raise
+    except Exception as exc:
+        # Any failure (unreadable linkignore, filesystem trouble) becomes a
+        # preview error field, never a traceback: the caller still owes the
+        # app its JSON envelope.
         preview.update(rows=[], adopt_candidates=[], error=str(exc))
         return preview
     preview["rows"] = run.rows_json()

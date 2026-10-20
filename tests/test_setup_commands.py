@@ -278,6 +278,61 @@ class SetupLinksTest(_SetupHarness):
         self.assertEqual(applied["harness"], [])
         mocks["apply_findings"].assert_not_called()  # nothing new was found
 
+    def test_an_apply_failure_still_emits_the_json_envelope(self):
+        # Regression: a filesystem error inside the apply calls escaped as a
+        # traceback before emit(), so the --json runs most likely to fail
+        # were exactly the ones that never produced a SetupApplied reply.
+        code, out, _ = self._run(
+            ["--apply", "--json"],
+            findings=[_finding("kiro")],
+            mcp=[_mcp("linear")],
+            apply_map={
+                "apply_findings": Mock(return_value=(["kiro"], [])),
+                "apply_mcp_findings": Mock(side_effect=OSError("disk full")),
+            },
+        )
+
+        self.assertEqual(code, 1)
+        applied = json.loads(out)["data"]["applied"]
+        # The step that succeeded is still reported, the failed one is
+        # named in errors, and the links block is present as always.
+        self.assertEqual(applied["harness"], ["kiro"])
+        self.assertEqual(applied["mcp"], [])
+        self.assertIn("disk full", " ".join(applied["errors"]))
+        self.assertIn("mcp", applied["errors"][0])
+        self.assertIn("rows", applied["links"])
+
+    def test_a_discovery_failure_still_emits_the_json_envelope(self):
+        # A crash before any apply step ran (unwritable config dir, corrupt
+        # registry) must still answer --json with a well-formed envelope.
+        from quiver.setup import commands as sc
+
+        for extra, key in ((["--apply"], "applied"), ([], "instructions")):
+            with self.subTest(extra=extra):
+                with patch.object(
+                    sc, "discover_harnesses",
+                    Mock(side_effect=OSError("config dir gone")),
+                ), patch("sys.stdin.isatty", return_value=False):
+                    out = io.StringIO()
+                    with redirect_stdout(out):
+                        code = cmd_setup(extra + ["--json"])
+                self.assertEqual(code, 1)
+                payload = json.loads(out.getvalue())["data"]
+                self.assertIn("config dir gone", str(payload[key]))
+
+    def test_an_apply_failure_exits_1_and_says_so_in_text_mode(self):
+        code, out, _ = self._run(
+            ["--apply"],
+            mcp=[_mcp("linear")],
+            apply_map={
+                "apply_mcp_findings": Mock(side_effect=OSError("disk full")),
+            },
+        )
+
+        self.assertEqual(code, 1)
+        self.assertIn("disk full", out)
+        self.assertIn("run swe setup --apply again", out)
+
     def test_text_apply_reports_links_and_a_linking_failure(self):
         (self.home / ".claude").mkdir()
         claude_md = self.home / ".claude" / "CLAUDE.md"

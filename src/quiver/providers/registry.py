@@ -27,7 +27,7 @@ view of providers without the bookkeeping key.
 import json
 from datetime import datetime
 
-from quiver.configuration import read_json_object
+from quiver.configuration import CorruptConfigurationError, read_json_object
 from quiver.paths import CONFIG_DIR, PROVIDERS_REGISTRY_FILE, atomic_write_text
 from quiver.providers.defaults import (
     DEFAULT_PROVIDERS,
@@ -36,6 +36,30 @@ from quiver.providers.defaults import (
 )
 
 _REMOVED_KEY = "_removed"
+
+
+def _validated_entries(registry: dict, source) -> dict:
+    """Every provider entry must be an object; ``_removed`` must be a list.
+
+    The top-level shape is already checked by ``read_json_object``, but a
+    hand-edited entry like ``"openai": "oops"`` used to get through and
+    crash the merge below inside ``dict(info)`` — a bare TypeError instead
+    of a controlled error naming the bad row.
+    """
+    for name, entry in registry.items():
+        if name == _REMOVED_KEY:
+            if not isinstance(entry, list):
+                raise CorruptConfigurationError(
+                    f"{source}: entry {name!r} must be a list,"
+                    f" got {type(entry).__name__}: fix or remove the file"
+                )
+            continue
+        if not isinstance(entry, dict):
+            raise CorruptConfigurationError(
+                f"{source}: entry {name!r} must be a JSON object,"
+                f" got {type(entry).__name__}: fix or remove the file"
+            )
+    return registry
 
 
 def _hydrate(entry: dict) -> dict:
@@ -69,7 +93,9 @@ def load_registry(include_removed: bool = False) -> dict:
         # read-only — the seed branch below then overwrote the broken file
         # with defaults. Raising CorruptConfigurationError makes the file
         # stay put until the user fixes or removes it.
-        user_reg = read_json_object(PROVIDERS_REGISTRY_FILE)
+        user_reg = _validated_entries(
+            read_json_object(PROVIDERS_REGISTRY_FILE), PROVIDERS_REGISTRY_FILE
+        )
 
     explicitly_removed: set[str] = set(user_reg.get(_REMOVED_KEY) or [])
 
