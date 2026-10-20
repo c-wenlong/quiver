@@ -209,6 +209,10 @@ data/ledger/
 # message times of your own sessions. Personal, and rewritten on each sync.
 data/devin-cloud/
 
+# The app's full-text session-search index: transcript text in a rebuildable
+# FTS5 database. Personal and large; deleting it just costs a re-index.
+data/search/
+
 # Credential values: provider API keys in secrets/providers/ and the values
 # behind mcp.json's ${NAME} references in secrets/mcp/. Keeping them out is
 # what makes the rest of the hub safe to commit.
