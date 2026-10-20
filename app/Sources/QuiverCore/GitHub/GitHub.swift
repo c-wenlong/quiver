@@ -306,12 +306,12 @@ public struct GhInbox: Decodable, Sendable {
 extension SweClient {
     /// `swe gh --json` — probe state plus pinned repos.
     public func ghOverview() async throws -> GhOverview {
-        try await call(["gh", "--json"])
+        try await call(["gh", "--json"], allowFailure: true)
     }
 
     /// `swe gh repo list --json` — the pin list alone (no env probe).
     public func ghRepoList() async throws -> GhPinList {
-        try await call(["gh", "repo", "list", "--json"])
+        try await call(["gh", "repo", "list", "--json"], allowFailure: true)
     }
 
     /// `swe gh repo add <input> --json` — verifies the repo exists before pinning.
@@ -326,7 +326,8 @@ extension SweClient {
 
     /// `swe gh repo search <query> --json`.
     public func ghSearchRepos(_ query: String, limit: Int = 10) async throws -> GhRepoSearch {
-        try await call(["gh", "repo", "search", query, "--limit=\(limit)", "--json"])
+        try await call(["gh", "repo", "search", query, "--limit=\(limit)", "--json"],
+                       allowFailure: true)
     }
 
     /// `swe gh pr --repo=<repo> --json`. A nil repo resolves from the
@@ -335,7 +336,7 @@ extension SweClient {
         var args = ["gh", "pr", "--state=\(state)", "--limit=\(limit)"]
         if let repo { args.append("--repo=\(repo)") }
         args.append("--json")
-        return try await call(args)
+        return try await call(args, allowFailure: true)
     }
 
     /// `swe gh pr status --repo=<repo> --json` — current-branch,
@@ -344,7 +345,7 @@ extension SweClient {
         var args = ["gh", "pr", "status"]
         if let repo { args.append("--repo=\(repo)") }
         args.append("--json")
-        return try await call(args)
+        return try await call(args, allowFailure: true)
     }
 
     /// `swe gh issue --repo=<repo> --json`.
@@ -352,7 +353,7 @@ extension SweClient {
         var args = ["gh", "issue", "--state=\(state)", "--limit=\(limit)"]
         if let repo { args.append("--repo=\(repo)") }
         args.append("--json")
-        return try await call(args)
+        return try await call(args, allowFailure: true)
     }
 
     /// `swe gh run --repo=<repo> --json`.
@@ -360,7 +361,7 @@ extension SweClient {
         var args = ["gh", "run", "--limit=\(limit)"]
         if let repo { args.append("--repo=\(repo)") }
         args.append("--json")
-        return try await call(args)
+        return try await call(args, allowFailure: true)
     }
 
     /// `swe gh pages --repo=<repo> --json`; `pages` is null for repos without a site.
@@ -368,7 +369,7 @@ extension SweClient {
         var args = ["gh", "pages"]
         if let repo { args.append("--repo=\(repo)") }
         args.append("--json")
-        return try await call(args)
+        return try await call(args, allowFailure: true)
     }
 
     /// `swe gh releases --repo=<repo> --json`.
@@ -376,7 +377,7 @@ extension SweClient {
         var args = ["gh", "releases", "--limit=\(limit)"]
         if let repo { args.append("--repo=\(repo)") }
         args.append("--json")
-        return try await call(args)
+        return try await call(args, allowFailure: true)
     }
 
     /// `swe gh tags --repo=<repo> --json`.
@@ -384,7 +385,7 @@ extension SweClient {
         var args = ["gh", "tags", "--limit=\(limit)"]
         if let repo { args.append("--repo=\(repo)") }
         args.append("--json")
-        return try await call(args)
+        return try await call(args, allowFailure: true)
     }
 
     /// `swe gh branches --repo=<repo> --json`.
@@ -392,11 +393,15 @@ extension SweClient {
         var args = ["gh", "branches", "--limit=\(limit)"]
         if let repo { args.append("--repo=\(repo)") }
         args.append("--json")
-        return try await call(args)
+        return try await call(args, allowFailure: true)
     }
 
-    /// `swe gh inbox --json`.
-    public func ghInbox(limit: Int = 50) async throws -> GhInbox {
-        try await call(["gh", "inbox", "--limit=\(limit)", "--json"])
+    /// `swe gh inbox --json`. `all` includes read notifications so the
+    /// page's unread filter can widen without another fetch.
+    public func ghInbox(limit: Int = 50, all: Bool = true) async throws -> GhInbox {
+        var args = ["gh", "inbox", "--limit=\(limit)"]
+        if all { args.append("--all") }
+        args.append("--json")
+        return try await call(args, allowFailure: true)
     }
 }

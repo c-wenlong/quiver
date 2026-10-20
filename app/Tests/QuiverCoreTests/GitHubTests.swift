@@ -255,6 +255,60 @@ import Testing
         #expect(model.selected == "o/b")
     }
 
+    /// Opening Inbox first marks `probed` without fetching pins; the
+    /// Repositories page must still load them.
+    @Test func inboxFirstStillLoadsPinsLater() async {
+        let calls = router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
+            "gh inbox --limit=50 --all --json": "\(env),\"status\":\"ok\",\"notifications\":[]",
+        ])
+        let model = GitHubModel()
+        let swe = SweClient(runner: calls)
+        await model.loadInbox(swe: swe)
+        #expect(model.probed)
+        #expect(model.pins.isEmpty)
+        await model.loadIfStale(swe: swe)
+        #expect(model.pins.map(\.name) == ["o/a"])
+        #expect(model.selected == "o/a")
+    }
+
+    /// A failed overview leaves the pin list unloaded; refresh retries it.
+    @Test func failedOverviewRetriesOnRefresh() async {
+        let calls = router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
+        ])
+        calls.replies["gh --json"] = .init(
+            status: 1, stdout: Data(), stderr: "swe exploded")
+        let model = GitHubModel()
+        let swe = SweClient(runner: calls)
+        await model.load(swe: swe)
+        #expect(model.probeError != nil)
+        #expect(model.pins.isEmpty)
+        calls.replies["gh --json"] = .init(
+            status: 0,
+            stdout: envelope("\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]"),
+            stderr: "")
+        await model.refresh(swe: swe)
+        #expect(model.pins.map(\.name) == ["o/a"])
+    }
+
+    /// A cancelled first inbox read must release `.loading`, or every
+    /// later poll (even a forced refresh) early-returns on the guard.
+    @Test func cancelledInboxReadDoesNotStickLoading() async {
+        final class Hanging: CommandRunning, @unchecked Sendable {
+            func run(_ arguments: [String]) async throws -> CommandResult {
+                try await Task.sleep(for: .seconds(60))
+                return .init(status: 0, stdout: Data(), stderr: "")
+            }
+        }
+        let model = GitHubModel()
+        let task = Task { await model.loadInbox(swe: SweClient(runner: Hanging())) }
+        try? await Task.sleep(for: .milliseconds(50))
+        task.cancel()
+        await task.value
+        if case .loading = model.inbox { Issue.record("inbox stuck on .loading") }
+    }
+
     @Test func envBlockedOnlyForCertainStates() async {
         let swe = SweClient(runner: router([
             "gh --json": "\"github\":{\"status\":\"auth-required\",\"login\":null,\"error\":\"not authenticated\"},\"repos\":[]",
@@ -266,7 +320,7 @@ import Testing
 
     @Test func inboxLoadsNotificationsAndPolls() async {
         let swe = SweClient(runner: router([
-            "gh inbox --limit=50 --json":
+            "gh inbox --limit=50 --all --json":
                 "\(env),\"status\":\"ok\",\"notifications\":[{"
                 + "\"id\":\"n1\",\"repo\":\"o/a\",\"title\":\"PR #7\",\"type\":\"PullRequest\","
                 + "\"reason\":\"review_requested\",\"unread\":true,"

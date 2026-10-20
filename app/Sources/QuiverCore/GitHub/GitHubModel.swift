@@ -45,6 +45,24 @@ public struct RepoBoard: Equatable, Sendable {
         case .branches: branches = .failed(message)
         }
     }
+
+    /// Whether the tab's surface holds rows — `.idle` and `.failed`
+    /// both want a fetch regardless of the timestamp.
+    func isLoaded(_ tab: RepoTab) -> Bool {
+        func loaded<T>(_ l: Loadable<T>) -> Bool {
+            if case .loaded = l { return true }
+            return false
+        }
+        return switch tab {
+        case .pulls: loaded(pulls)
+        case .issues: loaded(issues)
+        case .actions: loaded(runs)
+        case .pages: loaded(pages)
+        case .releases: loaded(releases)
+        case .tags: loaded(tags)
+        case .branches: loaded(branches)
+        }
+    }
 }
 
 /// The GitHub pages' store: the `gh` probe, the pin list, one board per
@@ -100,6 +118,10 @@ public final class GitHubModel {
     /// When each board field was last filled; a surface older than
     /// `staleAfter` refetches when it becomes visible.
     private var fetched: [BoardKey: Date] = [:]
+    /// When the pin list last loaded. Separate from `probed` because
+    /// `loadInbox` sets `probed` without fetching pins — gating on
+    /// `probed` alone would leave Repositories stuck on the empty card.
+    private var pinsFetchedAt: Date?
     private var generation = 0
     private let now: () -> Date
     private let staleAfter: TimeInterval
@@ -132,6 +154,7 @@ public final class GitHubModel {
             env = overview.github
             probed = true
             probeError = nil
+            pinsFetchedAt = now()
             pins = overview.repos.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             if selected == nil || !pins.contains(where: { $0.name == selected }) {
                 selected = pins.first?.name
@@ -145,16 +168,21 @@ public final class GitHubModel {
 
     /// Load whatever the page is looking at unless it was fetched recently.
     public func loadIfStale(swe: SweClient) async {
-        if !probed { await load(swe: swe) }
+        // `probed` alone is not enough: the inbox can set it while the
+        // pin list is still empty, and a failed overview must retry.
+        if pinsFetchedAt == nil { await load(swe: swe) }
         guard let repo = selected else { return }
         let key = BoardKey(repo: repo, tab: tab)
-        if let at = fetched[key], now().timeIntervalSince(at) < staleAfter { return }
+        // The timestamp only skips a fetch when rows are actually there —
+        // a cleared board (re-pinned repo) is never "fresh".
+        if let at = fetched[key], now().timeIntervalSince(at) < staleAfter,
+           board(for: repo).isLoaded(key.tab) { return }
         await loadTab(tab, repo: repo, swe: swe)
     }
 
     /// Manual refresh always fetches, even inside the stale window.
     public func refresh(swe: SweClient) async {
-        if !probed { await load(swe: swe) }
+        if pinsFetchedAt == nil { await load(swe: swe) }
         guard let repo = selected else { return }
         await loadTab(tab, repo: repo, swe: swe)
     }
@@ -213,6 +241,9 @@ public final class GitHubModel {
                 ? .loaded(reply.notifications)
                 : .failed("GitHub returned \(reply.status)")
         } catch is CancellationError {
+            // A cancelled first read must not strand `.loading`: the
+            // top guard treats it as "request in flight" forever.
+            if case .loading = inbox { inbox = .idle }
             return
         } catch {
             next = .failed(error.localizedDescription)
@@ -226,7 +257,14 @@ public final class GitHubModel {
         generation += 1
         let mine = generation
         let trimmed = query.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { searchResults = []; searchError = nil; return }
+        guard !trimmed.isEmpty else {
+            searchResults = []
+            searchError = nil
+            // The superseded request's defer can't clear this — `mine`
+            // no longer matches `generation` — so it is cleared here.
+            searching = false
+            return
+        }
         searching = true
         defer { if mine == generation { searching = false } }
         do {
@@ -241,10 +279,14 @@ public final class GitHubModel {
     /// Pin a repo. `swe gh repo add` verifies it exists first; the reply's
     /// `pinned` list is authoritative. Returns the repo's normalised
     /// `owner/name` on success so the caller can select it.
+    ///
+    /// Mutations are serialized (not just per-name): every reply carries
+    /// the whole pin list, so two overlapping mutations could land an
+    /// older list last and resurrect a removed pin.
     @discardableResult
     public func addRepo(_ input: String, swe: SweClient) async -> String? {
         let name = input.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty, !mutating.contains(name) else { return nil }
+        guard !name.isEmpty, mutating.isEmpty else { return nil }
         mutating.insert(name)
         defer { mutating.remove(name) }
         do {
@@ -260,13 +302,14 @@ public final class GitHubModel {
 
     /// Unpin a repo; its board is dropped with it.
     public func removeRepo(_ name: String, swe: SweClient) async -> Bool {
-        guard !mutating.contains(name) else { return false }
+        guard mutating.isEmpty else { return false }
         mutating.insert(name)
         defer { mutating.remove(name) }
         do {
             let reply = try await swe.ghRemoveRepo(name)
             pins = reply.pinned.sorted().map { PinnedRepo(name: $0, addedAt: now()) }
             boards[name] = nil
+            for key in fetched.keys where key.repo == name { fetched[key] = nil }
             if selected == name { selected = pins.first?.name }
             pinError = nil
             return true
