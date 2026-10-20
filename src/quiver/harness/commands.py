@@ -1254,14 +1254,15 @@ def _add_interactive(args: list[str]) -> int:
             return 1
         if choice in ("", "y", "yes"):
             action = "Updated" if draft["name"] in tools else "Added"
+            previous = tools.get(draft["name"]) or {}
             tools[draft["name"]] = {
                 "command": draft["command"],
                 "description": draft["description"],
                 "version": version,
                 "tags": tags_list,
                 "aliases": aliases_list,
-                "added": datetime.now().isoformat(),
-                **_kept_fields(tools.get(draft["name"])),
+                "added": previous.get("added") or datetime.now().isoformat(),
+                **_kept_fields(previous),
             }
             save_registry(tools)
             saved_status = c("green", "installed") if installed else c("yellow", "not yet in PATH")
@@ -1309,7 +1310,9 @@ def cmd_add(args):
     tools = load_registry()
     name = args[0]
     command = args[1]
-    desc = ""
+    # None means "not supplied": re-adding keeps the saved description,
+    # while an explicit `--description=` or empty positional clears it.
+    desc: str | None = None
     tags: list[str] | None = None
     aliases: list[str] | None = None
     no_replace = False
@@ -1360,8 +1363,10 @@ def cmd_add(args):
     previous = tools.get(name) or {}
     tools[name] = {
         "command": command,
-        "description": desc or previous.get("description", ""),
-        "version": previous.get("version"),
+        "description": desc if desc is not None else previous.get("description", ""),
+        # The stored version belongs to the probed binary: pointing the
+        # entry at a different command must not keep the old one.
+        "version": previous.get("version") if previous.get("command") == command else None,
         "tags": tags if tags is not None else previous.get("tags", ["agentic", "coding"]),
         "aliases": aliases if aliases is not None else previous.get("aliases", []),
         "added": previous.get("added") or datetime.now().isoformat(),

@@ -322,7 +322,7 @@ class BareFlagRejectionTest(unittest.TestCase):
         # capabilities) or user fields the command does not own.
         existing = {
             "demo": {
-                "command": "old",
+                "command": "demo-cmd",
                 "description": "ma description",
                 "state": "starred",
                 "pin": 2,
@@ -380,6 +380,29 @@ class BareFlagRejectionTest(unittest.TestCase):
         saved = save.call_args[0][0]["demo"]
         self.assertEqual(saved["tags"], ["nouveau"])
         self.assertEqual(saved["state"], "starred")
+
+    def test_re_adding_a_different_command_drops_the_stale_version(self):
+        # The stored version belongs to the probed binary: re-adding to
+        # point at another command must not show the old binary's version.
+        existing = {"demo": {"command": "old-bin", "version": "9.9"}}
+        with patch("quiver.harness.commands.load_registry", return_value=existing), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch(
+            "quiver.harness.commands.is_installed", return_value=True
+        ):
+            _run(cmd_add, ["demo", "new-bin"])
+        self.assertIsNone(save.call_args[0][0]["demo"]["version"])
+
+    def test_re_adding_with_empty_description_clears_it(self):
+        # `--description=` is an explicit clear, not "not supplied".
+        existing = {"demo": {"command": "demo-cmd", "description": "old text"}}
+        with patch("quiver.harness.commands.load_registry", return_value=existing), patch(
+            "quiver.harness.commands.save_registry"
+        ) as save, patch(
+            "quiver.harness.commands.is_installed", return_value=True
+        ):
+            _run(cmd_add, ["demo", "demo-cmd", "--description="])
+        self.assertEqual(save.call_args[0][0]["demo"]["description"], "")
 
     def test_adding_a_new_harness_sets_no_display_name(self):
         with patch("quiver.harness.commands.load_registry", return_value={}), patch(
