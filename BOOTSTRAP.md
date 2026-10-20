@@ -71,7 +71,7 @@ Two things stand between "code complete" and "shipping":
 
 ## Then cut a release
 
-- Tag `v0.x.y`, publish the GitHub release, the workflow attaches wheel + DMG + appcast.
+- Order matters: push `v0.x.y` **then** publish the GitHub release. If the workflow finishes before the release exists, it skips the attach step and exits green — re-run it (`Actions › Release › Run workflow`, same tag) so the wheel + DMG + `appcast.xml` land on the release.
 - Release notes should say **macOS 26+, Apple Silicon only**.
 - First-run smoke test on a fresh Mac profile: Gatekeeper pass, Check for Updates, bundled `swe` with no system Python.
 
