@@ -293,6 +293,20 @@ import Testing
         #expect(section.temperatures == ["battery": 33])
     }
 
+    @Test func theComputeSectionDropsTemperaturesBehindTheTick() {
+        var history = ComputeHistory()
+        history.appendTemperature(TemperaturePoint(at: now - 10,
+                                                   values: [.cpu: 61]))
+        // The newest tick read no sensors; the old point must not ship.
+        history.recordTick(now)
+        history.append("claude", TrendPoint(at: now, memoryBytes: 4, cpuPercent: 80,
+                                            gpuPercent: nil))
+        let section = WidgetSnapshot.ComputeSection(history: history, order: ["claude"],
+                                                    temperatureLines: [.cpu],
+                                                    selection: WidgetSelection())
+        #expect(section.temperatures.isEmpty)
+    }
+
     @Test func aComputeSectionWithoutTicksIsCollectingNotOld() {
         let section = WidgetSnapshot.ComputeSection(history: ComputeHistory(), order: [],
                                                     temperatureLines: [],
