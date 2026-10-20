@@ -9,6 +9,7 @@ from datetime import date, datetime, time, timedelta, tzinfo
 from pathlib import Path
 from typing import Iterable
 
+from quiver.paths import expand_user
 from quiver.sessions.models import Session
 
 
@@ -216,7 +217,7 @@ def _matches_search(session: Session, search: str) -> bool:
 def resolve_project_root(path: str | os.PathLike[str]) -> str:
     """Resolve a session path to its Git root, falling back to that path."""
 
-    recorded = Path(path).expanduser()
+    recorded = expand_user(path)
     try:
         recorded = recorded.resolve(strict=False)
     except OSError:

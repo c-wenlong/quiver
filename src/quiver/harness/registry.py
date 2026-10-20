@@ -210,7 +210,7 @@ def _read_legacy_stars() -> list[str]:
     try:
         with open(STARS_FILE) as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError, RecursionError):
         return []
     if isinstance(data, list):
         return [str(x) for x in data if isinstance(x, str) and x]
@@ -225,7 +225,7 @@ def _read_legacy_archive() -> dict:
     try:
         with open(ARCHIVE_FILE) as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError, RecursionError):
         return {}
     return data if isinstance(data, dict) else {}
 

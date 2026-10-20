@@ -56,7 +56,10 @@ class HarnessFinding:
 
 
 def _expand_path(path: str, home: Path) -> Path:
-    return Path(os.path.expanduser(path)).expanduser()
+    # os.path.expanduser leaves an unresolvable ``~user`` literal instead
+    # of raising; the trailing Path.expanduser this used to chain turned
+    # that literal into a RuntimeError.
+    return Path(os.path.expanduser(path))
 
 
 def _path_dirs(path_env: str | None, home: Path) -> list[Path]:

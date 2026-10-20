@@ -7,7 +7,12 @@ from datetime import datetime
 from pathlib import Path
 
 from quiver.configuration import read_json_object
-from quiver.paths import CONFIG_DIR, SKILL_CATALOGS_FILE, atomic_write_text
+from quiver.paths import (
+    CONFIG_DIR,
+    SKILL_CATALOGS_FILE,
+    atomic_write_text,
+    expand_user,
+)
 
 DEFAULT_SEARCH_ROOTS = ("Desktop", "Documents")
 DEFAULT_MAX_DEPTH = 12
@@ -46,7 +51,7 @@ def load_skill_catalogs() -> list[dict]:
     """Return configured catalogs: [{label, path, added?}, ...]."""
     try:
         data = json.loads(SKILL_CATALOGS_FILE.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+    except (FileNotFoundError, json.JSONDecodeError, OSError, RecursionError):
         return []
     catalogs = data.get("catalogs", [])
     if not isinstance(catalogs, list):
@@ -101,7 +106,7 @@ def catalog_has_skills(root: Path) -> bool:
 
 def resolve_catalog_path(path: str | Path) -> Path:
     """Resolve a catalog path; '.' and relative paths use the current working directory."""
-    return Path(path).expanduser().resolve()
+    return expand_user(path).resolve()
 
 
 def add_skill_catalog(path: str | Path, label: str | None = None) -> dict:

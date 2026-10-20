@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
 from quiver.harness.registry import load_registry, resolve
+from quiver.paths import expand_user
 from quiver.reports.models import FollowUp
 from quiver.sessions.aggregator import get_all_sessions
 from quiver.sessions.commands import _RESUME_FLAGS, _resume_cmd_args
@@ -56,7 +57,7 @@ def validate_project_root(project_root: str) -> Path:
     """Return a real, existing directory suitable for a child process cwd."""
     if not project_root or not project_root.strip():
         raise FollowUpWorkError("follow-up has no project path")
-    path = Path(project_root).expanduser()
+    path = expand_user(project_root)
     try:
         resolved = path.resolve(strict=True)
     except (OSError, RuntimeError) as exc:
@@ -91,7 +92,7 @@ def find_source_session(
     if not newest.path:
         raise FollowUpWorkError("newest referenced source session has no project path")
     try:
-        session_path = Path(newest.path).expanduser().resolve(strict=True)
+        session_path = expand_user(newest.path).resolve(strict=True)
     except (OSError, RuntimeError) as exc:
         raise FollowUpWorkError("newest referenced source session is unavailable") from exc
     if not session_path.is_dir() or not _is_within(session_path, project_root):
@@ -147,10 +148,16 @@ def prepare_follow_up_work(
             raise FollowUpWorkError(
                 f"{source.tool_name or source.agent} does not support CLI session resume"
             )
+        try:
+            cwd = str(expand_user(source.path).resolve(strict=True))
+        except (OSError, RuntimeError) as exc:
+            raise FollowUpWorkError(
+                "newest referenced source session is unavailable"
+            ) from exc
         return FollowUpWorkPlan(
             follow_up_id=follow_up.id,
             action="resume",
-            cwd=str(Path(source.path).expanduser().resolve(strict=True)),
+            cwd=cwd,
             launch_args=tuple(_resume_cmd_args(source)),
             source_session_id=source.session_id,
         )

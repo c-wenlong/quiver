@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from quiver.console import sanitize, sanitize_document
+from quiver.paths import expand_user
 from quiver.sessions.models import Session
 
 
@@ -254,7 +255,7 @@ def _tool_message(name: Any, arguments: Any = None, output: Any = None) -> Norma
             decoded = json.loads(arguments)
             if isinstance(decoded, (dict, list)):
                 arguments = decoded
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, RecursionError):
             pass
     content = output if output is not None else arguments
     text = _clean_text(content)
@@ -325,7 +326,7 @@ def _read_jsonl(path: Path) -> list[NormalizedMessage]:
                 continue
             try:
                 record = json.loads(line)
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, RecursionError):
                 continue
             messages.extend(_messages_from_record(record))
     return messages
@@ -370,7 +371,7 @@ def _deduplicate(messages: list[NormalizedMessage]) -> list[NormalizedMessage]:
 
 def _find_session_file(root: Path, session_id: str, patterns: tuple[str, ...] = ("*.jsonl",)) -> Path | None:
     if session_id:
-        direct = Path(session_id).expanduser()
+        direct = expand_user(session_id)
         if direct.is_file():
             return direct
     sid = Path(session_id).stem if session_id else ""
@@ -426,7 +427,7 @@ def _read_freebuff(session: Session) -> NormalizedTranscript:
             history = data.get("sessionState", {}).get("mainAgentState", {}).get("messageHistory", [])
             transcript.messages = [m for row in history for m in _messages_from_record(row)]
             transcript.source_paths.append(str(state))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError, RecursionError):
             pass
     if not transcript.messages:
         transcript.messages = _read_jsonl(chat)
@@ -478,7 +479,7 @@ def _read_cline(session: Session) -> NormalizedTranscript:
     if messages_path.exists():
         try:
             data = json.loads(messages_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, json.JSONDecodeError, RecursionError) as exc:
             return _unreadable(
                 session, f"Cline transcript error: {exc}", [messages_path])
         embedded = data.get("sessionId") if isinstance(data, dict) else None
@@ -516,7 +517,7 @@ def _read_cline(session: Session) -> NormalizedTranscript:
     for path in existing:
         try:
             transcript.messages.extend(_read_json_messages(path))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError, RecursionError):
             continue
     return transcript
 
@@ -527,7 +528,7 @@ def _read_gemini(session: Session) -> NormalizedTranscript:
     try:
         projects = json.loads(index.read_text(encoding="utf-8")).get("projects", {})
         hash_dir = projects.get(session.path) or projects.get(session.session_id)
-    except (OSError, json.JSONDecodeError, AttributeError):
+    except (OSError, json.JSONDecodeError, AttributeError, RecursionError):
         hash_dir = None
     if not hash_dir:
         return _unreadable(session, "Gemini project mapping not found")
@@ -559,7 +560,7 @@ def _sqlite_json_parts(session: Session, db_path: str) -> NormalizedTranscript:
         for message_id, raw in conn.execute("SELECT id, data FROM message WHERE session_id = ? ORDER BY time_created", (session.session_id,)):
             try:
                 data = json.loads(raw)
-            except (TypeError, json.JSONDecodeError):
+            except (TypeError, json.JSONDecodeError, RecursionError):
                 continue
             roles[str(message_id)] = _role(data.get("role"))
             direct = _message(roles[str(message_id)], data.get("content") or data.get("text"))
@@ -568,7 +569,7 @@ def _sqlite_json_parts(session: Session, db_path: str) -> NormalizedTranscript:
         for message_id, raw in conn.execute("SELECT message_id, data FROM part WHERE session_id = ? ORDER BY time_created", (session.session_id,)):
             try:
                 part = json.loads(raw)
-            except (TypeError, json.JSONDecodeError):
+            except (TypeError, json.JSONDecodeError, RecursionError):
                 continue
             part_type = str(part.get("type") or "").lower()
             if part_type in {"tool", "tool-invocation", "tool_result"}:
@@ -666,7 +667,7 @@ def _read_devin(session: Session) -> NormalizedTranscript:
         for raw in ordered:
             try:
                 record = json.loads(raw)
-            except (TypeError, json.JSONDecodeError):
+            except (TypeError, json.JSONDecodeError, RecursionError):
                 continue
             if not isinstance(record, dict):
                 continue
@@ -710,7 +711,7 @@ def _read_forge(session: Session) -> NormalizedTranscript:
         context = json.loads(row[0]) if row and row[0] else {}
         records = context.get("messages", []) if isinstance(context, dict) else []
         transcript.messages = [message for record in records for message in _messages_from_record(record.get("message", record) if isinstance(record, dict) else record)]
-    except (sqlite3.Error, json.JSONDecodeError) as exc:
+    except (sqlite3.Error, json.JSONDecodeError, RecursionError) as exc:
         return _unreadable(session, f"Forge transcript error: {exc}", [path])
     finally:
         conn.close()
@@ -723,7 +724,7 @@ def _read_crush(session: Session) -> NormalizedTranscript:
     try:
         data = json.loads(index.read_text(encoding="utf-8"))
         projects = data.get("projects", data) if isinstance(data, dict) else data
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError, RecursionError):
         projects = []
     for project in projects if isinstance(projects, list) else []:
         if not isinstance(project, dict) or project.get("path") != session.path:

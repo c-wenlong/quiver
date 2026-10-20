@@ -38,6 +38,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
+from quiver.paths import expand_user
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -315,7 +317,10 @@ def check_registry_schema(registry: dict) -> list[Finding]:
             root = cap.get("root")
             if not root:
                 continue
-            if not Path(root).expanduser().exists():
+            # expand_user, not Path.expanduser: a ``~missing-user`` root
+            # raises RuntimeError there, and a drift checker must report
+            # bad registry data rather than die on it.
+            if not expand_user(root).exists():
                 findings.append(Finding(
                     "warn", "registry",
                     f"{name}: capabilities.{cap_name}.root {root} does not exist on disk",
@@ -466,7 +471,17 @@ def check_dangling_symlinks(directories: Sequence[Path]) -> list[Finding]:
     for directory in directories:
         if not directory.is_dir():
             continue
-        for entry in sorted(directory.iterdir()):
+        try:
+            entries = sorted(directory.iterdir())
+        except OSError as exc:
+            # An unreadable directory is itself worth reporting; dying on
+            # the PermissionError would hide every check that runs after.
+            findings.append(Finding(
+                "warn", "symlinks",
+                f"{directory} cannot be scanned for broken symlinks: {exc.strerror or exc}",
+            ))
+            continue
+        for entry in entries:
             if entry.is_symlink() and not entry.exists():
                 findings.append(Finding(
                     "warn", "symlinks",
