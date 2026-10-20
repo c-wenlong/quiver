@@ -8,6 +8,13 @@ let package = Package(
         .executable(name: "Quiver", targets: ["QuiverApp"]),
         .executable(name: "QuiverWidgets", targets: ["QuiverWidgets"]),
     ],
+    dependencies: [
+        // In-app updates. Pinned exactly: this framework ships signed inside
+        // the bundle, so upgrades are deliberate. The feed is appcast.xml on
+        // the latest GitHub release (set in build-app.sh's prod Info.plist).
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
+    ],
+
     targets: [
         // Everything testable: models, the swe client, scanners, view models.
         .target(name: "QuiverCore", resources: [.process("Resources")]),
@@ -15,7 +22,18 @@ let package = Package(
         // app's Desktop widgets previews.
         .target(name: "QuiverWidgetsUI", dependencies: ["QuiverCore"]),
         // The SwiftUI shell. Kept thin so behaviour lives in QuiverCore.
-        .executableTarget(name: "QuiverApp", dependencies: ["QuiverCore", "QuiverWidgetsUI"]),
+        .executableTarget(
+            name: "QuiverApp",
+            dependencies: [
+                "QuiverCore", "QuiverWidgetsUI",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
+            // Sparkle.framework is copied into Contents/Frameworks by
+            // build-app.sh; the executable finds it through this rpath.
+            linkerSettings: [.unsafeFlags([
+                "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks",
+            ])]
+        ),
         // The WidgetKit extension. SwiftPM builds it as a plain executable;
         // script/build-app.sh wraps it in an .appex inside Quiver.app. The
         // entry point must be _NSExtensionMain (which Xcode sets on extension

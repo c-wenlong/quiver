@@ -272,6 +272,15 @@ private struct SettingsSectionView: View {
             }
             SettingsDivider()
             releaseRow
+            if app.updates.build.channel == .prod {
+                SettingsDivider()
+                SettingRow(title: "Automatic checks",
+                           detail: "Sparkle checks the appcast once a day.") {
+                    SettingSwitch(title: "Check automatically", isOn: Binding(
+                        get: { AppUpdater.shared.automaticallyChecksForUpdates },
+                        set: { AppUpdater.shared.automaticallyChecksForUpdates = $0 }))
+                }
+            }
         }
         .task { await app.updates.refresh(force: false) }
     }
@@ -369,11 +378,15 @@ private struct SettingsSectionView: View {
             title: "Latest release",
             detail: releaseDetail(updates.release)) {
                 HStack(spacing: 12) {
-                    if updates.release?.comparison == .available,
-                       let url = updates.release?.release?.url {
-                        Link("Open", destination: url).secondaryButton()
-                    }
                     if prod {
+                        Button("Check for Updates…") { AppUpdater.shared.checkForUpdates() }
+                            .secondaryButton()
+                            .disabled(!AppUpdater.shared.canCheckForUpdates)
+                    } else {
+                        if updates.release?.comparison == .available,
+                           let url = updates.release?.release?.url {
+                            Link("Open", destination: url).secondaryButton()
+                        }
                         Button("Check now") { Task { await updates.refresh(force: true) } }
                             .secondaryButton()
                             .disabled(updates.checking)

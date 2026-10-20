@@ -53,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         statusItem = StatusItemController(model: AppModel.shared)
         AppModel.shared.applyAppIcon()
         AppModel.shared.start()
+        AppUpdater.shared.start()
     }
 
     /// Show limit notifications even while Quiver's window is in front.
