@@ -111,8 +111,11 @@ def _find_skill_matches(name: str, scope: str, home: Path, cwd: Path) -> list[di
     ``scope`` is a root ref, not only a label: resolve_root_ref turns a
     literal path (``--from=~/.foo/skills``) or a discovered-root label into
     the label discovery reports and the root it sits at. Containment under
-    the resolved root also covers a scope that is itself a symlink — the
-    skills there are reported under the link target's label.
+    the resolved root is the precise match — labels are not unique
+    (``~/.foo/skills`` and ``~/.config/foo/skills`` are both ``foo``) and a
+    scope that is itself a symlink reports its skills under the link
+    target's label. Label matching stays as the fallback for a scope whose
+    root resolves to nothing discovery walked.
     """
     needle = name.lower()
     try:
@@ -125,16 +128,17 @@ def _find_skill_matches(name: str, scope: str, home: Path, cwd: Path) -> list[di
             scope_resolved = scope_root.resolve()
         except OSError:
             scope_resolved = None
-    skills = []
-    for s in discover_skills(home=home, cwd=cwd):
-        s_scope = s["scope"].lower()
-        if s_scope in (scope.lower(), scope_label.lower()):
-            skills.append(s)
-            continue
-        if scope_resolved is not None and Path(s["path"]).is_relative_to(
-            scope_resolved
-        ):
-            skills.append(s)
+    all_skills = discover_skills(home=home, cwd=cwd)
+    rooted: list[dict] = []
+    if scope_resolved is not None:
+        rooted = [
+            s for s in all_skills
+            if Path(s["path"]).is_relative_to(scope_resolved)
+        ]
+    skills = rooted or [
+        s for s in all_skills
+        if s["scope"].lower() in (scope.lower(), scope_label.lower())
+    ]
     exact = [s for s in skills if s["name"].lower() == needle]
     if exact:
         return exact

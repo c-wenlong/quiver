@@ -129,6 +129,25 @@ class SkillsLayoutTest(unittest.TestCase):
             self.assertFalse(src.exists())
             self.assertTrue((dest / "SKILL.md").exists())
 
+    def test_move_from_a_path_ignores_same_label_roots(self):
+        # ~/.foo/skills and ~/.config/foo/skills both carry the label
+        # "foo"; an explicit path must still mean exactly one root.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            foo = home / ".foo" / "skills"
+            other = home / ".config" / "foo" / "skills"
+            codex = home / ".codex" / "skills"
+            for root in (foo, other, codex):
+                root.mkdir(parents=True)
+            self._write_skill(foo, "move-me", "move-me")
+            self._write_skill(other, "move-me", "move-me")
+
+            src, dest = move_skill("move-me", str(foo), "codex", home=home)
+            self.assertFalse(src.exists())
+            self.assertTrue((dest / "SKILL.md").exists())
+            # The same-named skill under the other "foo" root is untouched.
+            self.assertTrue((other / "move-me" / "SKILL.md").exists())
+
     def test_move_reports_a_broken_destination_symlink(self):
         # The broken-link check ran after the exists() check, so it could
         # never fire: a dangling --to root read as "does not exist".
