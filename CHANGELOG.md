@@ -198,6 +198,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Accounts, the menu bar and widgets only, so the Harnesses page keeps the
   harness's display name. The card's Open app/Terminal buttons are icons now.
 
+- **A fresh Linux + Nix install bootstraps cleanly.** Six first-run bugs
+  together made a new machine look broken: any invocation — even a failed
+  unknown command — created `~/.quiver/config/harness.json` before it was
+  asked for anything (a read now stays a read; `save_registry` is the one
+  scaffolder), `swe init` skipped harnesses that had never run yet because
+  a config dir was the only install evidence (a binary on PATH counts now,
+  so Nix/uv installs like `crush` get their `~/.config/crush` links, hooks
+  included), `swe doctor` reported npm's global bin as the bare prefix when
+  `<prefix>/bin` did not exist yet (the POSIX convention is the answer,
+  unconditionally), `swe list` and `swe check` disagreed about the same
+  registry because archived rows counted in one and vanished in the other
+  (both now print the active count plus the shelved one, and an empty
+  registry is a deliberate empty state instead of a header over 0/0), and
+  `swe discover --apply-all` archived a home-scan find like `hermes` even
+  when its binary probed a live version (the probe result, not the source,
+  decides now; a find the confidence floor refuses is named with its
+  remedy instead of silently dropped). Old seeded registry rows are left
+  alone on upgrade — nothing in the file tells them from hand-authored
+  ones, so deleting them could erase real entries; `swe discover
+  --apply-all` after a `swe remove` remains the way to reset them.
+
 ### Added
 
 - **A docs site** at <https://c-wenlong.github.io/quiver/>, built with

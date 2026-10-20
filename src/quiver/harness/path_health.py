@@ -81,9 +81,16 @@ def probe_node_env() -> NodeEnv:
         npm_version = _run([npm, "-v"])
         global_prefix = _run([npm, "prefix", "-g"])
         if global_prefix:
-            # npm bin -g is deprecated; convention is <prefix>/bin
-            candidate = Path(global_prefix) / "bin"
-            global_bin = str(candidate) if candidate.is_dir() else global_prefix
+            # npm bin -g is gone since npm 9; the convention is
+            # <prefix>/bin on POSIX and the prefix itself on Windows. The
+            # bin dir need not exist yet — npm makes it on the first
+            # `npm i -g` — so existence must not pick the answer: reporting
+            # the bare prefix exports a PATH that hits nothing.
+            global_bin = (
+                global_prefix
+                if os.name == "nt"
+                else str(Path(global_prefix) / "bin")
+            )
 
     return NodeEnv(
         node=node,

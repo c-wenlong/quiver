@@ -274,6 +274,33 @@ class HomeScanTest(unittest.TestCase):
             self.assertEqual(entry["state"], "archived")
             self.assertIn("reason", entry["archived"])
 
+    def test_home_scan_with_a_live_binary_stays_active(self):
+        # #68: --apply-all shelved hermes even though `hermes --version`
+        # answers — archiving keyed on source alone, not on whether the
+        # probe succeeded. A live version is install evidence; shelving
+        # hides the tool the moment it registers.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".hermes" / "skills").mkdir(parents=True)
+            config_dir = home / ".quiver" / "config"
+            which = lambda name, **kw: "/nix/bin/hermes" if name == "hermes" else None
+            patches = (*_registry_patches(config_dir, config_dir / "harness.json"),
+                       patch("quiver.harness.discover.EXTRA_BIN_DIRS", ()),
+                       patch("quiver.harness.discover.shutil.which", side_effect=which),
+                       patch("quiver.harness.discover.live_version", lambda cmd: "0.20.5"))
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+                save_registry({"claude": dict(HARNESS_CATALOG["claude"])})
+                findings = discover_harnesses(path_env="", home=home)
+                added, skipped = apply_findings(findings, min_confidence="low")
+                registry = load_registry()
+            self.assertEqual(added, ["hermes"])
+            self.assertEqual(skipped, [])
+            entry = registry["hermes"]
+            self.assertNotIn("state", entry)  # active — never shelved
+            self.assertEqual(entry["command"], "hermes")
+            self.assertEqual(entry["version"], "0.20.5")
+            self.assertEqual(entry["discovered_via"], "home_scan")
+
 
 class ConfidenceFloorTest(unittest.TestCase):
     """min_confidence is a floor. The map was inverted before the home scan
@@ -295,6 +322,26 @@ class ConfidenceFloorTest(unittest.TestCase):
                 registry = load_registry()
             self.assertNotIn("fancytool", added)
             self.assertNotIn("fancytool", registry)
+
+    def test_floor_skips_are_named_not_silent(self):
+        # #68: --apply used to drop a low-confidence find with no output,
+        # so the dry run listed a tool the apply then pretended never
+        # existed. The refusal comes back named, with its remedy.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".fancytool" / "skills").mkdir(parents=True)
+            config_dir = home / ".quiver" / "config"
+            patches = (*_registry_patches(config_dir, config_dir / "harness.json"),
+                       patch("quiver.harness.discover.EXTRA_BIN_DIRS", ()),
+                       patch("quiver.harness.discover.live_version", lambda cmd: None))
+            with patches[0], patches[1], patches[2], patches[3], patches[4]:
+                save_registry({"claude": dict(HARNESS_CATALOG["claude"])})
+                findings = discover_harnesses(path_env="", home=home)
+                added, skipped = apply_findings(findings, min_confidence="high")
+            self.assertNotIn("fancytool", added)
+            [skip] = [s for s in skipped if s["name"] == "fancytool"]
+            self.assertIn("confidence is low", skip["reason"])
+            self.assertIn("--apply-all", skip["reason"])
 
 
 class NotHarnessTest(unittest.TestCase):
@@ -352,12 +399,13 @@ class DiscoverCommandSelectionTest(unittest.TestCase):
                               confidence=confidence, source="home_scan",
                               status=status, description="", tags=(), aliases=())
 
-    def _run(self, args, findings, *, supported=False, chosen=None):
+    def _run(self, args, findings, *, supported=False, chosen=None, apply_ret=None):
         from contextlib import redirect_stdout
         from io import StringIO
         from unittest import mock
         from quiver.harness import discover_commands as dc
-        apply = mock.Mock(return_value=([], []))
+        apply = mock.Mock(
+            return_value=apply_ret if apply_ret is not None else ([], []))
         out = StringIO()
         with patch.object(dc, "discover_harnesses", lambda **k: findings), \
                 patch.object(dc, "apply_findings", apply), \
@@ -389,6 +437,27 @@ class DiscoverCommandSelectionTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIsNone(apply.call_args.kwargs["names"])
         self.assertEqual(apply.call_args.kwargs["min_confidence"], "high")
+
+    def test_apply_prints_floor_skips_out_loud(self):
+        # #68: the refusal a floor creates is printed, not swallowed —
+        # before, --apply of a low-confidence find ended in silence.
+        skip = {"name": "a",
+                "reason": "confidence is low; name it "
+                          "(swe discover --apply a) or use --apply-all"}
+        code, out, _ = self._run(["--apply"], [self._finding("a")],
+                                 apply_ret=([], [skip]))
+        self.assertEqual(code, 0)
+        self.assertIn("! a:", out)
+        self.assertIn("confidence is low", out)
+
+    def test_apply_of_a_refused_name_returns_one(self):
+        # Naming a find apply refuses (already registered, or an alias of
+        # something else) is a failure, not a quiet no-op.
+        skip = {"name": "a", "reason": "already registered under 'claude'"}
+        code, out, _ = self._run(["--apply", "a"], [self._finding("a")],
+                                 apply_ret=([], [skip]))
+        self.assertEqual(code, 1)
+        self.assertIn("already registered", out)
 
     def test_pick_needs_a_terminal(self):
         code, out, apply = self._run(["--pick"], [self._finding("a")], supported=False)

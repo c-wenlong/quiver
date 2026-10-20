@@ -102,7 +102,10 @@ class SignatureTest(unittest.TestCase):
     def test_no_evidence_means_no_signature_root(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            found = {str(p.relative_to(home)) for p in discover_skill_roots(home)}
+            # A binary on PATH is evidence too (#68): stub it out or a
+            # dev machine with kilo/cline installed fails this assertion.
+            with mock.patch("quiver.init.layout.shutil.which", return_value=None):
+                found = {str(p.relative_to(home)) for p in discover_skill_roots(home)}
             self.assertNotIn(".kilo/skills", found)
             self.assertNotIn(".cline/skills", found)
 
@@ -133,7 +136,20 @@ class SignatureTest(unittest.TestCase):
             home = _home(tmp)
             registry = {"evil": {"capabilities": {
                 "skills": {"supported": True, "root": "~/../escape/skills"}}}}
-            self.assertEqual(discover_skill_roots(home, registry), [])
+            with mock.patch("quiver.init.layout.shutil.which", return_value=None):
+                self.assertEqual(discover_skill_roots(home, registry), [])
+
+    def test_binary_on_path_finds_signature_root(self):
+        # #68: Nix-profile crush — the binary resolves but ~/.config/crush
+        # was never made, so dir evidence alone skipped it. Installed by
+        # command, the signature root must be found and linked.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            which = lambda name: "/fake/bin/crush" if name == "crush" else None
+            with mock.patch("quiver.init.layout.shutil.which", side_effect=which):
+                found = {str(p.relative_to(home)) for p in discover_skill_roots(home)}
+            self.assertIn(".config/crush/skills", found)
+            self.assertNotIn(".kilo/skills", found)
 
     def test_supported_false_registry_root_is_not_found(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -210,9 +226,10 @@ class SignatureTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             (home / ".agents").mkdir()
-            found = {str(p.relative_to(home)) for p in discover_skill_roots(home)}
-            self.assertNotIn(".cline/skills", found)
-            instructions, _ = plan(home)
+            with mock.patch("quiver.init.layout.shutil.which", return_value=None):
+                found = {str(p.relative_to(home)) for p in discover_skill_roots(home)}
+                self.assertNotIn(".cline/skills", found)
+                instructions, _ = plan(home)
             by_label = {s.label: s for s in instructions}
             self.assertEqual(by_label["cline"].state, "create")
             self.assertFalse((home / ".cline").exists())
@@ -251,7 +268,11 @@ class SignatureTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            instructions, _ = plan(home)
+            # Same PATH stub as above: on a machine with these binaries the
+            # rows would legitimately read create — install by binary is
+            # install evidence, and this test is about the absence of both.
+            with mock.patch("quiver.init.layout.shutil.which", return_value=None):
+                instructions, _ = plan(home)
             by_label = {s.label: s for s in instructions}
             self.assertEqual(by_label["cline"].state, "skipped")
             self.assertEqual(by_label["kilo"].state, "skipped")

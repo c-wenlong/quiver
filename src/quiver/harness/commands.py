@@ -31,7 +31,14 @@ from quiver.harness.models import (
     display_name,
     primary_color,
 )
-from quiver.harness.registry import load_registry, load_registry_readonly, resolve, save_registry
+from quiver.harness.registry import (
+    archived_names,
+    load_registry,
+    load_registry_readonly,
+    resolve,
+    save_registry,
+    state_of,
+)
 from quiver.init.layout import link_states
 from quiver.harness.stars import (
     is_starred,
@@ -950,19 +957,23 @@ def cmd_list(args):
     n_inst = sum(1 for i in tools.values()
                  if i.get("command") and is_installed(i["command"]))
     n_star = sum(1 for n in tools if n in starred_set)
-    hints = "swe use <name>  │  swe hs star <name>  │  swe hs archive <name>  │  swe info <name>"
-    # Elide the finished line, not the hints alone: the counts in front of
-    # them are part of what has to fit.
-    summary = f"  {n_inst}/{len(tools)} installed  ·  {n_star} starred  ·  {hints}"
-    print(c("dim", elide(summary, terminal_width())))
-    if shown_starred:
-        print(f"  {c('neon_pink', '★')} {c('dim', '= favourited (pinned top, neon border)')}")
     # How many rows --scope left out has nothing to do with whether anything
     # is starred. Nesting this under the star legend meant a registry with no
     # favourites silently hid archived harnesses and never said so. Count what
     # the scope filter actually removed, so --scope=archived and --scope=all
     # (which hide nothing) stay quiet.
     hidden = [n for n in archived if n not in tools]
+    # The count belongs in the summary itself: "3/3 installed" claiming the
+    # registry is fully installed while a shelved fourth row exists is what
+    # made `swe list` and `swe check` disagree.
+    archived_part = f"  ·  {len(hidden)} archived" if hidden else ""
+    hints = "swe use <name>  │  swe hs star <name>  │  swe hs archive <name>  │  swe info <name>"
+    # Elide the finished line, not the hints alone: the counts in front of
+    # them are part of what has to fit.
+    summary = f"  {n_inst}/{len(tools)} installed  ·  {n_star} starred{archived_part}  ·  {hints}"
+    print(c("dim", elide(summary, terminal_width())))
+    if shown_starred:
+        print(f"  {c('neon_pink', '★')} {c('dim', '= favourited (pinned top, neon border)')}")
     if hidden:
         print(f"  {c('dim', '▪')} {c('dim', f'= archived ({len(hidden)} hidden; --scope=all to show)')}")
 
@@ -1100,6 +1111,19 @@ def cmd_info(args):
         ),
         ("Path:", path),
     ]
+    # A shelved harness still reports "installed" when its binary resolves,
+    # which read as swe list hiding an installed tool for no reason. Say
+    # when the row is archived (and why) so the two commands agree.
+    state = state_of(info)
+    if state != "active":
+        meta = info.get("archived")
+        detail = ""
+        if isinstance(meta, dict):
+            detail = " · ".join(
+                part for part in
+                (_fmt_when(meta.get("archived_at") or ""), meta.get("reason") or "")
+                if part)
+        rows.insert(6, ("State:", state + (f"  ·  {detail}" if detail else "")))
     colour = primary_color(name, info)
     if colour:
         rows.append(("Colour:", colour))
@@ -1450,7 +1474,14 @@ def cmd_check(args):
         print(f"  {c('dim', 'Run')} {c('cyan', 'swe discover --apply')} "
               f"{c('dim', 'to register what is installed here.')}\n")
         return 0
+    # Archived rows are listed for completeness but marked, and kept out of
+    # the installed count: the summary's denominator is the active set, the
+    # same scope `swe list` reports as "N/M installed". Otherwise a shelved
+    # harness reads as a broken install and the two commands disagree.
+    archived_set = set(archived_names(tools))
     updated = False
+    n_installed = 0
+    n_active = 0
     off_path_notes: list[str] = []
     print(f"\n{c('bold', 'Checking AI tools...')}\n")
 
@@ -1466,10 +1497,16 @@ def cmd_check(args):
     for name, info in sorted(tools.items()):
         aliases = [a for a in info.get("aliases", []) if a != name]
         command = info.get("command") or ""
-        if command and is_installed(command):
+        shelved = name in archived_set
+        installed = bool(command) and is_installed(command)
+        if not shelved:
+            n_active += 1
+            n_installed += installed
+        if installed:
             # Probe live version + heal stored version BEFORE we render
             # the row (this is the check-and-heal flow's side-effect,
-            # not just a display step).
+            # not just a display step). An archived harness heals the
+            # same way; only its rendered cells differ.
             ver = live_version(command)
             if not ver:
                 # Fall back to sanitizing whatever is already stored
@@ -1483,25 +1520,30 @@ def cmd_check(args):
                 if extract_version_number(str(stored)) != stored:
                     tools[name]["version"] = None
                     updated = True
-            display = tools[name].get("version") or "version unknown"
-            table.add_row({
-                "status": cpad("green", "✓", STATUS_COL_WIDTH),
-                "name": name,
-                "aliases": aliases,
-                "info": cpad("dim", display, INFO_COL_WIDTH),
-            })
+            mark, colour, note = "✓", "green", tools[name].get("version") or "version unknown"
         else:
-            table.add_row({
-                "status": cpad("red", "✗", STATUS_COL_WIDTH),
-                "name": name,
-                "aliases": aliases,
-                "info": cpad("dim", "not installed", INFO_COL_WIDTH),
-            })
+            mark, colour, note = "✗", "red", "not installed"
+        if shelved:
+            mark, colour, note = "▪", "dim", "archived"
+        table.add_row({
+            "status": cpad(colour, mark, STATUS_COL_WIDTH),
+            "name": name,
+            "aliases": aliases,
+            "info": cpad("dim", note, INFO_COL_WIDTH),
+        })
 
     for line in table.render():
         print(line)
 
-    orphans = find_off_path_tools(tools)
+    print()
+    summary = f"  {n_installed}/{n_active} installed"
+    if archived_set:
+        summary += f"  ·  {len(archived_set)} archived"
+    print(c("dim", summary))
+
+    # A shelved harness off PATH is not an accident to fix — skip it. The
+    # scan still reports it under swe list --scope=archived.
+    orphans = [o for o in find_off_path_tools(tools) if o[0] not in archived_set]
     if orphans:
         # Off-PATH diagnostic block lives BELOW the table — these
         # are not table rows (each orphan has a multi-line fix
@@ -1668,7 +1710,9 @@ def cmd_doctor(args):
 
     print(c("bold", "  Registry tools"))
     n_inst = sum(1 for i in tools.values() if is_installed(i.get("command", "")))
-    print(f"    registered:   {len(tools)}")
+    n_arch = len(archived_names(tools))
+    print(f"    registered:   {len(tools)}"
+          + (f"  {c('dim', '(' + str(n_arch) + ' archived)')}" if n_arch else ""))
     print(f"    on PATH:      {c('green', str(n_inst))}/{len(tools)}")
     if orphans:
         print(f"    off-PATH:     {c('yellow', str(len(orphans)))}")
