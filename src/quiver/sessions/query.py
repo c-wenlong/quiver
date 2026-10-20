@@ -105,6 +105,10 @@ class SessionQuery:
     agent: str | None = None
     cwd: str | None = None
     search: str | None = None
+    # Session ids that satisfy the search filter regardless of metadata —
+    # the FTS index answers "which sessions contain this text" and their
+    # ids union with the metadata substring match instead of replacing it.
+    search_ids: frozenset | None = None
     limit: int | None = None
 
     def __post_init__(self) -> None:
@@ -131,6 +135,7 @@ class SessionQuery:
         agent: str | None = None,
         cwd: str | None = None,
         search: str | None = None,
+        search_ids: frozenset | None = None,
         limit: int | None = None,
     ) -> "SessionQuery":
         start_ms, end_ms = calendar_range_ms(
@@ -142,6 +147,7 @@ class SessionQuery:
             agent=agent,
             cwd=cwd,
             search=search,
+            search_ids=search_ids,
             limit=limit,
         )
 
@@ -161,7 +167,10 @@ class SessionQuery:
         if self.cwd and not _path_is_within(session.path, self.cwd):
             return False
         if self.search and not _matches_search(session, self.search):
-            return False
+            if not (
+                self.search_ids and session.session_id in self.search_ids
+            ):
+                return False
         return True
 
 
