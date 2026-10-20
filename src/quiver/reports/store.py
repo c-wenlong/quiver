@@ -7,6 +7,7 @@ import json
 import os
 import tempfile
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -266,7 +267,17 @@ class ReportStore:
                 previous = CadenceCursor.from_dict(current)
             except (AttributeError, KeyError, TypeError, ValueError) as exc:
                 raise MalformedReportStateError(self.cursors_file) from exc
-            if through < previous.through:
+            # Compare instants, not ISO strings: a timezone change can make
+            # an equal-or-later instant sort lexically earlier. astimezone()
+            # treats a naive stamp as local, matching _default_period.
+            try:
+                backwards = (
+                    datetime.fromisoformat(through).astimezone()
+                    < datetime.fromisoformat(previous.through).astimezone()
+                )
+            except ValueError:
+                backwards = through < previous.through
+            if backwards:
                 raise ValueError(
                     f"cannot move {cadence} cursor backwards "
                     f"from {previous.through} to {through}"
