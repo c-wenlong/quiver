@@ -48,6 +48,7 @@ from quiver.mcp.secrets import _SECRET_FLAG_RE
 from quiver.mcp.secrets import load_secrets
 from quiver.mcp.secrets import redact as redact_secrets
 from quiver.mcp.secrets import resolve as resolve_secrets
+from quiver.mcp.secrets import scrub_args, scrub_url
 from quiver.mcp.secrets import set_secret
 from quiver.mcp.secrets import unresolved_names
 from quiver.paths import atomic_write_text, CONFIG_DIR, MCP_SOURCE_FILE
@@ -582,14 +583,14 @@ def server_summary(cfg: dict) -> str:
     st = server_type(cfg)
     if st == "http":
         # Harness configs hold resolved values — a `?key=TOKEN` URL would
-        # otherwise print its credential to the terminal. redact() swaps
-        # known secret values back to ${NAME} placeholders.
+        # otherwise print its credential to the terminal. scrub_url hides
+        # every credential shape, not only values already in the store.
         url = cfg.get("url", "?")
-        url = redact_secrets(url) if isinstance(url, str) else url
+        url = scrub_url(url) if isinstance(url, str) else url
         return f"http → {sanitize(url)}"
     if st == "stdio":
         cmd = cfg.get("command", "?")
-        args = cfg.get("args", [])
+        args = scrub_args(cfg.get("args", []))
         parts = [cmd]
         for a in args:
             if not a.startswith("-"):
@@ -599,7 +600,7 @@ def server_summary(cfg: dict) -> str:
     if st == "wrapped":
         args = cfg.get("args", [])
         url = next((a for a in args if a.startswith("http")), "?")
-        url = redact_secrets(url) if isinstance(url, str) else url
+        url = scrub_url(url) if isinstance(url, str) else url
         return f"wrapped → {sanitize(url)}"
     return "unknown"
 
