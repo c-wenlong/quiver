@@ -10,6 +10,10 @@ import Testing
         #expect(CustomProvider.envPrefix(for: "NUS SoC") == "NUS_SOC")
         #expect(CustomProvider.envPrefix(for: "foo-bar.baz") == "FOO_BAR_BAZ")
         #expect(CustomProvider.envPrefix(for: "  spaced  out ") == "SPACED_OUT")
+        // Accents fold to ASCII so the variables still parse in a shell;
+        // a name with nothing ASCII left has no prefix to give.
+        #expect(CustomProvider.envPrefix(for: "Café") == "CAFE")
+        #expect(CustomProvider.envPrefix(for: "學") == "")
         #expect(CustomProvider.envPrefix(for: "!!!") == "")
         #expect(CustomProvider.envPrefix(for: "") == "")
     }
@@ -23,6 +27,11 @@ import Testing
         // Plain http stays legal for local endpoints.
         #expect(CustomProvider.modelsURL("http://localhost:11434/v1")?.absoluteString
                 == "http://localhost:11434/v1/models")
+        // The append lands on the path, so a base carrying a query or
+        // fragment keeps it after /models rather than swallowing it.
+        #expect(CustomProvider.modelsURL("https://host/v1?api-version=2024")?.absoluteString
+                == "https://host/v1/models?api-version=2024")
+        #expect(CustomProvider.modelsURL("https://host")?.absoluteString == "https://host/models")
     }
 
     @Test func modelsURLRefusesNonURLs() {

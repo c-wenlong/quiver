@@ -711,9 +711,11 @@ private struct KeyEditor: View {
     @State private var providerChoice = ""
     /// The variable a multi-variable provider saves under.
     @State private var envVarChoice = ""
-    /// The last verdict and the (name, value) it describes.
+    /// The last verdict and the (name, value, base) it describes; the
+    /// custom path's base URL is part of the identity, so pointing the
+    /// endpoint elsewhere asks for a fresh test.
     @State private var testResult: APIKeyCheckResult?
-    @State private var testedFor = (name: "", value: "")
+    @State private var testedFor = (name: "", value: "", base: "")
     @State private var testing = false
     /// A rejected test showed; the next click saves regardless.
     @State private var saveAnyway = false
@@ -726,9 +728,12 @@ private struct KeyEditor: View {
     @State private var baseURL = ""
     /// The picked or typed model id; "" writes no `X_MODEL`.
     @State private var model = ""
-    /// The id a dropdown row last put in `model` — while the two agree the
-    /// dropdown stays shut, so picking one doesn't reopen it.
+    /// The id a dropdown row last put in `model` — typing away from it is
+    /// what reopens the list after a pick.
     @State private var pickedModel = ""
+    /// Whether the dropdown is showing: opens on focus and on typing,
+    /// closes on a pick, so an empty field can still browse the list.
+    @State private var modelListOpen = false
     /// What the last `{base}/models` fetch brought back.
     @State private var fetchedModels: [CustomProvider.Model] = []
     @State private var modelsStatus = ModelsFetch.idle
@@ -844,9 +849,14 @@ private struct KeyEditor: View {
         return "\(existing.joined(separator: ", ")) already set; saving replaces \(existing.count == 1 ? "it" : "them")."
     }
 
-    /// The verdict still describes the current name and value.
+    /// The verdict still describes the current name, value and endpoint.
     private var currentTest: APIKeyCheckResult? {
-        testedFor == (finalName, draft.value) ? testResult : nil
+        testedFor == (finalName, draft.value, testedBase) ? testResult : nil
+    }
+
+    /// The base a test answer is bound to; plain providers have none.
+    private var testedBase: String {
+        isCustom ? baseURL.trimmingCharacters(in: .whitespaces) : ""
     }
 
     /// A test is worth offering: a new non-empty value, or an edit that
@@ -993,10 +1003,12 @@ private struct KeyEditor: View {
                         .help("Ask {base}/models again")
                     }
                 }
-                if modelFocused && model != pickedModel && !filteredModels.isEmpty {
+                if modelFocused && modelListOpen && !filteredModels.isEmpty {
                     modelDropdown
                 }
             }
+            .onChange(of: modelFocused) { if modelFocused { modelListOpen = true } }
+            .onChange(of: model) { if model != pickedModel { modelListOpen = true } }
         }
     }
 
@@ -1016,7 +1028,7 @@ private struct KeyEditor: View {
     private var modelDropdown: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(filteredModels) { item in
-                Button { model = item.id; pickedModel = item.id } label: {
+                Button { model = item.id; pickedModel = item.id; modelListOpen = false } label: {
                     HStack(spacing: 8) {
                         Text(item.label).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).lineLimit(1)
                         if item.label != item.id {
@@ -1206,7 +1218,7 @@ private struct KeyEditor: View {
             let result = isCustom ? await testCustom(value, base) : await test(name, value)
             testing = false
             testResult = result
-            testedFor = (name, value)
+            testedFor = (name, value, isCustom ? base : "")
         }
     }
 
@@ -1232,6 +1244,7 @@ private struct KeyEditor: View {
         let name = finalName
         let provider = finalProvider
         let value = draft.value
+        let base = baseURL.trimmingCharacters(in: .whitespaces)
         saveTask = Task {
             defer { working = false }
             var result = currentTest
@@ -1240,13 +1253,13 @@ private struct KeyEditor: View {
             if canTest, result == nil {
                 testing = true
                 if isCustom {
-                    result = await testCustom(value, baseURL.trimmingCharacters(in: .whitespaces))
+                    result = await testCustom(value, base)
                 } else {
                     result = await test(name, value)
                 }
                 testing = false
                 testResult = result
-                testedFor = (name, value)
+                testedFor = (name, value, isCustom ? base : "")
             }
             guard !Task.isCancelled else { return }
             if case .rejected = result, !saveAnyway {

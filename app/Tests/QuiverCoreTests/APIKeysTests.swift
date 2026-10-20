@@ -1132,6 +1132,60 @@ struct FakeShell: ShellEnvironmentReading {
         #expect(transport.requests.first?.url?.absoluteString == "https://soclaas.test/v1/models")
     }
 
+    /// A custom provider may reuse a catalogue name: "OpenAI" writes
+    /// OPENAI_API_KEY, and its sibling OPENAI_BASE_URL must own the
+    /// check. Picking the catalogue probe would send the key to
+    /// api.openai.com, a host it was never meant for.
+    @Test func aCatalogueNameWithABaseURLChecksTheCustomEndpoint() async throws {
+        let transport = FakeTransport()
+        transport.reply(200, body: Data(#"{"data":[]}"#.utf8))
+        let (model, _) = try model(text: """
+            # Custom
+            export OPENAI_BASE_URL="https://proxy.test/v1"
+            export OPENAI_API_KEY="clsk-x"
+            """, transport: transport)
+        await model.load()
+        await model.check(name: "OPENAI_API_KEY")
+        #expect(transport.requests.first?.url?.absoluteString == "https://proxy.test/v1/models")
+    }
+
+    /// A sibling base URL that can't parse is no check at all; falling
+    /// back to the catalogue would leak the key the same way.
+    @Test func aBrokenBaseURLKeepsTheKeyFromTheCatalogueHost() async throws {
+        let transport = FakeTransport()
+        let (model, _) = try model(text: """
+            export OPENAI_BASE_URL="junk"
+            export OPENAI_API_KEY="clsk-x"
+            """, transport: transport)
+        await model.load()
+        await model.check(name: "OPENAI_API_KEY")
+        #expect(transport.requests.isEmpty)
+        guard case .noCheck = model.checks["OPENAI_API_KEY"]?.result else {
+            Issue.record("expected noCheck, got \(String(describing: model.checks["OPENAI_API_KEY"]))")
+            return
+        }
+    }
+
+    /// The verdict a check saved belongs to the endpoint it ran against:
+    /// repointing the base URL retires it even though the key is the same.
+    @Test func aBaseURLEditRetiresTheKeysCheck() async throws {
+        let transport = FakeTransport()
+        transport.reply(200, body: Data(#"{"data":[]}"#.utf8))
+        let (model, _) = try model(text: """
+            # SoCLaaS
+            export SOCLAAS_BASE_URL="https://soclaas.test/v1"
+            export SOCLAAS_API_KEY="clsk-x"
+            """, transport: transport)
+        await model.load()
+        await model.check(name: "SOCLAAS_API_KEY")
+        var key = try #require(model.rows.first { $0.name == "SOCLAAS_API_KEY" })
+        #expect(model.check(for: key)?.result == .works)
+        try await model.set(name: "SOCLAAS_BASE_URL", value: "https://elsewhere.test/v1",
+                            provider: "SoCLaaS")
+        key = try #require(model.rows.first { $0.name == "SOCLAAS_API_KEY" })
+        #expect(model.check(for: key) == nil)
+    }
+
     @Test func modelsFetchesAndParsesTheList() async throws {
         let transport = FakeTransport()
         transport.reply(200, body: Data(#"{"data":[{"id":"m1"},{"id":"m2","display_name":"M Two"}]}"#.utf8))

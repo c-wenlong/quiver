@@ -33,15 +33,17 @@ public enum CustomProvider {
         }
     }
 
-    /// The env-var prefix a provider name produces: uppercased, runs of
-    /// non-letters-and-digits folded to one underscore, ends trimmed —
-    /// "SoCLaaS" gives SOCLAAS and "NUS SoC" gives NUS_SOC. Empty when the
-    /// name has no letter or digit at all.
+    /// The env-var prefix a provider name produces: uppercased and folded
+    /// to ASCII ("Café" gives CAFE), runs of what is left that isn't a
+    /// letter or digit become one underscore, ends trimmed — "SoCLaaS"
+    /// gives SOCLAAS and "NUS SoC" gives NUS_SOC. Empty when nothing the
+    /// shell accepts is left, so "學" can't save a variable.
     public static func envPrefix(for name: String) -> String {
         var prefix = ""
         var pendingUnderscore = false
-        for character in name.uppercased() {
-            if character.isLetter || character.isNumber {
+        let folded = name.uppercased().folding(options: .diacriticInsensitive, locale: nil)
+        for character in folded {
+            if character.isASCII, character.isLetter || character.isNumber {
                 if pendingUnderscore, !prefix.isEmpty { prefix.append("_") }
                 prefix.append(character)
                 pendingUnderscore = false
@@ -52,17 +54,21 @@ public enum CustomProvider {
         return prefix
     }
 
-    /// `{base}/models`, or nil when `base` isn't an http(s) URL. A trailing
-    /// slash on the base is folded so "…/v1/" and "…/v1" agree.
+    /// `{base}/models`, or nil when `base` isn't an http(s) URL. The
+    /// append happens on the path so a base that carries a query or
+    /// fragment keeps it in place; a trailing slash folds so "…/v1/"
+    /// and "…/v1" agree.
     public static func modelsURL(_ base: String) -> URL? {
         let trimmed = base.trimmingCharacters(in: .whitespaces)
-        guard let url = URL(string: trimmed),
-              let scheme = url.scheme?.lowercased(),
+        guard var components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(),
               scheme == "https" || scheme == "http",
-              url.host != nil
+              components.host != nil
         else { return nil }
-        let stem = trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed
-        return URL(string: stem + "/models")
+        var path = components.percentEncodedPath
+        while path.hasSuffix("/") { path.removeLast() }
+        components.percentEncodedPath = path + "/models"
+        return components.url
     }
 
     /// The key check for a custom provider: `GET {base}/models` with the

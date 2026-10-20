@@ -843,15 +843,15 @@ public final class APIKeysModel {
     /// the network; the network checks share `slots` with single checks.
     public func checkAll() async {
         guard checking.isEmpty else { return }
-        var work: [(name: String, value: String, probe: APIKeyProbe)] = []
+        var work: [(name: String, value: String, anchor: String, probe: APIKeyProbe)] = []
         for row in rows where !row.value.isEmpty {
             if let probe = probe(for: row.name) {
-                work.append((row.name, row.value, probe))
+                work.append((row.name, row.value, checkAnchor(for: row), probe))
                 checking.insert(row.name)
             } else {
                 checks[row.name] = APIKeyCheck(
                     result: .noCheck(APIKeyProbe.noCheckReason(forName: row.name)),
-                    checkedAt: Date(), value: row.value, salt: checkSalt)
+                    checkedAt: Date(), value: checkAnchor(for: row), salt: checkSalt)
             }
         }
         let checker = self.checker
@@ -864,7 +864,7 @@ public final class APIKeysModel {
                     let result = await checker.check(key: target.value, probe: target.probe)
                     await slots.release()
                     return (target.name, APIKeyCheck(result: result, checkedAt: Date(),
-                                                     value: target.value, salt: salt))
+                                                     value: target.anchor, salt: salt))
                 }
             }
             for await (name, check) in group {
@@ -890,7 +890,7 @@ public final class APIKeysModel {
               !checking.contains(name) else { return }
         guard let probe = probe(for: name) else {
             checks[name] = APIKeyCheck(result: .noCheck(APIKeyProbe.noCheckReason(forName: name)),
-                                       checkedAt: Date(), value: row.value, salt: checkSalt)
+                                       checkedAt: Date(), value: checkAnchor(for: row), salt: checkSalt)
             saveChecks()
             return
         }
@@ -901,7 +901,7 @@ public final class APIKeysModel {
         await slots.release()
         // A rename during the check must not publish under the old name.
         guard rows.contains(where: { $0.name == name }) else { return }
-        checks[name] = APIKeyCheck(result: result, checkedAt: Date(), value: row.value,
+        checks[name] = APIKeyCheck(result: result, checkedAt: Date(), value: checkAnchor(for: row),
                                    salt: checkSalt)
         saveChecks()
     }
@@ -955,23 +955,37 @@ public final class APIKeysModel {
         return CustomProvider.models(in: body)
     }
 
-    /// The probe a check sends a key to: the catalog's when it knows the
-    /// name, else — for `X_API_KEY` with a sibling `X_BASE_URL` in the
-    /// file — a live `{base}/models` aimed at the custom endpoint.
+    /// The probe a check sends a key to. A `X_BASE_URL` sitting next to
+    /// a `X_API_KEY` wins over the catalog: the file points that provider
+    /// at a custom endpoint on purpose, and the catalog host would see a
+    /// key it was never meant for. An unparseable sibling is no check at
+    /// all, never a fall back to the catalog.
     private func probe(for name: String) -> APIKeyProbe? {
-        if let probe = APIKeyProbe.probe(forName: name) { return probe }
         let suffix = "_API_KEY"
-        guard name.hasSuffix(suffix), name.count > suffix.count else { return nil }
-        let baseName = name.dropLast(suffix.count) + "_BASE_URL"
-        guard let baseURL = rows.first(where: { $0.name == baseName })?.value else { return nil }
-        return CustomProvider.probe(baseURL: baseURL)
+        if name.hasSuffix(suffix), name.count > suffix.count,
+           let baseURL = rows.first(where: { $0.name == name.dropLast(suffix.count) + "_BASE_URL" })?.value {
+            return CustomProvider.probe(baseURL: baseURL)
+        }
+        return APIKeyProbe.probe(forName: name)
+    }
+
+    /// The value a check's fingerprint covers for a row: the key itself,
+    /// plus the sibling base URL when it has one. Repointing the custom
+    /// endpoint then retires the verdict the old endpoint earned.
+    private func checkAnchor(for row: Row) -> String {
+        let suffix = "_API_KEY"
+        guard row.name.hasSuffix(suffix), row.name.count > suffix.count,
+              let base = rows.first(where: { $0.name == row.name.dropLast(suffix.count) + "_BASE_URL" })?.value,
+              !base.isEmpty else { return row.value }
+        return row.value + "\u{1F}" + base
     }
 
     /// Store the verdict a pre-save test reached, so the row shows it
     /// right away instead of asking the provider a second time.
     private func recordTested(_ tested: APIKeyCheckResult?, name: String, value: String) {
         guard let tested else { return }
-        checks[name] = APIKeyCheck(result: tested, checkedAt: Date(), value: value, salt: checkSalt)
+        let anchor = rows.first(where: { $0.name == name }).map { checkAnchor(for: $0) } ?? value
+        checks[name] = APIKeyCheck(result: tested, checkedAt: Date(), value: anchor, salt: checkSalt)
         saveChecks()
     }
 
@@ -979,7 +993,7 @@ public final class APIKeysModel {
     /// changed since it ran: a result only describes the key it tested.
     public func check(for row: Row) -> APIKeyCheck? {
         guard let check = checks[row.name],
-              check.isCurrent(for: row.value, salt: checkSalt) else { return nil }
+              check.isCurrent(for: checkAnchor(for: row), salt: checkSalt) else { return nil }
         return check
     }
 
