@@ -1,10 +1,11 @@
 import Foundation
 
-/// What the popup's Compute tab draws: which of the RAM, CPU and GPU
-/// charts and in what order, top to bottom, and which harnesses get a
-/// line. Every chart and every harness shows until hidden on the Menu
-/// bar page. Unlike the Compute page's single chart, harnesses are not
-/// filtered by the flag threshold: the switches choose them instead.
+/// What the popup's Compute tab draws: which of the RAM, CPU, GPU and
+/// Temperature charts and in what order, top to bottom, and which
+/// harnesses get a line. Every chart and every harness shows until
+/// hidden on the Menu bar page. Unlike the Compute page's single chart,
+/// harnesses are not filtered by the flag threshold: the switches
+/// choose them instead.
 public struct ComputePopup: Equatable, Sendable {
     public var metrics = ToggleList()
     /// Keyed by harness id ("claude", "codex").

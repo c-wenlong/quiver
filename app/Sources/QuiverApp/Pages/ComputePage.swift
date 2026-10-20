@@ -107,18 +107,17 @@ struct ComputePage: View {
 
 // MARK: - Trends
 
-/// RAM, CPU and GPU over time behind tabs: one line per harness that has
-/// gone above the page's flag threshold. The Temperature tab draws the
-/// whole Mac instead. Points come from ComputeModel's trend sampler,
-/// which ticks whether the page is open or not.
+/// RAM, CPU, GPU and the whole Mac's temperatures over time behind tabs:
+/// one line per harness that has gone above the page's flag threshold,
+/// or one per sensor component on the Temperature tab. Points come from
+/// ComputeModel's trend sampler, which ticks whether the page is open or not.
 private struct TrendCard: View {
     @Environment(AppModel.self) private var app
-    /// A TrendMetric's raw value, or `temperatureTab`.
+    /// A TrendMetric's raw value.
     @State private var tab = UserDefaults.standard.string(forKey: Self.tabKey) ?? TrendMetric.ram.rawValue
     @State private var hovered: Date?
 
     private static let tabKey = "computeTrendTab"
-    static let temperatureTab = "temperature"
 
     private var model: ComputeModel { app.compute }
 
@@ -136,7 +135,7 @@ private struct TrendCard: View {
     }
 
     private var tabOptions: [(value: String, title: String)] {
-        TrendMetric.allCases.map { ($0.rawValue, $0.title) } + [(Self.temperatureTab, "Temperature")]
+        TrendMetric.allCases.map { ($0.rawValue, $0.title) }
     }
 
     var body: some View {
@@ -148,20 +147,18 @@ private struct TrendCard: View {
                     SelectMenu(options: TrendInterval.allCases.map { ($0, $0.title) },
                                selection: interval, width: 150)
                 }
-                if tab == Self.temperatureTab {
+                let metric = TrendMetric(rawValue: tab) ?? .ram
+                if metric == .temperature {
                     temperature
+                } else if model.history.isEmpty {
+                    placeholder("Collecting, the first points arrive within \(model.trendInterval.span).")
+                } else if metric == .gpu && !model.gpuAvailable {
+                    placeholder("GPU time isn't available on this Mac.")
+                } else if shown.isEmpty {
+                    placeholder("No harness has gone above "
+                                + ComputeSummary.bytes(model.limits.memoryBytes) + " yet.")
                 } else {
-                    let metric = TrendMetric(rawValue: tab) ?? .ram
-                    if model.history.isEmpty {
-                        placeholder("Collecting, the first points arrive within \(model.trendInterval.span).")
-                    } else if metric == .gpu && !model.gpuAvailable {
-                        placeholder("GPU time isn't available on this Mac.")
-                    } else if shown.isEmpty {
-                        placeholder("No harness has gone above "
-                                    + ComputeSummary.bytes(model.limits.memoryBytes) + " yet.")
-                    } else {
-                        TrendChart(metric: metric, harnesses: shown, hovered: $hovered)
-                    }
+                    TrendChart(metric: metric, harnesses: shown, hovered: $hovered)
                 }
             }
         }
