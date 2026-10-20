@@ -64,6 +64,12 @@ public final class UpdatesModel {
         checkout = preferences.checkout(build: build)
     }
 
+    /// Dev builds own the channel picker, the Source checkout row and
+    /// Rebuild; a prod build shows none of them whatever was saved. Gate
+    /// on the stamped build channel, not the effective channel, so a
+    /// stored dev override can't resurface dev controls on a release.
+    public var showsDevControls: Bool { build.channel == .dev }
+
     /// The saved Source checkout text, for the PathRow's draft seeding.
     public var checkoutOverride: String { preferences.checkoutOverride }
 
