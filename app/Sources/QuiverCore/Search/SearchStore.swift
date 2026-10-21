@@ -58,6 +58,21 @@ public struct SearchFileRow: Equatable, Sendable {
     public var state: SearchFileState
     public var failCount: Int
     public var failedMtimeMs: Double?
+
+    /// Whether the row still owes a read on the assumption that its
+    /// source's stat cannot have moved — the check a container scan runs
+    /// before paying to enumerate the source at all. `due` and the
+    /// partial sentinel are always behind; a `failed` row is behind until
+    /// it has failed enough at this stat to be held out, which under an
+    /// unchanged stat is exactly `failCount >= failuresBeforeHoldout`.
+    var owesRead: Bool {
+        if byteOffset == SearchStore.partialFileOffset { return true }
+        switch state {
+        case .current: return false
+        case .due: return true
+        case .failed: return failCount < SearchIndexer.failuresBeforeHoldout
+        }
+    }
 }
 
 /// Everything a `sessions` row carries. `agent` and `filePath` are required;
@@ -132,6 +147,20 @@ public struct SearchStatus: Equatable, Sendable {
     public init() {}
 }
 
+/// What one file's commit does to its session, inside `commitFile`'s single
+/// transaction.
+public enum IndexSessionCommit: Sendable, Equatable {
+    /// No session: only the cursor advances (a read-through that held none).
+    case none
+    /// The rows continue this session — an append.
+    case existing(Int64)
+    /// A brand-new session row with these fields.
+    case fresh(SearchSessionFields)
+    /// A new generation: mint a row, point the file at it, delete the old row
+    /// (its messages are orphaned for the drain to reclaim).
+    case replace(SearchSessionFields)
+}
+
 /// The persisted search index: per-file cursors, session rows, and message
 /// text in an FTS5 table. Adapted from Orca's `session-search-store.ts` and
 /// `session-search-index-writer.ts`.
@@ -185,6 +214,23 @@ public final class SearchStore: @unchecked Sendable {
     /// pattern as the ledger's `usageConnection`. The lock is what makes
     /// `status()` and `clear()` safe from threads the writer never sees.
     private let statusConnection = OSAllocatedUnfairLock<SQLiteDatabase?>(initialState: nil)
+    /// Prepared statements reused across calls — `Statement.bind` resets, so
+    /// a cached statement is always clean on entry. A scan prepares ~10
+    /// statements per indexed file otherwise, plus two SELECTs per file even
+    /// when nothing changed.
+    private var statements: [String: Statement] = [:]
+
+    private func cachedStatement(_ sql: String) throws -> Statement {
+        if let statement = statements[sql] { return statement }
+        let statement = try db.prepare(sql)
+        statements[sql] = statement
+        return statement
+    }
+
+    /// Finalize the cached statements before the handle closes — SQLite
+    /// tolerates either order, but a statement finalized on a closed handle
+    /// is an avoidable crash path.
+    deinit { statements.removeAll() }
 
     /// - Parameter directory: where `search.sqlite` lives; production uses
     ///   `SearchLocation.directory(under:)` (`~/.quiver/data/search/`).
@@ -200,23 +246,47 @@ public final class SearchStore: @unchecked Sendable {
 
     /// Every field the index holds for `path`, or nil when it holds nothing.
     public func fileRow(for path: String) throws -> SearchFileRow? {
-        let statement = try db.prepare("""
+        let statement = try cachedStatement("""
             SELECT path, dev, ino, byte_offset, mtime_ms, size_bytes, session_row_id,
                    state, fail_count, failed_mtime_ms
             FROM files WHERE path = ?
             """)
         statement.bind([.text(path)])
         guard try statement.step() else { return nil }
-        return Self.fileRow(statement)
+        let row = Self.fileRow(statement)
+        // An unstepped statement keeps a WAL read cursor open, which holds
+        // checkpointing hostage; `bind` resets it before reuse.
+        statement.bind([])
+        return row
     }
 
     /// Every row this index holds, path-ordered for a deterministic listing.
     public func files() throws -> [SearchFileRow] {
-        let statement = try db.prepare("""
+        let statement = try cachedStatement("""
             SELECT path, dev, ino, byte_offset, mtime_ms, size_bytes, session_row_id,
                    state, fail_count, failed_mtime_ms
             FROM files ORDER BY path
             """)
+        statement.bind([])
+        var rows: [SearchFileRow] = []
+        while try statement.step() {
+            rows.append(Self.fileRow(statement))
+        }
+        return rows
+    }
+
+    /// The rows under one path prefix — how synthetic container paths
+    /// (`<db>#<id>`) enumerate just their own entries without dumping the
+    /// whole table into memory.
+    public func files(withPrefix prefix: String) throws -> [SearchFileRow] {
+        // A [prefix, prefix+max-scalar) range — an index seek rather than a
+        // `substr` scan, and no code-point counting questions.
+        let statement = try cachedStatement("""
+            SELECT path, dev, ino, byte_offset, mtime_ms, size_bytes, session_row_id,
+                   state, fail_count, failed_mtime_ms
+            FROM files WHERE path >= ? AND path < ? || char(1114111) ORDER BY path
+            """)
+        statement.bind([.text(prefix), .text(prefix)])
         var rows: [SearchFileRow] = []
         while try statement.step() {
             rows.append(Self.fileRow(statement))
@@ -227,11 +297,14 @@ public final class SearchStore: @unchecked Sendable {
     /// Just the pair a write fences on, for the cheap read outside a
     /// transaction.
     public func fileFence(for path: String) throws -> SearchFileFence? {
-        let statement = try db.prepare("SELECT session_row_id, byte_offset FROM files WHERE path = ?")
+        let statement = try cachedStatement(
+            "SELECT session_row_id, byte_offset FROM files WHERE path = ?")
         statement.bind([.text(path)])
         guard try statement.step() else { return nil }
-        return SearchFileFence(sessionRowID: statement.isNull(0) ? nil : statement.int(0),
-                               byteOffset: statement.int(1))
+        let fence = SearchFileFence(sessionRowID: statement.isNull(0) ? nil : statement.int(0),
+                                  byteOffset: statement.int(1))
+        statement.bind([])
+        return fence
     }
 
     private static func fileRow(_ row: Statement) -> SearchFileRow {
@@ -254,9 +327,11 @@ public final class SearchStore: @unchecked Sendable {
     ///
     /// Partial observations must never create a dev/ino pair that no stat
     /// proved, so a missing pair keeps the stored one rather than erasing it.
+    /// A committed read also clears the row's `failed`/`due` state, so a
+    /// recovered file stops re-reading on every pass.
     public func upsertFile(path: String, stat: SearchFileStat,
                            byteOffset: Int64, sessionRowID: Int64?) throws {
-        try db.prepare("""
+        try cachedStatement("""
             INSERT INTO files(path, dev, ino, byte_offset, mtime_ms, size_bytes, session_row_id)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
@@ -265,7 +340,8 @@ public final class SearchStore: @unchecked Sendable {
               ino = CASE WHEN excluded.dev IS NOT NULL AND excluded.ino IS NOT NULL
                     THEN excluded.ino ELSE files.ino END,
               byte_offset = excluded.byte_offset, mtime_ms = excluded.mtime_ms,
-              size_bytes = excluded.size_bytes, session_row_id = excluded.session_row_id
+              size_bytes = excluded.size_bytes, session_row_id = excluded.session_row_id,
+              state = 'current', fail_count = 0, failed_mtime_ms = NULL
             """).bind([
             .text(path), stat.dev.map(SQLiteValue.int) ?? .null,
             stat.ino.map(SQLiteValue.int) ?? .null,
@@ -286,7 +362,7 @@ public final class SearchStore: @unchecked Sendable {
     /// and `due` only move an existing row.
     public func setFileState(_ path: String, _ state: SearchFileState, atMtimeMs: Double? = nil) throws {
         if state == .failed {
-            try db.prepare("""
+            try cachedStatement("""
                 INSERT INTO files(path, byte_offset, mtime_ms, state, fail_count, failed_mtime_ms)
                 VALUES (?, 0, ?, 'failed', 1, ?)
                 ON CONFLICT(path) DO UPDATE SET
@@ -296,7 +372,7 @@ public final class SearchStore: @unchecked Sendable {
                 """).bind([.text(path), .double(atMtimeMs ?? 0), .optionalDouble(atMtimeMs)]).run()
             return
         }
-        try db.prepare("""
+        try cachedStatement("""
             UPDATE files SET state = ?, fail_count = 0, failed_mtime_ms = NULL WHERE path = ?
             """).bind([.text(state.rawValue), .text(path)]).run()
     }
@@ -311,10 +387,10 @@ public final class SearchStore: @unchecked Sendable {
         try db.execute("BEGIN IMMEDIATE")
         do {
             if let sessionRowID = try fileFence(for: path)?.sessionRowID {
-                try db.prepare("DELETE FROM sessions WHERE id = ?")
-                    .bind([.int(sessionRowID)]).run()
+                try deleteSession(sessionRowID)
+                try setOrphansPending()
             }
-            try db.prepare("DELETE FROM files WHERE path = ?").bind([.text(path)]).run()
+            try cachedStatement("DELETE FROM files WHERE path = ?").bind([.text(path)]).run()
             try db.execute("COMMIT")
         } catch {
             try? db.execute("ROLLBACK")
@@ -329,7 +405,7 @@ public final class SearchStore: @unchecked Sendable {
     /// said what the session is, and `updateSession` fills it in later.
     @discardableResult
     public func createSession(_ fields: SearchSessionFields) throws -> Int64 {
-        try db.prepare("""
+        try cachedStatement("""
             INSERT INTO sessions(agent, session_id, file_path, title, cwd, cwd_key,
                                  created_at, updated_at, message_count)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -340,11 +416,18 @@ public final class SearchStore: @unchecked Sendable {
     /// Rewrites every field of a `sessions` row — the decoded session always
     /// wins over the provisional values a chunk wrote.
     public func updateSession(_ rowID: Int64, _ fields: SearchSessionFields) throws {
-        try db.prepare("""
+        try cachedStatement("""
             UPDATE sessions SET agent = ?, session_id = ?, file_path = ?, title = ?,
                 cwd = ?, cwd_key = ?, created_at = ?, updated_at = ?, message_count = ?
             WHERE id = ?
             """).bind(Self.sessionValues(fields) + [.int(rowID)]).run()
+    }
+
+    /// Deletes one `sessions` row. Callers that do this inside their own
+    /// transaction must also mark `orphans_pending`, or the drain never
+    /// looks for the messages this cut loose.
+    private func deleteSession(_ rowID: Int64) throws {
+        try cachedStatement("DELETE FROM sessions WHERE id = ?").bind([.int(rowID)]).run()
     }
 
     private static func sessionValues(_ fields: SearchSessionFields) -> [SQLiteValue?] {
@@ -360,19 +443,21 @@ public final class SearchStore: @unchecked Sendable {
 
     /// A `sessions` row and its id, or nil when it is gone.
     public func sessionRow(_ id: Int64) throws -> SearchSession? {
-        let statement = try db.prepare("""
+        let statement = try cachedStatement("""
             SELECT agent, session_id, file_path, title, cwd, cwd_key,
                    created_at, updated_at, message_count
             FROM sessions WHERE id = ?
             """)
         statement.bind([.int(id)])
         guard try statement.step() else { return nil }
-        return SearchSession(id: id, fields: SearchSessionFields(
+        let session = SearchSession(id: id, fields: SearchSessionFields(
             agent: statement.text(0) ?? "", sessionID: statement.text(1) ?? "",
             filePath: statement.text(2) ?? "", title: statement.text(3) ?? "",
             cwd: statement.text(4), cwdKey: statement.text(5),
             createdAt: statement.text(6), updatedAt: statement.text(7),
             messageCount: Int(statement.int(8))))
+        statement.bind([])
+        return session
     }
 
     /// Points `path` at a fresh `sessions` row and deletes the old row only,
@@ -397,10 +482,11 @@ public final class SearchStore: @unchecked Sendable {
                 return nil
             }
             let rowID = try createSession(fields)
-            try db.prepare("UPDATE files SET session_row_id = ? WHERE path = ?")
+            try cachedStatement("UPDATE files SET session_row_id = ? WHERE path = ?")
                 .bind([.int(rowID), .text(path)]).run()
             if let old = actual.sessionRowID {
-                try db.prepare("DELETE FROM sessions WHERE id = ?").bind([.int(old)]).run()
+                try deleteSession(old)
+                try setOrphansPending()
             }
             try db.execute("COMMIT")
             return rowID
@@ -414,17 +500,19 @@ public final class SearchStore: @unchecked Sendable {
 
     /// Commits one read's rows for `path` in a single `BEGIN IMMEDIATE`
     /// transaction: re-reads the `files` row and verifies it still equals
-    /// `expected` (nil = no row expected), writes the message and FTS rows
-    /// under `sessionRowID`, and advances the cursor — all or nothing.
+    /// `expected` (nil = no row expected), resolves the session (reusing,
+    /// creating or replacing the row), writes the message and FTS rows, and
+    /// advances the cursor — all or nothing.
     ///
     /// - Returns: false when the record moved under the read — it was removed,
     ///   or another writer moved the cursor these rows continue from — and
     ///   nothing was written. A read that never calls this leaves the index
     ///   exactly as it found it.
     /// - Parameters:
-    ///   - sessionRowID: the session the messages hang off and the files row
-    ///     points at; nil writes only the cursor (a file read through that
-    ///     held no session). Required when `messages` is non-empty.
+    ///   - session: what happens to the file's session — kept, created,
+    ///     generation-swapped, or none (a file read through that held none,
+    ///     which commits only its cursor). Required when `messages` is
+    ///     non-empty.
     ///   - updating: when set, rewrites the session row's fields in the same
     ///     transaction, so a finishing commit publishes the decoded session
     ///     together with its last rows.
@@ -434,13 +522,13 @@ public final class SearchStore: @unchecked Sendable {
         expected: SearchFileFence?,
         stat: SearchFileStat,
         byteOffset: Int64,
-        sessionRowID: Int64?,
+        session: IndexSessionCommit,
         messages: [SearchMessageRow],
         updating fields: SearchSessionFields? = nil
     ) throws -> Bool {
-        if sessionRowID == nil && (!messages.isEmpty || fields != nil) {
+        if case .none = session, !messages.isEmpty || fields != nil {
             throw SQLiteDatabase.Failure(
-                code: SQLITE_MISUSE, message: "commitFile: messages and fields need a sessionRowID")
+                code: SQLITE_MISUSE, message: "commitFile: messages and fields need a session")
         }
         try db.execute("BEGIN IMMEDIATE")
         do {
@@ -449,6 +537,23 @@ public final class SearchStore: @unchecked Sendable {
                   actual?.byteOffset == expected?.byteOffset else {
                 try db.execute("ROLLBACK")
                 return false
+            }
+            let sessionRowID: Int64?
+            switch session {
+            case .none:
+                sessionRowID = nil
+            case .existing(let rowID):
+                sessionRowID = rowID
+            case .fresh(let fields):
+                sessionRowID = try createSession(fields)
+            case .replace(let fields):
+                sessionRowID = try createSession(fields)
+                // Mint first, then cut the old row loose: the generation swap
+                // is one commit, so retrieval never sees the file unparented.
+                if let old = actual?.sessionRowID {
+                    try deleteSession(old)
+                    try setOrphansPending()
+                }
             }
             if let sessionRowID {
                 try insertMessages(under: sessionRowID, messages)
@@ -470,9 +575,9 @@ public final class SearchStore: @unchecked Sendable {
     /// other.
     private func insertMessages(under sessionRowID: Int64, _ messages: [SearchMessageRow]) throws {
         guard !messages.isEmpty else { return }
-        let insertMessage = try db.prepare(
+        let insertMessage = try cachedStatement(
             "INSERT INTO messages(session_row_id, role, ts) VALUES (?, ?, ?)")
-        let insertFTS = fts5Available ? try db.prepare("""
+        let insertFTS = fts5Available ? try cachedStatement("""
             INSERT INTO messages_fts(rowid, user_text, assistant_text, tool_text, identifiers)
             VALUES (?, ?, ?, ?, ?)
             """) : nil
@@ -489,6 +594,28 @@ public final class SearchStore: @unchecked Sendable {
 
     // MARK: - Orphan drain
 
+    /// One `meta` row, or nil.
+    private func metaValue(_ key: String) throws -> String? {
+        let statement = try cachedStatement("SELECT value FROM meta WHERE key = ?")
+        statement.bind([.text(key)])
+        guard try statement.step() else { return nil }
+        let value = statement.text(0)
+        statement.bind([])
+        return value
+    }
+
+    private func setMeta(_ key: String, _ value: String) throws {
+        try cachedStatement("INSERT OR REPLACE INTO meta(key, value) VALUES(?, ?)")
+            .bind([.text(key), .text(value)]).run()
+    }
+
+    /// Every delete of a `sessions` row marks this, in the same transaction:
+    /// it's what lets `drainOrphanedMessages` skip its O(messages) probe on
+    /// scans where nothing was orphaned — the common case.
+    private func setOrphansPending() throws {
+        try setMeta("orphans_pending", "1")
+    }
+
     /// Reclaims up to `limit` rows of one orphaned session's messages — a set
     /// a replace, a removed source or an interrupted earlier drain leaves
     /// behind — in one transaction, then hands pages back in a bounded step.
@@ -496,37 +623,43 @@ public final class SearchStore: @unchecked Sendable {
     /// asking in step with the deletes is many short stalls instead of one
     /// long one at the end.
     ///
-    /// Nothing records the work: rows whose session row is gone are the whole
-    /// record, so a crash before or during a drain is found by the next one.
+    /// The `orphans_pending` flag records the work: every session delete
+    /// raises it in the same transaction and a clean probe lowers it, so a
+    /// crash mid-drain is found by the next one. An index written before the
+    /// flag existed has it unset — nil probes once so old orphans surface.
     ///
     /// - Returns: rows deleted this call; call repeatedly until it returns 0.
     @discardableResult
     public func drainOrphanedMessages(limit: Int = 256) throws -> Int {
+        if try metaValue("orphans_pending") == "0" { return 0 }
         // Scoped: an unfinalized statement that read a row keeps a cursor on
         // messages open, which locks the deletes below with SQLITE_LOCKED.
         let orphan: Int64? = try {
-            let probe = try db.prepare("""
+            let probe = try cachedStatement("""
                 SELECT session_row_id FROM messages
                 WHERE session_row_id NOT IN (SELECT id FROM sessions) LIMIT 1
                 """)
+            probe.bind([])
             return try probe.step() ? probe.int(0) : nil
         }()
         guard let orphan else {
+            try setMeta("orphans_pending", "0")
             try db.execute("PRAGMA incremental_vacuum(2000)")
             return 0
         }
         try db.execute("BEGIN IMMEDIATE")
         do {
             let ids: [Int64] = try {
-                let pick = try db.prepare("SELECT id FROM messages WHERE session_row_id = ? LIMIT ?")
+                let pick = try cachedStatement(
+                    "SELECT id FROM messages WHERE session_row_id = ? LIMIT ?")
                 pick.bind([.int(orphan), .int(limit)])
                 var ids: [Int64] = []
                 while try pick.step() { ids.append(pick.int(0)) }
                 return ids
             }()
             let deleteFTS = fts5Available
-                ? try db.prepare("DELETE FROM messages_fts WHERE rowid = ?") : nil
-            let deleteMessage = try db.prepare("DELETE FROM messages WHERE id = ?")
+                ? try cachedStatement("DELETE FROM messages_fts WHERE rowid = ?") : nil
+            let deleteMessage = try cachedStatement("DELETE FROM messages WHERE id = ?")
             for id in ids {
                 if let deleteFTS {
                     try deleteFTS.bind([.int(id)]).run()
@@ -585,6 +718,8 @@ public final class SearchStore: @unchecked Sendable {
         // A poll holding the read connection would survive the unlink and
         // keep reading the old file; drop it first.
         statusConnection.withLock { $0 = nil }
+        // Finalized before the handle closes, same ordering as `deinit`.
+        statements.removeAll()
         db = nil
         SearchLocation.removeDatabase(at: url)
     }

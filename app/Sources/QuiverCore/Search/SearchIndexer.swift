@@ -37,6 +37,14 @@ public final class SearchIndexer: @unchecked Sendable {
     static let failuresBeforeHoldout = 3
     /// `finishScan` drains at most this many batches of orphaned messages.
     static let drainBatchLimit = 64
+    /// Text bytes buffered before a whole read commits mid-file — Orca's
+    /// char budget: one huge transcript holds ~its size in `SearchMessage`
+    /// otherwise. Appends never flush: a committed tail chunk whose cursor
+    /// never moved would re-read and duplicate on the next pass, and tails
+    /// are small anyway. Whole reads are safe: a flush failure leaves the
+    /// file `failed`, and the re-read's new generation replaces the
+    /// partial one.
+    static let bufferBudgetChars = 32 * 1024 * 1024
 
     let store: SearchStore
 
@@ -61,6 +69,17 @@ public final class SearchIndexer: @unchecked Sendable {
         var lastTs: String?
         /// Decoded messages so far, pre-chunk — the session's messageCount.
         var decoded = 0
+        /// The session the mid-read flushes committed under — `finishFile`
+        /// continues it rather than minting another.
+        var flushedSessionRowID: Int64?
+        /// The fence the next commit expects: after a flush, the row points
+        /// at the flushed session at the same offset.
+        var expected: SearchFileFence?
+        /// Approximate text bytes in `messages` — the flush trigger.
+        var bufferedChars = 0
+        /// The first flush failure, thrown from `finishFile` so the scan
+        /// marks the file failed; also stops buffering, so the bound holds.
+        var flushError: Error?
     }
 
     public init(store: SearchStore) {
@@ -120,11 +139,31 @@ public final class SearchIndexer: @unchecked Sendable {
             fileRow: try? store.fileRow(for: path), decoder: SearchDecoder(harness))
     }
 
+    /// Whether the line *could* carry anything this file's decoder wants —
+    /// the cheap marker gate that lets the caller run one `JSONSerialization`
+    /// for the union of both consumers instead of parsing per consumer.
+    public func wants(line: Data) -> Bool {
+        pending?.decoder.wants(line: line) ?? false
+    }
+
+    /// One already-parsed transcript line — the shared-parse path; the
+    /// caller ran `JSONSerialization` once for the ledger and the index.
+    public func consume(object: [String: Any]) {
+        guard pending != nil else { return }
+        record(pending!.decoder.decode(object: object))
+    }
+
     /// One transcript line — for devin, a whole `transcripts/*.json`
     /// document, since those files are pretty-printed.
     public func consume(line: Data) {
         guard pending != nil else { return }
-        let output = pending!.decoder.decode(line: line)
+        record(pending!.decoder.decode(line: line))
+    }
+
+    private func record(_ output: (messages: [SearchMessage], hints: SearchHints)) {
+        // A flushed-failure file buffers nothing more — the bound holds and
+        // `finishFile` still gets to throw the original error.
+        guard pending!.flushError == nil else { return }
         // Hints arrive repeatedly across a file: keep the latest non-nil.
         // That lands the explicit title wherever its record sits.
         if let value = output.hints.sessionId { pending!.hints.sessionId = value }
@@ -138,8 +177,56 @@ public final class SearchIndexer: @unchecked Sendable {
                 pending!.lastTs = ts
             }
             pending!.messages.append(message)
+            pending!.bufferedChars += message.text.utf8.count
         }
         pending!.decoded += output.messages.count
+        if !pending!.appending, pending!.bufferedChars >= Self.bufferBudgetChars {
+            flushPending()
+        }
+    }
+
+    /// Commits the buffered whole-read rows under the in-flight session —
+    /// offset parked at the partial sentinel, so a scan that dies mid-read
+    /// re-reads the file whole rather than trusting the fresh stat.
+    private func flushPending() {
+        do { try flushNow() } catch { pending!.flushError = error }
+        pending!.messages.removeAll(keepingCapacity: true)
+        pending!.bufferedChars = 0
+    }
+
+    private func flushNow() throws {
+        let file = pending!
+        guard !file.messages.isEmpty, let info = FileInfo(path: file.path) else { return }
+        let fields = SearchSessionFields(
+            agent: file.harness.rawValue,
+            sessionID: file.hints.sessionId ?? Self.stem(of: file.path),
+            filePath: file.path, title: file.hints.title ?? "",
+            cwd: file.hints.cwd, cwdKey: file.hints.cwd,
+            createdAt: file.firstTs, updatedAt: file.lastTs,
+            messageCount: file.decoded)
+        let stat = SearchFileStat(
+            ino: Int64(info.inode), mtimeMs: info.modified * 1000, sizeBytes: Int64(info.size))
+        let expected = file.expected
+            ?? file.fileRow.map { SearchFileFence(sessionRowID: $0.sessionRowID, byteOffset: $0.byteOffset) }
+        let session: IndexSessionCommit
+        if let rowID = file.flushedSessionRowID {
+            session = .existing(rowID)
+        } else if file.fileRow?.sessionRowID != nil {
+            session = .replace(fields)
+        } else {
+            session = .fresh(fields)
+        }
+        // The row's offset parks at the partial sentinel; the final commit
+        // moves it to the real offset. A fence miss means the record moved
+        // under the read — nothing was written and the next pass decides.
+        guard try store.commitFile(
+            path: file.path, expected: expected, stat: stat,
+            byteOffset: SearchStore.partialFileOffset,
+            session: session, messages: Self.messageRows(from: file.messages))
+        else { return }
+        let fence = try? store.fileFence(for: file.path)
+        pending!.flushedSessionRowID = fence?.sessionRowID
+        pending!.expected = fence
     }
 
     /// Commits the read in the store's per-file transaction, fenced on the
@@ -158,9 +245,10 @@ public final class SearchIndexer: @unchecked Sendable {
             // transcript with nothing to decode is not retried forever.
             return try store.commitFile(
                 path: path, expected: try? store.fileFence(for: path), stat: stat,
-                byteOffset: byteOffset, sessionRowID: nil, messages: [])
+                byteOffset: byteOffset, session: .none, messages: [])
         }
         defer { pending = nil }
+        if let flushError = file.flushError { throw flushError }
 
         let rows = Self.messageRows(from: file.messages)
         var fields = SearchSessionFields(
@@ -170,9 +258,9 @@ public final class SearchIndexer: @unchecked Sendable {
             cwd: file.hints.cwd, cwdKey: file.hints.cwd,
             createdAt: file.firstTs, updatedAt: file.lastTs,
             messageCount: file.decoded)
-        // A session worth writing is an explicit session id or any message; a
-        // file that decodes to neither gets only its cursor committed.
-        let hasSession = file.hints.sessionId != nil || !file.messages.isEmpty
+        // A session worth writing is an explicit session id or any message
+        // (`decoded` counts flushed chunks too).
+        let hasSession = file.hints.sessionId != nil || file.decoded > 0
         let old = file.fileRow
         let fence = old.map { SearchFileFence(sessionRowID: $0.sessionRowID, byteOffset: $0.byteOffset) }
 
@@ -190,23 +278,22 @@ public final class SearchIndexer: @unchecked Sendable {
                     fields.updatedAt = fields.updatedAt ?? existing.updatedAt
                     fields.messageCount += existing.messageCount
                 }
-                return try commit(path: path, expected: fence, stat: stat, byteOffset: byteOffset,
-                                  sessionRowID: sessionRowID, messages: rows, updating: fields,
-                                  prior: old)
+                return try store.commitFile(path: path, expected: fence, stat: stat,
+                    byteOffset: byteOffset, session: .existing(sessionRowID),
+                    messages: rows, updating: fields)
             }
             guard hasSession else {
-                return try commit(path: path, expected: fence, stat: stat, byteOffset: byteOffset,
-                                  sessionRowID: nil, messages: [], prior: old)
+                return try store.commitFile(path: path, expected: fence, stat: stat,
+                    byteOffset: byteOffset, session: .none, messages: [])
             }
-            let sessionRowID = try store.createSession(fields)
-            return try commit(path: path, expected: fence, stat: stat, byteOffset: byteOffset,
-                              sessionRowID: sessionRowID, messages: rows, updating: fields,
-                              prior: old)
+            return try store.commitFile(path: path, expected: fence, stat: stat,
+                byteOffset: byteOffset, session: .fresh(fields), messages: rows)
         }
 
         return try commitWholeRead(
             path: path, stat: stat, byteOffset: byteOffset,
-            fields: fields, rows: rows, hasSession: hasSession, old: old)
+            fields: fields, rows: rows, hasSession: hasSession, old: old,
+            flushedID: file.flushedSessionRowID, expected: file.expected)
     }
 
     /// Commits one session read whole out of a container — the synthetic
@@ -261,49 +348,34 @@ public final class SearchIndexer: @unchecked Sendable {
     }
 
     /// The whole-read commit `finishFile` and `finishSession` share: a row
-    /// that already holds a session gets a new generation (`replaceSession`
-    /// swaps it in one transaction), a first session is created, and a read
+    /// that already holds a session gets a new generation (`.replace` swaps
+    /// it in the same transaction), a first session is created, and a read
     /// that found none commits only its cursor.
     private func commitWholeRead(
         path: String, stat: SearchFileStat, byteOffset: Int64,
         fields: SearchSessionFields, rows: [SearchMessageRow],
-        hasSession: Bool, old: SearchFileRow?
+        hasSession: Bool, old: SearchFileRow?,
+        flushedID: Int64? = nil, expected: SearchFileFence? = nil
     ) throws -> Bool {
-        let fence = old.map { SearchFileFence(sessionRowID: $0.sessionRowID, byteOffset: $0.byteOffset) }
+        let fence = expected
+            ?? old.map { SearchFileFence(sessionRowID: $0.sessionRowID, byteOffset: $0.byteOffset) }
+        // A flushed read already holds its session — the final commit adds
+        // the last rows, publishes the finished fields, and moves the cursor.
+        if let flushedID {
+            return try store.commitFile(path: path, expected: fence, stat: stat,
+                byteOffset: byteOffset, session: .existing(flushedID),
+                messages: rows, updating: fields)
+        }
         if let old, old.sessionRowID != nil {
-            guard let sessionRowID = try store.replaceSession(for: path, expected: fence, fields: fields)
-            else { return false }
-            return try commit(
-                path: path,
-                expected: SearchFileFence(sessionRowID: sessionRowID, byteOffset: old.byteOffset),
-                stat: stat, byteOffset: byteOffset,
-                sessionRowID: sessionRowID, messages: rows, updating: fields,
-                prior: old)
+            return try store.commitFile(path: path, expected: fence, stat: stat,
+                byteOffset: byteOffset, session: .replace(fields), messages: rows)
         }
         guard hasSession else {
-            return try commit(path: path, expected: fence, stat: stat, byteOffset: byteOffset,
-                              sessionRowID: nil, messages: [], prior: old)
+            return try store.commitFile(path: path, expected: fence, stat: stat,
+                byteOffset: byteOffset, session: .none, messages: [])
         }
-        let sessionRowID = try store.createSession(fields)
-        return try commit(path: path, expected: fence, stat: stat, byteOffset: byteOffset,
-                          sessionRowID: sessionRowID, messages: rows, updating: fields,
-                          prior: old)
-    }
-
-    /// `commitFile` plus what it does not do: move the row's state on. A
-    /// successful commit clears `failed`/`due`, so a recovered file stops
-    /// re-reading on every pass.
-    private func commit(path: String, expected: SearchFileFence?, stat: SearchFileStat,
-                        byteOffset: Int64, sessionRowID: Int64?, messages: [SearchMessageRow],
-                        updating fields: SearchSessionFields? = nil, prior: SearchFileRow?) throws -> Bool {
-        guard try store.commitFile(
-            path: path, expected: expected, stat: stat, byteOffset: byteOffset,
-            sessionRowID: sessionRowID, messages: messages, updating: fields)
-        else { return false }
-        if let prior, prior.state != .current {
-            try? store.setFileState(path, .current)
-        }
-        return true
+        return try store.commitFile(path: path, expected: fence, stat: stat,
+            byteOffset: byteOffset, session: .fresh(fields), messages: rows)
     }
 
     /// The session id a file reports when no line carried one.
