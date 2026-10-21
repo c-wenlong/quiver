@@ -643,6 +643,11 @@ to use their own login state and environment."""
   {c('cyan', 'swe remote status [--host=H]')}           Probe the hub, list machines
                                             and paired devices.
   {c('cyan', 'swe remote devices [--revoke=<id>]')}     List or revoke paired devices.
+  {c('cyan', 'swe remote attach <session>')}            Take an observed session
+                                            under supervision: relaunched in
+                                            tmux with its harness resume flags.
+                                            {c('cyan', '--mode=headless')} sends
+                                            each prompt via claude -p instead.
 
   The phone only ever talks to the hub, over Tailscale. Sessions list as
   {c('bold', 'observed')} (a human terminal owns them: read-only) until they run

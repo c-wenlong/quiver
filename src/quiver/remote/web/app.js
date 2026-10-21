@@ -176,18 +176,25 @@ async function openChat(key) {
   el("chat-meta").textContent = row
     ? `${row.agent || row.harness} · ${row.cwd || ""}`
     : key;
-  const observed = !row || row.ownership !== "attached";
-  el("composer").classList.toggle("hidden", observed);
-  el("chat-banner").classList.toggle("hidden", !observed);
-  if (observed) {
-    el("chat-banner").textContent =
-      "Observed session: read-only. Run swe remote attach locally to steer it.";
-  }
+  updateOwnership(row);
   // Always backfill — the DOM was just cleared, and the stream must
   // start after the seq backfill actually reached, not a stale save.
   await backfill(key, gen);
   if (gen !== state.openGen || state.currentKey !== key) return;
   openStream(key, store.lastSeq[key] || 0);
+}
+
+function updateOwnership(row) {
+  const observed = !row || row.ownership !== "attached";
+  el("composer").classList.toggle("hidden", observed);
+  el("chat-banner").classList.toggle("hidden", !observed);
+  const canAttach = observed && row && row.attachable;
+  el("attach-btn").classList.toggle("hidden", !canAttach);
+  el("chat-banner-text").textContent = !observed
+    ? ""
+    : canAttach
+      ? "Observed session: read-only until attached."
+      : "Observed session: read-only (this harness cannot be attached).";
 }
 
 async function backfill(key, gen) {
@@ -209,6 +216,14 @@ function appendEvent(ev, live = true) {
   } else if (ev.type === "session.status") {
     const row = state.sessions.find((r) => r.key === ev.session);
     if (row) row.status = (ev.data || {}).status || "";
+  } else if (ev.type === "session.ownership") {
+    const row = state.sessions.find((r) => r.key === ev.session);
+    if (row) {
+      row.ownership = (ev.data || {}).ownership || row.ownership;
+      updateOwnership(row);
+    }
+  } else if (ev.type === "approval.requested") {
+    appendMessage({ kind: "approval", text: (ev.data || {}).prompt || "approval requested" }, ev.seq);
   }
   if (live) scrollBottom();
 }
@@ -357,7 +372,7 @@ async function loadInbox() {
   });
 }
 
-/* ── composer (write path lands in R2; UI is ready) ─────── */
+/* ── composer + controls ─────────────────────────────────── */
 
 el("composer").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -365,12 +380,36 @@ el("composer").addEventListener("submit", async (e) => {
   const text = input.value.trim();
   if (!text || !state.currentKey) return;
   input.value = "";
+  const mode = el("composer-mode").value;
   const { status, data } = await api(
     `/v1/sessions/${encodeURIComponent(state.currentKey)}/message`,
-    { method: "POST", body: JSON.stringify({ text, mode: "queue" }) }
+    { method: "POST", body: JSON.stringify({ text, mode }) }
   );
   if (status !== 200 && data && data.error) {
     appendMessage({ kind: "error", text: data.error.message || "send failed" }, 0);
+    scrollBottom();
+  }
+});
+
+el("interrupt-btn").addEventListener("click", async () => {
+  if (!state.currentKey) return;
+  await api(
+    `/v1/sessions/${encodeURIComponent(state.currentKey)}/control`,
+    { method: "POST", body: JSON.stringify({ op: "interrupt" }) }
+  );
+});
+
+el("attach-btn").addEventListener("click", async () => {
+  if (!state.currentKey) return;
+  const { status, data } = await api(
+    `/v1/sessions/${encodeURIComponent(state.currentKey)}/control`,
+    { method: "POST", body: JSON.stringify({ op: "attach" }) }
+  );
+  if (status !== 200) {
+    appendMessage({
+      kind: "error",
+      text: (data && data.error && data.error.message) || "attach failed",
+    }, 0);
     scrollBottom();
   }
 });

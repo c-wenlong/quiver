@@ -121,6 +121,12 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .92em;
 }
 #composer input { flex: 1; }
 #composer button { width: auto; margin: 0; }
+#composer select {
+  width: auto; margin: 0; padding: 0.45rem 0.3rem;
+  background: var(--bg2); color: var(--dim);
+}
+.banner { display: flex; align-items: center; gap: 0.6rem; }
+.banner button { width: auto; margin: 0; margin-left: auto; padding: 0.35rem 0.9rem; }
 
 /* tabs */
 #tabs {

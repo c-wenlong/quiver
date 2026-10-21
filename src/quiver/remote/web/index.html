@@ -40,11 +40,18 @@
 
   <section id="chat-view" class="view hidden">
     <div id="chat-meta" class="dim"></div>
-    <div id="chat-banner" class="banner hidden"></div>
+    <div id="chat-banner" class="banner hidden"><span id="chat-banner-text"></span>
+      <button id="attach-btn" class="primary hidden">Attach</button>
+    </div>
     <div id="chat-log"></div>
     <form id="composer" class="hidden">
+      <select id="composer-mode" title="queue waits for idle; steer writes now">
+        <option value="queue">queue</option>
+        <option value="steer">steer</option>
+      </select>
       <input id="composer-text" type="text" autocomplete="off"
              placeholder="Message the session">
+      <button id="interrupt-btn" class="ghost" type="button" title="Interrupt">■</button>
       <button class="primary" type="submit">Send</button>
     </form>
   </section>
