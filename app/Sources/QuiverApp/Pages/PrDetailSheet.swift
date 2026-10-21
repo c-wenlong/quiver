@@ -88,6 +88,8 @@ struct PrDetailSheet: View {
         if let mergeError {
             Text(mergeError).font(Theme.caption).foregroundStyle(Theme.dangerText)
                 .lineLimit(3)
+                .textSelection(.enabled)
+                .help(mergeError)
         }
 
         HStack(spacing: 10) {

@@ -94,9 +94,10 @@ struct RepositoriesPage: View {
                     // search rides the right end of the same row.
                     Tabs(options: RepoTab.allCases.map { ($0, $0.title) },
                          selection: $model.tab, style: .underline)
+                        .layoutPriority(1)
                     SearchField(prompt: "Filter by repo, title, branch…",
                                 text: $model.filter)
-                        .frame(minWidth: 140, maxWidth: 280)
+                        .frame(minWidth: 100, maxWidth: 280)
                         .padding(.bottom, 4)
                 }
                 if let error = model.pinError ?? model.actionError {

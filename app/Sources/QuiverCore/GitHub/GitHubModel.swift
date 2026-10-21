@@ -526,26 +526,45 @@ public final class GitHubModel {
         }
     }
 
+    /// The newest order stashed while a reorder is still saving — the
+    /// running call picks it up when the first one settles, so a drop
+    /// mid-save lands instead of being discarded.
+    private var queuedReorder: [String]?
+
     /// Persist a drag-reordered pin list. Applies the new order
     /// optimistically, then lets the CLI rewrite `github.json`; on
     /// failure the reply's authoritative list (or a reload) restores
     /// whatever the store actually holds.
     public func reorderPins(_ order: [String], swe: SweClient) async {
+        if mutating.contains("<reorder>") {
+            queuedReorder = order
+            let lookup = Dictionary(uniqueKeysWithValues: pins.map { ($0.name, $0) })
+            pins = order.compactMap { lookup[$0] }
+            return
+        }
         guard mutating.isEmpty else { return }
-        let current = pins
-        let lookup = Dictionary(uniqueKeysWithValues: current.map { ($0.name, $0) })
-        pins = order.compactMap { lookup[$0] }
         mutating.insert("<reorder>")
         defer { mutating.remove("<reorder>") }
-        do {
-            let reply = try await swe.ghReorderRepos(order)
-            pins = reply.pinned.map { lookup[$0] ?? PinnedRepo(name: $0, addedAt: now()) }
-            pinError = nil
-        } catch {
-            pins = current
-            pinError = error.localizedDescription
+        var next = order
+        while true {
+            // The pre-apply order is this attempt's restore point — a
+            // failed save puts back what the list showed before it.
+            let current = pins
+            let lookup = Dictionary(uniqueKeysWithValues: current.map { ($0.name, $0) })
+            pins = next.compactMap { lookup[$0] }
+            do {
+                let reply = try await swe.ghReorderRepos(next)
+                pins = reply.pinned.map { lookup[$0] ?? PinnedRepo(name: $0, addedAt: now()) }
+                pinError = nil
+            } catch {
+                pins = current
+                pinError = error.localizedDescription
+            }
+            scheduleSave()
+            guard let queued = queuedReorder else { return }
+            queuedReorder = nil
+            next = queued
         }
-        scheduleSave()
     }
 
     // MARK: - PR detail + write actions
