@@ -891,6 +891,37 @@ import Testing
         #expect(all == ["feat/login", "main"])
     }
 
+    /// `hasRows` mirrors `filtered`'s emptiness for callers that only
+    /// need presence: name-matched repos check row count, fallback
+    /// repos check for any match, and unloaded surfaces read as
+    /// non-empty so their state card still shows.
+    @Test func hasRowsMirrorsFilteredEmptiness() async {
+        let swe = SweClient(runner: router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
+        ]))
+        let model = GitHubModel()
+        await model.load(swe: swe)
+
+        let rows: Loadable<[String]> = .loaded(["feat/login", "main"])
+        let empty: Loadable<[String]> = .loaded([])
+        // No query: presence is just "are there rows".
+        #expect(model.hasRows(rows, repo: "o/a") { [$0] })
+        #expect(!model.hasRows(empty, repo: "o/a") { [$0] })
+        // Idle/failed surfaces are not "empty": their cards must show.
+        #expect(model.hasRows(Loadable<[String]>.idle, repo: "o/a") { [$0] })
+        #expect(model.hasRows(.failed("nope"), repo: "o/a") { [$0] })
+
+        // A fallback row search: any matching field keeps the card.
+        model.filter = "login"
+        #expect(model.hasRows(rows, repo: "o/a") { [$0] })
+        model.filter = "zzz"
+        #expect(!model.hasRows(rows, repo: "o/a") { [$0] })
+        // A name-matched repo ignores the filter on its rows.
+        model.filter = "o/a"
+        #expect(model.hasRows(rows, repo: "o/a") { [$0] })
+        #expect(!model.hasRows(empty, repo: "o/a") { [$0] })
+    }
+
     /// Filtering is pure: reading `visibleRepos`/`filtered` issues no
     /// `swe` calls, so typing in the box never searches GitHub.
     @Test func filteringIssuesNoRemoteCalls() async {
