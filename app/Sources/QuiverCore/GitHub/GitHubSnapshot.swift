@@ -12,7 +12,7 @@ import Foundation
 /// across a restart — including a gh account switch while the app was
 /// closed.
 public struct GitHubSnapshot: SnapshotContent {
-    public static let currentVersion = 1
+    public static let currentVersion = 2
     public var version = Self.currentVersion
     public var savedAt: Date
     /// The pins and the selection, so the Repositories page opens on its
@@ -22,16 +22,21 @@ public struct GitHubSnapshot: SnapshotContent {
     /// repo name -> the board as it last stood.
     public var boards: [String: RepoBoard]
     /// The last successfully loaded inbox; a failed refresh never
-    /// overwrites it.
+    /// overwrites it. `inboxLoaded` records whether a load ever
+    /// succeeded: without it an empty inbox restores as "no unread"
+    /// when the app simply never asked.
     public var inbox: [GhNotification]
+    public var inboxLoaded: Bool
 
     public init(savedAt: Date, pins: [PinnedRepo], selected: String?,
-                boards: [String: RepoBoard], inbox: [GhNotification]) {
+                boards: [String: RepoBoard], inbox: [GhNotification],
+                inboxLoaded: Bool) {
         self.savedAt = savedAt
         self.pins = pins
         self.selected = selected
         self.boards = boards
         self.inbox = inbox
+        self.inboxLoaded = inboxLoaded
     }
 }
 

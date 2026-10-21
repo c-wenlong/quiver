@@ -410,7 +410,8 @@ import Testing
         let snap = GitHubSnapshot(
             savedAt: Date(timeIntervalSince1970: 10_000),
             pins: [PinnedRepo(name: "o/a", addedAt: Date(timeIntervalSince1970: 100))],
-            selected: "o/a", boards: ["o/a": board], inbox: [])
+            selected: "o/a", boards: ["o/a": board], inbox: [],
+            inboxLoaded: false)
         try? JSONEncoder().encode(snap).write(to: file)
 
         // Seconds after the snapshot: a cold-start file must not skip
@@ -462,6 +463,25 @@ import Testing
             return
         }
         #expect(notes.first?.id == "n1")
+    }
+
+    /// An overview load that never touched the inbox must not restore
+    /// it as `.loaded([])` — the page would flash "No unread
+    /// notifications" while its first request was still running.
+    @Test func neverFetchedInboxRestoresIdle() async {
+        let file = tempSnapshot()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let swe = SweClient(runner: router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
+        ]))
+        let first = GitHubModel(snapshotFile: file)
+        await first.load(swe: swe)
+        first.saveNow()
+
+        let second = GitHubModel(snapshotFile: file)
+        if case .idle = second.inbox {} else {
+            Issue.record("inbox that never loaded should restore as .idle")
+        }
     }
 
     @Test func corruptSnapshotIsAColdStart() {

@@ -129,8 +129,12 @@ public final class GitHubModel {
     private let snapshot: SnapshotFile<GitHubSnapshot>?
     private var snapshotTask: Task<Void, Never>?
     /// The last successfully loaded inbox — a failed refresh must not
-    /// erase what a relaunch would restore.
+    /// erase what a relaunch would restore. `snapshotInboxLoaded`
+    /// records that a load happened at all: without it a never-fetched
+    /// inbox would restore as `.loaded([])` and show "no unread" while
+    /// its first request runs.
     private var snapshotInbox: [GhNotification] = []
+    private var snapshotInboxLoaded = false
 
     public init(now: @escaping () -> Date = Date.init, staleAfter: TimeInterval = 60,
                 snapshotFile: URL? = nil) {
@@ -262,6 +266,7 @@ public final class GitHubModel {
         if case .loaded(let notes) = next {
             inboxFetchedAt = now()
             snapshotInbox = notes
+            snapshotInboxLoaded = true
         }
         scheduleSave()
     }
@@ -375,7 +380,8 @@ public final class GitHubModel {
         } ?? snap.pins.first?.name
         boards = snap.boards
         snapshotInbox = snap.inbox
-        inbox = .loaded(snap.inbox)
+        snapshotInboxLoaded = snap.inboxLoaded
+        inbox = snap.inboxLoaded ? .loaded(snap.inbox) : .idle
         // A snapshot exists only because replies were received before.
         probed = true
     }
@@ -397,7 +403,8 @@ public final class GitHubModel {
     public func saveNow() {
         snapshot?.saveNow(GitHubSnapshot(
             savedAt: now(), pins: pins, selected: selected,
-            boards: boards, inbox: snapshotInbox))
+            boards: boards, inbox: snapshotInbox,
+            inboxLoaded: snapshotInboxLoaded))
     }
 }
 
