@@ -14,6 +14,10 @@ struct RepoJumper: View {
 
     @State private var query = ""
     @State private var working = false
+    @State private var selection = 0
+    // A jump can outlive the sheet (pin-add resolves after dismiss) —
+    // this tells the completion not to steal the landing.
+    @State private var gone = false
 
     private var model: GitHubModel { app.github }
 
@@ -35,41 +39,69 @@ struct RepoJumper: View {
             if let error = model.pinError ?? model.searchError {
                 Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
             }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    if model.searching {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text("Searching the catalog…")
-                                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                        }
-                        .padding(.vertical, 8).padding(.horizontal, 12)
-                        Divider().overlay(Theme.rowDivider)
-                    }
-                    ForEach(Array(rows.enumerated()), id: \.element) { index, name in
-                        JumperRow(name: name,
-                                  hit: model.searchResults.first { $0.name == name },
-                                  pinned: model.pins.contains { $0.name == name },
-                                  working: model.mutating.contains(name)) {
-                            jump(name)
-                        }
-                        if index < rows.count - 1 {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        if model.searching {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("Searching the catalog…")
+                                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                            }
+                            .padding(.vertical, 8).padding(.horizontal, 12)
                             Divider().overlay(Theme.rowDivider)
                         }
-                    }
-                    if !query.trimmingCharacters(in: .whitespaces).isEmpty,
-                       !model.searching, rows.isEmpty {
-                        Text("Nothing in the catalog matches — Settings → GitHub → Sync refreshes it.")
-                            .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                            .padding(.vertical, 10).padding(.horizontal, 6)
+                        ForEach(Array(rows.enumerated()), id: \.element) { index, name in
+                            JumperRow(name: name,
+                                      hit: model.searchResults.first { $0.name == name },
+                                      pinned: model.pins.contains { $0.name == name },
+                                      working: model.mutating.contains(name),
+                                      selected: index == selection) {
+                                jump(name)
+                            }
+                            .disabled(working)
+                            .id(index)
+                            if index < rows.count - 1 {
+                                Divider().overlay(Theme.rowDivider)
+                            }
+                        }
+                        if !query.trimmingCharacters(in: .whitespaces).isEmpty,
+                           !model.searching, rows.isEmpty {
+                            Text("Nothing in the catalog matches — Settings → GitHub → Sync refreshes it.")
+                                .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                                .padding(.vertical, 10).padding(.horizontal, 6)
+                        }
                     }
                 }
+                .frame(maxHeight: 300)
+                .onKeyPress(.upArrow) {
+                    selection = max(0, selection - 1)
+                    proxy.scrollTo(selection, anchor: .center)
+                    return .handled
+                }
+                .onKeyPress(.downArrow) {
+                    selection = min(rows.count - 1, selection + 1)
+                    proxy.scrollTo(selection, anchor: .center)
+                    return .handled
+                }
             }
-            .frame(maxHeight: 300)
+            .onKeyPress(.return) {
+                guard !working, rows.indices.contains(selection) else {
+                    return .ignored
+                }
+                jump(rows[selection])
+                return .handled
+            }
+            // Return inside the SearchField is a submit, not a keypress.
+            .onSubmit {
+                if !working, rows.indices.contains(selection) {
+                    jump(rows[selection])
+                }
+            }
             HStack {
                 Spacer()
                 Button("Done") { dismiss() }.secondaryButton()
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(.cancelAction)
             }
         }
         .sheetScaffold(width: 480)
@@ -84,6 +116,8 @@ struct RepoJumper: View {
                 await model.search(query, swe: app.swe)
             }
         }
+        .onChange(of: rows) { selection = 0 }
+        .onDisappear { gone = true }
     }
 
     /// Land on the repo's section: pin it first when the hit came from
@@ -104,7 +138,10 @@ struct RepoJumper: View {
         Task {
             let added = await model.addRepo(name, swe: app.swe)
             working = false
-            if let added { land(added) }
+            // The pin stays even when the sheet is gone — it was asked
+            // for — but a dismiss or a later pick owns the landing.
+            guard !gone, let added else { return }
+            land(added)
         }
     }
 }
@@ -117,6 +154,7 @@ private struct JumperRow: View {
     var hit: RepoHit?
     var pinned: Bool
     var working: Bool
+    var selected: Bool
     var pick: () -> Void
     @State private var hovering = false
 
@@ -145,7 +183,7 @@ private struct JumperRow: View {
             }
             .padding(.vertical, 8)
             .padding(.horizontal, 6)
-            .background(hovering ? Theme.rowHover : .clear, in: .rect(cornerRadius: Theme.controlRadius))
+            .background(hovering || selected ? Theme.rowHover : .clear, in: .rect(cornerRadius: Theme.controlRadius))
             .contentShape(.rect(cornerRadius: Theme.controlRadius))
         }
         .buttonStyle(RingedPlainStyle(cornerRadius: Theme.controlRadius))
