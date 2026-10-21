@@ -934,6 +934,15 @@ final class AppModel {
         try await launcher.launch(LaunchPlanner.terminal(terminal, running: line))
     }
 
+    /// Open a new agent session on a PR's head: `swe gh pr worktree`
+    /// checks the head out under ~/.quiver/worktrees, then the chosen
+    /// terminal gets `cd <checkout> && <harness cli>`.
+    func openPrSession(repo: String, number: Int, harness: Harness) async {
+        guard let path = await github.prWorktree(repo: repo, pr: number, swe: swe) else { return }
+        let line = "cd \(LaunchPlanner.shellQuote(path)) && \(harness.command)"
+        try? await launcher.launch(LaunchPlanner.terminal(terminal, running: line))
+    }
+
     static func keysFile(path: String) -> URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let trimmed = path.trimmingCharacters(in: .whitespaces)

@@ -39,6 +39,7 @@ and the fixture that pins the shape. Fixtures live under
 | `swe gh pr status [--repo=R] --json` | `GhResults` — per-repo `current_branch` (`GhPr` or null), `authored: [GhPr]`, `review_requested: [GhPr]` | |
 | `swe gh pr view <N|url> --repo=R --json` | `{"github": GhEnv, "repo", "status", "pr": GhPrDetail?}` — one repo only; `status` is `ok` or a `gh` status, `error` on failure (including a blocked env) | |
 | `swe gh pr merge <N|url> --repo=R [--method=squash|merge|rebase] [--auto] --json` | `{"github": GhEnv, "repo", "ref", "method", "auto", "merged", "error"?}` — `merged` is false under `--auto` (armed, not merged) | |
+| `swe gh pr worktree <N|url> --repo=R --json` | `{"github": GhEnv, "repo", "pr", "path", "head", "created", "error"?}` — `path` is the checkout under `~/.quiver/worktrees` a session launches from; `created` false means it already existed | |
 | `swe gh run rerun <id> --repo=R [--failed] --json` | `{"github": GhEnv, "repo", "run", "rerun", "failed_only"?, "error"?}` | |
 | `swe gh inbox read <id>...|--all --json` | `{"github": GhEnv, "all", "marked": [id], "failed": [{"id","error"}]}` — `--all` reports `marked: ["*"]` | |
 | `swe gh issue [--state=S] [--repo=R] [--limit=N] --json` | `GhResults` — per-repo `issues: [GhIssue]` | |
