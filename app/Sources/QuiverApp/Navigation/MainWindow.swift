@@ -311,6 +311,10 @@ private struct NavItem: View {
                 Spacer(minLength: 0)
                 if badge > 0 {
                     Text(badge > 99 ? "99+" : "\(badge)")
+                        // The count is spoken through accessibilityValue;
+                        // hiding the text keeps VoiceOver from reading
+                        // "Inbox 3, 3 unread".
+                        .accessibilityHidden(true)
                         .font(.system(size: 10, weight: .semibold).monospacedDigit())
                         .foregroundStyle(Theme.textSecondary)
                         .padding(.horizontal, 5)
