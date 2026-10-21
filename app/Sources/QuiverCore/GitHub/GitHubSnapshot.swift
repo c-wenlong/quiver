@@ -1,25 +1,37 @@
 import Foundation
 
-/// The GitHub pages' warm start: the last rows each surface held, the
-/// inbox, and the fetch times that make them stale. Written atomically
-/// on a debounce after every reply and once at quit; a missing or
-/// corrupt file only ever costs the cold start it would have been.
-public struct GitHubSnapshot: Codable, Sendable {
+/// The GitHub pages' warm start: the pins, the selection, the last rows
+/// each surface held, and the last good inbox. Written through
+/// `SnapshotFile` on a debounce after every reply and once at quit; a
+/// missing or corrupt file only ever costs the cold start it would have
+/// been.
+///
+/// Fetch times are deliberately NOT persisted: every restored surface is
+/// cold, so it shows its saved rows immediately and refetches on the
+/// first look. A snapshot can otherwise skip a whole `staleAfter` window
+/// across a restart — including a gh account switch while the app was
+/// closed.
+public struct GitHubSnapshot: SnapshotContent {
+    public static let currentVersion = 1
+    public var version = Self.currentVersion
     public var savedAt: Date
+    /// The pins and the selection, so the Repositories page opens on its
+    /// last view instead of a probe spinner.
+    public var pins: [PinnedRepo]
+    public var selected: String?
     /// repo name -> the board as it last stood.
     public var boards: [String: RepoBoard]
-    /// "owner/repo|tab" -> last fetch, matching each board's loaded slots.
-    public var fetched: [String: Date]
+    /// The last successfully loaded inbox; a failed refresh never
+    /// overwrites it.
     public var inbox: [GhNotification]
-    public var inboxFetchedAt: Date?
 
-    public init(savedAt: Date, boards: [String: RepoBoard], fetched: [String: Date],
-                inbox: [GhNotification], inboxFetchedAt: Date?) {
+    public init(savedAt: Date, pins: [PinnedRepo], selected: String?,
+                boards: [String: RepoBoard], inbox: [GhNotification]) {
         self.savedAt = savedAt
+        self.pins = pins
+        self.selected = selected
         self.boards = boards
-        self.fetched = fetched
         self.inbox = inbox
-        self.inboxFetchedAt = inboxFetchedAt
     }
 }
 

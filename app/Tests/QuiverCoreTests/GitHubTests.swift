@@ -359,12 +359,14 @@ import Testing
         + "\"mergeable\":\"mergeable\",\"review_decision\":\"approved\",\"checks\":\"passing\","
         + "\"updated_at\":\"2026-10-20T00:00:00Z\",\"url\":\"https://github.com/o/a/pull/7\"}]"
 
-    /// A quit-and-relaunch shows the last rows before any fetch lands,
-    /// with the fetch times that make them stale.
+    /// A quit-and-relaunch shows the last rows before any fetch lands —
+    /// pins, selection and boards included, so the page opens on its last
+    /// view instead of a probe spinner.
     @Test func snapshotRestoresBoardsAndInbox() async {
         let file = tempSnapshot()
         defer { try? FileManager.default.removeItem(at: file) }
         let swe = SweClient(runner: router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
             "gh pr --state=open --limit=50 --repo=o/a --json":
                 "\(env),\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"pull_requests\":\(prRows)}]",
             "gh inbox --limit=50 --all --json":
@@ -374,11 +376,17 @@ import Testing
                 + "\"updated_at\":\"2026-10-20T00:00:00Z\",\"url\":\"https://github.com/o/a/pull/7\"}]",
         ]))
         let first = GitHubModel(snapshotFile: file)
+        await first.load(swe: swe)
         await first.loadTab(.pulls, repo: "o/a", swe: swe)
         await first.loadInbox(swe: swe)
         first.saveNow()
 
         let second = GitHubModel(snapshotFile: file)
+        #expect(second.pins.map(\.name) == ["o/a"])
+        #expect(second.selected == "o/a")
+        // Restored state counts as probed: the page renders rows, not
+        // the "Checking gh…" spinner, while the first-look refetch runs.
+        #expect(second.probed)
         guard case .loaded(let prs) = second.board(for: "o/a").pulls else {
             Issue.record("restored board should hold pulls")
             return
@@ -391,23 +399,25 @@ import Testing
         #expect(notes.first?.id == "n1")
     }
 
-    /// Hydrated rows count as loaded-but-stale: the first look refetches
-    /// rather than trusting a day-old file.
-    @Test func restoredBoardRefetchesWhenStale() async {
+    /// Hydrated rows are warm for display but cold for fetching: no
+    /// fetch times survive a relaunch, so the first look always
+    /// refetches — a restart can never sit inside a stale window.
+    @Test func restoredRowsRefetchOnFirstLook() async {
         let file = tempSnapshot()
         defer { try? FileManager.default.removeItem(at: file) }
-        var snap = GitHubSnapshot(
-            savedAt: Date(timeIntervalSince1970: 1_000), boards: [:], fetched: [:],
-            inbox: [], inboxFetchedAt: nil)
         var board = RepoBoard()
         board.issues = .loaded([])
-        snap.boards["o/a"] = board
-        snap.fetched["o/a|issues"] = Date(timeIntervalSince1970: 1_000)
+        let snap = GitHubSnapshot(
+            savedAt: Date(timeIntervalSince1970: 10_000),
+            pins: [PinnedRepo(name: "o/a", addedAt: Date(timeIntervalSince1970: 100))],
+            selected: "o/a", boards: ["o/a": board], inbox: [])
         try? JSONEncoder().encode(snap).write(to: file)
 
-        let now = Date(timeIntervalSince1970: 10_000)
+        // Seconds after the snapshot: a cold-start file must not skip
+        // the refresh even inside staleAfter.
+        let now = Date(timeIntervalSince1970: 10_030)
         let model = GitHubModel(now: { now }, staleAfter: 60, snapshotFile: file)
-        model.selected = "o/a"
+        #expect(model.selected == "o/a")
         model.tab = .issues
         let calls = router([
             "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
@@ -415,9 +425,43 @@ import Testing
                 "\(env),\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"issues\":[]}]",
         ])
         await model.loadIfStale(swe: SweClient(runner: calls))
-        // The overview loads the pin list; the stale restored surface refetches.
+        // The overview reloads pins (pinsFetchedAt is not restored);
+        // the visible tab refetches despite rows being there.
         #expect(calls.calls.count == 2)
         #expect(calls.calls.last?.contains("--repo=o/a") == true)
+    }
+
+    /// A refresh that fails after a good read must not overwrite the
+    /// snapshot's rows: relaunch restores the last good inbox.
+    @Test func failedRefreshKeepsLastGoodInbox() async {
+        let file = tempSnapshot()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let replies = router([
+            "gh inbox --limit=50 --all --json":
+                "\(env),\"status\":\"ok\",\"notifications\":[{"
+                + "\"id\":\"n1\",\"repo\":\"o/a\",\"title\":\"PR #7\",\"type\":\"PullRequest\","
+                + "\"reason\":\"review_requested\",\"unread\":true,"
+                + "\"updated_at\":\"2026-10-20T00:00:00Z\",\"url\":\"https://github.com/o/a/pull/7\"}]",
+        ])
+        let swe = SweClient(runner: replies)
+        let first = GitHubModel(snapshotFile: file)
+        await first.loadInbox(swe: swe)
+        // The next poll fails: the model goes .failed but the snapshot
+        // keeps the rows it had.
+        replies.replies["gh inbox --limit=50 --all --json"] =
+            .init(status: 1, stdout: Data(), stderr: "gh timed out")
+        await first.loadInbox(swe: swe, force: true)
+        if case .failed = first.inbox {} else {
+            Issue.record("inbox should be failed after the bad reply")
+        }
+        first.saveNow()
+
+        let second = GitHubModel(snapshotFile: file)
+        guard case .loaded(let notes) = second.inbox else {
+            Issue.record("restored inbox should hold the last good rows")
+            return
+        }
+        #expect(notes.first?.id == "n1")
     }
 
     @Test func corruptSnapshotIsAColdStart() {

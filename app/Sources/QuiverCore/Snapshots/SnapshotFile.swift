@@ -82,6 +82,13 @@ public actor SnapshotFile<Content: SnapshotContent>: SnapshotStoring {
     }
 
     public func save(_ content: Content) {
+        saveNow(content)
+    }
+
+    /// The same write, synchronously — for quit paths that cannot await.
+    /// The flock on the sibling lock file, not the actor, is what
+    /// serializes writers, so a nonisolated save is safe.
+    public nonisolated func saveNow(_ content: Content) {
         // Reference-date seconds, so a date comes back bit-for-bit equal.
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .deferredToDate

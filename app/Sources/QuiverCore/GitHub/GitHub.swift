@@ -64,7 +64,7 @@ public struct GhTime: Codable, Equatable, Sendable {
 }
 
 /// A repo the user pinned in `swe gh repo list`.
-public struct PinnedRepo: Decodable, Equatable, Sendable, Identifiable {
+public struct PinnedRepo: Codable, Equatable, Sendable, Identifiable {
     public var id: String { name }
     /// `owner/repo`.
     public let name: String
