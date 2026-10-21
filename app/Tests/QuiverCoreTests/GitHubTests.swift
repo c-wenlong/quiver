@@ -137,6 +137,40 @@ import Testing
         #expect(hit.updatedAt.date != nil)
     }
 
+    @Test func prViewDecodesTheDetailRow() async throws {
+        let reply = try await client("swe-gh-pr-view").ghPrView(repo: "c-wenlong/quiver", ref: "472")
+        #expect(reply.github.status == .ok)
+        #expect(reply.status == "ok")
+        let pr = try #require(reply.pr)
+        #expect(pr.number == 472)
+        #expect(pr.mergeState == "clean")
+        #expect(pr.additions == 44)
+        #expect(pr.changedFiles == 2)
+        // CheckRun and StatusContext rows land in one vocabulary.
+        #expect(pr.checkRuns[0].state == "passing")
+        #expect(pr.checkRuns[1].status == "queued")
+        #expect(pr.checkRuns[1].state == "running")
+        #expect(pr.checkRuns[1].conclusion == nil)
+        #expect(pr.reviews.first?.author == "greptile-apps[bot]")
+        #expect(pr.reviewRequests == ["devin-ai-integration[bot]"])
+        #expect(pr.autoMerge == nil)
+    }
+
+    @Test func writeCommandsPassExpectedArguments() async throws {
+        let runner = FakeRunner(.init(status: 0, stdout: try fixture("swe-gh-pr-view"), stderr: ""))
+        let swe = SweClient(runner: runner)
+        _ = try await swe.ghPrView(repo: "o/r", ref: "7")
+        #expect(runner.calls.last == ["gh", "pr", "view", "7", "--repo=o/r", "--json"])
+        _ = try? await swe.ghPrMerge(repo: "o/r", ref: "7", method: "rebase", auto: true)
+        #expect(runner.calls.last == ["gh", "pr", "merge", "7", "--repo=o/r", "--method=rebase", "--auto", "--json"])
+        _ = try? await swe.ghRunRerun(repo: "o/r", run: 42, failedOnly: true)
+        #expect(runner.calls.last == ["gh", "run", "rerun", "42", "--repo=o/r", "--failed", "--json"])
+        _ = try? await swe.ghInboxRead(ids: ["1", "2"])
+        #expect(runner.calls.last == ["gh", "inbox", "read", "1", "2", "--json"])
+        _ = try? await swe.ghInboxRead(all: true)
+        #expect(runner.calls.last == ["gh", "inbox", "read", "--all", "--json"])
+    }
+
     @Test func ghCommandsPassExpectedArguments() async throws {
         let runner = FakeRunner(.init(status: 0, stdout: try fixture("swe-gh-prs"), stderr: ""))
         let swe = SweClient(runner: runner)
@@ -875,5 +909,140 @@ import Testing
         gate.released = true
         await loading.value
         #expect(model.catalog?.repos == 9)
+    }
+
+    // MARK: - PR detail + write actions
+
+    private var detailPayload: String {
+        env + ",\"repo\":\"o/a\",\"status\":\"ok\",\"pr\":{"
+            + "\"repo\":\"o/a\",\"number\":7,\"title\":\"Fix\",\"state\":\"open\","
+            + "\"draft\":false,\"author\":\"me\",\"branch\":\"f\",\"base\":\"main\","
+            + "\"labels\":[],\"mergeable\":\"mergeable\",\"review_decision\":\"approved\","
+            + "\"checks\":\"passing\",\"updated_at\":1700000000,"
+            + "\"url\":\"https://github.com/o/a/pull/7\",\"body\":\"text\","
+            + "\"merge_state\":\"clean\",\"additions\":1,\"deletions\":0,"
+            + "\"changed_files\":1,\"check_runs\":[{\"name\":\"ci\",\"workflow\":\"CI\","
+            + "\"status\":\"completed\",\"conclusion\":\"success\",\"state\":\"passing\","
+            + "\"url\":\"https://x/1\"}],\"reviews\":[],\"review_requests\":[],"
+            + "\"auto_merge\":null,\"created_at\":1700000000,\"merged_at\":null}"
+    }
+
+    @Test func prDetailLoadsIntoTheKeyedSlot() async {
+        let swe = SweClient(runner: router([
+            "gh pr view 7 --repo=o/a --json": detailPayload,
+        ]))
+        let model = GitHubModel()
+        await model.loadPrDetail(repo: "o/a", number: 7, swe: swe)
+        guard case .loaded(let pr) = model.prDetails["o/a#7"] else {
+            Issue.record("expected a loaded detail"); return
+        }
+        #expect(pr.number == 7)
+        #expect(pr.mergeState == "clean")
+        #expect(pr.checkRuns.first?.state == "passing")
+    }
+
+    @Test func prDetailFailureLandsTyped() async {
+        let swe = SweClient(runner: router([
+            "gh pr view 7 --repo=o/a --json":
+                env + ",\"repo\":\"o/a\",\"status\":\"upstream-error\","
+                + "\"pr\":null,\"error\":\"no pull requests found\"",
+        ]))
+        let model = GitHubModel()
+        await model.loadPrDetail(repo: "o/a", number: 7, swe: swe)
+        guard case .failed(let message) = model.prDetails["o/a#7"] else {
+            Issue.record("expected a failed detail"); return
+        }
+        #expect(message == "no pull requests found")
+    }
+
+    @Test func mergeSuccessDropsTheRowAndClearsError() async {
+        let swe = SweClient(runner: router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
+            "gh pr --state=open --limit=50 --repo=o/a --json":
+                env + ",\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\","
+                + "\"pull_requests\":[{\"number\":7,\"title\":\"Fix\",\"state\":\"open\","
+                + "\"draft\":false,\"author\":\"me\",\"branch\":\"f\",\"base\":\"main\","
+                + "\"labels\":[],\"mergeable\":\"mergeable\",\"review_decision\":\"approved\","
+                + "\"checks\":\"passing\",\"updated_at\":1700000000,"
+                + "\"url\":\"https://github.com/o/a/pull/7\"}]}]",
+            "gh pr merge 7 --repo=o/a --method=squash --json":
+                env + ",\"repo\":\"o/a\",\"ref\":\"7\",\"method\":\"squash\","
+                + "\"auto\":false,\"merged\":true",
+        ]))
+        let model = GitHubModel()
+        await model.load(swe: swe)
+        await model.loadTab(.pulls, repo: "o/a", swe: swe)
+        let error = await model.mergePr(repo: "o/a", ref: "7",
+                                        method: "squash", auto: false, swe: swe)
+        #expect(error == nil)
+        #expect(model.actionError == nil)
+        guard case .loaded(let prs) = model.board(for: "o/a").pulls else {
+            Issue.record("expected pulls to stay loaded"); return
+        }
+        #expect(prs.isEmpty)
+    }
+
+    @Test func mergeFailureReturnsThePayloadError() async {
+        let swe = SweClient(runner: router([
+            "gh pr merge 7 --repo=o/a --method=squash --json":
+                env + ",\"repo\":\"o/a\",\"ref\":\"7\",\"method\":\"squash\","
+                + "\"auto\":false,\"merged\":false,"
+                + "\"error\":\"Pull request is not mergeable\"",
+        ]))
+        let model = GitHubModel()
+        let error = await model.mergePr(repo: "o/a", ref: "7",
+                                        method: "squash", auto: false, swe: swe)
+        #expect(error == "Pull request is not mergeable")
+        #expect(model.actionError == "Pull request is not mergeable")
+    }
+
+    @Test func rerunSuccessDropsTheActionsFetchTime() async {
+        let swe = SweClient(runner: router([
+            "gh run rerun 42 --repo=o/a --failed --json":
+                env + ",\"repo\":\"o/a\",\"run\":42,\"rerun\":true,\"failed_only\":true",
+        ]))
+        let model = GitHubModel()
+        let error = await model.rerunRun(repo: "o/a", run: 42,
+                                         failedOnly: true, swe: swe)
+        #expect(error == nil)
+        #expect(model.actionError == nil)
+    }
+
+    @Test func markReadFlipsUnreadLocally() async {
+        let inboxPayload = env + ",\"status\":\"ok\",\"notifications\":["
+            + "{\"id\":\"1\",\"repo\":\"o/a\",\"title\":\"A\",\"type\":\"Issue\","
+            + "\"reason\":\"mention\",\"unread\":true,\"updated_at\":1700000000,"
+            + "\"url\":\"https://github.com/o/a/issues/1\"},"
+            + "{\"id\":\"2\",\"repo\":\"o/a\",\"title\":\"B\",\"type\":\"PullRequest\","
+            + "\"reason\":\"review_requested\",\"unread\":true,\"updated_at\":1700000000,"
+            + "\"url\":\"https://github.com/o/a/pull/2\"}]"
+        let swe = SweClient(runner: router([
+            "gh inbox --limit=50 --all --json": inboxPayload,
+            "gh inbox read 1 --json":
+                env + ",\"all\":false,\"marked\":[\"1\"]",
+        ]))
+        let model = GitHubModel()
+        await model.loadInbox(swe: swe)
+        #expect(model.unreadCount == 2)
+        let error = await model.markInboxRead(["1"], swe: swe)
+        #expect(error == nil)
+        #expect(model.unreadCount == 1)
+    }
+
+    @Test func markAllReadClearsTheInbox() async {
+        let inboxPayload = env + ",\"status\":\"ok\",\"notifications\":["
+            + "{\"id\":\"1\",\"repo\":\"o/a\",\"title\":\"A\",\"type\":\"Issue\","
+            + "\"reason\":\"mention\",\"unread\":true,\"updated_at\":1700000000,"
+            + "\"url\":\"https://github.com/o/a/issues/1\"}]"
+        let swe = SweClient(runner: router([
+            "gh inbox --limit=50 --all --json": inboxPayload,
+            "gh inbox read --all --json":
+                env + ",\"all\":true,\"marked\":[\"*\"]",
+        ]))
+        let model = GitHubModel()
+        await model.loadInbox(swe: swe)
+        let error = await model.markInboxRead([], all: true, swe: swe)
+        #expect(error == nil)
+        #expect(model.unreadCount == 0)
     }
 }

@@ -15,6 +15,8 @@ struct RepositoriesPage: View {
     @Environment(\.openURL) private var openURL
     @State private var adding = false
     @State private var managing = false
+    /// The PR whose detail sheet is open, if any.
+    @State private var detail: PrSelection?
 
     private var model: GitHubModel { app.github }
 
@@ -69,7 +71,7 @@ struct RepositoriesPage: View {
                     .frame(maxWidth: 360)
                 Tabs(options: RepoTab.allCases.map { ($0, $0.title) },
                      selection: $model.tab, style: .underline)
-                if let error = model.pinError {
+                if let error = model.pinError ?? model.actionError {
                     ErrorCard(message: error)
                 }
                 ScrollViewReader { proxy in
@@ -106,6 +108,9 @@ struct RepositoriesPage: View {
         }
         .sheet(isPresented: $adding) {
             AddRepoSheet()
+        }
+        .sheet(item: $detail) { selection in
+            PrDetailSheet(selection: selection)
         }
     }
 
@@ -172,7 +177,7 @@ struct RepositoriesPage: View {
                         [$0.title, "\($0.number)", $0.branch, $0.base, $0.author] + $0.labels },
                     empty: emptyText("No open pull requests.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .pulls))) { pr in
-            OpenRow(url: pr.url, open: openURL.callAsFunction) {
+            OpenRow(act: { detail = PrSelection(repo: repo, number: pr.number) }) {
                 PrIcon(state: pr.state, draft: pr.draft)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
@@ -192,6 +197,11 @@ struct RepositoriesPage: View {
                 }
                 ReviewMark(decision: pr.reviewDecision)
                 ChecksMark(checks: pr.checks)
+            }
+            .contextMenu {
+                Button("Open on GitHub") {
+                    if let url = URL(string: pr.url) { openURL(url) }
+                }
             }
         }
     }
@@ -243,8 +253,26 @@ struct RepositoriesPage: View {
                         .lineLimit(1).truncationMode(.middle)
                 }
                 Spacer(minLength: 12)
-                if let conclusion = run.conclusion {
+                if model.actionBusy.contains("rerun:\(repo)#\(run.id)") {
+                    ProgressView().controlSize(.small)
+                } else if let conclusion = run.conclusion {
                     Badge(conclusion == "success" ? "Passed" : conclusion.capitalized)
+                }
+            }
+            .contextMenu {
+                if run.conclusion == "failure" {
+                    Button("Re-run failed jobs") {
+                        Task { await model.rerunRun(repo: repo, run: run.id,
+                                                    failedOnly: true, swe: app.swe) }
+                    }
+                }
+                Button("Re-run all jobs") {
+                    Task { await model.rerunRun(repo: repo, run: run.id,
+                                                failedOnly: false, swe: app.swe) }
+                }
+                Divider()
+                Button("Open on GitHub") {
+                    if let url = URL(string: run.url) { openURL(url) }
                 }
             }
         }
@@ -406,17 +434,27 @@ private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: Vi
     }
 }
 
-/// A row that opens its GitHub URL: hover fill, link pointer, plain style.
+/// A row with one click action: hover fill, link pointer, plain style.
+/// `url:` rows open a GitHub page; a custom action opens the in-app
+/// workbench instead.
 private struct OpenRow<Content: View>: View {
-    var url: String
-    var open: (URL) -> Void
+    var act: () -> Void
     @ViewBuilder var content: Content
     @State private var hovering = false
 
+    init(url: String, open: @escaping (URL) -> Void,
+         @ViewBuilder content: () -> Content) {
+        act = { if let link = URL(string: url) { open(link) } }
+        self.content = content()
+    }
+
+    init(act: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+        self.act = act
+        self.content = content()
+    }
+
     var body: some View {
-        Button {
-            if let link = URL(string: url) { open(link) }
-        } label: {
+        Button(action: act) {
             HStack(alignment: .top, spacing: 12) { content }
                 .padding(.vertical, 10)
                 .padding(.horizontal, 6)
@@ -489,9 +527,9 @@ private struct RepoManager: View {
 // MARK: - State marks
 
 /// GitHub's purple for merged/closed-done states.
-private let ghPurple = Color(light: "#8250df", dark: "#a371f7")
+let ghPurple = Color(light: "#8250df", dark: "#a371f7")
 
-private struct PrIcon: View {
+struct PrIcon: View {
     var state: GhPr.State
     var draft: Bool
     var body: some View {
@@ -511,7 +549,7 @@ private struct PrIcon: View {
 }
 
 /// The folded statusCheckRollup as one coloured mark.
-private struct ChecksMark: View {
+struct ChecksMark: View {
     var checks: GhPr.Checks?
     var body: some View {
         Group {
@@ -537,7 +575,7 @@ private struct ChecksMark: View {
 }
 
 /// The review decision, shown only when GitHub tracks one.
-private struct ReviewMark: View {
+struct ReviewMark: View {
     var decision: GhPr.Review?
     var body: some View {
         Group {

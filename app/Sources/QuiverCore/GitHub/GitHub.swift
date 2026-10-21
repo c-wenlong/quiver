@@ -353,6 +353,115 @@ public struct GhInbox: Decodable, Sendable {
     public let notifications: [GhNotification]
 }
 
+// MARK: - One-object commands (detail + actions)
+
+/// One check row inside `GhPrDetail.checkRuns`, normalized across
+/// CheckRun and StatusContext shapes. `state` is swe's rollup word —
+/// `passing`|`running`|`failing`|`none` — so pending contexts and odd
+/// conclusions still draw a warning.
+public struct GhCheck: Decodable, Equatable, Sendable, Identifiable {
+    public var id: String { "\(workflow)/\(name)" }
+    public let name: String
+    public let workflow: String
+    public let status: String
+    public let conclusion: String?
+    public let state: String
+    public let url: String
+}
+
+/// One submitted review inside `GhPrDetail.reviews`.
+public struct GhReview: Decodable, Equatable, Sendable {
+    public let author: String
+    /// `approved` | `changes_requested` | `commented` | `dismissed` | …
+    public let state: String
+    public let submittedAt: GhTime?
+}
+
+/// An armed auto-merge on the PR.
+public struct GhAutoMerge: Decodable, Equatable, Sendable {
+    public let method: String
+    public let enabledAt: GhTime?
+}
+
+/// `swe gh pr view`'s detail row: every `GhPr` field plus the body,
+/// per-check rows, reviews, and the merge-state fields the pane draws.
+public struct GhPrDetail: Decodable, Equatable, Sendable, Identifiable {
+    public var id: Int { number }
+    public let repo: String
+    public let number: Int
+    public let title: String
+    public let state: GhPr.State
+    public let draft: Bool
+    public let author: String
+    public let branch: String
+    public let base: String
+    public let labels: [String]
+    public let mergeable: GhPr.Mergeable?
+    public let reviewDecision: GhPr.Review?
+    public let checks: GhPr.Checks?
+    public let updatedAt: GhTime
+    public let url: String
+    public let body: String
+    /// GitHub's `mergeStateStatus` lowercased: `clean`|`blocked`|`dirty`|…
+    public let mergeState: String
+    public let additions: Int?
+    public let deletions: Int?
+    public let changedFiles: Int?
+    public let checkRuns: [GhCheck]
+    public let reviews: [GhReview]
+    /// User logins and team slugs still awaiting review.
+    public let reviewRequests: [String]
+    public let autoMerge: GhAutoMerge?
+    public let createdAt: GhTime?
+    public let mergedAt: GhTime?
+}
+
+/// `swe gh pr view --json`: `pr` is null on any failure — a blocked
+/// env reads through `github`, a fetch failure through `error`.
+public struct GhPrView: Decodable, Sendable {
+    public let github: GhEnv
+    public let repo: String?
+    public let status: String
+    public let pr: GhPrDetail?
+    public let error: String?
+}
+
+/// `swe gh pr merge --json`: `merged` is false under `--auto` —
+/// arming is not merging.
+public struct GhMerge: Decodable, Sendable {
+    public let github: GhEnv
+    public let repo: String?
+    public let ref: String
+    public let method: String
+    public let auto: Bool
+    public let merged: Bool
+    public let error: String?
+}
+
+/// `swe gh run rerun --json`.
+public struct GhRerun: Decodable, Sendable {
+    public let github: GhEnv
+    public let repo: String?
+    public let run: Int
+    public let rerun: Bool
+    public let failedOnly: Bool?
+    public let error: String?
+}
+
+/// `swe gh inbox read --json`: `marked` lists the threads flipped;
+/// `--all` reports `marked: ["*"]`.
+public struct GhInboxRead: Decodable, Sendable {
+    public struct Failed: Decodable, Sendable {
+        public let id: String
+        public let error: String
+    }
+    public let github: GhEnv
+    public let all: Bool
+    public let marked: [String]
+    public let failed: [Failed]?
+    public let error: String?
+}
+
 // MARK: - SweClient
 
 extension SweClient {
@@ -466,6 +575,41 @@ extension SweClient {
     public func ghInbox(limit: Int = 50, all: Bool = true) async throws -> GhInbox {
         var args = ["gh", "inbox", "--limit=\(limit)"]
         if all { args.append("--all") }
+        args.append("--json")
+        return try await call(args, allowFailure: true)
+    }
+
+    /// `swe gh pr view <ref> --repo=<repo> --json` — the detail pane's read.
+    public func ghPrView(repo: String, ref: String) async throws -> GhPrView {
+        try await call(["gh", "pr", "view", ref, "--repo=\(repo)", "--json"],
+                       allowFailure: true)
+    }
+
+    /// `swe gh pr merge <ref> --repo=<repo> --json`. `auto` arms
+    /// auto-merge rather than merging now.
+    public func ghPrMerge(repo: String, ref: String, method: String,
+                          auto: Bool = false) async throws -> GhMerge {
+        var args = ["gh", "pr", "merge", ref, "--repo=\(repo)",
+                    "--method=\(method)"]
+        if auto { args.append("--auto") }
+        args.append("--json")
+        return try await call(args, allowFailure: true)
+    }
+
+    /// `swe gh run rerun <id> --repo=<repo> --json`; `failedOnly`
+    /// re-runs just the failed jobs.
+    public func ghRunRerun(repo: String, run: Int64,
+                           failedOnly: Bool = false) async throws -> GhRerun {
+        var args = ["gh", "run", "rerun", "\(run)", "--repo=\(repo)"]
+        if failedOnly { args.append("--failed") }
+        args.append("--json")
+        return try await call(args, allowFailure: true)
+    }
+
+    /// `swe gh inbox read <id>...|--all --json` — mark threads read.
+    public func ghInboxRead(ids: [String] = [], all: Bool = false) async throws -> GhInboxRead {
+        var args = ["gh", "inbox", "read"]
+        if all { args.append("--all") } else { args.append(contentsOf: ids) }
         args.append("--json")
         return try await call(args, allowFailure: true)
     }
