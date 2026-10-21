@@ -207,6 +207,29 @@ public struct GhNotification: Codable, Equatable, Sendable, Identifiable {
 public struct GhOverview: Decodable, Sendable {
     public let github: GhEnv
     public let repos: [PinnedRepo]
+    /// The synced catalog summary — nil until the first `swe gh sync`.
+    public let catalog: GhCatalog?
+}
+
+/// `swe gh`'s synced catalog: the local repo store `repo search` reads,
+/// written only by `swe gh sync`.
+public struct GhCatalog: Decodable, Sendable {
+    public let repos: Int
+    public let syncedAt: GhTime?
+    public let owners: [String]
+}
+
+/// `swe gh sync --json`: a resync's outcome — `failed` names the owners
+/// whose `gh repo list` errored; their previous rows stayed.
+public struct GhSync: Decodable, Sendable {
+    public struct FailedOwner: Decodable, Sendable {
+        public let owner: String
+        public let error: String?
+    }
+    public let repos: Int
+    public let syncedAt: GhTime?
+    public let owners: [String]
+    public let failed: [FailedOwner]
 }
 
 /// `swe gh repo list --json`.
@@ -351,6 +374,11 @@ extension SweClient {
     /// `swe gh repo remove <name> --json`.
     public func ghRemoveRepo(_ name: String) async throws -> GhPinRemoval {
         try await call(["gh", "repo", "remove", name, "--json"])
+    }
+
+    /// `swe gh sync --json` — rewrites the local repo catalog in place.
+    public func ghSync() async throws -> GhSync {
+        try await call(["gh", "sync", "--json"], allowFailure: true)
     }
 
     /// `swe gh repo search <query> --json`.

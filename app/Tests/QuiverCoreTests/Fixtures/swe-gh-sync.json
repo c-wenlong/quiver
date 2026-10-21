@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "data": {
+    "repos": 128,
+    "synced_at": 1792530000.5,
+    "owners": ["c-wenlong", "test-bot"],
+    "failed": [
+      {
+        "owner": "dead-org",
+        "error": "HTTP 404"
+      }
+    ]
+  }
+}

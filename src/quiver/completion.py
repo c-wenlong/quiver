@@ -316,6 +316,9 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--all", "Search all of GitHub, not just your repos and orgs"),
         ("--json", "Print the {schema, data} envelope"),
     ],
+    "gh sync": [
+        ("--json", "Print the {schema, data} envelope"),
+    ],
 }
 
 # Nested flag tables: cmd -> {subcommand: _COMMAND_FLAGS key}. `swe mcp sync
@@ -352,6 +355,7 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
         "branch": "gh", "branches": "gh", "board": "gh",
         "inbox": "gh", "notifications": "gh", "notifs": "gh",
         "repo": "gh repo", "repo search": "gh repo search",
+        "sync": "gh sync",
     },
     "skills": {
         "link": "skills link", "unlink": "skills unlink",
@@ -496,6 +500,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
     ],
     "gh": [
         ("board", "Every surface of a repo in one call"),
+        ("sync", "Snapshot your repos + orgs into the local catalog"),
         ("repo", "Pin or search the repos the dashboard watches"),
         ("pr", "Pull requests (alias: prs, pulls)"),
         ("issue", "Issues (alias: issues)"),

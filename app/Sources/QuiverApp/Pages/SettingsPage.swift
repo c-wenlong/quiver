@@ -147,6 +147,7 @@ private struct SettingsSectionView: View {
             case .preferences: preferencesCard
             case .notifications: notificationsCard
             case .updates: updatesCard
+            case .github: githubCard
             case .providers: ProvidersSection()
             case .services: ServicesCard(model: app.services)
             case .paths: pathsCard
@@ -234,6 +235,65 @@ private struct SettingsSectionView: View {
         }
         .onAppear { refreshMinutes = app.limits.refreshFreshMinutes }
         .onDisappear(perform: commitRefreshMinutes)
+    }
+
+    /// The gh install behind the GitHub pages, plus the one-shot sync
+    /// that fills the local repo catalog the Add-repo search reads.
+    private var githubCard: some View {
+        let model = app.github
+        return SettingsCard {
+            SettingRow(title: "GitHub CLI", detail: ghDetail,
+                       warning: ghWarning) {
+                Button { Task { await model.load(swe: app.swe) } } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .iconButton()
+                .help("Check gh again")
+            }
+            SettingsDivider()
+            SettingRow(title: "Repository catalog", detail: catalogDetail,
+                       warning: model.syncError) {
+                HStack(spacing: 8) {
+                    if model.syncing { ProgressView().controlSize(.small) }
+                    Button("Sync now") {
+                        Task { await model.syncGitHub(swe: app.swe) }
+                    }
+                    .primaryButton()
+                    .disabled(model.syncing || model.envSetup != nil)
+                }
+            }
+        }
+        .task(id: app.swePath) { await model.loadPinsIfNeeded(swe: app.swe) }
+    }
+
+    private var ghDetail: String {
+        let model = app.github
+        guard let env = model.env else {
+            return model.probeError ?? "Not checked yet."
+        }
+        return switch env.status {
+        case .ok: env.login.map { "Signed in as \($0)." } ?? "Signed in."
+        case .unavailable: "Not installed."
+        case .authRequired: "Not signed in."
+        case .upstreamError: env.error ?? "The gh probe failed."
+        }
+    }
+
+    private var ghWarning: String? {
+        switch app.github.env?.status {
+        case .unavailable: "Download gh cli: brew install gh"
+        case .authRequired: "Run gh auth login"
+        default: nil
+        }
+    }
+
+    private var catalogDetail: String {
+        guard let catalog = app.github.catalog else {
+            return "Not synced yet — the catalog is the repo list the Add-repository search reads."
+        }
+        let ago = catalog.syncedAt?.date
+            .map { " · synced \(UsageFormat.ago($0, now: .now))" } ?? ""
+        return "\(catalog.repos) repos\(ago) — the Add-repository search reads this list."
     }
 
     /// The field writes only on Return, focus loss or the popover closing;
