@@ -37,6 +37,7 @@ SEARCH_SUBDIR = "search"
 SEARCH_INDEX_BASENAME = "search.sqlite"
 GITHUB_SUBDIR = "github"
 GITHUB_CATALOG_BASENAME = "catalog.sqlite"
+REMOTE_SUBDIR = "remote"
 CACHE_SUBDIR = "cache"
 MCP_SUBDIR = "mcp"
 MCP_SERVERS_SUBDIR = "servers"
@@ -104,6 +105,19 @@ def github_catalog_for(home: Path | None = None) -> Path:
 def github_mirrors_for(home: Path | None = None) -> Path:
     """The bare clones `swe gh pr worktree` fetches PR heads into."""
     return data_dir_for(home) / GITHUB_SUBDIR / "mirrors"
+
+
+def remote_dir_for(home: Path | None = None) -> Path:
+    """``~/.quiver/data/remote`` — the remote-control hub's state.
+
+    Holds ``devices.json`` (paired phone credentials, mode 600),
+    ``machine.json`` (this machine's stable remote id), ``pair_tokens.json``
+    (one-time pairing hand-offs), ``cursors/`` (per-session transcript read
+    offsets), ``journal/`` (per-session event logs) and ``inbox/`` (staged
+    phone uploads). Regenerable except devices.json, which is why the whole
+    tree stays out of the hub repo's git.
+    """
+    return data_dir_for(home) / REMOTE_SUBDIR
 
 
 def worktrees_dir_for(home: Path | None = None) -> Path:
@@ -261,6 +275,10 @@ data/search/
 # its own .git the hub should never see.
 data/github/
 worktrees/
+
+# Remote-control state: paired-device credentials, event journals and
+# staged phone uploads. Personal, and journals rebuild from transcripts.
+data/remote/
 
 # Credential values: provider API keys in secrets/providers/ and the values
 # behind mcp.json's ${NAME} references in secrets/mcp/. Keeping them out is

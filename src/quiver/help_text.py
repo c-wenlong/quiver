@@ -630,6 +630,27 @@ to use their own login state and environment."""
   stores tokens. The few writes (merge, rerun, inbox read) are explicit
   commands, never side effects of a read."""
     ),
+    "remote": (
+        "Watch and steer sessions from a phone",
+        f"""\
+  {c('cyan', 'swe remote serve [--host=H] [--port=N]')}   Run the hub: session catalog,
+                                            transcript tailers, REST + SSE for
+                                            the phone app. Binds this machine's
+                                            Tailscale IP by default.
+  {c('cyan', 'swe remote pair [--name=N]')}             Mint a one-time pairing token;
+                                            prints the URL to open on the phone
+                                            (and a QR when qrencode is installed).
+  {c('cyan', 'swe remote status [--host=H]')}           Probe the hub, list machines
+                                            and paired devices.
+  {c('cyan', 'swe remote devices [--revoke=<id>]')}     List or revoke paired devices.
+
+  The phone only ever talks to the hub, over Tailscale. Sessions list as
+  {c('bold', 'observed')} (a human terminal owns them: read-only) until they run
+  under quiver's supervisor, which marks them {c('bold', 'attached')} and writable.
+
+  State lives under {c('dim', '~/.quiver/data/remote/')}: device credentials in
+  devices.json (0600), per-session event journals and transcript cursors."""
+    ),
     "version": (
         "Print the swe version",
         f"""\
@@ -666,6 +687,9 @@ COMMAND_CATEGORIES = [
         ("session", None),
         ("report",  None),
         ("models",  None),
+    ]),
+    ("Remote", [
+        ("remote",  None),
     ]),
     ("Reference", [
         ("find",    None),

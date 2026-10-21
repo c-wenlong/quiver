@@ -51,6 +51,31 @@ and the fixture that pins the shape. Fixtures live under
 | `swe gh branches [--repo=R] [--limit=N] --json` | `GhResults` — per-repo `branches: [GhBranch]` plus `default_branch` | |
 | `swe gh inbox [--all] [--limit=N] --json` | `{"github": GhEnv, "status", "notifications": [GhNotification]}` — `gh api notifications`, not per-repo; `--all` adds `all=true` so read rows come back too (default is unread-only) | |
 
+## Remote control (`swe remote serve`)
+
+A separate channel from the `--json` envelope: the hub speaks REST + SSE
+to phone clients over Tailscale, auth'd by a paired device credential
+(`Authorization: Bearer`). Events are `{"v": 1, "type", "session",
+"machine", "seq", "ts", "data"}`; `seq` is per-session and `?last=seq`
+replays the journal.
+
+| Route | Returns |
+|---|---|
+| `GET /v1/status` | `{ok, v, version, machine, uptime_s}` (unauthenticated) |
+| `POST /v1/pair` | `{device_id, credential, name}` for a live pair token |
+| `GET /v1/sessions` | `{sessions: [SessionRow + key, machine_id, ownership, attachable], machines, server_time}` — the SessionRow fields are identical to `swe session --json` |
+| `GET /v1/sessions/{key}/events` | SSE of `message.appended`, `session.status`, `notify`, `compaction`; `?last=seq` replays |
+| `GET /v1/sessions/{key}/messages` | `{messages: [events], next_before, has_more}` journal backfill |
+| `GET /v1/events` | global SSE (all sessions + `machine.*`) |
+| `GET /v1/inbox` | `{items}`: sessions in `followup`/`error`/`interrupted` |
+| `GET /v1/machines` | `{machines}` |
+
+`message.appended.data` is a RemoteMessage: `{kind: user|assistant|
+thinking|tool_use|tool_result|compaction|system|approval|error, text,
+ts, tool: {name, call_id, args_summary, args_full}?, result_ref?}`.
+Writes (`POST /v1/sessions/{key}/message|approval|control`, `POST
+/v1/sessions`) answer `409 not_attached` while a session is `observed`.
+
 ## Shape notes
 
 - `Harness`: `state` is `active` | `starred` | `archived`; `rate_limit` is

@@ -29,6 +29,7 @@ from quiver.github import main as github_main
 from quiver.mcp import main as mcp_main
 from quiver.plugins import cmd_plugins
 from quiver.providers import cli as providers_cli
+from quiver.remote import cmd_remote
 from quiver.reports.commands import cmd_report
 from quiver.sessions.commands import cmd_models, cmd_session
 from quiver.setup.commands import cmd_harness, cmd_setup
@@ -177,6 +178,7 @@ COMMANDS = {
     "providers": cmd_providers,
     "pv": cmd_providers,
     "config": cmd_config,
+    "remote": cmd_remote,
     "report": cmd_report,
     "discover": lambda args: cmd_harness(["discover", *args]),
     "autocomplete": cmd_autocomplete,
