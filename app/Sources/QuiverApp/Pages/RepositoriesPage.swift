@@ -95,15 +95,20 @@ struct RepositoriesPage: View {
                     ErrorCard(message: error)
                 }
                 ScrollViewReader { proxy in
-                    ForEach(visibleRepos) { pin in
-                        repoSection(pin.name).id(pin.name)
-                    }
-                    // A drop here moves the dragged section to the end.
-                    Color.clear.frame(height: 12)
-                        .dropDestination(for: String.self) { items, _ in
-                            guard let dragged = items.first else { return false }
-                            return dropPin(dragged, onto: nil)
+                    ReorderableRows(visibleRepos) { id, before in
+                        var order = model.pins.map(\.name)
+                        order.removeAll { $0 == id }
+                        if let before, let idx = order.firstIndex(of: before) {
+                            order.insert(id, at: idx)
+                        } else {
+                            order.append(id)
                         }
+                        Task { await model.reorderPins(order, swe: app.swe) }
+                    } row: { pin in
+                        repoSection(pin.name)
+                            .id(pin.name)
+                            .padding(.bottom, 10)
+                    }
                     .onChange(of: model.scrollTarget) { _, target in
                         // Banner click-through: the filter is already
                         // cleared so the section exists — scroll to it.
@@ -167,18 +172,13 @@ struct RepositoriesPage: View {
 
     /// One pinned repo's section: a callout holding its disclosure
     /// header (grip + chevron + name, a link out) and, unless folded,
-    /// the active tab's surface. Dropping a dragged section on the
-    /// card puts it in this one's slot.
+    /// the active tab's surface. The section is one ReorderableRows
+    /// item — a vertical drag on it reorders the pin list.
     @ViewBuilder private func repoSection(_ repo: String) -> some View {
         Card {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 8) {
-                    // The grip is the drag source — the rest of the
-                    // card keeps its clicks and text selection.
-                    Image(systemName: "line.3.horizontal")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Theme.textMuted)
-                        .draggable(repo)
+                    GripDots()
                     Button {
                         if collapsed.contains(repo) {
                             collapsed.remove(repo)
@@ -226,25 +226,6 @@ struct RepositoriesPage: View {
                 }
             }
         }
-        .dropDestination(for: String.self) { items, _ in
-            guard let dragged = items.first else { return false }
-            return dropPin(dragged, onto: repo)
-        }
-    }
-
-    /// A dropped repo takes the target's slot; the drop target for the
-    /// list's end is a thin zone under the last section.
-    private func dropPin(_ dragged: String, onto target: String?) -> Bool {
-        guard dragged != target else { return false }
-        var order = model.pins.map(\.name)
-        order.removeAll { $0 == dragged }
-        if let target, let idx = order.firstIndex(of: target) {
-            order.insert(dragged, at: idx)
-        } else {
-            order.append(dragged)
-        }
-        Task { await model.reorderPins(order, swe: app.swe) }
-        return true
     }
 
     /// The surface's empty text: under a row filter an empty list means
