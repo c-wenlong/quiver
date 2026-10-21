@@ -820,6 +820,7 @@ class TestCommands(unittest.TestCase):
         """A failed orgs read shouldn't widen to public GitHub — the
         search degrades to just the user's own repos."""
         seen = {}
+        org_calls = []
         run = _gh_run({
             "user/orgs": _Proc(returncode=1, stderr="boom"),
             "search repos": _Proc(stdout="[]"),
@@ -829,12 +830,18 @@ class TestCommands(unittest.TestCase):
             joined = " ".join(str(a) for a in cmd)
             if "search repos" in joined:
                 seen["argv"] = joined
+            if "user/orgs" in joined:
+                org_calls.append(joined)
             return run(cmd, **kw)
 
         rc, out, _ = self._run_cli(["repo", "search", "q"], run=record)
         self.assertEqual(rc, 0)
         self.assertIn("--owner octocat", seen["argv"])
         self.assertNotIn("org-one", seen["argv"])
+        # ...and the login-only fallback is not cached: a later search
+        # retries the orgs read rather than hiding org repos for the TTL.
+        self._run_cli(["repo", "search", "q2"], run=record)
+        self.assertEqual(len(org_calls), 2)
 
     def test_repo_search_owner_scope_is_cached(self):
         """Each `swe` run is a new process — the owner scope persists

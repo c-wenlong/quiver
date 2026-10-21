@@ -830,7 +830,9 @@ def _search_owners(env: gh.GhEnv) -> list[str]:
             name = line.strip()
             if name and name not in owners:
                 owners.append(name)
-    _cache_owners(env.login, owners)
+        # Only a successful orgs read may cache — a transient failure
+        # would otherwise hide org repos until the TTL ran out.
+        _cache_owners(env.login, owners)
     return owners
 
 
