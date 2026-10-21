@@ -14,15 +14,23 @@ public struct LedgerRoots: Sendable, Equatable {
     public var devinDatabases: [URL]
     /// Pi homes; session logs are under `<home>/agent/sessions`.
     public var piHomes: [URL]
-    /// Droid homes (`~/.factory`); session totals are under `<home>/sessions`.
+    /// Droid homes (`~/.factory`); session totals are under `<home>/sessions`,
+    /// and the search index also reads transcripts under `<home>/projects`.
     public var droidHomes: [URL]
     /// Cline homes; sessions are under `<home>/data/sessions`.
     public var clineHomes: [URL]
+    /// Cursor projects roots (`~/.cursor/projects`); chat transcripts sit
+    /// under `<root>/<workspace>/agent-transcripts/<id>/<id>.jsonl`.
+    public var cursorProjects: [URL]
+    /// Cline sessions roots (`~/.cline/data/sessions`); each session dir
+    /// pairs `<id>.json` with a `<id>.messages.json` sibling.
+    public var clineSessions: [URL]
 
     public init(
         claudeHomes: [URL] = [], codexHomes: [URL] = [],
         openCodeDatabases: [URL] = [], devinDatabases: [URL] = [],
-        piHomes: [URL] = [], droidHomes: [URL] = [], clineHomes: [URL] = []
+        piHomes: [URL] = [], droidHomes: [URL] = [], clineHomes: [URL] = [],
+        cursorProjects: [URL] = [], clineSessions: [URL] = []
     ) {
         self.claudeHomes = claudeHomes
         self.codexHomes = codexHomes
@@ -31,6 +39,8 @@ public struct LedgerRoots: Sendable, Equatable {
         self.piHomes = piHomes
         self.droidHomes = droidHomes
         self.clineHomes = clineHomes
+        self.cursorProjects = cursorProjects
+        self.clineSessions = clineSessions
     }
 
     /// The default locations under one user home, plus any profile homes.
@@ -45,7 +55,9 @@ public struct LedgerRoots: Sendable, Equatable {
             devinDatabases: [home.appendingPathComponent(".local/share/devin/cli/sessions.db")],
             piHomes: [home.appendingPathComponent(".pi")],
             droidHomes: [home.appendingPathComponent(".factory")],
-            clineHomes: [home.appendingPathComponent(".cline")])
+            clineHomes: [home.appendingPathComponent(".cline")],
+            cursorProjects: [home.appendingPathComponent(".cursor/projects")],
+            clineSessions: [home.appendingPathComponent(".cline/data/sessions")])
     }
 }
 
@@ -352,6 +364,58 @@ public actor Ledger {
             }
         }
         if let indexer {
+            // Index-pure transcript sources: `SearchTranscriptSource` rows
+            // with a decoder whose files feed no ledger records (cursor's
+            // usage is an API feed; droid and cline ride `scanSessionFile`
+            // above for totals only). `LedgerRoots` supplies the roots, the
+            // table row the file shape. Rows whose harness is nil — or that
+            // `indexRoots` does not map, like claude/codex/pi/devin, which
+            // the passes above already enumerate — are skipped here.
+            let indexRoots: [SearchDecoder.Harness: [URL]] = [
+                .cursor: roots.cursorProjects,
+                .droid: roots.droidHomes.flatMap {
+                    [$0.appendingPathComponent("sessions"),
+                     $0.appendingPathComponent("projects")]
+                },
+                .cline: roots.clineSessions,
+            ]
+            for source in SearchTranscriptSource.table() where source.harness != nil {
+                guard let harness = source.harness,
+                      let sourceRoots = indexRoots[harness] else { continue }
+                for root in sourceRoots {
+                    // Cursor's chat id → meta.json index, one per scan per
+                    // chats root: the `chats` tree is the `projects` root's
+                    // sibling (Orca's `cursorChatsRootFromTranscriptPath`,
+                    // resolved on the configured root rather than per file).
+                    let cursorMeta = harness == .cursor
+                        ? Self.cursorChatMetaIndex(under: root
+                            .deletingLastPathComponent().appendingPathComponent("chats"))
+                        : [:]
+                    for file in Self.capped(
+                        Self.transcriptFiles(under: root, source: source),
+                        recentLimit: recentLimit) {
+                        if Task.isCancelled { throw CancellationError() }
+                        switch harness {
+                        case .cline:
+                            indexClineFile(file, indexer: indexer, report: &report)
+                        case .cursor:
+                            indexCursorFile(file, metaIndex: cursorMeta,
+                                            indexer: indexer, report: &report)
+                        default:
+                            if source.isJSONL {
+                                indexJSONLFile(file, harness: harness,
+                                               indexer: indexer, report: &report)
+                            } else {
+                                indexWholeFile(file, harness: harness,
+                                               indexer: indexer, report: &report)
+                            }
+                        }
+                        await Task.yield()
+                    }
+                }
+            }
+        }
+        if let indexer {
             // A failed drain must not fail the scan: whatever is left
             // orphaned is found by the next pass's drain.
             do { try indexer.finishScan() } catch {
@@ -390,6 +454,177 @@ public actor Ledger {
             indexer.failFile(path: path, mtimeMs: stat.mtimeMs)
             report.notes.append("Index failed \(path): \(error.localizedDescription)")
         }
+    }
+
+    /// One index-pure JSONL transcript: `JSONLReader` streams its lines into
+    /// the decoder — never one `Data` blob the way `indexWholeFile` feeds a
+    /// document, since multi-line JSONL is not one JSON value. No ledger
+    /// cursor exists for these files, so `readNeed` never answers `.append`
+    /// and every owed read starts at byte zero; the committed offset stops
+    /// short of a half-written tail line, which the next pass then re-reads.
+    /// - Parameter extraMtimeMs: a watched sibling's stamp blended into the
+    ///   stat — Orca's `contentDependencyPath` — so a sidecar-only rewrite
+    ///   still re-reads the file it describes.
+    /// - Parameter fieldsOverlay: evaluated only when a read is owed; the
+    ///   returned fields are gap-filled into the file's commit transaction.
+    /// - Returns: whether the index committed, so callers can chain a
+    ///   sidecar enrichment onto a file that actually landed.
+    @discardableResult
+    private func indexJSONLFile(
+        _ url: URL, harness: SearchDecoder.Harness, indexer: SearchIndexer,
+        report: inout ScanReport, extraMtimeMs: Double? = nil,
+        fieldsOverlay: (() -> SearchSessionFields?)? = nil
+    ) -> Bool {
+        let path = url.resolvingSymlinksInPath().path
+        guard let info = FileInfo(path: path) else { return false }
+        let stat = SearchFileStat(
+            ino: Int64(info.inode),
+            mtimeMs: max(info.modified * 1000, extraMtimeMs ?? 0),
+            sizeBytes: Int64(info.size))
+        switch indexer.readNeed(path: path, stat: stat, ledgerOffset: nil) {
+        case .current, .skip:
+            return false
+        case .append, .whole:
+            break
+        }
+        do {
+            indexer.beginFile(path: path, harness: harness)
+            if let overlay = fieldsOverlay?() {
+                indexer.setFieldOverlay(overlay)
+            }
+            let result = try reader.read(URL(fileURLWithPath: path), from: 0) { line in
+                indexer.consume(line: line)
+            }
+            report.skippedLines += result.skippedLines
+            if try indexer.finishFile(path: path, stat: stat, byteOffset: Int64(result.endOffset)) {
+                report.filesIndexed += 1
+                return true
+            }
+            return false
+        } catch {
+            indexer.failFile(path: path, mtimeMs: stat.mtimeMs)
+            report.notes.append("Index failed \(path): \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    /// Cursor keeps transcript and metadata in two trees:
+    /// `<cursor>/projects/<slug>/agent-transcripts/<id>/<id>.jsonl` holds the
+    /// messages while `<cursor>/chats/<md5 of cwd>/<id>/meta.json` holds the
+    /// title, cwd and timestamps the transcript never writes (Orca's
+    /// `session-scanner-cursor-chat-meta.ts`). `metaIndex` joins them — the
+    /// md5 hashes the very cwd being looked up, so the chat id can only
+    /// resolve through the per-scan index the caller built.
+    private func indexCursorFile(
+        _ url: URL, metaIndex: [String: URL], indexer: SearchIndexer, report: inout ScanReport
+    ) {
+        let path = url.resolvingSymlinksInPath().path
+        let metaURL = Self.cursorChatId(forTranscript: path).flatMap { metaIndex[$0] }
+        indexJSONLFile(
+            url, harness: .cursor, indexer: indexer, report: &report,
+            extraMtimeMs: metaURL.flatMap { FileInfo(path: $0.path)?.modified }.map { $0 * 1000 },
+            // The overlay is read only when a read is owed, and merges into
+            // the file's own commit: a meta write that fails takes the file
+            // down with it instead of stranding behind a `current` row.
+            fieldsOverlay: metaURL.map { metaURL in { Self.cursorMetaFields(metaURL) } })
+    }
+
+    /// The fields a Cursor transcript never records, from the chat's
+    /// `meta.json` — title, cwd and timestamps. Gap-fill happens in
+    /// `finishFile`: the transcript's own records keep precedence (Orca's
+    /// `mergeCursorChatMeta`).
+    static func cursorMetaFields(_ metaURL: URL) -> SearchSessionFields? {
+        guard let meta = try? JSONSerialization.jsonObject(with: Data(contentsOf: metaURL))
+                as? [String: Any]
+        else { return nil }
+        return SearchSessionFields(
+            agent: "cursor", sessionID: "", filePath: "",
+            title: JSONValue.string(meta["title"])
+                .flatMap { SearchText.titleCandidate($0, limit: 96) } ?? "",
+            cwd: JSONValue.string(meta["cwd"]), cwdKey: nil,
+            createdAt: SearchStamp.iso(meta["createdAtMs"]),
+            updatedAt: SearchStamp.iso(meta["updatedAtMs"]),
+            messageCount: 0)
+    }
+
+    /// One Cline session = the `<id>.json` manifest plus its
+    /// `<id>.messages.json` sibling, decoded under one `beginFile` in Orca's
+    /// order — manifest first so the messages document's first user turn can
+    /// still outrank the manifest's `prompt` for the title. The sibling's
+    /// mtime blends into the stat (Orca's `contentDependencyPath`), so a
+    /// messages-only rewrite re-reads the pair; the byte cursor tracks the
+    /// manifest alone, the file this row claims to have read. A missing or
+    /// malformed sibling still yields a metadata-only session, as Orca's
+    /// does.
+    private func indexClineFile(
+        _ url: URL, indexer: SearchIndexer, report: inout ScanReport
+    ) {
+        let path = url.resolvingSymlinksInPath().path
+        guard let info = FileInfo(path: path) else { return }
+        let messagesURL = URL(fileURLWithPath: path)
+            .deletingPathExtension().appendingPathExtension("messages.json")
+        let stat = SearchFileStat(
+            ino: Int64(info.inode),
+            mtimeMs: max(info.modified, FileInfo(path: messagesURL.path)?.modified ?? 0) * 1000,
+            sizeBytes: Int64(info.size))
+        switch indexer.readNeed(path: path, stat: stat, ledgerOffset: nil) {
+        case .current, .skip:
+            return
+        case .append, .whole:
+            break
+        }
+        do {
+            indexer.beginFile(path: path, harness: .cline)
+            // Whole JSON documents, one `consume` each — the same unit
+            // `indexWholeFile` feeds. A document that fails to parse simply
+            // contributes nothing; the cursor still advances.
+            if let manifest = try? JSONSerialization.jsonObject(
+                with: Data(contentsOf: URL(fileURLWithPath: path))) as? [String: Any] {
+                indexer.consume(object: manifest)
+            }
+            if let messages = try? JSONSerialization.jsonObject(
+                with: Data(contentsOf: messagesURL)) as? [String: Any] {
+                indexer.consume(object: messages)
+            }
+            if try indexer.finishFile(path: path, stat: stat, byteOffset: Int64(info.size)) {
+                report.filesIndexed += 1
+            }
+        } catch {
+            indexer.failFile(path: path, mtimeMs: stat.mtimeMs)
+            report.notes.append("Index failed \(path): \(error.localizedDescription)")
+        }
+    }
+
+    /// chatId → `meta.json` under one Cursor chats root, indexed once per
+    /// scan: `<chats>/<md5-of-cwd>/<chatId>/meta.json`, first hit wins
+    /// (Orca's `buildCursorChatMetaIndex`).
+    static func cursorChatMetaIndex(under chatsRoot: URL) -> [String: URL] {
+        var index: [String: URL] = [:]
+        guard let workspaces = try? FileManager.default.contentsOfDirectory(
+            at: chatsRoot, includingPropertiesForKeys: [.isDirectoryKey])
+        else { return index }
+        for workspace in workspaces.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            guard (try? workspace.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true,
+                  let chats = try? FileManager.default.contentsOfDirectory(
+                      at: workspace, includingPropertiesForKeys: [.isDirectoryKey])
+            else { continue }
+            for chat in chats where index[chat.lastPathComponent] == nil {
+                let meta = chat.appendingPathComponent("meta.json")
+                if FileManager.default.fileExists(atPath: meta.path) {
+                    index[chat.lastPathComponent] = meta
+                }
+            }
+        }
+        return index
+    }
+
+    /// The chat id of a Cursor transcript: its parent directory's name when
+    /// the grandparent is `agent-transcripts` (Orca's
+    /// `cursorChatIdFromTranscriptPath`).
+    static func cursorChatId(forTranscript path: String) -> String? {
+        let chatDir = URL(fileURLWithPath: path).deletingLastPathComponent()
+        return chatDir.deletingLastPathComponent().lastPathComponent == "agent-transcripts"
+            ? chatDir.lastPathComponent : nil
     }
 
     /// OpenCode's sessions live inside `opencode.db`: each is indexed under
@@ -716,11 +951,56 @@ public actor Ledger {
         for case let url as URL in enumerator where match(url) {
             files.append(url)
         }
-        // Newest first for `recentLimit`'s prefix; on equal mtimes the old
-        // path-ascending order survives, keeping dedup's keep-first
-        // attribution stable. A file `FileInfo` cannot stat sorts last.
-        let stamped: [(url: URL, mtime: TimeInterval)] = files.map {
-            ($0, FileInfo(path: $0.path)?.modified ?? 0)
+        return newestFirst(files)
+    }
+
+    /// Files a `SearchTranscriptSource` row discovers under one root —
+    /// Orca's `discoverSourceFiles`: the extension list, the file predicate
+    /// and per-directory pruning all applied, newest first for
+    /// `recentLimit`'s prefix.
+    static func transcriptFiles(under root: URL, source: SearchTranscriptSource) -> [URL] {
+        // The enumerator yields realpath-resolved URLs (`/var` →
+        // `/private/var` on macOS), so depth is measured against the same
+        // resolution or a symlinked root counts off by the link's span.
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        let resolvedRoot = realpath(root.path, &buffer) != nil
+            ? URL(fileURLWithPath: String(cString: buffer)) : root
+        guard let enumerator = FileManager.default.enumerator(
+            at: resolvedRoot, includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
+            options: [.skipsHiddenFiles])
+        else { return [] }
+        let rootComponents = resolvedRoot.pathComponents.count
+        var files: [URL] = []
+        for case let url as URL in enumerator {
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey])
+            // Depth 0 is a direct child of the root — Orca's indexing.
+            if values?.isDirectory == true,
+               let prune = source.directoryPredicate,
+               !prune(url.lastPathComponent, url.pathComponents.count - rootComponents - 1) {
+                enumerator.skipDescendants()
+            }
+            guard values?.isRegularFile == true,
+                  source.extensions.contains(".\(url.pathExtension.lowercased())"),
+                  source.filePredicate?(url) ?? true
+            else { continue }
+            files.append(url)
+        }
+        return newestFirst(files, sidecar: source.sidecarPath)
+    }
+
+    /// `files`/`transcriptFiles` ordering — newest first for `recentLimit`'s
+    /// prefix; on equal mtimes the old path-ascending order survives,
+    /// keeping dedup's keep-first attribution stable. A file `FileInfo`
+    /// cannot stat sorts last. `sidecar` blends a sibling's mtime into the
+    /// stamp — a Cline session whose `.messages.json` moved is newer than
+    /// its untouched manifest reports.
+    private static func newestFirst(
+        _ urls: [URL], sidecar: (@Sendable (URL) -> URL?)? = nil
+    ) -> [URL] {
+        let stamped: [(url: URL, mtime: TimeInterval)] = urls.map {
+            let base = FileInfo(path: $0.path)?.modified ?? 0
+            let extra = sidecar?($0).flatMap { FileInfo(path: $0.path)?.modified } ?? 0
+            return ($0, max(base, extra))
         }
         return stamped
             .sorted { $0.mtime != $1.mtime ? $0.mtime > $1.mtime : $0.url.path < $1.url.path }
