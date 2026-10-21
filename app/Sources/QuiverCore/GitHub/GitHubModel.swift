@@ -120,6 +120,14 @@ public final class GitHubModel {
     public private(set) var searching = false
     public private(set) var searchError: String?
 
+    /// The synced repo catalog `repo search` reads — nil until the
+    /// first `swe gh sync` has run. The Settings card owns resyncs.
+    public private(set) var catalog: GhCatalog?
+    public private(set) var syncing = false
+    /// The last sync's failure, or which owners it skipped — shown as a
+    /// warning on the Settings card, cleared on a clean resync.
+    public private(set) var syncError: String?
+
     /// A mutation in flight — add or remove — keyed by repo name so two
     /// taps on the same repo can't run concurrently.
     public private(set) var mutating: Set<String> = []
@@ -167,6 +175,16 @@ public final class GitHubModel {
         restore()
     }
 
+    /// The blocking env state the pages' setup card covers — gh missing
+    /// or signed out. nil while probing, ok, or upstream-error (the
+    /// probe failed, not the login — pages stay up).
+    public var envSetup: GhEnv.Status? {
+        switch env?.status {
+        case .unavailable, .authRequired: env?.status
+        default: nil
+        }
+    }
+
     /// The env is unusable when the probe says so — surface reads can
     /// still succeed after a probe `upstream-error` (the probe failed,
     /// not the login), so only the two certain states gate.
@@ -188,6 +206,7 @@ public final class GitHubModel {
         do {
             let overview = try await swe.ghOverview()
             env = overview.github
+            catalog = overview.catalog
             probed = true
             probeError = nil
             pinsFetchedAt = now()
@@ -398,6 +417,24 @@ public final class GitHubModel {
             snapshotInboxLoaded = true
         }
         scheduleSave()
+    }
+
+    /// `swe gh sync` — refresh the repo catalog the search reads. The
+    /// Settings card owns this; nothing else writes the store.
+    public func syncGitHub(swe: SweClient) async {
+        guard !syncing else { return }
+        syncing = true
+        defer { syncing = false }
+        do {
+            let reply = try await swe.ghSync()
+            catalog = GhCatalog(repos: reply.repos, syncedAt: reply.syncedAt,
+                                owners: reply.owners)
+            syncError = reply.failed.isEmpty ? nil
+                : "Skipped \(reply.failed.map(\.owner).joined(separator: ", ")) — their old repos stayed."
+        } catch is CancellationError {
+        } catch {
+            syncError = error.localizedDescription
+        }
     }
 
     /// Search repos to pin. A new query supersedes the one in flight.

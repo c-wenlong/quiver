@@ -35,6 +35,8 @@ CONFIG_SUBDIR = "config"
 DATA_SUBDIR = "data"
 SEARCH_SUBDIR = "search"
 SEARCH_INDEX_BASENAME = "search.sqlite"
+GITHUB_SUBDIR = "github"
+GITHUB_CATALOG_BASENAME = "catalog.sqlite"
 CACHE_SUBDIR = "cache"
 MCP_SUBDIR = "mcp"
 MCP_SERVERS_SUBDIR = "servers"
@@ -92,6 +94,11 @@ def data_dir_for(home: Path | None = None) -> Path:
 def search_index_for(home: Path | None = None) -> Path:
     """The app's FTS5 transcript-search index. The Python side only reads it."""
     return data_dir_for(home) / SEARCH_SUBDIR / SEARCH_INDEX_BASENAME
+
+
+def github_catalog_for(home: Path | None = None) -> Path:
+    """The synced repo catalog `swe gh sync` fills and `repo search` reads."""
+    return data_dir_for(home) / GITHUB_SUBDIR / GITHUB_CATALOG_BASENAME
 
 
 def mcp_dir_for(home: Path | None = None) -> Path:
@@ -213,6 +220,8 @@ RATE_LIMITS_CACHE_FILE = CACHE_DIR / "rate_limits_cache.json"
 SESSION_COUNTS_CACHE_FILE = CACHE_DIR / "session_counts.json"
 # `swe gh repo search` owner scope (login + orgs), short TTL per login.
 GITHUB_OWNERS_CACHE = CACHE_DIR / "github_owners.json"
+# The synced catalog behind `swe gh sync`; only a resync rewrites it.
+GITHUB_CATALOG = github_catalog_for()
 
 # Pre-0.2.7 root. Only referenced by the migration path.
 LEGACY_CONFIG_DIR = Path.home() / ".config" / "swe"

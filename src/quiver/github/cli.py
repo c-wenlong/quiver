@@ -17,7 +17,7 @@ from datetime import datetime
 from quiver import paths
 from quiver.console import c, sanitize, truncate
 from quiver.flags import expand_value_flags
-from quiver.github import gh, repos
+from quiver.github import catalog, gh, repos
 from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.table import Table
 
@@ -736,12 +736,26 @@ def _cmd_repo(args: list[str], json_view: bool) -> int:
 
     if sub == "search":
         query = " ".join(pos)
+        limit = _limit(opts, 15)
+        # The synced catalog answers locally first — a query it misses
+        # falls through to the live scoped search so a repo created
+        # since the last sync is still findable.
+        if not opts["all"] and catalog.status() is not None:
+            found = catalog.search(query, limit)
+            if found:
+                if json_view:
+                    return emit({"query": query, "results": found,
+                                 "source": "catalog"})
+                _print_repo_hits(
+                    found, "repos — sync in Settings refreshes the "
+                           "catalog, or search all of GitHub with --all")
+                return 0
         env = gh.probe_env()
         if env.status != "ok":
             print(c("red", f"  {_env_error(env)}"), file=err)
             return 1
         args = ["search", "repos", query,
-                "--limit", str(_limit(opts, 15)),
+                "--limit", str(limit),
                 "--json", "fullName,description,stargazersCount,updatedAt"]
         owners = [] if opts["all"] else _search_owners(env)
         for owner in owners:
@@ -757,18 +771,12 @@ def _cmd_repo(args: list[str], json_view: bool) -> int:
              "url": f"https://github.com/{r.get('fullName')}"}
             for r in (result.data or []) if isinstance(r, dict)]
         if json_view:
-            return emit({"query": query, "results": found})
-        print()
-        for r in found:
-            stars = f"{r['stars']:,}" if isinstance(r["stars"], int) else "-"
-            name = str(r["name"])
-            print(f"  {c('cyan', name.ljust(40)[:40])} "
-                  f"{c('dim', stars.rjust(8))}  "
-                  f"{sanitize(truncate(r['description'] or '', 60))}")
+            return emit({"query": query, "results": found,
+                         "source": "github"})
         hint = ("repos — add one with `swe gh repo add <name>`, or "
                 "search all of GitHub with --all" if owners
                 else "repos — add one with `swe gh repo add <name>`")
-        print(c("dim", f"\n  {len(found)} {hint}\n"))
+        _print_repo_hits(found, hint)
         return 0
 
     if sub != "list":
@@ -789,6 +797,80 @@ def _cmd_repo(args: list[str], json_view: bool) -> int:
               f"{c('dim', _rel(r.get('added_at')))}")
     print()
     return 0
+
+
+def _print_repo_hits(found: list[dict], hint: str) -> None:
+    print()
+    for r in found:
+        stars = f"{r['stars']:,}" if isinstance(r["stars"], int) else "-"
+        name = str(r["name"])
+        print(f"  {c('cyan', name.ljust(40)[:40])} "
+              f"{c('dim', stars.rjust(8))}  "
+              f"{sanitize(truncate(r['description'] or '', 60))}")
+    print(c("dim", f"\n  {len(found)} {hint}\n"))
+
+
+# -------------------------------------------------------------- gh sync
+
+# `gh repo list` rows per owner; past this an org's tail is dropped, which
+# beats a second paginated call for catalogs this size.
+_SYNC_REPO_LIMIT = 1000
+_SYNC_FIELDS = ("nameWithOwner,description,stargazerCount,"
+                "updatedAt,isPrivate")
+
+
+def _cmd_sync(rest: list[str], json_view: bool) -> int:
+    err = error_stream(json_view)
+    if rest:
+        print(c("red", "Usage: swe gh sync [--json]"), file=err)
+        return 1
+    env = gh.probe_env()
+    if env.status != "ok":
+        print(c("red", f"  {_env_error(env)}"), file=err)
+        return 1
+    owners = _search_owners(env)
+    if not owners:
+        print(c("red", "  Could not resolve the account or its orgs."),
+              file=err)
+        return 1
+
+    def fetch(owner: str) -> dict:
+        result = gh.run_json(
+            ["repo", "list", owner, "--limit", str(_SYNC_REPO_LIMIT),
+             "--json", _SYNC_FIELDS], timeout=60)
+        if result.status != "ok" or not isinstance(result.data, list):
+            return {"owner": owner, "status": result.status,
+                    "error": result.error, "rows": []}
+        return {"owner": owner, "status": "ok", "rows": [
+            {"full_name": r["nameWithOwner"], "owner": owner,
+             "description": r.get("description"),
+             "stars": r.get("stargazerCount"),
+             "updated_at": r.get("updatedAt"),
+             "is_private": bool(r.get("isPrivate"))}
+            for r in result.data
+            if isinstance(r, dict) and r.get("nameWithOwner")]}
+
+    entries = _fan(owners, fetch)
+    ok = [e for e in entries if e["status"] == "ok"]
+    failed = [{"owner": e["owner"], "error": e["error"]}
+              for e in entries if e["status"] != "ok"]
+    summary = catalog.write(
+        [r for e in ok for r in e["rows"]], [e["owner"] for e in ok])
+    if json_view:
+        return emit({"repos": summary.get("repos", 0),
+                     "synced_at": summary.get("synced_at"),
+                     "owners": [e["owner"] for e in ok],
+                     "failed": failed})
+    print()
+    for e in entries:
+        fine = e["status"] == "ok"
+        detail = (f"{len(e['rows'])} repos" if fine
+                  else e["error"] or e["status"])
+        dot = c("green" if fine else "red", "●")
+        print(f"  {dot} {c('cyan', e['owner'])}  {c('dim', detail)}")
+    print(c("dim", f"\n  {summary.get('repos', 0)} repos in the catalog"
+                   " — `swe gh repo search` reads it now.\n"))
+    return 0 if not failed else 1
 
 
 # ------------------------------------------------------------------ commands
@@ -1190,7 +1272,8 @@ def _print_overview(json_view: bool) -> int:
     env = gh.probe_env()
     pinned = repos.load_pinned()
     if json_view:
-        return emit({"github": _env_payload(env), "repos": pinned})
+        return emit({"github": _env_payload(env), "repos": pinned,
+                     "catalog": catalog.status()})
     print(f"\n{c('bold', 'GitHub')}\n")
     if env.status == "ok":
         print(f"  {c('green', '●')} gh"
@@ -1225,6 +1308,8 @@ def main(argv=None) -> int:
 
     sub, rest = args[0], args[1:]
 
+    if sub == "sync":
+        return _cmd_sync(rest, json_view)
     if sub == "repo":
         return _cmd_repo(rest, json_view)
     if sub == "board":

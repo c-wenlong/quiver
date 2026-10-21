@@ -16,6 +16,18 @@ import Testing
         #expect(overview.github.login == "c-wenlong")
         #expect(overview.repos.map(\.name) == ["c-wenlong/quiver"])
         #expect(overview.repos[0].addedAt == Date(timeIntervalSince1970: 1_792_528_202))
+        let catalog = try #require(overview.catalog)
+        #expect(catalog.repos == 128)
+        #expect(catalog.owners == ["c-wenlong", "cortexairobot"])
+        #expect(catalog.syncedAt?.date != nil)
+    }
+
+    @Test func syncDecodesSummaryAndFailures() async throws {
+        let reply = try await client("swe-gh-sync").ghSync()
+        #expect(reply.repos == 128)
+        #expect(reply.owners == ["c-wenlong", "cortexairobot"])
+        #expect(reply.syncedAt?.date != nil)
+        #expect(reply.failed.map(\.owner) == ["dead-org"])
     }
 
     @Test func pullRequestsDecodeFullRows() async throws {
@@ -769,5 +781,57 @@ import Testing
         // trailing closure fine here: not inside a guard condition
         _ = model.matches(["x"])
         #expect(calls.calls.count == filled)
+    }
+
+    /// `load` picks up the catalog the overview reports; `syncGitHub`
+    /// replaces it with the resync's totals and clears the warning.
+    @Test func syncFillsCatalogAndClearsWarning() async {
+        let swe = SweClient(runner: router([
+            "gh --json": "\(env),\"repos\":[],"
+                + "\"catalog\":{\"repos\":2,\"synced_at\":1700000000,\"owners\":[\"me\"]}",
+            "gh sync --json":
+                "\"repos\":5,\"synced_at\":1700000100,\"owners\":[\"me\",\"org\"],"
+                + "\"failed\":[]",
+        ]))
+        let model = GitHubModel()
+        await model.load(swe: swe)
+        #expect(model.catalog?.repos == 2)
+
+        await model.syncGitHub(swe: swe)
+        #expect(model.catalog?.repos == 5)
+        #expect(model.catalog?.owners == ["me", "org"])
+        #expect(model.syncError == nil)
+        #expect(!model.syncing)
+    }
+
+    /// Owners a resync couldn't list are a warning, not an error — the
+    /// skipped slice keeps its old rows.
+    @Test func syncSkippedOwnersSurfaceAsWarning() async {
+        let swe = SweClient(runner: router([
+            "gh sync --json":
+                "\"repos\":3,\"synced_at\":1700000100,\"owners\":[\"me\"],"
+                + "\"failed\":[{\"owner\":\"dead-org\",\"error\":\"HTTP 404\"}]",
+        ]))
+        let model = GitHubModel()
+        await model.syncGitHub(swe: swe)
+        #expect(model.catalog?.repos == 3)
+        #expect(model.syncError?.contains("dead-org") == true)
+    }
+
+    /// The setup card gates on the certain states only: unavailable and
+    /// auth-required show it; ok and a probe failure keep the pages up.
+    @Test func envSetupCoversOnlyCertainBlocks() async {
+        func load(_ status: String) async -> GitHubModel {
+            let swe = SweClient(runner: router([
+                "gh --json": "\"github\":{\"status\":\"\(status)\",\"login\":\"me\",\"error\":null},\"repos\":[]",
+            ]))
+            let model = GitHubModel()
+            await model.load(swe: swe)
+            return model
+        }
+        #expect(await load("unavailable").envSetup == .unavailable)
+        #expect(await load("auth-required").envSetup == .authRequired)
+        #expect(await load("ok").envSetup == nil)
+        #expect(await load("upstream-error").envSetup == nil)
     }
 }
