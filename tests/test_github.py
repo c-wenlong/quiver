@@ -1425,6 +1425,43 @@ class TestCommands(unittest.TestCase):
         rc, _, _ = self._run_cli(["pr", "view", "7", "--repo=o/r"], env=env)
         self.assertEqual(rc, 1)
 
+    def test_pr_view_env_blocked_emits_envelope(self):
+        env = gh.GhEnv(installed=True, authenticated=False)
+        rc, out, _ = self._run_cli(
+            ["pr", "view", "7", "--repo=o/r", "--json"], env=env)
+        self.assertEqual(rc, 1)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["github"]["status"], "auth-required")
+        self.assertIsNone(data["pr"])
+        self.assertIn("error", data)
+
+    def test_pr_view_pending_context_shows_running(self):
+        detail = json.loads(self._pr_detail_json())
+        detail["statusCheckRollup"] = [
+            {"__typename": "StatusContext", "context": "ci/build",
+             "state": "PENDING", "targetUrl": "https://x/3"},
+        ]
+        run = _gh_run({"pr view": _Proc(stdout=json.dumps(detail))})
+        rc, out, _ = self._run_cli(
+            ["pr", "view", "7", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        chk = json.loads(out)["data"]["pr"]["check_runs"][0]
+        self.assertEqual(chk["state"], "running")
+        self.assertEqual(chk["status"], "queued")
+        self.assertIsNone(chk["conclusion"])
+
+    def test_pr_view_pending_context_renders_glyph(self):
+        detail = json.loads(self._pr_detail_json())
+        detail["statusCheckRollup"] = [
+            {"__typename": "StatusContext", "context": "ci/build",
+             "state": "PENDING", "targetUrl": "https://x/3"},
+        ]
+        run = _gh_run({"pr view": _Proc(stdout=json.dumps(detail))})
+        rc, out, _ = self._run_cli(
+            ["pr", "view", "7", "--repo=o/r"], run=run)
+        self.assertEqual(rc, 0)
+        self.assertIn("◐", out)
+
     def test_pr_view_single_pin_resolves(self):
         repos.add_pinned("o/r", self.store)
         run = _gh_run({"pr view": _Proc(stdout=self._pr_detail_json())})
@@ -1518,6 +1555,16 @@ class TestCommands(unittest.TestCase):
         self.assertTrue(json.loads(out)["data"]["failed_only"])
         self.assertIn("--failed", seen[0])
 
+    def test_pr_merge_env_blocked_emits_envelope(self):
+        env = gh.GhEnv(installed=True, authenticated=False)
+        rc, out, _ = self._run_cli(
+            ["pr", "merge", "7", "--repo=o/r", "--json"], env=env)
+        self.assertEqual(rc, 1)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["github"]["status"], "auth-required")
+        self.assertFalse(data["merged"])
+        self.assertIn("error", data)
+
     def test_run_rerun_bad_id(self):
         rc, out, _ = self._run_cli(["run", "rerun", "abc", "--repo=o/r"])
         self.assertEqual(rc, 1)
@@ -1585,6 +1632,26 @@ class TestCommands(unittest.TestCase):
         rc, out, _ = self._run_cli(["inbox", "read"])
         self.assertEqual(rc, 1)
         self.assertIn("Usage", out)
+
+    def test_run_rerun_env_blocked_emits_envelope(self):
+        env = gh.GhEnv(installed=True, authenticated=False)
+        rc, out, _ = self._run_cli(
+            ["run", "rerun", "42", "--repo=o/r", "--json"], env=env)
+        self.assertEqual(rc, 1)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["github"]["status"], "auth-required")
+        self.assertFalse(data["rerun"])
+        self.assertIn("error", data)
+
+    def test_inbox_read_env_blocked_emits_envelope(self):
+        env = gh.GhEnv(installed=True, authenticated=False)
+        rc, out, _ = self._run_cli(
+            ["inbox", "read", "1", "--json"], env=env)
+        self.assertEqual(rc, 1)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["github"]["status"], "auth-required")
+        self.assertEqual(data["marked"], [])
+        self.assertIn("error", data)
 
 
 if __name__ == "__main__":

@@ -163,16 +163,29 @@ def _pr_row(pr: dict) -> dict:
 def _check_row(item: dict) -> dict:
     """One statusCheckRollup entry, normalized across the two shapes:
     CheckRun carries status/conclusion/detailsUrl + workflowName, while
-    a StatusContext carries state/targetUrl + context for the name."""
+    a StatusContext carries state/targetUrl + context for the name. The
+    ``state`` field folds the entry to rollup_checks' vocabulary so
+    pending contexts and odd conclusions still draw a warning sign."""
     workflow = item.get("workflowName")
     if not workflow and isinstance(item.get("workflow"), dict):
         workflow = item["workflow"].get("name")
+    is_context = (item.get("__typename") == "StatusContext"
+                  or ("state" in item and "status" not in item))
+    if is_context:
+        ctx = str(item.get("state") or "").lower()
+        status = "completed" if ctx in ("success", "failure", "error") \
+            else "queued"
+        conclusion = ctx if status == "completed" else None
+    else:
+        status = str(item.get("status") or "").lower() or "completed"
+        conclusion = str(item.get("conclusion") or "").lower() or None
+    state = rollup_checks([item])
     return {
         "name": item.get("name") or item.get("context") or "",
         "workflow": workflow or "",
-        "status": str(item.get("status") or "").lower() or "completed",
-        "conclusion": str(item.get("conclusion") or item.get("state")
-                          or "").lower() or None,
+        "status": status,
+        "conclusion": conclusion,
+        "state": "none" if state == "unknown" else state,
         "url": item.get("detailsUrl") or item.get("targetUrl") or "",
     }
 
@@ -578,14 +591,7 @@ def _render_pr_detail(pr: dict) -> None:
     if checks:
         print(f"\n  {c('dim', 'Checks')}")
         for chk in checks:
-            conclusion = chk.get("conclusion") or chk.get("status") or ""
-            ci_glyph, ci_color = _checks_glyph(
-                "failing" if conclusion in ("failure", "cancelled",
-                                            "timed_out", "error")
-                else "running" if chk.get("status") in
-                ("in_progress", "queued", "waiting", "pending")
-                else "passing" if conclusion == "success"
-                else "none")
+            ci_glyph, ci_color = _checks_glyph(chk.get("state") or "none")
             workflow = f"  {chk['workflow']}" if chk.get("workflow") else ""
             print(f"    {c(ci_color, ci_glyph)} "
                   f"{sanitize(chk['name'])}{c('dim', workflow)}")
@@ -1133,15 +1139,17 @@ def _parse_common(rest: list[str],
     return opts, pos
 
 
-def _targets(opts: dict, json_view: bool) -> list[str] | None:
-    """Resolve the repo list, or print why nothing can be queried."""
+def _targets(opts: dict,
+             json_view: bool) -> tuple[list[str] | None, str | None]:
+    """Resolve the repo list, or print why nothing can be queried.
+    The message comes back too so --json callers can emit it."""
     if opts["repo"] and repos.normalize_repo_input(opts["repo"]) is None:
         msg = f"Not a GitHub repo: {opts['repo']}  (want owner/name or a URL)"
         if json_view:
             print(msg, file=error_stream(True))
         else:
             print(c("red", f"\n  {msg}\n"))
-        return None
+        return None, msg
     names = repos.resolve(opts["repo"])
     if not names:
         msg = ("No repo to query: pass --repo=owner/name, run inside a "
@@ -1150,16 +1158,17 @@ def _targets(opts: dict, json_view: bool) -> list[str] | None:
             print(msg, file=error_stream(True))
         else:
             print(c("red", f"\n  {msg}\n"))
-        return None
-    return names
+        return None, msg
+    return names, None
 
 
-def _resolve_one(opts: dict, json_view: bool) -> str | None:
+def _resolve_one(opts: dict,
+                 json_view: bool) -> tuple[str | None, str | None]:
     """One repo for one-object commands (view/merge/rerun): --repo or
     the checkout wins; several pins is ambiguous rather than wrong."""
-    names = _targets(opts, json_view)
+    names, res_err = _targets(opts, json_view)
     if names is None:
-        return None
+        return None, res_err
     if len(names) > 1:
         msg = ("This command takes one repo — pass --repo=owner/name "
                f"(resolved {len(names)} pins).")
@@ -1167,8 +1176,8 @@ def _resolve_one(opts: dict, json_view: bool) -> str | None:
             print(msg, file=error_stream(True))
         else:
             print(c("red", f"\n  {msg}\n"))
-        return None
-    return names[0]
+        return None, msg
+    return names[0], None
 
 
 def _limit(opts: dict, default: int = 30) -> int:
@@ -1204,7 +1213,7 @@ def _collect_json(cmd: str, opts: dict, fetch):
     A successful fetch is itself the auth proof — paying `auth status`
     on every poll made a one-repo board cost ~1s of probe per surface.
     """
-    names = _targets(opts, True)
+    names, _res_err = _targets(opts, True)
     if names is None:
         return gh.probe_env(), None
     if opts["web"]:
@@ -1231,7 +1240,7 @@ def _collect(cmd: str, opts: dict, json_view: bool, fetch):
     if env.status != "ok":
         print(c("red", f"\n  {_env_error(env)}\n"))
         return env, None
-    names = _targets(opts, json_view)
+    names, _res_err = _targets(opts, json_view)
     if names is None:
         return env, None
     if opts["web"]:
@@ -1329,14 +1338,27 @@ def _cmd_pr(rest: list[str], json_view: bool) -> int:
     return _finish(env, results, opts, json_view, _render_pr_table)
 
 
+def _env_emit(env: gh.GhEnv) -> dict:
+    """Every one-object payload carries the probe result so the app can
+    tell a blocked env from a fetch failure without a second call."""
+    return {"github": _env_payload(env)}
+
+
 def _cmd_pr_view(ref: str, opts: dict, json_view: bool) -> int:
     err = error_stream(json_view)
     env = gh.probe_env()
     if env.status != "ok":
-        print(c("red", f"  {_env_error(env)}"), file=err)
+        msg = _env_error(env)
+        print(c("red", f"  {msg}"), file=err)
+        if json_view:
+            emit({**_env_emit(env), "repo": None, "status": env.status,
+                  "pr": None, "error": msg})
         return 1
-    repo = _resolve_one(opts, json_view)
+    repo, res_err = _resolve_one(opts, json_view)
     if repo is None:
+        if json_view:
+            emit({**_env_emit(env), "repo": None, "status": "error",
+                  "pr": None, "error": res_err})
         return 1
     result = gh.run_json(
         ["pr", "view", ref, "--repo", repo, "--json", _PR_DETAIL_FIELDS],
@@ -1345,12 +1367,13 @@ def _cmd_pr_view(ref: str, opts: dict, json_view: bool) -> int:
         msg = result.error or "gh returned an invalid pull request"
         print(c("red", f"  {msg}"), file=err)
         if json_view:
-            emit({"repo": repo, "status": result.status, "pr": None,
-                  "error": msg})
+            emit({**_env_emit(env), "repo": repo, "status": result.status,
+                  "pr": None, "error": msg})
         return 1
     detail = _pr_detail(result.data, repo)
     if json_view:
-        return emit({"repo": repo, "status": "ok", "pr": detail})
+        return emit({**_env_emit(env), "repo": repo, "status": "ok",
+                     "pr": detail})
     _render_pr_detail(detail)
     return 0
 
@@ -1368,10 +1391,19 @@ def _cmd_pr_merge(ref: str, opts: dict, json_view: bool) -> int:
         return 1
     env = gh.probe_env()
     if env.status != "ok":
-        print(c("red", f"  {_env_error(env)}"), file=err)
+        msg = _env_error(env)
+        print(c("red", f"  {msg}"), file=err)
+        if json_view:
+            emit({**_env_emit(env), "repo": None, "ref": ref,
+                  "method": method, "auto": bool(opts["auto"]),
+                  "merged": False, "error": msg})
         return 1
-    repo = _resolve_one(opts, json_view)
+    repo, res_err = _resolve_one(opts, json_view)
     if repo is None:
+        if json_view:
+            emit({**_env_emit(env), "repo": None, "ref": ref,
+                  "method": method, "auto": bool(opts["auto"]),
+                  "merged": False, "error": res_err})
         return 1
     args = ["pr", "merge", ref, "--repo", repo, _MERGE_METHODS[method]]
     if opts["auto"]:
@@ -1380,17 +1412,18 @@ def _cmd_pr_merge(ref: str, opts: dict, json_view: bool) -> int:
     if result.status != "ok":
         msg = result.error or result.status
         if json_view:
-            emit({"repo": repo, "ref": ref, "method": method,
-                  "auto": bool(opts["auto"]), "merged": False,
-                  "error": msg})
+            emit({**_env_emit(env), "repo": repo, "ref": ref,
+                  "method": method, "auto": bool(opts["auto"]),
+                  "merged": False, "error": msg})
         else:
             print(c("red", f"  Merge failed: {msg}\n"))
         return 1
     # --auto arm's the merge for later; it does not merge now.
     merged = not opts["auto"]
     if json_view:
-        return emit({"repo": repo, "ref": ref, "method": method,
-                     "auto": bool(opts["auto"]), "merged": merged})
+        return emit({**_env_emit(env), "repo": repo, "ref": ref,
+                     "method": method, "auto": bool(opts["auto"]),
+                     "merged": merged})
     done = (f"Auto-merge armed for {ref} ({method})." if opts["auto"]
             else f"Merged {ref} in {repo} ({method}).")
     print(c("green", f"  {done}\n"))
@@ -1427,10 +1460,17 @@ def _cmd_run_rerun(run_id: str, opts: dict, json_view: bool) -> int:
         return 1
     env = gh.probe_env()
     if env.status != "ok":
-        print(c("red", f"  {_env_error(env)}"), file=err)
+        msg = _env_error(env)
+        print(c("red", f"  {msg}"), file=err)
+        if json_view:
+            emit({**_env_emit(env), "repo": None, "run": int(run_id),
+                  "rerun": False, "error": msg})
         return 1
-    repo = _resolve_one(opts, json_view)
+    repo, res_err = _resolve_one(opts, json_view)
     if repo is None:
+        if json_view:
+            emit({**_env_emit(env), "repo": None, "run": int(run_id),
+                  "rerun": False, "error": res_err})
         return 1
     args = ["run", "rerun", run_id, "--repo", repo]
     if opts["failed"]:
@@ -1439,13 +1479,14 @@ def _cmd_run_rerun(run_id: str, opts: dict, json_view: bool) -> int:
     if result.status != "ok":
         msg = result.error or result.status
         if json_view:
-            emit({"repo": repo, "run": int(run_id), "rerun": False,
-                  "error": msg})
+            emit({**_env_emit(env), "repo": repo, "run": int(run_id),
+                  "rerun": False, "error": msg})
         else:
             print(c("red", f"  Re-run failed: {msg}\n"))
         return 1
     if json_view:
-        return emit({"repo": repo, "run": int(run_id), "rerun": True,
+        return emit({**_env_emit(env), "repo": repo, "run": int(run_id),
+                     "rerun": True,
                      "failed_only": bool(opts["failed"])})
     which = "failed jobs of" if opts["failed"] else "all jobs of"
     print(c("green", f"  Re-running {which} run {run_id} in {repo}.\n"))
@@ -1469,7 +1510,11 @@ def _cmd_inbox_read(ids: list[str], opts: dict, json_view: bool) -> int:
         return 1
     env = gh.probe_env()
     if env.status != "ok":
-        print(c("red", f"  {_env_error(env)}"), file=err)
+        msg = _env_error(env)
+        print(c("red", f"  {msg}"), file=err)
+        if json_view:
+            emit({**_env_emit(env), "all": bool(opts["all"]),
+                  "marked": [], "error": msg})
         return 1
     if opts["all"]:
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1479,12 +1524,13 @@ def _cmd_inbox_read(ids: list[str], opts: dict, json_view: bool) -> int:
         if result.status != "ok":
             msg = result.error or result.status
             if json_view:
-                emit({"all": True, "marked": [], "error": msg})
+                emit({**_env_emit(env), "all": True, "marked": [],
+                      "error": msg})
             else:
                 print(c("red", f"  Marking read failed: {msg}\n"))
             return 1
         if json_view:
-            return emit({"all": True, "marked": ["*"]})
+            return emit({**_env_emit(env), "all": True, "marked": ["*"]})
         print(c("green", "  All notifications marked read.\n"))
         return 0
 
@@ -1499,7 +1545,8 @@ def _cmd_inbox_read(ids: list[str], opts: dict, json_view: bool) -> int:
     failed = [{"id": e["id"], "error": e["error"]}
               for e in entries if e["status"] != "ok"]
     if json_view:
-        return emit({"all": False, "marked": marked, "failed": failed})
+        return emit({**_env_emit(env), "all": False, "marked": marked,
+                     "failed": failed})
     for e in entries:
         if e["status"] == "ok":
             print(f"  {c('green', '●')} {e['id']} marked read")
@@ -1592,7 +1639,7 @@ def _cmd_board(rest: list[str], json_view: bool) -> int:
         print(c("red", f"Unexpected args: {' '.join(pos)}"),
               file=error_stream(json_view))
         return 1
-    names = _targets(opts, json_view)
+    names, _res_err = _targets(opts, json_view)
     if names is None:
         if json_view:
             emit({"github": _env_payload(gh.probe_env()),
