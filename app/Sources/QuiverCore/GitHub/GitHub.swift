@@ -40,7 +40,7 @@ public enum GhEntryStatus: String, Decodable, Sendable {
 /// A timestamp from `swe gh`: ISO 8601 for resource times, epoch seconds
 /// for local pin times. Decodes either into `date` (nil when the text
 /// is not a date we understand).
-public struct GhTime: Decodable, Equatable, Sendable {
+public struct GhTime: Codable, Equatable, Sendable {
     public var date: Date?
 
     public init(_ date: Date?) { self.date = date }
@@ -55,10 +55,16 @@ public struct GhTime: Decodable, Equatable, Sendable {
             date = nil
         }
     }
+
+    /// Epoch seconds — the decode path already accepts it.
+    public func encode(to encoder: any Encoder) throws {
+        var box = encoder.singleValueContainer()
+        try box.encode(date?.timeIntervalSince1970)
+    }
 }
 
 /// A repo the user pinned in `swe gh repo list`.
-public struct PinnedRepo: Decodable, Equatable, Sendable, Identifiable {
+public struct PinnedRepo: Codable, Equatable, Sendable, Identifiable {
     public var id: String { name }
     /// `owner/repo`.
     public let name: String
@@ -75,16 +81,16 @@ public struct RepoHit: Decodable, Equatable, Sendable, Identifiable {
     public let url: String
 }
 
-public struct GhPr: Decodable, Equatable, Sendable, Identifiable {
-    public enum State: String, Decodable, Sendable { case open, closed, merged }
+public struct GhPr: Codable, Equatable, Sendable, Identifiable {
+    public enum State: String, Codable, Sendable { case open, closed, merged }
     /// The statusCheckRollup folded to one bucket by swe.
-    public enum Checks: String, Decodable, Sendable { case none, passing, running, failing, unknown }
-    public enum Review: String, Decodable, Sendable {
+    public enum Checks: String, Codable, Sendable { case none, passing, running, failing, unknown }
+    public enum Review: String, Codable, Sendable {
         case approved, none
         case changesRequested = "changes_requested"
         case reviewRequired = "review_required"
     }
-    public enum Mergeable: String, Decodable, Sendable { case mergeable, conflicting, unknown }
+    public enum Mergeable: String, Codable, Sendable { case mergeable, conflicting, unknown }
 
     public var id: Int { number }
     public let number: Int
@@ -104,8 +110,8 @@ public struct GhPr: Decodable, Equatable, Sendable, Identifiable {
     public let url: String
 }
 
-public struct GhIssue: Decodable, Equatable, Sendable, Identifiable {
-    public enum State: String, Decodable, Sendable { case open, closed }
+public struct GhIssue: Codable, Equatable, Sendable, Identifiable {
+    public enum State: String, Codable, Sendable { case open, closed }
 
     public var id: Int { number }
     public let number: Int
@@ -120,7 +126,7 @@ public struct GhIssue: Decodable, Equatable, Sendable, Identifiable {
 }
 
 /// A workflow run from `gh run list`.
-public struct GhRun: Decodable, Equatable, Sendable, Identifiable {
+public struct GhRun: Codable, Equatable, Sendable, Identifiable {
     public let id: Int64
     public let workflow: String
     public let title: String
@@ -136,8 +142,8 @@ public struct GhRun: Decodable, Equatable, Sendable, Identifiable {
 }
 
 /// The repo's GitHub Pages site, when it has one.
-public struct GhPages: Decodable, Equatable, Sendable {
-    public struct Build: Decodable, Equatable, Sendable {
+public struct GhPages: Codable, Equatable, Sendable {
+    public struct Build: Codable, Equatable, Sendable {
         /// `built` | `building` | `errored` | `fetch-failed` (the build
         /// read itself failed; `error` has gh's stderr).
         public let status: String
@@ -152,7 +158,7 @@ public struct GhPages: Decodable, Equatable, Sendable {
     public let latestBuild: Build?
 }
 
-public struct GhRelease: Decodable, Equatable, Sendable, Identifiable {
+public struct GhRelease: Codable, Equatable, Sendable, Identifiable {
     public var id: String { tag }
     public let tag: String
     public let name: String?
@@ -163,14 +169,14 @@ public struct GhRelease: Decodable, Equatable, Sendable, Identifiable {
     public let url: String
 }
 
-public struct GhTag: Decodable, Equatable, Sendable, Identifiable {
+public struct GhTag: Codable, Equatable, Sendable, Identifiable {
     public var id: String { name }
     public let name: String
     public let sha: String
     public let url: String
 }
 
-public struct GhBranch: Decodable, Equatable, Sendable, Identifiable {
+public struct GhBranch: Codable, Equatable, Sendable, Identifiable {
     public var id: String { name }
     public let name: String
     public let protected: Bool
@@ -181,7 +187,7 @@ public struct GhBranch: Decodable, Equatable, Sendable, Identifiable {
 
 /// A line of the GitHub notifications inbox. `url` was rewritten by swe
 /// from the API subject URL to the github.com page where one exists.
-public struct GhNotification: Decodable, Equatable, Sendable, Identifiable {
+public struct GhNotification: Codable, Equatable, Sendable, Identifiable {
     public let id: String
     /// `owner/repo` the subject lives in.
     public let repo: String

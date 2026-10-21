@@ -316,8 +316,9 @@ final class AppModel {
     let mcp: McpModel
     /// The GitHub pages: pins, per-repo boards and the inbox, read
     /// through `swe gh`. The model gets the current swe per call, so a
-    /// path change needs no rebuild here.
-    let github = GitHubModel()
+    /// path change needs no rebuild here. Boards and the inbox persist
+    /// to ~/.quiver/cache for a warm start.
+    let github: GitHubModel
     /// The MCP servers page's "Server folders" section.
     let mcpRepo = McpServerRepoModel()
     /// The Settings > Updates section's build and release state.
@@ -361,6 +362,7 @@ final class AppModel {
         let quiver = home.appending(path: ".quiver")
         primitiveNames = PluginDisplayNames.load(from: PluginDisplayNames.file(home: home))
         limits = LimitsMonitor(quiver: quiver)
+        github = GitHubModel(snapshotFile: quiver.appending(path: "cache/github-snapshot.json"))
         let usage = UsageService(
             transport: URLSessionTransport(),
             secrets: KeychainCLI(),
