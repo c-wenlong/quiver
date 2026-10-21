@@ -77,8 +77,11 @@ enum SearchDroidDecoder {
         let type = object["type"] as? String
         if type == "session_start" {
             hints.sessionId = JSONValue.string(object["id"])
+            // "New Session" is Droid's untouched placeholder — Orca treats it
+            // as no title, so the first user prompt still wins instead of
+            // being locked out as an explicit title.
             hints.title = JSONValue.string(object["title"])
-                .flatMap { SearchText.titleCandidate($0, limit: 96) }
+                .flatMap { $0 == "New Session" ? nil : SearchText.titleCandidate($0, limit: 96) }
             hints.cwd = JSONValue.string(object["cwd"])
             return ([], hints)
         }

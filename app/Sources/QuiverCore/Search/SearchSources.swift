@@ -35,11 +35,16 @@ public struct SearchTranscriptSource: Sendable {
     /// True when each file streams as JSONL; false means one JSON document
     /// per file (or a metadata-plus-sidecar pair, for cline).
     public let isJSONL: Bool
+    /// A sibling file whose mtime also counts as the session's freshness —
+    /// Orca's `contentDependencyPath`. Ordering and read decisions blend it
+    /// in, so a sidecar-only update still lands inside a capped window.
+    public let sidecarPath: (@Sendable (URL) -> URL?)?
 
     public init(
         harness: SearchDecoder.Harness?, agent: String, roots: [URL],
         extensions: Set<String>, filePredicate: (@Sendable (URL) -> Bool)? = nil,
-        directoryPredicate: (@Sendable (String, Int) -> Bool)? = nil, isJSONL: Bool
+        directoryPredicate: (@Sendable (String, Int) -> Bool)? = nil, isJSONL: Bool,
+        sidecarPath: (@Sendable (URL) -> URL?)? = nil
     ) {
         self.harness = harness
         self.agent = agent
@@ -48,6 +53,7 @@ public struct SearchTranscriptSource: Sendable {
         self.filePredicate = filePredicate
         self.directoryPredicate = directoryPredicate
         self.isJSONL = isJSONL
+        self.sidecarPath = sidecarPath
     }
 
     /// Claude's `subagents/` directory name — task transcripts share the
@@ -223,7 +229,12 @@ public struct SearchTranscriptSource: Sendable {
                 // Cline stores one manifest directly beneath each session
                 // directory.
                 directoryPredicate: { _, depth in depth == 0 },
-                isJSONL: false),
+                isJSONL: false,
+                // The turns live in the `.messages.json` sibling — its
+                // writes are the session's real activity.
+                sidecarPath: {
+                    $0.deletingPathExtension().appendingPathExtension("messages.json")
+                }),
             SearchTranscriptSource(
                 harness: nil, agent: "kimi",
                 roots: [dir(".kimi-code/sessions")],

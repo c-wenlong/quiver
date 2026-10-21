@@ -465,12 +465,15 @@ public actor Ledger {
     /// - Parameter extraMtimeMs: a watched sibling's stamp blended into the
     ///   stat — Orca's `contentDependencyPath` — so a sidecar-only rewrite
     ///   still re-reads the file it describes.
+    /// - Parameter fieldsOverlay: evaluated only when a read is owed; the
+    ///   returned fields are gap-filled into the file's commit transaction.
     /// - Returns: whether the index committed, so callers can chain a
     ///   sidecar enrichment onto a file that actually landed.
     @discardableResult
     private func indexJSONLFile(
         _ url: URL, harness: SearchDecoder.Harness, indexer: SearchIndexer,
-        report: inout ScanReport, extraMtimeMs: Double? = nil
+        report: inout ScanReport, extraMtimeMs: Double? = nil,
+        fieldsOverlay: (() -> SearchSessionFields?)? = nil
     ) -> Bool {
         let path = url.resolvingSymlinksInPath().path
         guard let info = FileInfo(path: path) else { return false }
@@ -486,6 +489,9 @@ public actor Ledger {
         }
         do {
             indexer.beginFile(path: path, harness: harness)
+            if let overlay = fieldsOverlay?() {
+                indexer.setFieldOverlay(overlay)
+            }
             let result = try reader.read(URL(fileURLWithPath: path), from: 0) { line in
                 indexer.consume(line: line)
             }
@@ -514,54 +520,31 @@ public actor Ledger {
     ) {
         let path = url.resolvingSymlinksInPath().path
         let metaURL = Self.cursorChatId(forTranscript: path).flatMap { metaIndex[$0] }
-        guard indexJSONLFile(
+        indexJSONLFile(
             url, harness: .cursor, indexer: indexer, report: &report,
-            extraMtimeMs: metaURL.flatMap { FileInfo(path: $0.path)?.modified }.map { $0 * 1000 })
-        else { return }
-        enrichCursorSession(path: path, metaURL: metaURL, indexer: indexer, report: &report)
+            extraMtimeMs: metaURL.flatMap { FileInfo(path: $0.path)?.modified }.map { $0 * 1000 },
+            // The overlay is read only when a read is owed, and merges into
+            // the file's own commit: a meta write that fails takes the file
+            // down with it instead of stranding behind a `current` row.
+            fieldsOverlay: metaURL.map { metaURL in { Self.cursorMetaFields(metaURL) } })
     }
 
-    /// Fills the fields a Cursor transcript never records from the chat's
-    /// `meta.json`. Only gaps are filled — Orca's `mergeCursorChatMeta`
-    /// gives the transcript's own records precedence — and the fill runs
-    /// after each committed re-read, so a rewritten sibling replaces the
-    /// values it supplied last time instead of losing to them.
-    private func enrichCursorSession(
-        path: String, metaURL: URL?, indexer: SearchIndexer, report: inout ScanReport
-    ) {
-        guard let metaURL else { return }
-        do {
-            guard let rowID = try indexer.store.fileRow(for: path)?.sessionRowID,
-                  var fields = try indexer.store.sessionRow(rowID)?.fields,
-                  let meta = try? JSONSerialization.jsonObject(with: Data(contentsOf: metaURL))
-                      as? [String: Any]
-            else { return }
-            var changed = false
-            // `""` is what the index left when the transcript's own records
-            // produced no title — the meta's only wins in that gap.
-            if fields.title.isEmpty,
-               let title = JSONValue.string(meta["title"])
-                   .flatMap({ SearchText.titleCandidate($0, limit: 96) }) {
-                fields.title = title
-                changed = true
-            }
-            if fields.cwd == nil, let cwd = JSONValue.string(meta["cwd"]) {
-                fields.cwd = cwd
-                fields.cwdKey = cwd
-                changed = true
-            }
-            if fields.createdAt == nil, let created = SearchStamp.iso(meta["createdAtMs"]) {
-                fields.createdAt = created
-                changed = true
-            }
-            if fields.updatedAt == nil, let updated = SearchStamp.iso(meta["updatedAtMs"]) {
-                fields.updatedAt = updated
-                changed = true
-            }
-            if changed { try indexer.store.updateSession(rowID, fields) }
-        } catch {
-            report.notes.append("Cursor meta failed \(path): \(error.localizedDescription)")
-        }
+    /// The fields a Cursor transcript never records, from the chat's
+    /// `meta.json` — title, cwd and timestamps. Gap-fill happens in
+    /// `finishFile`: the transcript's own records keep precedence (Orca's
+    /// `mergeCursorChatMeta`).
+    static func cursorMetaFields(_ metaURL: URL) -> SearchSessionFields? {
+        guard let meta = try? JSONSerialization.jsonObject(with: Data(contentsOf: metaURL))
+                as? [String: Any]
+        else { return nil }
+        return SearchSessionFields(
+            agent: "cursor", sessionID: "", filePath: "",
+            title: JSONValue.string(meta["title"])
+                .flatMap { SearchText.titleCandidate($0, limit: 96) } ?? "",
+            cwd: JSONValue.string(meta["cwd"]), cwdKey: nil,
+            createdAt: SearchStamp.iso(meta["createdAtMs"]),
+            updatedAt: SearchStamp.iso(meta["updatedAtMs"]),
+            messageCount: 0)
     }
 
     /// One Cline session = the `<id>.json` manifest plus its
@@ -1002,16 +985,22 @@ public actor Ledger {
             else { continue }
             files.append(url)
         }
-        return newestFirst(files)
+        return newestFirst(files, sidecar: source.sidecarPath)
     }
 
     /// `files`/`transcriptFiles` ordering — newest first for `recentLimit`'s
     /// prefix; on equal mtimes the old path-ascending order survives,
     /// keeping dedup's keep-first attribution stable. A file `FileInfo`
-    /// cannot stat sorts last.
-    private static func newestFirst(_ urls: [URL]) -> [URL] {
+    /// cannot stat sorts last. `sidecar` blends a sibling's mtime into the
+    /// stamp — a Cline session whose `.messages.json` moved is newer than
+    /// its untouched manifest reports.
+    private static func newestFirst(
+        _ urls: [URL], sidecar: (@Sendable (URL) -> URL?)? = nil
+    ) -> [URL] {
         let stamped: [(url: URL, mtime: TimeInterval)] = urls.map {
-            ($0, FileInfo(path: $0.path)?.modified ?? 0)
+            let base = FileInfo(path: $0.path)?.modified ?? 0
+            let extra = sidecar?($0).flatMap { FileInfo(path: $0.path)?.modified } ?? 0
+            return ($0, max(base, extra))
         }
         return stamped
             .sorted { $0.mtime != $1.mtime ? $0.mtime > $1.mtime : $0.url.path < $1.url.path }

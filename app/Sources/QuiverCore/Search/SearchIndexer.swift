@@ -86,6 +86,10 @@ public final class SearchIndexer: @unchecked Sendable {
         /// The first flush failure, thrown from `finishFile` so the scan
         /// marks the file failed; also stops buffering, so the bound holds.
         var flushError: Error?
+        /// Sidecar-derived fields that fill gaps the transcript never
+        /// recorded — applied inside `finishFile`'s commit, so they land in
+        /// the same transaction as the messages they describe.
+        var fieldOverlay: SearchSessionFields?
     }
 
     public init(store: SearchStore) {
@@ -172,6 +176,14 @@ public final class SearchIndexer: @unchecked Sendable {
     public func consume(line: Data) {
         guard pending != nil else { return }
         record(pending!.decoder.decode(line: line))
+    }
+
+    /// Fields a sidecar supplies for the file in flight — Cursor's
+    /// `meta.json` carries title/cwd/dates the transcript never writes.
+    /// `finishFile` gap-fills them into the same commit, so a session's
+    /// metadata cannot strand behind a `files` row already marked current.
+    public func setFieldOverlay(_ fields: SearchSessionFields) {
+        pending?.fieldOverlay = fields
     }
 
     private func record(_ output: (messages: [SearchMessage], hints: SearchHints)) {
@@ -273,6 +285,19 @@ public final class SearchIndexer: @unchecked Sendable {
             cwd: file.hints.cwd, cwdKey: file.hints.cwd,
             createdAt: file.firstTs, updatedAt: file.lastTs,
             messageCount: file.decoded)
+        // The sidecar overlay only fills gaps — the transcript's own records
+        // keep precedence (Orca's `mergeCursorChatMeta` order).
+        if let overlay = file.fieldOverlay {
+            if fields.title.isEmpty, !overlay.title.isEmpty {
+                fields.title = overlay.title
+            }
+            if fields.cwd == nil {
+                fields.cwd = overlay.cwd
+                fields.cwdKey = overlay.cwdKey ?? overlay.cwd
+            }
+            if fields.createdAt == nil { fields.createdAt = overlay.createdAt }
+            if fields.updatedAt == nil { fields.updatedAt = overlay.updatedAt }
+        }
         // A session worth writing is an explicit session id or any message
         // (`decoded` counts flushed chunks too).
         let hasSession = file.hints.sessionId != nil || file.decoded > 0
