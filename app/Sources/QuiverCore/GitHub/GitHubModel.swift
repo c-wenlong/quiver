@@ -86,6 +86,13 @@ public final class GitHubModel {
     /// The repo the Repositories page shows, a pin name.
     public var selected: String?
     public var tab: RepoTab = .pulls
+    /// The page's filter text: repo names, PR titles, branch names and
+    /// the rest of the row text. Lives on the model so a banner's
+    /// click-through can clear it and land on its repo's section.
+    public var filter = ""
+    /// A repo the page should scroll into view — set by banner
+    /// click-through; the page scrolls and clears it.
+    public var scrollTarget: String?
 
     public private(set) var boards: [String: RepoBoard] = [:]
     /// Which (repo, tab) is mid-fetch, so rows keep their last data
@@ -196,17 +203,29 @@ public final class GitHubModel {
         }
     }
 
-    /// Load whatever the page is looking at unless it was fetched recently.
-    public func loadIfStale(swe: SweClient) async {
+    /// Fetch the pin list on first use. The surfaces themselves are
+    /// per-repo (`loadTabIfStale`), so a filtered page never waits on a
+    /// board it isn't showing.
+    public func loadPinsIfNeeded(swe: SweClient) async {
         // `probed` alone is not enough: the inbox can set it while the
         // pin list is still empty, and a failed overview must retry.
         if pinsFetchedAt == nil { await load(swe: swe) }
+    }
+
+    /// Load whatever the page is looking at unless it was fetched recently.
+    public func loadIfStale(swe: SweClient) async {
+        await loadPinsIfNeeded(swe: swe)
         guard let repo = selected else { return }
-        let key = BoardKey(repo: repo, tab: tab)
-        // First look this session hydrates every surface in one
-        // `swe gh board` call; a surface the board missed or failed
-        // falls through to its own per-tab fetch.
+        await loadTabIfStale(tab, repo: repo, swe: swe)
+    }
+
+    /// `loadIfStale` for one repo: the page shows several boards at
+    /// once, each with its own clock. First look this session hydrates
+    /// every surface in one `swe gh board` call; a surface the board
+    /// missed or failed falls through to its own per-tab fetch.
+    public func loadTabIfStale(_ tab: RepoTab, repo: String, swe: SweClient) async {
         if !boardHydrated.contains(repo) { await loadBoard(repo, swe: swe) }
+        let key = BoardKey(repo: repo, tab: tab)
         // The timestamp only skips a fetch when rows are actually there —
         // a cleared board (re-pinned repo) is never "fresh".
         if let at = fetched[key], now().timeIntervalSince(at) < staleAfter,
@@ -228,6 +247,12 @@ public final class GitHubModel {
     public func refresh(swe: SweClient) async {
         if pinsFetchedAt == nil { await load(swe: swe) }
         guard let repo = selected else { return }
+        await refresh(repo: repo, swe: swe)
+    }
+
+    /// `refresh` for one repo — the page's Refresh covers every repo on
+    /// screen, not only the selected one.
+    public func refresh(repo: String, swe: SweClient) async {
         if !boardHydrated.contains(repo) {
             await loadBoard(repo, swe: swe)
             if board(for: repo).isLoaded(tab) { return }
@@ -442,6 +467,42 @@ public final class GitHubModel {
             pinError = error.localizedDescription
             return false
         }
+    }
+
+    // MARK: - filter
+
+    /// What the filter matches against: the trimmed query.
+    public var query: String {
+        filter.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// The repos whose sections show. A query matching repo names
+    /// narrows to those; one matching none is a pure row search across
+    /// every pin, so a branch name still finds its board.
+    public var visibleRepos: [PinnedRepo] {
+        guard !query.isEmpty else { return pins }
+        let named = pins.filter { $0.name.localizedCaseInsensitiveContains(query) }
+        return named.isEmpty ? pins : named
+    }
+
+    /// A repo that matched the query by name shows its whole board;
+    /// only repos shown by fallback filter their rows.
+    public func showsAllRows(_ repo: String) -> Bool {
+        query.isEmpty || repo.localizedCaseInsensitiveContains(query)
+    }
+
+    /// Whether the row's text fields contain the query — repo names,
+    /// PR titles, branch names, numbers, labels, authors, tags, shas.
+    public func matches(_ parts: [String?]) -> Bool {
+        query.isEmpty || parts.contains { $0?.localizedCaseInsensitiveContains(query) ?? false }
+    }
+
+    /// The board's rows, filtered when this repo is shown by fallback
+    /// rather than by name.
+    public func filtered<Row>(_ state: Loadable<[Row]>, repo: String,
+                             _ parts: @escaping (Row) -> [String?]) -> Loadable<[Row]> {
+        guard case .loaded(let rows) = state, !showsAllRows(repo) else { return state }
+        return .loaded(rows.filter { matches(parts($0)) })
     }
 
     // MARK: - internals

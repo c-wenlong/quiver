@@ -2,12 +2,14 @@ import AppKit
 import QuiverCore
 import SwiftUI
 
-/// The GitHub dashboard: a picker of the pinned repos across the top,
-/// then the selected repo's pull requests, issues, workflow runs,
-/// Pages site, releases, tags and branches, each in its own tab.
-/// Rows carry their state (draft, conflicts, review, CI rollup) as
-/// icons and colour, and link straight to the GitHub page. The visible
-/// tab refetches on a minute timer while the page is open.
+/// The GitHub dashboard: a section per pinned repo under a filter bar,
+/// then pull requests, issues, workflow runs, Pages site, releases,
+/// tags and branches in shared tabs. The filter narrows by repo name
+/// (a name-matched repo shows its whole board) and by row text — PR
+/// title, branch, author, labels, tag, sha. Rows carry their state
+/// (draft, conflicts, review, CI rollup) as icons and colour, and link
+/// straight to the GitHub page. Every visible repo's tab refetches on
+/// a minute timer while the page is open.
 struct RepositoriesPage: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openURL) private var openURL
@@ -36,7 +38,11 @@ struct RepositoriesPage: View {
                     }
                 }
                 Button("Refresh", systemImage: "arrow.clockwise") {
-                    Task { await model.refresh(swe: app.swe) }
+                    Task {
+                        for repo in visibleRepos {
+                            await model.refresh(repo: repo.name, swe: app.swe)
+                        }
+                    }
                 }
                 .iconButton()
                 .keyboardShortcut("r", modifiers: .command)
@@ -54,33 +60,44 @@ struct RepositoriesPage: View {
                 EmptyCard(text: "Pin a repository to see its pull requests, issues and CI here.",
                           icon: "shippingbox", actionTitle: "Add repository") { adding = true }
             } else {
-                repoPicker
+                SearchField(prompt: "Filter by repo, title, branch…",
+                            text: $model.filter)
+                    .frame(maxWidth: 360)
                 Tabs(options: RepoTab.allCases.map { ($0, $0.title) },
                      selection: $model.tab, style: .underline)
                 if let error = model.pinError {
                     ErrorCard(message: error)
                 }
-                if let repo = model.selected {
-                    let board = model.board(for: repo)
-                    switch model.tab {
-                    case .pulls: pulls(repo: repo, board: board)
-                    case .issues: issues(repo: repo, board: board)
-                    case .actions: actions(repo: repo, board: board)
-                    case .pages: pages(repo: repo, board: board)
-                    case .releases: releases(repo: repo, board: board)
-                    case .tags: tags(repo: repo, board: board)
-                    case .branches: branches(repo: repo, board: board)
+                ScrollViewReader { proxy in
+                    ForEach(visibleRepos) { pin in
+                        repoSection(pin.name).id(pin.name)
+                    }
+                    .onChange(of: model.scrollTarget) { _, target in
+                        // Banner click-through: the filter is already
+                        // cleared so the section exists — scroll to it.
+                        guard let target else { return }
+                        model.scrollTarget = nil
+                        withAnimation { proxy.scrollTo(target, anchor: .top) }
                     }
                 }
             }
         }
-        .task(id: Visible(repo: model.selected, tab: model.tab, swe: app.swePath)) {
-            await model.loadIfStale(swe: app.swe)
+        .task(id: Visible(tab: model.tab, swe: app.swePath,
+                         filter: model.filter,
+                         repos: model.pins.map(\.name))) {
+            // Pins first, then only the sections on screen — a filtered
+            // page never waits on a repo it isn't showing.
+            await model.loadPinsIfNeeded(swe: app.swe)
+            for repo in visibleRepos where !Task.isCancelled {
+                await model.loadTabIfStale(model.tab, repo: repo.name, swe: app.swe)
+            }
             // Poll while the page is open so merged PRs and finished CI
             // land without a manual refresh.
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
-                await model.refresh(swe: app.swe)
+                for repo in visibleRepos where !Task.isCancelled {
+                    await model.loadTab(model.tab, repo: repo.name, swe: app.swe)
+                }
             }
         }
         .sheet(isPresented: $adding) {
@@ -88,35 +105,68 @@ struct RepositoriesPage: View {
         }
     }
 
-    /// Identity for the visible surface: switching repo, tab or swe
-    /// re-runs the load task and its poll loop.
+    /// Identity for the visible surface: switching tab, swe, the
+    /// filter or the pin list (add/remove) re-runs the load task and
+    /// its poll loop.
     private struct Visible: Hashable {
-        var repo: String?
         var tab: RepoTab
         var swe: String
+        var filter: String
+        var repos: [String]
     }
 
-    /// The pinned repos as chips. Adding and unpinning live in the
-    /// header's gear popover; the chips only select.
-    @ViewBuilder private var repoPicker: some View {
-        ScrollView(.horizontal) {
+    /// The repos whose sections show — the model's filter logic.
+    private var visibleRepos: [PinnedRepo] { model.visibleRepos }
+
+    /// The board's rows, filtered when this repo is shown by fallback
+    /// rather than by name.
+    private func filtered<Row>(_ state: Loadable<[Row]>, repo: String,
+                               _ parts: @escaping (Row) -> [String?]) -> Loadable<[Row]> {
+        model.filtered(state, repo: repo, parts)
+    }
+
+    /// One pinned repo's section: its name (a link out), then the
+    /// active tab's surface.
+    @ViewBuilder private func repoSection(_ repo: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                ForEach(model.pins) { pin in
-                    RepoChip(name: pin.name, isSelected: pin.name == model.selected) {
-                        model.selected = pin.name
-                    }
+                Text(repo).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+                Button {
+                    if let url = URL(string: "https://github.com/\(repo)") { openURL(url) }
+                } label: {
+                    Image(systemName: "arrow.up.right.square")
+                        .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
                 }
+                .plainButton()
+                .help("Open on GitHub")
             }
-            .padding(.vertical, 2)
+            let board = model.board(for: repo)
+            switch model.tab {
+            case .pulls: pulls(repo: repo, board: board)
+            case .issues: issues(repo: repo, board: board)
+            case .actions: actions(repo: repo, board: board)
+            case .pages: pages(repo: repo, board: board)
+            case .releases: releases(repo: repo, board: board)
+            case .tags: tags(repo: repo, board: board)
+            case .branches: branches(repo: repo, board: board)
+            }
         }
-        .scrollIndicators(.never)
+    }
+
+    /// The surface's empty text: under a row filter an empty list means
+    /// "nothing matched", not "nothing exists" — but a repo the query
+    /// named keeps the normal text, since its rows were never filtered.
+    private func emptyText(_ base: String, repo: String) -> String {
+        model.showsAllRows(repo) ? base : "Nothing matches \"\(model.query)\"."
     }
 
     // MARK: - Surfaces
 
     @ViewBuilder
     private func pulls(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(board.pulls, empty: "No open pull requests.",
+        SurfaceList(filtered(board.pulls, repo: repo) {
+                        [$0.title, "\($0.number)", $0.branch, $0.base, $0.author] + $0.labels },
+                    empty: emptyText("No open pull requests.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .pulls))) { pr in
             OpenRow(url: pr.url, open: openURL.callAsFunction) {
                 PrIcon(state: pr.state, draft: pr.draft)
@@ -144,7 +194,9 @@ struct RepositoriesPage: View {
 
     @ViewBuilder
     private func issues(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(board.issues, empty: "No open issues.",
+        SurfaceList(filtered(board.issues, repo: repo) {
+                        [$0.title, "\($0.number)", $0.author] + $0.labels + $0.assignees },
+                    empty: emptyText("No open issues.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .issues))) { issue in
             OpenRow(url: issue.url, open: openURL.callAsFunction) {
                 Image(systemName: issue.state == .open ? "exclamationmark.circle" : "checkmark.circle")
@@ -172,7 +224,9 @@ struct RepositoriesPage: View {
 
     @ViewBuilder
     private func actions(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(board.runs, empty: "No workflow runs.",
+        SurfaceList(filtered(board.runs, repo: repo) {
+                        [$0.title, $0.workflow, $0.branch, $0.event] },
+                    empty: emptyText("No workflow runs.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .actions))) { run in
             OpenRow(url: run.url, open: openURL.callAsFunction) {
                 RunIcon(status: run.status, conclusion: run.conclusion)
@@ -245,7 +299,8 @@ struct RepositoriesPage: View {
 
     @ViewBuilder
     private func releases(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(board.releases, empty: "No releases.",
+        SurfaceList(filtered(board.releases, repo: repo) { [$0.name, $0.tag] },
+                    empty: emptyText("No releases.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .releases))) { release in
             OpenRow(url: release.url, open: openURL.callAsFunction) {
                 Image(systemName: "tag").font(.system(size: 14))
@@ -269,7 +324,8 @@ struct RepositoriesPage: View {
 
     @ViewBuilder
     private func tags(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(board.tags, empty: "No tags.",
+        SurfaceList(filtered(board.tags, repo: repo) { [$0.name, $0.sha] },
+                    empty: emptyText("No tags.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .tags))) { tag in
             OpenRow(url: tag.url, open: openURL.callAsFunction) {
                 Image(systemName: "tag").font(.system(size: 14))
@@ -284,7 +340,8 @@ struct RepositoriesPage: View {
 
     @ViewBuilder
     private func branches(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(board.branches, empty: "No branches.",
+        SurfaceList(filtered(board.branches, repo: repo) { [$0.name, $0.sha] },
+                    empty: emptyText("No branches.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .branches))) { branch in
             OpenRow(url: branch.url, open: openURL.callAsFunction) {
                 Image(systemName: "arrow.triangle.branch").font(.system(size: 14))
@@ -366,33 +423,6 @@ private struct OpenRow<Content: View>: View {
         }
         .buttonStyle(RingedPlainStyle(cornerRadius: Theme.controlRadius))
         .onHover { hovering = $0 }
-    }
-}
-
-/// A pinned repo in the picker: capsule with the repo's short name,
-/// selected on `bg.selected`. Management lives in the gear popover.
-private struct RepoChip: View {
-    var name: String
-    var isSelected: Bool
-    var select: () -> Void
-    @State private var hovering = false
-
-    private var short: String { name.split(separator: "/").last.map(String.init) ?? name }
-
-    var body: some View {
-        Button(action: select) {
-            Text(short)
-                .font(Theme.control)
-                .foregroundStyle(isSelected || hovering ? Theme.textPrimary : Theme.textSecondary)
-                .padding(.horizontal, 12)
-                .frame(height: 28)
-                .background(isSelected ? Theme.selected : hovering ? Theme.hover : Theme.field,
-                            in: .capsule)
-                .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
-        }
-        .plainButton(cornerRadius: 14)
-        .onHover { hovering = $0 }
-        .help(name)
     }
 }
 
