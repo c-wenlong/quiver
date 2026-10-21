@@ -7,8 +7,8 @@ import Testing
         #expect(SettingsGroup.allCases.map(\.title) == ["App", "Usage", "Advanced"])
         #expect(SettingsGroup.app.sections == [.general, .preferences, .notifications, .updates])
         #expect(SettingsGroup.usage.sections == [.providers, .services])
-        #expect(SettingsGroup.advanced.sections == [.paths, .doctor])
-        #expect(SettingsGroup.order == [.general, .preferences, .notifications, .updates, .providers, .services, .paths, .doctor])
+        #expect(SettingsGroup.advanced.sections == [.paths, .doctor, .experimental])
+        #expect(SettingsGroup.order == [.general, .preferences, .notifications, .updates, .providers, .services, .paths, .doctor, .experimental])
     }
 
     @Test func everySectionHasATitleSymbolAndADescription() {
@@ -28,7 +28,8 @@ import Testing
         #expect(SettingsSection.providers.step(-1) == .updates)
         #expect(SettingsSection.general.step(-1) == .general)
         #expect(SettingsSection.paths.step(1) == .doctor)
-        #expect(SettingsSection.doctor.step(1) == .doctor)
+        #expect(SettingsSection.doctor.step(1) == .experimental)
+        #expect(SettingsSection.experimental.step(1) == .experimental)
     }
 
     @Test func aSavedSectionRestoresAndAnUnknownOneFallsBackToGeneral() {

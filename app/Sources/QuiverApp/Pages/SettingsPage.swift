@@ -151,6 +151,7 @@ private struct SettingsSectionView: View {
             case .services: ServicesCard(model: app.services)
             case .paths: pathsCard
             case .doctor: DoctorSection()
+            case .experimental: ExperimentalSection()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
