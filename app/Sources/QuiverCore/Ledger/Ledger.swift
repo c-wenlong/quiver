@@ -241,12 +241,20 @@ public actor Ledger {
 
     // MARK: - Scanning
 
+    /// `recentLimit` caps the sweep to each source's newest files — the
+    /// first N of each mtime-ordered list, sessions inside a database
+    /// included — so a caller that only needs live sessions hot (the
+    /// search index's reconcile tick) skips the backlog. Staleness checks
+    /// run only on the kept files; the rest wait for an unlimited pass.
     @discardableResult
-    public func scan(roots: LedgerRoots) async throws -> ScanReport {
+    public func scan(roots: LedgerRoots? = nil, recentLimit: Int? = nil) async throws -> ScanReport {
+        let roots = roots ?? .standard()
         var report = ScanReport()
         var seen = Set<String>()
         for home in roots.claudeHomes {
-            for file in Self.jsonlFiles(under: home.appendingPathComponent("projects")) {
+            for file in Self.capped(
+                Self.jsonlFiles(under: home.appendingPathComponent("projects")),
+                recentLimit: recentLimit) {
                 if Task.isCancelled { throw CancellationError() }
                 try scanFile(file, accountHome: home.path, parser: ClaudeFileParser.self, seen: &seen, report: &report)
                 await Task.yield()
@@ -256,26 +264,33 @@ public actor Ledger {
             // Active sessions first, so a rollout that also sits in the archive
             // is attributed to the live copy.
             for directory in ["sessions", "archived_sessions"] {
-                for file in Self.jsonlFiles(under: home.appendingPathComponent(directory)) {
+                for file in Self.capped(
+                    Self.jsonlFiles(under: home.appendingPathComponent(directory)),
+                    recentLimit: recentLimit) {
                     if Task.isCancelled { throw CancellationError() }
                     try scanFile(file, accountHome: home.path, parser: CodexFileParser.self, seen: &seen, report: &report)
                     await Task.yield()
                 }
             }
         }
-        for database in roots.openCodeDatabases where FileManager.default.fileExists(atPath: database.path) {
-            report.databasesRead += try scanSource(database, kind: HarnessMark("opencode").name,
-                                                   scan: DatabaseSources.scanOpenCode, report: &report)
-        }
         if let indexer {
             // OpenCode keeps its sessions inside the database, not in files
             // of their own: each indexes under a synthetic `<db>#<id>`
-            // path, read whole whenever its stat moves.
+            // path, read whole whenever its stat moves. Runs before the
+            // token scan below so its fingerprint check compares against
+            // the last scan's committed value — after `scanOpenCode` runs,
+            // the stored fingerprint is always the current one.
             for database in roots.openCodeDatabases
             where FileManager.default.fileExists(atPath: database.path) {
-                try indexOpenCodeSessions(database, indexer: indexer, report: &report)
+                try indexOpenCodeSessions(database, indexer: indexer,
+                                          recentLimit: recentLimit, report: &report)
                 await Task.yield()
             }
+        }
+        for database in roots.openCodeDatabases where FileManager.default.fileExists(atPath: database.path) {
+            report.databasesRead += try scanSource(database, kind: HarnessMark("opencode").name,
+                                                   scan: { try DatabaseSources.scanOpenCode($0, store: $1) },
+                                                   report: &report)
         }
         for database in roots.devinDatabases where FileManager.default.fileExists(atPath: database.path) {
             report.databasesRead += try scanSource(database, kind: HarnessMark("devin").name,
@@ -288,7 +303,9 @@ public actor Ledger {
             for database in roots.devinDatabases {
                 let transcripts = database.deletingLastPathComponent()
                     .appendingPathComponent("transcripts")
-                for file in Self.files(under: transcripts, suffix: ".json") {
+                for file in Self.capped(
+                    Self.files(under: transcripts, suffix: ".json"),
+                    recentLimit: recentLimit) {
                     if Task.isCancelled { throw CancellationError() }
                     indexWholeFile(file, harness: .devin, indexer: indexer, report: &report)
                     await Task.yield()
@@ -296,14 +313,18 @@ public actor Ledger {
             }
         }
         for home in roots.piHomes {
-            for file in Self.jsonlFiles(under: home.appendingPathComponent("agent/sessions")) {
+            for file in Self.capped(
+                Self.jsonlFiles(under: home.appendingPathComponent("agent/sessions")),
+                recentLimit: recentLimit) {
                 if Task.isCancelled { throw CancellationError() }
                 try scanFile(file, accountHome: home.path, parser: PiFileParser.self, seen: &seen, report: &report)
                 await Task.yield()
             }
         }
         for home in roots.droidHomes {
-            for file in Self.files(under: home.appendingPathComponent("sessions"), suffix: ".settings.json") {
+            for file in Self.capped(
+                Self.files(under: home.appendingPathComponent("sessions"), suffix: ".settings.json"),
+                recentLimit: recentLimit) {
                 if Task.isCancelled { throw CancellationError() }
                 try scanSessionFile(file, accountHome: home.path,
                                     watched: SessionTotalsFile.droidTranscript(for: file),
@@ -314,7 +335,9 @@ public actor Ledger {
         }
         for home in roots.clineHomes {
             // `<id>/<id>.json`: the stem must equal its session directory.
-            for file in Self.files(under: home.appendingPathComponent("data/sessions"), suffix: ".json")
+            for file in Self.capped(
+                Self.files(under: home.appendingPathComponent("data/sessions"), suffix: ".json"),
+                recentLimit: recentLimit)
             where file.deletingPathExtension().lastPathComponent
                 == file.deletingLastPathComponent().lastPathComponent {
                 if Task.isCancelled { throw CancellationError() }
@@ -371,20 +394,35 @@ public actor Ledger {
     /// when its content actually grew. A synthetic read is always whole —
     /// a row in a container has no byte offset the index could resume from.
     ///
-    /// The database is opened read-only for the whole pass, like
+    /// The database is opened read-only once for the whole pass, like
     /// `scanSource` opens it for its one read: a database that will not
     /// enumerate — locked mid-rebuild, a schema this build does not know —
     /// becomes one note instead of aborting the scan, and a session that
     /// fails its own read is held out after three failures like a file.
+    ///
+    /// The pass is skipped entirely when the database cannot have moved:
+    /// the file and its WAL still match the fingerprint the token scan
+    /// last committed, so no session's stat can differ from the one its
+    /// synthetic row recorded — unless that row's own state says it still
+    /// owes a read (`due`, a partial sentinel, or a failure not yet held
+    /// out: its recorded mtime is the stat an unchanged database would
+    /// still report).
     private func indexOpenCodeSessions(
-        _ url: URL, indexer: SearchIndexer, report: inout ScanReport
+        _ url: URL, indexer: SearchIndexer, recentLimit: Int?, report: inout ScanReport
     ) throws {
         let dbPath = url.resolvingSymlinksInPath().path
+        let indexed = (try? indexer.store.files(withPrefix: dbPath + "#")) ?? []
+        let unchanged = (try? DatabaseSources.sourceFingerprintUnchanged(
+            at: url, metaKey: "opencode:\(url.path)", store: store)) ?? false
+        // `indexed` must be non-empty too: a matching fingerprint with no
+        // synthetic rows means the index was cleared (or never ran at this
+        // fingerprint), not that the database holds nothing.
+        if unchanged && !indexed.isEmpty && indexed.allSatisfy({ !$0.owesRead }) { return }
         let source: SQLiteDatabase
         let sessions: [SearchOpenCode.Session]
         do {
-            source = try SQLiteDatabase(readOnly: url)
-            sessions = try SearchOpenCode.sessions(in: source)
+            source = try DatabaseSources.openReadOnly(at: url.path)
+            sessions = try SearchOpenCode.sessions(in: source, limit: recentLimit)
         } catch {
             report.notes.append(
                 "Skipped \(HarnessMark("opencode").name)'s database (\(url.path)): \(error.localizedDescription)")
@@ -426,7 +464,12 @@ public actor Ledger {
                 report.notes.append("Index failed \(path): \(error.localizedDescription)")
             }
         }
-        retireStaleSyntheticSessions(dbPath: dbPath, live: live, indexer: indexer, report: &report)
+        // A limited enumeration is not a census: a truncated list proves
+        // nothing about the sessions past the cap, so nothing retires.
+        if recentLimit.map({ sessions.count < $0 }) ?? true {
+            retireStaleSyntheticSessions(
+                dbPath: dbPath, indexed: indexed, live: live, indexer: indexer, report: &report)
+        }
     }
 
     /// Rows for sessions the enumeration no longer returns — the synthetic
@@ -434,15 +477,15 @@ public actor Ledger {
     /// complete, non-empty enumeration retires anything: a database that
     /// listed zero sessions proves nothing about the ids it holds (Orca's
     /// census rule in `session-search-synthetic-sources.ts`), and a failed
-    /// enumeration never reaches here.
+    /// enumeration never reaches here. `indexed` is the caller's
+    /// `files(withPrefix:)` fetch, so this never dumps the whole table.
     private func retireStaleSyntheticSessions(
-        dbPath: String, live: Set<String>, indexer: SearchIndexer, report: inout ScanReport
+        dbPath: String, indexed: [SearchFileRow], live: Set<String>,
+        indexer: SearchIndexer, report: inout ScanReport
     ) {
         guard !live.isEmpty else { return }
-        let prefix = dbPath + "#"
         do {
-            for row in try indexer.store.files()
-            where row.path.hasPrefix(prefix) && !live.contains(row.path) {
+            for row in indexed where !live.contains(row.path) {
                 try indexer.store.removeFile(row.path)
             }
         } catch {
@@ -523,10 +566,18 @@ public actor Ledger {
         try store.db.execute("BEGIN IMMEDIATE")
         do {
             let result = try reader.read(URL(fileURLWithPath: path), from: start) { line in
-                for record in lineParser.records(fromLine: line) {
+                // One JSONSerialization serves both consumers: the byte
+                // gates union, then the parsed object feeds the ledger
+                // parser and the index decoder together. A line neither
+                // wants — or one that parses to no dictionary — is skipped
+                // for the price of the marker checks alone.
+                guard lineParser.wants(line: line) || indexer?.wants(line: line) == true,
+                      let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
+                else { return }
+                for record in lineParser.records(fromObject: object) {
                     try store.upsert(record)
                 }
-                indexer?.consume(line: line)
+                indexer?.consume(object: object)
             }
             endOffset = result.endOffset
             let head = Self.hashRange(path: path, from: 0, length: min(Self.fingerprintBytes, result.endOffset))
@@ -619,29 +670,47 @@ public actor Ledger {
         return Int64(bitPattern: StableHash.of(data))
     }
 
-    /// Every `*.jsonl` under `directory`, path-sorted so dedup's keep-first is
+    /// Every `*.jsonl` under `directory`, newest first: mtime descending
+    /// with the path as tiebreaker, so `recentLimit`'s prefix takes the
+    /// live sessions before the backlog and dedup's keep-first stays
     /// deterministic.
     static func jsonlFiles(under directory: URL) -> [URL] {
-        guard let enumerator = FileManager.default.enumerator(
-            at: directory, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])
-        else { return [] }
-        var files: [URL] = []
-        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
-            files.append(url)
-        }
-        return files.sorted { $0.path < $1.path }
+        files(under: directory) { $0.pathExtension == "jsonl" }
     }
 
-    /// Every file under `directory` ending in `suffix`, path-sorted.
+    /// Every file under `directory` ending in `suffix`, same ordering.
     static func files(under directory: URL, suffix: String) -> [URL] {
+        files(under: directory) { $0.lastPathComponent.hasSuffix(suffix) }
+    }
+
+    /// `files` is mtime-descending: `recentLimit` takes its newest prefix,
+    /// and the kept set is re-sorted by path so dedup's keep-first resolves
+    /// a cross-file tie exactly as an uncapped scan does.
+    private static func capped(_ files: [URL], recentLimit: Int?) -> [URL] {
+        files.prefix(recentLimit ?? .max).sorted { $0.path < $1.path }
+    }
+
+    /// The shared enumeration for `jsonlFiles`/`files`: matches under
+    /// `directory`, newest first by mtime with the path as a deterministic
+    /// tiebreak. A file `FileInfo` cannot stat sorts last — whatever
+    /// consumes the list checks it again anyway.
+    private static func files(under directory: URL, where match: (URL) -> Bool) -> [URL] {
         guard let enumerator = FileManager.default.enumerator(
             at: directory, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])
         else { return [] }
         var files: [URL] = []
-        for case let url as URL in enumerator where url.lastPathComponent.hasSuffix(suffix) {
+        for case let url as URL in enumerator where match(url) {
             files.append(url)
         }
-        return files.sorted { $0.path < $1.path }
+        // Newest first for `recentLimit`'s prefix; on equal mtimes the old
+        // path-ascending order survives, keeping dedup's keep-first
+        // attribution stable. A file `FileInfo` cannot stat sorts last.
+        let stamped: [(url: URL, mtime: TimeInterval)] = files.map {
+            ($0, FileInfo(path: $0.path)?.modified ?? 0)
+        }
+        return stamped
+            .sorted { $0.mtime != $1.mtime ? $0.mtime > $1.mtime : $0.url.path < $1.url.path }
+            .map(\.url)
     }
 
     /// A second file a session-total file is read together with, stored in
@@ -1005,16 +1074,31 @@ protocol FileLogParser {
     /// The decoder the search index feeds the same lines to.
     static var searchHarness: SearchDecoder.Harness { get }
     init(file: URL, accountHome: String, savedState: Data?)
-    mutating func records(fromLine line: Data) -> [LedgerRecord]
+    /// The cheap byte gate: can this line carry ledger records? The scan
+    /// unions it with the index decoder's gate and parses the line once.
+    func wants(line: Data) -> Bool
+    /// Records from the already-parsed line object — the shared-parse path.
+    mutating func records(fromObject object: [String: Any]) -> [LedgerRecord]
     func savedState() -> Data?
+}
+
+extension FileLogParser {
+    /// The one-consumer entry, kept for callers that parse their own lines.
+    mutating func records(fromLine line: Data) -> [LedgerRecord] {
+        guard wants(line: line),
+              let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
+        else { return [] }
+        return records(fromObject: object)
+    }
 }
 
 struct ClaudeFileParser: FileLogParser {
     static let searchHarness: SearchDecoder.Harness = .claude
     let accountHome: String
     init(file: URL, accountHome: String, savedState: Data?) { self.accountHome = accountHome }
-    func records(fromLine line: Data) -> [LedgerRecord] {
-        ClaudeLogParser.records(fromLine: line, accountHome: accountHome)
+    func wants(line: Data) -> Bool { line.range(of: ClaudeLogParser.usageMarker) != nil }
+    func records(fromObject object: [String: Any]) -> [LedgerRecord] {
+        ClaudeLogParser.records(fromObject: object, accountHome: accountHome)
     }
     func savedState() -> Data? { nil }
 }

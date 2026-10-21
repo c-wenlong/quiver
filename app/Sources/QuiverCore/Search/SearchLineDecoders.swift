@@ -57,16 +57,48 @@ public struct SearchDecoder {
             devin: devin.state))
     }
 
+    /// Whether the line's bytes pass the harness's marker gate — the check
+    /// `decode(line:)` runs before parsing, exported so a caller can union
+    /// the two consumers' gates and run one `JSONSerialization` for both.
+    public func wants(line: Data) -> Bool {
+        switch harness {
+        case .claude: SearchClaudeDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .codex: SearchCodexDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .pi: SearchPiDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .devin: SearchDevinDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        }
+    }
+
+    /// One already-parsed transcript line → the messages and hints it
+    /// carries — the shared-parse counterpart of `decode(line:)`.
+    public mutating func decode(object: [String: Any]) -> (messages: [SearchMessage], hints: SearchHints) {
+        var output = switch harness {
+        case .claude: SearchClaudeDecoder.decode(object: object)
+        case .codex: codex.decode(object: object)
+        case .pi: SearchPiDecoder.decode(object: object)
+        case .devin: devin.decode(object: object)
+        }
+        return finish(output)
+    }
+
     /// One transcript line → the messages and hints it carries. For devin the
     /// "line" may also be a whole `transcripts/*.json` document — those files
     /// are pretty-printed, so one blob is the natural unit there too.
     public mutating func decode(line: Data) -> (messages: [SearchMessage], hints: SearchHints) {
-        var output = switch harness {
-        case .claude: SearchClaudeDecoder.decode(line: line)
-        case .codex: codex.decode(line: line)
-        case .pi: SearchPiDecoder.decode(line: line)
-        case .devin: devin.decode(line: line)
-        }
+        guard wants(line: line),
+              let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
+        else { return ([], SearchHints()) }
+        return decode(object: object)
+    }
+
+    /// The title bookkeeping `decode` applies after the per-harness walk:
+    /// the first user text is the fallback session title; an explicit title
+    /// record supersedes it wherever it lands, and stops later prompts from
+    /// clobbering it.
+    private mutating func finish(
+        _ output: (messages: [SearchMessage], hints: SearchHints)
+    ) -> (messages: [SearchMessage], hints: SearchHints) {
+        var output = output
         // The first user text is the fallback session title; an explicit
         // title record supersedes it wherever it lands, and stops later
         // prompts from clobbering it.
@@ -102,10 +134,14 @@ enum SearchClaudeDecoder {
     ].map { Data($0.utf8) }
 
     static func decode(line: Data) -> (messages: [SearchMessage], hints: SearchHints) {
-        var hints = SearchHints()
         guard markers.contains(where: { line.range(of: $0) != nil }),
               let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
-        else { return ([], hints) }
+        else { return ([], SearchHints()) }
+        return decode(object: object)
+    }
+
+    static func decode(object: [String: Any]) -> (messages: [SearchMessage], hints: SearchHints) {
+        var hints = SearchHints()
         hints.sessionId = JSONValue.string(object["sessionId"])
         hints.cwd = JSONValue.string(object["cwd"])
         hints.branch = JSONValue.string(object["gitBranch"])
@@ -156,10 +192,14 @@ struct SearchCodexDecoder {
     ].map { Data($0.utf8) }
 
     mutating func decode(line: Data) -> (messages: [SearchMessage], hints: SearchHints) {
-        var hints = SearchHints()
         guard Self.markers.contains(where: { line.range(of: $0) != nil }),
               let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
-        else { return ([], hints) }
+        else { return ([], SearchHints()) }
+        return decode(object: object)
+    }
+
+    mutating func decode(object: [String: Any]) -> (messages: [SearchMessage], hints: SearchHints) {
+        var hints = SearchHints()
         let ts = object["timestamp"] as? String
         let payload = object["payload"] as? [String: Any] ?? [:]
         switch object["type"] as? String {
@@ -310,10 +350,14 @@ enum SearchPiDecoder {
     static let markers = [#""message""#, #""session"#].map { Data($0.utf8) }
 
     static func decode(line: Data) -> (messages: [SearchMessage], hints: SearchHints) {
-        var hints = SearchHints()
         guard markers.contains(where: { line.range(of: $0) != nil }),
               let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
-        else { return ([], hints) }
+        else { return ([], SearchHints()) }
+        return decode(object: object)
+    }
+
+    static func decode(object: [String: Any]) -> (messages: [SearchMessage], hints: SearchHints) {
+        var hints = SearchHints()
         switch object["type"] as? String {
         case "session":
             hints.sessionId = JSONValue.string(object["id"])
@@ -372,10 +416,14 @@ struct SearchDevinDecoder {
     ].map { Data($0.utf8) }
 
     mutating func decode(line: Data) -> (messages: [SearchMessage], hints: SearchHints) {
-        var hints = SearchHints()
         guard Self.markers.contains(where: { line.range(of: $0) != nil }),
               let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
-        else { return ([], hints) }
+        else { return ([], SearchHints()) }
+        return decode(object: object)
+    }
+
+    mutating func decode(object: [String: Any]) -> (messages: [SearchMessage], hints: SearchHints) {
+        var hints = SearchHints()
         if let steps = object["steps"] as? [Any] {
             hints.sessionId = JSONValue.string(object["session_id"]) ?? JSONValue.string(object["sessionId"])
             hints.cwd = JSONValue.string(object["working_directory"])

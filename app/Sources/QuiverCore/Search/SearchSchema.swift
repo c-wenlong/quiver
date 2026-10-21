@@ -121,12 +121,18 @@ enum SearchSchema {
     /// before any table exists (it only takes effect on an empty file, and it
     /// is what lets `incremental_vacuum(N)` hand pages back in bounded steps),
     /// then WAL so a reader on another handle sees the last committed state.
+    /// The last three are tuning Orca never set: a bigger page cache keeps a
+    /// cold build's B-tree inserts off disk, temp tables stay in memory, and
+    /// the file is mmap'd so reads skip the page cache copy.
     private static func applyPragmas(to db: SQLiteDatabase) throws {
         try db.execute("PRAGMA busy_timeout = 5000")
         try db.execute("PRAGMA auto_vacuum = INCREMENTAL")
         try db.execute("PRAGMA journal_mode = WAL")
         try db.execute("PRAGMA synchronous = NORMAL")
         try db.execute("PRAGMA journal_size_limit = 8388608")
+        try db.execute("PRAGMA cache_size = -64000")
+        try db.execute("PRAGMA temp_store = MEMORY")
+        try db.execute("PRAGMA mmap_size = 268435456")
     }
 
     /// Whether what is on disk has to be thrown away. No `meta` table at all

@@ -40,6 +40,23 @@ enum DatabaseSources {
         return Int64(try store.meta(metaKey + ":watermark") ?? "") ?? 0
     }
 
+    /// The one read-only open every source read shares. Strictly
+    /// read-only: nothing is created, migrated or checkpointed in the
+    /// other app's database.
+    static func openReadOnly(at path: String) throws -> SQLiteDatabase {
+        try SQLiteDatabase(readOnly: URL(fileURLWithPath: path))
+    }
+
+    /// Whether the source at `url` still matches the fingerprint the last
+    /// committed scan stored under `metaKey` — a stat of the file and its
+    /// WAL against one meta row, the cheap "nothing moved" verdict a
+    /// caller wants before paying for an open or an enumeration. A file
+    /// that cannot be stat-ed is never unchanged.
+    static func sourceFingerprintUnchanged(at url: URL, metaKey: String, store: LedgerStore) throws -> Bool {
+        guard let fingerprint = Fingerprint(url) else { return false }
+        return try store.meta(metaKey + ":fingerprint") == fingerprint.text
+    }
+
     // MARK: - OpenCode
 
     /// `~/.local/share/opencode/opencode.db`: one `message` row per message,
@@ -52,13 +69,18 @@ enum DatabaseSources {
     /// reasoning into output (`total = input + output + cache`), which is
     /// detected per row. A recorded cost of 0 is OpenCode not knowing the
     /// price, so it is treated as no recorded cost.
-    static func scanOpenCode(_ url: URL, store: LedgerStore) throws -> Bool {
+    /// - Parameter source: a read-only connection the caller already holds
+    ///   (the index pass enumerates the same database on one open). The
+    ///   caller owns it — this never closes what it did not open — and is
+    ///   trusted to have checked `sourceFingerprintUnchanged` first, so a
+    ///   passed connection is used as-is.
+    static func scanOpenCode(_ url: URL, store: LedgerStore, source passed: SQLiteDatabase? = nil) throws -> Bool {
         guard let fingerprint = Fingerprint(url) else { return false }
         let metaKey = "opencode:\(url.path)"
         if try store.meta(metaKey + ":fingerprint") == fingerprint.text { return false }
         let watermark = try watermark(metaKey, fingerprint, store: store)
 
-        let source = try reading { try SQLiteDatabase(readOnly: url) }
+        let source = try passed ?? reading { try openReadOnly(at: url.path) }
         let statement = try reading { try source.prepare("""
             SELECT m.id, m.session_id, m.time_created, m.time_updated, s.directory,
                 json_extract(m.data, '$.modelID'), json_extract(m.data, '$.cost'),

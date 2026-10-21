@@ -3,7 +3,9 @@ import Observation
 
 /// What the Overview page and the menu bar ask of the ledger.
 public protocol LedgerQuerying: Sendable {
-    func scan(roots: LedgerRoots) async throws -> ScanReport
+    /// `recentLimit` caps the scan to each source's newest files; nil is
+    /// the full sweep.
+    func scan(roots: LedgerRoots?, recentLimit: Int?) async throws -> ScanReport
     func byHarness(in range: DateInterval) async -> [String: UsageTotals]
     func byAccount(in range: DateInterval) async -> [String: UsageTotals]
     /// The harness each account home's usage came from.
@@ -243,7 +245,10 @@ public final class OverviewModel {
     }
 
     /// Optionally scan the logs for new usage, then rebuild every figure.
-    public func load(scan: Bool) async {
+    /// `recentLimit` caps the scan to each source's newest files — the
+    /// search index's reconcile tick passes a small one so live sessions
+    /// re-index without a full backlog sweep; nil scans everything.
+    public func load(scan: Bool, recentLimit: Int? = nil) async {
         loadGeneration += 1
         summaryGeneration += 1
         warming?.cancel()
@@ -257,7 +262,7 @@ public final class OverviewModel {
                 revision += 1
             }
             do {
-                let report = try await ledger.scan(roots: roots())
+                let report = try await ledger.scan(roots: roots(), recentLimit: recentLimit)
                 error = nil
                 scanNotes = report.notes
                 completedScans += 1

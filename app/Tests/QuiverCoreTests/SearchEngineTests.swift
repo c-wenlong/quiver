@@ -22,7 +22,7 @@ import Testing
         let session = try store.createSession(fields)
         #expect(try store.commitFile(
             path: path, expected: nil, stat: stat(), byteOffset: 1,
-            sessionRowID: session, messages: messages, updating: fields))
+            session: .existing(session), messages: messages, updating: fields))
         return session
     }
 
@@ -70,7 +70,7 @@ import Testing
             agent: "claude", sessionID: "sess-ghost", filePath: "/t/claude/ghost.jsonl"))
         #expect(try store.commitFile(
             path: "/t/claude/ghost.jsonl", expected: nil, stat: stat(), byteOffset: 1,
-            sessionRowID: orphan,
+            session: .existing(orphan),
             messages: [SearchMessageRow(role: "user", userText: "ledger ghostword everywhere")]))
         try store.db.prepare("DELETE FROM sessions WHERE id = ?").bind([.int(orphan)]).run()
         return store
@@ -244,7 +244,7 @@ import Testing
         #expect(try store.commitFile(
             path: "/t/a.jsonl", expected: nil,
             stat: SearchFileStat(mtimeMs: 1_000, sizeBytes: 500), byteOffset: 1,
-            sessionRowID: sid,
+            session: .existing(sid),
             messages: [SearchMessageRow(role: "user",
                                         userText: "the ledger cursor stalled")]))
     }

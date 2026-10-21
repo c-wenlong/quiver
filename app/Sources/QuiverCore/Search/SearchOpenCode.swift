@@ -58,11 +58,14 @@ enum SearchOpenCode {
 
     /// Every indexable session the database lists — top-level and
     /// unarchived, newest activity first, matching Orca's list query.
+    /// `limit` keeps only the newest N — a capped result is not a census:
+    /// callers that retire on the enumeration must pass nil or see fewer
+    /// rows than the cap.
     ///
     /// The schema is probed once per open: a database mid-rebuild or one
     /// whose shape this build predates throws here — one note for the
     /// source — instead of failing every session the same way.
-    static func sessions(in db: SQLiteDatabase) throws -> [Session] {
+    static func sessions(in db: SQLiteDatabase, limit: Int? = nil) throws -> [Session] {
         let sessionColumns = try columns(of: "session", in: db)
         guard sessionColumns.isSuperset(of: ["id", "time_created", "time_updated"]),
               try columns(of: "message", in: db)
@@ -89,6 +92,7 @@ enum SearchOpenCode {
             FROM session s
             WHERE 1=1\(filters)
             ORDER BY CASE WHEN s.time_updated > 0 THEN s.time_updated ELSE s.time_created END DESC
+            \(limit.map { "LIMIT \($0)" } ?? "")
             """)
         var sessions: [Session] = []
         while try statement.step() {

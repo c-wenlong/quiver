@@ -120,11 +120,28 @@ public final class SearchIndexer: @unchecked Sendable {
             fileRow: try? store.fileRow(for: path), decoder: SearchDecoder(harness))
     }
 
+    /// Whether the line *could* carry anything this file's decoder wants —
+    /// the cheap marker gate that lets the caller run one `JSONSerialization`
+    /// for the union of both consumers instead of parsing per consumer.
+    public func wants(line: Data) -> Bool {
+        pending?.decoder.wants(line: line) ?? false
+    }
+
+    /// One already-parsed transcript line — the shared-parse path; the
+    /// caller ran `JSONSerialization` once for the ledger and the index.
+    public func consume(object: [String: Any]) {
+        guard pending != nil else { return }
+        record(pending!.decoder.decode(object: object))
+    }
+
     /// One transcript line — for devin, a whole `transcripts/*.json`
     /// document, since those files are pretty-printed.
     public func consume(line: Data) {
         guard pending != nil else { return }
-        let output = pending!.decoder.decode(line: line)
+        record(pending!.decoder.decode(line: line))
+    }
+
+    private func record(_ output: (messages: [SearchMessage], hints: SearchHints)) {
         // Hints arrive repeatedly across a file: keep the latest non-nil.
         // That lands the explicit title wherever its record sits.
         if let value = output.hints.sessionId { pending!.hints.sessionId = value }
@@ -158,7 +175,7 @@ public final class SearchIndexer: @unchecked Sendable {
             // transcript with nothing to decode is not retried forever.
             return try store.commitFile(
                 path: path, expected: try? store.fileFence(for: path), stat: stat,
-                byteOffset: byteOffset, sessionRowID: nil, messages: [])
+                byteOffset: byteOffset, session: .none, messages: [])
         }
         defer { pending = nil }
 
@@ -190,18 +207,16 @@ public final class SearchIndexer: @unchecked Sendable {
                     fields.updatedAt = fields.updatedAt ?? existing.updatedAt
                     fields.messageCount += existing.messageCount
                 }
-                return try commit(path: path, expected: fence, stat: stat, byteOffset: byteOffset,
-                                  sessionRowID: sessionRowID, messages: rows, updating: fields,
-                                  prior: old)
+                return try store.commitFile(path: path, expected: fence, stat: stat,
+                    byteOffset: byteOffset, session: .existing(sessionRowID),
+                    messages: rows, updating: fields)
             }
             guard hasSession else {
-                return try commit(path: path, expected: fence, stat: stat, byteOffset: byteOffset,
-                                  sessionRowID: nil, messages: [], prior: old)
+                return try store.commitFile(path: path, expected: fence, stat: stat,
+                    byteOffset: byteOffset, session: .none, messages: [])
             }
-            let sessionRowID = try store.createSession(fields)
-            return try commit(path: path, expected: fence, stat: stat, byteOffset: byteOffset,
-                              sessionRowID: sessionRowID, messages: rows, updating: fields,
-                              prior: old)
+            return try store.commitFile(path: path, expected: fence, stat: stat,
+                byteOffset: byteOffset, session: .fresh(fields), messages: rows)
         }
 
         return try commitWholeRead(
@@ -261,8 +276,8 @@ public final class SearchIndexer: @unchecked Sendable {
     }
 
     /// The whole-read commit `finishFile` and `finishSession` share: a row
-    /// that already holds a session gets a new generation (`replaceSession`
-    /// swaps it in one transaction), a first session is created, and a read
+    /// that already holds a session gets a new generation (`.replace` swaps
+    /// it in the same transaction), a first session is created, and a read
     /// that found none commits only its cursor.
     private func commitWholeRead(
         path: String, stat: SearchFileStat, byteOffset: Int64,
@@ -271,39 +286,15 @@ public final class SearchIndexer: @unchecked Sendable {
     ) throws -> Bool {
         let fence = old.map { SearchFileFence(sessionRowID: $0.sessionRowID, byteOffset: $0.byteOffset) }
         if let old, old.sessionRowID != nil {
-            guard let sessionRowID = try store.replaceSession(for: path, expected: fence, fields: fields)
-            else { return false }
-            return try commit(
-                path: path,
-                expected: SearchFileFence(sessionRowID: sessionRowID, byteOffset: old.byteOffset),
-                stat: stat, byteOffset: byteOffset,
-                sessionRowID: sessionRowID, messages: rows, updating: fields,
-                prior: old)
+            return try store.commitFile(path: path, expected: fence, stat: stat,
+                byteOffset: byteOffset, session: .replace(fields), messages: rows)
         }
         guard hasSession else {
-            return try commit(path: path, expected: fence, stat: stat, byteOffset: byteOffset,
-                              sessionRowID: nil, messages: [], prior: old)
+            return try store.commitFile(path: path, expected: fence, stat: stat,
+                byteOffset: byteOffset, session: .none, messages: [])
         }
-        let sessionRowID = try store.createSession(fields)
-        return try commit(path: path, expected: fence, stat: stat, byteOffset: byteOffset,
-                          sessionRowID: sessionRowID, messages: rows, updating: fields,
-                          prior: old)
-    }
-
-    /// `commitFile` plus what it does not do: move the row's state on. A
-    /// successful commit clears `failed`/`due`, so a recovered file stops
-    /// re-reading on every pass.
-    private func commit(path: String, expected: SearchFileFence?, stat: SearchFileStat,
-                        byteOffset: Int64, sessionRowID: Int64?, messages: [SearchMessageRow],
-                        updating fields: SearchSessionFields? = nil, prior: SearchFileRow?) throws -> Bool {
-        guard try store.commitFile(
-            path: path, expected: expected, stat: stat, byteOffset: byteOffset,
-            sessionRowID: sessionRowID, messages: messages, updating: fields)
-        else { return false }
-        if let prior, prior.state != .current {
-            try? store.setFileState(path, .current)
-        }
-        return true
+        return try store.commitFile(path: path, expected: fence, stat: stat,
+            byteOffset: byteOffset, session: .fresh(fields), messages: rows)
     }
 
     /// The session id a file reports when no line carried one.
