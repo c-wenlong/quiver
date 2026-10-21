@@ -76,8 +76,10 @@ final class AppModel {
         if github.pins.contains(where: { $0.name == repo }) {
             github.selected = repo
             // A filter that hid the repo would make the click-through
-            // land on nothing.
+            // land on nothing; the target section also needs scrolling
+            // to once it's rendered.
             github.filter = ""
+            github.scrollTarget = repo
             github.tab = switch type {
             case "PullRequest": .pulls
             case "Issue": .issues

@@ -68,13 +68,26 @@ struct RepositoriesPage: View {
                 if let error = model.pinError {
                     ErrorCard(message: error)
                 }
-                ForEach(visibleRepos) { pin in
-                    repoSection(pin.name)
+                ScrollViewReader { proxy in
+                    ForEach(visibleRepos) { pin in
+                        repoSection(pin.name).id(pin.name)
+                    }
+                    .onChange(of: model.scrollTarget) { _, target in
+                        // Banner click-through: the filter is already
+                        // cleared so the section exists — scroll to it.
+                        guard let target else { return }
+                        model.scrollTarget = nil
+                        withAnimation { proxy.scrollTo(target, anchor: .top) }
+                    }
                 }
             }
         }
-        .task(id: Visible(tab: model.tab, swe: app.swePath, filter: model.filter)) {
-            await model.loadIfStale(swe: app.swe)
+        .task(id: Visible(tab: model.tab, swe: app.swePath,
+                         filter: model.filter,
+                         repos: model.pins.map(\.name))) {
+            // Pins first, then only the sections on screen — a filtered
+            // page never waits on a repo it isn't showing.
+            await model.loadPinsIfNeeded(swe: app.swe)
             for repo in visibleRepos where !Task.isCancelled {
                 await model.loadTabIfStale(model.tab, repo: repo.name, swe: app.swe)
             }
@@ -92,12 +105,14 @@ struct RepositoriesPage: View {
         }
     }
 
-    /// Identity for the visible surface: switching tab, swe or the
-    /// repos the filter shows re-runs the load task and its poll loop.
+    /// Identity for the visible surface: switching tab, swe, the
+    /// filter or the pin list (add/remove) re-runs the load task and
+    /// its poll loop.
     private struct Visible: Hashable {
         var tab: RepoTab
         var swe: String
         var filter: String
+        var repos: [String]
     }
 
     /// The repos whose sections show — the model's filter logic.
@@ -139,9 +154,10 @@ struct RepositoriesPage: View {
     }
 
     /// The surface's empty text: under a row filter an empty list means
-    /// "nothing matched", not "nothing exists".
-    private func emptyText(_ base: String) -> String {
-        model.query.isEmpty ? base : "Nothing matches \"\(model.query)\"."
+    /// "nothing matched", not "nothing exists" — but a repo the query
+    /// named keeps the normal text, since its rows were never filtered.
+    private func emptyText(_ base: String, repo: String) -> String {
+        model.showsAllRows(repo) ? base : "Nothing matches \"\(model.query)\"."
     }
 
     // MARK: - Surfaces
@@ -150,7 +166,7 @@ struct RepositoriesPage: View {
     private func pulls(repo: String, board: RepoBoard) -> some View {
         SurfaceList(filtered(board.pulls, repo: repo) {
                         [$0.title, "\($0.number)", $0.branch, $0.base, $0.author] + $0.labels },
-                    empty: emptyText("No open pull requests."),
+                    empty: emptyText("No open pull requests.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .pulls))) { pr in
             OpenRow(url: pr.url, open: openURL.callAsFunction) {
                 PrIcon(state: pr.state, draft: pr.draft)
@@ -180,7 +196,7 @@ struct RepositoriesPage: View {
     private func issues(repo: String, board: RepoBoard) -> some View {
         SurfaceList(filtered(board.issues, repo: repo) {
                         [$0.title, "\($0.number)", $0.author] + $0.labels + $0.assignees },
-                    empty: emptyText("No open issues."),
+                    empty: emptyText("No open issues.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .issues))) { issue in
             OpenRow(url: issue.url, open: openURL.callAsFunction) {
                 Image(systemName: issue.state == .open ? "exclamationmark.circle" : "checkmark.circle")
@@ -210,7 +226,7 @@ struct RepositoriesPage: View {
     private func actions(repo: String, board: RepoBoard) -> some View {
         SurfaceList(filtered(board.runs, repo: repo) {
                         [$0.title, $0.workflow, $0.branch, $0.event] },
-                    empty: emptyText("No workflow runs."),
+                    empty: emptyText("No workflow runs.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .actions))) { run in
             OpenRow(url: run.url, open: openURL.callAsFunction) {
                 RunIcon(status: run.status, conclusion: run.conclusion)
@@ -284,7 +300,7 @@ struct RepositoriesPage: View {
     @ViewBuilder
     private func releases(repo: String, board: RepoBoard) -> some View {
         SurfaceList(filtered(board.releases, repo: repo) { [$0.name, $0.tag] },
-                    empty: emptyText("No releases."),
+                    empty: emptyText("No releases.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .releases))) { release in
             OpenRow(url: release.url, open: openURL.callAsFunction) {
                 Image(systemName: "tag").font(.system(size: 14))
@@ -309,7 +325,7 @@ struct RepositoriesPage: View {
     @ViewBuilder
     private func tags(repo: String, board: RepoBoard) -> some View {
         SurfaceList(filtered(board.tags, repo: repo) { [$0.name, $0.sha] },
-                    empty: emptyText("No tags."),
+                    empty: emptyText("No tags.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .tags))) { tag in
             OpenRow(url: tag.url, open: openURL.callAsFunction) {
                 Image(systemName: "tag").font(.system(size: 14))
@@ -325,7 +341,7 @@ struct RepositoriesPage: View {
     @ViewBuilder
     private func branches(repo: String, board: RepoBoard) -> some View {
         SurfaceList(filtered(board.branches, repo: repo) { [$0.name, $0.sha] },
-                    empty: emptyText("No branches."),
+                    empty: emptyText("No branches.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .branches))) { branch in
             OpenRow(url: branch.url, open: openURL.callAsFunction) {
                 Image(systemName: "arrow.triangle.branch").font(.system(size: 14))

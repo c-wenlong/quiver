@@ -90,6 +90,9 @@ public final class GitHubModel {
     /// the rest of the row text. Lives on the model so a banner's
     /// click-through can clear it and land on its repo's section.
     public var filter = ""
+    /// A repo the page should scroll into view — set by banner
+    /// click-through; the page scrolls and clears it.
+    public var scrollTarget: String?
 
     public private(set) var boards: [String: RepoBoard] = [:]
     /// Which (repo, tab) is mid-fetch, so rows keep their last data
@@ -200,11 +203,18 @@ public final class GitHubModel {
         }
     }
 
-    /// Load whatever the page is looking at unless it was fetched recently.
-    public func loadIfStale(swe: SweClient) async {
+    /// Fetch the pin list on first use. The surfaces themselves are
+    /// per-repo (`loadTabIfStale`), so a filtered page never waits on a
+    /// board it isn't showing.
+    public func loadPinsIfNeeded(swe: SweClient) async {
         // `probed` alone is not enough: the inbox can set it while the
         // pin list is still empty, and a failed overview must retry.
         if pinsFetchedAt == nil { await load(swe: swe) }
+    }
+
+    /// Load whatever the page is looking at unless it was fetched recently.
+    public func loadIfStale(swe: SweClient) async {
+        await loadPinsIfNeeded(swe: swe)
         guard let repo = selected else { return }
         await loadTabIfStale(tab, repo: repo, swe: swe)
     }
