@@ -122,6 +122,21 @@ class TestPinnedStore(unittest.TestCase):
         self.assertEqual(repos.load_pinned(self.store),
                          [{"name": "o/r", "added_at": 0}])
 
+    def test_reorder(self):
+        for n in ("o/r", "a/b", "x/y"):
+            repos.add_pinned(n, self.store)
+        pinned = repos.reorder_pinned(["x/y", "o/r"], self.store)
+        self.assertEqual([r["name"] for r in pinned],
+                         ["x/y", "o/r", "a/b"])
+
+    def test_reorder_ignores_unknown_and_dupes(self):
+        repos.add_pinned("o/r", self.store)
+        repos.add_pinned("a/b", self.store)
+        pinned = repos.reorder_pinned(
+            ["a/b", "no/pe", "A/B"], self.store)
+        self.assertEqual([r["name"] for r in pinned],
+                         ["a/b", "o/r"])
+
 
 class TestResolve(unittest.TestCase):
     def setUp(self):
@@ -436,6 +451,17 @@ class TestCommands(unittest.TestCase):
         rc, out, _ = self._run_cli(["repo", "remove", "cli/cli"], run=run)
         self.assertEqual(rc, 0)
         self.assertEqual(repos.load_pinned(self.store), [])
+
+    def test_repo_reorder_json(self):
+        for n in ("o/r", "a/b", "x/y"):
+            repos.add_pinned(n, self.store)
+        rc, out, _ = self._run_cli(
+            ["repo", "reorder", "x/y", "a/b", "--json"])
+        self.assertEqual(rc, 0)
+        payload = json.loads(out)["data"]
+        self.assertEqual(payload["pinned"], ["x/y", "a/b", "o/r"])
+        self.assertEqual([r["name"] for r in repos.load_pinned(self.store)],
+                         ["x/y", "a/b", "o/r"])
 
     def test_repo_add_unreachable(self):
         run = _gh_run({

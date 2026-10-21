@@ -216,7 +216,7 @@ public final class GitHubModel {
             probed = true
             probeError = nil
             pinsFetchedAt = now()
-            pins = overview.repos.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            pins = overview.repos
             if selected == nil || !pins.contains(where: { $0.name == selected }) {
                 selected = pins.first?.name
             }
@@ -483,7 +483,7 @@ public final class GitHubModel {
         defer { mutating.remove(name) }
         do {
             let reply = try await swe.ghAddRepo(name)
-            pins = reply.pinned.sorted().map { PinnedRepo(name: $0, addedAt: now()) }
+            pins = reply.pinned.map { PinnedRepo(name: $0, addedAt: now()) }
             pinError = nil
             return reply.repo
         } catch {
@@ -499,7 +499,7 @@ public final class GitHubModel {
         defer { mutating.remove(name) }
         do {
             let reply = try await swe.ghRemoveRepo(name)
-            pins = reply.pinned.sorted().map { PinnedRepo(name: $0, addedAt: now()) }
+            pins = reply.pinned.map { PinnedRepo(name: $0, addedAt: now()) }
             boards[name] = nil
             boardHydrated.remove(name)
             for key in fetched.keys where key.repo == name { fetched[key] = nil }
@@ -511,6 +511,28 @@ public final class GitHubModel {
             pinError = error.localizedDescription
             return false
         }
+    }
+
+    /// Persist a drag-reordered pin list. Applies the new order
+    /// optimistically, then lets the CLI rewrite `github.json`; on
+    /// failure the reply's authoritative list (or a reload) restores
+    /// whatever the store actually holds.
+    public func reorderPins(_ order: [String], swe: SweClient) async {
+        guard mutating.isEmpty else { return }
+        let current = pins
+        let lookup = Dictionary(uniqueKeysWithValues: current.map { ($0.name, $0) })
+        pins = order.compactMap { lookup[$0] }
+        mutating.insert("<reorder>")
+        defer { mutating.remove("<reorder>") }
+        do {
+            let reply = try await swe.ghReorderRepos(order)
+            pins = reply.pinned.map { lookup[$0] ?? PinnedRepo(name: $0, addedAt: now()) }
+            pinError = nil
+        } catch {
+            pins = current
+            pinError = error.localizedDescription
+        }
+        scheduleSave()
     }
 
     // MARK: - PR detail + write actions

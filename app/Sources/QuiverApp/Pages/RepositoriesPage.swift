@@ -16,6 +16,11 @@ struct RepositoriesPage: View {
     @State private var adding = false
     @State private var managing = false
     @State private var jumping = false
+    /// Repo names whose section is folded to just the header — keyed by
+    /// repo alone, so a collapse follows the repo across every tab.
+    @State private var collapsed: Set<String> = []
+    /// "repo:surface" keys whose row list was opened past the preview.
+    @State private var expanded: Set<String> = []
     /// The PR whose detail sheet is open, if any.
     @State private var detail: PrSelection?
 
@@ -73,11 +78,16 @@ struct RepositoriesPage: View {
                 EmptyCard(text: "Pin a repository to see its pull requests, issues and CI here.",
                           icon: "shippingbox", actionTitle: "Add repository") { adding = true }
             } else {
-                SearchField(prompt: "Filter by repo, title, branch…",
-                            text: $model.filter)
-                    .frame(maxWidth: 360)
-                Tabs(options: RepoTab.allCases.map { ($0, $0.title) },
-                     selection: $model.tab, style: .underline)
+                HStack(alignment: .bottom, spacing: 16) {
+                    // Tabs expands for the full-width underline; the
+                    // search rides the right end of the same row.
+                    Tabs(options: RepoTab.allCases.map { ($0, $0.title) },
+                         selection: $model.tab, style: .underline)
+                    SearchField(prompt: "Filter by repo, title, branch…",
+                                text: $model.filter)
+                        .frame(minWidth: 140, maxWidth: 280)
+                        .padding(.bottom, 4)
+                }
                 if let error = model.pinError ?? model.actionError {
                     ErrorCard(message: error)
                 }
@@ -88,11 +98,18 @@ struct RepositoriesPage: View {
                     ForEach(visibleRepos) { pin in
                         repoSection(pin.name).id(pin.name)
                     }
+                    // A drop here moves the dragged section to the end.
+                    Color.clear.frame(height: 12)
+                        .dropDestination(for: String.self) { items, _ in
+                            guard let dragged = items.first else { return false }
+                            return dropPin(dragged, onto: nil)
+                        }
                     .onChange(of: model.scrollTarget) { _, target in
                         // Banner click-through: the filter is already
                         // cleared so the section exists — scroll to it.
                         guard let target else { return }
                         model.scrollTarget = nil
+                        collapsed.remove(target)
                         withAnimation { proxy.scrollTo(target, anchor: .top) }
                     }
                 }
@@ -148,32 +165,86 @@ struct RepositoriesPage: View {
         model.filtered(state, repo: repo, parts)
     }
 
-    /// One pinned repo's section: its name (a link out), then the
-    /// active tab's surface.
+    /// One pinned repo's section: a callout holding its disclosure
+    /// header (grip + chevron + name, a link out) and, unless folded,
+    /// the active tab's surface. Dropping a dragged section on the
+    /// card puts it in this one's slot.
     @ViewBuilder private func repoSection(_ repo: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text(repo).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
-                Button {
-                    if let url = URL(string: "https://github.com/\(repo)") { openURL(url) }
-                } label: {
-                    Image(systemName: "arrow.up.right.square")
-                        .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+        Card {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 8) {
+                    // The grip is the drag source — the rest of the
+                    // card keeps its clicks and text selection.
+                    Image(systemName: "line.3.horizontal")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.textMuted)
+                        .draggable(repo)
+                    Button {
+                        if collapsed.contains(repo) {
+                            collapsed.remove(repo)
+                        } else {
+                            collapsed.insert(repo)
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Theme.textMuted)
+                                .rotationEffect(collapsed.contains(repo)
+                                                ? .zero : .degrees(90))
+                            Text(repo).font(Theme.cardTitle)
+                                .foregroundStyle(Theme.textPrimary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .plainButton()
+                    .help(collapsed.contains(repo) ? "Expand" : "Collapse")
+                    Spacer()
+                    Button {
+                        if let url = URL(string: "https://github.com/\(repo)") { openURL(url) }
+                    } label: {
+                        Image(systemName: "arrow.up.right.square")
+                            .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                    }
+                    .plainButton()
+                    .help("Open on GitHub")
                 }
-                .plainButton()
-                .help("Open on GitHub")
-            }
-            let board = model.board(for: repo)
-            switch model.tab {
-            case .pulls: pulls(repo: repo, board: board)
-            case .issues: issues(repo: repo, board: board)
-            case .actions: actions(repo: repo, board: board)
-            case .pages: pages(repo: repo, board: board)
-            case .releases: releases(repo: repo, board: board)
-            case .tags: tags(repo: repo, board: board)
-            case .branches: branches(repo: repo, board: board)
+                .padding(.bottom, collapsed.contains(repo) ? 0 : 10)
+                if !collapsed.contains(repo) {
+                    Divider().overlay(Theme.rowDivider)
+                        .padding(.bottom, 4)
+                    let board = model.board(for: repo)
+                    switch model.tab {
+                    case .pulls: pulls(repo: repo, board: board)
+                    case .issues: issues(repo: repo, board: board)
+                    case .actions: actions(repo: repo, board: board)
+                    case .pages: pages(repo: repo, board: board)
+                    case .releases: releases(repo: repo, board: board)
+                    case .tags: tags(repo: repo, board: board)
+                    case .branches: branches(repo: repo, board: board)
+                    }
+                }
             }
         }
+        .dropDestination(for: String.self) { items, _ in
+            guard let dragged = items.first else { return false }
+            return dropPin(dragged, onto: repo)
+        }
+    }
+
+    /// A dropped repo takes the target's slot; the drop target for the
+    /// list's end is a thin zone under the last section.
+    private func dropPin(_ dragged: String, onto target: String?) -> Bool {
+        guard dragged != target else { return false }
+        var order = model.pins.map(\.name)
+        order.removeAll { $0 == dragged }
+        if let target, let idx = order.firstIndex(of: target) {
+            order.insert(dragged, at: idx)
+        } else {
+            order.append(dragged)
+        }
+        Task { await model.reorderPins(order, swe: app.swe) }
+        return true
     }
 
     /// The surface's empty text: under a row filter an empty list means
@@ -190,7 +261,9 @@ struct RepositoriesPage: View {
         SurfaceList(filtered(board.pulls, repo: repo) {
                         [$0.title, "\($0.number)", $0.branch, $0.base, $0.author] + $0.labels },
                     empty: emptyText("No open pull requests.", repo: repo),
-                    loading: model.loading.contains(.init(repo: repo, tab: .pulls))) { pr in
+                    loading: model.loading.contains(.init(repo: repo, tab: .pulls)),
+                    expandKey: "\(repo):pulls", expanded: $expanded,
+                    framed: false) { pr in
             OpenRow(act: { detail = PrSelection(repo: repo, number: pr.number) }) {
                 PrIcon(state: pr.state, draft: pr.draft)
                 VStack(alignment: .leading, spacing: 3) {
@@ -244,7 +317,9 @@ struct RepositoriesPage: View {
         SurfaceList(filtered(board.issues, repo: repo) {
                         [$0.title, "\($0.number)", $0.author] + $0.labels + $0.assignees },
                     empty: emptyText("No open issues.", repo: repo),
-                    loading: model.loading.contains(.init(repo: repo, tab: .issues))) { issue in
+                    loading: model.loading.contains(.init(repo: repo, tab: .issues)),
+                    expandKey: "\(repo):issues", expanded: $expanded,
+                    framed: false) { issue in
             OpenRow(url: issue.url, open: openURL.callAsFunction) {
                 Image(systemName: issue.state == .open ? "exclamationmark.circle" : "checkmark.circle")
                     .font(.system(size: 15))
@@ -274,7 +349,9 @@ struct RepositoriesPage: View {
         SurfaceList(filtered(board.runs, repo: repo) {
                         [$0.title, $0.workflow, $0.branch, $0.event] },
                     empty: emptyText("No workflow runs.", repo: repo),
-                    loading: model.loading.contains(.init(repo: repo, tab: .actions))) { run in
+                    loading: model.loading.contains(.init(repo: repo, tab: .actions)),
+                    expandKey: "\(repo):actions", expanded: $expanded,
+                    framed: false) { run in
             OpenRow(url: run.url, open: openURL.callAsFunction) {
                 RunIcon(status: run.status, conclusion: run.conclusion)
                 VStack(alignment: .leading, spacing: 3) {
@@ -311,53 +388,56 @@ struct RepositoriesPage: View {
         }
     }
 
+    /// Pages is a single facts panel, not a row list — inside the repo
+    /// callout it renders bare with its own heading line.
     @ViewBuilder
     private func pages(repo: String, board: RepoBoard) -> some View {
         switch board.pages {
         case .idle, .loading:
-            LoadingCard(text: "Reading the Pages settings…")
+            LoadingCard(text: "Reading the Pages settings…", framed: false)
         case .failed(let message):
-            ErrorCard(message: message)
+            ErrorCard(message: message, framed: false)
         case .loaded(let pages):
             if let pages {
-                Card(title: "GitHub Pages",
-                     subtitle: pages.cname ?? pages.url ?? repo) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        if let url = pages.url, let link = URL(string: url) {
-                            Button { openURL(link) } label: {
-                                Label(url, systemImage: "arrow.up.right.square")
-                                    .font(Theme.bodySmall).foregroundStyle(Theme.accent)
-                            }
-                            .plainButton(cornerRadius: Theme.controlRadius)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(pages.cname ?? pages.url ?? "GitHub Pages")
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                    if let url = pages.url, let link = URL(string: url) {
+                        Button { openURL(link) } label: {
+                            Label(url, systemImage: "arrow.up.right.square")
+                                .font(Theme.bodySmall).foregroundStyle(Theme.accent)
                         }
-                        if let branch = pages.sourceBranch {
-                            Label("Built from \(branch)", systemImage: "arrow.triangle.branch")
+                        .plainButton(cornerRadius: Theme.controlRadius)
+                    }
+                    if let branch = pages.sourceBranch {
+                        Label("Built from \(branch)", systemImage: "arrow.triangle.branch")
+                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    }
+                    if let build = pages.latestBuild {
+                        HStack(spacing: 8) {
+                            BuildMark(status: build.status)
+                            Text("Last build \(build.status)")
                                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                            if let commit = build.commit {
+                                Text(commit.prefix(7))
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundStyle(Theme.textMuted)
+                            }
+                            if let at = build.updatedAt?.date {
+                                Text(UsageFormat.ago(at, now: .now))
+                                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                            }
                         }
-                        if let build = pages.latestBuild {
-                            HStack(spacing: 8) {
-                                BuildMark(status: build.status)
-                                Text("Last build \(build.status)")
-                                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                                if let commit = build.commit {
-                                    Text(commit.prefix(7))
-                                        .font(.system(size: 12, design: .monospaced))
-                                        .foregroundStyle(Theme.textMuted)
-                                }
-                                if let at = build.updatedAt?.date {
-                                    Text(UsageFormat.ago(at, now: .now))
-                                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                                }
-                            }
-                            if let error = build.error {
-                                Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
-                                    .lineLimit(3)
-                            }
+                        if let error = build.error {
+                            Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                                .lineLimit(3)
                         }
                     }
                 }
+                .padding(.vertical, 6)
             } else {
-                EmptyCard(text: "This repo has no GitHub Pages site.", icon: "globe")
+                EmptyCard(text: "This repo has no GitHub Pages site.",
+                          icon: "globe", framed: false)
             }
         }
     }
@@ -366,7 +446,9 @@ struct RepositoriesPage: View {
     private func releases(repo: String, board: RepoBoard) -> some View {
         SurfaceList(filtered(board.releases, repo: repo) { [$0.name, $0.tag] },
                     empty: emptyText("No releases.", repo: repo),
-                    loading: model.loading.contains(.init(repo: repo, tab: .releases))) { release in
+                    loading: model.loading.contains(.init(repo: repo, tab: .releases)),
+                    expandKey: "\(repo):releases", expanded: $expanded,
+                    framed: false) { release in
             OpenRow(url: release.url, open: openURL.callAsFunction) {
                 Image(systemName: "tag").font(.system(size: 14))
                     .foregroundStyle(Theme.accent)
@@ -391,7 +473,9 @@ struct RepositoriesPage: View {
     private func tags(repo: String, board: RepoBoard) -> some View {
         SurfaceList(filtered(board.tags, repo: repo) { [$0.name, $0.sha] },
                     empty: emptyText("No tags.", repo: repo),
-                    loading: model.loading.contains(.init(repo: repo, tab: .tags))) { tag in
+                    loading: model.loading.contains(.init(repo: repo, tab: .tags)),
+                    expandKey: "\(repo):tags", expanded: $expanded,
+                    framed: false) { tag in
             OpenRow(url: tag.url, open: openURL.callAsFunction) {
                 Image(systemName: "tag").font(.system(size: 14))
                     .foregroundStyle(Theme.textSecondary)
@@ -407,7 +491,9 @@ struct RepositoriesPage: View {
     private func branches(repo: String, board: RepoBoard) -> some View {
         SurfaceList(filtered(board.branches, repo: repo) { [$0.name, $0.sha] },
                     empty: emptyText("No branches.", repo: repo),
-                    loading: model.loading.contains(.init(repo: repo, tab: .branches))) { branch in
+                    loading: model.loading.contains(.init(repo: repo, tab: .branches)),
+                    expandKey: "\(repo):branches", expanded: $expanded,
+                    framed: false) { branch in
             OpenRow(url: branch.url, open: openURL.callAsFunction) {
                 Image(systemName: "arrow.triangle.branch").font(.system(size: 14))
                     .foregroundStyle(branch.default ? Theme.accent : Theme.textSecondary)
@@ -424,46 +510,99 @@ struct RepositoriesPage: View {
 }
 
 /// A surface's rows inside one card: the spinner on first load, the
-/// error card on failure, the empty line on `.loaded([])`, else a row
-/// per entry separated by hairlines.
+/// error card on failure, the empty line on `.loaded([])`, else a
+/// preview of `preview` rows plus an expander row when more exist.
 private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: View>: View {
     var state: Loadable<[Row]>
     var empty: String
     var loading: Bool
+    /// "repo:surface" key into `expanded`; nil disables the preview cap.
+    var expandKey: String?
+    @Binding var expanded: Set<String>
+    var preview = 3
+    /// False inside a repo callout — the section card is the frame.
+    var framed = true
     @ViewBuilder var row: (Row) -> Content
 
     init(_ state: Loadable<[Row]>, empty: String, loading: Bool,
+         expandKey: String? = nil, expanded: Binding<Set<String>>? = nil,
+         framed: Bool = true,
          @ViewBuilder row: @escaping (Row) -> Content) {
         self.state = state
         self.empty = empty
         self.loading = loading
+        self.expandKey = expandKey
+        self._expanded = expanded ?? .constant([])
+        self.framed = framed
         self.row = row
+    }
+
+    private var isOpen: Bool {
+        expandKey.map { expanded.contains($0) } ?? true
     }
 
     var body: some View {
         switch state {
         case .idle, .loading:
-            LoadingCard(text: "Fetching…")
+            LoadingCard(text: "Fetching…", framed: framed)
         case .failed(let message):
-            ErrorCard(message: message)
+            ErrorCard(message: message, framed: framed)
         case .loaded(let rows) where rows.isEmpty:
-            EmptyCard(text: empty, icon: "checkmark.circle")
+            EmptyCard(text: empty, icon: "checkmark.circle", framed: framed)
         case .loaded(let rows):
-            Card {
-                VStack(spacing: 0) {
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in
-                        row(item)
-                        if index < rows.count - 1 { Divider().overlay(Theme.rowDivider) }
-                    }
+            Group {
+                if framed { Card { content(rows) } } else { content(rows) }
+            }
+        }
+    }
+
+    @ViewBuilder private func content(_ rows: [Row]) -> some View {
+        VStack(spacing: 0) {
+            let visible = isOpen ? rows : Array(rows.prefix(preview))
+            ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
+                row(item)
+                if index < visible.count - 1 || (!isOpen && expandKey != nil) {
+                    Divider().overlay(Theme.rowDivider)
                 }
-                if loading {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("Refreshing…").font(Theme.caption).foregroundStyle(Theme.textMuted)
-                    }
+            }
+            if let expandKey, !isOpen, rows.count > preview {
+                ExpanderRow(more: rows.count - preview) {
+                    expanded.insert(expandKey)
                 }
             }
         }
+        if loading {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Refreshing…").font(Theme.caption).foregroundStyle(Theme.textMuted)
+            }
+        }
+    }
+}
+
+/// The bottom-of-card row that opens a truncated list to every row.
+private struct ExpanderRow: View {
+    var more: Int
+    var act: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: act) {
+            HStack(spacing: 8) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("\(more) more").font(Theme.caption)
+            }
+            .foregroundStyle(Theme.textMuted)
+            .padding(.vertical, 10)
+            .padding(.horizontal, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(hovering ? Theme.rowHover : .clear,
+                        in: .rect(cornerRadius: Theme.controlRadius))
+            .contentShape(.rect(cornerRadius: Theme.controlRadius))
+        }
+        .buttonStyle(RingedPlainStyle(cornerRadius: Theme.controlRadius))
+        .onHover { hovering = $0 }
     }
 }
 

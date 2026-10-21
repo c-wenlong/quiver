@@ -34,6 +34,7 @@ and the fixture that pins the shape. Fixtures live under
 | `swe gh repo list --json` | `{"repos": [PinnedRepo]}` | |
 | `swe gh repo add <name|url> --json` | `{"repo", "pinned": [name]}` — verifies via `gh repo view` before pinning | |
 | `swe gh repo remove <name> --json` | `{"removed": bool, "repo", "pinned": [name]}` | |
+| `swe gh repo reorder <name>... --json` | `{"pinned": [name]}` — named pins take the given order; unnamed pins keep their relative order at the end | |
 | `swe gh repo search <query> --json` | `{"query", "results": [RepoHit], "source": "catalog"\|"github"}` — reads the synced catalog first (no `gh` call on a hit), falls back to the live scoped search on a miss or when never synced; `--all` always searches public GitHub | |
 | `swe gh pr [--state=S] [--repo=R] [--limit=N] --json` | `GhResults` — per-repo `pull_requests: [GhPr]` | |
 | `swe gh pr status [--repo=R] --json` | `GhResults` — per-repo `current_branch` (`GhPr` or null), `authored: [GhPr]`, `review_requested: [GhPr]` | |

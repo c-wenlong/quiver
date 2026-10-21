@@ -814,7 +814,7 @@ def _cmd_repo(args: list[str], json_view: bool) -> int:
     rest = args[1:] if args else []
     err = error_stream(json_view)
 
-    if sub in ("add", "remove", "rm", "search"):
+    if sub in ("add", "remove", "rm", "search", "reorder"):
         parsed = _parse_common(rest, json_view)
         if parsed is None:
             return 1
@@ -856,6 +856,15 @@ def _cmd_repo(args: list[str], json_view: bool) -> int:
         print(f"Unpinned {c('cyan', name)}." if removed
               else c("dim", f"{name} was not pinned."))
         return 0 if removed else 1
+
+    if sub == "reorder":
+        names = [repos.normalize_repo_input(p) or p for p in pos]
+        pinned = repos.reorder_pinned(names)
+        if json_view:
+            return emit({"pinned": [r["name"] for r in pinned]})
+        print("Pin order: "
+              + ", ".join(c("cyan", r["name"]) for r in pinned))
+        return 0
 
     if sub == "search":
         query = " ".join(pos)
@@ -904,7 +913,7 @@ def _cmd_repo(args: list[str], json_view: bool) -> int:
 
     if sub != "list":
         print(c("red", f"Unknown: swe gh repo {sub}  "
-                       "(list | add | remove | search)"), file=err)
+                       "(list | add | remove | reorder | search)"), file=err)
         return 1
 
     pinned = repos.load_pinned()

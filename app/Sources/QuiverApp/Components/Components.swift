@@ -611,20 +611,26 @@ struct ErrorCard: View {
     var actionTitle: String? = nil
     var actionShortcut: KeyboardShortcut? = nil
     var action: (() -> Void)? = nil
+    /// False inside a larger callout — renders bare, no second frame.
+    var framed = true
 
     var body: some View {
-        Card {
-            HStack {
-                Label(message, systemImage: "exclamationmark.triangle")
-                    .font(Theme.bodySmall)
-                    .foregroundStyle(Theme.dangerText)
-                    .textSelection(.enabled)
-                Spacer()
-                if let actionTitle, let action {
-                    Button(actionTitle, action: action)
-                        .secondaryButton()
-                        .keyboardShortcut(actionShortcut)
-                }
+        Group {
+            if framed { Card { content } } else { content }
+        }
+    }
+
+    private var content: some View {
+        HStack {
+            Label(message, systemImage: "exclamationmark.triangle")
+                .font(Theme.bodySmall)
+                .foregroundStyle(Theme.dangerText)
+                .textSelection(.enabled)
+            Spacer()
+            if let actionTitle, let action {
+                Button(actionTitle, action: action)
+                    .secondaryButton()
+                    .keyboardShortcut(actionShortcut)
             }
         }
     }
@@ -684,19 +690,26 @@ struct EmptyCard: View {
     var actionTitle: String? = nil
     var actionShortcut: KeyboardShortcut? = nil
     var action: (() -> Void)? = nil
+    /// False when the card lives inside a larger callout already —
+    /// the content renders bare instead of nesting a second frame.
+    var framed = true
 
     var body: some View {
-        Card {
-            HStack {
-                Label(text, systemImage: icon)
-                    .font(Theme.bodySmall)
-                    .foregroundStyle(Theme.textSecondary)
-                Spacer()
-                if let actionTitle, let action {
-                    Button(actionTitle, action: action)
-                        .secondaryButton()
-                        .keyboardShortcut(actionShortcut)
-                }
+        Group {
+            if framed { Card { content } } else { content }
+        }
+    }
+
+    private var content: some View {
+        HStack {
+            Label(text, systemImage: icon)
+                .font(Theme.bodySmall)
+                .foregroundStyle(Theme.textSecondary)
+            Spacer()
+            if let actionTitle, let action {
+                Button(actionTitle, action: action)
+                    .secondaryButton()
+                    .keyboardShortcut(actionShortcut)
             }
         }
     }
@@ -705,13 +718,19 @@ struct EmptyCard: View {
 /// Work in progress: a small spinner with what it's doing.
 struct LoadingCard: View {
     var text: String
+    /// False inside a larger callout — renders bare, no second frame.
+    var framed = true
 
     var body: some View {
-        Card {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text(text).font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-            }
+        Group {
+            if framed { Card { content } } else { content }
+        }
+    }
+
+    private var content: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(text).font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
         }
     }
 }

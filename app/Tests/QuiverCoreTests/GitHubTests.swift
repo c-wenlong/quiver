@@ -311,6 +311,33 @@ import Testing
         #expect(model.selected == "o/b")
     }
 
+    /// Reorder applies the new order immediately, then the CLI reply —
+    /// the store's `pinned` — is authoritative. A failed call restores
+    /// the previous order.
+    @Test func reorderPersistsAndRestoresOnFailure() async {
+        let calls = router([
+            "gh --json": "\(env),\"repos\":["
+                + "{\"name\":\"o/a\",\"added_at\":100},"
+                + "{\"name\":\"o/b\",\"added_at\":200},"
+                + "{\"name\":\"o/c\",\"added_at\":300}]",
+            "gh repo reorder o/c o/a o/b --json":
+                "\"pinned\":[\"o/c\",\"o/a\",\"o/b\"]",
+        ])
+        let model = GitHubModel()
+        let swe = SweClient(runner: calls)
+        await model.load(swe: swe)
+        #expect(model.pins.map(\.name) == ["o/a", "o/b", "o/c"])
+
+        await model.reorderPins(["o/c", "o/a", "o/b"], swe: swe)
+        #expect(model.pins.map(\.name) == ["o/c", "o/a", "o/b"])
+
+        calls.replies["gh repo reorder o/b o/a o/c --json"] = .init(
+            status: 1, stdout: Data(), stderr: "disk full")
+        await model.reorderPins(["o/b", "o/a", "o/c"], swe: swe)
+        #expect(model.pins.map(\.name) == ["o/c", "o/a", "o/b"])
+        #expect(model.pinError != nil)
+    }
+
     /// Opening Inbox first marks `probed` without fetching pins; the
     /// Repositories page must still load them.
     @Test func inboxFirstStillLoadsPinsLater() async {

@@ -81,7 +81,7 @@ def repo_at(path: Path | None) -> str | None:
 
 
 def load_pinned(path: Path | None = None) -> list[dict]:
-    """Pinned repos as ``[{name, added_at}]``, oldest first.
+    """Pinned repos as ``[{name, added_at}]``, in stored order.
 
     A hand-edited or half-written file degrades to ``[]`` instead of
     crashing a command — entries need a string ``name``, and ``added_at``
@@ -152,6 +152,26 @@ def remove_pinned(name: str, path: Path | None = None) -> tuple[list[dict], bool
         if len(kept) != len(pinned):
             save_pinned(kept, path)
         return kept, len(kept) != len(pinned)
+
+
+def reorder_pinned(order: list[str], path: Path | None = None) -> list[dict]:
+    """Rewrite pin order: names in ``order`` take their positions first,
+    any pinned repo not named keeps its relative place at the end — a
+    caller moving one entry to the front needn't list the rest.
+    """
+    path = path or paths.GITHUB_FILE
+    wanted = [n.lower() for n in order]
+    with _locked(path):
+        pinned = load_pinned(path)
+        by_name = {r["name"].lower(): r for r in pinned}
+        head, seen = [], set()
+        for n in wanted:
+            if n in by_name and n not in seen:
+                seen.add(n)
+                head.append(by_name[n])
+        tail = [r for r in pinned if r["name"].lower() not in seen]
+        save_pinned(head + tail, path)
+        return head + tail
 
 
 def resolve(repo_arg: str | None, cwd: Path | None = None) -> list[str]:

@@ -250,6 +250,11 @@ public struct GhPinRemoval: Decodable, Sendable {
     public let pinned: [String]
 }
 
+/// `swe gh repo reorder --json`.
+public struct GhPinOrder: Decodable, Sendable {
+    public let pinned: [String]
+}
+
 /// `swe gh repo search <q> --json`.
 public struct GhRepoSearch: Decodable, Sendable {
     public let query: String
@@ -495,6 +500,11 @@ extension SweClient {
     /// `swe gh repo remove <name> --json`.
     public func ghRemoveRepo(_ name: String) async throws -> GhPinRemoval {
         try await call(["gh", "repo", "remove", name, "--json"])
+    }
+
+    /// `swe gh repo reorder <name>... --json` — rewrites the pin order.
+    public func ghReorderRepos(_ order: [String]) async throws -> GhPinOrder {
+        try await call(["gh", "repo", "reorder"] + order + ["--json"])
     }
 
     /// `swe gh sync --json` — rewrites the local repo catalog in place.
