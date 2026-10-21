@@ -91,6 +91,10 @@ public final class GitHubModel {
     /// Which (repo, tab) is mid-fetch, so rows keep their last data
     /// while a spinner shows on the tab.
     public private(set) var loading: Set<BoardKey> = []
+    /// A second request while one was already running — its reply
+    /// predates the second call, so the surface refetches after it lands
+    /// rather than dropping the refresh.
+    private var queuedRefreshes: Set<BoardKey> = []
 
     public private(set) var inbox: Loadable<[GhNotification]> = .idle
     /// Newest inbox fetch time; the page polls on a timer and shows
@@ -194,6 +198,16 @@ public final class GitHubModel {
         await loadTab(tab, repo: repo, swe: swe)
     }
 
+    /// A new notification names a repo whose rows may have moved: drop
+    /// its fetch times so the next look refetches, and refresh it now
+    /// when it is the repo on screen.
+    public func invalidate(repo: String, swe: SweClient) {
+        for key in fetched.keys where key.repo == repo { fetched[key] = nil }
+        if selected == repo {
+            Task { await loadTab(tab, repo: repo, swe: swe) }
+        }
+    }
+
     /// Manual refresh always fetches, even inside the stale window.
     public func refresh(swe: SweClient) async {
         if pinsFetchedAt == nil { await load(swe: swe) }
@@ -206,9 +220,17 @@ public final class GitHubModel {
     /// not an empty list.
     public func loadTab(_ tab: RepoTab, repo: String, swe: SweClient) async {
         let key = BoardKey(repo: repo, tab: tab)
-        guard !loading.contains(key) else { return }
+        guard !loading.contains(key) else {
+            queuedRefreshes.insert(key)
+            return
+        }
         loading.insert(key)
-        defer { loading.remove(key) }
+        defer {
+            loading.remove(key)
+            if queuedRefreshes.remove(key) != nil {
+                Task { await loadTab(tab, repo: repo, swe: swe) }
+            }
+        }
         do {
             switch tab {
             case .pulls:

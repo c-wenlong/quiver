@@ -49,6 +49,45 @@ final class AppModel {
     /// its own `openWindow` cannot reach the `Window` scene.
     @ObservationIgnored var openMainWindow: (() -> Void)?
 
+    /// Clicked a GitHub banner: raise the window and land on the repo's
+    /// board — the tab its subject type belongs to — or the Inbox when
+    /// the repo isn't pinned (boards only exist for pins).
+    func openGitHub(repo: String, type: String) {
+        NSApp.activate()
+        if let open = openMainWindow {
+            open()
+        } else if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) {
+            window.makeKeyAndOrderFront(nil)
+        }
+        // The click can precede the Repositories page — and so its pin
+        // fetch. An empty pin list is "not loaded yet", not "unpinned":
+        // load before routing, or a pinned repo would land on Inbox.
+        if github.pins.isEmpty {
+            Task {
+                await github.load(swe: swe)
+                routeGitHub(repo: repo, type: type)
+            }
+        } else {
+            routeGitHub(repo: repo, type: type)
+        }
+    }
+
+    private func routeGitHub(repo: String, type: String) {
+        if github.pins.contains(where: { $0.name == repo }) {
+            github.selected = repo
+            github.tab = switch type {
+            case "PullRequest": .pulls
+            case "Issue": .issues
+            case "CheckSuite", "CheckRun": .actions
+            case "Release": .releases
+            default: .pulls
+            }
+            selection = .repositories
+        } else {
+            selection = .inbox
+        }
+    }
+
     /// The swe chosen in Settings; empty means whatever PATH finds.
     var swePath: String {
         didSet {
@@ -319,6 +358,10 @@ final class AppModel {
     /// path change needs no rebuild here. Boards and the inbox persist
     /// to ~/.quiver/cache for a warm start.
     let github: GitHubModel
+    /// Polls the inbox while the app runs — regardless of which page is
+    /// open — and turns new notifications into banners plus board
+    /// invalidations. Assigned in init, where `~/.quiver` is known.
+    let githubNotify: GitHubNotifier
     /// The MCP servers page's "Server folders" section.
     let mcpRepo = McpServerRepoModel()
     /// The Settings > Updates section's build and release state.
@@ -363,6 +406,7 @@ final class AppModel {
         primitiveNames = PluginDisplayNames.load(from: PluginDisplayNames.file(home: home))
         limits = LimitsMonitor(quiver: quiver)
         github = GitHubModel(snapshotFile: quiver.appending(path: "cache/github-snapshot.json"))
+        githubNotify = GitHubNotifier(quiver: quiver, model: github)
         let usage = UsageService(
             transport: URLSessionTransport(),
             secrets: KeychainCLI(),
@@ -703,6 +747,11 @@ final class AppModel {
         search.start()
         watchers = [
             Task { await accounts.keepFresh() },
+            // The inbox polls whether or not its page is open: banners
+            // and board invalidations come from this stream.
+            Task { [githubNotify, weak self] in
+                await githubNotify.keepFresh { self?.swe }
+            },
             // The last session list shows at once; swe lists again behind it,
             // so the page is usually ready before it is opened.
             // The other swe pages only read what they showed last; swe runs

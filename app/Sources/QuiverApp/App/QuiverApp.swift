@@ -66,6 +66,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         [.banner, .sound]
     }
 
+    /// A GitHub banner click routes to the repo's board, or the Inbox
+    /// when it isn't pinned. Limit banners carry no `gh` marker and are
+    /// left to the OS default.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            didReceive response: UNNotificationResponse) async {
+        // Only the click routes — dismissing a banner must not open a window.
+        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else { return }
+        let info = response.notification.request.content.userInfo
+        guard info["gh"] as? Bool == true else { return }
+        let repo = info["repo"] as? String ?? ""
+        let type = info["type"] as? String ?? ""
+        await MainActor.run {
+            AppModel.shared.openGitHub(repo: repo, type: type)
+        }
+    }
+
     /// The GitHub snapshot's debounced write may still be pending; the
     /// final flush makes quit cheap enough to be synchronous.
     func applicationWillTerminate(_ notification: Notification) {
