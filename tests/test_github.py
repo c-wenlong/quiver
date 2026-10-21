@@ -879,7 +879,7 @@ class TestCommands(unittest.TestCase):
 
     def test_board_no_repos(self):
         rc, out, _ = self._run_cli(["board", "--json"])
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 1)
         self.assertEqual(json.loads(out)["data"]["boards"], [])
         rc, _, _ = self._run_cli(["board"])
         self.assertEqual(rc, 1)

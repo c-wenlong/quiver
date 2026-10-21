@@ -1050,8 +1050,8 @@ _BOARD_FETCHERS = {
     "issues": lambda n: _fetch_issues(n, "open", 50),
     "runs": lambda n: _fetch_runs(n, 30),
     "pages": _fetch_pages,
-    "releases": lambda n: _fetch_releases(n, 10),
-    "tags": lambda n: _fetch_tags(n, 20),
+    "releases": lambda n: _fetch_releases(n, 20),
+    "tags": lambda n: _fetch_tags(n, 30),
     "branches": lambda n: _fetch_branches(n, 50),
 }
 
@@ -1094,8 +1094,8 @@ def _cmd_board(rest: list[str], json_view: bool) -> int:
     names = _targets(opts, json_view)
     if names is None:
         if json_view:
-            return emit({"github": _env_payload(gh.probe_env()),
-                         "boards": []})
+            emit({"github": _env_payload(gh.probe_env()),
+                  "boards": []})
         return 1
     if opts["web"]:
         _open_web("pr", names)

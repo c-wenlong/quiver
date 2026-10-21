@@ -243,7 +243,14 @@ public final class GitHubModel {
         boardHydrated.insert(repo)
         let keys = RepoTab.allCases.map { BoardKey(repo: repo, tab: $0) }
         for key in keys { loading.insert(key) }
-        defer { for key in keys { loading.remove(key) } }
+        defer {
+            for key in keys {
+                loading.remove(key)
+                if queuedRefreshes.remove(key) != nil {
+                    Task { await loadTab(key.tab, repo: key.repo, swe: swe) }
+                }
+            }
+        }
         do {
             let reply = try await swe.ghBoard(repo: repo)
             env = reply.github
