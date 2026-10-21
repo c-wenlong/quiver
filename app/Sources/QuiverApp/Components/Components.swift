@@ -96,6 +96,14 @@ extension View {
         buttonStyle(PrimaryButtonStyle()).focusRing(cornerRadius: Theme.controlRadius)
     }
 
+    /// The same primary shape in `success` green — the confirm action
+    /// for a good outcome (GitHub's merge button).
+    func successButton() -> some View {
+        buttonStyle(PrimaryButtonStyle(background: Theme.success,
+                                       foreground: Theme.successForeground))
+            .focusRing(cornerRadius: Theme.controlRadius)
+    }
+
     /// 32pt on the field fill with a strong hairline. A button made with
     /// `role: .destructive` gets its label in `dangerText`.
     func secondaryButton() -> some View {
@@ -168,13 +176,19 @@ struct FormField<Content: View>: View {
 }
 
 struct PrimaryButtonStyle: ButtonStyle {
+    var background = Theme.primaryBackground
+    var foreground = Theme.primaryForeground
+
     func makeBody(configuration: Configuration) -> some View {
-        PrimaryButtonBody(configuration: configuration)
+        PrimaryButtonBody(configuration: configuration,
+                          background: background, foreground: foreground)
     }
 }
 
 private struct PrimaryButtonBody: View {
     let configuration: ButtonStyleConfiguration
+    var background: Color
+    var foreground: Color
     @Environment(\.isEnabled) private var isEnabled
     @State private var hovering = false
 
@@ -184,8 +198,8 @@ private struct PrimaryButtonBody: View {
             .labelStyle(.titleAndIcon)
             .padding(.horizontal, 12)
             .frame(height: Theme.controlHeight)
-            .foregroundStyle(Theme.primaryForeground)
-            .background(Theme.primaryBackground, in: .rect(cornerRadius: Theme.controlRadius))
+            .foregroundStyle(foreground)
+            .background(background, in: .rect(cornerRadius: Theme.controlRadius))
             .scaleEffect(hovering && isEnabled && !configuration.isPressed ? 1.03 : 1)
             .opacity(isEnabled ? (configuration.isPressed ? 0.85 : 1) : 0.45)
             .animation(.easeOut(duration: Theme.fadeDuration), value: hovering)
@@ -611,20 +625,26 @@ struct ErrorCard: View {
     var actionTitle: String? = nil
     var actionShortcut: KeyboardShortcut? = nil
     var action: (() -> Void)? = nil
+    /// False inside a larger callout — renders bare, no second frame.
+    var framed = true
 
     var body: some View {
-        Card {
-            HStack {
-                Label(message, systemImage: "exclamationmark.triangle")
-                    .font(Theme.bodySmall)
-                    .foregroundStyle(Theme.dangerText)
-                    .textSelection(.enabled)
-                Spacer()
-                if let actionTitle, let action {
-                    Button(actionTitle, action: action)
-                        .secondaryButton()
-                        .keyboardShortcut(actionShortcut)
-                }
+        Group {
+            if framed { Card { content } } else { content }
+        }
+    }
+
+    private var content: some View {
+        HStack {
+            Label(message, systemImage: "exclamationmark.triangle")
+                .font(Theme.bodySmall)
+                .foregroundStyle(Theme.dangerText)
+                .textSelection(.enabled)
+            Spacer()
+            if let actionTitle, let action {
+                Button(actionTitle, action: action)
+                    .secondaryButton()
+                    .keyboardShortcut(actionShortcut)
             }
         }
     }
@@ -684,19 +704,26 @@ struct EmptyCard: View {
     var actionTitle: String? = nil
     var actionShortcut: KeyboardShortcut? = nil
     var action: (() -> Void)? = nil
+    /// False when the card lives inside a larger callout already —
+    /// the content renders bare instead of nesting a second frame.
+    var framed = true
 
     var body: some View {
-        Card {
-            HStack {
-                Label(text, systemImage: icon)
-                    .font(Theme.bodySmall)
-                    .foregroundStyle(Theme.textSecondary)
-                Spacer()
-                if let actionTitle, let action {
-                    Button(actionTitle, action: action)
-                        .secondaryButton()
-                        .keyboardShortcut(actionShortcut)
-                }
+        Group {
+            if framed { Card { content } } else { content }
+        }
+    }
+
+    private var content: some View {
+        HStack {
+            Label(text, systemImage: icon)
+                .font(Theme.bodySmall)
+                .foregroundStyle(Theme.textSecondary)
+            Spacer()
+            if let actionTitle, let action {
+                Button(actionTitle, action: action)
+                    .secondaryButton()
+                    .keyboardShortcut(actionShortcut)
             }
         }
     }
@@ -705,13 +732,19 @@ struct EmptyCard: View {
 /// Work in progress: a small spinner with what it's doing.
 struct LoadingCard: View {
     var text: String
+    /// False inside a larger callout — renders bare, no second frame.
+    var framed = true
 
     var body: some View {
-        Card {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text(text).font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-            }
+        Group {
+            if framed { Card { content } } else { content }
+        }
+    }
+
+    private var content: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(text).font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
         }
     }
 }

@@ -238,7 +238,7 @@ public final class GitHubModel {
             probed = true
             probeError = nil
             pinsFetchedAt = now()
-            pins = overview.repos.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            pins = overview.repos
             if selected == nil || !pins.contains(where: { $0.name == selected }) {
                 selected = pins.first?.name
             }
@@ -271,7 +271,7 @@ public final class GitHubModel {
     /// every surface in one `swe gh board` call; a surface the board
     /// missed or failed falls through to its own per-tab fetch.
     public func loadTabIfStale(_ tab: RepoTab, repo: String, swe: SweClient) async {
-        if !boardHydrated.contains(repo) { await loadBoard(repo, swe: swe) }
+        if !boardHydrated.contains(repo) { await loadBoards([repo], swe: swe) }
         let key = BoardKey(repo: repo, tab: tab)
         // The timestamp only skips a fetch when rows are actually there —
         // a cleared board (re-pinned repo) is never "fresh".
@@ -305,19 +305,25 @@ public final class GitHubModel {
     /// screen, not only the selected one.
     public func refresh(repo: String, swe: SweClient) async {
         if !boardHydrated.contains(repo) {
-            await loadBoard(repo, swe: swe)
+            await loadBoards([repo], swe: swe)
             if board(for: repo).isLoaded(tab) { return }
         }
         await loadTab(tab, repo: repo, swe: swe)
     }
 
-    /// Fetch every surface of one repo in a single `swe gh board` call.
-    /// Runs once per repo per launch — `boardHydrated` is the attempt
-    /// flag, so a failed board degrades to per-tab fetches rather than
-    /// retrying the expensive call on every visit.
-    private func loadBoard(_ repo: String, swe: SweClient) async {
-        boardHydrated.insert(repo)
-        let keys = RepoTab.allCases.map { BoardKey(repo: repo, tab: $0) }
+    /// Fetch every surface of every repo in a single `swe gh board` call —
+    /// the CLI fans the repo list out internally, so the page hydrates in
+    /// one subprocess instead of pins × subprocesses in sequence.
+    /// `boardHydrated` is the once-per-launch attempt flag per repo, so a
+    /// failed board degrades to per-tab fetches rather than retrying the
+    /// expensive call on every visit.
+    public func loadBoards(_ repos: [String], swe: SweClient) async {
+        let pending = repos.filter { !boardHydrated.contains($0) }
+        guard !pending.isEmpty else { return }
+        boardHydrated.formUnion(pending)
+        let keys = pending.flatMap { repo in
+            RepoTab.allCases.map { BoardKey(repo: repo, tab: $0) }
+        }
         for key in keys { loading.insert(key) }
         defer {
             for key in keys {
@@ -328,28 +334,35 @@ public final class GitHubModel {
             }
         }
         do {
-            let reply = try await swe.ghBoard(repo: repo)
+            let reply = try await swe.ghBoard(repos: pending)
             env = reply.github
             probed = true
-            guard let payload = reply.boards.first(where: { $0.repo == repo })
-            else { return }
-            var board = boards[repo] ?? RepoBoard()
             let stamp = now()
-            let s = payload.surfaces
-            fill(s.pullRequests, into: &board, \.pulls, repo: repo, tab: .pulls, stamp: stamp) { $0.pullRequests ?? [] }
-            fill(s.issues, into: &board, \.issues, repo: repo, tab: .issues, stamp: stamp) { $0.issues ?? [] }
-            fill(s.runs, into: &board, \.runs, repo: repo, tab: .actions, stamp: stamp) { $0.runs ?? [] }
-            fill(s.pages, into: &board, \.pages, repo: repo, tab: .pages, stamp: stamp) { $0.pages }
-            fill(s.releases, into: &board, \.releases, repo: repo, tab: .releases, stamp: stamp) { $0.releases ?? [] }
-            fill(s.tags, into: &board, \.tags, repo: repo, tab: .tags, stamp: stamp) { $0.tags ?? [] }
-            fill(s.branches, into: &board, \.branches, repo: repo, tab: .branches, stamp: stamp) { $0.branches ?? [] }
-            boards[repo] = board
+            for repo in pending {
+                // A repo absent from the reply keeps its prior state —
+                // the surfaces were never fetched, so per-tab loads
+                // pick it up on demand.
+                guard let payload = reply.boards.first(where: { $0.repo == repo })
+                else { continue }
+                var board = boards[repo] ?? RepoBoard()
+                let s = payload.surfaces
+                fill(s.pullRequests, into: &board, \.pulls, repo: repo, tab: .pulls, stamp: stamp) { $0.pullRequests ?? [] }
+                fill(s.issues, into: &board, \.issues, repo: repo, tab: .issues, stamp: stamp) { $0.issues ?? [] }
+                fill(s.runs, into: &board, \.runs, repo: repo, tab: .actions, stamp: stamp) { $0.runs ?? [] }
+                fill(s.pages, into: &board, \.pages, repo: repo, tab: .pages, stamp: stamp) { $0.pages }
+                fill(s.releases, into: &board, \.releases, repo: repo, tab: .releases, stamp: stamp) { $0.releases ?? [] }
+                fill(s.tags, into: &board, \.tags, repo: repo, tab: .tags, stamp: stamp) { $0.tags ?? [] }
+                fill(s.branches, into: &board, \.branches, repo: repo, tab: .branches, stamp: stamp) { $0.branches ?? [] }
+                boards[repo] = board
+            }
             scheduleSave()
         } catch is CancellationError {
         } catch {
-            var board = boards[repo] ?? RepoBoard()
-            board.fail(tab, message: error.localizedDescription)
-            boards[repo] = board
+            for repo in pending {
+                var board = boards[repo] ?? RepoBoard()
+                board.fail(tab, message: error.localizedDescription)
+                boards[repo] = board
+            }
         }
     }
 
@@ -591,7 +604,7 @@ public final class GitHubModel {
         defer { mutating.remove(name) }
         do {
             let reply = try await swe.ghAddRepo(name)
-            pins = reply.pinned.sorted().map { PinnedRepo(name: $0, addedAt: now()) }
+            pins = reply.pinned.map { PinnedRepo(name: $0, addedAt: now()) }
             pinError = nil
             return reply.repo
         } catch {
@@ -607,7 +620,7 @@ public final class GitHubModel {
         defer { mutating.remove(name) }
         do {
             let reply = try await swe.ghRemoveRepo(name)
-            pins = reply.pinned.sorted().map { PinnedRepo(name: $0, addedAt: now()) }
+            pins = reply.pinned.map { PinnedRepo(name: $0, addedAt: now()) }
             boards[name] = nil
             boardHydrated.remove(name)
             for key in fetched.keys where key.repo == name { fetched[key] = nil }
@@ -622,6 +635,47 @@ public final class GitHubModel {
         } catch {
             pinError = error.localizedDescription
             return false
+        }
+    }
+
+    /// The newest order stashed while a reorder is still saving — the
+    /// running call picks it up when the first one settles, so a drop
+    /// mid-save lands instead of being discarded.
+    private var queuedReorder: [String]?
+
+    /// Persist a drag-reordered pin list. Applies the new order
+    /// optimistically, then lets the CLI rewrite `github.json`; on
+    /// failure the reply's authoritative list (or a reload) restores
+    /// whatever the store actually holds.
+    public func reorderPins(_ order: [String], swe: SweClient) async {
+        if mutating.contains("<reorder>") {
+            queuedReorder = order
+            let lookup = Dictionary(uniqueKeysWithValues: pins.map { ($0.name, $0) })
+            pins = order.compactMap { lookup[$0] }
+            return
+        }
+        guard mutating.isEmpty else { return }
+        mutating.insert("<reorder>")
+        defer { mutating.remove("<reorder>") }
+        var next = order
+        while true {
+            // The pre-apply order is this attempt's restore point — a
+            // failed save puts back what the list showed before it.
+            let current = pins
+            let lookup = Dictionary(uniqueKeysWithValues: current.map { ($0.name, $0) })
+            pins = next.compactMap { lookup[$0] }
+            do {
+                let reply = try await swe.ghReorderRepos(next)
+                pins = reply.pinned.map { lookup[$0] ?? PinnedRepo(name: $0, addedAt: now()) }
+                pinError = nil
+            } catch {
+                pins = current
+                pinError = error.localizedDescription
+            }
+            scheduleSave()
+            guard let queued = queuedReorder else { return }
+            queuedReorder = nil
+            next = queued
         }
     }
 
@@ -797,6 +851,17 @@ public final class GitHubModel {
                              _ parts: @escaping (Row) -> [String?]) -> Loadable<[Row]> {
         guard case .loaded(let rows) = state, !showsAllRows(repo) else { return state }
         return .loaded(rows.filter { matches(parts($0)) })
+    }
+
+    /// Whether `filtered` would leave any rows — for callers that only
+    /// need presence, like the repo card's fold control. Exits on the
+    /// first match instead of building a filtered array, and treats
+    /// unloaded or failed surfaces as non-empty so their state shows.
+    public func hasRows<Row>(_ state: Loadable<[Row]>, repo: String,
+                            _ parts: @escaping (Row) -> [String?]) -> Bool {
+        guard case .loaded(let rows) = state else { return true }
+        guard !showsAllRows(repo) else { return !rows.isEmpty }
+        return rows.contains { matches(parts($0)) }
     }
 
     // MARK: - session bridge

@@ -60,23 +60,40 @@ struct RepoDetailPage: View {
                     Task { await model.loadFocus(repo: repo, swe: app.swe) }
                 }
             } else {
-                SearchField(prompt: "Filter by title, branch, tag…", text: $filter)
-                    .frame(maxWidth: 360)
-                Tabs(options: RepoTab.allCases.map { ($0, $0.title) },
-                     selection: $model.focusTab, style: .underline)
+                HStack(alignment: .bottom, spacing: 16) {
+                    // Same layout as the dashboard: the tabs expand for
+                    // the underline, the search rides the right end.
+                    Tabs(options: RepoTab.allCases.map { ($0, $0.title) },
+                         selection: $model.focusTab, style: .underline)
+                        .layoutPriority(1)
+                    if model.focusLoading.contains(.init(repo: repo, tab: model.focusTab)) {
+                        ProgressView().controlSize(.small)
+                            .padding(.bottom, 4)
+                    }
+                    SearchField(prompt: "Filter by title, branch, tag…", text: $filter)
+                        .frame(minWidth: 100, maxWidth: 280)
+                        .padding(.bottom, 4)
+                }
                 if let error = model.pinError ?? model.actionError {
                     ErrorCard(message: error)
                 }
                 if let error = model.sessionError {
                     ErrorCard(message: error)
                 }
-                RepoSurfaces(repo: repo,
-                             board: model.focusBoard(for: repo),
-                             tab: model.focusTab,
-                             loading: model.focusLoading,
-                             query: query) {
-                    detail = PrSelection(repo: repo, number: $0)
+                // The callout's row treatment without the callout: the
+                // surface bleeds to the card's edges like a dashboard
+                // section minus its header.
+                Card {
+                    RepoSurfaces(repo: repo,
+                                 board: model.focusBoard(for: repo),
+                                 tab: model.focusTab,
+                                 query: query) {
+                        detail = PrSelection(repo: repo, number: $0)
+                    }
+                    .padding(.horizontal, -Theme.cardPadding)
+                    .padding(.bottom, -Theme.cardPadding)
                 }
+                .clipShape(.rect(cornerRadius: Theme.cardRadius))
             }
         }
         .task(id: Focus(repo: repo, tab: model.focusTab, swe: app.swePath)) {

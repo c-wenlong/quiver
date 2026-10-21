@@ -96,7 +96,10 @@ public final class HoverExpansion {
     /// `collapsed` is the persisted choice the pointer logic keys off:
     /// a pinned-open sidebar tracks the pointer for suppression but only
     /// a collapsed one schedules the delayed expand and hide.
+    /// A repeat `inside` value is a no-op: callers that report on every
+    /// pointer move must not keep pushing the delayed change out.
     public func hover(_ inside: Bool, collapsed: Bool) {
+        guard inside != pointerInside else { return }
         pending?.cancel()
         pointerInside = inside
         if !inside { expansion.pointerLeft() }

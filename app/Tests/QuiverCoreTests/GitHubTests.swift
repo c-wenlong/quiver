@@ -311,6 +311,88 @@ import Testing
         #expect(model.selected == "o/b")
     }
 
+    /// Reorder applies the new order immediately, then the CLI reply —
+    /// the store's `pinned` — is authoritative even when it disagrees
+    /// with the request. A failed call restores the previous order.
+    @Test func reorderPersistsAndRestoresOnFailure() async {
+        let calls = router([
+            "gh --json": "\(env),\"repos\":["
+                + "{\"name\":\"o/a\",\"added_at\":100},"
+                + "{\"name\":\"o/b\",\"added_at\":200},"
+                + "{\"name\":\"o/c\",\"added_at\":300}]",
+            // The store lands a different order than asked — its reply,
+            // not the request, is what the model keeps.
+            "gh repo reorder o/c o/a o/b --json":
+                "\"pinned\":[\"o/c\",\"o/b\",\"o/a\"]",
+        ])
+        let model = GitHubModel()
+        let swe = SweClient(runner: calls)
+        await model.load(swe: swe)
+        #expect(model.pins.map(\.name) == ["o/a", "o/b", "o/c"])
+
+        await model.reorderPins(["o/c", "o/a", "o/b"], swe: swe)
+        #expect(model.pins.map(\.name) == ["o/c", "o/b", "o/a"])
+
+        calls.replies["gh repo reorder o/b o/a o/c --json"] = .init(
+            status: 1, stdout: Data(), stderr: "disk full")
+        await model.reorderPins(["o/b", "o/a", "o/c"], swe: swe)
+        #expect(model.pins.map(\.name) == ["o/c", "o/b", "o/a"])
+        #expect(model.pinError != nil)
+    }
+
+    /// A drop while the first reorder's save is in flight used to be
+    /// discarded: the optimistic order showed but nothing persisted it.
+    /// The second order queues behind the first and lands when it settles.
+    @Test func reorderDropDuringSaveQueues() async {
+        final class Gate: CommandRunning, @unchecked Sendable {
+            var replies: [String: CommandResult] = [:]
+            private(set) var calls: [[String]] = []
+            private var hold: CheckedContinuation<Void, Never>?
+            private var resumed = false
+            func run(_ arguments: [String]) async throws -> CommandResult {
+                calls.append(arguments)
+                let joined = arguments.joined(separator: " ")
+                if joined.contains("repo reorder o/c"), !resumed {
+                    await withCheckedContinuation { hold = $0 }
+                }
+                for (suffix, reply) in replies where joined.hasSuffix(suffix) {
+                    return reply
+                }
+                return .init(status: 1, stdout: Data(), stderr: "no route")
+            }
+            func run(_ arguments: [String], input: Data?) async throws -> CommandResult {
+                try await run(arguments)
+            }
+            func resume() { resumed = true; hold?.resume(); hold = nil }
+        }
+        let gate = Gate()
+        gate.replies["gh --json"] = .init(status: 0, stdout: envelope(
+            "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100},"
+            + "{\"name\":\"o/b\",\"added_at\":200},"
+            + "{\"name\":\"o/c\",\"added_at\":300}]"), stderr: "")
+        gate.replies["gh repo reorder o/c o/a o/b --json"] = .init(
+            status: 0, stdout: envelope("\"pinned\":[\"o/c\",\"o/a\",\"o/b\"]"), stderr: "")
+        gate.replies["gh repo reorder o/b o/c o/a --json"] = .init(
+            status: 0, stdout: envelope("\"pinned\":[\"o/b\",\"o/c\",\"o/a\"]"), stderr: "")
+        let model = GitHubModel()
+        let swe = SweClient(runner: gate)
+        await model.load(swe: swe)
+
+        let first = Task { await model.reorderPins(["o/c", "o/a", "o/b"], swe: swe) }
+        try? await Task.sleep(for: .milliseconds(50))
+        await model.reorderPins(["o/b", "o/c", "o/a"], swe: swe)
+        // The second drop shows immediately even though its save waits.
+        #expect(model.pins.map(\.name) == ["o/b", "o/c", "o/a"])
+        gate.resume()
+        await first.value
+
+        let reorders = gate.calls.map { $0.joined(separator: " ") }
+            .filter { $0.contains("repo reorder") }
+        #expect(reorders.count == 2)
+        #expect(reorders.last?.contains("o/b o/c o/a") == true)
+        #expect(model.pins.map(\.name) == ["o/b", "o/c", "o/a"])
+    }
+
     /// Opening Inbox first marks `probed` without fetching pins; the
     /// Repositories page must still load them.
     @Test func inboxFirstStillLoadsPinsLater() async {
@@ -970,6 +1052,37 @@ import Testing
             return
         }
         #expect(all == ["feat/login", "main"])
+    }
+
+    /// `hasRows` mirrors `filtered`'s emptiness for callers that only
+    /// need presence: name-matched repos check row count, fallback
+    /// repos check for any match, and unloaded surfaces read as
+    /// non-empty so their state card still shows.
+    @Test func hasRowsMirrorsFilteredEmptiness() async {
+        let swe = SweClient(runner: router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
+        ]))
+        let model = GitHubModel()
+        await model.load(swe: swe)
+
+        let rows: Loadable<[String]> = .loaded(["feat/login", "main"])
+        let empty: Loadable<[String]> = .loaded([])
+        // No query: presence is just "are there rows".
+        #expect(model.hasRows(rows, repo: "o/a") { [$0] })
+        #expect(!model.hasRows(empty, repo: "o/a") { [$0] })
+        // Idle/failed surfaces are not "empty": their cards must show.
+        #expect(model.hasRows(Loadable<[String]>.idle, repo: "o/a") { [$0] })
+        #expect(model.hasRows(.failed("nope"), repo: "o/a") { [$0] })
+
+        // A fallback row search: any matching field keeps the card.
+        model.filter = "login"
+        #expect(model.hasRows(rows, repo: "o/a") { [$0] })
+        model.filter = "zzz"
+        #expect(!model.hasRows(rows, repo: "o/a") { [$0] })
+        // A name-matched repo ignores the filter on its rows.
+        model.filter = "o/a"
+        #expect(model.hasRows(rows, repo: "o/a") { [$0] })
+        #expect(!model.hasRows(empty, repo: "o/a") { [$0] })
     }
 
     /// Filtering is pure: reading `visibleRepos`/`filtered` issues no

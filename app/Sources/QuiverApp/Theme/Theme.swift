@@ -61,6 +61,9 @@ enum Theme {
 
     static let usageTrack = Color(light: "#f5f5f5", dark: "#40404080")
     static let success = Color(light: "#10b981", dark: "#34d399")
+    /// Text on `success` as a fill — white on emerald-500 light,
+    /// near-black green on emerald-400 dark.
+    static let successForeground = Color(light: "#ffffff", dark: "#052e1e")
     static let warning = Color(light: "#f59e0b", dark: "#fbbf24")
     static let danger = Color(light: "#ef4444", dark: "#f87171")
     /// Danger and warning for text and glyphs. The roles above are for
@@ -107,6 +110,11 @@ enum Theme {
     static let sidebarTrailingPadding: CGFloat = 4
     /// The collapsed nav pill that hugs an icon: 8 + 18 + 8.
     static let navIconPillWidth: CGFloat = 34
+    /// The strip that arms the hover expansion: just the icon column
+    /// (leading padding + pill + trailing), so a pointer heading for
+    /// the page's left edge never floats the sidebar over its target.
+    static let sidebarHoverWidth: CGFloat =
+        sidebarLeadingPadding + navIconPillWidth + sidebarTrailingPadding
     /// The invisible drag strip centred on the sidebar's trailing edge.
     static let sidebarResizeHandleWidth: CGFloat = 8
     /// Sidebar collapse, expand and hover-float all use this.

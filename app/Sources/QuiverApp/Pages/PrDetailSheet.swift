@@ -25,6 +25,9 @@ struct PrDetailSheet: View {
     /// A merge's returned error — kept on the sheet so a failed merge
     /// stays readable after the busy state clears.
     @State private var mergeError: String?
+    /// The check list starts folded — the pass count on the header is
+    /// enough when everything is green; it opens for the failed rows.
+    @State private var checksOpen = false
 
     private var model: GitHubModel { app.github }
     private var state: Loadable<GhPrDetail> {
@@ -47,7 +50,7 @@ struct PrDetailSheet: View {
                 content(pr)
             }
         }
-        .sheetScaffold(width: 560)
+        .sheetScaffold(width: 680)
         .task { await load() }
     }
 
@@ -59,50 +62,62 @@ struct PrDetailSheet: View {
     @ViewBuilder
     private func content(_ pr: GhPrDetail) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 16) {
                 header(pr)
                 if !pr.checkRuns.isEmpty { checks(pr.checkRuns) }
                 if !pr.reviews.isEmpty || !pr.reviewRequests.isEmpty {
                     reviews(pr)
                 }
-                if !pr.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(pr.body)
-                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                        .lineLimit(10)
-                        .textSelection(.enabled)
+                let body = pr.body.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !body.isEmpty {
+                    section("Description") {
+                        MarkdownBody(body: body)
+                            .font(Theme.bodySmall)
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineSpacing(3)
+                            .textSelection(.enabled)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxHeight: 420)
+        .frame(maxHeight: 460)
 
         if let mergeError {
             Text(mergeError).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                .lineLimit(3)
+                .textSelection(.enabled)
+                .help(mergeError)
         }
 
         HStack(spacing: 10) {
             if pr.state == .open {
-                Picker("Method", selection: $method) {
-                    Text("Squash").tag("squash")
-                    Text("Merge").tag("merge")
-                    Text("Rebase").tag("rebase")
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 210)
+                SelectMenu(options: [
+                    (value: "squash", title: "Squash and merge"),
+                    (value: "rebase", title: "Rebase and merge"),
+                    (value: "merge", title: "Create a merge commit"),
+                ], selection: $method, width: 172)
                 Button {
                     Task { await merge(auto: false) }
                 } label: {
-                    if merging { ProgressView().controlSize(.small) }
-                    else { Text("Merge") }
+                    if merging {
+                        ProgressView().controlSize(.small)
+                            .tint(Theme.successForeground)
+                    } else {
+                        Text("Merge")
+                    }
                 }
-                .primaryButton()
+                .successButton()
+                .fixedSize()
                 .disabled(merging || pr.draft || pr.mergeable == .conflicting)
                 .help(pr.draft ? "Draft PRs can't merge"
                       : pr.mergeable == .conflicting ? "Resolve the conflicts first"
                       : "Merge now with the selected strategy")
                 Button("Auto-merge") { Task { await merge(auto: true) } }
                     .secondaryButton()
+                    .fixedSize()
                     .disabled(merging || pr.draft || pr.autoMerge != nil)
                     .help(pr.autoMerge != nil
                           ? "Auto-merge is already armed"
@@ -123,7 +138,18 @@ struct PrDetailSheet: View {
             .help("Fetch again")
             Button("Done") { dismiss() }
                 .secondaryButton()
+                .fixedSize()
                 .keyboardShortcut(.cancelAction)
+        }
+    }
+
+    /// A titled card of content — the sheet's repeating section shape.
+    @ViewBuilder
+    private func section<Content: View>(_ title: String,
+                                      @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(Theme.caption).foregroundStyle(Theme.textMuted)
+            SettingsCard { content() }
         }
     }
 
@@ -131,8 +157,10 @@ struct PrDetailSheet: View {
     private func header(_ pr: GhPrDetail) -> some View {
         HStack(alignment: .top, spacing: 10) {
             PrIcon(state: pr.state, draft: pr.draft)
+                .padding(.top, 2)
             VStack(alignment: .leading, spacing: 4) {
                 Text(pr.title).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(2)
                 Text("#\(pr.number) · \(pr.repo) · \(pr.branch) → \(pr.base)"
                      + (pr.updatedAt.date.map { " · \(UsageFormat.ago($0, now: .now))" } ?? ""))
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -163,56 +191,91 @@ struct PrDetailSheet: View {
         }
     }
 
+    /// The check list, folded until asked — the header carries the pass
+    /// count so a green PR reads "Checks 9/9" without the nine rows.
     @ViewBuilder
     private func checks(_ rows: [GhCheck]) -> some View {
+        let passed = rows.filter { $0.state == "passing" }.count
+        let failing = rows.contains { $0.state == "failing" }
         VStack(alignment: .leading, spacing: 6) {
-            Text("Checks").font(Theme.caption).foregroundStyle(Theme.textMuted)
-            ForEach(Array(rows.enumerated()), id: \.offset) { _, check in
-                HStack(spacing: 8) {
-                    CheckGlyph(state: check.state)
-                    Text(check.name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                    if !check.workflow.isEmpty {
-                        Text(check.workflow).font(Theme.caption).foregroundStyle(Theme.textMuted)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 8)
-                    if let conclusion = check.conclusion {
-                        Text(conclusion).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    } else {
-                        Text(check.status).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    }
-                    if let url = URL(string: check.url), !check.url.isEmpty {
-                        Button { openURL(url) } label: {
-                            Image(systemName: "arrow.up.right.square")
-                                .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
-                        }
-                        .plainButton()
-                        .help("Open the check")
-                    }
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { checksOpen.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Theme.textMuted)
+                        .rotationEffect(checksOpen ? .degrees(90) : .zero)
+                    Text("Checks").font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    Text("\(passed)/\(rows.count)")
+                        .font(Theme.caption)
+                        .foregroundStyle(failing ? Theme.danger
+                                         : passed == rows.count ? Theme.success
+                                         : Theme.warning)
                 }
+            }
+            .plainButton()
+            .help(checksOpen ? "Hide the check list" : "Show every check")
+            if checksOpen {
+                SettingsCard { checkRows(rows) }
             }
         }
     }
 
     @ViewBuilder
+    private func checkRows(_ rows: [GhCheck]) -> some View {
+        ForEach(Array(rows.enumerated()), id: \.offset) { index, check in
+            HStack(spacing: 8) {
+                CheckGlyph(state: check.state)
+                Text(check.name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                if !check.workflow.isEmpty {
+                    Text(check.workflow).font(Theme.caption).foregroundStyle(Theme.textMuted)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                if let conclusion = check.conclusion {
+                    Text(conclusion).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                } else {
+                    Text(check.status).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
+                if let url = URL(string: check.url), !check.url.isEmpty {
+                    Button { openURL(url) } label: {
+                        Image(systemName: "arrow.up.right.square")
+                            .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                    }
+                    .plainButton()
+                    .help("Open the check")
+                }
+            }
+            .padding(.vertical, 7)
+            if index < rows.count - 1 { SettingsDivider() }
+        }
+    }
+
+    @ViewBuilder
     private func reviews(_ pr: GhPrDetail) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Reviews").font(Theme.caption).foregroundStyle(Theme.textMuted)
-            ForEach(pr.reviews, id: \.author) { review in
+        section("Reviews") {
+            ForEach(Array(pr.reviews.enumerated()), id: \.offset) { index, review in
                 HStack(spacing: 8) {
                     Text(review.author).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
                     Text(review.state.replacing("_", with: " "))
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    Spacer(minLength: 8)
                     if let at = review.submittedAt?.date {
                         Text(UsageFormat.ago(at, now: .now))
                             .font(Theme.caption).foregroundStyle(Theme.textMuted)
                     }
                 }
+                .padding(.vertical, 7)
+                if index < pr.reviews.count - 1 || !pr.reviewRequests.isEmpty {
+                    SettingsDivider()
+                }
             }
             if !pr.reviewRequests.isEmpty {
                 Text("requested: \(pr.reviewRequests.joined(separator: ", "))")
                     .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    .padding(.vertical, 7)
             }
         }
     }
@@ -253,6 +316,113 @@ private struct CheckGlyph: View {
         case "failing": Theme.danger
         case "running": Theme.warning
         default: Theme.textMuted
+        }
+    }
+}
+
+/// The PR body, segmented by `GitHubMarkdown`: prose between `<details>`
+/// folds renders as markdown; each fold collapses to its `<summary>`
+/// line — the way GitHub renders them.
+private struct MarkdownBody: View {
+    let segments: [MarkdownSegment]
+
+    init(body: String) { segments = GitHubMarkdown.segments(body) }
+    init(segments: [MarkdownSegment]) { self.segments = segments }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(segments.enumerated()), id: \.offset) { _, seg in
+                switch seg {
+                case .markdown(let md):
+                    Text(Self.markdown(md))
+                case .details(let title, let inner):
+                    DetailsSection(title: title, segments: inner)
+                }
+            }
+        }
+    }
+
+    /// Rendered markdown: Apple's parser covers emphasis, links, lists
+    /// and code through presentation intent — but paragraphs live only
+    /// in the intent, not the characters, so `Text` would fuse them.
+    /// A `\n` goes in wherever the paragraph component's id changes,
+    /// then the heading pass gives `##` lines real sizes.
+    static func markdown(_ md: String) -> AttributedString {
+        let parsed = (try? AttributedString(
+            markdown: md,
+            options: .init(interpretedSyntax: .full,
+                           failurePolicy: .returnPartiallyParsedIfPossible)))
+            ?? AttributedString(md)
+        var text = AttributedString()
+        var paragraph: PresentationIntent.IntentType?
+        for run in parsed.runs {
+            let intent = run.presentationIntent
+            let para = intent?.components
+                .first { $0.kind == .paragraph }
+            if let intent, let para, para != paragraph,
+               !text.characters.isEmpty {
+                text += AttributedString("\n")
+                // Text draws no list bullets or quote rail — the
+                // markers are characters, so they show.
+                let kinds = intent.components.map(\.kind)
+                let quoteDepth = kinds.filter { $0 == .blockQuote }.count
+                text += AttributedString(String(repeating: "│ ", count: quoteDepth))
+                if kinds.contains(.unorderedList) {
+                    let depth = kinds.filter { $0 == .unorderedList }.count
+                    text += AttributedString(String(repeating: "  ", count: depth - 1) + "• ")
+                } else if kinds.contains(.orderedList),
+                          let item = intent.components.first(where: {
+                              if case .listItem = $0.kind { return true }
+                              return false }),
+                          case .listItem(let ordinal) = item.kind {
+                    text += AttributedString("\(ordinal). ")
+                }
+            }
+            paragraph = para
+            text += AttributedString(parsed[run.range])
+        }
+        for run in text.runs {
+            guard let intent = run.presentationIntent else { continue }
+            for component in intent.components {
+                guard case .header(let level) = component.kind else { continue }
+                let sizes: [CGFloat] = [17, 15, 14, 13, 13, 13]
+                text[run.range].font = NSFont.systemFont(
+                    ofSize: sizes[min(max(level, 1), 6) - 1], weight: .semibold)
+                text[run.range].foregroundColor = NSColor(Theme.textPrimary)
+            }
+        }
+        return text
+    }
+}
+
+/// A `<details>` block: the `<summary>` line behind the same fold
+/// affordance as Checks, its segments rendered inside when opened.
+private struct DetailsSection: View {
+    let title: String
+    let segments: [MarkdownSegment]
+    @State private var open = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { open.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Theme.textMuted)
+                        .rotationEffect(open ? .degrees(90) : .zero)
+                    Text(MarkdownBody.markdown(title))
+                        .font(Theme.bodySmall)
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                }
+            }
+            .plainButton()
+            if open {
+                MarkdownBody(segments: segments)
+                    .padding(.leading, 12)
+            }
         }
     }
 }

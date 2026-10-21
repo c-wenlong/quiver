@@ -16,6 +16,9 @@ struct RepositoriesPage: View {
     @State private var adding = false
     @State private var managing = false
     @State private var jumping = false
+    /// Repo names whose section is folded to just the header — keyed by
+    /// repo alone, so a collapse follows the repo across every tab.
+    @State private var collapsed: Set<String> = []
     /// The PR whose detail sheet is open, if any.
     @State private var detail: PrSelection?
 
@@ -57,8 +60,19 @@ struct RepositoriesPage: View {
                 .help("Jump to a repository (⌘K)")
                 Button("Refresh", systemImage: "arrow.clockwise") {
                     Task {
-                        for repo in visibleRepos {
-                            await model.refresh(repo: repo.name, swe: app.swe)
+                        // A board call covers repos not yet hydrated;
+                        // the per-repo refreshes overlap after it.
+                        await model.loadBoards(visibleRepos.map(\.name),
+                                               swe: app.swe)
+                        let model = model
+                        let swe = app.swe
+                        await withTaskGroup(of: Void.self) { group in
+                            for repo in visibleRepos {
+                                group.addTask {
+                                    await model.refresh(repo: repo.name,
+                                                        swe: swe)
+                                }
+                            }
                         }
                     }
                 }
@@ -82,11 +96,17 @@ struct RepositoriesPage: View {
                 EmptyCard(text: "Pin a repository to see its pull requests, issues and CI here.",
                           icon: "shippingbox", actionTitle: "Add repository") { adding = true }
             } else {
-                SearchField(prompt: "Filter by repo, title, branch…",
-                            text: $model.filter)
-                    .frame(maxWidth: 360)
-                Tabs(options: RepoTab.allCases.map { ($0, $0.title) },
-                     selection: $model.tab, style: .underline)
+                HStack(alignment: .bottom, spacing: 16) {
+                    // Tabs expands for the full-width underline; the
+                    // search rides the right end of the same row.
+                    Tabs(options: RepoTab.allCases.map { ($0, $0.title) },
+                         selection: $model.tab, style: .underline)
+                        .layoutPriority(1)
+                    SearchField(prompt: "Filter by repo, title, branch…",
+                                text: $model.filter)
+                        .frame(minWidth: 100, maxWidth: 280)
+                        .padding(.bottom, 4)
+                }
                 if let error = model.pinError ?? model.actionError {
                     ErrorCard(message: error)
                 }
@@ -94,14 +114,26 @@ struct RepositoriesPage: View {
                     ErrorCard(message: error)
                 }
                 ScrollViewReader { proxy in
-                    ForEach(visibleRepos) { pin in
-                        repoSection(pin.name).id(pin.name)
+                    ReorderableRows(visibleRepos) { id, before in
+                        var order = model.pins.map(\.name)
+                        order.removeAll { $0 == id }
+                        if let before, let idx = order.firstIndex(of: before) {
+                            order.insert(id, at: idx)
+                        } else {
+                            order.append(id)
+                        }
+                        Task { await model.reorderPins(order, swe: app.swe) }
+                    } row: { pin in
+                        repoSection(pin.name)
+                            .id(pin.name)
+                            .padding(.bottom, 10)
                     }
                     .onChange(of: model.scrollTarget) { _, target in
                         // Banner click-through: the filter is already
                         // cleared so the section exists — scroll to it.
                         guard let target else { return }
                         model.scrollTarget = nil
+                        collapsed.remove(target)
                         withAnimation { proxy.scrollTo(target, anchor: .top) }
                     }
                 }
@@ -110,19 +142,34 @@ struct RepositoriesPage: View {
         .task(id: Visible(tab: model.tab, swe: app.swePath,
                          filter: model.filter,
                          repos: model.pins.map(\.name))) {
-            // Pins first, then only the sections on screen — a filtered
-            // page never waits on a repo it isn't showing.
+            // Pins first, then one board call hydrates every visible
+            // repo's surfaces at once — the CLI fans the list out itself.
             await model.loadPinsIfNeeded(swe: app.swe)
             await model.loadSessionHarnesses(swe: app.swe)
-            for repo in visibleRepos where !Task.isCancelled {
-                await model.loadTabIfStale(model.tab, repo: repo.name, swe: app.swe)
+            await model.loadBoards(visibleRepos.map(\.name), swe: app.swe)
+            // What the board missed or failed falls back to per-tab
+            // fetches — overlapped, since each await releases the actor.
+            let model = model
+            let swe = app.swe
+            await withTaskGroup(of: Void.self) { group in
+                for repo in visibleRepos {
+                    group.addTask {
+                        await model.loadTabIfStale(model.tab, repo: repo.name,
+                                                   swe: swe)
+                    }
+                }
             }
             // Poll while the page is open so merged PRs and finished CI
             // land without a manual refresh.
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
-                for repo in visibleRepos where !Task.isCancelled {
-                    await model.loadTab(model.tab, repo: repo.name, swe: app.swe)
+                await withTaskGroup(of: Void.self) { group in
+                    for repo in visibleRepos {
+                        group.addTask {
+                            await model.loadTab(model.tab, repo: repo.name,
+                                                swe: swe)
+                        }
+                    }
                 }
             }
         }
@@ -150,56 +197,122 @@ struct RepositoriesPage: View {
     /// The repos whose sections show — the model's filter logic.
     private var visibleRepos: [PinnedRepo] { model.visibleRepos }
 
-    /// One pinned repo's section: its name, then on the right the
-    /// link-out and the open-in-full affordance, then the active tab's
-    /// surface.
+    /// One pinned repo's section: a callout holding its header (grip +
+    /// chevron + name, a link out) and, unless folded or empty, the
+    /// active tab's surface. The section is one ReorderableRows item —
+    /// a vertical drag on it reorders the pin list.
     @ViewBuilder private func repoSection(_ repo: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text(repo).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
-                Spacer(minLength: 8)
-                Button {
-                    if let url = URL(string: "https://github.com/\(repo)") { openURL(url) }
-                } label: {
-                    Image(systemName: "arrow.up.right.square")
-                        .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+        let board = model.board(for: repo)
+        let empty = surfaceEmpty(repo, board: board)
+        Card {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 8) {
+                    GripDots()
+                    if empty {
+                        // Nothing inside to fold — no chevron, no body.
+                        Text(repo).font(Theme.cardTitle)
+                            .foregroundStyle(Theme.textPrimary)
+                    } else {
+                        Button {
+                            if collapsed.contains(repo) {
+                                collapsed.remove(repo)
+                            } else {
+                                collapsed.insert(repo)
+                            }
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(Theme.textMuted)
+                                    .rotationEffect(collapsed.contains(repo)
+                                                    ? .zero : .degrees(90))
+                                Text(repo).font(Theme.cardTitle)
+                                    .foregroundStyle(Theme.textPrimary)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .plainButton()
+                        .help(collapsed.contains(repo) ? "Expand" : "Collapse")
+                    }
+                    // A fetch for the shown tab spins beside the name —
+                    // the old bottom-of-list indicator looked stranded
+                    // once the rows bled to the callout's edges.
+                    if model.loading.contains(.init(repo: repo, tab: model.tab)) {
+                        ProgressView().controlSize(.small)
+                    }
+                    Spacer()
+                    Button {
+                        if let url = URL(string: "https://github.com/\(repo)") { openURL(url) }
+                    } label: {
+                        Image(systemName: "arrow.up.right.square")
+                            .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                    }
+                    .plainButton()
+                    .help("Open on GitHub")
+                    Button { model.focused = repo } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                    }
+                    .plainButton()
+                    .help("Open \(repo) in full")
                 }
-                .plainButton()
-                .help("Open on GitHub")
-                Button { model.focused = repo } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Theme.textMuted)
+                .padding(.bottom, empty || collapsed.contains(repo) ? 0 : 10)
+                if !empty, !collapsed.contains(repo) {
+                    // Rows bleed to the callout's edges, GitHub-style:
+                    // the negative pads undo the card's, and the clip
+                    // keeps hover fills inside the rounded corners.
+                    VStack(spacing: 0) {
+                        Divider().overlay(Theme.rowDivider)
+                            .padding(.bottom, 4)
+                        RepoSurfaces(repo: repo, board: board, tab: model.tab,
+                                     query: model.query,
+                                     unfiltered: model.showsAllRows(repo)) {
+                            detail = PrSelection(repo: repo, number: $0)
+                        }
+                    }
+                    .padding(.horizontal, -Theme.cardPadding)
+                    .padding(.bottom, -Theme.cardPadding)
                 }
-                .plainButton()
-                .help("Open \(repo) in full")
-            }
-            RepoSurfaces(repo: repo, board: model.board(for: repo), tab: model.tab,
-                         loading: model.loading, query: model.query,
-                         unfiltered: model.showsAllRows(repo)) {
-                detail = PrSelection(repo: repo, number: $0)
             }
         }
+        .clipShape(.rect(cornerRadius: Theme.cardRadius))
     }
+
+    /// Whether the active tab's surface came back empty — the callout
+    /// then shows just the repo title, without a fold control or an
+    /// empty-state row. `hasRows` only checks presence (first match
+    /// exits) so the list's own filter pass isn't duplicated. Loading,
+    /// errors and unfetched surfaces keep the card so state stays
+    /// visible.
+    private func surfaceEmpty(_ repo: String, board: RepoBoard) -> Bool {
+        switch model.tab {
+        case .pulls: return !model.hasRows(board.pulls, repo: repo, RepoSurfaces.prParts)
+        case .issues: return !model.hasRows(board.issues, repo: repo, RepoSurfaces.issueParts)
+        case .actions: return !model.hasRows(board.runs, repo: repo, RepoSurfaces.runParts)
+        case .releases: return !model.hasRows(board.releases, repo: repo, RepoSurfaces.releaseParts)
+        case .tags: return !model.hasRows(board.tags, repo: repo, RepoSurfaces.tagParts)
+        case .branches: return !model.hasRows(board.branches, repo: repo, RepoSurfaces.branchParts)
+        case .pages:
+            if case .loaded(let site) = board.pages { return site == nil }
+            return false
+        }
+    }
+
 }
 
 // MARK: - Repo surfaces
 
 /// One repo's tab surfaces — pull requests, issues, workflow runs,
 /// Pages, releases, tags and branches — shared verbatim between the
-/// dashboard's repo sections and the single-repo focus page. What
+/// dashboard's repo callouts and the single-repo focus page. What
 /// differs is the board they read (the dashboard's open-state store vs
-/// the focus page's every-state one), the loading set behind the
-/// spinner, and the row filter.
+/// the focus page's every-state one) and the row filter.
 struct RepoSurfaces: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openURL) private var openURL
     var repo: String
     var board: RepoBoard
     var tab: RepoTab
-    /// The fetching set the spinners read — `model.loading` on the
-    /// dashboard, `model.focusLoading` on the focus page.
-    var loading: Set<GitHubModel.BoardKey>
     /// The row-filter text; empty keeps every row.
     var query = ""
     /// Skip row filtering — a dashboard section the query named keeps
@@ -207,6 +320,9 @@ struct RepoSurfaces: View {
     var unfiltered = false
     /// A PR row tap opens the page's detail sheet.
     var openPr: (Int) -> Void
+    /// "repo:surface" keys opened past their 3-row preview — this
+    /// view's own set, so expanding one repo never unfolds another's.
+    @State private var expanded: Set<String> = []
 
     private var model: GitHubModel { app.github }
 
@@ -222,17 +338,11 @@ struct RepoSurfaces: View {
         }
     }
 
-    /// Whether this surface has a fetch in flight — the card's
-    /// "Refreshing…" row and the first-load spinner.
-    private func busy(_ tab: RepoTab) -> Bool {
-        loading.contains(.init(repo: repo, tab: tab))
-    }
-
     /// The rows, filtered when `query` is on and the surface is not
     /// exempt — a match on any of the row's fields keeps it.
     private func filtered<Row>(_ state: Loadable<[Row]>,
                                _ parts: @escaping (Row) -> [String?]) -> Loadable<[Row]> {
-        guard case .loaded(let rows) = state, !unfiltered, !query.isEmpty else { return state }
+        guard case .loaded(let rows) = state, !unfiltered else { return state }
         return .loaded(rows.filter { row in
             parts(row).contains { $0?.localizedCaseInsensitiveContains(query) ?? false }
         })
@@ -244,14 +354,29 @@ struct RepoSurfaces: View {
         unfiltered || query.isEmpty ? base : "Nothing matches \"\(query)\"."
     }
 
-    // MARK: - Surfaces
+    /// What the row filter searches per surface — shared by the list's
+    /// filtered state and the callout's `surfaceEmpty`, so they can
+    /// never disagree.
+    static let prParts: (GhPr) -> [String?] = {
+        [$0.title, "\($0.number)", $0.branch, $0.base, $0.author] + $0.labels }
+    static let issueParts: (GhIssue) -> [String?] = {
+        [$0.title, "\($0.number)", $0.author] + $0.labels + $0.assignees }
+    static let runParts: (GhRun) -> [String?] = {
+        [$0.title, $0.workflow, $0.branch, $0.event] }
+    static let releaseParts: (GhRelease) -> [String?] = { [$0.name, $0.tag] }
+    static let tagParts: (GhTag) -> [String?] = { [$0.name, $0.sha] }
+    static let branchParts: (GhBranch) -> [String?] = { [$0.name, $0.sha] }
+
+    /// The tab's rows after the search filter.
+    private func pullsState() -> Loadable<[GhPr]> {
+        filtered(board.pulls, Self.prParts)
+    }
 
     @ViewBuilder
     private func pulls() -> some View {
-        SurfaceList(filtered(board.pulls) {
-                        [$0.title, "\($0.number)", $0.branch, $0.base, $0.author] + $0.labels },
+        SurfaceList(pullsState(),
                     empty: emptyText("No pull requests."),
-                    loading: busy(.pulls)) { pr in
+                    expandKey: "\(repo):pulls", expanded: $expanded) { pr in
             OpenRow(act: { openPr(pr.number) }) {
                 PrIcon(state: pr.state, draft: pr.draft)
                 VStack(alignment: .leading, spacing: 3) {
@@ -267,8 +392,12 @@ struct RepoSurfaces: View {
                 }
                 Spacer(minLength: 12)
                 if pr.mergeable == .conflicting {
-                    Label("Conflicts", systemImage: "exclamationmark.triangle")
-                        .font(Theme.caption).foregroundStyle(Theme.warningText)
+                    Label {
+                        Text("Conflicts")
+                    } icon: {
+                        OcticonView(icon: .alert, size: 12)
+                    }
+                    .font(Theme.caption).foregroundStyle(Theme.warningText)
                 }
                 ReviewMark(decision: pr.reviewDecision)
                 ChecksMark(checks: pr.checks)
@@ -300,12 +429,15 @@ struct RepoSurfaces: View {
         }
     }
 
+    private func issuesState() -> Loadable<[GhIssue]> {
+        filtered(board.issues, Self.issueParts)
+    }
+
     @ViewBuilder
     private func issues() -> some View {
-        SurfaceList(filtered(board.issues) {
-                        [$0.title, "\($0.number)", $0.author] + $0.labels + $0.assignees },
+        SurfaceList(issuesState(),
                     empty: emptyText("No issues."),
-                    loading: busy(.issues)) { issue in
+                    expandKey: "\(repo):issues", expanded: $expanded) { issue in
             OpenRow(url: issue.url, open: openURL.callAsFunction) {
                 Image(systemName: issue.state == .open ? "exclamationmark.circle" : "checkmark.circle")
                     .font(.system(size: 15))
@@ -330,12 +462,15 @@ struct RepoSurfaces: View {
         }
     }
 
+    private func actionsState() -> Loadable<[GhRun]> {
+        filtered(board.runs, Self.runParts)
+    }
+
     @ViewBuilder
     private func actions() -> some View {
-        SurfaceList(filtered(board.runs) {
-                        [$0.title, $0.workflow, $0.branch, $0.event] },
+        SurfaceList(actionsState(),
                     empty: emptyText("No workflow runs."),
-                    loading: busy(.actions)) { run in
+                    expandKey: "\(repo):actions", expanded: $expanded) { run in
             OpenRow(url: run.url, open: openURL.callAsFunction) {
                 RunIcon(status: run.status, conclusion: run.conclusion)
                 VStack(alignment: .leading, spacing: 3) {
@@ -372,62 +507,74 @@ struct RepoSurfaces: View {
         }
     }
 
+    /// Pages is a single facts panel, not a row list — inside the repo
+    /// callout it keeps the card's inset rather than bleeding.
     @ViewBuilder
     private func pages() -> some View {
-        switch board.pages {
-        case .idle, .loading:
-            LoadingCard(text: "Reading the Pages settings…")
-        case .failed(let message):
-            ErrorCard(message: message)
-        case .loaded(let pages):
-            if let pages {
-                Card(title: "GitHub Pages",
-                     subtitle: pages.cname ?? pages.url ?? repo) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        if let url = pages.url, let link = URL(string: url) {
-                            Button { openURL(link) } label: {
-                                Label(url, systemImage: "arrow.up.right.square")
-                                    .font(Theme.bodySmall).foregroundStyle(Theme.accent)
-                            }
-                            .plainButton(cornerRadius: Theme.controlRadius)
+        Group {
+            switch board.pages {
+            case .idle, .loading:
+                LoadingCard(text: "Reading the Pages settings…", framed: false)
+            case .failed(let message):
+                ErrorCard(message: message, framed: false)
+            case .loaded(let pages):
+                if let pages {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(pages.cname ?? pages.url ?? "GitHub Pages")
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                    if let url = pages.url, let link = URL(string: url) {
+                        Button { openURL(link) } label: {
+                            Label(url, systemImage: "arrow.up.right.square")
+                                .font(Theme.bodySmall).foregroundStyle(Theme.accent)
                         }
-                        if let branch = pages.sourceBranch {
-                            Label("Built from \(branch)", systemImage: "arrow.triangle.branch")
+                        .plainButton(cornerRadius: Theme.controlRadius)
+                    }
+                    if let branch = pages.sourceBranch {
+                        Label("Built from \(branch)", systemImage: "arrow.triangle.branch")
+                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    }
+                    if let build = pages.latestBuild {
+                        HStack(spacing: 8) {
+                            BuildMark(status: build.status)
+                            Text("Last build \(build.status)")
                                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                            if let commit = build.commit {
+                                Text(commit.prefix(7))
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundStyle(Theme.textMuted)
+                            }
+                            if let at = build.updatedAt?.date {
+                                Text(UsageFormat.ago(at, now: .now))
+                                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                            }
                         }
-                        if let build = pages.latestBuild {
-                            HStack(spacing: 8) {
-                                BuildMark(status: build.status)
-                                Text("Last build \(build.status)")
-                                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                                if let commit = build.commit {
-                                    Text(commit.prefix(7))
-                                        .font(.system(size: 12, design: .monospaced))
-                                        .foregroundStyle(Theme.textMuted)
-                                }
-                                if let at = build.updatedAt?.date {
-                                    Text(UsageFormat.ago(at, now: .now))
-                                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                                }
-                            }
-                            if let error = build.error {
-                                Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
-                                    .lineLimit(3)
-                            }
+                        if let error = build.error {
+                            Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                                .lineLimit(3)
                         }
                     }
                 }
-            } else {
-                EmptyCard(text: "This repo has no GitHub Pages site.", icon: "globe")
+                .padding(.vertical, 6)
+                } else {
+                    EmptyCard(text: "This repo has no GitHub Pages site.",
+                              icon: "globe", framed: false)
+                }
             }
         }
+        // Counteracts the callout's row bleed on every branch: the
+        // panel keeps the inset the rows gave up.
+        .padding([.horizontal, .bottom], Theme.cardPadding)
+    }
+
+    private func releasesState() -> Loadable<[GhRelease]> {
+        filtered(board.releases, Self.releaseParts)
     }
 
     @ViewBuilder
     private func releases() -> some View {
-        SurfaceList(filtered(board.releases) { [$0.name, $0.tag] },
+        SurfaceList(releasesState(),
                     empty: emptyText("No releases."),
-                    loading: busy(.releases)) { release in
+                    expandKey: "\(repo):releases", expanded: $expanded) { release in
             OpenRow(url: release.url, open: openURL.callAsFunction) {
                 Image(systemName: "tag").font(.system(size: 14))
                     .foregroundStyle(Theme.accent)
@@ -448,11 +595,15 @@ struct RepoSurfaces: View {
         }
     }
 
+    private func tagsState() -> Loadable<[GhTag]> {
+        filtered(board.tags, Self.tagParts)
+    }
+
     @ViewBuilder
     private func tags() -> some View {
-        SurfaceList(filtered(board.tags) { [$0.name, $0.sha] },
+        SurfaceList(tagsState(),
                     empty: emptyText("No tags."),
-                    loading: busy(.tags)) { tag in
+                    expandKey: "\(repo):tags", expanded: $expanded) { tag in
             OpenRow(url: tag.url, open: openURL.callAsFunction) {
                 Image(systemName: "tag").font(.system(size: 14))
                     .foregroundStyle(Theme.textSecondary)
@@ -464,11 +615,15 @@ struct RepoSurfaces: View {
         }
     }
 
+    private func branchesState() -> Loadable<[GhBranch]> {
+        filtered(board.branches, Self.branchParts)
+    }
+
     @ViewBuilder
     private func branches() -> some View {
-        SurfaceList(filtered(board.branches) { [$0.name, $0.sha] },
+        SurfaceList(branchesState(),
                     empty: emptyText("No branches."),
-                    loading: busy(.branches)) { branch in
+                    expandKey: "\(repo):branches", expanded: $expanded) { branch in
             OpenRow(url: branch.url, open: openURL.callAsFunction) {
                 Image(systemName: "arrow.triangle.branch").font(.system(size: 14))
                     .foregroundStyle(branch.default ? Theme.accent : Theme.textSecondary)
@@ -484,44 +639,72 @@ struct RepoSurfaces: View {
     }
 }
 
-/// A surface's rows inside one card: the spinner on first load, the
-/// error card on failure, the empty line on `.loaded([])`, else a row
-/// per entry separated by hairlines.
+/// A surface's rows inside the repo callout: the spinner on first
+/// load, the error card on failure, the empty line on `.loaded([])`,
+/// else a preview of `preview` rows plus a `.cardBottom` expander that
+/// sits flush on the callout's bottom edge when more exist.
 private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: View>: View {
     var state: Loadable<[Row]>
     var empty: String
-    var loading: Bool
+    /// "repo:surface" key into `expanded`; nil disables the preview cap.
+    var expandKey: String?
+    @Binding var expanded: Set<String>
+    var preview = 3
     @ViewBuilder var row: (Row) -> Content
 
-    init(_ state: Loadable<[Row]>, empty: String, loading: Bool,
+    init(_ state: Loadable<[Row]>, empty: String,
+         expandKey: String? = nil, expanded: Binding<Set<String>>? = nil,
          @ViewBuilder row: @escaping (Row) -> Content) {
         self.state = state
         self.empty = empty
-        self.loading = loading
+        self.expandKey = expandKey
+        self._expanded = expanded ?? .constant([])
         self.row = row
+    }
+
+    private var isOpen: Bool {
+        expandKey.map { expanded.contains($0) } ?? true
     }
 
     var body: some View {
         switch state {
         case .idle, .loading:
-            LoadingCard(text: "Fetching…")
+            LoadingCard(text: "Fetching…", framed: false)
+                .padding(statePadding)
         case .failed(let message):
-            ErrorCard(message: message)
+            ErrorCard(message: message, framed: false)
+                .padding(statePadding)
         case .loaded(let rows) where rows.isEmpty:
-            EmptyCard(text: empty, icon: "checkmark.circle")
+            EmptyCard(text: empty, icon: "checkmark.circle", framed: false)
+                .padding(statePadding)
         case .loaded(let rows):
-            Card {
-                VStack(spacing: 0) {
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in
-                        row(item)
-                        if index < rows.count - 1 { Divider().overlay(Theme.rowDivider) }
-                    }
+            content(rows)
+        }
+    }
+
+    /// The bare state rows share the row content's inset inside the
+    /// bled callout — without it their text and buttons touch the edge.
+    private var statePadding: EdgeInsets {
+        EdgeInsets(top: 10, leading: 14, bottom: 10, trailing: 14)
+    }
+
+    @ViewBuilder private func content(_ rows: [Row]) -> some View {
+        VStack(spacing: 0) {
+            let visible = isOpen ? rows : Array(rows.prefix(preview))
+            let hasMore = expandKey != nil && rows.count > preview
+            ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
+                row(item)
+                if index < visible.count - 1 || hasMore {
+                    Divider().overlay(Theme.rowDivider)
                 }
-                if loading {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("Refreshing…").font(Theme.caption).foregroundStyle(Theme.textMuted)
-                    }
+            }
+            if let expandKey, hasMore {
+                ExpandRow(isExpanded: isOpen, hidden: rows.count - preview,
+                          help: (expand: "Show every row",
+                                 collapse: "Show only the first \(preview)"),
+                          edge: .cardBottom) {
+                    if isOpen { expanded.remove(expandKey) }
+                    else { expanded.insert(expandKey) }
                 }
             }
         }
@@ -530,7 +713,8 @@ private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: Vi
 
 /// A row with one click action: hover fill, link pointer, plain style.
 /// `url:` rows open a GitHub page; a custom action opens the in-app
-/// workbench instead.
+/// workbench instead. Rows bleed to the callout's edges, so the hover
+/// fill runs wall to wall and the content carries the inset.
 private struct OpenRow<Content: View>: View {
     var act: () -> Void
     @ViewBuilder var content: Content
@@ -551,7 +735,7 @@ private struct OpenRow<Content: View>: View {
         Button(action: act) {
             HStack(alignment: .top, spacing: 12) { content }
                 .padding(.vertical, 10)
-                .padding(.horizontal, 6)
+                .padding(.horizontal, 14)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(hovering ? Theme.rowHover : .clear,
                             in: .rect(cornerRadius: Theme.controlRadius))
@@ -642,14 +826,23 @@ private struct RepoManager: View {
 /// GitHub's purple for merged/closed-done states.
 let ghPurple = Color(light: "#8250df", dark: "#a371f7")
 
+/// The PR's state as GitHub's own octicon — pull request open, merge
+/// node merged, crossed pull request closed, dashed pull request draft.
+/// Tinted like the platform: green, purple, red, muted.
 struct PrIcon: View {
     var state: GhPr.State
     var draft: Bool
     var body: some View {
-        Image(systemName: state == .merged ? "arrow.triangle.merge" : "arrow.triangle.pull")
-            .font(.system(size: 15))
+        OcticonView(icon: icon, size: 16)
             .foregroundStyle(color)
-            .padding(.top, 1)
+    }
+    private var icon: Octicon {
+        if draft { return .pullRequestDraft }
+        return switch state {
+        case .open: .pullRequest
+        case .merged: .merge
+        case .closed: .pullRequestClosed
+        }
     }
     private var color: Color {
         if draft { return Theme.textMuted }
