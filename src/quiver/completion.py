@@ -437,6 +437,7 @@ _NESTED_SUBCOMMANDS: dict[tuple[str, str], list[tuple[str, str]]] = {
         ("list", "Pinned repos"),
         ("add", "Pin a repo"),
         ("remove", "Unpin a repo"),
+        ("reorder", "Rewrite pin order"),
         ("search", "Search github.com for repos to pin"),
     ],
     ("gh", "pr"): [

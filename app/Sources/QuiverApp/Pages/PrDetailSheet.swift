@@ -25,6 +25,9 @@ struct PrDetailSheet: View {
     /// A merge's returned error — kept on the sheet so a failed merge
     /// stays readable after the busy state clears.
     @State private var mergeError: String?
+    /// The check list starts folded — the pass count on the header is
+    /// enough when everything is green; it opens for the failed rows.
+    @State private var checksOpen = false
 
     private var model: GitHubModel { app.github }
     private var state: Loadable<GhPrDetail> {
@@ -47,7 +50,7 @@ struct PrDetailSheet: View {
                 content(pr)
             }
         }
-        .sheetScaffold(width: 560)
+        .sheetScaffold(width: 680)
         .task { await load() }
     }
 
@@ -59,25 +62,34 @@ struct PrDetailSheet: View {
     @ViewBuilder
     private func content(_ pr: GhPrDetail) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 16) {
                 header(pr)
                 if !pr.checkRuns.isEmpty { checks(pr.checkRuns) }
                 if !pr.reviews.isEmpty || !pr.reviewRequests.isEmpty {
                     reviews(pr)
                 }
-                if !pr.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(pr.body)
-                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                        .lineLimit(10)
-                        .textSelection(.enabled)
+                let body = pr.body.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !body.isEmpty {
+                    section("Description") {
+                        Text(markdown(body))
+                            .font(Theme.bodySmall)
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineSpacing(3)
+                            .textSelection(.enabled)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxHeight: 420)
+        .frame(maxHeight: 460)
 
         if let mergeError {
             Text(mergeError).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                .lineLimit(3)
+                .textSelection(.enabled)
+                .help(mergeError)
         }
 
         HStack(spacing: 10) {
@@ -89,7 +101,7 @@ struct PrDetailSheet: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
-                .frame(width: 210)
+                .frame(width: 200)
                 Button {
                     Task { await merge(auto: false) }
                 } label: {
@@ -97,12 +109,14 @@ struct PrDetailSheet: View {
                     else { Text("Merge") }
                 }
                 .primaryButton()
+                .fixedSize()
                 .disabled(merging || pr.draft || pr.mergeable == .conflicting)
                 .help(pr.draft ? "Draft PRs can't merge"
                       : pr.mergeable == .conflicting ? "Resolve the conflicts first"
                       : "Merge now with the selected strategy")
                 Button("Auto-merge") { Task { await merge(auto: true) } }
                     .secondaryButton()
+                    .fixedSize()
                     .disabled(merging || pr.draft || pr.autoMerge != nil)
                     .help(pr.autoMerge != nil
                           ? "Auto-merge is already armed"
@@ -123,7 +137,18 @@ struct PrDetailSheet: View {
             .help("Fetch again")
             Button("Done") { dismiss() }
                 .secondaryButton()
+                .fixedSize()
                 .keyboardShortcut(.cancelAction)
+        }
+    }
+
+    /// A titled card of content — the sheet's repeating section shape.
+    @ViewBuilder
+    private func section<Content: View>(_ title: String,
+                                      @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(Theme.caption).foregroundStyle(Theme.textMuted)
+            SettingsCard { content() }
         }
     }
 
@@ -131,8 +156,10 @@ struct PrDetailSheet: View {
     private func header(_ pr: GhPrDetail) -> some View {
         HStack(alignment: .top, spacing: 10) {
             PrIcon(state: pr.state, draft: pr.draft)
+                .padding(.top, 2)
             VStack(alignment: .leading, spacing: 4) {
                 Text(pr.title).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(2)
                 Text("#\(pr.number) · \(pr.repo) · \(pr.branch) → \(pr.base)"
                      + (pr.updatedAt.date.map { " · \(UsageFormat.ago($0, now: .now))" } ?? ""))
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -163,56 +190,113 @@ struct PrDetailSheet: View {
         }
     }
 
+    /// The PR body as rendered markdown: Apple's parser covers emphasis,
+    /// links, lists and code through presentation intent; the heading
+    /// pass gives `##` lines real sizes since `Text` leaves those to us.
+    private func markdown(_ body: String) -> AttributedString {
+        var text = (try? AttributedString(
+            markdown: body,
+            options: .init(interpretedSyntax: .full,
+                           failurePolicy: .returnPartiallyParsedIfPossible)))
+            ?? AttributedString(body)
+        for run in text.runs {
+            guard let intent = run.presentationIntent else { continue }
+            for component in intent.components {
+                guard case .header(let level) = component.kind else { continue }
+                let sizes: [CGFloat] = [17, 15, 14, 13, 13, 13]
+                text[run.range].font = NSFont.systemFont(
+                    ofSize: sizes[min(max(level, 1), 6) - 1], weight: .semibold)
+                text[run.range].foregroundColor = NSColor(Theme.textPrimary)
+            }
+        }
+        return text
+    }
+
+    /// The check list, folded until asked — the header carries the pass
+    /// count so a green PR reads "Checks 9/9" without the nine rows.
     @ViewBuilder
     private func checks(_ rows: [GhCheck]) -> some View {
+        let passed = rows.filter { $0.state == "passing" }.count
+        let failing = rows.contains { $0.state == "failing" }
         VStack(alignment: .leading, spacing: 6) {
-            Text("Checks").font(Theme.caption).foregroundStyle(Theme.textMuted)
-            ForEach(Array(rows.enumerated()), id: \.offset) { _, check in
-                HStack(spacing: 8) {
-                    CheckGlyph(state: check.state)
-                    Text(check.name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                    if !check.workflow.isEmpty {
-                        Text(check.workflow).font(Theme.caption).foregroundStyle(Theme.textMuted)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 8)
-                    if let conclusion = check.conclusion {
-                        Text(conclusion).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    } else {
-                        Text(check.status).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    }
-                    if let url = URL(string: check.url), !check.url.isEmpty {
-                        Button { openURL(url) } label: {
-                            Image(systemName: "arrow.up.right.square")
-                                .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
-                        }
-                        .plainButton()
-                        .help("Open the check")
-                    }
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { checksOpen.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Theme.textMuted)
+                        .rotationEffect(checksOpen ? .degrees(90) : .zero)
+                    Text("Checks").font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    Text("\(passed)/\(rows.count)")
+                        .font(Theme.caption)
+                        .foregroundStyle(failing ? Theme.danger
+                                         : passed == rows.count ? Theme.success
+                                         : Theme.warning)
                 }
+            }
+            .plainButton()
+            .help(checksOpen ? "Hide the check list" : "Show every check")
+            if checksOpen {
+                SettingsCard { checkRows(rows) }
             }
         }
     }
 
     @ViewBuilder
+    private func checkRows(_ rows: [GhCheck]) -> some View {
+        ForEach(Array(rows.enumerated()), id: \.offset) { index, check in
+            HStack(spacing: 8) {
+                CheckGlyph(state: check.state)
+                Text(check.name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                if !check.workflow.isEmpty {
+                    Text(check.workflow).font(Theme.caption).foregroundStyle(Theme.textMuted)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                if let conclusion = check.conclusion {
+                    Text(conclusion).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                } else {
+                    Text(check.status).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
+                if let url = URL(string: check.url), !check.url.isEmpty {
+                    Button { openURL(url) } label: {
+                        Image(systemName: "arrow.up.right.square")
+                            .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                    }
+                    .plainButton()
+                    .help("Open the check")
+                }
+            }
+            .padding(.vertical, 7)
+            if index < rows.count - 1 { SettingsDivider() }
+        }
+    }
+
+    @ViewBuilder
     private func reviews(_ pr: GhPrDetail) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Reviews").font(Theme.caption).foregroundStyle(Theme.textMuted)
-            ForEach(pr.reviews, id: \.author) { review in
+        section("Reviews") {
+            ForEach(Array(pr.reviews.enumerated()), id: \.offset) { index, review in
                 HStack(spacing: 8) {
                     Text(review.author).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
                     Text(review.state.replacing("_", with: " "))
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    Spacer(minLength: 8)
                     if let at = review.submittedAt?.date {
                         Text(UsageFormat.ago(at, now: .now))
                             .font(Theme.caption).foregroundStyle(Theme.textMuted)
                     }
                 }
+                .padding(.vertical, 7)
+                if index < pr.reviews.count - 1 || !pr.reviewRequests.isEmpty {
+                    SettingsDivider()
+                }
             }
             if !pr.reviewRequests.isEmpty {
                 Text("requested: \(pr.reviewRequests.joined(separator: ", "))")
                     .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    .padding(.vertical, 7)
             }
         }
     }
