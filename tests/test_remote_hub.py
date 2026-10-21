@@ -6,6 +6,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from quiver.remote import protocol
 from quiver.remote.hub import HubState, make_server
@@ -120,8 +121,7 @@ class TestEndpoints(HubBase):
         for route, body in (
             ("message", {"text": "hi"}),
             ("approval", {"request_id": "r", "decision": "allow"}),
-            ("control", {"op": "attach"}),
-            ("attachments", {}),
+            ("control", {"op": "interrupt"}),
         ):
             status, data = self.srv.request(
                 "POST", f"/v1/sessions/claude:s1/{route}",
@@ -161,6 +161,178 @@ class TestEndpoints(HubBase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(data)["items"], [])
+
+
+class TestReadRoutes(HubBase):
+    def test_inbox_item_shape(self):
+        srv = _Server(
+            sessions=[_session(sid="f1")],
+            statuses=lambda ss: ["followup"],
+        )
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        status, data = srv.request(
+            "GET", "/v1/inbox",
+            headers={"Authorization": f"Bearer {cred['credential']}"},
+        )
+        items = json.loads(data)["items"]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["status"], "followup")
+        self.assertEqual(items[0]["key"], "claude:f1")
+
+    def test_machines_lists_self(self):
+        self.srv.state._register_machine()
+        status, data = self.srv.request(
+            "GET", "/v1/machines", headers=self.auth()
+        )
+        machines = json.loads(data)["machines"]
+        self.assertTrue(
+            any(m["id"] == self.srv.state.machine_id for m in machines)
+        )
+
+    def test_messages_before_limit(self):
+        for i in range(5):
+            self.srv.state.emit(
+                "claude:s1",
+                protocol.event(
+                    "message.appended", "claude:s1", "mbp",
+                    protocol.message("assistant", f"m{i}"),
+                ),
+            )
+        status, data = self.srv.request(
+            "GET", "/v1/sessions/claude:s1/messages?limit=2",
+            headers=self.auth(),
+        )
+        msgs = json.loads(data)["messages"]
+        self.assertEqual(len(msgs), 2)
+        self.assertEqual(msgs[-1]["data"]["text"], "m4")
+        cutoff = msgs[0]["seq"]
+        status, data = self.srv.request(
+            "GET",
+            f"/v1/sessions/claude:s1/messages?before={cutoff}",
+            headers=self.auth(),
+        )
+        msgs = json.loads(data)["messages"]
+        self.assertEqual(
+            [m["data"]["text"] for m in msgs], ["m0", "m1", "m2"]
+        )
+
+    def test_events_unknown_key_404(self):
+        status, _ = self.srv.request(
+            "GET", "/v1/sessions/ghost/events", headers=self.auth()
+        )
+        self.assertEqual(status, 404)
+
+    def test_messages_unknown_key_404(self):
+        status, _ = self.srv.request(
+            "GET", "/v1/sessions/ghost/messages", headers=self.auth()
+        )
+        self.assertEqual(status, 404)
+
+    def test_bad_pair_json(self):
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.srv.port, timeout=5
+        )
+        try:
+            conn.request("POST", "/v1/pair", body="{bad",
+                         headers={"Content-Type": "application/json"})
+            self.assertEqual(conn.getresponse().status, 400)
+        finally:
+            conn.close()
+
+    def test_static_assets(self):
+        for path in ("/", "/app.js", "/styles.css",
+                     "/manifest.webmanifest", "/icon.svg"):
+            status, _ = self.srv.request("GET", path)
+            self.assertEqual(status, 200, path)
+        status, _ = self.srv.request("GET", "/nope.js")
+        self.assertEqual(status, 404)
+
+
+class TestWriteStubs(HubBase):
+    """R1: write routes exist but return the documented stubs."""
+
+    def test_post_sessions_501(self):
+        status, data = self.srv.request(
+            "POST", "/v1/sessions", body={"harness": "claude"},
+            headers=self.auth(),
+        )
+        self.assertEqual(status, 501)
+        self.assertEqual(
+            json.loads(data)["error"]["code"], "not_implemented"
+        )
+
+    def test_post_unknown_action_404(self):
+        status, _ = self.srv.request(
+            "POST", "/v1/sessions/claude:s1/bogus",
+            body={}, headers=self.auth(),
+        )
+        self.assertEqual(status, 404)
+
+    def test_post_unknown_session_404(self):
+        status, _ = self.srv.request(
+            "POST", "/v1/sessions/ghost/message",
+            body={"text": "x"}, headers=self.auth(),
+        )
+        self.assertEqual(status, 404)
+
+
+class TestServeEntry(unittest.TestCase):
+    def test_serve_keyboard_interrupt_returns_0(self):
+        from quiver.remote import hub as hub_mod
+
+        state = MagicMock()
+        server = MagicMock()
+        server.serve_forever.side_effect = KeyboardInterrupt
+        with patch.object(hub_mod, "make_server", return_value=server):
+            rc = hub_mod.serve(state, "127.0.0.1", 0)
+        self.assertEqual(rc, 0)
+        state.start.assert_called_once()
+        state.stop.assert_called_once()
+        server.server_close.assert_called_once()
+
+    def test_state_start_stop(self):
+        state = HubState(Path(tempfile.mkdtemp()))
+        state.start()
+        try:
+            self.assertTrue(state._threads)
+            self.assertTrue(all(t.is_alive() for t in state._threads))
+        finally:
+            state.stop()
+        self.assertTrue(
+            all(not t.is_alive() for t in state._threads)
+        )
+
+
+class TestGlobalEvents(HubBase):
+    def test_global_stream_replays(self):
+        self.srv.state.emit(
+            "claude:s1",
+            protocol.event(
+                "session.status", "claude:s1", "mbp",
+                {"status": "done"},
+            ),
+        )
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.srv.port, timeout=5
+        )
+        try:
+            conn.request("GET", "/v1/events?last=0", headers=self.auth())
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 200)
+            self.assertIn("text/event-stream",
+                          resp.getheader("Content-Type"))
+            buf = b""
+            for _ in range(20):
+                chunk = resp.readline()
+                if not chunk:
+                    break
+                buf += chunk
+                if b"journal.caught-up" in buf:
+                    break
+            self.assertIn(b"session.status", buf)
+        finally:
+            conn.close()
 
 
 class TestSSE(HubBase):

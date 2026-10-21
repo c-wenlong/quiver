@@ -296,6 +296,12 @@ class _Handler(BaseHTTPRequestHandler):
             stem = path[len("/v1/sessions/"):]
             key_part, sep, action = stem.rpartition("/")
             key = unquote(key_part if sep else stem)
+            if sep and action in {"events", "messages"}:
+                if self._state.catalog.row_for(key) is None:
+                    self._send_error(
+                        404, "unknown_session", "no such session"
+                    )
+                    return
             if sep and action == "events":
                 after = _int_arg(args.get("last"), 0)
                 self._sse_stream(key, after)

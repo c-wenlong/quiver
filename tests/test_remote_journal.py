@@ -58,6 +58,35 @@ class TestJournal(unittest.TestCase):
         self.assertEqual(events, [])
         self.assertFalse(truncated)
 
+    def test_truncated_when_client_behind_ring(self):
+        key = "a:x"
+        path = self.journal.dir / f"{protocol.key_slug(key)}.jsonl"
+        with open(path, "w") as fh:
+            for i in range(10, 15):
+                fh.write(json.dumps({"seq": i, "type": "t"}) + "\n")
+        events, truncated = self.journal.read_since(key, 2)
+        self.assertTrue(truncated)
+        self.assertEqual([e["seq"] for e in events], [10, 11, 12, 13, 14])
+
+    def test_read_since_limit_and_corrupt_lines(self):
+        key = "a:y"
+        path = self.journal.dir / f"{protocol.key_slug(key)}.jsonl"
+        with open(path, "w") as fh:
+            fh.write("not json\n")
+            fh.write(json.dumps([1, 2]) + "\n")          # non-dict
+            fh.write(json.dumps({"type": "t"}) + "\n")   # no seq
+            for i in range(1, 5):
+                fh.write(json.dumps({"seq": i, "type": "t"}) + "\n")
+        events, _ = self.journal.read_since(key, 0, limit=2)
+        self.assertEqual([e["seq"] for e in events], [1, 2])
+
+    def test_append_oserror_returns_event(self):
+        from unittest.mock import patch
+        j = Journal(Path(self.tmp) / "nowhere")
+        with patch("builtins.open", side_effect=OSError("read-only")):
+            ev = j.append("k", protocol.event("t", "k", "m", {}))
+        self.assertEqual(ev["seq"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

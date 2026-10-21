@@ -100,7 +100,11 @@ def _probe(host: str, port: int, timeout: float = 3.0) -> dict | None:
 
 
 def _cmd_serve(flags: dict) -> int:
-    host, port = _host_port(flags)
+    try:
+        host, port = _host_port(flags)
+    except ValueError as exc:
+        print(c("red", str(exc)), file=sys.stderr)
+        return 1
     if not host:
         host = _tailscale_ip() or "127.0.0.1"
         if host == "127.0.0.1":
@@ -124,7 +128,11 @@ def _cmd_serve(flags: dict) -> int:
 
 
 def _cmd_pair(flags: dict) -> int:
-    host, port = _host_port(flags)
+    try:
+        host, port = _host_port(flags)
+    except ValueError as exc:
+        print(c("red", str(exc)), file=sys.stderr)
+        return 1
     if not host:
         host = _tailscale_ip() or "127.0.0.1"
     token = pairing.mint_pair_token()
@@ -152,7 +160,11 @@ def _cmd_pair(flags: dict) -> int:
 
 
 def _cmd_status(flags: dict, json_view: bool) -> int:
-    host, port = _host_port(flags)
+    try:
+        host, port = _host_port(flags)
+    except ValueError as exc:
+        print(c("red", str(exc)), file=error_stream(json_view))
+        return 1
     if not host:
         host = _tailscale_ip() or "127.0.0.1"
     info = _probe(host, port)

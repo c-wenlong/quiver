@@ -174,6 +174,98 @@ class TestSnapshotSource(unittest.TestCase):
             self.assertEqual(out[0]["text"], "c")
 
 
+class TestOpencodeSource(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        import sqlite3
+        self.db = self.tmp / "opencode.db"
+        conn = sqlite3.connect(self.db)
+        conn.execute("CREATE TABLE message (id TEXT PRIMARY KEY, data TEXT)")
+        conn.execute(
+            "CREATE TABLE part (id TEXT, message_id TEXT, "
+            "session_id TEXT, time_created INTEGER, data TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO message VALUES ('m1', ?)",
+            (json.dumps({"role": "assistant"}),),
+        )
+        conn.commit()
+        conn.close()
+
+    def _add_part(self, pid, created, data):
+        import sqlite3
+        conn = sqlite3.connect(self.db)
+        conn.execute(
+            "INSERT INTO part VALUES (?, 'm1', 'sess1', ?, ?)",
+            (pid, created, json.dumps(data)),
+        )
+        conn.commit()
+        conn.close()
+
+    def test_incremental_parts(self):
+        self._add_part("p1", 1000, {"type": "text", "text": "hello"})
+        self._add_part("p2", 1001, {"type": "reasoning", "text": "hmm"})
+        self._add_part("p3", 1002, {
+            "type": "tool", "tool": "Bash", "id": "c1",
+            "state": {"status": "completed", "output": "done",
+                      "input": {"command": "ls"}},
+        })
+        src = tail.OpencodeSource(self.db, "sess1")
+        out = src.poll()
+        kinds = [m["kind"] for m in out]
+        self.assertEqual(kinds, ["assistant", "thinking",
+                                 "tool_use", "tool_result"])
+        self.assertEqual(src.poll(), [])
+        self._add_part("p4", 1003, {"type": "text", "text": "more"})
+        out = src.poll()
+        self.assertEqual([m["text"] for m in out], ["more"])
+
+    def test_cursor_persistence(self):
+        self._add_part("p1", 1000, {"type": "text", "text": "a"})
+        src = tail.OpencodeSource(self.db, "sess1")
+        src.poll()
+        state = src.state()
+        src2 = tail.OpencodeSource(self.db, "sess1")
+        src2.restore(state)
+        self.assertEqual(src2.poll(), [])
+        self._add_part("p2", 1001, {"type": "text", "text": "b"})
+        self.assertEqual(src2.poll()[0]["text"], "b")
+
+
+class TestTailer(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def test_cursor_round_trip(self):
+        path = self.tmp / "t.jsonl"
+        path.write_text(json.dumps(_claude_user("a")) + "\n")
+        src = tail.JsonlTailSource(path, "claude")
+        cursors = self.tmp / "cursors"
+        t1 = tail.Tailer("k", _session_for(), src, cursors, False)
+        msgs = t1.poll(time.time(), active=True)
+        self.assertEqual(len(msgs), 1)
+
+        src2 = tail.JsonlTailSource(path, "claude")
+        t2 = tail.Tailer("k", _session_for(), src2, cursors, True)
+        self.assertEqual(t2.poll(time.time(), True), [])
+        path.write_text(
+            path.read_text() + json.dumps(_claude_user("b")) + "\n"
+        )
+        self.assertEqual(t2.poll(time.time(), True)[0]["text"], "b")
+
+    def test_skip_to_end_when_journal_exists_no_cursor(self):
+        path = self.tmp / "t.jsonl"
+        path.write_text(json.dumps(_claude_user("old")) + "\n")
+        src = tail.JsonlTailSource(path, "claude")
+        t = tail.Tailer("k", _session_for(), src, self.tmp, has_journal=True)
+        self.assertEqual(t.poll(time.time(), True), [])
+
+
+def _session_for():
+    return Session(timestamp=0, agent="Claude Code", path="/tmp",
+                   session_id="", tool_name="claude")
+
+
 class TestTailManager(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -219,6 +311,153 @@ class TestTailManager(unittest.TestCase):
             mgr.sync([("claude:x", sess, "")])
         self.assertNotIn("claude:x", mgr.tailers)
 
+    def test_notify_transitions(self):
+        src = tail.JsonlTailSource(self.tmp / "x.jsonl", "claude")
+        (self.tmp / "x.jsonl").write_text("")
+        mgr = self._manager()
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id="", tool_name="claude")
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([("claude:x", sess, "done")])
+            notify = [e for _k, e in self.events if e["type"] == "notify"]
+            self.assertEqual(notify, [])
+            mgr.sync([("claude:x", sess, "active")])
+            mgr.sync([("claude:x", sess, "followup")])
+            notify = [e for _k, e in self.events if e["type"] == "notify"]
+            self.assertEqual(notify[-1]["data"]["kind"], "needs_you")
+            mgr.sync([("claude:x", sess, "active")])
+            mgr.sync([("claude:x", sess, "done")])
+            notify = [e for _k, e in self.events if e["type"] == "notify"]
+            self.assertEqual(notify[-1]["data"]["kind"], "finished")
+            mgr.sync([("claude:x", sess, "error")])
+            notify = [e for _k, e in self.events if e["type"] == "notify"]
+            self.assertEqual(notify[-1]["data"]["kind"], "error")
+
+    def test_jsonl_truncation_restarts(self):
+        path = self.tmp / "z.jsonl"
+        path.write_text(json.dumps(_claude_user("a")) + "\n")
+        src = tail.JsonlTailSource(path, "claude")
+        src.poll()
+        self.assertGreater(src.offset, 0)
+        path.write_text(json.dumps(_claude_user("b")) + "\n")
+        src.offset = 10**9  # simulate: file shrank below offset
+        out = src.poll()
+        self.assertEqual([m["text"] for m in out], ["b"])
+        self.assertGreater(src.offset, 0)
+
+    def test_compaction_and_interrupted_decode(self):
+        compact = {"type": "system", "subtype": "compact_boundary"}
+        out = tail.decode_record("claude", compact)
+        self.assertEqual(out[0]["kind"], "compaction")
+        aborted = {"type": "system", "subtype": "turn_aborted",
+                   "content": "turn aborted"}
+        out = tail.decode_record("claude", aborted)
+        self.assertEqual(out[0]["kind"], "system")
+
+    def test_opencode_skip_to_end(self):
+        self._add_part_skip()
+        src = tail.OpencodeSource(self.db2, "sess1")
+        src.skip_to_end()
+        self.assertGreater(src.cursor, 0)
+        self.assertEqual(src.poll(), [])
+
+    def _add_part_skip(self):
+        import sqlite3
+        self.db2 = self.tmp / "oc2.db"
+        conn = sqlite3.connect(self.db2)
+        conn.execute("CREATE TABLE message (id TEXT PRIMARY KEY, data TEXT)")
+        conn.execute(
+            "CREATE TABLE part (id TEXT, message_id TEXT, "
+            "session_id TEXT, time_created INTEGER, data TEXT)"
+        )
+        conn.execute("INSERT INTO message VALUES ('m', ?)",
+                     (json.dumps({"role": "assistant"}),))
+        conn.execute("INSERT INTO part VALUES ('p', 'm', 'sess1', 5000, ?)",
+                     (json.dumps({"type": "text", "text": "x"}),))
+        conn.commit()
+        conn.close()
+
+    def test_codex_decode_variants(self):
+        out = tail.decode_record("codex", {
+            "type": "response_item",
+            "timestamp": 1_700_000_000.0,
+            "payload": {"type": "message", "role": "user",
+                        "content": [{"type": "input_text",
+                                     "text": "yo"}]},
+        })
+        self.assertEqual(out[0]["kind"], "user")
+        out = tail.decode_record("codex", {
+            "type": "response_item",
+            "payload": {"type": "function_call_output",
+                        "call_id": "c9", "output": "ok"},
+        })
+        self.assertEqual(out[0]["kind"], "tool_result")
+        self.assertEqual(out[0]["result_ref"], "c9")
+        out = tail.decode_record("codex", {
+            "type": "event_msg",
+            "payload": {"type": "turn_aborted"},
+        })
+        self.assertEqual(out[0]["kind"], "system")
+        out = tail.decode_record("codex", {
+            "type": "response_item",
+            "payload": {"type": "ghost"},
+        })
+        self.assertEqual(out, [])
+
+    def test_generic_nested_blocks(self):
+        rec = {"message": {"role": "assistant",
+                           "content": [{"type": "thinking",
+                                        "thinking": "hmm"},
+                                       {"type": "text",
+                                        "text": "answer"}]}}
+        out = tail.decode_record("droid", rec)
+        self.assertEqual(
+            [m["kind"] for m in out], ["thinking", "assistant"]
+        )
+
+    def test_resolve_jsonl_claude_direct_and_glob(self):
+        direct = self.tmp / "abc.jsonl"
+        direct.write_text("{}\n")
+        sess = Session(timestamp=0, agent="a", path="/p",
+                       session_id=str(direct), tool_name="claude")
+        self.assertEqual(tail.resolve_jsonl_path(sess), direct)
+
+        proj = self.tmp / "claude-home" / "projects" / "-p"
+        proj.mkdir(parents=True)
+        nested = proj / "sid9.jsonl"
+        nested.write_text("{}\n")
+        sess = Session(timestamp=0, agent="a", path="/p",
+                       session_id="sid9", tool_name="claude")
+        real_expand = tail.expand_user
+        with patch("quiver.remote.tail.expand_user",
+                   side_effect=lambda p: (
+                       self.tmp / "claude-home" / "projects"
+                   ) if p == "~/.claude/projects" else real_expand(p)):
+            self.assertEqual(tail.resolve_jsonl_path(sess), nested)
+
+    def test_make_source_dispatch(self):
+        sess = _session_for()
+        sess.tool_name = "opencode"
+        sess.session_id = "s"
+        with patch("quiver.remote.tail.expand_user",
+                   return_value=self.tmp / "missing.db"):
+            # db missing → falls back to the snapshot reader
+            self.assertIsInstance(
+                tail.make_source(sess), tail.SnapshotSource
+            )
+        with patch("quiver.remote.tail.expand_user",
+                   return_value=self.tmp):
+            db = self.tmp / "oc.db"
+            import sqlite3 as _sq
+            _sq.connect(db).close()
+            self.assertIsInstance(
+                tail.make_source(sess), tail.OpencodeSource
+            )
+        sess.tool_name = "freebuff"
+        with patch.object(tail, "resolve_jsonl_path",
+                          return_value=None):
+            src = tail.make_source(sess)
+        self.assertIsInstance(src, tail.SnapshotSource)
 
 if __name__ == "__main__":
     unittest.main()
