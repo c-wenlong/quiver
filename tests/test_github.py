@@ -851,6 +851,74 @@ class TestCommands(unittest.TestCase):
         self.assertIn("o/r", out)
         self.assertIn("PRs", out)
 
+    def test_board_render_mixed_surfaces(self):
+        """Failed entries print their status; a Pages site prints site."""
+        run = _gh_run({
+            "pr list": _Proc(returncode=1, stderr="boom"),
+            "issue list": _Proc(stdout="[]"),
+            "run list": _Proc(stdout="[]"),
+            "repos/o/r/pages": _Proc(stdout=json.dumps(
+                {"html_url": "https://o.github.io/r"})),
+            "release list": _Proc(stdout="[]"),
+            "tags?per_page": _Proc(stdout="[]"),
+            "default_branch": _Proc(stdout="main\n"),
+            "branches?per_page": _Proc(stdout="[]"),
+        })
+        rc, out, _ = self._run_cli(["board", "--repo=o/r"], run=run)
+        self.assertEqual(rc, 0)
+        self.assertIn("upstream-error", out)
+        self.assertIn("site", out)
+
+    def test_board_rejects_positional_and_bad_flag(self):
+        rc, out, _ = self._run_cli(["board", "extra", "--repo=o/r"])
+        self.assertEqual(rc, 1)
+        rc, out, _ = self._run_cli(["board", "--bogus"])
+        self.assertEqual(rc, 1)
+        rc, out, _ = self._run_cli(["board", "--repo"])
+        self.assertEqual(rc, 1)
+
+    def test_board_no_repos(self):
+        rc, out, _ = self._run_cli(["board", "--json"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["data"]["boards"], [])
+        rc, _, _ = self._run_cli(["board"])
+        self.assertEqual(rc, 1)
+
+    def test_board_web_opens_pulls(self):
+        opened = []
+        with patch("quiver.github.cli.webbrowser.open", opened.append):
+            rc, _, _ = self._run_cli(["board", "--repo=o/r", "--web"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(opened, ["https://github.com/o/r/pulls"])
+
+    def test_json_no_repos_is_typed_env(self):
+        rc, out, _ = self._run_cli(["pr", "--json"])
+        self.assertEqual(rc, 1)
+        doc = json.loads(out)
+        self.assertEqual(doc["data"]["github"]["status"], "ok")
+        self.assertEqual(doc["data"]["results"], [])
+
+    def test_json_blocked_env_fails_after_fetch(self):
+        """A failed fetch probes to classify; a blocked env is typed."""
+        run = _gh_run({"pr list": _Proc(returncode=1, stderr="boom")})
+        blocked = gh.GhEnv(installed=True, authenticated=False)
+        rc, out, err = self._run_cli(
+            ["pr", "--repo=o/r", "--json"], run=run, env=blocked)
+        self.assertEqual(rc, 1)
+        doc = json.loads(out)
+        self.assertEqual(doc["data"]["github"]["status"], "auth-required")
+        self.assertEqual(doc["data"]["results"], [])
+        self.assertIn("auth", err)
+
+    def test_json_web_still_opens(self):
+        opened = []
+        run = _gh_run({"pr list": _Proc(stdout="[]")})
+        with patch("quiver.github.cli.webbrowser.open", opened.append):
+            rc, out, _ = self._run_cli(
+                ["pr", "--repo=o/r", "--web", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        self.assertEqual(opened, ["https://github.com/o/r/pulls"])
+
     def test_repo_search_render(self):
         run = _gh_run({
             "search repos": _Proc(stdout=json.dumps([
