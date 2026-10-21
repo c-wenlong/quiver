@@ -234,6 +234,12 @@ struct RepositoriesPage: View {
                         .plainButton()
                         .help(collapsed.contains(repo) ? "Expand" : "Collapse")
                     }
+                    // A fetch for the shown tab spins beside the name —
+                    // the old bottom-of-list indicator looked stranded
+                    // once the rows bled to the callout's edges.
+                    if model.loading.contains(.init(repo: repo, tab: model.tab)) {
+                        ProgressView().controlSize(.small)
+                    }
                     Spacer()
                     Button {
                         if let url = URL(string: "https://github.com/\(repo)") { openURL(url) }
@@ -320,7 +326,6 @@ struct RepositoriesPage: View {
     private func pulls(repo: String, board: RepoBoard) -> some View {
         SurfaceList(pullsState(repo, board: board),
                     empty: emptyText("No open pull requests.", repo: repo),
-                    loading: model.loading.contains(.init(repo: repo, tab: .pulls)),
                     expandKey: "\(repo):pulls", expanded: $expanded) { pr in
             OpenRow(act: { detail = PrSelection(repo: repo, number: pr.number) }) {
                 PrIcon(state: pr.state, draft: pr.draft)
@@ -378,7 +383,6 @@ struct RepositoriesPage: View {
     private func issues(repo: String, board: RepoBoard) -> some View {
         SurfaceList(issuesState(repo, board: board),
                     empty: emptyText("No open issues.", repo: repo),
-                    loading: model.loading.contains(.init(repo: repo, tab: .issues)),
                     expandKey: "\(repo):issues", expanded: $expanded) { issue in
             OpenRow(url: issue.url, open: openURL.callAsFunction) {
                 Image(systemName: issue.state == .open ? "exclamationmark.circle" : "checkmark.circle")
@@ -412,7 +416,6 @@ struct RepositoriesPage: View {
     private func actions(repo: String, board: RepoBoard) -> some View {
         SurfaceList(actionsState(repo, board: board),
                     empty: emptyText("No workflow runs.", repo: repo),
-                    loading: model.loading.contains(.init(repo: repo, tab: .actions)),
                     expandKey: "\(repo):actions", expanded: $expanded) { run in
             OpenRow(url: run.url, open: openURL.callAsFunction) {
                 RunIcon(status: run.status, conclusion: run.conclusion)
@@ -517,7 +520,6 @@ struct RepositoriesPage: View {
     private func releases(repo: String, board: RepoBoard) -> some View {
         SurfaceList(releasesState(repo, board: board),
                     empty: emptyText("No releases.", repo: repo),
-                    loading: model.loading.contains(.init(repo: repo, tab: .releases)),
                     expandKey: "\(repo):releases", expanded: $expanded) { release in
             OpenRow(url: release.url, open: openURL.callAsFunction) {
                 Image(systemName: "tag").font(.system(size: 14))
@@ -547,7 +549,6 @@ struct RepositoriesPage: View {
     private func tags(repo: String, board: RepoBoard) -> some View {
         SurfaceList(tagsState(repo, board: board),
                     empty: emptyText("No tags.", repo: repo),
-                    loading: model.loading.contains(.init(repo: repo, tab: .tags)),
                     expandKey: "\(repo):tags", expanded: $expanded) { tag in
             OpenRow(url: tag.url, open: openURL.callAsFunction) {
                 Image(systemName: "tag").font(.system(size: 14))
@@ -568,7 +569,6 @@ struct RepositoriesPage: View {
     private func branches(repo: String, board: RepoBoard) -> some View {
         SurfaceList(branchesState(repo, board: board),
                     empty: emptyText("No branches.", repo: repo),
-                    loading: model.loading.contains(.init(repo: repo, tab: .branches)),
                     expandKey: "\(repo):branches", expanded: $expanded) { branch in
             OpenRow(url: branch.url, open: openURL.callAsFunction) {
                 Image(systemName: "arrow.triangle.branch").font(.system(size: 14))
@@ -592,19 +592,17 @@ struct RepositoriesPage: View {
 private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: View>: View {
     var state: Loadable<[Row]>
     var empty: String
-    var loading: Bool
     /// "repo:surface" key into `expanded`; nil disables the preview cap.
     var expandKey: String?
     @Binding var expanded: Set<String>
     var preview = 3
     @ViewBuilder var row: (Row) -> Content
 
-    init(_ state: Loadable<[Row]>, empty: String, loading: Bool,
+    init(_ state: Loadable<[Row]>, empty: String,
          expandKey: String? = nil, expanded: Binding<Set<String>>? = nil,
          @ViewBuilder row: @escaping (Row) -> Content) {
         self.state = state
         self.empty = empty
-        self.loading = loading
         self.expandKey = expandKey
         self._expanded = expanded ?? .constant([])
         self.row = row
@@ -655,13 +653,6 @@ private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: Vi
                     else { expanded.insert(expandKey) }
                 }
             }
-        }
-        if loading {
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text("Refreshing…").font(Theme.caption).foregroundStyle(Theme.textMuted)
-            }
-            .padding(.horizontal, Theme.cardPadding)
         }
     }
 }
