@@ -87,7 +87,8 @@ struct RepoDetailPage: View {
                     RepoSurfaces(repo: repo,
                                  board: model.focusBoard(for: repo),
                                  tab: model.focusTab,
-                                 query: query) {
+                                 query: query,
+                                 scrollFetch: true) {
                         detail = PrSelection(repo: repo, number: $0)
                     }
                     .padding(.horizontal, -Theme.cardPadding)

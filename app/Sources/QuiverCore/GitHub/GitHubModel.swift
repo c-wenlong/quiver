@@ -49,18 +49,25 @@ public struct RepoBoard: Codable, Equatable, Sendable {
     /// Whether the tab's surface holds rows — `.idle` and `.failed`
     /// both want a fetch regardless of the timestamp.
     func isLoaded(_ tab: RepoTab) -> Bool {
-        func loaded<T>(_ l: Loadable<T>) -> Bool {
-            if case .loaded = l { return true }
-            return false
+        rowCount(tab) != nil
+    }
+
+    /// The tab's loaded row count; nil for anything not `.loaded`.
+    /// A count below the requested limit means the listing ended —
+    /// the scroll loader uses it to stop growing the window.
+    func rowCount(_ tab: RepoTab) -> Int? {
+        func count<T>(_ l: Loadable<[T]>) -> Int? {
+            if case .loaded(let rows) = l { return rows.count }
+            return nil
         }
         return switch tab {
-        case .pulls: loaded(pulls)
-        case .issues: loaded(issues)
-        case .actions: loaded(runs)
-        case .pages: loaded(pages)
-        case .releases: loaded(releases)
-        case .tags: loaded(tags)
-        case .branches: loaded(branches)
+        case .pulls: count(pulls)
+        case .issues: count(issues)
+        case .actions: count(runs)
+        case .pages: nil
+        case .releases: count(releases)
+        case .tags: count(tags)
+        case .branches: count(branches)
         }
     }
 }
@@ -124,6 +131,12 @@ public final class GitHubModel {
     /// `queuedRefreshes` for the focus store: a request during a fetch
     /// reruns once the older reply lands.
     private var focusQueued: Set<BoardKey> = []
+    /// How many rows each focus surface asks for — grows by
+    /// `focusStep` every time the scroll loader reaches the end.
+    private var focusLimits: [BoardKey: Int] = [:]
+    /// Focus surfaces whose last reply came back short of the limit —
+    /// the remote has no more, so the scroll loader stops asking.
+    public private(set) var focusExhausted: Set<BoardKey> = []
 
     public private(set) var inbox: Loadable<[GhNotification]> = .idle
     /// Unread lines in the loaded inbox — the sidebar badge and the
@@ -476,29 +489,35 @@ public final class GitHubModel {
                 Task { await loadFocusTab(tab, repo: repo, swe: swe) }
             }
         }
+        let limit = focusLimit(for: key)
         do {
             switch tab {
             case .pulls:
-                apply(try await swe.ghPullRequests(repo: repo, state: "all"),
+                apply(try await swe.ghPullRequests(repo: repo, state: "all", limit: limit),
                       to: key, \.pulls, store: .focus) { $0.pullRequests ?? [] }
             case .issues:
-                apply(try await swe.ghIssues(repo: repo, state: "all"),
+                apply(try await swe.ghIssues(repo: repo, state: "all", limit: limit),
                       to: key, \.issues, store: .focus) { $0.issues ?? [] }
             case .actions:
-                apply(try await swe.ghRuns(repo: repo),
+                apply(try await swe.ghRuns(repo: repo, limit: limit),
                       to: key, \.runs, store: .focus) { $0.runs ?? [] }
             case .pages:
                 apply(try await swe.ghPages(repo: repo),
                       to: key, \.pages, store: .focus) { $0.pages }
             case .releases:
-                apply(try await swe.ghReleases(repo: repo),
+                apply(try await swe.ghReleases(repo: repo, limit: limit),
                       to: key, \.releases, store: .focus) { $0.releases ?? [] }
             case .tags:
-                apply(try await swe.ghTags(repo: repo),
+                apply(try await swe.ghTags(repo: repo, limit: limit),
                       to: key, \.tags, store: .focus) { $0.tags ?? [] }
             case .branches:
-                apply(try await swe.ghBranches(repo: repo),
+                apply(try await swe.ghBranches(repo: repo, limit: limit),
                       to: key, \.branches, store: .focus) { $0.branches ?? [] }
+            }
+            // A short page means the listing ended — the scroll loader
+            // stops growing the window on this surface.
+            if let rows = focusBoard(for: repo).rowCount(tab), rows < limit {
+                focusExhausted.insert(key)
             }
         } catch is CancellationError {
         } catch {
@@ -506,6 +525,44 @@ public final class GitHubModel {
             board.fail(tab, message: error.localizedDescription)
             focusBoards[repo] = board
         }
+    }
+
+    /// The scroll loader's fetch: grow the surface's window by
+    /// `focusStep` and refetch at the new limit. Rows already shown
+    /// stay put — the reply is a superset, so nothing moves.
+    public func loadMoreFocus(_ tab: RepoTab, repo: String, swe: SweClient) async {
+        guard tab != .pages else { return }
+        let key = BoardKey(repo: repo, tab: tab)
+        guard !focusExhausted.contains(key), !focusLoading.contains(key) else { return }
+        focusLimits[key] = focusLimit(for: key) + Self.focusStep
+        await loadFocusTab(tab, repo: repo, swe: swe)
+    }
+
+    /// A surface's fetch size — the opening defaults below, grown by
+    /// `focusStep` every time `loadMoreFocus` runs.
+    private func focusLimit(for key: BoardKey) -> Int {
+        focusLimits[key] ?? Self.focusDefaultLimit(key.tab)
+    }
+
+    /// How much `loadMoreFocus` widens a surface each pass.
+    private static let focusStep = 50
+
+    /// The opening fetch sizes: ≥ the "past 20" the page promises on
+    /// every list surface. Pages is a single settings card, not a list.
+    private static func focusDefaultLimit(_ tab: RepoTab) -> Int {
+        switch tab {
+        case .pulls, .issues, .branches: 50
+        case .actions, .tags: 30
+        case .releases: 20
+        case .pages: 0
+        }
+    }
+
+    /// Whether the scroll loader may still find older rows — the
+    /// surface fetched its full window last time, so more could exist.
+    public func focusCanGrow(_ key: BoardKey) -> Bool {
+        guard key.tab != .pages, !focusExhausted.contains(key) else { return false }
+        return focusBoard(for: key.repo).rowCount(key.tab) ?? 0 >= focusLimit(for: key)
     }
 
     /// The focus page's Refresh — the visible surface only, matching
@@ -626,6 +683,8 @@ public final class GitHubModel {
             for key in fetched.keys where key.repo == name { fetched[key] = nil }
             focusBoards[name] = nil
             for key in focusFetched.keys where key.repo == name { focusFetched[key] = nil }
+            for key in focusLimits.keys where key.repo == name { focusLimits[key] = nil }
+            focusExhausted = focusExhausted.filter { $0.repo != name }
             if selected == name { selected = pins.first?.name }
             // The focus page dies with its pin — the dashboard takes over.
             if focused == name { focused = nil }

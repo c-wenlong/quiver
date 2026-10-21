@@ -199,9 +199,10 @@ import Testing
     final class Router: CommandRunning, @unchecked Sendable {
         var replies: [String: CommandResult] = [:]
         private(set) var calls: [[String]] = []
+        private let lock = NSLock()
         init(_ replies: [String: CommandResult]) { self.replies = replies }
         func run(_ arguments: [String]) async throws -> CommandResult {
-            calls.append(arguments)
+            lock.withLock { calls.append(arguments) }
             for (suffix, reply) in replies where arguments.joined(separator: " ").hasSuffix(suffix) {
                 return reply
             }
@@ -497,6 +498,17 @@ import Testing
         + "\"mergeable\":\"mergeable\",\"review_decision\":\"approved\",\"checks\":\"passing\","
         + "\"updated_at\":\"2026-10-20T00:00:00Z\",\"url\":\"https://github.com/o/a/pull/7\"}]"
 
+    /// `count` PR rows — the scroll-window tests need a full page to
+    /// keep the surface growable.
+    private func prRows(_ count: Int) -> String {
+        "[" + (1...count).map { n in
+            "{\"number\":\(n),\"title\":\"Fix \(n)\",\"state\":\"open\",\"draft\":false,"
+            + "\"author\":\"me\",\"branch\":\"f\",\"base\":\"main\",\"labels\":[],"
+            + "\"mergeable\":\"mergeable\",\"review_decision\":\"approved\",\"checks\":\"passing\","
+            + "\"updated_at\":\"2026-10-20T00:00:00Z\",\"url\":\"https://github.com/o/a/pull/\(n)\"}"
+        }.joined(separator: ",") + "]"
+    }
+
     /// A quit-and-relaunch shows the last rows before any fetch lands —
     /// pins, selection and boards included, so the page opens on its last
     /// view instead of a probe spinner.
@@ -740,6 +752,83 @@ import Testing
         // the stale window.
         await model.loadFocusTabIfStale(.issues, repo: "o/a", swe: swe)
         #expect(calls.calls.count == filled + 2)
+    }
+
+    /// The scroll loader: a full first page leaves the surface
+    /// growable, and `loadMoreFocus` refetches at the widened limit.
+    @Test func loadMoreFocusGrowsTheWindow() async {
+        let calls = focusRouter(repo: "o/a", pulls: prRows(50))
+        calls.replies["gh pr --state=all --limit=100 --repo=o/a --json"] = .init(
+            status: 0,
+            stdout: envelope(
+                "\(env),\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"pull_requests\":\(prRows(100))}]"),
+            stderr: "")
+        let swe = SweClient(runner: calls)
+        let model = GitHubModel()
+        await model.loadFocusTab(.pulls, repo: "o/a", swe: swe)
+        #expect(model.focusCanGrow(.init(repo: "o/a", tab: .pulls)))
+        await model.loadMoreFocus(.pulls, repo: "o/a", swe: swe)
+        #expect(calls.calls.contains {
+            $0.joined(separator: " ") == "gh pr --state=all --limit=100 --repo=o/a --json"
+        })
+        guard case .loaded(let prs) = model.focusBoard(for: "o/a").pulls else {
+            Issue.record("focus pulls should be loaded"); return
+        }
+        #expect(prs.count == 100)
+        // Still a full page — the surface can grow once more.
+        #expect(model.focusCanGrow(.init(repo: "o/a", tab: .pulls)))
+        // And a later refresh keeps the widened window instead of
+        // shrinking the board back to 50.
+        await model.refreshFocus(repo: "o/a", swe: swe)
+        #expect(calls.calls.last?.joined(separator: " ")
+            .contains("--limit=100") == true)
+    }
+
+    /// A reply short of the requested limit means the listing ended:
+    /// the surface stops growing and the scroll loader fires nothing.
+    @Test func shortFocusReplyMarksTheEnd() async {
+        let calls = focusRouter(repo: "o/a", pulls: prRows(20))
+        let swe = SweClient(runner: calls)
+        let model = GitHubModel()
+        await model.loadFocusTab(.pulls, repo: "o/a", swe: swe)
+        #expect(model.focusExhausted.contains(.init(repo: "o/a", tab: .pulls)))
+        #expect(!model.focusCanGrow(.init(repo: "o/a", tab: .pulls)))
+        let before = calls.calls.count
+        await model.loadMoreFocus(.pulls, repo: "o/a", swe: swe)
+        #expect(calls.calls.count == before)
+    }
+
+    /// Exhaustion is per surface: a short issues page never stops the
+    /// pulls window growing.
+    @Test func focusExhaustionIsPerSurface() async {
+        let calls = focusRouter(repo: "o/a", pulls: prRows(50))
+        let swe = SweClient(runner: calls)
+        let model = GitHubModel()
+        await model.loadFocusTab(.issues, repo: "o/a", swe: swe)
+        await model.loadFocusTab(.pulls, repo: "o/a", swe: swe)
+        #expect(model.focusExhausted.contains(.init(repo: "o/a", tab: .issues)))
+        #expect(model.focusCanGrow(.init(repo: "o/a", tab: .pulls)))
+    }
+
+    /// Unpinning also drops the scroll window's bookkeeping — a re-pin
+    /// starts the surface at its default limit again.
+    @Test func removeRepoResetsTheScrollWindow() async {
+        let calls = focusRouter(repo: "o/a", pulls: prRows(20))
+        calls.replies["gh --json"] = .init(
+            status: 0,
+            stdout: envelope("\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]"),
+            stderr: "")
+        calls.replies["gh repo remove o/a --json"] = .init(
+            status: 0,
+            stdout: envelope("\"removed\":true,\"repo\":\"o/a\",\"pinned\":[]"),
+            stderr: "")
+        let swe = SweClient(runner: calls)
+        let model = GitHubModel()
+        await model.load(swe: swe)
+        await model.loadFocusTab(.pulls, repo: "o/a", swe: swe)
+        #expect(model.focusExhausted.contains(.init(repo: "o/a", tab: .pulls)))
+        #expect(await model.removeRepo("o/a", swe: swe))
+        #expect(model.focusExhausted.isEmpty)
     }
 
     /// A surface the board reports failed refetches on its tab's next
