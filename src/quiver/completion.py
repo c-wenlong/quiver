@@ -348,7 +348,7 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
         "run": "gh", "runs": "gh", "actions": "gh", "ci": "gh",
         "pages": "gh", "page": "gh",
         "release": "gh", "releases": "gh", "tag": "gh", "tags": "gh",
-        "branch": "gh", "branches": "gh",
+        "branch": "gh", "branches": "gh", "board": "gh",
         "inbox": "gh", "notifications": "gh", "notifs": "gh",
         "repo": "gh repo", "repo search": "gh repo search",
     },
@@ -494,6 +494,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("help", "Detailed help for one command"),
     ],
     "gh": [
+        ("board", "Every surface of a repo in one call"),
         ("repo", "Pin or search the repos the dashboard watches"),
         ("pr", "Pull requests (alias: prs, pulls)"),
         ("issue", "Issues (alias: issues)"),

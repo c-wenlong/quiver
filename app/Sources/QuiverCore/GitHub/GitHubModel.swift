@@ -130,6 +130,10 @@ public final class GitHubModel {
     /// When each board field was last filled; a surface older than
     /// `staleAfter` refetches when it becomes visible.
     private var fetched: [BoardKey: Date] = [:]
+    /// Repos whose surfaces were hydrated by `swe gh board` this launch —
+    /// the attempt flag, so the board runs once per repo per session and
+    /// failures degrade to per-tab fetches.
+    private var boardHydrated: Set<String> = []
     /// When the pin list last loaded. Separate from `probed` because
     /// `loadInbox` sets `probed` without fetching pins — gating on
     /// `probed` alone would leave Repositories stuck on the empty card.
@@ -199,6 +203,10 @@ public final class GitHubModel {
         if pinsFetchedAt == nil { await load(swe: swe) }
         guard let repo = selected else { return }
         let key = BoardKey(repo: repo, tab: tab)
+        // First look this session hydrates every surface in one
+        // `swe gh board` call; a surface the board missed or failed
+        // falls through to its own per-tab fetch.
+        if !boardHydrated.contains(repo) { await loadBoard(repo, swe: swe) }
         // The timestamp only skips a fetch when rows are actually there —
         // a cleared board (re-pinned repo) is never "fresh".
         if let at = fetched[key], now().timeIntervalSince(at) < staleAfter,
@@ -220,7 +228,73 @@ public final class GitHubModel {
     public func refresh(swe: SweClient) async {
         if pinsFetchedAt == nil { await load(swe: swe) }
         guard let repo = selected else { return }
+        if !boardHydrated.contains(repo) {
+            await loadBoard(repo, swe: swe)
+            if board(for: repo).isLoaded(tab) { return }
+        }
         await loadTab(tab, repo: repo, swe: swe)
+    }
+
+    /// Fetch every surface of one repo in a single `swe gh board` call.
+    /// Runs once per repo per launch — `boardHydrated` is the attempt
+    /// flag, so a failed board degrades to per-tab fetches rather than
+    /// retrying the expensive call on every visit.
+    private func loadBoard(_ repo: String, swe: SweClient) async {
+        boardHydrated.insert(repo)
+        let keys = RepoTab.allCases.map { BoardKey(repo: repo, tab: $0) }
+        for key in keys { loading.insert(key) }
+        defer {
+            for key in keys {
+                loading.remove(key)
+                if queuedRefreshes.remove(key) != nil {
+                    Task { await loadTab(key.tab, repo: key.repo, swe: swe) }
+                }
+            }
+        }
+        do {
+            let reply = try await swe.ghBoard(repo: repo)
+            env = reply.github
+            probed = true
+            guard let payload = reply.boards.first(where: { $0.repo == repo })
+            else { return }
+            var board = boards[repo] ?? RepoBoard()
+            let stamp = now()
+            let s = payload.surfaces
+            fill(s.pullRequests, into: &board, \.pulls, repo: repo, tab: .pulls, stamp: stamp) { $0.pullRequests ?? [] }
+            fill(s.issues, into: &board, \.issues, repo: repo, tab: .issues, stamp: stamp) { $0.issues ?? [] }
+            fill(s.runs, into: &board, \.runs, repo: repo, tab: .actions, stamp: stamp) { $0.runs ?? [] }
+            fill(s.pages, into: &board, \.pages, repo: repo, tab: .pages, stamp: stamp) { $0.pages }
+            fill(s.releases, into: &board, \.releases, repo: repo, tab: .releases, stamp: stamp) { $0.releases ?? [] }
+            fill(s.tags, into: &board, \.tags, repo: repo, tab: .tags, stamp: stamp) { $0.tags ?? [] }
+            fill(s.branches, into: &board, \.branches, repo: repo, tab: .branches, stamp: stamp) { $0.branches ?? [] }
+            boards[repo] = board
+            scheduleSave()
+        } catch is CancellationError {
+        } catch {
+            var board = boards[repo] ?? RepoBoard()
+            board.fail(tab, message: error.localizedDescription)
+            boards[repo] = board
+        }
+    }
+
+    /// Write one board surface's entry into `path`: ok loads the rows and
+    /// the fetched stamp, anything else is the entry's typed failure.
+    private func fill<Entry: GhEntryFields, Row: Equatable & Sendable>(
+        _ entry: Entry?, into board: inout RepoBoard,
+        _ path: WritableKeyPath<RepoBoard, Loadable<Row>>,
+        repo: String, tab: RepoTab, stamp: Date,
+        rows: (Entry) -> Row
+    ) {
+        let value: Loadable<Row>
+        if let entry {
+            value = entry.status == .ok
+                ? .loaded(rows(entry))
+                : .failed(entry.error ?? entry.status.rawValue)
+        } else {
+            value = .failed("swe board returned no \(tab.rawValue) entry")
+        }
+        board[keyPath: path] = value
+        if case .loaded = value { fetched[BoardKey(repo: repo, tab: tab)] = stamp }
     }
 
     /// Fetch one surface of one repo into its board slot. The reply's
@@ -358,6 +432,7 @@ public final class GitHubModel {
             let reply = try await swe.ghRemoveRepo(name)
             pins = reply.pinned.sorted().map { PinnedRepo(name: $0, addedAt: now()) }
             boards[name] = nil
+            boardHydrated.remove(name)
             for key in fetched.keys where key.repo == name { fetched[key] = nil }
             if selected == name { selected = pins.first?.name }
             pinError = nil

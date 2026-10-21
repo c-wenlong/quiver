@@ -10,6 +10,7 @@ second, then every pinned repo — so a bare ``swe gh pr`` is the dashboard.
 
 import time
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from quiver.console import c, sanitize, truncate
@@ -868,6 +869,45 @@ def _limit(opts: dict, default: int = 30) -> int:
     return max(1, min(n, 200))
 
 
+def _fan(names: list[str], fetch) -> list[dict]:
+    """One ``gh`` subprocess per repo, overlapped — GitHub latency
+    dominates, so serial fetches cost pins × per-call seconds."""
+    if len(names) == 1:
+        return [fetch(names[0])]
+    with ThreadPoolExecutor(max_workers=min(8, len(names))) as pool:
+        return list(pool.map(fetch, names))
+
+
+def _env_after(results: list[dict]) -> gh.GhEnv:
+    """The probe exists to classify failures; a clean sweep already
+    proves gh worked, so it costs no subprocess at all."""
+    if all(r["status"] == "ok" for r in results):
+        # Successful fetches prove gh is installed and authed — spelling
+        # it out keeps `installed` off a live `shutil.which`.
+        return gh.GhEnv(installed=True, authenticated=True)
+    return gh.probe_env()
+
+
+def _collect_json(cmd: str, opts: dict, fetch):
+    """The app's path: fetch first, probe only to classify a failure.
+
+    A successful fetch is itself the auth proof — paying `auth status`
+    on every poll made a one-repo board cost ~1s of probe per surface.
+    """
+    names = _targets(opts, True)
+    if names is None:
+        return gh.probe_env(), None
+    if opts["web"]:
+        _open_web(cmd, names)
+        return gh.probe_env(), []
+    results = _fan(names, lambda name: fetch(name, opts))
+    env = _env_after(results)
+    if env.status != "ok":
+        print(_env_error(env), file=error_stream(True))
+        return env, None
+    return env, results
+
+
 def _collect(cmd: str, opts: dict, json_view: bool, fetch):
     """Gate on gh + repo resolution, then fetch per repo.
 
@@ -875,12 +915,11 @@ def _collect(cmd: str, opts: dict, json_view: bool, fetch):
     blocked (message already printed), [] when ``--web`` opened instead
     of fetching.
     """
+    if json_view:
+        return _collect_json(cmd, opts, fetch)
     env = gh.probe_env()
     if env.status != "ok":
-        if json_view:
-            print(_env_error(env), file=error_stream(True))
-        else:
-            print(c("red", f"\n  {_env_error(env)}\n"))
+        print(c("red", f"\n  {_env_error(env)}\n"))
         return env, None
     names = _targets(opts, json_view)
     if names is None:
@@ -888,7 +927,7 @@ def _collect(cmd: str, opts: dict, json_view: bool, fetch):
     if opts["web"]:
         _open_web(cmd, names)
         return env, []
-    return env, [fetch(name, opts) for name in names]
+    return env, _fan(names, lambda name: fetch(name, opts))
 
 
 def _emit_results(env: gh.GhEnv, results: list[dict]) -> int:
@@ -980,22 +1019,94 @@ def _cmd_inbox(rest: list[str], json_view: bool) -> int:
         print(c("red", f"Unexpected args: {' '.join(pos)}"),
               file=error_stream(json_view))
         return 1
-    env = gh.probe_env()
-    if env.status != "ok":
-        if json_view:
-            print(_env_error(env), file=error_stream(True))
-            emit({"github": _env_payload(env),
-                  "status": env.status, "notifications": []})
-        else:
-            print(c("red", f"\n  {_env_error(env)}\n"))
-        return 1
     if opts["web"]:
         _open_web("inbox", [])
         return 0
-    payload = _fetch_inbox(_limit(opts, 50), fetch_all=opts["all"])
     if json_view:
+        # Same fetch-first path as _collect_json — the poll is every
+        # minute, so a success must not pay for a probe.
+        payload = _fetch_inbox(_limit(opts, 50), fetch_all=opts["all"])
+        env = _env_after([payload])
+        if env.status != "ok":
+            print(_env_error(env), file=error_stream(True))
+            emit({"github": _env_payload(env), "status": env.status,
+                  "notifications": []})
+            return 1
         return emit({"github": _env_payload(env), **payload})
+    env = gh.probe_env()
+    if env.status != "ok":
+        print(c("red", f"\n  {_env_error(env)}\n"))
+        return 1
+    payload = _fetch_inbox(_limit(opts, 50), fetch_all=opts["all"])
     _render_inbox(payload)
+    return 0
+
+
+# The app's cold load: every surface of a repo in one reply, so the
+# Repositories page fills all its tabs for the price of the slowest
+# single fetch instead of one call per tab.
+_BOARD_FETCHERS = {
+    "pull_requests": lambda n: _fetch_prs(n, "open", 50),
+    "issues": lambda n: _fetch_issues(n, "open", 50),
+    "runs": lambda n: _fetch_runs(n, 30),
+    "pages": _fetch_pages,
+    "releases": lambda n: _fetch_releases(n, 20),
+    "tags": lambda n: _fetch_tags(n, 30),
+    "branches": lambda n: _fetch_branches(n, 50),
+}
+
+
+def _fetch_board(name: str) -> dict:
+    with ThreadPoolExecutor(max_workers=len(_BOARD_FETCHERS)) as pool:
+        futures = {key: pool.submit(fetch, name)
+                   for key, fetch in _BOARD_FETCHERS.items()}
+        return {"repo": name,
+                "surfaces": {key: fut.result() for key, fut in futures.items()}}
+
+
+def _render_board(boards: list[dict]) -> None:
+    counts = {"pull_requests": "PRs", "issues": "issues", "runs": "runs",
+              "pages": "pages", "releases": "releases", "tags": "tags",
+              "branches": "branches"}
+    print()
+    for board in boards:
+        print(f"  {c('cyan', board['repo'])}")
+        for key, label in counts.items():
+            entry = board["surfaces"].get(key) or {}
+            if entry.get("status") != "ok":
+                print(f"    {label:10} {c('red', entry.get('status') or 'missing')}")
+            elif key == "pages":
+                print(f"    {label:10} {'site' if entry.get('pages') else '—'}")
+            else:
+                print(f"    {label:10} {len(entry.get(key) or [])}")
+    print()
+
+
+def _cmd_board(rest: list[str], json_view: bool) -> int:
+    parsed = _parse_common(rest, json_view)
+    if parsed is None:
+        return 1
+    opts, pos = parsed
+    if pos:
+        print(c("red", f"Unexpected args: {' '.join(pos)}"),
+              file=error_stream(json_view))
+        return 1
+    names = _targets(opts, json_view)
+    if names is None:
+        if json_view:
+            emit({"github": _env_payload(gh.probe_env()),
+                  "boards": []})
+        return 1
+    if opts["web"]:
+        _open_web("pr", names)
+        return 0
+    boards = _fan(names, _fetch_board)
+    env = _env_after(
+        [s for b in boards for s in b["surfaces"].values()])
+    if json_view:
+        rc = emit({"github": _env_payload(env), "boards": boards})
+        return 1 if env.status != "ok" else rc
+    _render_board(boards)
     return 0
 
 
@@ -1040,6 +1151,8 @@ def main(argv=None) -> int:
 
     if sub == "repo":
         return _cmd_repo(rest, json_view)
+    if sub == "board":
+        return _cmd_board(rest, json_view)
     if sub in ("pr", "prs", "pulls"):
         return _cmd_pr(rest, json_view)
     if sub in ("issue", "issues"):

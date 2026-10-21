@@ -399,6 +399,81 @@ import Testing
         #expect(notes.first?.id == "n1")
     }
 
+    private func boardSurfaces(repo: String, pulls: String) -> String {
+        "\"pull_requests\":{\"repo\":\"\(repo)\",\"status\":\"ok\",\"pull_requests\":\(pulls)},"
+            + "\"issues\":{\"repo\":\"\(repo)\",\"status\":\"ok\",\"issues\":[]},"
+            + "\"runs\":{\"repo\":\"\(repo)\",\"status\":\"ok\",\"runs\":[]},"
+            + "\"pages\":{\"repo\":\"\(repo)\",\"status\":\"ok\",\"pages\":null},"
+            + "\"releases\":{\"repo\":\"\(repo)\",\"status\":\"ok\",\"releases\":[]},"
+            + "\"tags\":{\"repo\":\"\(repo)\",\"status\":\"ok\",\"tags\":[]},"
+            + "\"branches\":{\"repo\":\"\(repo)\",\"status\":\"ok\",\"branches\":[]}"
+    }
+
+    /// First look fills all seven surfaces with one `swe gh board` call;
+    /// afterwards the visible tab alone owns staleness.
+    @Test func firstLookHydratesAllSurfacesViaBoard() async {
+        let calls = router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
+            "gh board --repo=o/a --json":
+                "\(env),\"boards\":[{\"repo\":\"o/a\",\"surfaces\":{"
+                + boardSurfaces(repo: "o/a", pulls: prRows) + "}}]",
+        ])
+        let swe = SweClient(runner: calls)
+        let model = GitHubModel()
+        await model.load(swe: swe)
+        await model.loadIfStale(swe: swe)
+        let board = model.board(for: "o/a")
+        guard case .loaded(let prs) = board.pulls else {
+            Issue.record("pulls not loaded: \(board.pulls) calls=\(calls.calls)")
+            return
+        }
+        #expect(prs.first?.number == 7)
+        if case .loaded = board.issues {} else { Issue.record("issues not loaded") }
+        if case .loaded = board.runs {} else { Issue.record("runs not loaded") }
+        if case .loaded = board.pages {} else { Issue.record("pages not loaded") }
+        if case .loaded = board.releases {} else { Issue.record("releases not loaded") }
+        if case .loaded = board.tags {} else { Issue.record("tags not loaded") }
+        if case .loaded = board.branches {} else { Issue.record("branches not loaded") }
+        // Overview + board: the whole board cost two calls, not eight —
+        // and the hydrated visible tab is fresh, so a second look is free.
+        #expect(calls.calls.count == 2)
+        await model.loadIfStale(swe: swe)
+        #expect(calls.calls.count == 2)
+    }
+
+    /// A surface the board reports failed refetches on its tab's next
+    /// visit through the per-tab path.
+    @Test func boardFailureDegradesToPerTabFetch() async {
+        let calls = router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
+            "gh board --repo=o/a --json":
+                "\(env),\"boards\":[{\"repo\":\"o/a\",\"surfaces\":{"
+                + "\"pull_requests\":{\"repo\":\"o/a\",\"status\":\"upstream-error\",\"error\":\"gh timed out\"},"
+                + "\"issues\":{\"repo\":\"o/a\",\"status\":\"ok\",\"issues\":[]},"
+                + "\"runs\":{\"repo\":\"o/a\",\"status\":\"ok\",\"runs\":[]},"
+                + "\"pages\":{\"repo\":\"o/a\",\"status\":\"ok\",\"pages\":null},"
+                + "\"releases\":{\"repo\":\"o/a\",\"status\":\"ok\",\"releases\":[]},"
+                + "\"tags\":{\"repo\":\"o/a\",\"status\":\"ok\",\"tags\":[]},"
+                + "\"branches\":{\"repo\":\"o/a\",\"status\":\"ok\",\"branches\":[]}}}]",
+            "gh pr --state=open --limit=50 --repo=o/a --json":
+                "\(env),\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"pull_requests\":\(prRows)}]",
+        ])
+        let swe = SweClient(runner: calls)
+        let model = GitHubModel()
+        await model.load(swe: swe)
+        await model.loadIfStale(swe: swe)
+        guard case .loaded(let prs) = model.board(for: "o/a").pulls else {
+            Issue.record("pulls should be refetched per-tab")
+            return
+        }
+        #expect(prs.first?.number == 7)
+        // The other surfaces came from the board and did not refetch.
+        if case .loaded = model.board(for: "o/a").issues {} else {
+            Issue.record("issues should be board-loaded")
+        }
+        #expect(calls.calls.count == 3)
+    }
+
     /// Hydrated rows are warm for display but cold for fetching: no
     /// fetch times survive a relaunch, so the first look always
     /// refetches — a restart can never sit inside a stale window.
@@ -426,9 +501,11 @@ import Testing
                 "\(env),\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"issues\":[]}]",
         ])
         await model.loadIfStale(swe: SweClient(runner: calls))
-        // The overview reloads pins (pinsFetchedAt is not restored);
-        // the visible tab refetches despite rows being there.
-        #expect(calls.calls.count == 2)
+        // The overview reloads pins (pinsFetchedAt is not restored), the
+        // session's first board hydrate is attempted (its reply decodes
+        // as the wrong shape and degrades), and the visible tab refetches
+        // despite rows being there.
+        #expect(calls.calls.count == 3)
         #expect(calls.calls.last?.contains("--repo=o/a") == true)
     }
 
@@ -513,8 +590,11 @@ import Testing
     @Test func invalidateDropsFetchTimesForOffscreenRepo() async {
         let calls = router([
             "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100},{\"name\":\"o/b\",\"added_at\":200}]",
-            "--repo=o/b --json": "\(env),\"results\":[{\"repo\":\"o/b\",\"status\":\"ok\",\"pull_requests\":[]}]",
-            "--repo=o/a --json": "\(env),\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"pull_requests\":[]}]",
+            "gh board --repo=o/b --json":
+                "\(env),\"boards\":[{\"repo\":\"o/b\",\"surfaces\":{"
+                + boardSurfaces(repo: "o/b", pulls: "[]") + "}}]",
+            "gh pr --state=open --limit=50 --repo=o/b --json":
+                "\(env),\"results\":[{\"repo\":\"o/b\",\"status\":\"ok\",\"pull_requests\":[]}]",
         ])
         let swe = SweClient(runner: calls)
         let model = GitHubModel()

@@ -287,6 +287,29 @@ public struct GhResults<Entry: Decodable & Sendable>: Decodable, Sendable {
     public let results: [Entry]
 }
 
+/// `swe gh board --json`: all seven surfaces per repo in one reply, so
+/// the page's cold load costs the slowest single fetch instead of one
+/// call per tab.
+public struct GhBoards: Decodable, Sendable {
+    public let github: GhEnv
+    public let boards: [GhBoardPayload]
+}
+
+public struct GhBoardPayload: Decodable, Sendable {
+    public let repo: String
+    public let surfaces: GhSurfaces
+}
+
+public struct GhSurfaces: Decodable, Sendable {
+    public let pullRequests: GhPrEntry?
+    public let issues: GhIssueEntry?
+    public let runs: GhRunEntry?
+    public let pages: GhPagesEntry?
+    public let releases: GhReleaseEntry?
+    public let tags: GhTagEntry?
+    public let branches: GhBranchEntry?
+}
+
 /// `swe gh pr status --json` groups PRs three ways per repo.
 public struct GhPrStatusEntry: Decodable, Sendable {
     public let repo: String
@@ -349,6 +372,14 @@ extension SweClient {
     /// authored and review-requested buckets in one reply.
     public func ghPrStatus(repo: String? = nil) async throws -> GhResults<GhPrStatusEntry> {
         var args = ["gh", "pr", "status"]
+        if let repo { args.append("--repo=\(repo)") }
+        args.append("--json")
+        return try await call(args, allowFailure: true)
+    }
+
+    /// `swe gh board --repo=<repo> --json` — every surface in one reply.
+    public func ghBoard(repo: String? = nil) async throws -> GhBoards {
+        var args = ["gh", "board"]
         if let repo { args.append("--repo=\(repo)") }
         args.append("--json")
         return try await call(args, allowFailure: true)
