@@ -33,7 +33,7 @@ import Testing
         /// The path the scan keys on — temp dirs sit under /var, a symlink.
         var path: String { file.resolvingSymlinksInPath().path }
 
-        init() throws {
+        init(bufferBudget: Int? = nil) throws {
             temp = try TempDir()
             home = temp.path("claude")
             file = home.appendingPathComponent("projects/-p/s1.jsonl")
@@ -41,7 +41,9 @@ import Testing
                 at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             ledger = try Ledger(directory: temp.path("cache"))
             store = try SearchStore(directory: temp.path("data/search"))
-            indexer = SearchIndexer(store: store)
+            let s = store
+            indexer = bufferBudget.map { SearchIndexer(store: s, bufferBudget: $0) }
+                ?? SearchIndexer(store: s)
         }
 
         /// Connects the index to the scan.
@@ -268,6 +270,91 @@ import Testing
         #expect(report.filesIndexed == 0)
         #expect(try s.store.files().isEmpty)
         #expect(try s.store.status().sessionCount == 0)
+    }
+
+    @Test func aLargeWholeReadCommitsInChunks() async throws {
+        let s = try Setup(bufferBudget: 100)
+        await s.attach()
+        // Each line's text exceeds the tiny budget: every line flushes.
+        try s.write(userLine(String(repeating: "aardvark ", count: 30))
+            + assistantLine(String(repeating: "bobcat ", count: 30))
+            + userLine(String(repeating: "cheetah ", count: 30),
+                         ts: "2026-10-05T12:00:02.000Z"))
+        let size = Int64(try Data(contentsOf: s.file).count)
+
+        let report = try await s.ledger.scan(roots: s.roots)
+
+        #expect(report.filesIndexed == 1)
+        #expect(s.indexer.midReadFlushes >= 1)
+        let row = try #require(try s.row())
+        #expect(row.state == .current)
+        // The finishing commit moved the cursor off the partial sentinel.
+        #expect(row.byteOffset == size)
+        // Every chunked insert landed once, under one session.
+        #expect(try s.store.status().messageCount == 3)
+        #expect(try s.fts("aardvark").count == 1)
+        #expect(try s.fts("cheetah").count == 1)
+        let session = try #require(try s.store.sessionRow(row.sessionRowID ?? -1))
+        #expect(session.fields.messageCount == 3)
+        #expect(session.fields.updatedAt == "2026-10-05T12:00:02.000Z")
+    }
+
+    @Test func aReadAbandonedMidFlushReReadsWhole() async throws {
+        let s = try Setup(bufferBudget: 50)
+        let path = s.path
+        let lines = userLine(String(repeating: "aardvark ", count: 20))
+            + userLine(String(repeating: "bobcat ", count: 20),
+                       ts: "2026-10-05T12:00:01.000Z")
+        try s.write(lines)
+
+        // A read that flushed, then never finished — the process died.
+        s.indexer.beginFile(path: path, harness: .claude)
+        for line in lines.split(separator: "\n") {
+            s.indexer.consume(line: Data(line.utf8))
+        }
+        #expect(s.indexer.midReadFlushes >= 1)
+        let parked = try #require(try s.row())
+        #expect(parked.byteOffset == SearchStore.partialFileOffset)
+        let partialSession = try #require(parked.sessionRowID)
+        // The parked row owes a whole read, not an append.
+        #expect(s.indexer.readNeed(path: path, stat: s.stat(), ledgerOffset: nil) == .whole)
+        s.indexer.beginFile(path: path, harness: .claude) // drop the stale slot
+
+        let report = try await { () async throws -> ScanReport in
+            await s.attach()
+            return try await s.ledger.scan(roots: s.roots)
+        }()
+
+        #expect(report.filesIndexed == 1)
+        let row = try #require(try s.row())
+        #expect(row.state == .current && row.byteOffset > 0)
+        // The partial generation was replaced, not appended to: each
+        // message exists exactly once and the old session row is gone.
+        #expect(try s.store.sessionRow(partialSession) == nil)
+        #expect(try s.store.status().messageCount == 2)
+        #expect(try s.fts("aardvark").count == 1)
+    }
+
+    @Test func anAppendedReadBuffersWithoutFlushing() async throws {
+        let s = try Setup(bufferBudget: 50)
+        await s.attach()
+        try s.write(userLine("first prompt"))
+        try await s.ledger.scan(roots: s.roots)
+        let before = try #require(try s.row())
+
+        // Well past the budget — but an append must never commit mid-file:
+        // a committed tail chunk whose cursor never moved would re-read and
+        // duplicate on the next pass.
+        try s.append(assistantLine(String(repeating: "zebra ", count: 40),
+                                   ts: "2026-10-05T12:00:02.000Z"))
+        let report = try await s.ledger.scan(roots: s.roots)
+
+        #expect(report.filesIndexed == 1)
+        #expect(s.indexer.midReadFlushes == 0)
+        let after = try #require(try s.row())
+        #expect(after.sessionRowID == before.sessionRowID)
+        #expect(try s.store.status().messageCount == 2)
+        #expect(try s.fts("zebra").count == 1)
     }
 
     @Test func anIndexCommitFailureFailsTheFileNotTheScan() async throws {
