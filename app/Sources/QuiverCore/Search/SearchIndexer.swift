@@ -68,6 +68,10 @@ public final class SearchIndexer: @unchecked Sendable {
         /// The `files` row as the read began — what every commit fences on.
         var fileRow: SearchFileRow?
         var decoder: SearchDecoder
+        /// The session id the records never carry — antigravity's
+        /// conversation dir, rovo/muse's session dir — supplied by the
+        /// source row's `sessionIDFromPath`. A record-carried id still wins.
+        var sessionIDHint: String?
         var messages: [SearchMessage] = []
         var hints = SearchHints()
         /// First and last decoded timestamps — the session's time range.
@@ -151,10 +155,17 @@ public final class SearchIndexer: @unchecked Sendable {
     /// - Parameter appending: whether this read covers only the tail past the
     ///   `files` row's offset. `finishFile` commits a tail against the row's
     ///   session and a whole read as a new session generation.
-    public func beginFile(path: String, harness: SearchDecoder.Harness, appending: Bool = false) {
+    /// - Parameter sessionID: the source-derived session id for transcripts
+    ///   whose records never carry one; a record's own `sessionId` hint
+    ///   still outranks it.
+    public func beginFile(
+        path: String, harness: SearchDecoder.Harness,
+        appending: Bool = false, sessionID: String? = nil
+    ) {
         pending = Pending(
             path: path, harness: harness, appending: appending,
-            fileRow: try? store.fileRow(for: path), decoder: SearchDecoder(harness))
+            fileRow: try? store.fileRow(for: path), decoder: SearchDecoder(harness),
+            sessionIDHint: sessionID)
     }
 
     /// Whether the line *could* carry anything this file's decoder wants —
@@ -178,12 +189,52 @@ public final class SearchIndexer: @unchecked Sendable {
         record(pending!.decoder.decode(line: line))
     }
 
+    /// The decoder's end-of-file flush — Kimi joins streamed `content.part`
+    /// chunks into one assistant message per `step.end`, and a trailing
+    /// unterminated step releases here (`consumeKimiWireTranscript`'s
+    /// `flushAssistant` after the stream ends).
+    public func consumeEndOfFile() {
+        guard pending != nil else { return }
+        record(pending!.decoder.endOfFile())
+    }
+
     /// Fields a sidecar supplies for the file in flight — Cursor's
     /// `meta.json` carries title/cwd/dates the transcript never writes.
     /// `finishFile` gap-fills them into the same commit, so a session's
     /// metadata cannot strand behind a `files` row already marked current.
     public func setFieldOverlay(_ fields: SearchSessionFields) {
         pending?.fieldOverlay = fields
+    }
+
+    /// A stamp carried outside any message — the paired manifest's
+    /// `created_at`/`updated_at` (rovo/kiro/grok/kimi) — folded into the
+    /// session timeline exactly like a record's own stamp, Orca's
+    /// `updateTimeline`.
+    public func consumeTimeline(_ value: Any?) {
+        guard pending != nil, let ts = SearchStamp.iso(value) else { return }
+        foldTimeline(ts)
+    }
+
+    /// Orca's `updateTimeline` on one ISO stamp: `createdAt` is the earliest
+    /// stamp seen, `updatedAt` the latest. Comparison runs on parsed epoch
+    /// ms where both stamps parse; an unparseable stamp (only fixtures write
+    /// those) keeps the old first/last-seen behavior.
+    private func foldTimeline(_ ts: String) {
+        guard let incoming = SearchStamp.milliseconds(ts) else {
+            if pending!.firstTs == nil { pending!.firstTs = ts }
+            pending!.lastTs = ts
+            return
+        }
+        if let first = pending!.firstTs, let firstMs = SearchStamp.milliseconds(first) {
+            if incoming < firstMs { pending!.firstTs = ts }
+        } else {
+            pending!.firstTs = ts
+        }
+        if let last = pending!.lastTs, let lastMs = SearchStamp.milliseconds(last) {
+            if incoming >= lastMs { pending!.lastTs = ts }
+        } else {
+            pending!.lastTs = ts
+        }
     }
 
     private func record(_ output: (messages: [SearchMessage], hints: SearchHints)) {
@@ -199,8 +250,7 @@ public final class SearchIndexer: @unchecked Sendable {
         pending!.hints.nonUserOrigin = pending!.hints.nonUserOrigin || output.hints.nonUserOrigin
         for message in output.messages {
             if let ts = message.ts {
-                if pending!.firstTs == nil { pending!.firstTs = ts }
-                pending!.lastTs = ts
+                foldTimeline(ts)
             }
             pending!.messages.append(message)
             pending!.bufferedChars += message.text.utf8.count
@@ -225,7 +275,7 @@ public final class SearchIndexer: @unchecked Sendable {
         guard !file.messages.isEmpty, let info = FileInfo(path: file.path) else { return }
         let fields = SearchSessionFields(
             agent: file.harness.rawValue,
-            sessionID: file.hints.sessionId ?? Self.stem(of: file.path),
+            sessionID: file.hints.sessionId ?? file.sessionIDHint ?? Self.stem(of: file.path),
             filePath: file.path, title: file.hints.title ?? "",
             cwd: file.hints.cwd, cwdKey: file.hints.cwd,
             createdAt: file.firstTs, updatedAt: file.lastTs,
@@ -280,7 +330,7 @@ public final class SearchIndexer: @unchecked Sendable {
         let rows = Self.messageRows(from: file.messages)
         var fields = SearchSessionFields(
             agent: file.harness.rawValue,
-            sessionID: file.hints.sessionId ?? Self.stem(of: path),
+            sessionID: file.hints.sessionId ?? file.sessionIDHint ?? Self.stem(of: path),
             filePath: path, title: file.hints.title ?? "",
             cwd: file.hints.cwd, cwdKey: file.hints.cwd,
             createdAt: file.firstTs, updatedAt: file.lastTs,
@@ -298,9 +348,10 @@ public final class SearchIndexer: @unchecked Sendable {
             if fields.createdAt == nil { fields.createdAt = overlay.createdAt }
             if fields.updatedAt == nil { fields.updatedAt = overlay.updatedAt }
         }
-        // A session worth writing is an explicit session id or any message
-        // (`decoded` counts flushed chunks too).
-        let hasSession = file.hints.sessionId != nil || file.decoded > 0
+        // A session worth writing is an explicit session id — record- or
+        // path-derived — or any message (`decoded` counts flushed chunks too).
+        let hasSession = file.hints.sessionId != nil
+            || file.sessionIDHint != nil || file.decoded > 0
         let old = file.fileRow
         let fence = old.map { SearchFileFence(sessionRowID: $0.sessionRowID, byteOffset: $0.byteOffset) }
 
