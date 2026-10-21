@@ -882,7 +882,9 @@ def _env_after(results: list[dict]) -> gh.GhEnv:
     """The probe exists to classify failures; a clean sweep already
     proves gh worked, so it costs no subprocess at all."""
     if all(r["status"] == "ok" for r in results):
-        return gh.GhEnv(authenticated=True)
+        # Successful fetches prove gh is installed and authed — spelling
+        # it out keeps `installed` off a live `shutil.which`.
+        return gh.GhEnv(installed=True, authenticated=True)
     return gh.probe_env()
 
 
