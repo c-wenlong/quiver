@@ -41,6 +41,11 @@ public struct SearchHints: Sendable, Equatable {
     /// internal run, not one the user started. Orca drops these outright;
     /// surfacing the flag lets the indexer decide.
     public var nonUserOrigin = false
+    /// This record's user text is harness-injected machinery — Claude's
+    /// `isMeta`, CodeBuddy's `providerData.skipRun`, a known injected-turn
+    /// tag. The turn still indexes as a user message, but it never seeds the
+    /// first-prompt title (Orca's `metaTitle`/`seedFirstUserPrompt` gate).
+    public var injectedUserTurn = false
 
     public init(sessionId: String? = nil, cwd: String? = nil, branch: String? = nil, title: String? = nil) {
         self.sessionId = sessionId
