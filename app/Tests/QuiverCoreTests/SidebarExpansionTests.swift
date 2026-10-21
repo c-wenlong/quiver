@@ -177,6 +177,24 @@ struct HoverExpansionTests {
         #expect(hover.isFloating)
     }
 
+    @Test func repeatInsideReportsDoNotPostponeTheEntry() async {
+        // A caller reporting on every pointer move (continuous hover)
+        // re-sends the same `inside`; the entry delay must still count
+        // from the first report, not the latest.
+        let clock = ManualClock()
+        let hover = rail(clock)
+        hover.hover(true, collapsed: true)
+        await clock.waitForSleepers(1)
+        clock.advance(by: .milliseconds(15))
+        hover.hover(true, collapsed: true)
+        hover.hover(true, collapsed: true)
+        await clock.waitForSleepers(1) // no new sleeper registered
+        clock.advance(by: .milliseconds(5))
+        await settle(hover)
+        #expect(hover.isExpanded)
+        #expect(hover.isFloating)
+    }
+
     @Test func leavingBeforeTheEntryDelayNeverExpands() async {
         let clock = ManualClock()
         let hover = rail(clock)

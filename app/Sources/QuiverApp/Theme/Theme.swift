@@ -107,6 +107,11 @@ enum Theme {
     static let sidebarTrailingPadding: CGFloat = 4
     /// The collapsed nav pill that hugs an icon: 8 + 18 + 8.
     static let navIconPillWidth: CGFloat = 34
+    /// The strip that arms the hover expansion: just the icon column
+    /// (leading padding + pill + trailing), so a pointer heading for
+    /// the page's left edge never floats the sidebar over its target.
+    static let sidebarHoverWidth: CGFloat =
+        sidebarLeadingPadding + navIconPillWidth + sidebarTrailingPadding
     /// The invisible drag strip centred on the sidebar's trailing edge.
     static let sidebarResizeHandleWidth: CGFloat = 8
     /// Sidebar collapse, expand and hover-float all use this.

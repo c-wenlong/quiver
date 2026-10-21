@@ -218,7 +218,19 @@ private struct Sidebar: View {
         // floating; the content's top padding clears the traffic lights.
         .ignoresSafeArea(.container, edges: .top)
         .animation(animation, value: isExpanded)
-        .onHover(perform: hover)
+        // The tracking area spans the full unclipped width, so where the
+        // pointer is decides "inside": collapsed, only the icon strip
+        // arms the expansion — a pointer crossing the rail to reach the
+        // page's left edge never floats the panel over its target. Once
+        // floating, the whole expanded panel keeps itself hovered.
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let location):
+                hover(isExpanded || location.x <= Theme.sidebarHoverWidth)
+            case .ended:
+                hover(false)
+            }
+        }
         .onAppear { hoverExpansion.expansion.collapsed = model.sidebarCollapsed }
         .onChange(of: model.sidebarCollapsed) { _, new in
             // The button already toggled expansion, so this only fires
