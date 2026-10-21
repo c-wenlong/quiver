@@ -246,20 +246,28 @@ struct RepositoriesPage: View {
                 }
                 .padding(.bottom, empty || collapsed.contains(repo) ? 0 : 10)
                 if !empty, !collapsed.contains(repo) {
-                    Divider().overlay(Theme.rowDivider)
-                        .padding(.bottom, 4)
-                    switch model.tab {
-                    case .pulls: pulls(repo: repo, board: board)
-                    case .issues: issues(repo: repo, board: board)
-                    case .actions: actions(repo: repo, board: board)
-                    case .pages: pages(repo: repo, board: board)
-                    case .releases: releases(repo: repo, board: board)
-                    case .tags: tags(repo: repo, board: board)
-                    case .branches: branches(repo: repo, board: board)
+                    // Rows bleed to the callout's edges, GitHub-style:
+                    // the negative pads undo the card's, and the clip
+                    // keeps hover fills inside the rounded corners.
+                    VStack(spacing: 0) {
+                        Divider().overlay(Theme.rowDivider)
+                            .padding(.bottom, 4)
+                        switch model.tab {
+                        case .pulls: pulls(repo: repo, board: board)
+                        case .issues: issues(repo: repo, board: board)
+                        case .actions: actions(repo: repo, board: board)
+                        case .pages: pages(repo: repo, board: board)
+                        case .releases: releases(repo: repo, board: board)
+                        case .tags: tags(repo: repo, board: board)
+                        case .branches: branches(repo: repo, board: board)
+                        }
                     }
+                    .padding(.horizontal, -Theme.cardPadding)
+                    .padding(.bottom, -Theme.cardPadding)
                 }
             }
         }
+        .clipShape(.rect(cornerRadius: Theme.cardRadius))
     }
 
     /// Whether the active tab's surface came back empty — the callout
@@ -313,8 +321,7 @@ struct RepositoriesPage: View {
         SurfaceList(pullsState(repo, board: board),
                     empty: emptyText("No open pull requests.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .pulls)),
-                    expandKey: "\(repo):pulls", expanded: $expanded,
-                    framed: false) { pr in
+                    expandKey: "\(repo):pulls", expanded: $expanded) { pr in
             OpenRow(act: { detail = PrSelection(repo: repo, number: pr.number) }) {
                 PrIcon(state: pr.state, draft: pr.draft)
                 VStack(alignment: .leading, spacing: 3) {
@@ -372,8 +379,7 @@ struct RepositoriesPage: View {
         SurfaceList(issuesState(repo, board: board),
                     empty: emptyText("No open issues.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .issues)),
-                    expandKey: "\(repo):issues", expanded: $expanded,
-                    framed: false) { issue in
+                    expandKey: "\(repo):issues", expanded: $expanded) { issue in
             OpenRow(url: issue.url, open: openURL.callAsFunction) {
                 Image(systemName: issue.state == .open ? "exclamationmark.circle" : "checkmark.circle")
                     .font(.system(size: 15))
@@ -407,8 +413,7 @@ struct RepositoriesPage: View {
         SurfaceList(actionsState(repo, board: board),
                     empty: emptyText("No workflow runs.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .actions)),
-                    expandKey: "\(repo):actions", expanded: $expanded,
-                    framed: false) { run in
+                    expandKey: "\(repo):actions", expanded: $expanded) { run in
             OpenRow(url: run.url, open: openURL.callAsFunction) {
                 RunIcon(status: run.status, conclusion: run.conclusion)
                 VStack(alignment: .leading, spacing: 3) {
@@ -446,7 +451,7 @@ struct RepositoriesPage: View {
     }
 
     /// Pages is a single facts panel, not a row list — inside the repo
-    /// callout it renders bare with its own heading line.
+    /// callout it keeps the card's inset rather than bleeding.
     @ViewBuilder
     private func pages(repo: String, board: RepoBoard) -> some View {
         switch board.pages {
@@ -492,6 +497,9 @@ struct RepositoriesPage: View {
                     }
                 }
                 .padding(.vertical, 6)
+                // Counteracts the callout's row bleed: the panel keeps
+                // the inset the rows gave up.
+                .padding([.horizontal, .bottom], Theme.cardPadding)
             } else {
                 EmptyCard(text: "This repo has no GitHub Pages site.",
                           icon: "globe", framed: false)
@@ -508,8 +516,7 @@ struct RepositoriesPage: View {
         SurfaceList(releasesState(repo, board: board),
                     empty: emptyText("No releases.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .releases)),
-                    expandKey: "\(repo):releases", expanded: $expanded,
-                    framed: false) { release in
+                    expandKey: "\(repo):releases", expanded: $expanded) { release in
             OpenRow(url: release.url, open: openURL.callAsFunction) {
                 Image(systemName: "tag").font(.system(size: 14))
                     .foregroundStyle(Theme.accent)
@@ -539,8 +546,7 @@ struct RepositoriesPage: View {
         SurfaceList(tagsState(repo, board: board),
                     empty: emptyText("No tags.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .tags)),
-                    expandKey: "\(repo):tags", expanded: $expanded,
-                    framed: false) { tag in
+                    expandKey: "\(repo):tags", expanded: $expanded) { tag in
             OpenRow(url: tag.url, open: openURL.callAsFunction) {
                 Image(systemName: "tag").font(.system(size: 14))
                     .foregroundStyle(Theme.textSecondary)
@@ -561,8 +567,7 @@ struct RepositoriesPage: View {
         SurfaceList(branchesState(repo, board: board),
                     empty: emptyText("No branches.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .branches)),
-                    expandKey: "\(repo):branches", expanded: $expanded,
-                    framed: false) { branch in
+                    expandKey: "\(repo):branches", expanded: $expanded) { branch in
             OpenRow(url: branch.url, open: openURL.callAsFunction) {
                 Image(systemName: "arrow.triangle.branch").font(.system(size: 14))
                     .foregroundStyle(branch.default ? Theme.accent : Theme.textSecondary)
@@ -578,9 +583,10 @@ struct RepositoriesPage: View {
     }
 }
 
-/// A surface's rows inside one card: the spinner on first load, the
-/// error card on failure, the empty line on `.loaded([])`, else a
-/// preview of `preview` rows plus an expander row when more exist.
+/// A surface's rows inside the repo callout: the spinner on first
+/// load, the error card on failure, the empty line on `.loaded([])`,
+/// else a preview of `preview` rows plus a `.cardBottom` expander that
+/// sits flush on the callout's bottom edge when more exist.
 private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: View>: View {
     var state: Loadable<[Row]>
     var empty: String
@@ -589,20 +595,16 @@ private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: Vi
     var expandKey: String?
     @Binding var expanded: Set<String>
     var preview = 3
-    /// False inside a repo callout — the section card is the frame.
-    var framed = true
     @ViewBuilder var row: (Row) -> Content
 
     init(_ state: Loadable<[Row]>, empty: String, loading: Bool,
          expandKey: String? = nil, expanded: Binding<Set<String>>? = nil,
-         framed: Bool = true,
          @ViewBuilder row: @escaping (Row) -> Content) {
         self.state = state
         self.empty = empty
         self.loading = loading
         self.expandKey = expandKey
         self._expanded = expanded ?? .constant([])
-        self.framed = framed
         self.row = row
     }
 
@@ -613,15 +615,13 @@ private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: Vi
     var body: some View {
         switch state {
         case .idle, .loading:
-            LoadingCard(text: "Fetching…", framed: framed)
+            LoadingCard(text: "Fetching…", framed: false)
         case .failed(let message):
-            ErrorCard(message: message, framed: framed)
+            ErrorCard(message: message, framed: false)
         case .loaded(let rows) where rows.isEmpty:
-            EmptyCard(text: empty, icon: "checkmark.circle", framed: framed)
+            EmptyCard(text: empty, icon: "checkmark.circle", framed: false)
         case .loaded(let rows):
-            Group {
-                if framed { Card { content(rows) } } else { content(rows) }
-            }
+            content(rows)
         }
     }
 
@@ -639,7 +639,7 @@ private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: Vi
                 ExpandRow(isExpanded: isOpen, hidden: rows.count - preview,
                           help: (expand: "Show every row",
                                  collapse: "Show only the first \(preview)"),
-                          edge: .inset) {
+                          edge: .cardBottom) {
                     if isOpen { expanded.remove(expandKey) }
                     else { expanded.insert(expandKey) }
                 }
@@ -650,13 +650,15 @@ private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: Vi
                 ProgressView().controlSize(.small)
                 Text("Refreshing…").font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
+            .padding(.horizontal, Theme.cardPadding)
         }
     }
 }
 
 /// A row with one click action: hover fill, link pointer, plain style.
 /// `url:` rows open a GitHub page; a custom action opens the in-app
-/// workbench instead.
+/// workbench instead. Rows bleed to the callout's edges, so the hover
+/// fill runs wall to wall and the content carries the inset.
 private struct OpenRow<Content: View>: View {
     var act: () -> Void
     @ViewBuilder var content: Content
@@ -677,7 +679,7 @@ private struct OpenRow<Content: View>: View {
         Button(action: act) {
             HStack(alignment: .top, spacing: 12) { content }
                 .padding(.vertical, 10)
-                .padding(.horizontal, 6)
+                .padding(.horizontal, 14)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(hovering ? Theme.rowHover : .clear,
                             in: .rect(cornerRadius: Theme.controlRadius))
