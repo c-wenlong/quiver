@@ -566,15 +566,20 @@ private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: Vi
     @ViewBuilder private func content(_ rows: [Row]) -> some View {
         VStack(spacing: 0) {
             let visible = isOpen ? rows : Array(rows.prefix(preview))
+            let hasMore = expandKey != nil && rows.count > preview
             ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
                 row(item)
-                if index < visible.count - 1 || (!isOpen && expandKey != nil) {
+                if index < visible.count - 1 || hasMore {
                     Divider().overlay(Theme.rowDivider)
                 }
             }
-            if let expandKey, !isOpen, rows.count > preview {
-                ExpanderRow(more: rows.count - preview) {
-                    expanded.insert(expandKey)
+            if let expandKey, hasMore {
+                ExpandRow(isExpanded: isOpen, hidden: rows.count - preview,
+                          help: (expand: "Show every row",
+                                 collapse: "Show only the first \(preview)"),
+                          edge: .inset) {
+                    if isOpen { expanded.remove(expandKey) }
+                    else { expanded.insert(expandKey) }
                 }
             }
         }
@@ -584,32 +589,6 @@ private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: Vi
                 Text("Refreshing…").font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
         }
-    }
-}
-
-/// The bottom-of-card row that opens a truncated list to every row.
-private struct ExpanderRow: View {
-    var more: Int
-    var act: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: act) {
-            HStack(spacing: 8) {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("\(more) more").font(Theme.caption)
-            }
-            .foregroundStyle(Theme.textMuted)
-            .padding(.vertical, 10)
-            .padding(.horizontal, 6)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(hovering ? Theme.rowHover : .clear,
-                        in: .rect(cornerRadius: Theme.controlRadius))
-            .contentShape(.rect(cornerRadius: Theme.controlRadius))
-        }
-        .buttonStyle(RingedPlainStyle(cornerRadius: Theme.controlRadius))
-        .onHover { hovering = $0 }
     }
 }
 
