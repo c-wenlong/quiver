@@ -54,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
+        PopupKeyRouting.install()
         FocusVisibility.start()
         statusItem = StatusItemController(model: AppModel.shared)
         AppModel.shared.applyAppIcon()
