@@ -9,10 +9,13 @@ second, then every pinned repo — so a bare ``swe gh pr`` is the dashboard.
 """
 
 import json
+import re
+import subprocess
 import time
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
 
 from quiver import paths
 from quiver.console import c, sanitize, truncate
@@ -1306,14 +1309,16 @@ def _cmd_pr(rest: list[str], json_view: bool) -> int:
         return 1
     opts, pos = parsed
     sub = pos[0] if pos else "list"
-    if sub in ("view", "merge"):
+    if sub in ("view", "merge", "worktree", "checkout"):
         if len(pos) != 2:
             print(c("red", f"Usage: swe gh pr {sub} <number|url>"),
                   file=error_stream(json_view))
             return 1
         if sub == "view":
             return _cmd_pr_view(pos[1], opts, json_view)
-        return _cmd_pr_merge(pos[1], opts, json_view)
+        if sub == "merge":
+            return _cmd_pr_merge(pos[1], opts, json_view)
+        return _cmd_pr_worktree(pos[1], opts, json_view)
     if len(pos) > 1:
         print(c("red", f"Unexpected args: {' '.join(pos[1:])}"),
               file=error_stream(json_view))
@@ -1324,7 +1329,8 @@ def _cmd_pr(rest: list[str], json_view: bool) -> int:
         return _finish(env, results, opts, json_view, _render_pr_status)
     if sub != "list":
         print(c("red",
-                f"Unknown: swe gh pr {sub}  (list | status | view | merge)"),
+                f"Unknown: swe gh pr {sub}  (list | status | view | merge "
+                "| worktree)"),
               file=error_stream(json_view))
         return 1
     state = (opts["state"] or "open").lower()
@@ -1427,6 +1433,123 @@ def _cmd_pr_merge(ref: str, opts: dict, json_view: bool) -> int:
     done = (f"Auto-merge armed for {ref} ({method})." if opts["auto"]
             else f"Merged {ref} in {repo} ({method}).")
     print(c("green", f"  {done}\n"))
+    return 0
+
+
+def _run_git(args: list[str], timeout: int = 120) -> gh.GhResult:
+    """``git <args>`` with ``run_gh``'s never-raise contract."""
+    try:
+        done = subprocess.run(
+            ["git", *args], capture_output=True, text=True,
+            timeout=timeout)
+    except FileNotFoundError:
+        return gh.GhResult("unavailable", error="git is not installed")
+    except subprocess.TimeoutExpired:
+        return gh.GhResult("upstream-error",
+                           error=f"git timed out after {timeout}s")
+    except OSError as exc:
+        return gh.GhResult("unavailable", error=str(exc))
+    if done.returncode != 0:
+        return gh.GhResult("upstream-error",
+                           error=(done.stderr or done.stdout or "").strip())
+    return gh.GhResult("ok", data=done.stdout)
+
+
+def _pr_number(ref: str) -> str | None:
+    """The numeric part of a PR ref: bare digits or a /pull/N URL."""
+    if ref.isdigit():
+        return ref
+    match = re.search(r"/pull/(\d+)", ref)
+    return match.group(1) if match else None
+
+
+def _mirror_for(repo: str) -> str:
+    return str(paths.GITHUB_MIRRORS / (repo.replace("/", "__") + ".git"))
+
+
+def _worktree_for(repo: str, number: str) -> str:
+    return str(paths.WORKTREES_DIR / f"{repo.replace('/', '__')}-pr{number}")
+
+
+def _registered_worktrees(mirror: str) -> list[str]:
+    result = _run_git(["-C", mirror, "worktree", "list", "--porcelain"])
+    if result.status != "ok":
+        return []
+    return [line.split(" ", 1)[1]
+            for line in (result.data or "").splitlines()
+            if line.startswith("worktree ")]
+
+
+def _cmd_pr_worktree(ref: str, opts: dict, json_view: bool) -> int:
+    """A detached checkout of the PR's head under ~/.quiver/worktrees.
+
+    The repo's bare mirror lives under data/github/mirrors; the PR head
+    is fetched via refs/pull/N/head — GitHub's own ref, so fork PRs need
+    no fork remote. Re-running returns the existing checkout.
+    """
+    err = error_stream(json_view)
+    number = _pr_number(ref)
+    if number is None:
+        print(c("red", "Want a PR number or its /pull/<N> URL"), file=err)
+        return 1
+    env = gh.probe_env()
+    if env.status != "ok":
+        if json_view:
+            emit({**_env_emit(env), "repo": None, "pr": int(number),
+                  "path": None, "created": False, "error": _env_error(env)})
+        else:
+            print(c("red", f"  {_env_error(env)}"), file=err)
+        return 1
+    repo, res_err = _resolve_one(opts, json_view)
+    if repo is None:
+        if json_view:
+            emit({**_env_emit(env), "repo": None, "pr": int(number),
+                  "path": None, "created": False, "error": res_err})
+        return 1
+
+    def fail(step: str, result: gh.GhResult) -> int:
+        msg = result.error or result.status
+        if json_view:
+            emit({**_env_emit(env), "repo": repo, "pr": int(number),
+                  "path": None, "created": False,
+                  "error": f"{step}: {msg}"})
+        else:
+            print(c("red", f"  {step}: {msg}\n"))
+        return 1
+
+    mirror = _mirror_for(repo)
+    if not Path(mirror).is_dir():
+        paths.GITHUB_MIRRORS.mkdir(parents=True, exist_ok=True)
+        result = gh.run_gh(
+            ["repo", "clone", repo, mirror, "--",
+             "--bare", "--filter=blob:none"], timeout=300)
+        if result.status != "ok":
+            return fail("Clone failed", result)
+
+    result = _run_git(["-C", mirror, "fetch", "origin",
+                       f"refs/pull/{number}/head"], timeout=120)
+    if result.status != "ok":
+        return fail("Fetch failed", result)
+    sha = _run_git(["-C", mirror, "rev-parse", "--short=12", "FETCH_HEAD"])
+    head = (sha.data or "").strip() if sha.status == "ok" else None
+
+    path = _worktree_for(repo, number)
+    created = False
+    if path not in _registered_worktrees(mirror):
+        paths.WORKTREES_DIR.mkdir(parents=True, exist_ok=True)
+        result = _run_git(["-C", mirror, "worktree", "add", "--detach",
+                           path, "FETCH_HEAD"], timeout=300)
+        if result.status != "ok":
+            return fail("Worktree failed", result)
+        created = True
+
+    if json_view:
+        return emit({**_env_emit(env), "repo": repo, "pr": int(number),
+                     "path": path, "head": head, "created": created})
+    state = "checked out" if created else "already at"
+    print(f"  {c('green', repo + '#' + number)} {state} "
+          f"{c('cyan', path)}"
+          + (f"  {c('dim', '@ ' + head)}" if head else "") + "\n")
     return 0
 
 

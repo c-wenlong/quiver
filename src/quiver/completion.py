@@ -444,6 +444,7 @@ _NESTED_SUBCOMMANDS: dict[tuple[str, str], list[tuple[str, str]]] = {
         ("status", "Current branch, authored, needs-review"),
         ("view", "One PR: checks, reviews, merge state"),
         ("merge", "Merge a PR (squash by default)"),
+        ("worktree", "Checkout the PR head under ~/.quiver/worktrees"),
     ],
     ("gh", "run"): [
         ("list", "List workflow runs"),

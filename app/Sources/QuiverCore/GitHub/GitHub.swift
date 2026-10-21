@@ -256,6 +256,18 @@ public struct GhRepoSearch: Decodable, Sendable {
     public let results: [RepoHit]
 }
 
+/// `swe gh pr worktree <N> --repo=R --json`: the checkout a session
+/// launches from. `path` is null on failure, `created` false when the
+/// worktree already existed.
+public struct GhPrWorktree: Decodable, Sendable {
+    public let repo: String
+    public let pr: Int
+    public let path: String?
+    public let head: String?
+    public let created: Bool
+    public let error: String?
+}
+
 /// The per-repo entry shape differs only in which key holds the rows;
 /// each surface gets a named entry so the contract stays explicit.
 public struct GhPrEntry: Decodable, Sendable {
@@ -512,6 +524,15 @@ extension SweClient {
         if let repo { args.append("--repo=\(repo)") }
         args.append("--json")
         return try await call(args, allowFailure: true)
+    }
+
+    /// `swe gh pr worktree <n> --repo=<repo> --json` — fetch the PR head
+    /// into a shared mirror and keep a detached checkout under
+    /// ~/.quiver/worktrees. A failed reply still decodes (path nil, the
+    /// error in `error`), so `allowFailure` stays on.
+    public func ghPrWorktree(repo: String, pr: Int) async throws -> GhPrWorktree {
+        try await call(["gh", "pr", "worktree", "\(pr)", "--repo=\(repo)", "--json"],
+                       allowFailure: true)
     }
 
     /// `swe gh board --repo=<repo> --json` — every surface in one reply.

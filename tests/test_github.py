@@ -1523,6 +1523,196 @@ class TestCommands(unittest.TestCase):
         self.assertFalse(data["merged"])
         self.assertIn("not mergeable", data["error"])
 
+    # -- swe gh pr worktree -------------------------------------------
+
+    def _patch_paths(self):
+        mirrors = Path(self.tmp.name) / "data" / "github" / "mirrors"
+        trees = Path(self.tmp.name) / "worktrees"
+        patches = [
+            patch.object(paths, "GITHUB_MIRRORS", mirrors),
+            patch.object(paths, "WORKTREES_DIR", trees),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        return mirrors, trees
+
+    def test_pr_worktree_creates_then_reuses(self):
+        mirrors, trees = self._patch_paths()
+        seen = []
+
+        def run(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            seen.append(joined)
+            if "worktree list" in joined:
+                wt = trees / "o__r-pr7"
+                if wt.exists():
+                    return _Proc(stdout=f"worktree {wt}\n")
+                return _Proc(stdout="worktree /x/mirror\n")
+            if "rev-parse" in joined:
+                return _Proc(stdout="abc123def456\n")
+            return _Proc(stdout="ok")
+
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "7", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["repo"], "o/r")
+        self.assertEqual(data["pr"], 7)
+        self.assertTrue(data["created"])
+        self.assertEqual(data["head"], "abc123def456")
+        self.assertIn("refs/pull/7/head", seen[1])
+        self.assertIn("worktree list", seen[3])
+        self.assertIn("worktree add --detach", seen[4])
+        # The clone ran first, bare + blob-filtered.
+        self.assertIn("repo clone o/r", seen[0])
+        self.assertIn("--bare", seen[0])
+        self.assertIn("--filter=blob:none", seen[0])
+
+        # Second call: mirror exists, worktree registered → reuse.
+        (mirrors / "o__r.git").mkdir(parents=True)
+        (trees / "o__r-pr7").mkdir(parents=True)
+        seen.clear()
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "7", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)["data"]
+        self.assertFalse(data["created"])
+        self.assertFalse(any("repo clone" in c for c in seen))
+        self.assertFalse(any("worktree add" in c for c in seen))
+
+    def test_pr_worktree_accepts_url_ref(self):
+        self._patch_paths()
+        seen = []
+
+        def run(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            seen.append(joined)
+            if "worktree list" in joined:
+                return _Proc(stdout="worktree /x\n")
+            if "rev-parse" in joined:
+                return _Proc(stdout="abc\n")
+            return _Proc(stdout="ok")
+
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "https://github.com/o/r/pull/9",
+             "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["data"]["pr"], 9)
+        self.assertIn("refs/pull/9/head", seen[1])
+
+    def test_pr_worktree_bad_ref(self):
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "abc", "--repo=o/r"])
+        self.assertEqual(rc, 1)
+        self.assertIn("pull", out)
+
+    def test_pr_worktree_fetch_failure(self):
+        self._patch_paths()
+
+        def run(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            if "refs/pull/" in joined:
+                return _Proc(returncode=1,
+                             stderr="couldn't find remote ref")
+            return _Proc(stdout="ok")
+
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "99", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 1)
+        data = json.loads(out)["data"]
+        self.assertIsNone(data["path"])
+        self.assertIn("Fetch failed", data["error"])
+
+    def test_pr_worktree_env_blocked(self):
+        env = gh.GhEnv(installed=True, authenticated=False)
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "7", "--repo=o/r", "--json"], env=env)
+        self.assertEqual(rc, 1)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["github"]["status"], "auth-required")
+        self.assertIsNone(data["path"])
+        self.assertIn("error", data)
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "7", "--repo=o/r"], env=env)
+        self.assertEqual(rc, 1)
+        self.assertIn("gh auth login", out)
+
+    def test_pr_worktree_no_repo_resolves_error(self):
+        rc, out, _ = self._run_cli(["pr", "worktree", "7", "--json"])
+        self.assertEqual(rc, 1)
+        data = json.loads(out)["data"]
+        self.assertIsNone(data["path"])
+        self.assertIn("No repo to query", data["error"])
+
+    def test_pr_worktree_clone_failure(self):
+        self._patch_paths()
+
+        def run(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            if "repo clone" in joined:
+                return _Proc(returncode=1, stderr="denied")
+            return _Proc(stdout="ok")
+
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "7", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 1)
+        data = json.loads(out)["data"]
+        self.assertIn("Clone failed", data["error"])
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "7", "--repo=o/r"], run=run)
+        self.assertEqual(rc, 1)
+        self.assertIn("Clone failed", out)
+
+    def test_pr_worktree_add_failure(self):
+        self._patch_paths()
+
+        def run(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            if "worktree list" in joined:
+                return _Proc(returncode=1, stderr="bad mirror")
+            if "worktree add" in joined:
+                return _Proc(returncode=1, stderr="locked")
+            if "rev-parse" in joined:
+                return _Proc(stdout="abc\n")
+            return _Proc(stdout="ok")
+
+        # A failing `worktree list` counts as unregistered → tries `add`.
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "7", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 1)
+        data = json.loads(out)["data"]
+        self.assertIn("Worktree failed", data["error"])
+
+    def test_pr_worktree_text_success(self):
+        mirrors, trees = self._patch_paths()
+
+        def run(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            if "worktree list" in joined:
+                return _Proc(stdout="worktree /x\n")
+            if "rev-parse" in joined:
+                return _Proc(stdout="abc123\n")
+            return _Proc(stdout="ok")
+
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "7", "--repo=o/r"], run=run)
+        self.assertEqual(rc, 0)
+        self.assertIn("checked out", out)
+        self.assertIn("o__r-pr7", out)
+
+    def test_run_git_never_raises(self):
+        for exc in (FileNotFoundError, subprocess.TimeoutExpired("git", 1),
+                    OSError("bad")):
+            with patch("subprocess.run", side_effect=exc):
+                result = ghcli._run_git(["status"])
+            self.assertNotEqual(result.status, "ok", exc)
+        with patch("subprocess.run",
+                   return_value=_Proc(returncode=1, stderr="nope")):
+            result = ghcli._run_git(["status"])
+        self.assertEqual(result.status, "upstream-error")
+        self.assertEqual(result.error, "nope")
+
     # -- swe gh run rerun ---------------------------------------------
 
     def test_run_rerun_json(self):
