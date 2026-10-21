@@ -21,7 +21,7 @@ public enum RepoTab: String, CaseIterable, Identifiable, Sendable {
 /// All seven surfaces' state for one pinned repo. Each loads on first
 /// visit and is re-fetched by refresh and the page's poll loop; a surface
 /// that was never asked for stays `.idle` rather than reading as empty.
-public struct RepoBoard: Equatable, Sendable {
+public struct RepoBoard: Codable, Equatable, Sendable {
     public var pulls: Loadable<[GhPr]> = .idle
     public var issues: Loadable<[GhIssue]> = .idle
     public var runs: Loadable<[GhRun]> = .idle
@@ -125,10 +125,23 @@ public final class GitHubModel {
     private var generation = 0
     private let now: () -> Date
     private let staleAfter: TimeInterval
+    /// Where the warm-start snapshot lives; nil (tests) disables disk.
+    private let snapshot: SnapshotFile<GitHubSnapshot>?
+    private var snapshotTask: Task<Void, Never>?
+    /// The last successfully loaded inbox — a failed refresh must not
+    /// erase what a relaunch would restore. `snapshotInboxLoaded`
+    /// records that a load happened at all: without it a never-fetched
+    /// inbox would restore as `.loaded([])` and show "no unread" while
+    /// its first request runs.
+    private var snapshotInbox: [GhNotification] = []
+    private var snapshotInboxLoaded = false
 
-    public init(now: @escaping () -> Date = Date.init, staleAfter: TimeInterval = 60) {
+    public init(now: @escaping () -> Date = Date.init, staleAfter: TimeInterval = 60,
+                snapshotFile: URL? = nil) {
         self.now = now
         self.staleAfter = staleAfter
+        snapshot = snapshotFile.map { SnapshotFile(url: $0) }
+        restore()
     }
 
     /// The env is unusable when the probe says so — surface reads can
@@ -159,6 +172,7 @@ public final class GitHubModel {
             if selected == nil || !pins.contains(where: { $0.name == selected }) {
                 selected = pins.first?.name
             }
+            scheduleSave()
         } catch is CancellationError {
         } catch {
             probed = true
@@ -249,7 +263,12 @@ public final class GitHubModel {
             next = .failed(error.localizedDescription)
         }
         inbox = next
-        if case .loaded = next { inboxFetchedAt = now() }
+        if case .loaded(let notes) = next {
+            inboxFetchedAt = now()
+            snapshotInbox = notes
+            snapshotInboxLoaded = true
+        }
+        scheduleSave()
     }
 
     /// Search repos to pin. A new query supersedes the one in flight.
@@ -312,6 +331,7 @@ public final class GitHubModel {
             for key in fetched.keys where key.repo == name { fetched[key] = nil }
             if selected == name { selected = pins.first?.name }
             pinError = nil
+            scheduleSave()
             return true
         } catch {
             pinError = error.localizedDescription
@@ -343,6 +363,48 @@ public final class GitHubModel {
         board[keyPath: path] = value
         boards[key.repo] = board
         if case .loaded = value { fetched[key] = now() }
+        scheduleSave()
+    }
+
+    // MARK: - warm-start snapshot
+
+    /// Hydrate pins, selection, boards and the inbox from the last
+    /// quit's file. Rows come back but fetch times do not: everything
+    /// restored is cold, so the stale machinery refetches it on the
+    /// first look — this only decides what the first frame shows.
+    private func restore() {
+        guard let snap = snapshot?.load() else { return }
+        pins = snap.pins
+        selected = snap.selected.flatMap { name in
+            snap.pins.contains { $0.name == name } ? name : nil
+        } ?? snap.pins.first?.name
+        boards = snap.boards
+        snapshotInbox = snap.inbox
+        snapshotInboxLoaded = snap.inboxLoaded
+        inbox = snap.inboxLoaded ? .loaded(snap.inbox) : .idle
+        // A snapshot exists only because replies were received before.
+        probed = true
+    }
+
+    /// Coalesce bursts — a tab switch can fill several surfaces in one
+    /// second — into one atomic write.
+    private func scheduleSave() {
+        guard snapshot != nil else { return }
+        snapshotTask?.cancel()
+        snapshotTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled else { return }
+            self?.saveNow()
+        }
+    }
+
+    /// Write the current state to disk, synchronously. Called from the
+    /// debounce and from `applicationWillTerminate`.
+    public func saveNow() {
+        snapshot?.saveNow(GitHubSnapshot(
+            savedAt: now(), pins: pins, selected: selected,
+            boards: boards, inbox: snapshotInbox,
+            inboxLoaded: snapshotInboxLoaded))
     }
 }
 

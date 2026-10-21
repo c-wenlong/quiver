@@ -66,6 +66,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         [.banner, .sound]
     }
 
+    /// The GitHub snapshot's debounced write may still be pending; the
+    /// final flush makes quit cheap enough to be synchronous.
+    func applicationWillTerminate(_ notification: Notification) {
+        AppModel.shared.github.saveNow()
+    }
+
     /// Both quit paths (the app menu and the panel's Quit) come through
     /// here; AGENTS.md drafts live only in memory.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
