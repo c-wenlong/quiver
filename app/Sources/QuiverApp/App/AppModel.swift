@@ -314,6 +314,10 @@ final class AppModel {
     /// The Skills, MCP servers and Plugins pages' last lists, kept while the app runs.
     let skills: SkillsModel
     let mcp: McpModel
+    /// The GitHub pages: pins, per-repo boards and the inbox, read
+    /// through `swe gh`. The model gets the current swe per call, so a
+    /// path change needs no rebuild here.
+    let github = GitHubModel()
     /// The MCP servers page's "Server folders" section.
     let mcpRepo = McpServerRepoModel()
     /// The Settings > Updates section's build and release state.

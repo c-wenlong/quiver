@@ -1,6 +1,7 @@
 /// The main window's sidebar, as app/ROADMAP.md lays it out.
 public enum AppSection: String, CaseIterable, Identifiable, Hashable, Sendable {
     case overview, sessions, calendar, pricing
+    case repositories, inbox
     case accounts, harnesses, compute, skills, agentsMd, mcpServers, plugins, models
     case menuBar, widgets, serviceStatus, settings
 
@@ -12,6 +13,8 @@ public enum AppSection: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .sessions: "Sessions"
         case .calendar: "Calendar"
         case .pricing: "Pricing"
+        case .repositories: "Repositories"
+        case .inbox: "Inbox"
         case .accounts: "Accounts"
         case .harnesses: "Harnesses"
         case .compute: "Compute"
@@ -34,6 +37,8 @@ public enum AppSection: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .sessions: "clock.arrow.circlepath"
         case .calendar: "calendar"
         case .pricing: "dollarsign.circle"
+        case .repositories: "shippingbox"
+        case .inbox: "tray"
         case .accounts: "person.2"
         case .harnesses: "terminal"
         case .compute: "cpu"
@@ -51,13 +56,14 @@ public enum AppSection: String, CaseIterable, Identifiable, Hashable, Sendable {
 }
 
 public enum SidebarGroup: CaseIterable, Identifiable, Sendable {
-    case usage, manage, primitives, system
+    case usage, github, manage, primitives, system
 
     public var id: Self { self }
 
     public var title: String {
         switch self {
         case .usage: "Usage"
+        case .github: "GitHub"
         case .manage: "Manage"
         case .primitives: "Primitives"
         case .system: "System"
@@ -67,6 +73,7 @@ public enum SidebarGroup: CaseIterable, Identifiable, Sendable {
     public var sections: [AppSection] {
         switch self {
         case .usage: [.overview, .sessions, .calendar, .pricing]
+        case .github: [.repositories, .inbox]
         case .manage: [.accounts, .harnesses, .compute]
         case .primitives: [.plugins, .skills, .agentsMd, .mcpServers, .models]
         case .system: [.menuBar, .widgets, .serviceStatus, .settings]
