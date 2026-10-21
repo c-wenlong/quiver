@@ -80,8 +80,8 @@ enum Theme {
 
     // MARK: Type roles (tokens.json `core.typography`)
 
-    static let pageTitle = Font.system(size: 36, weight: .semibold)
-    static let pageSubtitle = Font.system(size: 16)
+    static let pageTitle = Font.system(size: 28, weight: .semibold)
+    static let pageSubtitle = Font.system(size: 14)
     static let sectionTitle = Font.system(size: 20, weight: .semibold)
     static let display = Font.system(size: 72, weight: .bold)
     static let figure = Font.system(size: 20, weight: .bold)
@@ -295,7 +295,7 @@ struct PageHeader<Actions: View>: View {
     var body: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 8) {
-                Text(title).font(Theme.pageTitle).tracking(-0.9).foregroundStyle(Theme.textPrimary)
+                Text(title).font(Theme.pageTitle).tracking(-0.6).foregroundStyle(Theme.textPrimary)
                 if !subtitle.isEmpty || link != nil {
                     // Inline link: the subtitle ends mid-sentence and the
                     // link's label finishes it.
