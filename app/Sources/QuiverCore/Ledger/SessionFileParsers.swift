@@ -10,6 +10,7 @@ import Foundation
 /// line, so it is kept as line-parser state.
 struct PiFileParser: FileLogParser {
     static let harness = "pi"
+    static let searchHarness: SearchDecoder.Harness = .pi
 
     private let file: URL
     private let accountHome: String

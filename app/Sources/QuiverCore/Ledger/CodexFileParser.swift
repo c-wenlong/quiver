@@ -25,6 +25,7 @@ import Foundation
 /// replay still seeds the cumulative baseline.
 struct CodexFileParser: FileLogParser {
     static let harness = "codex"
+    static let searchHarness: SearchDecoder.Harness = .codex
     /// Sessions that never logged a model, priced as ccusage does.
     static let fallbackModel = "gpt-5"
 
