@@ -18,6 +18,27 @@ enum SearchStamp {
         return Date.ISO8601FormatStyle(includingFractionalSeconds: true)
             .format(Date(timeIntervalSince1970: seconds))
     }
+
+    /// Orca's `timestampMs`: the same epoch encoding as `iso`, as epoch
+    /// milliseconds — for comparisons (OMP's title fold, muse's 60s dedupe).
+    static func milliseconds(_ value: Any?) -> Double? {
+        if let string = value as? String {
+            guard !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            if let date = try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(string) {
+                return date.timeIntervalSince1970 * 1000
+            }
+            if let date = try? Date.ISO8601FormatStyle(includingFractionalSeconds: false).parse(string) {
+                return date.timeIntervalSince1970 * 1000
+            }
+            return nil
+        }
+        guard let number = value as? NSNumber,
+              !(number === kCFBooleanTrue || number === kCFBooleanFalse)
+        else { return nil }
+        let raw = number.doubleValue
+        guard raw.isFinite, raw > 0 else { return nil }
+        return raw > 1_000_000_000_000 ? raw : raw * 1000
+    }
 }
 
 /// Cursor `~/.cursor/projects/<workspace>/agent-transcripts/<id>/<id>.jsonl`:

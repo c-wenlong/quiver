@@ -15,11 +15,14 @@ import Foundation
 /// decodes to nothing, and nothing here ever throws or touches the file
 /// system — the scan wiring is a later milestone.
 public struct SearchDecoder {
-    /// The JSONL transcript formats the index reads; keys match swe's
-    /// `tool_name`s. `cursor`/`droid` are JSONL like the rest; `cline`'s
-    /// "line" is a whole session document the way devin's is.
+    /// The JSONL transcript formats the index reads; keys match Orca's agent
+    /// ids (`primeAgent` is `"prime-agent"`). `cursor`/`droid` are JSONL like
+    /// the rest; `cline`/`rovo`/`kiro`/`grok`/`kimi`'s "line" is a whole
+    /// document — or one of two paired documents — the way devin's is.
     public enum Harness: String, Sendable, CaseIterable {
-        case claude, codex, pi, devin, cursor, droid, cline
+        case claude, qoder, codebuddy, codex, gemini, copilot, cursor, grok,
+             devin, hermes, jcode, kiro, rovo, pi, omp, primeAgent = "prime-agent",
+             openclaw, droid, cline, kimi, muse, antigravity
     }
 
     private let harness: Harness
@@ -30,6 +33,11 @@ public struct SearchDecoder {
     private var explicitTitleSeen = false
     private var codex = SearchCodexDecoder()
     private var devin = SearchDevinDecoder()
+    private var omp = SearchOmpDecoder()
+    private var qoder = SearchQoderDecoder()
+    private var codebuddy = SearchCodebuddyDecoder()
+    private var kimi = SearchKimiDecoder()
+    private var muse = SearchMuseDecoder()
 
     /// Line-parser state, saved with a file's scan cursor. Round-trips
     /// through `savedState()`/`init(_:savedState:)` like `FileLogParser`'s.
@@ -38,6 +46,11 @@ public struct SearchDecoder {
         var explicitTitleSeen = false
         var codex = SearchCodexDecoder.State()
         var devin = SearchDevinDecoder.State()
+        var omp = SearchOmpDecoder.State()
+        var qoder = SearchQoderDecoder.State()
+        var codebuddy = SearchCodebuddyDecoder.State()
+        var kimi = SearchKimiDecoder.State()
+        var muse = SearchMuseDecoder.State()
     }
 
     public init(_ harness: Harness, savedState: Data? = nil) {
@@ -47,6 +60,11 @@ public struct SearchDecoder {
             explicitTitleSeen = state.explicitTitleSeen
             codex.state = state.codex
             devin.state = state.devin
+            omp.state = state.omp
+            qoder.state = state.qoder
+            codebuddy.state = state.codebuddy
+            kimi.state = state.kimi
+            muse.state = state.muse
         }
     }
 
@@ -55,7 +73,12 @@ public struct SearchDecoder {
             promptTitleSent: promptTitleSent,
             explicitTitleSeen: explicitTitleSeen,
             codex: codex.state,
-            devin: devin.state))
+            devin: devin.state,
+            omp: omp.state,
+            qoder: qoder.state,
+            codebuddy: codebuddy.state,
+            kimi: kimi.state,
+            muse: muse.state))
     }
 
     /// Whether the line's bytes pass the harness's marker gate — the check
@@ -64,12 +87,28 @@ public struct SearchDecoder {
     public func wants(line: Data) -> Bool {
         switch harness {
         case .claude: SearchClaudeDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .qoder: SearchQoderDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .codebuddy: SearchCodebuddyDecoder.markers.contains(where: { line.range(of: $0) != nil })
         case .codex: SearchCodexDecoder.markers.contains(where: { line.range(of: $0) != nil })
-        case .pi: SearchPiDecoder.markers.contains(where: { line.range(of: $0) != nil })
-        case .devin: SearchDevinDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .gemini: SearchGeminiDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .copilot: SearchCopilotDecoder.markers.contains(where: { line.range(of: $0) != nil })
         case .cursor: SearchCursorDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .grok: SearchGrokDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .devin: SearchDevinDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .hermes: SearchHermesDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .jcode: SearchJcodeDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .kiro: SearchKiroDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .rovo: SearchRovoDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .pi: SearchPiDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .omp: SearchOmpDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .primeAgent, .openclaw:
+            SearchMessageGraphDecoder.markers.contains(where: { line.range(of: $0) != nil })
         case .droid: SearchDroidDecoder.markers.contains(where: { line.range(of: $0) != nil })
         case .cline: SearchClineDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .kimi: SearchKimiDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .muse: SearchMuseDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .antigravity:
+            SearchAntigravityDecoder.markers.contains(where: { line.range(of: $0) != nil })
         }
     }
 
@@ -78,12 +117,26 @@ public struct SearchDecoder {
     public mutating func decode(object: [String: Any]) -> (messages: [SearchMessage], hints: SearchHints) {
         var output = switch harness {
         case .claude: SearchClaudeDecoder.decode(object: object)
+        case .qoder: qoder.decode(object: object)
+        case .codebuddy: codebuddy.decode(object: object)
         case .codex: codex.decode(object: object)
-        case .pi: SearchPiDecoder.decode(object: object)
-        case .devin: devin.decode(object: object)
+        case .gemini: SearchGeminiDecoder.decode(object: object)
+        case .copilot: SearchCopilotDecoder.decode(object: object)
         case .cursor: SearchCursorDecoder.decode(object: object)
+        case .grok: SearchGrokDecoder.decode(object: object)
+        case .devin: devin.decode(object: object)
+        case .hermes: SearchHermesDecoder.decode(object: object)
+        case .jcode: SearchJcodeDecoder.decode(object: object)
+        case .kiro: SearchKiroDecoder.decode(object: object)
+        case .rovo: SearchRovoDecoder.decode(object: object)
+        case .pi: SearchPiDecoder.decode(object: object)
+        case .omp: omp.decode(object: object)
+        case .primeAgent, .openclaw: SearchMessageGraphDecoder.decode(object: object)
         case .droid: SearchDroidDecoder.decode(object: object)
         case .cline: SearchClineDecoder.decode(object: object)
+        case .kimi: kimi.decode(object: object)
+        case .muse: muse.decode(object: object)
+        case .antigravity: SearchAntigravityDecoder.decode(object: object)
         }
         return finish(output)
     }
@@ -96,6 +149,16 @@ public struct SearchDecoder {
               let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
         else { return ([], SearchHints()) }
         return decode(object: object)
+    }
+
+    /// Buffered output still held at end of file — Kimi joins streamed
+    /// `content.part` chunks into one message per `step.end` and flushes a
+    /// trailing unterminated step here. All other decoders hold nothing.
+    public mutating func endOfFile() -> (messages: [SearchMessage], hints: SearchHints) {
+        switch harness {
+        case .kimi: return finish(kimi.endOfFile())
+        default: return ([], SearchHints())
+        }
     }
 
     /// The title bookkeeping `decode` applies after the per-harness walk:
@@ -111,7 +174,7 @@ public struct SearchDecoder {
         // prompts from clobbering it.
         if output.hints.title != nil {
             explicitTitleSeen = true
-        } else if !promptTitleSent, !explicitTitleSeen,
+        } else if !promptTitleSent, !explicitTitleSeen, !output.hints.injectedUserTurn,
                   let user = output.messages.first(where: { $0.role == .user }),
                   let candidate = SearchText.titleCandidate(user.text) {
             promptTitleSent = true
@@ -161,9 +224,18 @@ enum SearchClaudeDecoder {
         case "user", "assistant":
             let type = object["type"] as? String
             let message = object["message"] as? [String: Any]
-            return (SearchContent.messages(
+            let messages = SearchContent.messages(
                 role: type == "user" ? .user : .assistant,
-                content: message?["content"], ts: ts), hints)
+                content: message?["content"], ts: ts)
+            // Meta prompts (injected context) index like any other user turn
+            // but only seed Orca's last-resort metaTitle — which Quiver has
+            // no slot for — so they must not seed the title candidate.
+            if type == "user" {
+                hints.injectedUserTurn = object["isMeta"] as? Bool == true
+                    || messages.first(where: { $0.role == .user })
+                        .map { SearchInjectedTurn.isKnown($0.text) } ?? false
+            }
+            return (messages, hints)
         default:
             break
         }

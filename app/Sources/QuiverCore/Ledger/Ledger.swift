@@ -25,12 +25,20 @@ public struct LedgerRoots: Sendable, Equatable {
     /// Cline sessions roots (`~/.cline/data/sessions`); each session dir
     /// pairs `<id>.json` with a `<id>.messages.json` sibling.
     public var clineSessions: [URL]
+    /// Roots for the search index's own transcript enumeration, keyed by
+    /// harness — every `SearchTranscriptSource` row's roots except the
+    /// harnesses the explicit fields above already own (claude/codex/pi/
+    /// devin feed ledger records; cursor/droid/cline keep richer mappings).
+    /// An empty map means no index-pure enumeration, so a roots value built
+    /// for a couple of harnesses never sweeps the real user home.
+    public var transcriptRoots: [SearchDecoder.Harness: [URL]]
 
     public init(
         claudeHomes: [URL] = [], codexHomes: [URL] = [],
         openCodeDatabases: [URL] = [], devinDatabases: [URL] = [],
         piHomes: [URL] = [], droidHomes: [URL] = [], clineHomes: [URL] = [],
-        cursorProjects: [URL] = [], clineSessions: [URL] = []
+        cursorProjects: [URL] = [], clineSessions: [URL] = [],
+        transcriptRoots: [SearchDecoder.Harness: [URL]] = [:]
     ) {
         self.claudeHomes = claudeHomes
         self.codexHomes = codexHomes
@@ -41,6 +49,7 @@ public struct LedgerRoots: Sendable, Equatable {
         self.clineHomes = clineHomes
         self.cursorProjects = cursorProjects
         self.clineSessions = clineSessions
+        self.transcriptRoots = transcriptRoots
     }
 
     /// The default locations under one user home, plus any profile homes.
@@ -48,7 +57,19 @@ public struct LedgerRoots: Sendable, Equatable {
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
         claudeProfiles: [URL] = [], codexProfiles: [URL] = []
     ) -> LedgerRoots {
-        LedgerRoots(
+        var transcriptRoots: [SearchDecoder.Harness: [URL]] = [:]
+        for source in SearchTranscriptSource.table(home: home) {
+            guard let harness = source.harness else { continue }
+            switch harness {
+            // The explicit fields own these — LedgerRoots.standard fills
+            // them below and the scan's merges keep them authoritative.
+            case .claude, .codex, .pi, .devin, .cursor, .droid, .cline:
+                continue
+            default:
+                transcriptRoots[harness, default: []] += source.roots
+            }
+        }
+        return LedgerRoots(
             claudeHomes: [home.appendingPathComponent(".claude")] + claudeProfiles,
             codexHomes: [home.appendingPathComponent(".codex")] + codexProfiles,
             openCodeDatabases: [home.appendingPathComponent(".local/share/opencode/opencode.db")],
@@ -57,7 +78,8 @@ public struct LedgerRoots: Sendable, Equatable {
             droidHomes: [home.appendingPathComponent(".factory")],
             clineHomes: [home.appendingPathComponent(".cline")],
             cursorProjects: [home.appendingPathComponent(".cursor/projects")],
-            clineSessions: [home.appendingPathComponent(".cline/data/sessions")])
+            clineSessions: [home.appendingPathComponent(".cline/data/sessions")],
+            transcriptRoots: transcriptRoots)
     }
 }
 
@@ -367,18 +389,16 @@ public actor Ledger {
             // Index-pure transcript sources: `SearchTranscriptSource` rows
             // with a decoder whose files feed no ledger records (cursor's
             // usage is an API feed; droid and cline ride `scanSessionFile`
-            // above for totals only). `LedgerRoots` supplies the roots, the
-            // table row the file shape. Rows whose harness is nil — or that
-            // `indexRoots` does not map, like claude/codex/pi/devin, which
-            // the passes above already enumerate — are skipped here.
-            let indexRoots: [SearchDecoder.Harness: [URL]] = [
-                .cursor: roots.cursorProjects,
-                .droid: roots.droidHomes.flatMap {
-                    [$0.appendingPathComponent("sessions"),
-                     $0.appendingPathComponent("projects")]
-                },
-                .cline: roots.clineSessions,
-            ]
+            // above for totals only). `transcriptRoots` holds the default
+            // root set; the explicit fields win wherever they overlap —
+            // claude/codex/pi/devin's passes above already enumerate them.
+            var indexRoots = roots.transcriptRoots
+            indexRoots[.cursor] = roots.cursorProjects
+            indexRoots[.droid] = roots.droidHomes.flatMap {
+                [$0.appendingPathComponent("sessions"),
+                 $0.appendingPathComponent("projects")]
+            }
+            indexRoots[.cline] = roots.clineSessions
             for source in SearchTranscriptSource.table() where source.harness != nil {
                 guard let harness = source.harness,
                       let sourceRoots = indexRoots[harness] else { continue }
@@ -395,18 +415,41 @@ public actor Ledger {
                         Self.transcriptFiles(under: root, source: source),
                         recentLimit: recentLimit) {
                         if Task.isCancelled { throw CancellationError() }
+                        let pathSessionID = source.sessionIDFromPath?(file)
                         switch harness {
                         case .cline:
                             indexClineFile(file, indexer: indexer, report: &report)
+                        case .rovo:
+                            indexRovoFile(file, sessionID: pathSessionID,
+                                          indexer: indexer, report: &report)
+                        case .kiro:
+                            indexKiroFile(file, indexer: indexer, report: &report)
+                        case .grok:
+                            indexGrokFile(file, sessionID: pathSessionID,
+                                          indexer: indexer, report: &report)
+                        case .kimi:
+                            indexKimiFile(file, sessionID: pathSessionID,
+                                          indexer: indexer, report: &report)
                         case .cursor:
                             indexCursorFile(file, metaIndex: cursorMeta,
                                             indexer: indexer, report: &report)
-                        default:
-                            if source.isJSONL {
+                        case .gemini:
+                            // Orca's `parseGeminiSessionFile` dispatches on
+                            // the extension: `.jsonl` streams, the legacy
+                            // `.json` checkpoint reads whole.
+                            if file.pathExtension.lowercased() == "jsonl" {
                                 indexJSONLFile(file, harness: harness,
                                                indexer: indexer, report: &report)
                             } else {
                                 indexWholeFile(file, harness: harness,
+                                               indexer: indexer, report: &report)
+                            }
+                        default:
+                            if source.isJSONL {
+                                indexJSONLFile(file, harness: harness, sessionID: pathSessionID,
+                                               indexer: indexer, report: &report)
+                            } else {
+                                indexWholeFile(file, harness: harness, sessionID: pathSessionID,
                                                indexer: indexer, report: &report)
                             }
                         }
@@ -429,7 +472,8 @@ public actor Ledger {
     /// the index, feeding no ledger records. Failures mark the file failed
     /// and become a note, like a bad transcript in `scanFile`.
     private func indexWholeFile(
-        _ url: URL, harness: SearchDecoder.Harness, indexer: SearchIndexer, report: inout ScanReport
+        _ url: URL, harness: SearchDecoder.Harness, sessionID: String? = nil,
+        indexer: SearchIndexer, report: inout ScanReport
     ) {
         let path = url.resolvingSymlinksInPath().path
         guard let info = FileInfo(path: path) else { return }
@@ -445,7 +489,7 @@ public actor Ledger {
             // Tens of MB of pretty-printed JSON in one blob is fine — the
             // decoder treats the document as one line.
             let data = try Data(contentsOf: URL(fileURLWithPath: path))
-            indexer.beginFile(path: path, harness: harness)
+            indexer.beginFile(path: path, harness: harness, sessionID: sessionID)
             indexer.consume(line: data)
             if try indexer.finishFile(path: path, stat: stat, byteOffset: Int64(info.size)) {
                 report.filesIndexed += 1
@@ -465,13 +509,16 @@ public actor Ledger {
     /// - Parameter extraMtimeMs: a watched sibling's stamp blended into the
     ///   stat — Orca's `contentDependencyPath` — so a sidecar-only rewrite
     ///   still re-reads the file it describes.
+    /// - Parameter sessionID: the session id the records never carry — the
+    ///   source row's `sessionIDFromPath` for antigravity/rovo/muse.
     /// - Parameter fieldsOverlay: evaluated only when a read is owed; the
     ///   returned fields are gap-filled into the file's commit transaction.
     /// - Returns: whether the index committed, so callers can chain a
     ///   sidecar enrichment onto a file that actually landed.
     @discardableResult
     private func indexJSONLFile(
-        _ url: URL, harness: SearchDecoder.Harness, indexer: SearchIndexer,
+        _ url: URL, harness: SearchDecoder.Harness, sessionID: String? = nil,
+        indexer: SearchIndexer,
         report: inout ScanReport, extraMtimeMs: Double? = nil,
         fieldsOverlay: (() -> SearchSessionFields?)? = nil
     ) -> Bool {
@@ -488,7 +535,7 @@ public actor Ledger {
             break
         }
         do {
-            indexer.beginFile(path: path, harness: harness)
+            indexer.beginFile(path: path, harness: harness, sessionID: sessionID)
             if let overlay = fieldsOverlay?() {
                 indexer.setFieldOverlay(overlay)
             }
@@ -593,6 +640,243 @@ public actor Ledger {
             indexer.failFile(path: path, mtimeMs: stat.mtimeMs)
             report.notes.append("Index failed \(path): \(error.localizedDescription)")
         }
+    }
+
+    /// One Rovo session = `metadata.json` plus its `session_context.json`
+    /// sibling under one `beginFile` (Orca's `parseRovoSessionFile`). The
+    /// sibling's mtime blends into the stat (`contentDependencyPath`), and a
+    /// malformed manifest commits `.none` — Orca returns before reading the
+    /// context, so the pair must not index a bare session either.
+    private func indexRovoFile(
+        _ url: URL, sessionID: String?, indexer: SearchIndexer, report: inout ScanReport
+    ) {
+        let path = url.resolvingSymlinksInPath().path
+        guard let info = FileInfo(path: path) else { return }
+        let contextURL = URL(fileURLWithPath: path)
+            .deletingLastPathComponent().appendingPathComponent("session_context.json")
+        let stat = SearchFileStat(
+            ino: Int64(info.inode),
+            mtimeMs: max(info.modified, FileInfo(path: contextURL.path)?.modified ?? 0) * 1000,
+            sizeBytes: Int64(info.size))
+        switch indexer.readNeed(path: path, stat: stat, ledgerOffset: nil) {
+        case .current, .skip:
+            return
+        case .append, .whole:
+            break
+        }
+        do {
+            let manifest = try? JSONSerialization.jsonObject(
+                with: Data(contentsOf: URL(fileURLWithPath: path))) as? [String: Any]
+            indexer.beginFile(path: path, harness: .rovo, sessionID: manifest == nil ? nil : sessionID)
+            if let manifest {
+                indexer.consume(object: manifest)
+                // `updateTimeline`: the manifest's own stamps fold into the
+                // session's range (snake then camel, Orca's order; a JSON
+                // null is as absent as a missing key).
+                indexer.consumeTimeline(Self.firstPresent(
+                    manifest["created_at"], manifest["createdAt"]))
+                indexer.consumeTimeline(Self.firstPresent(
+                    manifest["updated_at"], manifest["updatedAt"]))
+                if let context = try? JSONSerialization.jsonObject(
+                    with: Data(contentsOf: contextURL)) as? [String: Any] {
+                    indexer.consume(object: context)
+                }
+            }
+            if try indexer.finishFile(path: path, stat: stat, byteOffset: Int64(info.size)) {
+                report.filesIndexed += 1
+            }
+        } catch {
+            indexer.failFile(path: path, mtimeMs: stat.mtimeMs)
+            report.notes.append("Index failed \(path): \(error.localizedDescription)")
+        }
+    }
+
+    /// One Kiro session = the `<uuid>.json` manifest plus its streamed
+    /// `<uuid>.jsonl` sibling (Orca's `parseKiroSessionFile`). A
+    /// `parent_session_id` marks a subagent's child session
+    /// (`listedKiroMetadata`) and a malformed manifest commits `.none` —
+    /// Orca returns before reading the transcript either way. The
+    /// transcript's mtime blends into the stat; a missing transcript still
+    /// yields the metadata-only session, as Orca's does.
+    private func indexKiroFile(
+        _ url: URL, indexer: SearchIndexer, report: inout ScanReport
+    ) {
+        let path = url.resolvingSymlinksInPath().path
+        guard let info = FileInfo(path: path) else { return }
+        let transcriptURL = URL(fileURLWithPath: path + "l")
+        let stat = SearchFileStat(
+            ino: Int64(info.inode),
+            mtimeMs: max(info.modified, FileInfo(path: transcriptURL.path)?.modified ?? 0) * 1000,
+            sizeBytes: Int64(info.size))
+        switch indexer.readNeed(path: path, stat: stat, ledgerOffset: nil) {
+        case .current, .skip:
+            return
+        case .append, .whole:
+            break
+        }
+        do {
+            // The session id is the validated UUID filename (the predicate
+            // admitted only those); the records carry none, and the stem
+            // fallback names it without a hint.
+            indexer.beginFile(path: path, harness: .kiro)
+            let manifest = try? JSONSerialization.jsonObject(
+                with: Data(contentsOf: URL(fileURLWithPath: path))) as? [String: Any]
+            let listed = manifest != nil && JSONValue.string(manifest?["parent_session_id"]) == nil
+            if listed {
+                indexer.consume(object: manifest!)
+                indexer.consumeTimeline(manifest?["created_at"])
+                indexer.consumeTimeline(manifest?["updated_at"])
+                if FileManager.default.fileExists(atPath: transcriptURL.path) {
+                    let result = try reader.read(transcriptURL, from: 0) { indexer.consume(line: $0) }
+                    report.skippedLines += result.skippedLines
+                }
+            }
+            if try indexer.finishFile(path: path, stat: stat, byteOffset: Int64(info.size)) {
+                report.filesIndexed += 1
+            }
+        } catch {
+            indexer.failFile(path: path, mtimeMs: stat.mtimeMs)
+            report.notes.append("Index failed \(path): \(error.localizedDescription)")
+        }
+    }
+
+    /// One Grok session = `summary.json` plus its streamed
+    /// `chat_history.jsonl` sibling (Orca's `parseGrokSessionFile`). A
+    /// malformed summary commits `.none` — Orca returns before reading the
+    /// history; the history's mtime blends into the stat, and a missing
+    /// history still yields the summary-only session.
+    private func indexGrokFile(
+        _ url: URL, sessionID: String?, indexer: SearchIndexer, report: inout ScanReport
+    ) {
+        let path = url.resolvingSymlinksInPath().path
+        guard let info = FileInfo(path: path) else { return }
+        let historyURL = URL(fileURLWithPath: path)
+            .deletingLastPathComponent().appendingPathComponent("chat_history.jsonl")
+        let stat = SearchFileStat(
+            ino: Int64(info.inode),
+            mtimeMs: max(info.modified, FileInfo(path: historyURL.path)?.modified ?? 0) * 1000,
+            sizeBytes: Int64(info.size))
+        switch indexer.readNeed(path: path, stat: stat, ledgerOffset: nil) {
+        case .current, .skip:
+            return
+        case .append, .whole:
+            break
+        }
+        do {
+            let manifest = try? JSONSerialization.jsonObject(
+                with: Data(contentsOf: URL(fileURLWithPath: path))) as? [String: Any]
+            indexer.beginFile(path: path, harness: .grok, sessionID: manifest == nil ? nil : sessionID)
+            if let manifest {
+                indexer.consume(object: manifest)
+                indexer.consumeTimeline(manifest["created_at"])
+                indexer.consumeTimeline(manifest["updated_at"])
+                indexer.consumeTimeline(manifest["last_active_at"])
+                if FileManager.default.fileExists(atPath: historyURL.path) {
+                    let result = try reader.read(historyURL, from: 0) { indexer.consume(line: $0) }
+                    report.skippedLines += result.skippedLines
+                }
+            }
+            if try indexer.finishFile(path: path, stat: stat, byteOffset: Int64(info.size)) {
+                report.filesIndexed += 1
+            }
+        } catch {
+            indexer.failFile(path: path, mtimeMs: stat.mtimeMs)
+            report.notes.append("Index failed \(path): \(error.localizedDescription)")
+        }
+    }
+
+    /// One Kimi session = `state.json` plus the streamed
+    /// `agents/<primary>/wire.jsonl` sibling, plus the work dir the shared
+    /// `session_index.jsonl` maps it to (Orca's `parseKimiSessionFile` —
+    /// the index lives four levels up beside `sessions/`). A malformed
+    /// manifest commits `.none`; a missing wire transcript still yields the
+    /// metadata-only session.
+    private func indexKimiFile(
+        _ url: URL, sessionID: String?, indexer: SearchIndexer, report: inout ScanReport
+    ) {
+        let path = url.resolvingSymlinksInPath().path
+        guard let info = FileInfo(path: path) else { return }
+        let wireURL = SearchTranscriptSource.kimiWireURL(forStateFile: URL(fileURLWithPath: path))
+        let stat = SearchFileStat(
+            ino: Int64(info.inode),
+            mtimeMs: max(info.modified, FileInfo(path: wireURL.path)?.modified ?? 0) * 1000,
+            sizeBytes: Int64(info.size))
+        switch indexer.readNeed(path: path, stat: stat, ledgerOffset: nil) {
+        case .current, .skip:
+            return
+        case .append, .whole:
+            break
+        }
+        do {
+            let manifest = try? JSONSerialization.jsonObject(
+                with: Data(contentsOf: URL(fileURLWithPath: path))) as? [String: Any]
+            indexer.beginFile(path: path, harness: .kimi, sessionID: manifest == nil ? nil : sessionID)
+            if let manifest {
+                indexer.consume(object: manifest)
+                indexer.consumeTimeline(manifest["createdAt"])
+                indexer.consumeTimeline(manifest["updatedAt"])
+                indexer.setFieldOverlay(Self.manifestFields(
+                    // `lastPrompt` is the last-resort title — it fills a
+                    // session the wire transcript never retitled.
+                    title: manifest["lastPrompt"],
+                    cwd: sessionID.flatMap { Self.kimiWorkDirs(forStateFile: path)[$0] }))
+                if FileManager.default.fileExists(atPath: wireURL.path) {
+                    let result = try reader.read(wireURL, from: 0) { indexer.consume(line: $0) }
+                    report.skippedLines += result.skippedLines
+                }
+                indexer.consumeEndOfFile()
+            }
+            if try indexer.finishFile(path: path, stat: stat, byteOffset: Int64(info.size)) {
+                report.filesIndexed += 1
+            }
+        } catch {
+            indexer.failFile(path: path, mtimeMs: stat.mtimeMs)
+            report.notes.append("Index failed \(path): \(error.localizedDescription)")
+        }
+    }
+
+    /// `<KIMI_CODE_HOME>/session_index.jsonl` — the shared session→workdir
+    /// map four levels above a `state.json` (Orca's
+    /// `kimiSessionIndexPathFromStatePath`), folded later-wins into
+    /// `sessionId → workDir` (`readKimiWorkDirBySessionId`).
+    static func kimiWorkDirs(forStateFile path: String) -> [String: String] {
+        let indexURL = URL(fileURLWithPath: path)
+            .deletingLastPathComponent()  // session_<uuid>
+            .deletingLastPathComponent()  // wd_<name>_<hash>
+            .deletingLastPathComponent()  // sessions
+            .deletingLastPathComponent()  // <KIMI_CODE_HOME>
+            .appendingPathComponent("session_index.jsonl")
+        guard let content = try? String(contentsOf: indexURL, encoding: .utf8) else { return [:] }
+        var map: [String: String] = [:]
+        for line in content.split(separator: "\n") {
+            guard let record = try? JSONSerialization.jsonObject(with: Data(line.utf8))
+                as? [String: Any],
+                let sessionId = JSONValue.string(record["sessionId"]),
+                let workDir = JSONValue.string(record["workDir"])
+            else { continue }
+            map[sessionId] = workDir
+        }
+        return map
+    }
+
+    /// The first value that exists and is not JSON null — Orca's
+    /// `extractString(a) ?? extractString(b)` over snake/camel key pairs.
+    private static func firstPresent(_ values: Any?...) -> Any? {
+        values.lazy.compactMap { $0 }.first { !($0 is NSNull) }
+    }
+
+    /// The gap-fill fields a paired-file session's manifest carries that no
+    /// record decodes to — kimi's `lastPrompt` fallback title and the
+    /// session-index workDir.
+    private static func manifestFields(
+        title: Any?, cwd: String? = nil
+    ) -> SearchSessionFields {
+        SearchSessionFields(
+            agent: "kimi", sessionID: "", filePath: "",
+            title: JSONValue.string(title)
+                .flatMap { SearchText.titleCandidate($0, limit: 96) } ?? "",
+            cwd: cwd, cwdKey: nil,
+            createdAt: nil, updatedAt: nil, messageCount: 0)
     }
 
     /// chatId → `meta.json` under one Cursor chats root, indexed once per
@@ -965,9 +1249,13 @@ public actor Ledger {
         var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
         let resolvedRoot = realpath(root.path, &buffer) != nil
             ? URL(fileURLWithPath: String(cString: buffer)) : root
+        // Antigravity's transcript chain lives under `.system_generated`, so
+        // its row keeps hidden entries; every other source keeps skipping.
+        var options: FileManager.DirectoryEnumerationOptions = []
+        if !source.includesHiddenFiles { options.insert(.skipsHiddenFiles) }
         guard let enumerator = FileManager.default.enumerator(
             at: resolvedRoot, includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
-            options: [.skipsHiddenFiles])
+            options: options)
         else { return [] }
         let rootComponents = resolvedRoot.pathComponents.count
         var files: [URL] = []
