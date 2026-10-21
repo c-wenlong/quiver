@@ -12,6 +12,7 @@ struct RepositoriesPage: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openURL) private var openURL
     @State private var adding = false
+    @State private var managing = false
 
     private var model: GitHubModel { app.github }
 
@@ -22,6 +23,18 @@ struct RepositoriesPage: View {
             if model.envBlocked == nil {
                 Button("Add repository", systemImage: "plus") { adding = true }
                     .primaryButton()
+                Button { managing = true } label: {
+                    Image(systemName: "gearshape")
+                }
+                .iconButton()
+                .help("Manage pinned repositories")
+                .popover(isPresented: $managing, arrowEdge: .bottom) {
+                    RepoManager {
+                        managing = false
+                        // The sheet attaches once the popover is gone.
+                        DispatchQueue.main.async { adding = true }
+                    }
+                }
                 Button("Refresh", systemImage: "arrow.clockwise") {
                     Task { await model.refresh(swe: app.swe) }
                 }
@@ -83,28 +96,16 @@ struct RepositoriesPage: View {
         var swe: String
     }
 
-    /// The pinned repos as chips, plus the add button at the end.
+    /// The pinned repos as chips. Adding and unpinning live in the
+    /// header's gear popover; the chips only select.
     @ViewBuilder private var repoPicker: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
                 ForEach(model.pins) { pin in
                     RepoChip(name: pin.name, isSelected: pin.name == model.selected) {
                         model.selected = pin.name
-                    } remove: {
-                        Task { await model.removeRepo(pin.name, swe: app.swe) }
                     }
                 }
-                Button { adding = true } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .medium))
-                        .frame(height: 28)
-                        .padding(.horizontal, 10)
-                        .background(Theme.field, in: .capsule)
-                        .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
-                        .foregroundStyle(Theme.textSecondary)
-                }
-                .plainButton(cornerRadius: 14)
-                .help("Pin another repository")
             }
             .padding(.vertical, 2)
         }
@@ -369,12 +370,11 @@ private struct OpenRow<Content: View>: View {
 }
 
 /// A pinned repo in the picker: capsule with the repo's short name,
-/// selected on `bg.selected`, unpin on the context menu.
+/// selected on `bg.selected`. Management lives in the gear popover.
 private struct RepoChip: View {
     var name: String
     var isSelected: Bool
     var select: () -> Void
-    var remove: () -> Void
     @State private var hovering = false
 
     private var short: String { name.split(separator: "/").last.map(String.init) ?? name }
@@ -393,13 +393,62 @@ private struct RepoChip: View {
         .plainButton(cornerRadius: 14)
         .onHover { hovering = $0 }
         .help(name)
-        .contextMenu {
-            Button("Open on GitHub") {
-                if let url = URL(string: "https://github.com/\(name)") { NSWorkspace.shared.open(url) }
+    }
+}
+
+/// The header gear's popover: every pin with an open and an unpin
+/// control, and the add path — all repo management in one place.
+private struct RepoManager: View {
+    @Environment(AppModel.self) private var app
+    @Environment(\.openURL) private var openURL
+    var onAdd: () -> Void
+
+    private var model: GitHubModel { app.github }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Pinned repositories")
+                .font(Theme.control).foregroundStyle(Theme.textSecondary)
+                .padding(.bottom, 4)
+            if model.pins.isEmpty {
+                Text("Nothing pinned yet.")
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    .padding(.vertical, 6)
             }
-            Divider()
-            Button("Unpin \(name)", role: .destructive, action: remove)
+            ForEach(model.pins) { pin in
+                HStack(spacing: 8) {
+                    Text(pin.name)
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 8)
+                    Button {
+                        if let url = URL(string: "https://github.com/\(pin.name)") { openURL(url) }
+                    } label: {
+                        Image(systemName: "arrow.up.right.square")
+                            .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                    }
+                    .plainButton()
+                    .help("Open on GitHub")
+                    Button {
+                        Task { await model.removeRepo(pin.name, swe: app.swe) }
+                    } label: {
+                        Image(systemName: "minus.circle")
+                            .font(.system(size: 13)).foregroundStyle(Theme.dangerText)
+                    }
+                    .plainButton()
+                    .help("Unpin \(pin.name)")
+                }
+                .padding(.vertical, 3)
+            }
+            Divider().overlay(Theme.rowDivider).padding(.vertical, 6)
+            Button(action: onAdd) {
+                Label("Add repository…", systemImage: "plus")
+                    .font(Theme.bodySmall).foregroundStyle(Theme.accent)
+            }
+            .plainButton()
         }
+        .padding(14)
+        .frame(width: 300)
     }
 }
 
