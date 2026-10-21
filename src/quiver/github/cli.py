@@ -1,8 +1,8 @@
 """``swe gh`` — GitHub surfaces over ``gh``: PRs, issues, actions, inbox.
 
-Read-only on purpose: the agent inside a harness owns writes (create,
-merge, comment). Quiver owns the map — which repos you watch, what state
-they are in, and a fast way to jump to any of their GitHub pages.
+Reads cover the dashboard; a few deliberate writes exist too — merging
+a PR, re-running a workflow, marking notifications read — all explicit
+commands, never side effects of a read.
 
 Repo resolution is ``--repo=`` first, the working directory's remote
 second, then every pinned repo — so a bare ``swe gh pr`` is the dashboard.
@@ -12,7 +12,7 @@ import json
 import time
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 
 from quiver import paths
 from quiver.console import c, sanitize, truncate
@@ -21,7 +21,7 @@ from quiver.github import catalog, gh, repos
 from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.table import Table
 
-_VALUE_FLAGS = {"--repo", "--state", "--limit"}
+_VALUE_FLAGS = {"--repo", "--state", "--limit", "--method"}
 
 _PR_FIELDS = (
     "number,title,state,isDraft,author,headRefName,baseRefName,labels,"
@@ -36,6 +36,12 @@ _RUN_FIELDS = (
 )
 _RELEASE_FIELDS = (
     "tagName,name,isLatest,isDraft,isPrerelease,publishedAt"
+)
+_PR_DETAIL_FIELDS = (
+    "number,title,state,isDraft,author,headRefName,baseRefName,body,url,"
+    "mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,"
+    "latestReviews,reviewRequests,additions,deletions,changedFiles,"
+    "labels,createdAt,updatedAt,mergedAt,autoMergeRequest"
 )
 
 
@@ -151,6 +157,76 @@ def _pr_row(pr: dict) -> dict:
         "checks": rollup_checks(pr.get("statusCheckRollup")),
         "updated_at": pr.get("updatedAt"),
         "url": pr.get("url") or "",
+    }
+
+
+def _check_row(item: dict) -> dict:
+    """One statusCheckRollup entry, normalized across the two shapes:
+    CheckRun carries status/conclusion/detailsUrl + workflowName, while
+    a StatusContext carries state/targetUrl + context for the name. The
+    ``state`` field folds the entry to rollup_checks' vocabulary so
+    pending contexts and odd conclusions still draw a warning sign."""
+    workflow = item.get("workflowName")
+    if not workflow and isinstance(item.get("workflow"), dict):
+        workflow = item["workflow"].get("name")
+    is_context = (item.get("__typename") == "StatusContext"
+                  or ("state" in item and "status" not in item))
+    if is_context:
+        ctx = str(item.get("state") or "").lower()
+        status = "completed" if ctx in ("success", "failure", "error") \
+            else "queued"
+        conclusion = ctx if status == "completed" else None
+    else:
+        status = str(item.get("status") or "").lower() or "completed"
+        conclusion = str(item.get("conclusion") or "").lower() or None
+    state = rollup_checks([item])
+    return {
+        "name": item.get("name") or item.get("context") or "",
+        "workflow": workflow or "",
+        "status": status,
+        "conclusion": conclusion,
+        "state": "none" if state == "unknown" else state,
+        "url": item.get("detailsUrl") or item.get("targetUrl") or "",
+    }
+
+
+def _pr_detail(pr: dict, repo: str) -> dict:
+    """The list row plus everything the detail pane draws: body, the
+    per-check rows behind the rollup, reviews, and merge state."""
+    requested = []
+    for r in pr.get("reviewRequests") or []:
+        if isinstance(r, dict):
+            # A requested reviewer can be a user (login) or a team
+            # (slug/name) — whichever name it carries is the label.
+            name = r.get("login") or r.get("slug") or r.get("name")
+            if name:
+                requested.append(str(name))
+    automerge = pr.get("autoMergeRequest")
+    return {
+        **_pr_row(pr),
+        "repo": repo,
+        "body": pr.get("body") or "",
+        "merge_state": str(pr.get("mergeStateStatus")
+                           or "").lower() or "unknown",
+        "additions": pr.get("additions"),
+        "deletions": pr.get("deletions"),
+        "changed_files": pr.get("changedFiles"),
+        "check_runs": [_check_row(x)
+                       for x in (pr.get("statusCheckRollup") or [])
+                       if isinstance(x, dict)],
+        "reviews": [
+            {"author": _login(r.get("author")),
+             "state": str(r.get("state") or "").lower(),
+             "submitted_at": r.get("submittedAt")}
+            for r in (pr.get("latestReviews") or [])
+            if isinstance(r, dict)],
+        "review_requests": requested,
+        "auto_merge": ({
+            "method": str(automerge.get("mergeMethod") or "").lower(),
+            "enabled_at": automerge.get("enabledAt"),
+        } if isinstance(automerge, dict) else None),
+        "created_at": pr.get("createdAt"),
+        "merged_at": pr.get("mergedAt"),
     }
 
 
@@ -487,6 +563,50 @@ def _render_pr_status(results: list[dict]) -> None:
                       f"{sanitize(pr['title'])} "
                       f"{c(ci_color, ci_glyph)}")
             print()
+
+
+def _render_pr_detail(pr: dict) -> None:
+    glyph, color = _pr_glyph(pr)
+    print(f"\n  {c(color, glyph)} {c('bold', sanitize(pr['title']))}")
+    print(f"  {c('cyan', '#' + str(pr['number']))} "
+          f"{c('dim', pr['repo'])}  "
+          f"{c('cyan', pr['branch'])} → {pr['base']}  "
+          f"{c('dim', _rel(_parse_iso(pr.get('updated_at'))))}")
+    print(f"  {c('dim', pr['url'])}")
+    meta = []
+    if pr.get("author") and pr["author"] != "-":
+        meta.append(f"by {pr['author']}")
+    if pr.get("additions") is not None:
+        meta.append(f"+{pr['additions']}/-{pr['deletions']}"
+                    f" in {pr.get('changed_files') or 0} files")
+    if pr.get("mergeable"):
+        meta.append(pr["mergeable"])
+    if pr.get("merge_state") and pr["merge_state"] != "unknown":
+        meta.append(pr["merge_state"])
+    if pr.get("auto_merge"):
+        meta.append(f"auto-merge: {pr['auto_merge']['method']}")
+    if meta:
+        print(f"  {c('dim', ' · '.join(meta))}")
+    checks = pr.get("check_runs") or []
+    if checks:
+        print(f"\n  {c('dim', 'Checks')}")
+        for chk in checks:
+            ci_glyph, ci_color = _checks_glyph(chk.get("state") or "none")
+            workflow = f"  {chk['workflow']}" if chk.get("workflow") else ""
+            print(f"    {c(ci_color, ci_glyph)} "
+                  f"{sanitize(chk['name'])}{c('dim', workflow)}")
+    reviews = pr.get("reviews") or []
+    requested = pr.get("review_requests") or []
+    if reviews or requested:
+        print(f"\n  {c('dim', 'Reviews')}")
+        for r in reviews:
+            print(f"    {r['author']}  {c('dim', r['state'])}")
+        if requested:
+            print(f"    {c('dim', 'requested: ' + ', '.join(requested))}")
+    body = (pr.get("body") or "").strip()
+    if body:
+        print(f"\n  {c('dim', truncate(sanitize(body), 400))}")
+    print()
 
 
 def _render_issue_table(results: list[dict]) -> None:
@@ -993,8 +1113,8 @@ def _parse_common(rest: list[str],
     except ValueError as exc:
         print(c("red", str(exc)), file=error_stream(json_view))
         return None
-    opts = {"repo": None, "state": None, "limit": None,
-            "web": False, "all": False}
+    opts = {"repo": None, "state": None, "limit": None, "method": None,
+            "web": False, "all": False, "auto": False, "failed": False}
     pos = []
     i = 0
     while i < len(args):
@@ -1007,21 +1127,29 @@ def _parse_common(rest: list[str],
         elif args[i] == "--all":
             opts["all"] = True
             i += 1
+        elif args[i] == "--auto":
+            opts["auto"] = True
+            i += 1
+        elif args[i] == "--failed":
+            opts["failed"] = True
+            i += 1
         else:
             pos.append(args[i])
             i += 1
     return opts, pos
 
 
-def _targets(opts: dict, json_view: bool) -> list[str] | None:
-    """Resolve the repo list, or print why nothing can be queried."""
+def _targets(opts: dict,
+             json_view: bool) -> tuple[list[str] | None, str | None]:
+    """Resolve the repo list, or print why nothing can be queried.
+    The message comes back too so --json callers can emit it."""
     if opts["repo"] and repos.normalize_repo_input(opts["repo"]) is None:
         msg = f"Not a GitHub repo: {opts['repo']}  (want owner/name or a URL)"
         if json_view:
             print(msg, file=error_stream(True))
         else:
             print(c("red", f"\n  {msg}\n"))
-        return None
+        return None, msg
     names = repos.resolve(opts["repo"])
     if not names:
         msg = ("No repo to query: pass --repo=owner/name, run inside a "
@@ -1030,8 +1158,26 @@ def _targets(opts: dict, json_view: bool) -> list[str] | None:
             print(msg, file=error_stream(True))
         else:
             print(c("red", f"\n  {msg}\n"))
-        return None
-    return names
+        return None, msg
+    return names, None
+
+
+def _resolve_one(opts: dict,
+                 json_view: bool) -> tuple[str | None, str | None]:
+    """One repo for one-object commands (view/merge/rerun): --repo or
+    the checkout wins; several pins is ambiguous rather than wrong."""
+    names, res_err = _targets(opts, json_view)
+    if names is None:
+        return None, res_err
+    if len(names) > 1:
+        msg = ("This command takes one repo — pass --repo=owner/name "
+               f"(resolved {len(names)} pins).")
+        if json_view:
+            print(msg, file=error_stream(True))
+        else:
+            print(c("red", f"\n  {msg}\n"))
+        return None, msg
+    return names[0], None
 
 
 def _limit(opts: dict, default: int = 30) -> int:
@@ -1067,7 +1213,7 @@ def _collect_json(cmd: str, opts: dict, fetch):
     A successful fetch is itself the auth proof — paying `auth status`
     on every poll made a one-repo board cost ~1s of probe per surface.
     """
-    names = _targets(opts, True)
+    names, _res_err = _targets(opts, True)
     if names is None:
         return gh.probe_env(), None
     if opts["web"]:
@@ -1094,7 +1240,7 @@ def _collect(cmd: str, opts: dict, json_view: bool, fetch):
     if env.status != "ok":
         print(c("red", f"\n  {_env_error(env)}\n"))
         return env, None
-    names = _targets(opts, json_view)
+    names, _res_err = _targets(opts, json_view)
     if names is None:
         return env, None
     if opts["web"]:
@@ -1160,6 +1306,14 @@ def _cmd_pr(rest: list[str], json_view: bool) -> int:
         return 1
     opts, pos = parsed
     sub = pos[0] if pos else "list"
+    if sub in ("view", "merge"):
+        if len(pos) != 2:
+            print(c("red", f"Usage: swe gh pr {sub} <number|url>"),
+                  file=error_stream(json_view))
+            return 1
+        if sub == "view":
+            return _cmd_pr_view(pos[1], opts, json_view)
+        return _cmd_pr_merge(pos[1], opts, json_view)
     if len(pos) > 1:
         print(c("red", f"Unexpected args: {' '.join(pos[1:])}"),
               file=error_stream(json_view))
@@ -1169,7 +1323,8 @@ def _cmd_pr(rest: list[str], json_view: bool) -> int:
             "pr", opts, json_view, lambda name, _o: _fetch_pr_status(name))
         return _finish(env, results, opts, json_view, _render_pr_status)
     if sub != "list":
-        print(c("red", f"Unknown: swe gh pr {sub}  (list | status)"),
+        print(c("red",
+                f"Unknown: swe gh pr {sub}  (list | status | view | merge)"),
               file=error_stream(json_view))
         return 1
     state = (opts["state"] or "open").lower()
@@ -1183,11 +1338,231 @@ def _cmd_pr(rest: list[str], json_view: bool) -> int:
     return _finish(env, results, opts, json_view, _render_pr_table)
 
 
+def _env_emit(env: gh.GhEnv) -> dict:
+    """Every one-object payload carries the probe result so the app can
+    tell a blocked env from a fetch failure without a second call."""
+    return {"github": _env_payload(env)}
+
+
+def _cmd_pr_view(ref: str, opts: dict, json_view: bool) -> int:
+    err = error_stream(json_view)
+    env = gh.probe_env()
+    if env.status != "ok":
+        msg = _env_error(env)
+        print(c("red", f"  {msg}"), file=err)
+        if json_view:
+            emit({**_env_emit(env), "repo": None, "status": env.status,
+                  "pr": None, "error": msg})
+        return 1
+    repo, res_err = _resolve_one(opts, json_view)
+    if repo is None:
+        if json_view:
+            emit({**_env_emit(env), "repo": None, "status": "error",
+                  "pr": None, "error": res_err})
+        return 1
+    result = gh.run_json(
+        ["pr", "view", ref, "--repo", repo, "--json", _PR_DETAIL_FIELDS],
+        timeout=60)
+    if result.status != "ok" or not isinstance(result.data, dict):
+        msg = result.error or "gh returned an invalid pull request"
+        print(c("red", f"  {msg}"), file=err)
+        if json_view:
+            emit({**_env_emit(env), "repo": repo, "status": result.status,
+                  "pr": None, "error": msg})
+        return 1
+    detail = _pr_detail(result.data, repo)
+    if json_view:
+        return emit({**_env_emit(env), "repo": repo, "status": "ok",
+                     "pr": detail})
+    _render_pr_detail(detail)
+    return 0
+
+
+_MERGE_METHODS = {"squash": "--squash", "merge": "--merge",
+                  "rebase": "--rebase"}
+
+
+def _cmd_pr_merge(ref: str, opts: dict, json_view: bool) -> int:
+    err = error_stream(json_view)
+    method = (opts["method"] or "squash").lower()
+    if method not in _MERGE_METHODS:
+        print(c("red", "--method must be squash, merge or rebase"),
+              file=err)
+        return 1
+    env = gh.probe_env()
+    if env.status != "ok":
+        msg = _env_error(env)
+        print(c("red", f"  {msg}"), file=err)
+        if json_view:
+            emit({**_env_emit(env), "repo": None, "ref": ref,
+                  "method": method, "auto": bool(opts["auto"]),
+                  "merged": False, "error": msg})
+        return 1
+    repo, res_err = _resolve_one(opts, json_view)
+    if repo is None:
+        if json_view:
+            emit({**_env_emit(env), "repo": None, "ref": ref,
+                  "method": method, "auto": bool(opts["auto"]),
+                  "merged": False, "error": res_err})
+        return 1
+    args = ["pr", "merge", ref, "--repo", repo, _MERGE_METHODS[method]]
+    if opts["auto"]:
+        args.append("--auto")
+    result = gh.run_gh(args, timeout=60)
+    if result.status != "ok":
+        msg = result.error or result.status
+        if json_view:
+            emit({**_env_emit(env), "repo": repo, "ref": ref,
+                  "method": method, "auto": bool(opts["auto"]),
+                  "merged": False, "error": msg})
+        else:
+            print(c("red", f"  Merge failed: {msg}\n"))
+        return 1
+    # --auto arm's the merge for later; it does not merge now.
+    merged = not opts["auto"]
+    if json_view:
+        return emit({**_env_emit(env), "repo": repo, "ref": ref,
+                     "method": method, "auto": bool(opts["auto"]),
+                     "merged": merged})
+    done = (f"Auto-merge armed for {ref} ({method})." if opts["auto"]
+            else f"Merged {ref} in {repo} ({method}).")
+    print(c("green", f"  {done}\n"))
+    return 0
+
+
+def _cmd_run(rest: list[str], json_view: bool) -> int:
+    parsed = _parse_common(rest, json_view)
+    if parsed is None:
+        return 1
+    opts, pos = parsed
+    if pos and pos[0] == "rerun":
+        if len(pos) != 2:
+            print(c("red", "Usage: swe gh run rerun <run-id>"),
+                  file=error_stream(json_view))
+            return 1
+        return _cmd_run_rerun(pos[1], opts, json_view)
+    if pos and pos[0] == "list":
+        pos = pos[1:]
+    if pos:
+        print(c("red", f"Unexpected args: {' '.join(pos)}"),
+              file=error_stream(json_view))
+        return 1
+    env, results = _collect(
+        "run", opts, json_view, lambda n, o: _fetch_runs(n, _limit(o, 15)))
+    return _finish(env, results, opts, json_view, _render_run_table)
+
+
+def _cmd_run_rerun(run_id: str, opts: dict, json_view: bool) -> int:
+    err = error_stream(json_view)
+    if not run_id.isdigit():
+        print(c("red", "Want the numeric run id from `swe gh run`"),
+              file=err)
+        return 1
+    env = gh.probe_env()
+    if env.status != "ok":
+        msg = _env_error(env)
+        print(c("red", f"  {msg}"), file=err)
+        if json_view:
+            emit({**_env_emit(env), "repo": None, "run": int(run_id),
+                  "rerun": False, "error": msg})
+        return 1
+    repo, res_err = _resolve_one(opts, json_view)
+    if repo is None:
+        if json_view:
+            emit({**_env_emit(env), "repo": None, "run": int(run_id),
+                  "rerun": False, "error": res_err})
+        return 1
+    args = ["run", "rerun", run_id, "--repo", repo]
+    if opts["failed"]:
+        args.append("--failed")
+    result = gh.run_gh(args, timeout=60)
+    if result.status != "ok":
+        msg = result.error or result.status
+        if json_view:
+            emit({**_env_emit(env), "repo": repo, "run": int(run_id),
+                  "rerun": False, "error": msg})
+        else:
+            print(c("red", f"  Re-run failed: {msg}\n"))
+        return 1
+    if json_view:
+        return emit({**_env_emit(env), "repo": repo, "run": int(run_id),
+                     "rerun": True,
+                     "failed_only": bool(opts["failed"])})
+    which = "failed jobs of" if opts["failed"] else "all jobs of"
+    print(c("green", f"  Re-running {which} run {run_id} in {repo}.\n"))
+    return 0
+
+
+def _cmd_inbox_read(ids: list[str], opts: dict, json_view: bool) -> int:
+    """Mark notification threads read: `gh api PATCH threads/<id>` per
+    id, or one PUT notifications with last_read_at for --all."""
+    err = error_stream(json_view)
+    if not ids and not opts["all"]:
+        print(c("red", "Usage: swe gh inbox read <id>... | --all"),
+              file=err)
+        return 1
+    if ids and opts["all"]:
+        print(c("red", "Pick ids or --all, not both"), file=err)
+        return 1
+    bad = [i for i in ids if not i.isdigit()]
+    if bad:
+        print(c("red", f"Not a notification id: {' '.join(bad)}"), file=err)
+        return 1
+    env = gh.probe_env()
+    if env.status != "ok":
+        msg = _env_error(env)
+        print(c("red", f"  {msg}"), file=err)
+        if json_view:
+            emit({**_env_emit(env), "all": bool(opts["all"]),
+                  "marked": [], "error": msg})
+        return 1
+    if opts["all"]:
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        result = gh.run_gh(
+            ["api", "--method", "PUT", "notifications",
+             "-f", f"last_read_at={stamp}"], timeout=30)
+        if result.status != "ok":
+            msg = result.error or result.status
+            if json_view:
+                emit({**_env_emit(env), "all": True, "marked": [],
+                      "error": msg})
+            else:
+                print(c("red", f"  Marking read failed: {msg}\n"))
+            return 1
+        if json_view:
+            return emit({**_env_emit(env), "all": True, "marked": ["*"]})
+        print(c("green", "  All notifications marked read.\n"))
+        return 0
+
+    def mark(thread: str) -> dict:
+        r = gh.run_gh(["api", "--method", "PATCH",
+                       f"notifications/threads/{thread}"], timeout=30)
+        return {"id": thread, "status": r.status,
+                "error": r.error or r.status}
+
+    entries = _fan(ids, mark)
+    marked = [e["id"] for e in entries if e["status"] == "ok"]
+    failed = [{"id": e["id"], "error": e["error"]}
+              for e in entries if e["status"] != "ok"]
+    if json_view:
+        return emit({**_env_emit(env), "all": False, "marked": marked,
+                     "failed": failed})
+    for e in entries:
+        if e["status"] == "ok":
+            print(f"  {c('green', '●')} {e['id']} marked read")
+        else:
+            print(f"  {c('red', '●')} {e['id']}  {c('dim', e['error'])}")
+    print()
+    return 0 if not failed else 1
+
+
 def _cmd_inbox(rest: list[str], json_view: bool) -> int:
     parsed = _parse_common(rest, json_view)
     if parsed is None:
         return 1
     opts, pos = parsed
+    if pos and pos[0] == "read":
+        return _cmd_inbox_read(pos[1:], opts, json_view)
     if pos:
         print(c("red", f"Unexpected args: {' '.join(pos)}"),
               file=error_stream(json_view))
@@ -1264,7 +1639,7 @@ def _cmd_board(rest: list[str], json_view: bool) -> int:
         print(c("red", f"Unexpected args: {' '.join(pos)}"),
               file=error_stream(json_view))
         return 1
-    names = _targets(opts, json_view)
+    names, _res_err = _targets(opts, json_view)
     if names is None:
         if json_view:
             emit({"github": _env_payload(gh.probe_env()),
@@ -1338,9 +1713,7 @@ def main(argv=None) -> int:
             _render_issue_table,
             states=("open", "closed", "all"))(rest, json_view)
     if sub in ("run", "runs", "actions", "ci"):
-        return _list_command(
-            "run", lambda n, o: _fetch_runs(n, _limit(o, 15)),
-            _render_run_table)(rest, json_view)
+        return _cmd_run(rest, json_view)
     if sub in ("pages", "page"):
         return _list_command(
             "pages", lambda n, _o: _fetch_pages(n),

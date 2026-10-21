@@ -37,6 +37,10 @@ and the fixture that pins the shape. Fixtures live under
 | `swe gh repo search <query> --json` | `{"query", "results": [RepoHit], "source": "catalog"\|"github"}` — reads the synced catalog first (no `gh` call on a hit), falls back to the live scoped search on a miss or when never synced; `--all` always searches public GitHub | |
 | `swe gh pr [--state=S] [--repo=R] [--limit=N] --json` | `GhResults` — per-repo `pull_requests: [GhPr]` | |
 | `swe gh pr status [--repo=R] --json` | `GhResults` — per-repo `current_branch` (`GhPr` or null), `authored: [GhPr]`, `review_requested: [GhPr]` | |
+| `swe gh pr view <N|url> --repo=R --json` | `{"github": GhEnv, "repo", "status", "pr": GhPrDetail?}` — one repo only; `status` is `ok` or a `gh` status, `error` on failure (including a blocked env) | |
+| `swe gh pr merge <N|url> --repo=R [--method=squash|merge|rebase] [--auto] --json` | `{"github": GhEnv, "repo", "ref", "method", "auto", "merged", "error"?}` — `merged` is false under `--auto` (armed, not merged) | |
+| `swe gh run rerun <id> --repo=R [--failed] --json` | `{"github": GhEnv, "repo", "run", "rerun", "failed_only"?, "error"?}` | |
+| `swe gh inbox read <id>...|--all --json` | `{"github": GhEnv, "all", "marked": [id], "failed": [{"id","error"}]}` — `--all` reports `marked: ["*"]` | |
 | `swe gh issue [--state=S] [--repo=R] [--limit=N] --json` | `GhResults` — per-repo `issues: [GhIssue]` | |
 | `swe gh run [--repo=R] [--limit=N] --json` (aliases `runs`, `actions`, `ci`) | `GhResults` — per-repo `runs: [GhRun]` | |
 | `swe gh pages [--repo=R] --json` | `GhResults` — per-repo `pages` (see below) | |
@@ -110,6 +114,15 @@ against all pins, so `results` is always a list of per-repo entries.
   `running`|`failing`|`unknown`; `review_decision` is `approved`|
   `changes_requested`|`review_required`|`none`; `mergeable` is GitHub's
   value lowercased (`mergeable`|`conflicting`|`unknown`).
+- `GhPrDetail`: every `GhPr` field plus `{repo, body, merge_state,
+  additions, deletions, changed_files, check_runs, reviews,
+  review_requests, auto_merge, created_at, merged_at}`. `check_runs`
+  entries are `{name, workflow, status, conclusion, state, url}` where
+  `state` folds the entry to `passing`|`running`|`failing`|`none`;
+  `reviews`
+  are `{author, state, submitted_at}`; `review_requests` is a list of
+  names (a user login or a team slug); `auto_merge` is
+  `{method, enabled_at}` or null.
 - `GhIssue`: `{number, title, state, author, labels, assignees,
   comments, updated_at, url}`.
 - `GhRun`: `{id, workflow, title, branch, event, status, conclusion,
