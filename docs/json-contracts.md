@@ -29,6 +29,20 @@ and the fixture that pins the shape. Fixtures live under
 | `swe harness usage-daily codex [--account-dir=<dir>] --json` | `{"status", "summary", "days"}` — `status` is `ok` \| `auth-required` \| `unsupported` \| `unavailable`. `summary` is `{lifetime_tokens, peak_daily_tokens, current_streak_days, longest_streak_days}` or null; each `days` entry is `{"date": "YYYY-MM-DD", "tokens": int}` | |
 | `swe doctor --json` | `DoctorReport` (`allowFailure`) | `swe-doctor.json` |
 | `swe session <limit> [--days=N] --json` | `SessionListPayload` | `swe-session.json` |
+| `swe gh --json` | `{"github": GhEnv, "repos": [PinnedRepo]}` | |
+| `swe gh repo list --json` | `{"repos": [PinnedRepo]}` | |
+| `swe gh repo add <name|url> --json` | `{"repo", "pinned": [name]}` — verifies via `gh repo view` before pinning | |
+| `swe gh repo remove <name> --json` | `{"removed": bool, "repo", "pinned": [name]}` | |
+| `swe gh repo search <query> --json` | `{"query", "results": [RepoHit]}` | |
+| `swe gh pr [--state=S] [--repo=R] [--limit=N] --json` | `GhResults` — per-repo `pull_requests: [GhPr]` | |
+| `swe gh pr status [--repo=R] --json` | `GhResults` — per-repo `current_branch` (`GhPr` or null), `authored: [GhPr]`, `review_requested: [GhPr]` | |
+| `swe gh issue [--state=S] [--repo=R] [--limit=N] --json` | `GhResults` — per-repo `issues: [GhIssue]` | |
+| `swe gh run [--repo=R] [--limit=N] --json` (aliases `runs`, `actions`, `ci`) | `GhResults` — per-repo `runs: [GhRun]` | |
+| `swe gh pages [--repo=R] --json` | `GhResults` — per-repo `pages` (see below) | |
+| `swe gh releases [--repo=R] [--limit=N] --json` | `GhResults` — per-repo `releases: [GhRelease]` | |
+| `swe gh tags [--repo=R] [--limit=N] --json` | `GhResults` — per-repo `tags: [GhTag]` | |
+| `swe gh branches [--repo=R] [--limit=N] --json` | `GhResults` — per-repo `branches: [GhBranch]` plus `default_branch` | |
+| `swe gh inbox [--all] [--limit=N] --json` | `{"github": GhEnv, "status", "notifications": [GhNotification]}` — `gh api notifications`, not per-repo; `--all` adds `all=true` so read rows come back too (default is unread-only) | |
 
 ## Shape notes
 
@@ -64,3 +78,53 @@ and the fixture that pins the shape. Fixtures live under
   like `mcp_servers` stay snake_case in saved snapshots.
 - No `--json` output carries secret values; MCP env/header values arrive
   as key names only.
+
+### `swe gh` shapes
+
+All GitHub data comes from the ambient `gh` login; no tokens are stored.
+Repo resolution is `--repo=` first, then the working directory's git
+remote, then every pinned repo — a bare query outside a checkout runs
+against all pins, so `results` is always a list of per-repo entries.
+
+- `GhEnv`: `{"status", "login", "error"}` — `status` is `ok` |
+  `unavailable` (gh missing) | `auth-required` | `upstream-error`
+  (the `gh auth status` probe itself failed, e.g. a timeout — not proof
+  the login is gone). `error` carries the probe failure or is null. On a
+  blocked env the command exits 1, prints the reason to stderr, and
+  still emits the envelope with empty results.
+- `GhResults`: `{"github": GhEnv, "results": [entry]}` where each entry
+  is `{"repo", "status", <rows>, "error"?}`. `status` is `ok` |
+  `not-found` | `unavailable` | `auth-required` | `upstream-error`; on
+  `ok` the row list is populated, otherwise it is `[]`/`null` and
+  `error` carries gh's stderr. Distinguish `ok` + empty rows (a repo
+  with no PRs) from an upstream failure.
+- `PinnedRepo`: `{"name": "owner/repo", "added_at": epoch}`.
+- `RepoHit`: `{name, description, stars, updated_at, url}`.
+- `GhPr`: `{number, title, state, draft, author, branch, base, labels,
+  mergeable, review_decision, checks, updated_at, url}`. `state` is
+  `open`|`closed`|`merged`; `checks` is a rollup `none`|`passing`|
+  `running`|`failing`|`unknown`; `review_decision` is `approved`|
+  `changes_requested`|`review_required`|`none`; `mergeable` is GitHub's
+  value lowercased (`mergeable`|`conflicting`|`unknown`).
+- `GhIssue`: `{number, title, state, author, labels, assignees,
+  comments, updated_at, url}`.
+- `GhRun`: `{id, workflow, title, branch, event, status, conclusion,
+  created_at, updated_at, url}`; `conclusion` is null while running.
+- `pages` entry: `{"repo", "status", "pages": null | {url, cname,
+  status, source_branch, latest_build: null | {status, error, commit,
+  updated_at}}}`. `pages: null` means the repo has no Pages site;
+  `latest_build: null` means no builds yet, while a failed build read
+  arrives as `{"status": "fetch-failed", "error": <gh stderr>}`.
+- `GhRelease`: `{tag, name, latest, draft, prerelease, published_at,
+  url}`. `GhTag`: `{name, sha, url}`. `GhBranch`: `{name, protected,
+  default, sha, url}`.
+- `GhNotification`: `{id, repo, title, type, reason, unread,
+  updated_at, url}` — `url` is rewritten from the API subject URL to the
+  github.com page (`/pulls/N` → `/pull/N`), falling back to the repo
+  page when the subject has none. `type` is GitHub's (`PullRequest`,
+  `Issue`, `CheckRun`, …), `reason` is `review_requested`, `mention`,
+  etc.
+- Timestamp fields (`updated_at`, `published_at`, `created_at`,
+  `added_at`): `added_at` is epoch seconds; the rest are ISO 8601
+  strings straight from `gh` — decode with `.iso8601`, not
+  `.secondsSince1970`.
