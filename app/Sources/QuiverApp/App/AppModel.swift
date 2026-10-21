@@ -308,6 +308,9 @@ final class AppModel {
     let models: ModelsModel?
     /// The Settings > Services section's keys and probe results.
     let services: ServicesModel
+    /// The Settings > Experimental section's session-search switch: it hands
+    /// the ledger a `SearchIndexer` while on, and keeps the index current.
+    let search: SearchIndexModel
     /// The Skills, MCP servers and Plugins pages' last lists, kept while the app runs.
     let skills: SkillsModel
     let mcp: McpModel
@@ -572,6 +575,9 @@ final class AppModel {
             overviewError = "Couldn't open the usage ledger: \(error.localizedDescription)"
         }
         sessions?.hideTrivial = hidesTrivial
+        // Built whether or not the ledger opened: a nil ledger shows the
+        // reason under the switch instead of hiding the feature.
+        search = SearchIndexModel(quiver: quiver, ledger: ledger, overview: overview)
         // A new Devin token or org id syncs the cloud sessions at once.
         services.onFieldChanged = { [devinCloud] field in
             guard field.hasPrefix("DEVIN_"), let devinCloud else { return }
@@ -690,6 +696,9 @@ final class AppModel {
         }
         if let overview { refreshing = Task { await overview.keepFresh() } }
         if let ledger, backingUp == nil { backingUp = Task { await ledger.keepBackedUp() } }
+        // Applies the persisted switch: attaches the indexer and starts the
+        // reconcile only when the feature is on.
+        search.start()
         watchers = [
             Task { await accounts.keepFresh() },
             // The last session list shows at once; swe lists again behind it,

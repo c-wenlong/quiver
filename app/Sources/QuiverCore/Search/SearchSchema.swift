@@ -149,7 +149,7 @@ enum SearchSchema {
 
     /// A smoke test for the one feature the index cannot work without. The
     /// probe table is `temp`, so it never persists.
-    private static func probeFTS5(_ db: SQLiteDatabase) -> Bool {
+    static func probeFTS5(_ db: SQLiteDatabase) -> Bool {
         do {
             try db.execute("CREATE VIRTUAL TABLE temp.search_fts5_probe USING fts5(x)")
             try db.execute("DROP TABLE temp.search_fts5_probe")
