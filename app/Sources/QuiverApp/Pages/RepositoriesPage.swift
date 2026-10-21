@@ -23,7 +23,16 @@ struct RepositoriesPage: View {
 
     var body: some View {
         @Bindable var model = model
-        Page(title: "Repositories",
+        if let repo = model.focused {
+            RepoDetailPage(repo: repo) { model.focused = nil }
+        } else {
+            dashboard
+        }
+    }
+
+    private var dashboard: some View {
+        @Bindable var model = model
+        return Page(title: "Repositories",
              subtitle: "Your pinned repos' pull requests, issues and CI, from swe gh.") {
             if model.envBlocked == nil {
                 Button("Add repository", systemImage: "plus") { adding = true }
@@ -141,19 +150,14 @@ struct RepositoriesPage: View {
     /// The repos whose sections show — the model's filter logic.
     private var visibleRepos: [PinnedRepo] { model.visibleRepos }
 
-    /// The board's rows, filtered when this repo is shown by fallback
-    /// rather than by name.
-    private func filtered<Row>(_ state: Loadable<[Row]>, repo: String,
-                               _ parts: @escaping (Row) -> [String?]) -> Loadable<[Row]> {
-        model.filtered(state, repo: repo, parts)
-    }
-
-    /// One pinned repo's section: its name (a link out), then the
-    /// active tab's surface.
+    /// One pinned repo's section: its name, then on the right the
+    /// link-out and the open-in-full affordance, then the active tab's
+    /// surface.
     @ViewBuilder private func repoSection(_ repo: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Text(repo).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+                Spacer(minLength: 8)
                 Button {
                     if let url = URL(string: "https://github.com/\(repo)") { openURL(url) }
                 } label: {
@@ -162,36 +166,93 @@ struct RepositoriesPage: View {
                 }
                 .plainButton()
                 .help("Open on GitHub")
+                Button { model.focused = repo } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.textMuted)
+                }
+                .plainButton()
+                .help("Open \(repo) in full")
             }
-            let board = model.board(for: repo)
-            switch model.tab {
-            case .pulls: pulls(repo: repo, board: board)
-            case .issues: issues(repo: repo, board: board)
-            case .actions: actions(repo: repo, board: board)
-            case .pages: pages(repo: repo, board: board)
-            case .releases: releases(repo: repo, board: board)
-            case .tags: tags(repo: repo, board: board)
-            case .branches: branches(repo: repo, board: board)
+            RepoSurfaces(repo: repo, board: model.board(for: repo), tab: model.tab,
+                         loading: model.loading, query: model.query,
+                         unfiltered: model.showsAllRows(repo)) {
+                detail = PrSelection(repo: repo, number: $0)
             }
         }
     }
+}
 
-    /// The surface's empty text: under a row filter an empty list means
-    /// "nothing matched", not "nothing exists" — but a repo the query
-    /// named keeps the normal text, since its rows were never filtered.
-    private func emptyText(_ base: String, repo: String) -> String {
-        model.showsAllRows(repo) ? base : "Nothing matches \"\(model.query)\"."
+// MARK: - Repo surfaces
+
+/// One repo's tab surfaces — pull requests, issues, workflow runs,
+/// Pages, releases, tags and branches — shared verbatim between the
+/// dashboard's repo sections and the single-repo focus page. What
+/// differs is the board they read (the dashboard's open-state store vs
+/// the focus page's every-state one), the loading set behind the
+/// spinner, and the row filter.
+struct RepoSurfaces: View {
+    @Environment(AppModel.self) private var app
+    @Environment(\.openURL) private var openURL
+    var repo: String
+    var board: RepoBoard
+    var tab: RepoTab
+    /// The fetching set the spinners read — `model.loading` on the
+    /// dashboard, `model.focusLoading` on the focus page.
+    var loading: Set<GitHubModel.BoardKey>
+    /// The row-filter text; empty keeps every row.
+    var query = ""
+    /// Skip row filtering — a dashboard section the query named keeps
+    /// its whole board.
+    var unfiltered = false
+    /// A PR row tap opens the page's detail sheet.
+    var openPr: (Int) -> Void
+
+    private var model: GitHubModel { app.github }
+
+    var body: some View {
+        switch tab {
+        case .pulls: pulls()
+        case .issues: issues()
+        case .actions: actions()
+        case .pages: pages()
+        case .releases: releases()
+        case .tags: tags()
+        case .branches: branches()
+        }
+    }
+
+    /// Whether this surface has a fetch in flight — the card's
+    /// "Refreshing…" row and the first-load spinner.
+    private func busy(_ tab: RepoTab) -> Bool {
+        loading.contains(.init(repo: repo, tab: tab))
+    }
+
+    /// The rows, filtered when `query` is on and the surface is not
+    /// exempt — a match on any of the row's fields keeps it.
+    private func filtered<Row>(_ state: Loadable<[Row]>,
+                               _ parts: @escaping (Row) -> [String?]) -> Loadable<[Row]> {
+        guard case .loaded(let rows) = state, !unfiltered, !query.isEmpty else { return state }
+        return .loaded(rows.filter { row in
+            parts(row).contains { $0?.localizedCaseInsensitiveContains(query) ?? false }
+        })
+    }
+
+    /// Under a row filter an empty list means "nothing matched", not
+    /// "nothing exists" — an unfiltered surface keeps the base text.
+    private func emptyText(_ base: String) -> String {
+        unfiltered || query.isEmpty ? base : "Nothing matches \"\(query)\"."
     }
 
     // MARK: - Surfaces
 
     @ViewBuilder
-    private func pulls(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(filtered(board.pulls, repo: repo) {
+    private func pulls() -> some View {
+        SurfaceList(filtered(board.pulls) {
                         [$0.title, "\($0.number)", $0.branch, $0.base, $0.author] + $0.labels },
-                    empty: emptyText("No open pull requests.", repo: repo),
-                    loading: model.loading.contains(.init(repo: repo, tab: .pulls))) { pr in
-            OpenRow(act: { detail = PrSelection(repo: repo, number: pr.number) }) {
+                    empty: emptyText("No pull requests."),
+                    loading: busy(.pulls)) { pr in
+            OpenRow(act: { openPr(pr.number) }) {
                 PrIcon(state: pr.state, draft: pr.draft)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
@@ -240,11 +301,11 @@ struct RepositoriesPage: View {
     }
 
     @ViewBuilder
-    private func issues(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(filtered(board.issues, repo: repo) {
+    private func issues() -> some View {
+        SurfaceList(filtered(board.issues) {
                         [$0.title, "\($0.number)", $0.author] + $0.labels + $0.assignees },
-                    empty: emptyText("No open issues.", repo: repo),
-                    loading: model.loading.contains(.init(repo: repo, tab: .issues))) { issue in
+                    empty: emptyText("No issues."),
+                    loading: busy(.issues)) { issue in
             OpenRow(url: issue.url, open: openURL.callAsFunction) {
                 Image(systemName: issue.state == .open ? "exclamationmark.circle" : "checkmark.circle")
                     .font(.system(size: 15))
@@ -270,11 +331,11 @@ struct RepositoriesPage: View {
     }
 
     @ViewBuilder
-    private func actions(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(filtered(board.runs, repo: repo) {
+    private func actions() -> some View {
+        SurfaceList(filtered(board.runs) {
                         [$0.title, $0.workflow, $0.branch, $0.event] },
-                    empty: emptyText("No workflow runs.", repo: repo),
-                    loading: model.loading.contains(.init(repo: repo, tab: .actions))) { run in
+                    empty: emptyText("No workflow runs."),
+                    loading: busy(.actions)) { run in
             OpenRow(url: run.url, open: openURL.callAsFunction) {
                 RunIcon(status: run.status, conclusion: run.conclusion)
                 VStack(alignment: .leading, spacing: 3) {
@@ -312,7 +373,7 @@ struct RepositoriesPage: View {
     }
 
     @ViewBuilder
-    private func pages(repo: String, board: RepoBoard) -> some View {
+    private func pages() -> some View {
         switch board.pages {
         case .idle, .loading:
             LoadingCard(text: "Reading the Pages settings…")
@@ -363,10 +424,10 @@ struct RepositoriesPage: View {
     }
 
     @ViewBuilder
-    private func releases(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(filtered(board.releases, repo: repo) { [$0.name, $0.tag] },
-                    empty: emptyText("No releases.", repo: repo),
-                    loading: model.loading.contains(.init(repo: repo, tab: .releases))) { release in
+    private func releases() -> some View {
+        SurfaceList(filtered(board.releases) { [$0.name, $0.tag] },
+                    empty: emptyText("No releases."),
+                    loading: busy(.releases)) { release in
             OpenRow(url: release.url, open: openURL.callAsFunction) {
                 Image(systemName: "tag").font(.system(size: 14))
                     .foregroundStyle(Theme.accent)
@@ -388,10 +449,10 @@ struct RepositoriesPage: View {
     }
 
     @ViewBuilder
-    private func tags(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(filtered(board.tags, repo: repo) { [$0.name, $0.sha] },
-                    empty: emptyText("No tags.", repo: repo),
-                    loading: model.loading.contains(.init(repo: repo, tab: .tags))) { tag in
+    private func tags() -> some View {
+        SurfaceList(filtered(board.tags) { [$0.name, $0.sha] },
+                    empty: emptyText("No tags."),
+                    loading: busy(.tags)) { tag in
             OpenRow(url: tag.url, open: openURL.callAsFunction) {
                 Image(systemName: "tag").font(.system(size: 14))
                     .foregroundStyle(Theme.textSecondary)
@@ -404,10 +465,10 @@ struct RepositoriesPage: View {
     }
 
     @ViewBuilder
-    private func branches(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(filtered(board.branches, repo: repo) { [$0.name, $0.sha] },
-                    empty: emptyText("No branches.", repo: repo),
-                    loading: model.loading.contains(.init(repo: repo, tab: .branches))) { branch in
+    private func branches() -> some View {
+        SurfaceList(filtered(board.branches) { [$0.name, $0.sha] },
+                    empty: emptyText("No branches."),
+                    loading: busy(.branches)) { branch in
             OpenRow(url: branch.url, open: openURL.callAsFunction) {
                 Image(systemName: "arrow.triangle.branch").font(.system(size: 14))
                     .foregroundStyle(branch.default ? Theme.accent : Theme.textSecondary)

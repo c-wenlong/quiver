@@ -86,6 +86,17 @@ public final class GitHubModel {
     /// The repo the Repositories page shows, a pin name.
     public var selected: String?
     public var tab: RepoTab = .pulls
+    /// The repo open on the focus page — the single-repo view that
+    /// swaps in over the dashboard. nil means the dashboard shows.
+    /// Picking a different repo restarts the page on pull requests.
+    public var focused: String? {
+        didSet {
+            if focused != nil, focused != oldValue { focusTab = .pulls }
+        }
+    }
+    /// The focus page's tab; the dashboard's `tab` is left alone so a
+    /// trip through a repo never moves it.
+    public var focusTab: RepoTab = .pulls
     /// The page's filter text: repo names, PR titles, branch names and
     /// the rest of the row text. Lives on the model so a banner's
     /// click-through can clear it and land on its repo's section.
@@ -102,6 +113,17 @@ public final class GitHubModel {
     /// predates the second call, so the surface refetches after it lands
     /// rather than dropping the refresh.
     private var queuedRefreshes: Set<BoardKey> = []
+
+    /// The focus page's boards, loading set and clocks — its own store.
+    /// Pulls and issues fetch every state, since the page exists to
+    /// survey a repo's recent work and open-only would hide what
+    /// landed; the rows can't share the dashboard's open-only board.
+    public private(set) var focusBoards: [String: RepoBoard] = [:]
+    public private(set) var focusLoading: Set<BoardKey> = []
+    private var focusFetched: [BoardKey: Date] = [:]
+    /// `queuedRefreshes` for the focus store: a request during a fetch
+    /// reruns once the older reply lands.
+    private var focusQueued: Set<BoardKey> = []
 
     public private(set) var inbox: Loadable<[GhNotification]> = .idle
     /// Unread lines in the loaded inbox — the sidebar badge and the
@@ -263,8 +285,12 @@ public final class GitHubModel {
     /// when it is the repo on screen.
     public func invalidate(repo: String, swe: SweClient) {
         for key in fetched.keys where key.repo == repo { fetched[key] = nil }
+        for key in focusFetched.keys where key.repo == repo { focusFetched[key] = nil }
         if selected == repo {
             Task { await loadTab(tab, repo: repo, swe: swe) }
+        }
+        if focused == repo {
+            Task { await loadFocusTab(focusTab, repo: repo, swe: swe) }
         }
     }
 
@@ -393,6 +419,88 @@ public final class GitHubModel {
         boards[repo] ?? RepoBoard()
     }
 
+    // MARK: - focus page (one repo in full)
+
+    /// The focus board for `repo`, always non-nil so the page can read
+    /// directly.
+    public func focusBoard(for repo: String) -> RepoBoard {
+        focusBoards[repo] ?? RepoBoard()
+    }
+
+    /// The focus page's opening fetch: all seven surfaces together,
+    /// each fresh-skipped, so the initial view fills at the price of
+    /// the slowest surface and a quick out-and-back costs nothing.
+    public func loadFocus(repo: String, swe: SweClient) async {
+        await withTaskGroup(of: Void.self) { group in
+            for tab in RepoTab.allCases {
+                group.addTask { await self.loadFocusTabIfStale(tab, repo: repo, swe: swe) }
+            }
+        }
+    }
+
+    /// `loadTabIfStale` against the focus store: a surface never fetched
+    /// (or whose repo was re-pinned and cleared) is never "fresh".
+    public func loadFocusTabIfStale(_ tab: RepoTab, repo: String, swe: SweClient) async {
+        let key = BoardKey(repo: repo, tab: tab)
+        if let at = focusFetched[key], now().timeIntervalSince(at) < staleAfter,
+           focusBoard(for: repo).isLoaded(tab) { return }
+        await loadFocusTab(tab, repo: repo, swe: swe)
+    }
+
+    /// Fetch one surface into the focus store. Pulls and issues go out
+    /// with `--state=all`: the page is the "what happened here lately"
+    /// view, so merged and closed rows are the content, not noise.
+    public func loadFocusTab(_ tab: RepoTab, repo: String, swe: SweClient) async {
+        let key = BoardKey(repo: repo, tab: tab)
+        guard !focusLoading.contains(key) else {
+            focusQueued.insert(key)
+            return
+        }
+        focusLoading.insert(key)
+        defer {
+            focusLoading.remove(key)
+            if focusQueued.remove(key) != nil {
+                Task { await loadFocusTab(tab, repo: repo, swe: swe) }
+            }
+        }
+        do {
+            switch tab {
+            case .pulls:
+                apply(try await swe.ghPullRequests(repo: repo, state: "all"),
+                      to: key, \.pulls, store: .focus) { $0.pullRequests ?? [] }
+            case .issues:
+                apply(try await swe.ghIssues(repo: repo, state: "all"),
+                      to: key, \.issues, store: .focus) { $0.issues ?? [] }
+            case .actions:
+                apply(try await swe.ghRuns(repo: repo),
+                      to: key, \.runs, store: .focus) { $0.runs ?? [] }
+            case .pages:
+                apply(try await swe.ghPages(repo: repo),
+                      to: key, \.pages, store: .focus) { $0.pages }
+            case .releases:
+                apply(try await swe.ghReleases(repo: repo),
+                      to: key, \.releases, store: .focus) { $0.releases ?? [] }
+            case .tags:
+                apply(try await swe.ghTags(repo: repo),
+                      to: key, \.tags, store: .focus) { $0.tags ?? [] }
+            case .branches:
+                apply(try await swe.ghBranches(repo: repo),
+                      to: key, \.branches, store: .focus) { $0.branches ?? [] }
+            }
+        } catch is CancellationError {
+        } catch {
+            var board = focusBoards[repo] ?? RepoBoard()
+            board.fail(tab, message: error.localizedDescription)
+            focusBoards[repo] = board
+        }
+    }
+
+    /// The focus page's Refresh — the visible surface only, matching
+    /// the dashboard's manual refresh.
+    public func refreshFocus(repo: String, swe: SweClient) async {
+        await loadFocusTab(focusTab, repo: repo, swe: swe)
+    }
+
     /// The GitHub notifications inbox; refetches when stale or forced.
     public func loadInbox(swe: SweClient, force: Bool = false) async {
         if case .loading = inbox { return }
@@ -503,7 +611,11 @@ public final class GitHubModel {
             boards[name] = nil
             boardHydrated.remove(name)
             for key in fetched.keys where key.repo == name { fetched[key] = nil }
+            focusBoards[name] = nil
+            for key in focusFetched.keys where key.repo == name { focusFetched[key] = nil }
             if selected == name { selected = pins.first?.name }
+            // The focus page dies with its pin — the dashboard takes over.
+            if focused == name { focused = nil }
             pinError = nil
             scheduleSave()
             return true
@@ -564,6 +676,7 @@ public final class GitHubModel {
             if let error = reply.error { actionError = error; return error }
             actionError = nil
             for k in fetched.keys where k.repo == repo { fetched[k] = nil }
+            for k in focusFetched.keys where k.repo == repo { focusFetched[k] = nil }
             var board = boards[repo] ?? RepoBoard()
             if reply.merged, case .loaded(let prs) = board.pulls,
                let number = Int(ref) {
@@ -596,6 +709,7 @@ public final class GitHubModel {
             if let error = reply.error { actionError = error; return error }
             actionError = nil
             fetched[BoardKey(repo: repo, tab: .actions)] = nil
+            focusFetched[BoardKey(repo: repo, tab: .actions)] = nil
             return nil
         } catch is CancellationError {
             return "Cancelled."
@@ -731,12 +845,17 @@ public final class GitHubModel {
 
     // MARK: - internals
 
+    /// Which board map a surface reply lands in — the dashboard's
+    /// `boards` or the focus page's `focusBoards`.
+    private enum Store { case dashboard, focus }
+
     /// Pull the entry for the repo out of a surface reply and write it to
     /// the board slot `path`. `.ok` loads the rows; any other status —
     /// or no entry at all — is a failure carrying swe's `error`.
     private func apply<Entry: GhEntryFields, Row: Equatable & Sendable>(
         _ reply: GhResults<Entry>, to key: BoardKey,
         _ path: WritableKeyPath<RepoBoard, Loadable<Row>>,
+        store: Store = .dashboard,
         rows: (Entry) -> Row
     ) {
         env = reply.github
@@ -749,11 +868,19 @@ public final class GitHubModel {
         } else {
             value = .failed("swe returned no result for \(key.repo)")
         }
-        var board = boards[key.repo] ?? RepoBoard()
-        board[keyPath: path] = value
-        boards[key.repo] = board
-        if case .loaded = value { fetched[key] = now() }
-        scheduleSave()
+        switch store {
+        case .dashboard:
+            var board = boards[key.repo] ?? RepoBoard()
+            board[keyPath: path] = value
+            boards[key.repo] = board
+            if case .loaded = value { fetched[key] = now() }
+            scheduleSave()
+        case .focus:
+            var board = focusBoards[key.repo] ?? RepoBoard()
+            board[keyPath: path] = value
+            focusBoards[key.repo] = board
+            if case .loaded = value { focusFetched[key] = now() }
+        }
     }
 
     // MARK: - warm-start snapshot
