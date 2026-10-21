@@ -71,7 +71,7 @@ struct PrDetailSheet: View {
                 let body = pr.body.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !body.isEmpty {
                     section("Description") {
-                        Text(markdown(body))
+                        MarkdownBody(body: body)
                             .font(Theme.bodySmall)
                             .foregroundStyle(Theme.textSecondary)
                             .lineSpacing(3)
@@ -94,21 +94,22 @@ struct PrDetailSheet: View {
 
         HStack(spacing: 10) {
             if pr.state == .open {
-                Picker("Method", selection: $method) {
-                    Text("Squash").tag("squash")
-                    Text("Merge").tag("merge")
-                    Text("Rebase").tag("rebase")
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 200)
+                SelectMenu(options: [
+                    (value: "squash", title: "Squash and merge"),
+                    (value: "rebase", title: "Rebase and merge"),
+                    (value: "merge", title: "Create a merge commit"),
+                ], selection: $method, width: 172)
                 Button {
                     Task { await merge(auto: false) }
                 } label: {
-                    if merging { ProgressView().controlSize(.small) }
-                    else { Text("Merge") }
+                    if merging {
+                        ProgressView().controlSize(.small)
+                            .tint(Theme.successForeground)
+                    } else {
+                        Text("Merge")
+                    }
                 }
-                .primaryButton()
+                .successButton()
                 .fixedSize()
                 .disabled(merging || pr.draft || pr.mergeable == .conflicting)
                 .help(pr.draft ? "Draft PRs can't merge"
@@ -188,28 +189,6 @@ struct PrDetailSheet: View {
                 }
             }
         }
-    }
-
-    /// The PR body as rendered markdown: Apple's parser covers emphasis,
-    /// links, lists and code through presentation intent; the heading
-    /// pass gives `##` lines real sizes since `Text` leaves those to us.
-    private func markdown(_ body: String) -> AttributedString {
-        var text = (try? AttributedString(
-            markdown: body,
-            options: .init(interpretedSyntax: .full,
-                           failurePolicy: .returnPartiallyParsedIfPossible)))
-            ?? AttributedString(body)
-        for run in text.runs {
-            guard let intent = run.presentationIntent else { continue }
-            for component in intent.components {
-                guard case .header(let level) = component.kind else { continue }
-                let sizes: [CGFloat] = [17, 15, 14, 13, 13, 13]
-                text[run.range].font = NSFont.systemFont(
-                    ofSize: sizes[min(max(level, 1), 6) - 1], weight: .semibold)
-                text[run.range].foregroundColor = NSColor(Theme.textPrimary)
-            }
-        }
-        return text
     }
 
     /// The check list, folded until asked — the header carries the pass
@@ -337,6 +316,113 @@ private struct CheckGlyph: View {
         case "failing": Theme.danger
         case "running": Theme.warning
         default: Theme.textMuted
+        }
+    }
+}
+
+/// The PR body, segmented by `GitHubMarkdown`: prose between `<details>`
+/// folds renders as markdown; each fold collapses to its `<summary>`
+/// line — the way GitHub renders them.
+private struct MarkdownBody: View {
+    let segments: [MarkdownSegment]
+
+    init(body: String) { segments = GitHubMarkdown.segments(body) }
+    init(segments: [MarkdownSegment]) { self.segments = segments }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(segments.enumerated()), id: \.offset) { _, seg in
+                switch seg {
+                case .markdown(let md):
+                    Text(Self.markdown(md))
+                case .details(let title, let inner):
+                    DetailsSection(title: title, segments: inner)
+                }
+            }
+        }
+    }
+
+    /// Rendered markdown: Apple's parser covers emphasis, links, lists
+    /// and code through presentation intent — but paragraphs live only
+    /// in the intent, not the characters, so `Text` would fuse them.
+    /// A `\n` goes in wherever the paragraph component's id changes,
+    /// then the heading pass gives `##` lines real sizes.
+    static func markdown(_ md: String) -> AttributedString {
+        let parsed = (try? AttributedString(
+            markdown: md,
+            options: .init(interpretedSyntax: .full,
+                           failurePolicy: .returnPartiallyParsedIfPossible)))
+            ?? AttributedString(md)
+        var text = AttributedString()
+        var paragraph: PresentationIntent.IntentType?
+        for run in parsed.runs {
+            let intent = run.presentationIntent
+            let para = intent?.components
+                .first { $0.kind == .paragraph }
+            if let intent, let para, para != paragraph,
+               !text.characters.isEmpty {
+                text += AttributedString("\n")
+                // Text draws no list bullets or quote rail — the
+                // markers are characters, so they show.
+                let kinds = intent.components.map(\.kind)
+                let quoteDepth = kinds.filter { $0 == .blockQuote }.count
+                text += AttributedString(String(repeating: "│ ", count: quoteDepth))
+                if kinds.contains(.unorderedList) {
+                    let depth = kinds.filter { $0 == .unorderedList }.count
+                    text += AttributedString(String(repeating: "  ", count: depth - 1) + "• ")
+                } else if kinds.contains(.orderedList),
+                          let item = intent.components.first(where: {
+                              if case .listItem = $0.kind { return true }
+                              return false }),
+                          case .listItem(let ordinal) = item.kind {
+                    text += AttributedString("\(ordinal). ")
+                }
+            }
+            paragraph = para
+            text += AttributedString(parsed[run.range])
+        }
+        for run in text.runs {
+            guard let intent = run.presentationIntent else { continue }
+            for component in intent.components {
+                guard case .header(let level) = component.kind else { continue }
+                let sizes: [CGFloat] = [17, 15, 14, 13, 13, 13]
+                text[run.range].font = NSFont.systemFont(
+                    ofSize: sizes[min(max(level, 1), 6) - 1], weight: .semibold)
+                text[run.range].foregroundColor = NSColor(Theme.textPrimary)
+            }
+        }
+        return text
+    }
+}
+
+/// A `<details>` block: the `<summary>` line behind the same fold
+/// affordance as Checks, its segments rendered inside when opened.
+private struct DetailsSection: View {
+    let title: String
+    let segments: [MarkdownSegment]
+    @State private var open = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { open.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Theme.textMuted)
+                        .rotationEffect(open ? .degrees(90) : .zero)
+                    Text(MarkdownBody.markdown(title))
+                        .font(Theme.bodySmall)
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                }
+            }
+            .plainButton()
+            if open {
+                MarkdownBody(segments: segments)
+                    .padding(.leading, 12)
+            }
         }
     }
 }
