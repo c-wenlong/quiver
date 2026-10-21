@@ -506,7 +506,12 @@ public actor Ledger {
             let data = try Data(contentsOf: URL(fileURLWithPath: path))
             indexer.beginFile(path: path, harness: harness, sessionID: sessionID)
             indexer.consume(line: data)
-            if try indexer.finishFile(path: path, stat: stat, byteOffset: Int64(info.size)) {
+            if try indexer.finishFile(
+                path: path, stat: stat,
+                // The pair fingerprint: `readNeed` expects byteOffset ==
+                // sizeBytes for `.current`, and sizeBytes now covers the
+                // sidecar too (same convention the OpenCode path uses).
+                byteOffset: stat.sizeBytes ?? Int64(info.size)) {
                 report.filesIndexed += 1
             }
         } catch {
@@ -649,7 +654,12 @@ public actor Ledger {
                 with: Data(contentsOf: messagesURL)) as? [String: Any] {
                 indexer.consume(object: messages)
             }
-            if try indexer.finishFile(path: path, stat: stat, byteOffset: Int64(info.size)) {
+            if try indexer.finishFile(
+                path: path, stat: stat,
+                // The pair fingerprint: `readNeed` expects byteOffset ==
+                // sizeBytes for `.current`, and sizeBytes now covers the
+                // sidecar too (same convention the OpenCode path uses).
+                byteOffset: stat.sizeBytes ?? Int64(info.size)) {
                 report.filesIndexed += 1
             }
         } catch {
@@ -702,7 +712,12 @@ public actor Ledger {
                     indexer.consume(object: context)
                 }
             }
-            if try indexer.finishFile(path: path, stat: stat, byteOffset: Int64(info.size)) {
+            if try indexer.finishFile(
+                path: path, stat: stat,
+                // The pair fingerprint: `readNeed` expects byteOffset ==
+                // sizeBytes for `.current`, and sizeBytes now covers the
+                // sidecar too (same convention the OpenCode path uses).
+                byteOffset: stat.sizeBytes ?? Int64(info.size)) {
                 report.filesIndexed += 1
             }
         } catch {
@@ -736,14 +751,14 @@ public actor Ledger {
             break
         }
         do {
-            // The session id is the validated UUID filename (the predicate
-            // admitted only those); the records carry none, so it arrives
-            // as the path-derived hint — a metadata-only session still
-            // commits.
-            indexer.beginFile(path: path, harness: .kiro, sessionID: sessionID)
             let manifest = try? JSONSerialization.jsonObject(
                 with: Data(contentsOf: URL(fileURLWithPath: path))) as? [String: Any]
             let listed = manifest != nil && JSONValue.string(manifest?["parent_session_id"]) == nil
+            // The session id is the validated UUID filename — but only for
+            // a listed session: a child manifest (`parent_session_id`) or
+            // a malformed one commits `.none` like Orca's early return.
+            indexer.beginFile(
+                path: path, harness: .kiro, sessionID: listed ? sessionID : nil)
             if listed {
                 indexer.consume(object: manifest!)
                 indexer.consumeTimeline(manifest?["created_at"])
@@ -753,7 +768,12 @@ public actor Ledger {
                     report.skippedLines += result.skippedLines
                 }
             }
-            if try indexer.finishFile(path: path, stat: stat, byteOffset: Int64(info.size)) {
+            if try indexer.finishFile(
+                path: path, stat: stat,
+                // The pair fingerprint: `readNeed` expects byteOffset ==
+                // sizeBytes for `.current`, and sizeBytes now covers the
+                // sidecar too (same convention the OpenCode path uses).
+                byteOffset: stat.sizeBytes ?? Int64(info.size)) {
                 report.filesIndexed += 1
             }
         } catch {
@@ -799,7 +819,12 @@ public actor Ledger {
                     report.skippedLines += result.skippedLines
                 }
             }
-            if try indexer.finishFile(path: path, stat: stat, byteOffset: Int64(info.size)) {
+            if try indexer.finishFile(
+                path: path, stat: stat,
+                // The pair fingerprint: `readNeed` expects byteOffset ==
+                // sizeBytes for `.current`, and sizeBytes now covers the
+                // sidecar too (same convention the OpenCode path uses).
+                byteOffset: stat.sizeBytes ?? Int64(info.size)) {
                 report.filesIndexed += 1
             }
         } catch {
@@ -857,7 +882,12 @@ public actor Ledger {
                 }
                 indexer.consumeEndOfFile()
             }
-            if try indexer.finishFile(path: path, stat: stat, byteOffset: Int64(info.size)) {
+            if try indexer.finishFile(
+                path: path, stat: stat,
+                // The pair fingerprint: `readNeed` expects byteOffset ==
+                // sizeBytes for `.current`, and sizeBytes now covers the
+                // sidecar too (same convention the OpenCode path uses).
+                byteOffset: stat.sizeBytes ?? Int64(info.size)) {
                 report.filesIndexed += 1
             }
         } catch {
