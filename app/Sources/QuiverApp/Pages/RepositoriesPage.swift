@@ -15,6 +15,7 @@ struct RepositoriesPage: View {
     @Environment(\.openURL) private var openURL
     @State private var adding = false
     @State private var managing = false
+    @State private var jumping = false
 
     private var model: GitHubModel { app.github }
 
@@ -37,6 +38,12 @@ struct RepositoriesPage: View {
                         DispatchQueue.main.async { adding = true }
                     }
                 }
+                Button { jumping = true } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+                .iconButton()
+                .keyboardShortcut("k", modifiers: .command)
+                .help("Jump to a repository (⌘K)")
                 Button("Refresh", systemImage: "arrow.clockwise") {
                     Task {
                         for repo in visibleRepos {
@@ -106,6 +113,9 @@ struct RepositoriesPage: View {
         }
         .sheet(isPresented: $adding) {
             AddRepoSheet()
+        }
+        .sheet(isPresented: $jumping) {
+            RepoJumper()
         }
     }
 
@@ -439,6 +449,16 @@ private struct RepoManager: View {
 
     private var model: GitHubModel { app.github }
 
+    /// Pins grouped by their `owner/` — the header only earns its row
+    /// when more than one owner exists.
+    private var groups: [(owner: String, pins: [PinnedRepo])] {
+        Dictionary(grouping: model.pins) { pin in
+            String(pin.name.split(separator: "/", maxSplits: 1).first ?? "")
+        }
+        .sorted { $0.key < $1.key }
+        .map { ($0.key, $0.value.sorted { $0.name < $1.name }) }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Pinned repositories")
@@ -449,30 +469,39 @@ private struct RepoManager: View {
                     .font(Theme.caption).foregroundStyle(Theme.textMuted)
                     .padding(.vertical, 6)
             }
-            ForEach(model.pins) { pin in
-                HStack(spacing: 8) {
-                    Text(pin.name)
-                        .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1).truncationMode(.middle)
-                    Spacer(minLength: 8)
-                    Button {
-                        if let url = URL(string: "https://github.com/\(pin.name)") { openURL(url) }
-                    } label: {
-                        Image(systemName: "arrow.up.right.square")
-                            .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
-                    }
-                    .plainButton()
-                    .help("Open on GitHub")
-                    Button {
-                        Task { await model.removeRepo(pin.name, swe: app.swe) }
-                    } label: {
-                        Image(systemName: "minus.circle")
-                            .font(.system(size: 13)).foregroundStyle(Theme.dangerText)
-                    }
-                    .plainButton()
-                    .help("Unpin \(pin.name)")
+            ForEach(groups, id: \.owner) { owner, pins in
+                if groups.count > 1 {
+                    Text(owner)
+                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                        .padding(.top, 4)
                 }
-                .padding(.vertical, 3)
+                ForEach(pins) { pin in
+                    HStack(spacing: 8) {
+                        Text(groups.count > 1
+                             ? String(pin.name.split(separator: "/").last ?? "")
+                             : pin.name)
+                            .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1).truncationMode(.middle)
+                        Spacer(minLength: 8)
+                        Button {
+                            if let url = URL(string: "https://github.com/\(pin.name)") { openURL(url) }
+                        } label: {
+                            Image(systemName: "arrow.up.right.square")
+                                .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                        }
+                        .plainButton()
+                        .help("Open on GitHub")
+                        Button {
+                            Task { await model.removeRepo(pin.name, swe: app.swe) }
+                        } label: {
+                            Image(systemName: "minus.circle")
+                                .font(.system(size: 13)).foregroundStyle(Theme.dangerText)
+                        }
+                        .plainButton()
+                        .help("Unpin \(pin.name)")
+                    }
+                    .padding(.vertical, 3)
+                }
             }
             Divider().overlay(Theme.rowDivider).padding(.vertical, 6)
             Button(action: onAdd) {
