@@ -21,7 +21,7 @@ public enum RepoTab: String, CaseIterable, Identifiable, Sendable {
 /// All seven surfaces' state for one pinned repo. Each loads on first
 /// visit and is re-fetched by refresh and the page's poll loop; a surface
 /// that was never asked for stays `.idle` rather than reading as empty.
-public struct RepoBoard: Equatable, Sendable {
+public struct RepoBoard: Codable, Equatable, Sendable {
     public var pulls: Loadable<[GhPr]> = .idle
     public var issues: Loadable<[GhIssue]> = .idle
     public var runs: Loadable<[GhRun]> = .idle
@@ -125,10 +125,16 @@ public final class GitHubModel {
     private var generation = 0
     private let now: () -> Date
     private let staleAfter: TimeInterval
+    /// Where the warm-start snapshot lives; nil (tests) disables disk.
+    private let snapshotFile: URL?
+    private var snapshotTask: Task<Void, Never>?
 
-    public init(now: @escaping () -> Date = Date.init, staleAfter: TimeInterval = 60) {
+    public init(now: @escaping () -> Date = Date.init, staleAfter: TimeInterval = 60,
+                snapshotFile: URL? = nil) {
         self.now = now
         self.staleAfter = staleAfter
+        self.snapshotFile = snapshotFile
+        restore()
     }
 
     /// The env is unusable when the probe says so — surface reads can
@@ -250,6 +256,7 @@ public final class GitHubModel {
         }
         inbox = next
         if case .loaded = next { inboxFetchedAt = now() }
+        scheduleSave()
     }
 
     /// Search repos to pin. A new query supersedes the one in flight.
@@ -312,6 +319,7 @@ public final class GitHubModel {
             for key in fetched.keys where key.repo == name { fetched[key] = nil }
             if selected == name { selected = pins.first?.name }
             pinError = nil
+            scheduleSave()
             return true
         } catch {
             pinError = error.localizedDescription
@@ -343,6 +351,63 @@ public final class GitHubModel {
         board[keyPath: path] = value
         boards[key.repo] = board
         if case .loaded = value { fetched[key] = now() }
+        scheduleSave()
+    }
+
+    // MARK: - warm-start snapshot
+
+    /// Hydrate boards, fetch times and the inbox from the last quit's
+    /// file. Everything restored is stale by definition — the stale
+    /// machinery refetches it on the first look; this only decides what
+    /// the first frame shows.
+    private func restore() {
+        guard let url = snapshotFile,
+              let data = try? Data(contentsOf: url),
+              let snap = try? JSONDecoder().decode(GitHubSnapshot.self, from: data)
+        else { return }
+        boards = snap.boards
+        for (key, at) in snap.fetched {
+            guard let sep = key.lastIndex(of: "|"),
+                  let tab = RepoTab(rawValue: String(key[sep...].dropFirst()))
+            else { continue }
+            fetched[BoardKey(repo: String(key[..<sep]), tab: tab)] = at
+        }
+        if snap.inboxFetchedAt != nil || !snap.inbox.isEmpty {
+            inbox = .loaded(snap.inbox)
+            inboxFetchedAt = snap.inboxFetchedAt
+        }
+    }
+
+    /// Coalesce bursts — a tab switch can fill several surfaces in one
+    /// second — into one atomic write.
+    private func scheduleSave() {
+        guard snapshotFile != nil else { return }
+        snapshotTask?.cancel()
+        snapshotTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled else { return }
+            self?.saveNow()
+        }
+    }
+
+    /// Write the current state to disk, synchronously. Called from the
+    /// debounce and from `applicationWillTerminate`.
+    public func saveNow() {
+        guard let url = snapshotFile else { return }
+        var flat: [String: Date] = [:]
+        for (key, at) in fetched { flat["\(key.repo)|\(key.tab.rawValue)"] = at }
+        let rows: [GhNotification]
+        if case .loaded(let n) = inbox { rows = n } else { rows = [] }
+        let snap = GitHubSnapshot(
+            savedAt: now(), boards: boards, fetched: flat,
+            inbox: rows, inboxFetchedAt: inboxFetchedAt)
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONEncoder().encode(snap).write(to: url, options: .atomic)
+        } catch {
+            // A lost snapshot costs one cold start; never worth a crash.
+        }
     }
 }
 

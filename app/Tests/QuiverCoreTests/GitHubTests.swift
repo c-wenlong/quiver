@@ -346,4 +346,100 @@ import Testing
         }
         #expect(again.count == 1)
     }
+
+    // MARK: - warm-start snapshot
+
+    private func tempSnapshot() -> URL {
+        FileManager.default.temporaryDirectory
+            .appending(path: "gh-test-\(UUID().uuidString).json")
+    }
+
+    private let prRows = "[{\"number\":7,\"title\":\"Fix\",\"state\":\"open\",\"draft\":false,"
+        + "\"author\":\"me\",\"branch\":\"f\",\"base\":\"main\",\"labels\":[],"
+        + "\"mergeable\":\"mergeable\",\"review_decision\":\"approved\",\"checks\":\"passing\","
+        + "\"updated_at\":\"2026-10-20T00:00:00Z\",\"url\":\"https://github.com/o/a/pull/7\"}]"
+
+    /// A quit-and-relaunch shows the last rows before any fetch lands,
+    /// with the fetch times that make them stale.
+    @Test func snapshotRestoresBoardsAndInbox() async {
+        let file = tempSnapshot()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let swe = SweClient(runner: router([
+            "gh pr --state=open --limit=50 --repo=o/a --json":
+                "\(env),\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"pull_requests\":\(prRows)}]",
+            "gh inbox --limit=50 --all --json":
+                "\(env),\"status\":\"ok\",\"notifications\":[{"
+                + "\"id\":\"n1\",\"repo\":\"o/a\",\"title\":\"PR #7\",\"type\":\"PullRequest\","
+                + "\"reason\":\"review_requested\",\"unread\":true,"
+                + "\"updated_at\":\"2026-10-20T00:00:00Z\",\"url\":\"https://github.com/o/a/pull/7\"}]",
+        ]))
+        let first = GitHubModel(snapshotFile: file)
+        await first.loadTab(.pulls, repo: "o/a", swe: swe)
+        await first.loadInbox(swe: swe)
+        first.saveNow()
+
+        let second = GitHubModel(snapshotFile: file)
+        guard case .loaded(let prs) = second.board(for: "o/a").pulls else {
+            Issue.record("restored board should hold pulls")
+            return
+        }
+        #expect(prs.first?.number == 7)
+        guard case .loaded(let notes) = second.inbox else {
+            Issue.record("restored inbox should hold notifications")
+            return
+        }
+        #expect(notes.first?.id == "n1")
+    }
+
+    /// Hydrated rows count as loaded-but-stale: the first look refetches
+    /// rather than trusting a day-old file.
+    @Test func restoredBoardRefetchesWhenStale() async {
+        let file = tempSnapshot()
+        defer { try? FileManager.default.removeItem(at: file) }
+        var snap = GitHubSnapshot(
+            savedAt: Date(timeIntervalSince1970: 1_000), boards: [:], fetched: [:],
+            inbox: [], inboxFetchedAt: nil)
+        var board = RepoBoard()
+        board.issues = .loaded([])
+        snap.boards["o/a"] = board
+        snap.fetched["o/a|issues"] = Date(timeIntervalSince1970: 1_000)
+        try? JSONEncoder().encode(snap).write(to: file)
+
+        let now = Date(timeIntervalSince1970: 10_000)
+        let model = GitHubModel(now: { now }, staleAfter: 60, snapshotFile: file)
+        model.selected = "o/a"
+        model.tab = .issues
+        let calls = router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
+            "--repo=o/a --json":
+                "\(env),\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"issues\":[]}]",
+        ])
+        await model.loadIfStale(swe: SweClient(runner: calls))
+        // The overview loads the pin list; the stale restored surface refetches.
+        #expect(calls.calls.count == 2)
+        #expect(calls.calls.last?.contains("--repo=o/a") == true)
+    }
+
+    @Test func corruptSnapshotIsAColdStart() {
+        let file = tempSnapshot()
+        defer { try? FileManager.default.removeItem(at: file) }
+        try? Data("not json".utf8).write(to: file)
+        let model = GitHubModel(snapshotFile: file)
+        #expect(model.boards.isEmpty)
+        if case .idle = model.inbox {} else {
+            Issue.record("inbox should be idle after a corrupt snapshot")
+        }
+    }
+
+    /// `.loading` has no reply coming after a quit; it must restore as
+    /// `.idle`, not a stuck spinner.
+    @Test func loadingSurfaceRestoresAsIdle() throws {
+        var board = RepoBoard()
+        board.pulls = .loading
+        let data = try JSONEncoder().encode(board)
+        let decoded = try JSONDecoder().decode(RepoBoard.self, from: data)
+        if case .idle = decoded.pulls {} else {
+            Issue.record(".loading must decode as .idle")
+        }
+    }
 }
