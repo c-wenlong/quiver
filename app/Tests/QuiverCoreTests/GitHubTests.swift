@@ -506,4 +506,48 @@ import Testing
             Issue.record(".loading must decode as .idle")
         }
     }
+
+    /// `invalidate` drops the repo's fetch times; with that repo off
+    /// screen nothing refetches until it is looked at again — inside the
+    /// stale window included.
+    @Test func invalidateDropsFetchTimesForOffscreenRepo() async {
+        let calls = router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100},{\"name\":\"o/b\",\"added_at\":200}]",
+            "--repo=o/b --json": "\(env),\"results\":[{\"repo\":\"o/b\",\"status\":\"ok\",\"pull_requests\":[]}]",
+            "--repo=o/a --json": "\(env),\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"pull_requests\":[]}]",
+        ])
+        let swe = SweClient(runner: calls)
+        let model = GitHubModel()
+        await model.load(swe: swe)
+        await model.loadTab(.pulls, repo: "o/b", swe: swe)
+        let filled = calls.calls.count
+        // o/b is not selected: no immediate reload.
+        model.invalidate(repo: "o/b", swe: swe)
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(calls.calls.count == filled)
+        // But its times are gone: looking at it refetches despite the
+        // stale window.
+        model.selected = "o/b"
+        await model.loadIfStale(swe: swe)
+        #expect(calls.calls.count == filled + 1)
+    }
+
+    /// With the notified repo on screen, `invalidate` refreshes the
+    /// visible tab immediately so the row moves with the banner.
+    @Test func invalidateRefreshesTheSelectedRepoNow() async {
+        let calls = router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
+            "--repo=o/a --json": "\(env),\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"pull_requests\":[]}]",
+        ])
+        let swe = SweClient(runner: calls)
+        let model = GitHubModel()
+        await model.load(swe: swe)
+        await model.loadIfStale(swe: swe)
+        let filled = calls.calls.count
+        model.invalidate(repo: "o/a", swe: swe)
+        for _ in 0..<200 where calls.calls.count == filled {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(calls.calls.count == filled + 1)
+    }
 }

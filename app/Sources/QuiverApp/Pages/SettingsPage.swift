@@ -203,11 +203,17 @@ private struct SettingsSectionView: View {
     private var notificationsCard: some View {
         SettingsCard {
             @Bindable var limits = app.limits
+            @Bindable var githubNotify = app.githubNotify
             SettingRow(title: "Notify about limits",
                        detail: "When a limit reaches 90%, and again when it resets after that. Once per window.",
                        warning: app.limits.notificationsBlocked && app.limits.notifyEnabled
                            ? "Notifications for Quiver are off in System Settings > Notifications." : nil) {
                 SettingSwitch(title: "Notify about limits", isOn: $limits.notifyEnabled)
+            }
+            SettingsDivider()
+            SettingRow(title: "Notify about GitHub",
+                       detail: "New inbox notifications banner while the app runs; a click opens the repo's board.") {
+                SettingSwitch(title: "Notify about GitHub", isOn: $githubNotify.bannersEnabled)
             }
             SettingsDivider()
             SettingRow(title: "Refresh only what failed for",

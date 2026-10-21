@@ -194,6 +194,16 @@ public final class GitHubModel {
         await loadTab(tab, repo: repo, swe: swe)
     }
 
+    /// A new notification names a repo whose rows may have moved: drop
+    /// its fetch times so the next look refetches, and refresh it now
+    /// when it is the repo on screen.
+    public func invalidate(repo: String, swe: SweClient) {
+        for key in fetched.keys where key.repo == repo { fetched[key] = nil }
+        if selected == repo {
+            Task { await loadTab(tab, repo: repo, swe: swe) }
+        }
+    }
+
     /// Manual refresh always fetches, even inside the stale window.
     public func refresh(swe: SweClient) async {
         if pinsFetchedAt == nil { await load(swe: swe) }
