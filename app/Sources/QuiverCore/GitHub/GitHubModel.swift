@@ -513,6 +513,142 @@ public final class GitHubModel {
         }
     }
 
+    // MARK: - PR detail + write actions
+
+    /// A PR detail keyed `owner/name#number`, filled on the sheet's open
+    /// and stale-while-revalidate on later opens — the last good read
+    /// stays on screen while a fresh one lands.
+    public private(set) var prDetails: [String: Loadable<GhPrDetail>] = [:]
+    /// A merge, rerun or mark-read in flight — keyed so the same
+    /// action on the same object can't fire twice.
+    public private(set) var actionBusy: Set<String> = []
+    /// The last action's failure, for surfaces (context menus) with no
+    /// natural place to carry a returned error.
+    public private(set) var actionError: String?
+
+    /// The sheet's read — always fetches fresh (a PR's state moves);
+    /// `.loaded` rows stay on screen while the new reply lands.
+    public func loadPrDetail(repo: String, number: Int, swe: SweClient) async {
+        let key = "\(repo)#\(number)"
+        if case .loading = prDetails[key] { return }
+        if prDetails[key] == nil { prDetails[key] = .loading }
+        do {
+            let reply = try await swe.ghPrView(repo: repo, ref: "\(number)")
+            env = reply.github
+            probed = true
+            prDetails[key] = reply.pr.map { .loaded($0) }
+                ?? .failed(reply.error ?? "GitHub returned \(reply.status)")
+        } catch is CancellationError {
+            // Same rule as the inbox: a cancelled first read must not
+            // strand `.loading` forever.
+            if case .loading = prDetails[key] { prDetails[key] = nil }
+        } catch {
+            prDetails[key] = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Merge a PR, or arm auto-merge — the reply's `error` is the
+    /// verdict, so a blocked env reads the same as a declined merge.
+    /// On success the pulls surface forgets its fetch time and the
+    /// row drops out optimistically; the next poll confirms it.
+    @discardableResult
+    public func mergePr(repo: String, ref: String, method: String, auto: Bool,
+                        swe: SweClient) async -> String? {
+        let key = "merge:\(repo)#\(ref)"
+        guard actionBusy.insert(key).inserted else { return nil }
+        defer { actionBusy.remove(key) }
+        do {
+            let reply = try await swe.ghPrMerge(repo: repo, ref: ref,
+                                                method: method, auto: auto)
+            env = reply.github
+            if let error = reply.error { actionError = error; return error }
+            actionError = nil
+            for k in fetched.keys where k.repo == repo { fetched[k] = nil }
+            var board = boards[repo] ?? RepoBoard()
+            if reply.merged, case .loaded(let prs) = board.pulls,
+               let number = Int(ref) {
+                board.pulls = .loaded(prs.filter { $0.number != number })
+                boards[repo] = board
+                scheduleSave()
+            }
+            return nil
+        } catch is CancellationError {
+            return "Cancelled."
+        } catch {
+            actionError = error.localizedDescription
+            return actionError
+        }
+    }
+
+    /// Re-run a workflow run — all jobs or only the failed ones.
+    /// Success just drops the runs surface's freshness so the next
+    /// look refetches; the run row itself flips on GitHub's schedule.
+    @discardableResult
+    public func rerunRun(repo: String, run: Int64, failedOnly: Bool,
+                         swe: SweClient) async -> String? {
+        let key = "rerun:\(repo)#\(run)"
+        guard actionBusy.insert(key).inserted else { return nil }
+        defer { actionBusy.remove(key) }
+        do {
+            let reply = try await swe.ghRunRerun(repo: repo, run: run,
+                                                 failedOnly: failedOnly)
+            env = reply.github
+            if let error = reply.error { actionError = error; return error }
+            actionError = nil
+            fetched[BoardKey(repo: repo, tab: .actions)] = nil
+            return nil
+        } catch is CancellationError {
+            return "Cancelled."
+        } catch {
+            actionError = error.localizedDescription
+            return actionError
+        }
+    }
+
+    /// Mark notification threads read — per id, or the whole inbox.
+    /// The local unread flags flip immediately; `unreadCount` (and so
+    /// the badges) moves without waiting on the next poll.
+    @discardableResult
+    public func markInboxRead(_ ids: [String], all: Bool = false,
+                              swe: SweClient) async -> String? {
+        guard all || !ids.isEmpty else { return nil }
+        let key = all ? "inbox:all" : "inbox:\(ids.sorted().joined(separator: ","))"
+        guard actionBusy.insert(key).inserted else { return nil }
+        defer { actionBusy.remove(key) }
+        do {
+            let reply = try await swe.ghInboxRead(ids: ids, all: all)
+            env = reply.github
+            if let error = reply.error { actionError = error; return error }
+            let missed = (reply.failed ?? []).map { "\($0.id): \($0.error)" }
+            if !missed.isEmpty {
+                actionError = missed.joined(separator: " · ")
+                return actionError
+            }
+            actionError = nil
+            if case .loaded(let notes) = inbox {
+                let done = Set(all ? notes.map(\.id) : reply.marked)
+                inbox = .loaded(notes.map {
+                    done.contains($0.id)
+                        ? GhNotification(id: $0.id, repo: $0.repo, title: $0.title,
+                                         type: $0.type, reason: $0.reason,
+                                         unread: false, updatedAt: $0.updatedAt,
+                                         url: $0.url)
+                        : $0
+                })
+                if case .loaded(let now) = inbox {
+                    snapshotInbox = now
+                }
+                scheduleSave()
+            }
+            return nil
+        } catch is CancellationError {
+            return "Cancelled."
+        } catch {
+            actionError = error.localizedDescription
+            return actionError
+        }
+    }
+
     // MARK: - filter
 
     /// What the filter matches against: the trimmed query.

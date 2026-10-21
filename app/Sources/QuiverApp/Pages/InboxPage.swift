@@ -18,6 +18,19 @@ struct InboxPage: View {
              subtitle: "GitHub notifications across your repos, via swe gh inbox.") {
             Toggle("Unread only", isOn: $unreadOnly)
                 .toggleStyle(GreenSwitchStyle())
+            if model.unreadCount > 0 {
+                Button {
+                    Task { await model.markInboxRead([], all: true, swe: app.swe) }
+                } label: {
+                    if model.actionBusy.contains("inbox:all") {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "envelope.open")
+                    }
+                }
+                .iconButton()
+                .help("Mark every notification read")
+            }
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task { await model.loadInbox(swe: app.swe, force: true) }
             }
@@ -42,6 +55,9 @@ struct InboxPage: View {
                         Task { await model.loadInbox(swe: app.swe, force: true) }
                     }
                 case .loaded(let notifications):
+                    if let error = model.actionError {
+                        ErrorCard(message: error)
+                    }
                     let rows = unreadOnly ? notifications.filter(\.unread) : notifications
                     if rows.isEmpty {
                         EmptyCard(text: unreadOnly ? "No unread notifications." : "The inbox is empty.",
@@ -52,6 +68,20 @@ struct InboxPage: View {
                                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, note in
                                     NotificationRow(note: note) {
                                         if let url = URL(string: note.url) { openURL(url) }
+                                    }
+                                    .contextMenu {
+                                        if note.unread {
+                                            Button("Mark as read") {
+                                                Task {
+                                                    await model.markInboxRead(
+                                                        [note.id], swe: app.swe)
+                                                }
+                                            }
+                                            Divider()
+                                        }
+                                        Button("Open on GitHub") {
+                                            if let url = URL(string: note.url) { openURL(url) }
+                                        }
                                     }
                                     if index < rows.count - 1 { Divider().overlay(Theme.rowDivider) }
                                 }
