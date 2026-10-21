@@ -37,33 +37,41 @@ struct AddRepoSheet: View {
             if let error = model.pinError ?? model.searchError {
                 Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
             }
-            if model.searching {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Searching GitHub…").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                }
-            } else if !model.searchResults.isEmpty {
+            // The droplist: five rows in view, the rest a scroll away.
+            // Results stay on screen while a re-search runs, so typing
+            // never flashes the list away and back.
+            if model.searching || !model.searchResults.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(model.searchResults.prefix(8).enumerated()), id: \.element.id) { index, hit in
-                        HitRow(hit: hit, pinned: model.pins.contains { $0.name == hit.name },
-                               working: model.mutating.contains(hit.name)) {
-                            pin(hit.name)
+                    if model.searching {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Searching GitHub…")
+                                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         }
-                        if index < min(model.searchResults.count, 8) - 1 {
-                            Divider().overlay(Theme.rowDivider)
+                        .padding(.vertical, 8).padding(.horizontal, 12)
+                        Divider().overlay(Theme.rowDivider)
+                    }
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(model.searchResults.enumerated()), id: \.element.id) { index, hit in
+                                HitRow(hit: hit, pinned: model.pins.contains { $0.name == hit.name },
+                                       working: model.mutating.contains(hit.name)) {
+                                    pin(hit.name)
+                                }
+                                if index < model.searchResults.count - 1 {
+                                    Divider().overlay(Theme.rowDivider)
+                                }
+                            }
                         }
                     }
+                    .frame(maxHeight: 280)
                 }
                 .padding(.vertical, 4)
-                .padding(.horizontal, 6)
                 .background(Theme.field, in: .rect(cornerRadius: Theme.controlRadius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
                     .strokeBorder(Theme.border, lineWidth: 1))
             }
             HStack {
-                Button("Search") { Task { await model.search(query, swe: app.swe) } }
-                    .secondaryButton()
-                    .disabled(model.searching || query.trimmingCharacters(in: .whitespaces).isEmpty)
                 Spacer()
                 Button("Cancel") { dismiss() }.secondaryButton()
                 if let direct = directInput {
@@ -77,7 +85,19 @@ struct AddRepoSheet: View {
             }
         }
         .sheetScaffold(width: 520)
-        .onAppear { Task { await model.search("", swe: app.swe) } }
+        // Typing is the search: each edit re-arms a 350ms debounce, and
+        // only a pause actually hits GitHub. An emptied field clears the
+        // list right away — `search("")` does that itself.
+        .task(id: query) {
+            if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                await model.search("", swe: app.swe)
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(350))
+            if !Task.isCancelled {
+                await model.search(query, swe: app.swe)
+            }
+        }
     }
 
     private func pin(_ name: String) {
