@@ -4,6 +4,7 @@ import io
 import json
 import subprocess
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
@@ -316,6 +317,11 @@ class TestCommands(unittest.TestCase):
         patcher = patch.object(paths, "GITHUB_FILE", self.store)
         patcher.start()
         self.addCleanup(patcher.stop)
+        self.owners_cache = Path(self.tmp.name) / "cache" / "github_owners.json"
+        owners_patcher = patch.object(paths, "GITHUB_OWNERS_CACHE",
+                                      self.owners_cache)
+        owners_patcher.start()
+        self.addCleanup(owners_patcher.stop)
 
     def _run_cli(self, args, run=None, env=None):
         out, err = io.StringIO(), io.StringIO()
@@ -829,6 +835,67 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("--owner octocat", seen["argv"])
         self.assertNotIn("org-one", seen["argv"])
+
+    def test_repo_search_owner_scope_is_cached(self):
+        """Each `swe` run is a new process — the owner scope persists
+        on disk so a typing pause doesn't refetch the same orgs."""
+        calls = []
+        run = _gh_run({
+            "user/orgs": _Proc(stdout="org-one\n"),
+            "search repos": _Proc(stdout="[]"),
+        })
+
+        def record(cmd, **kw):
+            calls.append(" ".join(str(a) for a in cmd))
+            return run(cmd, **kw)
+
+        self._run_cli(["repo", "search", "q"], run=record)
+        self._run_cli(["repo", "search", "q2"], run=record)
+        self.assertEqual(sum("user/orgs" in c for c in calls), 1)
+
+    def test_repo_search_owner_cache_expires(self):
+        self.owners_cache.parent.mkdir(parents=True, exist_ok=True)
+        self.owners_cache.write_text(json.dumps({"logins": {"octocat": {
+            "owners": ["octocat", "stale-org"],
+            "fetched_at": time.time() - 3600}}}))
+        seen = {}
+        run = _gh_run({
+            "user/orgs": _Proc(stdout="fresh-org\n"),
+            "search repos": _Proc(stdout="[]"),
+        })
+
+        def record(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            if "search repos" in joined:
+                seen["argv"] = joined
+            return run(cmd, **kw)
+
+        self._run_cli(["repo", "search", "q"], run=record)
+        self.assertIn("--owner fresh-org", seen["argv"])
+        self.assertNotIn("stale-org", seen["argv"])
+
+    def test_repo_search_owner_cache_is_per_login(self):
+        """A cache entry under another account must not scope this one —
+        `gh auth switch` means the login on file can differ."""
+        self.owners_cache.parent.mkdir(parents=True, exist_ok=True)
+        self.owners_cache.write_text(json.dumps({"logins": {"someone-else": {
+            "owners": ["someone-else", "their-org"],
+            "fetched_at": time.time()}}}))
+        seen = {}
+        run = _gh_run({
+            "user/orgs": _Proc(stdout="my-org\n"),
+            "search repos": _Proc(stdout="[]"),
+        })
+
+        def record(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            if "search repos" in joined:
+                seen["argv"] = joined
+            return run(cmd, **kw)
+
+        self._run_cli(["repo", "search", "q"], run=record)
+        self.assertIn("--owner my-org", seen["argv"])
+        self.assertNotIn("their-org", seen["argv"])
 
     def test_json_errors_leave_stdout_clean(self):
         run = _gh_run({
