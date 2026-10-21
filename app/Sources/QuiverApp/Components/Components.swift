@@ -96,6 +96,14 @@ extension View {
         buttonStyle(PrimaryButtonStyle()).focusRing(cornerRadius: Theme.controlRadius)
     }
 
+    /// The same primary shape in `success` green — the confirm action
+    /// for a good outcome (GitHub's merge button).
+    func successButton() -> some View {
+        buttonStyle(PrimaryButtonStyle(background: Theme.success,
+                                       foreground: Theme.successForeground))
+            .focusRing(cornerRadius: Theme.controlRadius)
+    }
+
     /// 32pt on the field fill with a strong hairline. A button made with
     /// `role: .destructive` gets its label in `dangerText`.
     func secondaryButton() -> some View {
@@ -168,13 +176,19 @@ struct FormField<Content: View>: View {
 }
 
 struct PrimaryButtonStyle: ButtonStyle {
+    var background = Theme.primaryBackground
+    var foreground = Theme.primaryForeground
+
     func makeBody(configuration: Configuration) -> some View {
-        PrimaryButtonBody(configuration: configuration)
+        PrimaryButtonBody(configuration: configuration,
+                          background: background, foreground: foreground)
     }
 }
 
 private struct PrimaryButtonBody: View {
     let configuration: ButtonStyleConfiguration
+    var background: Color
+    var foreground: Color
     @Environment(\.isEnabled) private var isEnabled
     @State private var hovering = false
 
@@ -184,8 +198,8 @@ private struct PrimaryButtonBody: View {
             .labelStyle(.titleAndIcon)
             .padding(.horizontal, 12)
             .frame(height: Theme.controlHeight)
-            .foregroundStyle(Theme.primaryForeground)
-            .background(Theme.primaryBackground, in: .rect(cornerRadius: Theme.controlRadius))
+            .foregroundStyle(foreground)
+            .background(background, in: .rect(cornerRadius: Theme.controlRadius))
             .scaleEffect(hovering && isEnabled && !configuration.isPressed ? 1.03 : 1)
             .opacity(isEnabled ? (configuration.isPressed ? 0.85 : 1) : 0.45)
             .animation(.easeOut(duration: Theme.fadeDuration), value: hovering)

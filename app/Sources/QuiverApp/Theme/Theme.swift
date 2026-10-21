@@ -61,6 +61,9 @@ enum Theme {
 
     static let usageTrack = Color(light: "#f5f5f5", dark: "#40404080")
     static let success = Color(light: "#10b981", dark: "#34d399")
+    /// Text on `success` as a fill — white on emerald-500 light,
+    /// near-black green on emerald-400 dark.
+    static let successForeground = Color(light: "#ffffff", dark: "#052e1e")
     static let warning = Color(light: "#f59e0b", dark: "#fbbf24")
     static let danger = Color(light: "#ef4444", dark: "#f87171")
     /// Danger and warning for text and glyphs. The roles above are for
