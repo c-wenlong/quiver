@@ -594,4 +594,23 @@ import Testing
         }
         #expect(calls.calls.count == 2)
     }
+
+    /// The badge count follows the loaded rows: only `unread` lines
+    /// count, and `.idle`/`.failed` read as zero rather than blocking.
+    @Test func unreadCountTracksLoadedInbox() async {
+        let calls = router([
+            "gh inbox --limit=50 --all --json":
+                "\(env),\"status\":\"ok\",\"notifications\":["
+                + "{\"id\":\"n1\",\"repo\":\"o/a\",\"title\":\"a\",\"type\":\"PullRequest\","
+                + "\"reason\":\"mention\",\"unread\":true,"
+                + "\"updated_at\":\"2026-10-20T00:00:00Z\",\"url\":\"https://github.com/o/a/pull/1\"},"
+                + "{\"id\":\"n2\",\"repo\":\"o/a\",\"title\":\"b\",\"type\":\"Issue\","
+                + "\"reason\":\"comment\",\"unread\":false,"
+                + "\"updated_at\":\"2026-10-20T00:00:00Z\",\"url\":\"https://github.com/o/a/issues/2\"}]",
+        ])
+        let model = GitHubModel()
+        #expect(model.unreadCount == 0)
+        await model.loadInbox(swe: SweClient(runner: calls))
+        #expect(model.unreadCount == 1)
+    }
 }
