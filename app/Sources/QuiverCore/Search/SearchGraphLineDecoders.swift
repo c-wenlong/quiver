@@ -184,7 +184,7 @@ enum SearchRovoDecoder {
                 texts.append(text)
             }
         }
-        return SearchText.titleCandidate(texts.joined(separator: " "), limit: 96)
+        return SearchText.bounded(texts.joined(separator: " "))
     }
 }
 
@@ -481,8 +481,10 @@ enum SearchGrokDecoder {
 /// (`consumeKimiWireTranscript`'s trailing `flushAssistant`).
 struct SearchKimiDecoder {
     struct State: Codable, Equatable, Sendable {
-        /// `content.part` text chunks since the last `step.end`.
+        /// `content.part` text chunks since the last `step.end`, capped at
+        /// the message bound — a runaway wire cannot out-allocate it.
         var pendingAssistant: [String] = []
+        var pendingChars: Int = 0
     }
 
     var state = State()
@@ -508,8 +510,10 @@ struct SearchKimiDecoder {
             switch event["type"] as? String {
             case "content.part":
                 let part = event["part"] as? [String: Any]
-                if part?["type"] as? String == "text", let text = part?["text"] as? String {
+                if part?["type"] as? String == "text", let text = part?["text"] as? String,
+                   state.pendingChars < SearchText.messageLimit {
                     state.pendingAssistant.append(text)
+                    state.pendingChars += text.utf16.count
                 }
             case "step.end":
                 return (flushAssistant(), hints)
@@ -537,6 +541,7 @@ struct SearchKimiDecoder {
     private mutating func flushAssistant() -> [SearchMessage] {
         let joined = state.pendingAssistant.joined()
         state.pendingAssistant = []
+        state.pendingChars = 0
         guard let text = SearchText.bounded(joined) else { return [] }
         return [SearchMessage(role: .assistant, text: text)]
     }

@@ -266,7 +266,11 @@ public struct SearchTranscriptSource: Sendable {
                 directoryPredicate: { _, _ in false },
                 isJSONL: false,
                 // The turns stream from the `<uuid>.jsonl` sibling.
-                sidecarPath: { URL(fileURLWithPath: $0.path + "l") }),
+                sidecarPath: { URL(fileURLWithPath: $0.path + "l") },
+                // The UUID filename is the session id; the records carry
+                // none (Orca's `sessionId: basename(file, '.json')`). A
+                // metadata-only session still commits.
+                sessionIDFromPath: { $0.deletingPathExtension().lastPathComponent }),
             SearchTranscriptSource(
                 harness: .rovo, agent: "rovo",
                 roots: [dir(".rovodev/sessions")],

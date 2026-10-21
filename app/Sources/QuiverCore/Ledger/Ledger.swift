@@ -423,7 +423,8 @@ public actor Ledger {
                             indexRovoFile(file, sessionID: pathSessionID,
                                           indexer: indexer, report: &report)
                         case .kiro:
-                            indexKiroFile(file, indexer: indexer, report: &report)
+                            indexKiroFile(file, sessionID: pathSessionID,
+                                          indexer: indexer, report: &report)
                         case .grok:
                             indexGrokFile(file, sessionID: pathSessionID,
                                           indexer: indexer, report: &report)
@@ -433,6 +434,20 @@ public actor Ledger {
                         case .cursor:
                             indexCursorFile(file, metaIndex: cursorMeta,
                                             indexer: indexer, report: &report)
+                        case .antigravity:
+                            if file.lastPathComponent == "transcript_full.jsonl" {
+                                // The compact sibling's predicate flipped to
+                                // skip the moment this file existed — its
+                                // already-indexed row would otherwise keep
+                                // answering searches forever.
+                                let compact = file.deletingLastPathComponent()
+                                    .appendingPathComponent("transcript.jsonl")
+                                try? indexer.store.removeFile(
+                                    compact.resolvingSymlinksInPath().path)
+                            }
+                            indexJSONLFile(file, harness: harness,
+                                           sessionID: pathSessionID,
+                                           indexer: indexer, report: &report)
                         case .gemini:
                             // Orca's `parseGeminiSessionFile` dispatches on
                             // the extension: `.jsonl` streams, the legacy
@@ -610,10 +625,11 @@ public actor Ledger {
         guard let info = FileInfo(path: path) else { return }
         let messagesURL = URL(fileURLWithPath: path)
             .deletingPathExtension().appendingPathExtension("messages.json")
+        let messagesInfo = FileInfo(path: messagesURL.path)
         let stat = SearchFileStat(
             ino: Int64(info.inode),
-            mtimeMs: max(info.modified, FileInfo(path: messagesURL.path)?.modified ?? 0) * 1000,
-            sizeBytes: Int64(info.size))
+            mtimeMs: max(info.modified, messagesInfo?.modified ?? 0) * 1000,
+            sizeBytes: Int64(info.size + (messagesInfo?.size ?? 0)))
         switch indexer.readNeed(path: path, stat: stat, ledgerOffset: nil) {
         case .current, .skip:
             return
@@ -654,10 +670,14 @@ public actor Ledger {
         guard let info = FileInfo(path: path) else { return }
         let contextURL = URL(fileURLWithPath: path)
             .deletingLastPathComponent().appendingPathComponent("session_context.json")
+        // The stat covers both files — size as well as mtime — so a
+        // sidecar delete or rewrite can never leave stale turns indexed
+        // behind an unchanged fingerprint.
+        let contextInfo = FileInfo(path: contextURL.path)
         let stat = SearchFileStat(
             ino: Int64(info.inode),
-            mtimeMs: max(info.modified, FileInfo(path: contextURL.path)?.modified ?? 0) * 1000,
-            sizeBytes: Int64(info.size))
+            mtimeMs: max(info.modified, contextInfo?.modified ?? 0) * 1000,
+            sizeBytes: Int64(info.size + (contextInfo?.size ?? 0)))
         switch indexer.readNeed(path: path, stat: stat, ledgerOffset: nil) {
         case .current, .skip:
             return
@@ -699,15 +719,16 @@ public actor Ledger {
     /// transcript's mtime blends into the stat; a missing transcript still
     /// yields the metadata-only session, as Orca's does.
     private func indexKiroFile(
-        _ url: URL, indexer: SearchIndexer, report: inout ScanReport
+        _ url: URL, sessionID: String?, indexer: SearchIndexer, report: inout ScanReport
     ) {
         let path = url.resolvingSymlinksInPath().path
         guard let info = FileInfo(path: path) else { return }
         let transcriptURL = URL(fileURLWithPath: path + "l")
+        let transcriptInfo = FileInfo(path: transcriptURL.path)
         let stat = SearchFileStat(
             ino: Int64(info.inode),
-            mtimeMs: max(info.modified, FileInfo(path: transcriptURL.path)?.modified ?? 0) * 1000,
-            sizeBytes: Int64(info.size))
+            mtimeMs: max(info.modified, transcriptInfo?.modified ?? 0) * 1000,
+            sizeBytes: Int64(info.size + (transcriptInfo?.size ?? 0)))
         switch indexer.readNeed(path: path, stat: stat, ledgerOffset: nil) {
         case .current, .skip:
             return
@@ -716,9 +737,10 @@ public actor Ledger {
         }
         do {
             // The session id is the validated UUID filename (the predicate
-            // admitted only those); the records carry none, and the stem
-            // fallback names it without a hint.
-            indexer.beginFile(path: path, harness: .kiro)
+            // admitted only those); the records carry none, so it arrives
+            // as the path-derived hint — a metadata-only session still
+            // commits.
+            indexer.beginFile(path: path, harness: .kiro, sessionID: sessionID)
             let manifest = try? JSONSerialization.jsonObject(
                 with: Data(contentsOf: URL(fileURLWithPath: path))) as? [String: Any]
             let listed = manifest != nil && JSONValue.string(manifest?["parent_session_id"]) == nil
@@ -752,10 +774,11 @@ public actor Ledger {
         guard let info = FileInfo(path: path) else { return }
         let historyURL = URL(fileURLWithPath: path)
             .deletingLastPathComponent().appendingPathComponent("chat_history.jsonl")
+        let historyInfo = FileInfo(path: historyURL.path)
         let stat = SearchFileStat(
             ino: Int64(info.inode),
-            mtimeMs: max(info.modified, FileInfo(path: historyURL.path)?.modified ?? 0) * 1000,
-            sizeBytes: Int64(info.size))
+            mtimeMs: max(info.modified, historyInfo?.modified ?? 0) * 1000,
+            sizeBytes: Int64(info.size + (historyInfo?.size ?? 0)))
         switch indexer.readNeed(path: path, stat: stat, ledgerOffset: nil) {
         case .current, .skip:
             return
@@ -797,10 +820,18 @@ public actor Ledger {
         let path = url.resolvingSymlinksInPath().path
         guard let info = FileInfo(path: path) else { return }
         let wireURL = SearchTranscriptSource.kimiWireURL(forStateFile: URL(fileURLWithPath: path))
+        // `session_index.jsonl` supplies the work dir, so its stamp blends
+        // into freshness alongside the wire transcript — a workdir-only
+        // change still re-reads.
+        let indexURL = Self.kimiSessionIndexURL(forStateFile: path)
+        let wireInfo = FileInfo(path: wireURL.path)
+        let sessionIndexInfo = FileInfo(path: indexURL.path)
         let stat = SearchFileStat(
             ino: Int64(info.inode),
-            mtimeMs: max(info.modified, FileInfo(path: wireURL.path)?.modified ?? 0) * 1000,
-            sizeBytes: Int64(info.size))
+            mtimeMs: max(info.modified, wireInfo?.modified ?? 0,
+                         sessionIndexInfo?.modified ?? 0) * 1000,
+            sizeBytes: Int64(info.size + (wireInfo?.size ?? 0)
+                             + (sessionIndexInfo?.size ?? 0)))
         switch indexer.readNeed(path: path, stat: stat, ledgerOffset: nil) {
         case .current, .skip:
             return
@@ -837,15 +868,20 @@ public actor Ledger {
 
     /// `<KIMI_CODE_HOME>/session_index.jsonl` — the shared session→workdir
     /// map four levels above a `state.json` (Orca's
-    /// `kimiSessionIndexPathFromStatePath`), folded later-wins into
-    /// `sessionId → workDir` (`readKimiWorkDirBySessionId`).
-    static func kimiWorkDirs(forStateFile path: String) -> [String: String] {
-        let indexURL = URL(fileURLWithPath: path)
+    /// `kimiSessionIndexPathFromStatePath`).
+    static func kimiSessionIndexURL(forStateFile path: String) -> URL {
+        URL(fileURLWithPath: path)
             .deletingLastPathComponent()  // session_<uuid>
             .deletingLastPathComponent()  // wd_<name>_<hash>
             .deletingLastPathComponent()  // sessions
             .deletingLastPathComponent()  // <KIMI_CODE_HOME>
             .appendingPathComponent("session_index.jsonl")
+    }
+
+    /// `readKimiWorkDirBySessionId`: `session_index.jsonl` folded
+    /// later-wins into `sessionId → workDir`.
+    static func kimiWorkDirs(forStateFile path: String) -> [String: String] {
+        let indexURL = kimiSessionIndexURL(forStateFile: path)
         guard let content = try? String(contentsOf: indexURL, encoding: .utf8) else { return [:] }
         var map: [String: String] = [:]
         for line in content.split(separator: "\n") {
