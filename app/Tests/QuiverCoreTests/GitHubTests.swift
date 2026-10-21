@@ -506,4 +506,92 @@ import Testing
             Issue.record(".loading must decode as .idle")
         }
     }
+
+    /// `invalidate` drops the repo's fetch times; with that repo off
+    /// screen nothing refetches until it is looked at again — inside the
+    /// stale window included.
+    @Test func invalidateDropsFetchTimesForOffscreenRepo() async {
+        let calls = router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100},{\"name\":\"o/b\",\"added_at\":200}]",
+            "--repo=o/b --json": "\(env),\"results\":[{\"repo\":\"o/b\",\"status\":\"ok\",\"pull_requests\":[]}]",
+            "--repo=o/a --json": "\(env),\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"pull_requests\":[]}]",
+        ])
+        let swe = SweClient(runner: calls)
+        let model = GitHubModel()
+        await model.load(swe: swe)
+        await model.loadTab(.pulls, repo: "o/b", swe: swe)
+        let filled = calls.calls.count
+        // o/b is not selected: no immediate reload.
+        model.invalidate(repo: "o/b", swe: swe)
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(calls.calls.count == filled)
+        // But its times are gone: looking at it refetches despite the
+        // stale window.
+        model.selected = "o/b"
+        await model.loadIfStale(swe: swe)
+        #expect(calls.calls.count == filled + 1)
+    }
+
+    /// With the notified repo on screen, `invalidate` refreshes the
+    /// visible tab immediately so the row moves with the banner.
+    @Test func invalidateRefreshesTheSelectedRepoNow() async {
+        let calls = router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
+            "--repo=o/a --json": "\(env),\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"pull_requests\":[]}]",
+        ])
+        let swe = SweClient(runner: calls)
+        let model = GitHubModel()
+        await model.load(swe: swe)
+        await model.loadIfStale(swe: swe)
+        let filled = calls.calls.count
+        model.invalidate(repo: "o/a", swe: swe)
+        for _ in 0..<200 where calls.calls.count == filled {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(calls.calls.count == filled + 1)
+    }
+
+    /// `invalidate` during an in-flight fetch must not drop the refresh:
+    /// the in-flight reply predates the notification, so the surface
+    /// fetches again after it lands.
+    @Test func invalidateQueuesBehindAnInFlightFetch() async {
+        /// First `--repo` call holds until released; later calls return
+        /// immediately.
+        final class Gated: CommandRunning, @unchecked Sendable {
+            private(set) var calls: [[String]] = []
+            var released = false
+            private var held = 0
+            func run(_ arguments: [String]) async throws -> CommandResult {
+                calls.append(arguments)
+                if arguments.joined(separator: " ").contains("--repo=") {
+                    held += 1
+                    if held == 1 {
+                        while !released { try? await Task.sleep(for: .milliseconds(5)) }
+                    }
+                }
+                let payload = "{\"schema\":1,\"data\":{\"github\":{\"status\":\"ok\","
+                    + "\"login\":\"me\",\"error\":null},"
+                    + "\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"pull_requests\":[]}]}}"
+                return .init(status: 0, stdout: Data(payload.utf8), stderr: "")
+            }
+            func run(_ arguments: [String], input: Data?) async throws -> CommandResult {
+                try await run(arguments)
+            }
+        }
+        let calls = Gated()
+        let swe = SweClient(runner: calls)
+        let model = GitHubModel()
+        model.selected = "o/a"
+        let inFlight = Task { await model.loadTab(.pulls, repo: "o/a", swe: swe) }
+        for _ in 0..<200 where calls.calls.isEmpty {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        model.invalidate(repo: "o/a", swe: swe)
+        calls.released = true
+        await inFlight.value
+        for _ in 0..<200 where calls.calls.count < 2 {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(calls.calls.count == 2)
+    }
 }
