@@ -337,8 +337,12 @@ struct RepositoriesPage: View {
                 }
                 Spacer(minLength: 12)
                 if pr.mergeable == .conflicting {
-                    Label("Conflicts", systemImage: "exclamationmark.triangle")
-                        .font(Theme.caption).foregroundStyle(Theme.warningText)
+                    Label {
+                        Text("Conflicts")
+                    } icon: {
+                        OcticonView(icon: .alert, size: 12)
+                    }
+                    .font(Theme.caption).foregroundStyle(Theme.warningText)
                 }
                 ReviewMark(decision: pr.reviewDecision)
                 ChecksMark(checks: pr.checks)
@@ -781,14 +785,23 @@ private struct RepoManager: View {
 /// GitHub's purple for merged/closed-done states.
 let ghPurple = Color(light: "#8250df", dark: "#a371f7")
 
+/// The PR's state as GitHub's own octicon — pull request open, merge
+/// node merged, crossed pull request closed, dashed pull request draft.
+/// Tinted like the platform: green, purple, red, muted.
 struct PrIcon: View {
     var state: GhPr.State
     var draft: Bool
     var body: some View {
-        Image(systemName: state == .merged ? "arrow.triangle.merge" : "arrow.triangle.pull")
-            .font(.system(size: 15))
+        OcticonView(icon: icon, size: 16)
             .foregroundStyle(color)
-            .padding(.top, 1)
+    }
+    private var icon: Octicon {
+        if draft { return .pullRequestDraft }
+        return switch state {
+        case .open: .pullRequest
+        case .merged: .merge
+        case .closed: .pullRequestClosed
+        }
     }
     private var color: Color {
         if draft { return Theme.textMuted }
