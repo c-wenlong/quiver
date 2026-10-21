@@ -28,9 +28,16 @@ struct PiFileParser: FileLogParser {
         }
     }
 
-    mutating func records(fromLine line: Data) -> [LedgerRecord] {
-        guard let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
-        else { return [] }
+    /// Only `session` and `message` records carry anything this parser
+    /// reads — the same byte markers `SearchPiDecoder` gates on (`"session`
+    /// has no closing quote so it covers `session_info` too).
+    private static let markers = [#""message""#, #""session"#].map { Data($0.utf8) }
+
+    func wants(line: Data) -> Bool {
+        Self.markers.contains(where: { line.range(of: $0) != nil })
+    }
+
+    mutating func records(fromObject object: [String: Any]) -> [LedgerRecord] {
         switch object["type"] as? String {
         case "session":
             if let cwd = JSONValue.string(object["cwd"]) { state.cwd = cwd }

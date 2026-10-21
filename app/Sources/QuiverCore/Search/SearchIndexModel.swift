@@ -7,9 +7,10 @@ import Observation
 /// Enabling means handing a `SearchIndexer` to the ledger (`setIndexer`):
 /// every scan then feeds the FTS index off the same transcript read the
 /// usage ledger already performs, so the feature rides the scan path the
-/// app always had. While enabled a reconcile task re-runs that same
-/// `overview.load(scan:)` entry on a short cycle so sessions running now
-/// become searchable within a minute; a poll task keeps the status line
+/// app always had. While enabled a reconcile task re-runs that entry —
+/// `overview.load(scan:recentLimit:)` capped to each source's newest
+/// files — on a short cycle so sessions running now become searchable
+/// within a minute; a poll task keeps the status line
 /// honest — every couple of seconds while a scan runs, slower once it
 /// settles.
 @MainActor
@@ -18,6 +19,11 @@ public final class SearchIndexModel {
     /// The UserDefaults key the switch writes. The CLI reads the same key
     /// for its own index mode.
     public static let defaultsKey = "searchIndexingEnabled"
+
+    /// Files per source the reconcile tick scans — enough to cover the
+    /// sessions a user has live, without paying for the backlog on every
+    /// pass. The app's own refresh still runs the full sweep.
+    static let recentPerAgent = 12
 
     /// The switch itself. Persisted; a flip applies at once.
     public var enabled: Bool {
@@ -238,16 +244,18 @@ public final class SearchIndexModel {
         }
     }
 
-    /// Keeps the index current: the same `load(scan:)` the app's own
-    /// refresh runs, on a shorter cycle while enabled, so a session that
-    /// ends now is searchable within a minute.
+    /// Keeps the index current: the app's `load(scan:)`, capped to each
+    /// source's `recentPerAgent` newest files and run on a short cycle
+    /// while enabled, so a session that ends now is searchable within a
+    /// minute. The capped pass is not a census — the app's own refresh
+    /// still sweeps the backlog whole.
     private func startReconcile() {
         reconciling?.cancel()
         reconciling = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
                 do { try await Task.sleep(for: reconcileInterval) } catch { return }
-                await overview?.load(scan: true)
+                await overview?.load(scan: true, recentLimit: Self.recentPerAgent)
             }
         }
     }

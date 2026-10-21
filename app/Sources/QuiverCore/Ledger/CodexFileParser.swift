@@ -93,15 +93,20 @@ struct CodexFileParser: FileLogParser {
 
     func savedState() -> Data? { try? JSONEncoder().encode(state) }
 
+    /// Lines whose bytes name a record this parser reads — `session_meta`,
+    /// `turn_context`, the two usage carriers and the two event types the
+    /// replay gate listens for. Every object `records(fromObject:)` acts
+    /// on carries its marker verbatim, so the byte check loses nothing.
     private static let markers = [
         "\"session_meta\"", "\"turn_context\"", "\"token_count\"", "\"token_usage_record\"",
         "\"task_started\"", "\"thread_settings_applied\"",
     ].map { Data($0.utf8) }
 
-    mutating func records(fromLine line: Data) -> [LedgerRecord] {
-        guard Self.markers.contains(where: { line.range(of: $0) != nil }),
-              let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
-        else { return [] }
+    func wants(line: Data) -> Bool {
+        Self.markers.contains(where: { line.range(of: $0) != nil })
+    }
+
+    mutating func records(fromObject object: [String: Any]) -> [LedgerRecord] {
         let type = object["type"] as? String
         let payload = object["payload"] as? [String: Any] ?? [:]
         let lineTime = (object["timestamp"] as? String).flatMap(Timestamp.parse)

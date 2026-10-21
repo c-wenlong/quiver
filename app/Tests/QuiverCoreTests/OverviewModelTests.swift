@@ -60,7 +60,7 @@ actor FakeLedger: LedgerQuerying {
 
     func failScans(with error: Error) { scanError = error }
 
-    func scan(roots: LedgerRoots) async throws -> ScanReport {
+    func scan(roots: LedgerRoots?, recentLimit: Int?) async throws -> ScanReport {
         scans += 1
         if holdScans {
             scanWaiting = true

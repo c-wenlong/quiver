@@ -19,8 +19,13 @@ enum ClaudeLogParser {
 
     static func records(fromLine line: Data, accountHome: String) -> [LedgerRecord] {
         guard line.range(of: usageMarker) != nil,
-              let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any],
-              let message = object["message"] as? [String: Any],
+              let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
+        else { return [] }
+        return records(fromObject: object, accountHome: accountHome)
+    }
+
+    static func records(fromObject object: [String: Any], accountHome: String) -> [LedgerRecord] {
+        guard let message = object["message"] as? [String: Any],
               let usage = message["usage"] as? [String: Any],
               usage["input_tokens"] is NSNumber, usage["output_tokens"] is NSNumber,
               let timestampText = object["timestamp"] as? String,
