@@ -22,8 +22,15 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from quiver import __version__
-from quiver.remote import catalog as catalog_mod
-from quiver.remote import pairing, protocol, tail
+from quiver.remote import (
+    attachments,
+    catalog as catalog_mod,
+    inject,
+    pairing,
+    protocol,
+    supervise,
+    tail,
+)
 from quiver.remote.journal import Journal
 
 DEFAULT_PORT = 8477
@@ -127,17 +134,32 @@ class HubState:
         while not self._stop.is_set():
             try:
                 self.catalog.refresh()
+                adopted = supervise.adopt_pending(
+                    self.home, self.catalog.tail_rows()
+                )
+                if adopted:
+                    # Newly adopted keys need a second refresh pass so the
+                    # rows carry ownership: attached.
+                    self.catalog.refresh()
                 self.tail_manager.sync(self.catalog.tail_rows())
             except Exception:
                 pass
             self._stop.wait(catalog_mod.REFRESH_INTERVAL_S)
 
     def _tail_loop(self) -> None:
+        sweeps = 0
         while not self._stop.is_set():
             try:
                 self.tail_manager.tick()
             except Exception:
                 pass
+            sweeps += 1
+            if sweeps >= 1200:  # ~5 min at a 250 ms tick
+                sweeps = 0
+                try:
+                    attachments.sweep(self.home)
+                except Exception:
+                    pass
             self._stop.wait(0.25)
 
 
@@ -420,10 +442,20 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/sessions":
-            self._send_error(
-                501, "not_implemented",
-                "launching sessions lands with the write path (R2)",
+            body = self._read_body()
+            if body is None:
+                self._send_error(400, "bad_body", "unreadable JSON body")
+                return
+            ok, note, _name = supervise.launch_new(
+                self._state.home,
+                str(body.get("harness") or body.get("tool") or ""),
+                str(body.get("cwd") or ""),
+                str(body.get("prompt") or ""),
             )
+            if not ok:
+                self._send_error(422, "launch_failed", note)
+                return
+            self._send_json(202, {"ok": True, "note": note})
             return
 
         if path.startswith("/v1/sessions/"):
@@ -435,22 +467,204 @@ class _Handler(BaseHTTPRequestHandler):
             if row is None:
                 self._send_error(404, "unknown_session", "no such session")
                 return
-            if action in {"message", "approval", "control", "attachments"}:
+            if action == "attachments":
+                self._stage_attachment(key)
+                return
+            if action == "control":
+                self._control(key, row)
+                return
+            if action in {"message", "approval"}:
                 if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
                     self._send_error(
                         409, "not_attached",
                         "session is observed: read-only until attached",
                     )
                     return
-                self._send_error(
-                    501, "not_implemented",
-                    "the write path lands in a later milestone",
-                )
+                if action == "message":
+                    self._send_message(key, row)
+                else:
+                    self._send_approval(key)
                 return
             self._send_error(404, "not_found", "unknown route")
             return
 
         self._send_error(404, "not_found", "unknown route")
+
+    def _injector(self, key: str):
+        meta = supervise.meta_for(self._state.home, key)
+        return inject.injector_for(self._state.home, key, meta)
+
+    def _send_message(self, key: str, row: dict) -> None:
+        body = self._read_body()
+        if body is None:
+            self._send_error(400, "bad_body", "unreadable JSON body")
+            return
+        try:
+            cmd = protocol.parse_message_command(body)
+        except ValueError as exc:
+            self._send_error(422, "bad_command", str(exc))
+            return
+        # Resolve attachment refs to staged paths before injection.
+        paths = []
+        for ref in cmd["attachments"]:
+            path = attachments.resolve(self._state.home, key, ref)
+            if path is None:
+                self._send_error(
+                    422, "bad_attachment", f"unknown attachment {ref}"
+                )
+                return
+            paths.append(path)
+        cmd["attachments"] = paths
+        session = self._state.catalog.session_for(key)
+        status = str(row.get("status") or "")
+        injector = self._injector(key)
+        result = injector.send(session, cmd, status)
+        if not result.ok:
+            self._send_error(409, "send_failed", result.note)
+            return
+        self._send_json(200, {"ok": True, "note": result.note})
+
+    def _send_approval(self, key: str) -> None:
+        body = self._read_body()
+        if body is None:
+            self._send_error(400, "bad_body", "unreadable JSON body")
+            return
+        try:
+            cmd = protocol.parse_approval_command(body)
+        except ValueError as exc:
+            self._send_error(422, "bad_command", str(exc))
+            return
+        session = self._state.catalog.session_for(key)
+        result = self._injector(key).approval(
+            session, cmd["request_id"], cmd["decision"]
+        )
+        if not result.ok:
+            code = (
+                "approval_not_supported"
+                if result.note.startswith("approval_not_supported")
+                else "approval_failed"
+            )
+            self._send_error(409, code, result.note)
+            return
+        self._state.emit(
+            key,
+            protocol.event(
+                "approval.resolved", key, self._state.machine_id,
+                {
+                    "request_id": cmd["request_id"],
+                    "decision": cmd["decision"],
+                },
+            ),
+        )
+        self._send_json(200, {"ok": True, "note": result.note})
+
+    def _control(self, key: str, row: dict) -> None:
+        body = self._read_body()
+        if body is None:
+            self._send_error(400, "bad_body", "unreadable JSON body")
+            return
+        try:
+            cmd = protocol.parse_control_command(body)
+        except ValueError as exc:
+            self._send_error(422, "bad_command", str(exc))
+            return
+        op = cmd["op"]
+        if op == "attach":
+            self._attach(key, row, body)
+            return
+        if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
+            self._send_error(
+                409, "not_attached",
+                "session is observed: read-only until attached",
+            )
+            return
+        session = self._state.catalog.session_for(key)
+        result = self._injector(key).control(
+            session, op, str(cmd.get("value") or "")
+        )
+        if not result.ok:
+            self._send_error(409, "control_failed", result.note)
+            return
+        if op in {"kill", "detach"}:
+            attachments.drop_session(self._state.home, key)
+            row["ownership"] = protocol.OWNERSHIP_OBSERVED
+            self._emit_ownership(key)
+        self._send_json(200, {"ok": True, "note": result.note})
+
+    def _attach(self, key: str, row: dict, body: dict) -> None:
+        if row.get("ownership") == protocol.OWNERSHIP_ATTACHED:
+            self._send_json(200, {"ok": True, "note": "already attached"})
+            return
+        if not row.get("attachable"):
+            self._send_error(
+                422, "not_attachable",
+                "this harness cannot be resumed under supervision",
+            )
+            return
+        session = self._state.catalog.session_for(key)
+        if session is None:
+            self._send_error(404, "unknown_session", "no such session")
+            return
+        mode = str(body.get("mode") or "tmux")
+        if mode == "headless" and session.tool_name != "claude":
+            self._send_error(
+                422, "bad_mode", "headless attach only exists for claude"
+            )
+            return
+        ok, note = supervise.attach(
+            self._state.home, key, session,
+            last_append_at=self._state.tail_manager.last_append_at(key),
+            status=str(row.get("status") or ""),
+            mode=mode,
+        )
+        if not ok:
+            self._send_error(409, "not_idle", note)
+            return
+        row["ownership"] = protocol.OWNERSHIP_ATTACHED
+        self._emit_ownership(key)
+        self._send_json(200, {"ok": True, "note": note})
+
+    def _emit_ownership(self, key: str) -> None:
+        row = self._state.catalog.row_for(key) or {}
+        self._state.emit(
+            key,
+            protocol.event(
+                "session.ownership", key, self._state.machine_id,
+                {"ownership": row.get("ownership")},
+            ),
+        )
+
+    def _stage_attachment(self, key: str) -> None:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0:
+            self._send_error(400, "bad_body", "empty upload")
+            return
+        if length > attachments.MAX_BYTES:
+            self._send_error(413, "too_large", "attachment exceeds 20 MB")
+            return
+        data = self.rfile.read(length)
+        ctype = self.headers.get("Content-Type") or ""
+        name = ""
+        if ctype.startswith("multipart/form-data"):
+            name, data = _parse_multipart(ctype, data)
+            if data is None:
+                self._send_error(
+                    400, "bad_body", "unreadable multipart upload"
+                )
+                return
+        else:
+            from urllib.parse import parse_qs, urlparse
+
+            args = parse_qs(urlparse(self.path).query)
+            name = (args.get("name") or [self.headers.get("X-Filename") or ""])[0]
+        payload, err = attachments.stage(self._state.home, key, name, data)
+        if payload is None:
+            self._send_error(422, "bad_attachment", err or "stage failed")
+            return
+        self._send_json(200, payload)
 
     def _messages(self, key: str, args) -> None:
         before = _int_arg(args.get("before"), 0)
@@ -513,6 +727,32 @@ class _Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
             pass
+
+
+def _parse_multipart(ctype: str, body: bytes) -> tuple[str, bytes | None]:
+    """Minimal single-file multipart reader: returns (filename, bytes)."""
+    try:
+        boundary = ctype.split("boundary=", 1)[1].strip().strip('"')
+        marker = ("--" + boundary).encode()
+        for part in body.split(marker):
+            if b"Content-Disposition" not in part:
+                continue
+            head, _, blob = part.partition(b"\r\n\r\n")
+            if not blob:
+                continue
+            blob = blob.rstrip(b"\r\n-")
+            name = ""
+            for line in head.decode("utf-8", "replace").splitlines():
+                if "content-disposition" not in line.lower():
+                    continue
+                for field in line.split(";"):
+                    field = field.strip()
+                    if field.startswith("filename="):
+                        name = field.split("=", 1)[1].strip().strip('"')
+            return name, blob
+    except Exception:
+        pass
+    return "", None
 
 
 def _int_arg(values, default: int) -> int:

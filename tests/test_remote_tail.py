@@ -556,5 +556,20 @@ class TestTailManager(unittest.TestCase):
             src = tail.make_source(sess)
         self.assertIsInstance(src, tail.SnapshotSource)
 
+    def test_last_append_tracked(self):
+        src = tail.JsonlTailSource(self.tmp / "y.jsonl", "claude")
+        (self.tmp / "y.jsonl").write_text(
+            json.dumps(_claude_user("hi")) + "\n"
+        )
+        mgr = self._manager()
+        sess = _session_for()
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([("claude:y", sess, "active")])
+            self.assertIsNone(mgr.last_append_at("claude:y"))
+            n = mgr.tick(time.time())
+        self.assertEqual(n, 1)
+        self.assertIsNotNone(mgr.last_append_at("claude:y"))
+
+
 if __name__ == "__main__":
     unittest.main()

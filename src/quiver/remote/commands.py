@@ -1,4 +1,4 @@
-"""``swe remote serve|pair|status|devices`` — argv + print only.
+"""``swe remote serve|pair|status|devices|attach`` — argv + print only.
 
 The serve command runs the hub in the foreground (a launchd/systemd
 unit or ``nohup`` keeps it alive); ``pair`` mints a one-time token into
@@ -23,12 +23,12 @@ from quiver.flags import expand_value_flags
 from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.paths import remote_dir_for
 from quiver.remote import catalog as catalog_mod
-from quiver.remote import pairing
+from quiver.remote import pairing, protocol, supervise, tail
 from quiver.remote.hub import DEFAULT_PORT, HubState, serve
 
-_SUBCOMMANDS = {"serve", "pair", "status", "devices"}
+_SUBCOMMANDS = {"serve", "pair", "status", "devices", "attach"}
 
-_VALUE_FLAGS = {"--host", "--port", "--name", "--tail-days", "--revoke"}
+_VALUE_FLAGS = {"--host", "--port", "--name", "--tail-days", "--revoke", "--mode"}
 
 _USAGE = f"""\
   {c('cyan', 'swe remote serve [--host=H] [--port=N]')}   Run the hub (REST + SSE)
@@ -36,6 +36,8 @@ _USAGE = f"""\
                                   Print a pairing URL + token for a phone
   {c('cyan', 'swe remote status [--host=H] [--port=N]')}  Probe the hub + list machines
   {c('cyan', 'swe remote devices [--revoke=<id>]')}       List or revoke paired devices
+  {c('cyan', 'swe remote attach <session> [--mode=tmux|headless]')}
+                                  Move an observed session under supervision
 """
 
 
@@ -242,6 +244,56 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
     return 0
 
 
+def _cmd_attach(flags: dict, rest: list[str]) -> int:
+    """Local attach: mark + relaunch; the hub reads the registry."""
+    if not rest:
+        print(c("red", "attach needs a session key or id"),
+              file=sys.stderr)
+        return 1
+    want = rest[0]
+    mode = flags.get("--mode") or "tmux"
+    if mode not in {"tmux", "headless"}:
+        print(c("red", "--mode must be tmux or headless"), file=sys.stderr)
+        return 1
+    from quiver.sessions.aggregator import get_all_sessions
+    from quiver.sessions.status import session_statuses
+
+    sessions = get_all_sessions(limit=None, use_cache=True)
+    matches = [
+        s for s in sessions
+        if protocol.session_key(s.tool_name, s.session_id, s.path) == want
+        or s.session_id == want
+    ]
+    if not matches:
+        # Permit a unique substring match on the session id.
+        matches = [s for s in sessions if want in (s.session_id or "")]
+    if not matches:
+        print(c("red", f"no session matches {want}"), file=sys.stderr)
+        return 1
+    if len(matches) > 1:
+        print(c("red", f"{want} matches {len(matches)} sessions; use the full key"),
+              file=sys.stderr)
+        return 1
+    session = matches[0]
+    key = protocol.session_key(session.tool_name, session.session_id, session.path)
+    status = session_statuses([session])[0]
+    transcript = tail.resolve_jsonl_path(session)
+    last_append = None
+    try:
+        last_append = transcript.stat().st_mtime if transcript else None
+    except OSError:
+        pass
+    ok, note = supervise.attach(
+        None, key, session,
+        last_append_at=last_append, status=status, mode=mode,
+    )
+    if not ok:
+        print(c("red", note), file=sys.stderr)
+        return 1
+    print(f"{c('green', 'attached')} {key} — {note}")
+    return 0
+
+
 def cmd_remote(args: list[str]) -> int:
     try:
         sub, flags, rest, json_view = _parse_flags(list(args))
@@ -271,4 +323,6 @@ def cmd_remote(args: list[str]) -> int:
         return _cmd_status(flags, json_view)
     if sub == "devices":
         return _cmd_devices(flags, json_view)
+    if sub == "attach":
+        return _cmd_attach(flags, rest)
     return 0

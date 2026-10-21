@@ -8,7 +8,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from quiver.remote import commands, pairing
+from quiver.remote import commands, pairing, supervise
 from quiver.sessions.models import Session
 
 
@@ -127,6 +127,61 @@ class TestDevices(unittest.TestCase):
         self.assertIn("no such device", out)
 
 
+class TestAttachCmd(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.session = Session(timestamp=0, agent="Claude Code",
+                               path="/tmp/p", session_id="abc",
+                               tool_name="claude")
+
+    def _patch_discovery(self, sessions):
+        return (
+            patch("quiver.sessions.aggregator.get_all_sessions",
+                  return_value=sessions),
+            patch("quiver.sessions.status.session_statuses",
+                  lambda ss: ["done"] * len(ss)),
+            patch.object(commands.tail, "resolve_jsonl_path",
+                         return_value=None),
+        )
+
+    def test_no_match(self):
+        p1, p2, p3 = self._patch_discovery([])
+        with p1, p2, p3:
+            rc, _, err = _run(["attach", "ghost"])
+        self.assertEqual(rc, 1)
+        self.assertIn("no session matches", err)
+
+    def test_attach_headless(self):
+        p1, p2, p3 = self._patch_discovery([self.session])
+        with p1, p2, p3, \
+             patch.object(commands.supervise, "attach",
+                          return_value=(True, "attached (headless)")) as att:
+            rc, out, _ = _run(["attach", "claude:abc", "--mode=headless"])
+        self.assertEqual(rc, 0)
+        self.assertIn("attached", out)
+        self.assertEqual(att.call_args[1]["mode"], "headless")
+
+    def test_attach_ambiguous(self):
+        other = Session(timestamp=0, agent="Claude Code", path="/tmp/q",
+                        session_id="abc2", tool_name="claude")
+        p1, p2, p3 = self._patch_discovery([self.session, other])
+        with p1, p2, p3:
+            # substring "bc" matches both session ids (no exact match)
+            rc, _, err = _run(["attach", "bc"])
+        self.assertEqual(rc, 1)
+        self.assertIn("matches", err)
+
+    def test_attach_bad_mode(self):
+        rc, _, err = _run(["attach", "x", "--mode=weird"])
+        self.assertEqual(rc, 1)
+        self.assertIn("--mode", err)
+
+    def test_attach_missing_arg(self):
+        rc, _, err = _run(["attach"])
+        self.assertEqual(rc, 1)
+        self.assertIn("needs a session", err)
+
+
 class TestServe(unittest.TestCase):
     def test_serve_binds_tailscale(self):
         seen = {}
@@ -236,6 +291,24 @@ class TestDevicesList(unittest.TestCase):
             rc, out, _ = _run(["devices", "--json"])
             data = json.loads(out)
             self.assertEqual(data["data"]["devices"][0]["id"], "d1")
+
+
+class TestAttachFail(unittest.TestCase):
+    def test_supervise_failure(self):
+        session = Session(timestamp=0, agent="Claude Code",
+                          path="/tmp/p", session_id="abc",
+                          tool_name="claude")
+        with patch("quiver.sessions.aggregator.get_all_sessions",
+                   return_value=[session]), \
+             patch("quiver.sessions.status.session_statuses",
+                   lambda ss: ["active"]), \
+             patch.object(commands.tail, "resolve_jsonl_path",
+                          return_value=None), \
+             patch.object(commands.supervise, "attach",
+                          return_value=(False, "session is busy")):
+            rc, _, err = _run(["attach", "claude:abc"])
+        self.assertEqual(rc, 1)
+        self.assertIn("busy", err)
 
 
 if __name__ == "__main__":
