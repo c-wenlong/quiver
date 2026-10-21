@@ -10,7 +10,7 @@ from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.github import cli as ghcli
+from quiver.github import catalog, cli as ghcli
 from quiver.github import gh, repos
 from quiver import paths
 
@@ -309,6 +309,63 @@ class TestShaping(unittest.TestCase):
         self.assertEqual(row["url"], "https://github.com/o/r")
 
 
+class TestCatalog(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db = Path(self.tmp.name) / "catalog.sqlite"
+
+    def _rows(self, owner, names, stars=0):
+        return [{"full_name": f"{owner}/{n}", "owner": owner,
+                 "description": f"{n} description", "stars": stars,
+                 "updated_at": "2026-10-20", "is_private": False}
+                for n in names]
+
+    def test_status_none_before_sync(self):
+        self.assertIsNone(catalog.status(self.db))
+
+    def test_search_empty_db(self):
+        self.assertEqual(catalog.search("x", 5, self.db), [])
+
+    def test_write_then_status(self):
+        catalog.write(self._rows("octocat", ["quiver"]), ["octocat"],
+                      self.db)
+        st = catalog.status(self.db)
+        self.assertEqual(st["repos"], 1)
+        self.assertEqual(st["owners"], ["octocat"])
+        self.assertGreater(st["synced_at"], 0)
+
+    def test_search_ranks_name_over_description(self):
+        catalog.write(
+            [{"full_name": "b/other", "owner": "b",
+              "description": "infra tooling", "stars": 99,
+              "updated_at": None, "is_private": False},
+             {"full_name": "a/infra-docs", "owner": "a",
+              "description": "plain", "stars": 1,
+              "updated_at": None, "is_private": False}],
+            ["a", "b"], self.db)
+        hits = catalog.search("infra", 10, self.db)
+        self.assertEqual(hits[0]["name"], "a/infra-docs")
+
+    def test_resync_prunes_only_covered_owners(self):
+        catalog.write(self._rows("a", ["keep", "gone"])
+                      + self._rows("b", ["theirs"]), ["a", "b"], self.db)
+        catalog.write(self._rows("a", ["keep"]), ["a"], self.db)
+        names = {r["name"] for r in catalog.search("", 50, self.db)}
+        self.assertEqual(names, {"a/keep", "b/theirs"})
+
+    def test_search_treats_wildcard_chars_literally(self):
+        catalog.write([{"full_name": "a/quxver", "owner": "a",
+                        "description": None, "stars": 0,
+                        "updated_at": None, "is_private": False},
+                       {"full_name": "a/qu_ver", "owner": "a",
+                        "description": None, "stars": 0,
+                        "updated_at": None, "is_private": False}],
+                      ["a"], self.db)
+        hits = catalog.search("qu_ver", 10, self.db)
+        self.assertEqual([h["name"] for h in hits], ["a/qu_ver"])
+
+
 class TestCommands(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -322,6 +379,12 @@ class TestCommands(unittest.TestCase):
                                       self.owners_cache)
         owners_patcher.start()
         self.addCleanup(owners_patcher.stop)
+        self.catalog_db = (Path(self.tmp.name) / "data" / "github"
+                           / "catalog.sqlite")
+        catalog_patcher = patch.object(paths, "GITHUB_CATALOG",
+                                       self.catalog_db)
+        catalog_patcher.start()
+        self.addCleanup(catalog_patcher.stop)
 
     def _run_cli(self, args, run=None, env=None):
         out, err = io.StringIO(), io.StringIO()
@@ -903,6 +966,171 @@ class TestCommands(unittest.TestCase):
         self._run_cli(["repo", "search", "q"], run=record)
         self.assertIn("--owner my-org", seen["argv"])
         self.assertNotIn("their-org", seen["argv"])
+
+    def _catalog_rows(self, owner, names):
+        return [{"full_name": f"{owner}/{n}", "owner": owner,
+                 "description": f"{n} description", "stars": i,
+                 "updated_at": "2026-10-20T00:00:00Z", "is_private": False}
+                for i, n in enumerate(names)]
+
+    def _sync_run(self, repo_lists, orgs="org-one\n"):
+        handlers = {"user/orgs": _Proc(stdout=orgs)}
+        for owner, rows in repo_lists.items():
+            handlers[f"repo list {owner}"] = _Proc(
+                stdout=json.dumps([
+                    {"nameWithOwner": f"{owner}/{n}", "description": f"{n}",
+                     "stargazerCount": i,
+                     "updatedAt": "2026-10-20T00:00:00Z",
+                     "isPrivate": False}
+                    for i, n in enumerate(rows)]))
+        return _gh_run(handlers)
+
+    def test_sync_writes_catalog_and_emits_summary(self):
+        run = self._sync_run({"octocat": ["quiver"], "org-one": ["sdk"]})
+        rc, out, _ = self._run_cli(["sync", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["repos"], 2)
+        self.assertEqual(data["owners"], ["octocat", "org-one"])
+        self.assertEqual(data["failed"], [])
+        status = catalog.status()
+        self.assertEqual(status["repos"], 2)
+        self.assertGreater(status["synced_at"], 0)
+
+    def test_sync_failed_owner_returns_1_and_keeps_rows(self):
+        run = self._sync_run({"octocat": ["quiver"], "org-one": ["sdk"]})
+        self._run_cli(["sync"], run=run)
+        handlers = {
+            "user/orgs": _Proc(stdout="org-one\n"),
+            "repo list octocat": _Proc(stdout="[]"),
+            "repo list org-one": _Proc(returncode=1, stderr="boom"),
+        }
+        # --json: the payload carries `failed`, so the exit stays 0 and
+        # callers can still read which owners did not sync.
+        rc, out, _ = self._run_cli(["sync", "--json"],
+                                   run=_gh_run(handlers))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)["data"]
+        self.assertEqual([f["owner"] for f in data["failed"]], ["org-one"])
+        # Text mode reports the partial failure as exit 1.
+        rc, _, _ = self._run_cli(["sync"], run=_gh_run(handlers))
+        self.assertEqual(rc, 1)
+        # The failed owner's rows survive; octocat's pruned rows don't.
+        self.assertEqual(
+            [r["name"] for r in catalog.search("sdk", 10)],
+            ["org-one/sdk"])
+        self.assertEqual(catalog.search("quiver", 10), [])
+
+    def test_sync_env_blocked(self):
+        env = gh.GhEnv(installed=False)
+        rc, out, _ = self._run_cli(["sync"], env=env)
+        self.assertEqual(rc, 1)
+        self.assertIn("brew install gh", out)
+
+    def test_sync_account_switch_wipes_previous_rows(self):
+        run = self._sync_run({"octocat": ["quiver"]}, orgs="")
+        self._run_cli(["sync"], run=run)
+        other = gh.GhEnv(installed=True, authenticated=True,
+                         login="someone-else")
+        run = self._sync_run({"someone-else": ["theirs"]}, orgs="")
+        self._run_cli(["sync"], run=run, env=other)
+        self.assertEqual(catalog.search("quiver", 10), [])
+        self.assertEqual(
+            [r["name"] for r in catalog.search("theirs", 10)],
+            ["someone-else/theirs"])
+        self.assertEqual(catalog.status()["owners"], ["someone-else"])
+
+    def test_sync_orgs_failure_is_reported(self):
+        run = _gh_run({
+            "user/orgs": _Proc(returncode=1, stderr="boom"),
+            "repo list octocat": _Proc(stdout=json.dumps([
+                {"nameWithOwner": "octocat/quiver", "description": None,
+                 "stargazerCount": 1, "updatedAt": "2026-10-20T00:00:00Z",
+                 "isPrivate": False}])),
+        })
+        rc, out, _ = self._run_cli(["sync", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["failed"][0]["owner"], "<orgs>")
+        self.assertEqual(data["owners"], ["octocat"])
+
+    def test_sync_nonlist_response_counts_as_failure(self):
+        self._run_cli(["sync"], run=self._sync_run(
+            {"octocat": ["quiver"], "org-one": ["sdk"]}))
+        handlers = {
+            "user/orgs": _Proc(stdout="org-one\n"),
+            # gh exits 0 but prints junk — must not prune the old rows.
+            "repo list org-one": _Proc(stdout="not json"),
+            "repo list octocat": _Proc(stdout="[]"),
+        }
+        rc, out, _ = self._run_cli(["sync", "--json"],
+                                   run=_gh_run(handlers))
+        data = json.loads(out)["data"]
+        self.assertEqual([f["owner"] for f in data["failed"]],
+                         ["org-one"])
+        self.assertEqual(
+            [r["name"] for r in catalog.search("sdk", 10)],
+            ["org-one/sdk"])
+
+    def test_repo_search_reads_catalog_without_gh(self):
+        catalog.write(self._catalog_rows("octocat", ["quiver"]),
+                      ["octocat"])
+        # Every gh call is unstubbed — a catalog hit must not make one.
+        rc, out, _ = self._run_cli(
+            ["repo", "search", "quiver", "--json"], run=_gh_run({}))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["source"], "catalog")
+        self.assertEqual(data["results"][0]["name"], "octocat/quiver")
+
+    def test_repo_search_catalog_miss_falls_back_live(self):
+        catalog.write(self._catalog_rows("octocat", ["quiver"]),
+                      ["octocat"])
+        seen = {}
+        run = _gh_run({
+            "user/orgs": _Proc(stdout=""),
+            "search repos": _Proc(stdout=json.dumps([
+                {"fullName": "octocat/new-repo", "description": "fresh",
+                 "stargazersCount": 1, "updatedAt": "2026-10-20"}])),
+        })
+
+        def record(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            if "search repos" in joined:
+                seen["argv"] = joined
+            return run(cmd, **kw)
+
+        rc, out, _ = self._run_cli(["repo", "search", "new", "--json"],
+                                   run=record)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["source"], "github")
+        self.assertIn("--owner octocat", seen["argv"])
+
+    def test_repo_search_all_bypasses_catalog(self):
+        catalog.write(self._catalog_rows("octocat", ["quiver"]),
+                      ["octocat"])
+        seen = {}
+        run = _gh_run({"search repos": _Proc(stdout="[]")})
+
+        def record(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            if "search repos" in joined:
+                seen["argv"] = joined
+            return run(cmd, **kw)
+
+        self._run_cli(["repo", "search", "quiver", "--all"], run=record)
+        self.assertIn("search repos", seen["argv"])
+        self.assertNotIn("--owner", seen["argv"])
+
+    def test_overview_json_reports_catalog(self):
+        self._run_cli(["--json"])  # never synced: key present but null
+        catalog.write(self._catalog_rows("octocat", ["quiver"]),
+                      ["octocat"])
+        rc, out, _ = self._run_cli(["--json"])
+        data = json.loads(out)["data"]
+        self.assertEqual(data["catalog"]["repos"], 1)
+        self.assertEqual(data["catalog"]["owners"], ["octocat"])
 
     def test_json_errors_leave_stdout_clean(self):
         run = _gh_run({

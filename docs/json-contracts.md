@@ -29,11 +29,12 @@ and the fixture that pins the shape. Fixtures live under
 | `swe harness usage-daily codex [--account-dir=<dir>] --json` | `{"status", "summary", "days"}` — `status` is `ok` \| `auth-required` \| `unsupported` \| `unavailable`. `summary` is `{lifetime_tokens, peak_daily_tokens, current_streak_days, longest_streak_days}` or null; each `days` entry is `{"date": "YYYY-MM-DD", "tokens": int}` | |
 | `swe doctor --json` | `DoctorReport` (`allowFailure`) | `swe-doctor.json` |
 | `swe session <limit> [--days=N] --json` | `SessionListPayload` | `swe-session.json` |
-| `swe gh --json` | `{"github": GhEnv, "repos": [PinnedRepo]}` | |
+| `swe gh --json` | `{"github": GhEnv, "repos": [PinnedRepo], "catalog": GhCatalog?}` | |
+| `swe gh sync --json` | `{"repos": int, "synced_at": epoch, "owners": [name], "failed": [{"owner", "error"}]}` — rewrites the local repo catalog (`~/.quiver/data/github/catalog.sqlite`) in place; `failed` names owners whose `gh repo list` errored | |
 | `swe gh repo list --json` | `{"repos": [PinnedRepo]}` | |
 | `swe gh repo add <name|url> --json` | `{"repo", "pinned": [name]}` — verifies via `gh repo view` before pinning | |
 | `swe gh repo remove <name> --json` | `{"removed": bool, "repo", "pinned": [name]}` | |
-| `swe gh repo search <query> --json` | `{"query", "results": [RepoHit]}` | |
+| `swe gh repo search <query> --json` | `{"query", "results": [RepoHit], "source": "catalog"\|"github"}` — reads the synced catalog first (no `gh` call on a hit), falls back to the live scoped search on a miss or when never synced; `--all` always searches public GitHub | |
 | `swe gh pr [--state=S] [--repo=R] [--limit=N] --json` | `GhResults` — per-repo `pull_requests: [GhPr]` | |
 | `swe gh pr status [--repo=R] --json` | `GhResults` — per-repo `current_branch` (`GhPr` or null), `authored: [GhPr]`, `review_requested: [GhPr]` | |
 | `swe gh issue [--state=S] [--repo=R] [--limit=N] --json` | `GhResults` — per-repo `issues: [GhIssue]` | |
@@ -99,6 +100,9 @@ against all pins, so `results` is always a list of per-repo entries.
   `error` carries gh's stderr. Distinguish `ok` + empty rows (a repo
   with no PRs) from an upstream failure.
 - `PinnedRepo`: `{"name": "owner/repo", "added_at": epoch}`.
+- `GhCatalog`: `{"repos": int, "synced_at": epoch, "owners": [name]}` —
+  the synced repo store `swe gh repo search` reads; `synced_at` is when
+  the last `swe gh sync` wrote it. Null until the first sync.
 - `RepoHit`: `{name, description, stars, updated_at, url}`.
 - `GhPr`: `{number, title, state, draft, author, branch, base, labels,
   mergeable, review_decision, checks, updated_at, url}`. `state` is

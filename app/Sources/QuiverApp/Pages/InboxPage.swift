@@ -25,7 +25,11 @@ struct InboxPage: View {
             .keyboardShortcut("r", modifiers: .command)
             .help("Fetch the inbox again (⌘R)")
         } content: {
-            if let blocked = model.envBlocked {
+            if let setup = model.envSetup {
+                GhSetupCard(status: setup) {
+                    Task { await model.loadInbox(swe: app.swe, force: true) }
+                }
+            } else if let blocked = model.envBlocked {
                 ErrorCard(message: blocked, actionTitle: "Refresh") {
                     Task { await model.loadInbox(swe: app.swe, force: true) }
                 }

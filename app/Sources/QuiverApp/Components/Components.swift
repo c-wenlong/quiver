@@ -630,6 +630,53 @@ struct ErrorCard: View {
     }
 }
 
+/// gh is missing or signed out: the one command that fixes it, a copy
+/// affordance, and a Refresh that re-probes. Covers both `envSetup`
+/// states on the GitHub pages.
+struct GhSetupCard: View {
+    var status: GhEnv.Status
+    var refresh: () -> Void
+
+    private var title: String {
+        status == .unavailable
+            ? "Download gh cli to enable github features."
+            : "Sign in to GitHub to enable github features."
+    }
+
+    private var command: String {
+        status == .unavailable ? "brew install gh" : "gh auth login"
+    }
+
+    var body: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(title, systemImage: "terminal")
+                    .font(Theme.bodySmall)
+                    .foregroundStyle(Theme.textSecondary)
+                HStack(spacing: 8) {
+                    Text(command)
+                        .font(Theme.bodySmall.monospaced())
+                        .foregroundStyle(Theme.textPrimary)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Theme.field,
+                                    in: .rect(cornerRadius: Theme.controlRadius))
+                    CopyButton(title: "Copy", help: "Copy the command",
+                               iconSize: 12) {
+                        copyToPasteboard(command)
+                    }
+                    .iconButton()
+                    Spacer()
+                    Button("Refresh", systemImage: "arrow.clockwise",
+                           action: refresh)
+                        .secondaryButton()
+                }
+            }
+        }
+    }
+}
+
 /// Nothing to show, or a quiet all-clear.
 struct EmptyCard: View {
     var text: String

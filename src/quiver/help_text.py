@@ -587,8 +587,11 @@ to use their own login state and environment."""
         "GitHub surfaces: PRs, issues, actions, inbox, pinned repos",
         f"""\
   {c('cyan', 'swe gh')}                          gh status + pinned repos
+  {c('cyan', 'swe gh sync')}                     Snapshot your repos + orgs into the
+                                            local catalog (resync-only updates)
   {c('cyan', 'swe gh repo list|add|remove|search')}   The repos the dashboard watches
-                                            (search hits your repos + orgs; --all is public)
+                                            (search reads the catalog, then live;
+                                            --all is public)
   {c('cyan', 'swe gh board [--repo=R]')}            Every surface of a repo in one call
   {c('cyan', 'swe gh pr [--repo=R] [--state=S]')}     Pull requests (default: open)
   {c('cyan', 'swe gh pr status')}                Current branch, authored, needs-review

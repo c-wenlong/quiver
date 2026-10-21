@@ -49,7 +49,11 @@ struct RepositoriesPage: View {
                 .help("Fetch the visible tab again (⌘R)")
             }
         } content: {
-            if let blocked = model.envBlocked {
+            if let setup = model.envSetup {
+                GhSetupCard(status: setup) {
+                    Task { await model.refresh(swe: app.swe) }
+                }
+            } else if let blocked = model.envBlocked {
                 ErrorCard(message: blocked, actionTitle: "Refresh",
                           actionShortcut: KeyboardShortcut("r", modifiers: .command)) {
                     Task { await model.refresh(swe: app.swe) }
