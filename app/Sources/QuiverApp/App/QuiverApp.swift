@@ -44,6 +44,7 @@ struct QuiverApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var statusItem: StatusItemController?
+    private var dockBadgeTask: Task<Void, Never>?
 
     /// Before launch finishes, so a hidden Dock icon never flashes in.
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -57,6 +58,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         statusItem = StatusItemController(model: AppModel.shared)
         AppModel.shared.applyAppIcon()
         AppModel.shared.start()
+        // The Dock tile mirrors the unread inbox count — ambient even
+        // when no window is open.
+        let model = AppModel.shared
+        dockBadgeTask = Task { @MainActor in
+            for await unread in Observations({ model.github.unreadCount }) {
+                NSApp.dockTile.badgeLabel = unread > 0 ? "\(unread)" : nil
+            }
+        }
         AppUpdater.shared.start()
     }
 

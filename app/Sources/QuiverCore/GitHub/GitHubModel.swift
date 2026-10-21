@@ -97,6 +97,14 @@ public final class GitHubModel {
     private var queuedRefreshes: Set<BoardKey> = []
 
     public private(set) var inbox: Loadable<[GhNotification]> = .idle
+    /// Unread lines in the loaded inbox — the sidebar badge and the
+    /// Dock tile both read this. 0 until the first fetch lands and
+    /// through `.idle`/`.failed`, which read as "nothing known" rather
+    /// than "inbox zero".
+    public var unreadCount: Int {
+        guard case .loaded(let notes) = inbox else { return 0 }
+        return notes.filter(\.unread).count
+    }
     /// Newest inbox fetch time; the page polls on a timer and shows
     /// "updated Ns ago" from it.
     public private(set) var inboxFetchedAt: Date?

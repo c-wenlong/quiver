@@ -171,7 +171,8 @@ private struct Sidebar: View {
                             ForEach(group.sections) { section in
                                 NavItem(section: section, isSelected: model.selection == section,
                                         isFocused: focused == section,
-                                        collapsed: !isExpanded) {
+                                        collapsed: !isExpanded,
+                                        badge: section == .inbox ? model.github.unreadCount : 0) {
                                     // Reselecting the open page asks a detail
                                     // view on it to go back.
                                     if model.selection == section {
@@ -289,6 +290,10 @@ private struct NavItem: View {
     /// The icon rail: the label fades and clips away, the pill hugs the
     /// icon (8 + 18 + 8) at the same x it has when expanded.
     var collapsed: Bool
+    /// Unread count on the row — the Inbox passes `unreadCount`; other
+    /// rows pass nothing. Expanded: a source-list capsule. Collapsed: a
+    /// dot on the icon's corner.
+    var badge = 0
     var action: () -> Void
     @State private var hovering = false
 
@@ -304,6 +309,20 @@ private struct NavItem: View {
                     .fixedSize()
                     .opacity(collapsed ? 0 : 1)
                 Spacer(minLength: 0)
+                if badge > 0 {
+                    Text(badge > 99 ? "99+" : "\(badge)")
+                        // The count is spoken through accessibilityValue;
+                        // hiding the text keeps VoiceOver from reading
+                        // "Inbox 3, 3 unread".
+                        .accessibilityHidden(true)
+                        .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(Theme.textSecondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Theme.subtle, in: .capsule)
+                        .fixedSize()
+                        .opacity(collapsed ? 0 : 1)
+                }
             }
             .foregroundStyle(isSelected || hovering ? Theme.textPrimary : Theme.textNav)
             .padding(.horizontal, 8)
@@ -313,11 +332,20 @@ private struct NavItem: View {
             .background(isSelected ? Theme.navActive : hovering ? Theme.hover : .clear,
                         in: .rect(cornerRadius: Theme.controlRadius))
             .contentShape(.rect(cornerRadius: Theme.controlRadius))
+            .overlay(alignment: .topTrailing) {
+                if collapsed, badge > 0 {
+                    Circle()
+                        .fill(Theme.accent)
+                        .frame(width: 6, height: 6)
+                        .offset(x: -3, y: 6)
+                }
+            }
         }
         .buttonStyle(RingedPlainStyle(cornerRadius: Theme.controlRadius))
         .focusRing(isFocused, cornerRadius: Theme.controlRadius)
         .onHover { hovering = $0 }
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityValue(badge > 0 ? "\(badge) unread" : "")
     }
 }
 
