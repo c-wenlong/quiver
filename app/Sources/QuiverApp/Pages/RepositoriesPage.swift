@@ -197,35 +197,43 @@ struct RepositoriesPage: View {
         model.filtered(state, repo: repo, parts)
     }
 
-    /// One pinned repo's section: a callout holding its disclosure
-    /// header (grip + chevron + name, a link out) and, unless folded,
-    /// the active tab's surface. The section is one ReorderableRows
-    /// item — a vertical drag on it reorders the pin list.
+    /// One pinned repo's section: a callout holding its header (grip +
+    /// chevron + name, a link out) and, unless folded or empty, the
+    /// active tab's surface. The section is one ReorderableRows item —
+    /// a vertical drag on it reorders the pin list.
     @ViewBuilder private func repoSection(_ repo: String) -> some View {
+        let board = model.board(for: repo)
+        let empty = surfaceEmpty(repo, board: board)
         Card {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 8) {
                     GripDots()
-                    Button {
-                        if collapsed.contains(repo) {
-                            collapsed.remove(repo)
-                        } else {
-                            collapsed.insert(repo)
+                    if empty {
+                        // Nothing inside to fold — no chevron, no body.
+                        Text(repo).font(Theme.cardTitle)
+                            .foregroundStyle(Theme.textPrimary)
+                    } else {
+                        Button {
+                            if collapsed.contains(repo) {
+                                collapsed.remove(repo)
+                            } else {
+                                collapsed.insert(repo)
+                            }
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(Theme.textMuted)
+                                    .rotationEffect(collapsed.contains(repo)
+                                                    ? .zero : .degrees(90))
+                                Text(repo).font(Theme.cardTitle)
+                                    .foregroundStyle(Theme.textPrimary)
+                            }
+                            .contentShape(Rectangle())
                         }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(Theme.textMuted)
-                                .rotationEffect(collapsed.contains(repo)
-                                                ? .zero : .degrees(90))
-                            Text(repo).font(Theme.cardTitle)
-                                .foregroundStyle(Theme.textPrimary)
-                        }
-                        .contentShape(Rectangle())
+                        .plainButton()
+                        .help(collapsed.contains(repo) ? "Expand" : "Collapse")
                     }
-                    .plainButton()
-                    .help(collapsed.contains(repo) ? "Expand" : "Collapse")
                     Spacer()
                     Button {
                         if let url = URL(string: "https://github.com/\(repo)") { openURL(url) }
@@ -236,11 +244,10 @@ struct RepositoriesPage: View {
                     .plainButton()
                     .help("Open on GitHub")
                 }
-                .padding(.bottom, collapsed.contains(repo) ? 0 : 10)
-                if !collapsed.contains(repo) {
+                .padding(.bottom, empty || collapsed.contains(repo) ? 0 : 10)
+                if !empty, !collapsed.contains(repo) {
                     Divider().overlay(Theme.rowDivider)
                         .padding(.bottom, 4)
-                    let board = model.board(for: repo)
                     switch model.tab {
                     case .pulls: pulls(repo: repo, board: board)
                     case .issues: issues(repo: repo, board: board)
@@ -255,6 +262,28 @@ struct RepositoriesPage: View {
         }
     }
 
+    /// Whether the active tab's surface came back empty — the callout
+    /// then shows just the repo title, without a fold control or an
+    /// empty-state row. Loading, errors and not-yet-fetched surfaces
+    /// keep their normal card so state stays visible.
+    private func surfaceEmpty(_ repo: String, board: RepoBoard) -> Bool {
+        func emptied<Row>(_ state: Loadable<[Row]>) -> Bool {
+            if case .loaded(let rows) = state { return rows.isEmpty }
+            return false
+        }
+        switch model.tab {
+        case .pulls: return emptied(pullsState(repo, board: board))
+        case .issues: return emptied(issuesState(repo, board: board))
+        case .actions: return emptied(actionsState(repo, board: board))
+        case .releases: return emptied(releasesState(repo, board: board))
+        case .tags: return emptied(tagsState(repo, board: board))
+        case .branches: return emptied(branchesState(repo, board: board))
+        case .pages:
+            if case .loaded(let site) = board.pages { return site == nil }
+            return false
+        }
+    }
+
     /// The surface's empty text: under a row filter an empty list means
     /// "nothing matched", not "nothing exists" — but a repo the query
     /// named keeps the normal text, since its rows were never filtered.
@@ -264,10 +293,16 @@ struct RepositoriesPage: View {
 
     // MARK: - Surfaces
 
+    /// The tab's rows after the search filter — shared by the surface
+    /// list and `surfaceEmpty`, so the two can never disagree.
+    private func pullsState(_ repo: String, board: RepoBoard) -> Loadable<[GhPr]> {
+        filtered(board.pulls, repo: repo) {
+            [$0.title, "\($0.number)", $0.branch, $0.base, $0.author] + $0.labels }
+    }
+
     @ViewBuilder
     private func pulls(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(filtered(board.pulls, repo: repo) {
-                        [$0.title, "\($0.number)", $0.branch, $0.base, $0.author] + $0.labels },
+        SurfaceList(pullsState(repo, board: board),
                     empty: emptyText("No open pull requests.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .pulls)),
                     expandKey: "\(repo):pulls", expanded: $expanded,
@@ -320,10 +355,14 @@ struct RepositoriesPage: View {
         }
     }
 
+    private func issuesState(_ repo: String, board: RepoBoard) -> Loadable<[GhIssue]> {
+        filtered(board.issues, repo: repo) {
+            [$0.title, "\($0.number)", $0.author] + $0.labels + $0.assignees }
+    }
+
     @ViewBuilder
     private func issues(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(filtered(board.issues, repo: repo) {
-                        [$0.title, "\($0.number)", $0.author] + $0.labels + $0.assignees },
+        SurfaceList(issuesState(repo, board: board),
                     empty: emptyText("No open issues.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .issues)),
                     expandKey: "\(repo):issues", expanded: $expanded,
@@ -352,10 +391,14 @@ struct RepositoriesPage: View {
         }
     }
 
+    private func actionsState(_ repo: String, board: RepoBoard) -> Loadable<[GhRun]> {
+        filtered(board.runs, repo: repo) {
+            [$0.title, $0.workflow, $0.branch, $0.event] }
+    }
+
     @ViewBuilder
     private func actions(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(filtered(board.runs, repo: repo) {
-                        [$0.title, $0.workflow, $0.branch, $0.event] },
+        SurfaceList(actionsState(repo, board: board),
                     empty: emptyText("No workflow runs.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .actions)),
                     expandKey: "\(repo):actions", expanded: $expanded,
@@ -450,9 +493,13 @@ struct RepositoriesPage: View {
         }
     }
 
+    private func releasesState(_ repo: String, board: RepoBoard) -> Loadable<[GhRelease]> {
+        filtered(board.releases, repo: repo) { [$0.name, $0.tag] }
+    }
+
     @ViewBuilder
     private func releases(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(filtered(board.releases, repo: repo) { [$0.name, $0.tag] },
+        SurfaceList(releasesState(repo, board: board),
                     empty: emptyText("No releases.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .releases)),
                     expandKey: "\(repo):releases", expanded: $expanded,
@@ -477,9 +524,13 @@ struct RepositoriesPage: View {
         }
     }
 
+    private func tagsState(_ repo: String, board: RepoBoard) -> Loadable<[GhTag]> {
+        filtered(board.tags, repo: repo) { [$0.name, $0.sha] }
+    }
+
     @ViewBuilder
     private func tags(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(filtered(board.tags, repo: repo) { [$0.name, $0.sha] },
+        SurfaceList(tagsState(repo, board: board),
                     empty: emptyText("No tags.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .tags)),
                     expandKey: "\(repo):tags", expanded: $expanded,
@@ -495,9 +546,13 @@ struct RepositoriesPage: View {
         }
     }
 
+    private func branchesState(_ repo: String, board: RepoBoard) -> Loadable<[GhBranch]> {
+        filtered(board.branches, repo: repo) { [$0.name, $0.sha] }
+    }
+
     @ViewBuilder
     private func branches(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(filtered(board.branches, repo: repo) { [$0.name, $0.sha] },
+        SurfaceList(branchesState(repo, board: board),
                     empty: emptyText("No branches.", repo: repo),
                     loading: model.loading.contains(.init(repo: repo, tab: .branches)),
                     expandKey: "\(repo):branches", expanded: $expanded,
