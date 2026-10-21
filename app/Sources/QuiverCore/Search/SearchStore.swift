@@ -1,4 +1,5 @@
 import Foundation
+import os
 import SQLite3
 
 /// What a `files` row still owes a reader.
@@ -135,7 +136,12 @@ public struct SearchStatus: Equatable, Sendable {
 /// text in an FTS5 table. Adapted from Orca's `session-search-store.ts` and
 /// `session-search-index-writer.ts`.
 ///
-/// Not thread-safe — like `LedgerStore`, one owner serializes calls.
+/// Writes are not thread-safe — like `LedgerStore`, one owner serializes
+/// them (the `Ledger` actor's scan). `status()` is the exception: it runs
+/// on its own read-only connection under a lock, so a UI can poll while a
+/// scan writes. `clear()` must come after `setIndexer(nil)`: once the
+/// detach has returned the actor cannot be inside an index write, because
+/// it only touches the indexer between file reads.
 ///
 /// Two conventions come from Orca and are load-bearing:
 ///
@@ -147,7 +153,7 @@ public struct SearchStatus: Equatable, Sendable {
 ///   afterwards by `drainOrphanedMessages`, never deleted inline — deleting a
 ///   whole conversation inside a write transaction sizes it by the session
 ///   being replaced rather than by the chunk being written.
-public final class SearchStore {
+public final class SearchStore: @unchecked Sendable {
     /// `files.byte_offset` for a read that has not reached the end of the
     /// file. Not a byte offset, so an append is declined and the file is
     /// re-read whole; the rows it did write still answer searches.
@@ -155,6 +161,14 @@ public final class SearchStore {
 
     /// Quiver's own schema version (see `SearchSchema`).
     public static var schemaVersion: Int { SearchSchema.version }
+
+    /// Whether this build's SQLite can run the FTS5 index — a property of
+    /// the linked library, not of the index file, so the check opens a
+    /// throwaway in-memory database instead of the real one. Probed once.
+    public static let fts5Supported: Bool = {
+        guard let db = try? SQLiteDatabase() else { return false }
+        return SearchSchema.probeFTS5(db)
+    }()
 
     public let url: URL
     public let directory: URL
@@ -166,6 +180,11 @@ public final class SearchStore {
     /// The write connection; nil after `clear()`. Internal so tests can read
     /// through it under `@testable`.
     var db: SQLiteDatabase!
+    /// A read-only connection `status()` opens lazily and shares — a WAL
+    /// reader never queues behind a scan on the write connection, the same
+    /// pattern as the ledger's `usageConnection`. The lock is what makes
+    /// `status()` and `clear()` safe from threads the writer never sees.
+    private let statusConnection = OSAllocatedUnfairLock<SQLiteDatabase?>(initialState: nil)
 
     /// - Parameter directory: where `search.sqlite` lives; production uses
     ///   `SearchLocation.directory(under:)` (`~/.quiver/data/search/`).
@@ -527,7 +546,21 @@ public final class SearchStore {
 
     /// Rows per file state and the session and message totals. The status is
     /// these queries; a caller polls it rather than tracking progress itself.
+    ///
+    /// Run on the read-only connection inside the lock: polling mid-scan
+    /// reads the last committed rows without stalling the writer.
     public func status() throws -> SearchStatus {
+        try statusConnection.withLock { connection throws -> SearchStatus in
+            if connection == nil {
+                let path = url.path
+                    .addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? url.path
+                connection = try SQLiteDatabase(readOnlyURI: "file:\(path)?mode=ro")
+            }
+            return try readStatus(from: connection!)
+        }
+    }
+
+    private func readStatus(from db: SQLiteDatabase) throws -> SearchStatus {
         var status = SearchStatus()
         let states = try db.prepare("SELECT state, count(*) FROM files GROUP BY state")
         while try states.step() {
@@ -546,9 +579,12 @@ public final class SearchStore {
         return status
     }
 
-    /// Closes the connection and deletes the database with every journal file
-    /// beside it. The store is unusable afterwards.
+    /// Closes the connections and deletes the database with every journal
+    /// file beside it. The store is unusable afterwards.
     public func clear() {
+        // A poll holding the read connection would survive the unlink and
+        // keep reading the old file; drop it first.
+        statusConnection.withLock { $0 = nil }
         db = nil
         SearchLocation.removeDatabase(at: url)
     }

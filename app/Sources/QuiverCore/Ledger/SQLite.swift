@@ -13,6 +13,13 @@ final class SQLiteDatabase: @unchecked Sendable {
 
     private(set) var handle: OpaquePointer?
 
+    /// A scratch in-memory database: a probe can ask questions of SQLite
+    /// without leaving a file behind.
+    init() throws {
+        try open(":memory:", flags: SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX)
+        sqlite3_busy_timeout(handle, 2_000)
+    }
+
     /// Opens (and creates) a read-write database.
     init(url: URL) throws {
         try open(url.path, flags: SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX)
