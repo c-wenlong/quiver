@@ -1523,6 +1523,107 @@ class TestCommands(unittest.TestCase):
         self.assertFalse(data["merged"])
         self.assertIn("not mergeable", data["error"])
 
+    # -- swe gh pr worktree -------------------------------------------
+
+    def _patch_paths(self):
+        mirrors = Path(self.tmp.name) / "data" / "github" / "mirrors"
+        trees = Path(self.tmp.name) / "worktrees"
+        patches = [
+            patch.object(paths, "GITHUB_MIRRORS", mirrors),
+            patch.object(paths, "WORKTREES_DIR", trees),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        return mirrors, trees
+
+    def test_pr_worktree_creates_then_reuses(self):
+        mirrors, trees = self._patch_paths()
+        seen = []
+
+        def run(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            seen.append(joined)
+            if "worktree list" in joined:
+                wt = trees / "o__r-pr7"
+                if wt.exists():
+                    return _Proc(stdout=f"worktree {wt}\n")
+                return _Proc(stdout="worktree /x/mirror\n")
+            if "rev-parse" in joined:
+                return _Proc(stdout="abc123def456\n")
+            return _Proc(stdout="ok")
+
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "7", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["repo"], "o/r")
+        self.assertEqual(data["pr"], 7)
+        self.assertTrue(data["created"])
+        self.assertEqual(data["head"], "abc123def456")
+        self.assertIn("refs/pull/7/head", seen[1])
+        self.assertIn("worktree list", seen[3])
+        self.assertIn("worktree add --detach", seen[4])
+        # The clone ran first, bare + blob-filtered.
+        self.assertIn("repo clone o/r", seen[0])
+        self.assertIn("--bare", seen[0])
+        self.assertIn("--filter=blob:none", seen[0])
+
+        # Second call: mirror exists, worktree registered → reuse.
+        (mirrors / "o__r.git").mkdir(parents=True)
+        (trees / "o__r-pr7").mkdir(parents=True)
+        seen.clear()
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "7", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)["data"]
+        self.assertFalse(data["created"])
+        self.assertFalse(any("repo clone" in c for c in seen))
+        self.assertFalse(any("worktree add" in c for c in seen))
+
+    def test_pr_worktree_accepts_url_ref(self):
+        self._patch_paths()
+        seen = []
+
+        def run(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            seen.append(joined)
+            if "worktree list" in joined:
+                return _Proc(stdout="worktree /x\n")
+            if "rev-parse" in joined:
+                return _Proc(stdout="abc\n")
+            return _Proc(stdout="ok")
+
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "https://github.com/o/r/pull/9",
+             "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["data"]["pr"], 9)
+        self.assertIn("refs/pull/9/head", seen[1])
+
+    def test_pr_worktree_bad_ref(self):
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "abc", "--repo=o/r"])
+        self.assertEqual(rc, 1)
+        self.assertIn("pull", out)
+
+    def test_pr_worktree_fetch_failure(self):
+        self._patch_paths()
+
+        def run(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            if "refs/pull/" in joined:
+                return _Proc(returncode=1,
+                             stderr="couldn't find remote ref")
+            return _Proc(stdout="ok")
+
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "99", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 1)
+        data = json.loads(out)["data"]
+        self.assertIsNone(data["path"])
+        self.assertIn("Fetch failed", data["error"])
+
     # -- swe gh run rerun ---------------------------------------------
 
     def test_run_rerun_json(self):

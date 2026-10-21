@@ -549,6 +549,50 @@ public final class GitHubModel {
         return .loaded(rows.filter { matches(parts($0)) })
     }
 
+    // MARK: - session bridge
+
+    /// Installed harness CLIs for the "Open in session" picker —
+    /// `swe list`, loaded once and archived entries dropped.
+    public private(set) var sessionHarnesses: [Harness] = []
+    private var harnessesLoaded = false
+    /// `owner/name#N` while its PR worktree is being prepared.
+    public private(set) var worktreeBusy = Set<String>()
+    /// The last worktree or launch failure, shown on the page.
+    public private(set) var sessionError: String?
+
+    public func loadSessionHarnesses(swe: SweClient) async {
+        guard !harnessesLoaded else { return }
+        harnessesLoaded = true
+        do {
+            sessionHarnesses = try await swe.harnesses(withUsage: false)
+                .filter { ($0.installed ?? false) && $0.state != .archived }
+                .sorted { $0.title < $1.title }
+        } catch {
+            // An empty picker is the failure mode — the menu hides.
+        }
+    }
+
+    /// `swe gh pr worktree`: fetch the PR head into the shared mirror
+    /// and keep a detached checkout for it. Returns the checkout path,
+    /// or nil with `sessionError` set.
+    public func prWorktree(repo: String, pr: Int, swe: SweClient) async -> String? {
+        let key = "\(repo)#\(pr)"
+        guard !worktreeBusy.contains(key) else { return nil }
+        worktreeBusy.insert(key)
+        defer { worktreeBusy.remove(key) }
+        do {
+            let reply = try await swe.ghPrWorktree(repo: repo, pr: pr)
+            if let path = reply.path {
+                sessionError = nil
+                return path
+            }
+            sessionError = reply.error ?? "swe returned no worktree path."
+        } catch {
+            sessionError = error.localizedDescription
+        }
+        return nil
+    }
+
     // MARK: - internals
 
     /// Pull the entry for the repo out of a surface reply and write it to

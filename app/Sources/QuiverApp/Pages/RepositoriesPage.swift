@@ -72,6 +72,9 @@ struct RepositoriesPage: View {
                 if let error = model.pinError {
                     ErrorCard(message: error)
                 }
+                if let error = model.sessionError {
+                    ErrorCard(message: error)
+                }
                 ScrollViewReader { proxy in
                     ForEach(visibleRepos) { pin in
                         repoSection(pin.name).id(pin.name)
@@ -92,6 +95,7 @@ struct RepositoriesPage: View {
             // Pins first, then only the sections on screen — a filtered
             // page never waits on a repo it isn't showing.
             await model.loadPinsIfNeeded(swe: app.swe)
+            await model.loadSessionHarnesses(swe: app.swe)
             for repo in visibleRepos where !Task.isCancelled {
                 await model.loadTabIfStale(model.tab, repo: repo.name, swe: app.swe)
             }
@@ -192,6 +196,30 @@ struct RepositoriesPage: View {
                 }
                 ReviewMark(decision: pr.reviewDecision)
                 ChecksMark(checks: pr.checks)
+                if model.worktreeBusy.contains("\(repo)#\(pr.number)") {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            .contextMenu {
+                if !model.sessionHarnesses.isEmpty {
+                    Menu {
+                        ForEach(model.sessionHarnesses) { harness in
+                            Button(harness.title) {
+                                Task {
+                                    await app.openPrSession(repo: repo,
+                                                            number: pr.number,
+                                                            harness: harness)
+                                }
+                            }
+                        }
+                    } label: {
+                        Label("Open in session", systemImage: "terminal")
+                    }
+                    Divider()
+                }
+                Button("Open on GitHub") {
+                    if let url = URL(string: pr.url) { openURL(url) }
+                }
             }
         }
     }
