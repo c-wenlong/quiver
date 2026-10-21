@@ -186,8 +186,8 @@ public final class SearchIndexer: @unchecked Sendable {
     }
 
     /// Commits the buffered whole-read rows under the in-flight session —
-    /// cursor unmoved, so a scan that dies mid-read still re-reads the file
-    /// and the new generation replaces the partial one.
+    /// offset parked at the partial sentinel, so a scan that dies mid-read
+    /// re-reads the file whole rather than trusting the fresh stat.
     private func flushPending() {
         do { try flushNow() } catch { pending!.flushError = error }
         pending!.messages.removeAll(keepingCapacity: true)
@@ -216,12 +216,12 @@ public final class SearchIndexer: @unchecked Sendable {
         } else {
             session = .fresh(fields)
         }
-        // The row's offset stays where it started; the final commit moves
-        // it. A fence miss means the record moved under the read — nothing
-        // was written and the next pass decides again.
+        // The row's offset parks at the partial sentinel; the final commit
+        // moves it to the real offset. A fence miss means the record moved
+        // under the read — nothing was written and the next pass decides.
         guard try store.commitFile(
             path: file.path, expected: expected, stat: stat,
-            byteOffset: expected?.byteOffset ?? 0,
+            byteOffset: SearchStore.partialFileOffset,
             session: session, messages: Self.messageRows(from: file.messages))
         else { return }
         let fence = try? store.fileFence(for: file.path)

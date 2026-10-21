@@ -253,7 +253,11 @@ public final class SearchStore: @unchecked Sendable {
             """)
         statement.bind([.text(path)])
         guard try statement.step() else { return nil }
-        return Self.fileRow(statement)
+        let row = Self.fileRow(statement)
+        // An unstepped statement keeps a WAL read cursor open, which holds
+        // checkpointing hostage; `bind` resets it before reuse.
+        statement.bind([])
+        return row
     }
 
     /// Every row this index holds, path-ordered for a deterministic listing.
@@ -275,12 +279,14 @@ public final class SearchStore: @unchecked Sendable {
     /// (`<db>#<id>`) enumerate just their own entries without dumping the
     /// whole table into memory.
     public func files(withPrefix prefix: String) throws -> [SearchFileRow] {
+        // A [prefix, prefix+max-scalar) range — an index seek rather than a
+        // `substr` scan, and no code-point counting questions.
         let statement = try cachedStatement("""
             SELECT path, dev, ino, byte_offset, mtime_ms, size_bytes, session_row_id,
                    state, fail_count, failed_mtime_ms
-            FROM files WHERE substr(path, 1, ?) = ? ORDER BY path
+            FROM files WHERE path >= ? AND path < ? || char(1114111) ORDER BY path
             """)
-        statement.bind([.int(prefix.count), .text(prefix)])
+        statement.bind([.text(prefix), .text(prefix)])
         var rows: [SearchFileRow] = []
         while try statement.step() {
             rows.append(Self.fileRow(statement))
@@ -295,8 +301,10 @@ public final class SearchStore: @unchecked Sendable {
             "SELECT session_row_id, byte_offset FROM files WHERE path = ?")
         statement.bind([.text(path)])
         guard try statement.step() else { return nil }
-        return SearchFileFence(sessionRowID: statement.isNull(0) ? nil : statement.int(0),
-                               byteOffset: statement.int(1))
+        let fence = SearchFileFence(sessionRowID: statement.isNull(0) ? nil : statement.int(0),
+                                  byteOffset: statement.int(1))
+        statement.bind([])
+        return fence
     }
 
     private static func fileRow(_ row: Statement) -> SearchFileRow {
@@ -442,12 +450,14 @@ public final class SearchStore: @unchecked Sendable {
             """)
         statement.bind([.int(id)])
         guard try statement.step() else { return nil }
-        return SearchSession(id: id, fields: SearchSessionFields(
+        let session = SearchSession(id: id, fields: SearchSessionFields(
             agent: statement.text(0) ?? "", sessionID: statement.text(1) ?? "",
             filePath: statement.text(2) ?? "", title: statement.text(3) ?? "",
             cwd: statement.text(4), cwdKey: statement.text(5),
             createdAt: statement.text(6), updatedAt: statement.text(7),
             messageCount: Int(statement.int(8))))
+        statement.bind([])
+        return session
     }
 
     /// Points `path` at a fresh `sessions` row and deletes the old row only,
@@ -589,7 +599,9 @@ public final class SearchStore: @unchecked Sendable {
         let statement = try cachedStatement("SELECT value FROM meta WHERE key = ?")
         statement.bind([.text(key)])
         guard try statement.step() else { return nil }
-        return statement.text(0)
+        let value = statement.text(0)
+        statement.bind([])
+        return value
     }
 
     private func setMeta(_ key: String, _ value: String) throws {

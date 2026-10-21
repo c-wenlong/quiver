@@ -335,11 +335,15 @@ public actor Ledger {
         }
         for home in roots.clineHomes {
             // `<id>/<id>.json`: the stem must equal its session directory.
+            // Filter before the cap — sibling `.json` files that fail it
+            // must not crowd sessions out of a limited window.
             for file in Self.capped(
-                Self.files(under: home.appendingPathComponent("data/sessions"), suffix: ".json"),
-                recentLimit: recentLimit)
-            where file.deletingPathExtension().lastPathComponent
-                == file.deletingLastPathComponent().lastPathComponent {
+                Self.files(under: home.appendingPathComponent("data/sessions"), suffix: ".json")
+                    .filter {
+                        $0.deletingPathExtension().lastPathComponent
+                            == $0.deletingLastPathComponent().lastPathComponent
+                    },
+                recentLimit: recentLimit) {
                 if Task.isCancelled { throw CancellationError() }
                 try scanSessionFile(file, accountHome: home.path,
                                     parse: { try SessionTotalsFile.cline(session: $0, accountHome: home.path) },
@@ -411,18 +415,28 @@ public actor Ledger {
         _ url: URL, indexer: SearchIndexer, recentLimit: Int?, report: inout ScanReport
     ) throws {
         let dbPath = url.resolvingSymlinksInPath().path
+        let metaKey = "opencode:\(url.path)"
         let indexed = (try? indexer.store.files(withPrefix: dbPath + "#")) ?? []
         let unchanged = (try? DatabaseSources.sourceFingerprintUnchanged(
-            at: url, metaKey: "opencode:\(url.path)", store: store)) ?? false
+            at: url, metaKey: metaKey, store: store)) ?? false
+        // The last enumeration may have been capped: sessions past the cap
+        // hold no synthetic row, so an unchanged fingerprint alone must not
+        // skip them. `partial` records that the census was truncated.
+        let partial = (try? store.meta(metaKey + ":partial")) == "1"
         // `indexed` must be non-empty too: a matching fingerprint with no
         // synthetic rows means the index was cleared (or never ran at this
         // fingerprint), not that the database holds nothing.
-        if unchanged && !indexed.isEmpty && indexed.allSatisfy({ !$0.owesRead }) { return }
+        if unchanged && !partial && !indexed.isEmpty
+           && indexed.allSatisfy({ !$0.owesRead }) { return }
         let source: SQLiteDatabase
         let sessions: [SearchOpenCode.Session]
         do {
             source = try DatabaseSources.openReadOnly(at: url.path)
             sessions = try SearchOpenCode.sessions(in: source, limit: recentLimit)
+            let truncated = recentLimit.map { sessions.count >= $0 } ?? false
+            if truncated != partial {
+                try? store.setMeta(metaKey + ":partial", truncated ? "1" : "0")
+            }
         } catch {
             report.notes.append(
                 "Skipped \(HarnessMark("opencode").name)'s database (\(url.path)): \(error.localizedDescription)")
