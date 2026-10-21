@@ -454,13 +454,14 @@ struct RepositoriesPage: View {
     /// callout it keeps the card's inset rather than bleeding.
     @ViewBuilder
     private func pages(repo: String, board: RepoBoard) -> some View {
-        switch board.pages {
-        case .idle, .loading:
-            LoadingCard(text: "Reading the Pages settings…", framed: false)
-        case .failed(let message):
-            ErrorCard(message: message, framed: false)
-        case .loaded(let pages):
-            if let pages {
+        Group {
+            switch board.pages {
+            case .idle, .loading:
+                LoadingCard(text: "Reading the Pages settings…", framed: false)
+            case .failed(let message):
+                ErrorCard(message: message, framed: false)
+            case .loaded(let pages):
+                if let pages {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(pages.cname ?? pages.url ?? "GitHub Pages")
                         .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
@@ -497,14 +498,15 @@ struct RepositoriesPage: View {
                     }
                 }
                 .padding(.vertical, 6)
-                // Counteracts the callout's row bleed: the panel keeps
-                // the inset the rows gave up.
-                .padding([.horizontal, .bottom], Theme.cardPadding)
-            } else {
-                EmptyCard(text: "This repo has no GitHub Pages site.",
-                          icon: "globe", framed: false)
+                } else {
+                    EmptyCard(text: "This repo has no GitHub Pages site.",
+                              icon: "globe", framed: false)
+                }
             }
         }
+        // Counteracts the callout's row bleed on every branch: the
+        // panel keeps the inset the rows gave up.
+        .padding([.horizontal, .bottom], Theme.cardPadding)
     }
 
     private func releasesState(_ repo: String, board: RepoBoard) -> Loadable<[GhRelease]> {
@@ -616,13 +618,22 @@ private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: Vi
         switch state {
         case .idle, .loading:
             LoadingCard(text: "Fetching…", framed: false)
+                .padding(statePadding)
         case .failed(let message):
             ErrorCard(message: message, framed: false)
+                .padding(statePadding)
         case .loaded(let rows) where rows.isEmpty:
             EmptyCard(text: empty, icon: "checkmark.circle", framed: false)
+                .padding(statePadding)
         case .loaded(let rows):
             content(rows)
         }
+    }
+
+    /// The bare state rows share the row content's inset inside the
+    /// bled callout — without it their text and buttons touch the edge.
+    private var statePadding: EdgeInsets {
+        EdgeInsets(top: 10, leading: 14, bottom: 10, trailing: 14)
     }
 
     @ViewBuilder private func content(_ rows: [Row]) -> some View {
