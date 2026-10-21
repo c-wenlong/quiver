@@ -47,6 +47,12 @@ public final class SearchIndexer: @unchecked Sendable {
     static let bufferBudgetChars = 32 * 1024 * 1024
 
     let store: SearchStore
+    /// The flush trigger — injectable so tests exercise chunking without
+    /// writing a 32 MiB transcript.
+    let bufferBudget: Int
+    /// How many mid-read commits this indexer has run — the observable a
+    /// test asserts against. Internal, not public API.
+    private(set) var midReadFlushes = 0
 
     /// The file currently being decoded — set by `beginFile`, committed by
     /// `finishFile`, dropped by `failFile`. One scan reads one file at a
@@ -84,6 +90,14 @@ public final class SearchIndexer: @unchecked Sendable {
 
     public init(store: SearchStore) {
         self.store = store
+        self.bufferBudget = Self.bufferBudgetChars
+    }
+
+    /// A test-size buffer budget — `SearchIndexerTests` passes a few hundred
+    /// bytes here so chunk commits run on fixture transcripts.
+    init(store: SearchStore, bufferBudget: Int) {
+        self.store = store
+        self.bufferBudget = bufferBudget
     }
 
     /// Paths that never enter the index: Claude `subagents/` transcripts are
@@ -180,7 +194,7 @@ public final class SearchIndexer: @unchecked Sendable {
             pending!.bufferedChars += message.text.utf8.count
         }
         pending!.decoded += output.messages.count
-        if !pending!.appending, pending!.bufferedChars >= Self.bufferBudgetChars {
+        if !pending!.appending, pending!.bufferedChars >= bufferBudget {
             flushPending()
         }
     }
@@ -227,6 +241,7 @@ public final class SearchIndexer: @unchecked Sendable {
         let fence = try? store.fileFence(for: file.path)
         pending!.flushedSessionRowID = fence?.sessionRowID
         pending!.expected = fence
+        midReadFlushes += 1
     }
 
     /// Commits the read in the store's per-file transaction, fenced on the
