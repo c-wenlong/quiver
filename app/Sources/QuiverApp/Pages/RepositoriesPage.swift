@@ -264,20 +264,18 @@ struct RepositoriesPage: View {
 
     /// Whether the active tab's surface came back empty — the callout
     /// then shows just the repo title, without a fold control or an
-    /// empty-state row. Loading, errors and not-yet-fetched surfaces
-    /// keep their normal card so state stays visible.
+    /// empty-state row. `hasRows` only checks presence (first match
+    /// exits) so the list's own filter pass isn't duplicated. Loading,
+    /// errors and unfetched surfaces keep the card so state stays
+    /// visible.
     private func surfaceEmpty(_ repo: String, board: RepoBoard) -> Bool {
-        func emptied<Row>(_ state: Loadable<[Row]>) -> Bool {
-            if case .loaded(let rows) = state { return rows.isEmpty }
-            return false
-        }
         switch model.tab {
-        case .pulls: return emptied(pullsState(repo, board: board))
-        case .issues: return emptied(issuesState(repo, board: board))
-        case .actions: return emptied(actionsState(repo, board: board))
-        case .releases: return emptied(releasesState(repo, board: board))
-        case .tags: return emptied(tagsState(repo, board: board))
-        case .branches: return emptied(branchesState(repo, board: board))
+        case .pulls: return !model.hasRows(board.pulls, repo: repo, Self.prParts)
+        case .issues: return !model.hasRows(board.issues, repo: repo, Self.issueParts)
+        case .actions: return !model.hasRows(board.runs, repo: repo, Self.runParts)
+        case .releases: return !model.hasRows(board.releases, repo: repo, Self.releaseParts)
+        case .tags: return !model.hasRows(board.tags, repo: repo, Self.tagParts)
+        case .branches: return !model.hasRows(board.branches, repo: repo, Self.branchParts)
         case .pages:
             if case .loaded(let site) = board.pages { return site == nil }
             return false
@@ -293,11 +291,21 @@ struct RepositoriesPage: View {
 
     // MARK: - Surfaces
 
-    /// The tab's rows after the search filter — shared by the surface
-    /// list and `surfaceEmpty`, so the two can never disagree.
+    /// What the row filter searches per surface — shared by the list's
+    /// filtered state and `surfaceEmpty`, so they can never disagree.
+    private static let prParts: (GhPr) -> [String?] = {
+        [$0.title, "\($0.number)", $0.branch, $0.base, $0.author] + $0.labels }
+    private static let issueParts: (GhIssue) -> [String?] = {
+        [$0.title, "\($0.number)", $0.author] + $0.labels + $0.assignees }
+    private static let runParts: (GhRun) -> [String?] = {
+        [$0.title, $0.workflow, $0.branch, $0.event] }
+    private static let releaseParts: (GhRelease) -> [String?] = { [$0.name, $0.tag] }
+    private static let tagParts: (GhTag) -> [String?] = { [$0.name, $0.sha] }
+    private static let branchParts: (GhBranch) -> [String?] = { [$0.name, $0.sha] }
+
+    /// The tab's rows after the search filter.
     private func pullsState(_ repo: String, board: RepoBoard) -> Loadable<[GhPr]> {
-        filtered(board.pulls, repo: repo) {
-            [$0.title, "\($0.number)", $0.branch, $0.base, $0.author] + $0.labels }
+        filtered(board.pulls, repo: repo, Self.prParts)
     }
 
     @ViewBuilder
@@ -356,8 +364,7 @@ struct RepositoriesPage: View {
     }
 
     private func issuesState(_ repo: String, board: RepoBoard) -> Loadable<[GhIssue]> {
-        filtered(board.issues, repo: repo) {
-            [$0.title, "\($0.number)", $0.author] + $0.labels + $0.assignees }
+        filtered(board.issues, repo: repo, Self.issueParts)
     }
 
     @ViewBuilder
@@ -392,8 +399,7 @@ struct RepositoriesPage: View {
     }
 
     private func actionsState(_ repo: String, board: RepoBoard) -> Loadable<[GhRun]> {
-        filtered(board.runs, repo: repo) {
-            [$0.title, $0.workflow, $0.branch, $0.event] }
+        filtered(board.runs, repo: repo, Self.runParts)
     }
 
     @ViewBuilder
@@ -494,7 +500,7 @@ struct RepositoriesPage: View {
     }
 
     private func releasesState(_ repo: String, board: RepoBoard) -> Loadable<[GhRelease]> {
-        filtered(board.releases, repo: repo) { [$0.name, $0.tag] }
+        filtered(board.releases, repo: repo, Self.releaseParts)
     }
 
     @ViewBuilder
@@ -525,7 +531,7 @@ struct RepositoriesPage: View {
     }
 
     private func tagsState(_ repo: String, board: RepoBoard) -> Loadable<[GhTag]> {
-        filtered(board.tags, repo: repo) { [$0.name, $0.sha] }
+        filtered(board.tags, repo: repo, Self.tagParts)
     }
 
     @ViewBuilder
@@ -547,7 +553,7 @@ struct RepositoriesPage: View {
     }
 
     private func branchesState(_ repo: String, board: RepoBoard) -> Loadable<[GhBranch]> {
-        filtered(board.branches, repo: repo) { [$0.name, $0.sha] }
+        filtered(board.branches, repo: repo, Self.branchParts)
     }
 
     @ViewBuilder
