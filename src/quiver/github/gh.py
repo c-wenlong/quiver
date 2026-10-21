@@ -8,6 +8,7 @@ tell "no such PR" (``not-found``) apart from "GitHub is down"
 """
 
 import json
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -60,9 +61,11 @@ def probe_env() -> GhEnv:
         return env
     env.authenticated = done.returncode == 0
     if env.authenticated:
-        who = run_gh(["api", "user", "--jq", ".login"])
-        if who.status == "ok":
-            env.login = str(who.data or "").strip()
+        # `auth status` already names the account ("Logged in to github.com
+        # account NAME"), so a second `api user` call is pure latency.
+        match = re.search(r"account (\S+)", done.stderr + done.stdout)
+        if match:
+            env.login = match.group(1)
     return env
 
 
