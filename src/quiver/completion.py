@@ -313,6 +313,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     ],
     "gh repo search": [
         ("--limit", "Rows to fetch"),
+        ("--all", "Search all of GitHub, not just your repos and orgs"),
         ("--json", "Print the {schema, data} envelope"),
     ],
 }

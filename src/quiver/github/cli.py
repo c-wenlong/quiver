@@ -8,11 +8,13 @@ Repo resolution is ``--repo=`` first, the working directory's remote
 second, then every pinned repo — so a bare ``swe gh pr`` is the dashboard.
 """
 
+import json
 import time
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
+from quiver import paths
 from quiver.console import c, sanitize, truncate
 from quiver.flags import expand_value_flags
 from quiver.github import gh, repos
@@ -738,9 +740,13 @@ def _cmd_repo(args: list[str], json_view: bool) -> int:
         if env.status != "ok":
             print(c("red", f"  {_env_error(env)}"), file=err)
             return 1
-        result = gh.run_json([
-            "search", "repos", query, "--limit", str(_limit(opts, 15)),
-            "--json", "fullName,description,stargazersCount,updatedAt"])
+        args = ["search", "repos", query,
+                "--limit", str(_limit(opts, 15)),
+                "--json", "fullName,description,stargazersCount,updatedAt"]
+        owners = [] if opts["all"] else _search_owners(env)
+        for owner in owners:
+            args += ["--owner", owner]
+        result = gh.run_json(args)
         if result.status != "ok":
             print(c("red", result.error or result.status), file=err)
             return 1
@@ -759,8 +765,10 @@ def _cmd_repo(args: list[str], json_view: bool) -> int:
             print(f"  {c('cyan', name.ljust(40)[:40])} "
                   f"{c('dim', stars.rjust(8))}  "
                   f"{sanitize(truncate(r['description'] or '', 60))}")
-        print(c("dim", f"\n  {len(found)} repos — add one with "
-                       "`swe gh repo add <name>`\n"))
+        hint = ("repos — add one with `swe gh repo add <name>`, or "
+                "search all of GitHub with --all" if owners
+                else "repos — add one with `swe gh repo add <name>`")
+        print(c("dim", f"\n  {len(found)} {hint}\n"))
         return 0
 
     if sub != "list":
@@ -797,6 +805,74 @@ def _open_web(kind: str, targets: list[str]) -> None:
            else f"https://github.com/{targets[0]}/{_WEB_PAGES[kind]}"
            if targets else "https://github.com")
     webbrowser.open(url)
+
+
+# Org membership barely moves, and the sheet re-searches on every typing
+# pause — each `swe` run would otherwise re-fetch `user/orgs`. Cached per
+# login under ~/.quiver/cache so an `gh auth switch` can't leak scopes.
+_OWNERS_TTL = 600
+
+
+def _search_owners(env: gh.GhEnv) -> list[str]:
+    """Who a repo search may hit: the login itself plus every org the
+    account belongs to, so results are repos the user can actually pin
+    rather than all of public GitHub. An empty list means the scope
+    couldn't be resolved — the caller then runs the query unscoped.
+    """
+    cached = _cached_owners(env.login)
+    if cached is not None:
+        return cached
+    owners = [env.login] if env.login else []
+    orgs = gh.run_gh(["api", "user/orgs", "--paginate",
+                      "--jq", ".[].login"])
+    if orgs.status == "ok" and isinstance(orgs.data, str):
+        for line in orgs.data.splitlines():
+            name = line.strip()
+            if name and name not in owners:
+                owners.append(name)
+        # Only a successful orgs read may cache — a transient failure
+        # would otherwise hide org repos until the TTL ran out.
+        _cache_owners(env.login, owners)
+    return owners
+
+
+def _cached_owners(login: str) -> list[str] | None:
+    """The owner list under the TTL, keyed by login — ``None`` on a
+    miss, a stale entry or an unreadable file."""
+    if not login:
+        return None
+    try:
+        data = json.loads(paths.GITHUB_OWNERS_CACHE.read_text(
+            encoding="utf-8"))
+        entry = data.get("logins", {}).get(login, {})
+        if time.time() - float(entry.get("fetched_at", 0)) < _OWNERS_TTL:
+            owners = entry.get("owners")
+            if isinstance(owners, list):
+                return [str(o) for o in owners]
+    except (OSError, ValueError, TypeError):
+        pass
+    return None
+
+
+def _cache_owners(login: str, owners: list[str]) -> None:
+    """Best-effort write; a cache that can't persist just means the
+    next search re-fetches."""
+    if not login:
+        return
+    try:
+        data = json.loads(paths.GITHUB_OWNERS_CACHE.read_text(
+            encoding="utf-8"))
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError):
+        data = {}
+    data.setdefault("logins", {})[login] = {
+        "owners": owners, "fetched_at": time.time()}
+    try:
+        paths.atomic_write_text(paths.GITHUB_OWNERS_CACHE,
+                                json.dumps(data))
+    except OSError:
+        pass
 
 
 def _env_error(env: gh.GhEnv) -> str:
