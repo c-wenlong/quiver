@@ -53,8 +53,19 @@ struct RepositoriesPage: View {
                 .help("Jump to a repository (⌘K)")
                 Button("Refresh", systemImage: "arrow.clockwise") {
                     Task {
-                        for repo in visibleRepos {
-                            await model.refresh(repo: repo.name, swe: app.swe)
+                        // A board call covers repos not yet hydrated;
+                        // the per-repo refreshes overlap after it.
+                        await model.loadBoards(visibleRepos.map(\.name),
+                                               swe: app.swe)
+                        let model = model
+                        let swe = app.swe
+                        await withTaskGroup(of: Void.self) { group in
+                            for repo in visibleRepos {
+                                group.addTask {
+                                    await model.refresh(repo: repo.name,
+                                                        swe: swe)
+                                }
+                            }
                         }
                     }
                 }
@@ -123,19 +134,34 @@ struct RepositoriesPage: View {
         .task(id: Visible(tab: model.tab, swe: app.swePath,
                          filter: model.filter,
                          repos: model.pins.map(\.name))) {
-            // Pins first, then only the sections on screen — a filtered
-            // page never waits on a repo it isn't showing.
+            // Pins first, then one board call hydrates every visible
+            // repo's surfaces at once — the CLI fans the list out itself.
             await model.loadPinsIfNeeded(swe: app.swe)
             await model.loadSessionHarnesses(swe: app.swe)
-            for repo in visibleRepos where !Task.isCancelled {
-                await model.loadTabIfStale(model.tab, repo: repo.name, swe: app.swe)
+            await model.loadBoards(visibleRepos.map(\.name), swe: app.swe)
+            // What the board missed or failed falls back to per-tab
+            // fetches — overlapped, since each await releases the actor.
+            let model = model
+            let swe = app.swe
+            await withTaskGroup(of: Void.self) { group in
+                for repo in visibleRepos {
+                    group.addTask {
+                        await model.loadTabIfStale(model.tab, repo: repo.name,
+                                                   swe: swe)
+                    }
+                }
             }
             // Poll while the page is open so merged PRs and finished CI
             // land without a manual refresh.
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
-                for repo in visibleRepos where !Task.isCancelled {
-                    await model.loadTab(model.tab, repo: repo.name, swe: app.swe)
+                await withTaskGroup(of: Void.self) { group in
+                    for repo in visibleRepos {
+                        group.addTask {
+                            await model.loadTab(model.tab, repo: repo.name,
+                                                swe: swe)
+                        }
+                    }
                 }
             }
         }

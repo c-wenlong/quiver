@@ -233,6 +233,17 @@ def _pr_detail(pr: dict, repo: str) -> dict:
     }
 
 
+def _comment_count(value) -> int:
+    """``comments`` across the two gh shapes: ``gh issue list`` returns
+    the comment objects themselves, GraphQL search returns
+    ``{totalCount}`` — the row always carries the number."""
+    if isinstance(value, dict):
+        return int(value.get("totalCount") or 0)
+    if isinstance(value, list):
+        return len(value)
+    return int(value or 0)
+
+
 def _issue_row(issue: dict) -> dict:
     return {
         "number": issue.get("number"),
@@ -241,9 +252,7 @@ def _issue_row(issue: dict) -> dict:
         "author": _login(issue.get("author")),
         "labels": _label_names(issue.get("labels")),
         "assignees": [_login(a) for a in (issue.get("assignees") or [])],
-        "comments": (issue.get("comments") or {}).get("totalCount", 0)
-        if isinstance(issue.get("comments"), dict)
-        else issue.get("comments") or 0,
+        "comments": _comment_count(issue.get("comments")),
         "updated_at": issue.get("updatedAt"),
         "url": issue.get("url") or "",
     }
@@ -1155,7 +1164,9 @@ def _targets(opts: dict,
              json_view: bool) -> tuple[list[str] | None, str | None]:
     """Resolve the repo list, or print why nothing can be queried.
     The message comes back too so --json callers can emit it."""
-    if opts["repo"] and repos.normalize_repo_input(opts["repo"]) is None:
+    if opts["repo"] and not all(
+            repos.normalize_repo_input(part)
+            for part in opts["repo"].split(",")):
         msg = f"Not a GitHub repo: {opts['repo']}  (want owner/name or a URL)"
         if json_view:
             print(msg, file=error_stream(True))
@@ -1183,7 +1194,7 @@ def _resolve_one(opts: dict,
         return None, res_err
     if len(names) > 1:
         msg = ("This command takes one repo — pass --repo=owner/name "
-               f"(resolved {len(names)} pins).")
+               f"(resolved {len(names)} repos).")
         if json_view:
             print(msg, file=error_stream(True))
         else:

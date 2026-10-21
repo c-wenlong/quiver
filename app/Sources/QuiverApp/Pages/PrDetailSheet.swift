@@ -25,6 +25,9 @@ struct PrDetailSheet: View {
     /// A merge's returned error — kept on the sheet so a failed merge
     /// stays readable after the busy state clears.
     @State private var mergeError: String?
+    /// The check list starts folded — the pass count on the header is
+    /// enough when everything is green; it opens for the failed rows.
+    @State private var checksOpen = false
 
     private var model: GitHubModel { app.github }
     private var state: Loadable<GhPrDetail> {
@@ -68,11 +71,13 @@ struct PrDetailSheet: View {
                 let body = pr.body.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !body.isEmpty {
                     section("Description") {
-                        Text(body)
-                            .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                            .lineLimit(12)
+                        Text(markdown(body))
+                            .font(Theme.bodySmall)
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineSpacing(3)
                             .textSelection(.enabled)
                             .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             }
@@ -183,36 +188,87 @@ struct PrDetailSheet: View {
         }
     }
 
+    /// The PR body as rendered markdown: Apple's parser covers emphasis,
+    /// links, lists and code through presentation intent; the heading
+    /// pass gives `##` lines real sizes since `Text` leaves those to us.
+    private func markdown(_ body: String) -> AttributedString {
+        var text = (try? AttributedString(
+            markdown: body,
+            options: .init(interpretedSyntax: .full,
+                           failurePolicy: .returnPartiallyParsedIfPossible)))
+            ?? AttributedString(body)
+        for run in text.runs {
+            guard let intent = run.presentationIntent else { continue }
+            for component in intent.components {
+                guard case .header(let level) = component.kind else { continue }
+                let sizes: [CGFloat] = [17, 15, 14, 13, 13, 13]
+                text[run.range].font = NSFont.systemFont(
+                    ofSize: sizes[min(max(level, 1), 6) - 1], weight: .semibold)
+                text[run.range].foregroundColor = NSColor(Theme.textPrimary)
+            }
+        }
+        return text
+    }
+
+    /// The check list, folded until asked — the header carries the pass
+    /// count so a green PR reads "Checks 9/9" without the nine rows.
     @ViewBuilder
     private func checks(_ rows: [GhCheck]) -> some View {
-        section("Checks") {
-            ForEach(Array(rows.enumerated()), id: \.offset) { index, check in
-                HStack(spacing: 8) {
-                    CheckGlyph(state: check.state)
-                    Text(check.name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                    if !check.workflow.isEmpty {
-                        Text(check.workflow).font(Theme.caption).foregroundStyle(Theme.textMuted)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 8)
-                    if let conclusion = check.conclusion {
-                        Text(conclusion).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    } else {
-                        Text(check.status).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    }
-                    if let url = URL(string: check.url), !check.url.isEmpty {
-                        Button { openURL(url) } label: {
-                            Image(systemName: "arrow.up.right.square")
-                                .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
-                        }
-                        .plainButton()
-                        .help("Open the check")
-                    }
+        let passed = rows.filter { $0.state == "passing" }.count
+        let failing = rows.contains { $0.state == "failing" }
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { checksOpen.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Theme.textMuted)
+                        .rotationEffect(checksOpen ? .degrees(90) : .zero)
+                    Text("Checks").font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    Text("\(passed)/\(rows.count)")
+                        .font(Theme.caption)
+                        .foregroundStyle(failing ? Theme.danger
+                                         : passed == rows.count ? Theme.success
+                                         : Theme.warning)
                 }
-                .padding(.vertical, 7)
-                if index < rows.count - 1 { SettingsDivider() }
             }
+            .plainButton()
+            .help(checksOpen ? "Hide the check list" : "Show every check")
+            if checksOpen {
+                SettingsCard { checkRows(rows) }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func checkRows(_ rows: [GhCheck]) -> some View {
+        ForEach(Array(rows.enumerated()), id: \.offset) { index, check in
+            HStack(spacing: 8) {
+                CheckGlyph(state: check.state)
+                Text(check.name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                if !check.workflow.isEmpty {
+                    Text(check.workflow).font(Theme.caption).foregroundStyle(Theme.textMuted)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                if let conclusion = check.conclusion {
+                    Text(conclusion).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                } else {
+                    Text(check.status).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
+                if let url = URL(string: check.url), !check.url.isEmpty {
+                    Button { openURL(url) } label: {
+                        Image(systemName: "arrow.up.right.square")
+                            .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                    }
+                    .plainButton()
+                    .help("Open the check")
+                }
+            }
+            .padding(.vertical, 7)
+            if index < rows.count - 1 { SettingsDivider() }
         }
     }
 

@@ -177,12 +177,14 @@ def reorder_pinned(order: list[str], path: Path | None = None) -> list[dict]:
 def resolve(repo_arg: str | None, cwd: Path | None = None) -> list[str]:
     """Which repos a query runs against, in priority order.
 
-    ``--repo=`` wins, then the working directory's remote, then every
-    pinned repo — so ``swe gh pr list`` alone is a dashboard over pins.
+    ``--repo=`` wins — a comma list (``--repo=a/b,c/d``) resolves every
+    part — then the working directory's remote, then every pinned repo,
+    so ``swe gh pr list`` alone is a dashboard over pins.
     """
     if repo_arg:
-        name = normalize_repo_input(repo_arg)
-        return [name] if name else []
+        names = [normalize_repo_input(part)
+                 for part in repo_arg.split(",")]
+        return [n for n in names if n]
     local = repo_at(cwd or Path.cwd())
     if local:
         return [local]

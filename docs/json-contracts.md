@@ -92,6 +92,8 @@ All GitHub data comes from the ambient `gh` login; no tokens are stored.
 Repo resolution is `--repo=` first, then the working directory's git
 remote, then every pinned repo — a bare query outside a checkout runs
 against all pins, so `results` is always a list of per-repo entries.
+`--repo=` takes a comma list (`--repo=a/b,c/d`) which resolves every
+part in order; one bad part fails the command before any fetch.
 
 - `GhEnv`: `{"status", "login", "error"}` — `status` is `ok` |
   `unavailable` (gh missing) | `auth-required` | `upstream-error`

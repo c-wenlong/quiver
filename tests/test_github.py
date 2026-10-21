@@ -149,6 +149,13 @@ class TestResolve(unittest.TestCase):
     def test_repo_arg_wins(self):
         self.assertEqual(repos.resolve("me/proj"), ["me/proj"])
 
+    def test_repo_arg_comma_list(self):
+        self.assertEqual(repos.resolve("a/b,c/d"), ["a/b", "c/d"])
+
+    def test_repo_arg_comma_drops_invalid_parts(self):
+        self.assertEqual(repos.resolve("a/b,not a repo"), ["a/b"])
+        self.assertEqual(repos.resolve("not a repo"), [])
+
     def test_cwd_remote(self):
         run = _gh_run({"remote get-url origin": _Proc(
             stdout="git@github.com:o/r.git\n")})
@@ -557,6 +564,35 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(issue["labels"], ["bug"])
         self.assertEqual(issue["assignees"], ["k"])
         self.assertEqual(issue["comments"], 2)
+
+    def test_issue_list_comments_array(self):
+        # `gh issue list` returns the comment objects themselves — the
+        # row folds them to the count the app's Int field decodes.
+        run = _gh_run({
+            "issue list": _Proc(stdout=json.dumps([{
+                "number": 5, "title": "Bug", "state": "OPEN",
+                "author": {"login": "u"}, "labels": [], "assignees": [],
+                "comments": [{"body": "a"}, {"body": "b"}, {"body": "c"}],
+                "updatedAt": "2026-10-20T00:00:00Z", "url": "u",
+            }])),
+        })
+        rc, out, _ = self._run_cli(["issue", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        issue = json.loads(out)["data"]["results"][0]["issues"][0]
+        self.assertEqual(issue["comments"], 3)
+
+    def test_comma_repo_fans_out(self):
+        run = _gh_run({"issue list": _Proc(stdout="[]")})
+        rc, out, _ = self._run_cli(
+            ["issue", "--repo=o/r,a/b", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        got = json.loads(out)["data"]["results"]
+        self.assertEqual([r["repo"] for r in got], ["o/r", "a/b"])
+
+    def test_comma_repo_rejects_bad_part(self):
+        rc, out, _ = self._run_cli(["issue", "--repo=o/r,not a repo"])
+        self.assertEqual(rc, 1)
+        self.assertIn("not a repo", out.lower())
 
     def test_bad_issue_state(self):
         rc, out, _ = self._run_cli(["issue", "--repo=o/r", "--state=merged"])

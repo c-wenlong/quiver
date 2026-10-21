@@ -615,7 +615,8 @@ to use their own login state and environment."""
   shows all pinned repos in turn.
 
   {c('bold', 'Flags')}
-  {c('cyan', '--repo=owner/name')}   Repo (a github.com URL works too)
+  {c('cyan', '--repo=owner/name')}   Repo (a github.com URL works too;
+                          comma-separate several: --repo=a/b,c/d)
   {c('cyan', '--state=open|closed|…')}  pr: open/closed/merged/all; issue: open/closed/all
   {c('cyan', '--limit=N')}            Rows to fetch (default 30, cap 200)
   {c('cyan', '--all')}                inbox: include read notifications

@@ -545,10 +545,15 @@ extension SweClient {
                        allowFailure: true)
     }
 
-    /// `swe gh board --repo=<repo> --json` — every surface in one reply.
-    public func ghBoard(repo: String? = nil) async throws -> GhBoards {
+    /// `swe gh board --repo=<a,b> --json` — every surface of every repo
+    /// in one reply; the CLI fans the repos out itself. `repos` nil means
+    /// "every pin", relying on resolve's pin fallback — pass the explicit
+    /// list when the caller knows it, since a checkout cwd would win.
+    public func ghBoard(repos: [String]? = nil) async throws -> GhBoards {
         var args = ["gh", "board"]
-        if let repo { args.append("--repo=\(repo)") }
+        if let repos, !repos.isEmpty {
+            args.append("--repo=\(repos.joined(separator: ","))")
+        }
         args.append("--json")
         return try await call(args, allowFailure: true)
     }
