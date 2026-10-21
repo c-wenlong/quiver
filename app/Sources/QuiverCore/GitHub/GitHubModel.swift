@@ -739,6 +739,17 @@ public final class GitHubModel {
         return .loaded(rows.filter { matches(parts($0)) })
     }
 
+    /// Whether `filtered` would leave any rows — for callers that only
+    /// need presence, like the repo card's fold control. Exits on the
+    /// first match instead of building a filtered array, and treats
+    /// unloaded or failed surfaces as non-empty so their state shows.
+    public func hasRows<Row>(_ state: Loadable<[Row]>, repo: String,
+                            _ parts: @escaping (Row) -> [String?]) -> Bool {
+        guard case .loaded(let rows) = state else { return true }
+        guard !showsAllRows(repo) else { return !rows.isEmpty }
+        return rows.contains { matches(parts($0)) }
+    }
+
     // MARK: - session bridge
 
     /// Installed harness CLIs for the "Open in session" picker —
