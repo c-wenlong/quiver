@@ -334,6 +334,10 @@ struct PageView: View {
             CalendarPage()
         case .pricing:
             PricingPage()
+        case .repositories:
+            RepositoriesPage()
+        case .inbox:
+            InboxPage()
         case .accounts:
             AccountsPage()
         case .agentsMd:
