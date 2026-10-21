@@ -197,19 +197,23 @@ class TestGhWrapper(unittest.TestCase):
             self.assertEqual(gh.run_json(["x"]).status, "upstream-error")
 
     def test_probe_env(self):
+        calls = []
+
         def run(cmd, **kw):
             joined = " ".join(str(a) for a in cmd)
+            calls.append(joined)
             if "auth status" in joined:
-                return _Proc(stdout="Logged in")
-            if "api user" in joined:
-                return _Proc(stdout="octocat\n")
+                return _Proc(
+                    stderr="✓ Logged in to github.com account octocat")
             return _Proc(returncode=1)
         with patch("shutil.which", return_value="/usr/bin/gh"), \
              patch("subprocess.run", run):
             env = gh.probe_env()
         self.assertTrue(env.installed)
         self.assertTrue(env.authenticated)
+        # The login parses out of `auth status` — no second `api user` call.
         self.assertEqual(env.login, "octocat")
+        self.assertFalse(any("api user" in call for call in calls))
 
     def test_probe_env_timeout_is_not_auth_required(self):
         def run(cmd, **kw):
@@ -792,6 +796,60 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(rc, 1)
         payload = json.loads(out)["data"]
         self.assertEqual(payload["status"], "auth-required")
+
+    def test_env_after_clean_sweep_skips_probe(self):
+        """A successful fetch is itself the auth proof — no probe runs."""
+        with patch("quiver.github.gh.probe_env") as probe:
+            env = ghcli._env_after([{"status": "ok"}, {"status": "ok"}])
+        self.assertEqual(env.status, "ok")
+        probe.assert_not_called()
+
+    def test_env_after_failure_probes(self):
+        blocked = gh.GhEnv(installed=True, authenticated=False)
+        with patch("quiver.github.gh.probe_env", return_value=blocked) as probe:
+            env = ghcli._env_after([{"status": "upstream-error"}])
+        probe.assert_called_once()
+        self.assertEqual(env.status, "auth-required")
+
+    def test_board_json(self):
+        run = _gh_run({
+            "pr list": _Proc(stdout="[]"),
+            "issue list": _Proc(stdout="[]"),
+            "run list": _Proc(stdout="[]"),
+            "pages/builds": _Proc(returncode=1, stderr="404 Not Found"),
+            "repos/o/r/pages": _Proc(returncode=1, stderr="404 Not Found"),
+            "release list": _Proc(stdout="[]"),
+            "tags?per_page": _Proc(stdout="[]"),
+            "default_branch": _Proc(stdout="main\n"),
+            "branches?per_page": _Proc(stdout="[]"),
+        })
+        rc, out, _ = self._run_cli(["board", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)["data"]
+        board = data["boards"][0]
+        self.assertEqual(board["repo"], "o/r")
+        self.assertEqual(
+            set(board["surfaces"]),
+            {"pull_requests", "issues", "runs", "pages",
+             "releases", "tags", "branches"})
+        for entry in board["surfaces"].values():
+            self.assertEqual(entry["status"], "ok")
+
+    def test_board_render(self):
+        run = _gh_run({
+            "pr list": _Proc(stdout=json.dumps([{"number": 7}])),
+            "issue list": _Proc(stdout="[]"),
+            "run list": _Proc(stdout="[]"),
+            "pages": _Proc(returncode=1, stderr="404 Not Found"),
+            "release list": _Proc(stdout="[]"),
+            "tags?per_page": _Proc(stdout="[]"),
+            "default_branch": _Proc(stdout="main\n"),
+            "branches?per_page": _Proc(stdout="[]"),
+        })
+        rc, out, _ = self._run_cli(["board", "--repo=o/r"], run=run)
+        self.assertEqual(rc, 0)
+        self.assertIn("o/r", out)
+        self.assertIn("PRs", out)
 
     def test_repo_search_render(self):
         run = _gh_run({
