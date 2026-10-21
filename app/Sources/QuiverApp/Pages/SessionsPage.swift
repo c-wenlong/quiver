@@ -173,6 +173,7 @@ private struct SessionsContent: View {
                                                     expanded: openedDays.contains(group.day))
                         ForEach(shown) { row in
                             SessionRow(row: row, project: model.project(for: row.session),
+                                       match: model.searchHit(for: row.session.id),
                                        open: { detail = row }, resume: { resume(row) })
                             Divider().overlay(Theme.border)
                         }
@@ -439,6 +440,9 @@ private struct SessionRow: View {
     var row: SessionsModel.Row
     /// The session's project resolved to its main repository.
     var project: String?
+    /// The transcript hit this row surfaced on, for the snippet line; nil
+    /// when it matched on metadata or content search is off.
+    var match: SearchHit?
     var open: () -> Void
     var resume: () -> Void
     @State private var hovering = false
@@ -460,6 +464,14 @@ private struct SessionRow: View {
                     Text(details)
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         .lineLimit(2)
+                    // The transcript excerpt that matched the search, on a
+                    // terse third line; matched terms stand out in primary.
+                    if let match, !match.snippetParts.isEmpty {
+                        snippet(match.snippetParts)
+                            .font(Theme.caption)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -510,6 +522,17 @@ private struct SessionRow: View {
         .accessibilityElement(children: .combine)
         .accessibilityAction(named: "Details", open)
         .accessibilityAction(named: "Resume", resume)
+    }
+
+    /// "match: <snippet>" with each matched term in primary text on the
+    /// muted line — subtle, and green stays reserved for money.
+    private func snippet(_ parts: [SearchSnippetPart]) -> Text {
+        var text = Text("match: ").foregroundStyle(Theme.textMuted)
+        for part in parts {
+            text = text + Text(part.text)
+                .foregroundStyle(part.matched ? Theme.textPrimary : Theme.textMuted)
+        }
+        return text
     }
 
     /// project · agent · location · models · time · duration

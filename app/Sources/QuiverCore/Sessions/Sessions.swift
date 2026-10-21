@@ -261,7 +261,15 @@ public final class SessionsModel {
         public init() {}
     }
 
-    public var filter = Filter()
+    public var filter = Filter() {
+        didSet {
+            // The index hits hang off the needle and its agent scope; the
+            // other gates don't touch them.
+            if filter.search != oldValue.search || filter.harness != oldValue.harness {
+                refreshSearch()
+            }
+        }
+    }
     public private(set) var rows: [Row] = []
     public private(set) var failures: [String] = []
     public private(set) var isLoading = false
@@ -301,6 +309,39 @@ public final class SessionsModel {
     /// Only the newest usage read (from a load or a refresh) writes usage.
     private var usageGeneration = 0
 
+    // MARK: - Transcript search
+
+    /// Settings' "Index transcripts for search" UserDefaults key; the M4
+    /// toggle writes it. Read once at init; a change is pushed here like
+    /// `hideTrivial` — no need to keep re-reading defaults per keystroke.
+    public static let searchIndexingDefaultsKey = "searchIndexingEnabled"
+
+    /// Whether the search filter also asks the FTS transcript index.
+    public var searchIndexingEnabled: Bool {
+        didSet {
+            if searchIndexingEnabled != oldValue { refreshSearch() }
+        }
+    }
+
+    /// The index's directory; nil uses `~/.quiver/data/search`.
+    private let searchIndexDirectory: URL?
+    /// The lazily created reader; opened on the first enabled search.
+    private var cachedSearchEngine: SearchEngine?
+    /// Hits for the current needle, keyed by every id form a hit's session
+    /// or a listed session can be known by (`SearchEngine.matchKeys`), so
+    /// the index's codex thread uuid still finds swe's rollout-stem id.
+    /// Cleared the moment the needle changes — a stale hit must never keep
+    /// a row the new needle doesn't name.
+    private var hitsByKey: [String: SearchHit] = [:]
+    /// Only the newest content search writes `hitsByKey`.
+    private var searchGeneration = 0
+    /// The in-flight search; tests await it, production only needs the commit.
+    var searchTask: Task<Void, Never>?
+    /// Sessions a content search names at most for the union — loose enough
+    /// that a real match is never crowded out, tight enough that the
+    /// per-hit snippet queries stay under a few dozen milliseconds.
+    private static let searchHitLimit = 200
+
     /// - Parameters:
     ///   - defaultHomes: the Claude and Codex homes `swe session` reads. The
     ///     ledger's sessions from any other home (Quiver's extra accounts)
@@ -311,11 +352,16 @@ public final class SessionsModel {
     ///     soon after doesn't ask swe again.
     ///   - listTimeout: how long swe may take before the listing is stopped
     ///     and counts as failed, so a hung swe can't block the next try.
+    ///   - searchIndex: the search index's directory; nil reads the default
+    ///     `~/.quiver/data/search`.
+    ///   - searchIndexingEnabled: overrides the stored
+    ///     `searchIndexingEnabled` default (tests); nil reads it.
     public init(source: SessionListing, ledger: SessionUsageQuerying, defaultHomes: Set<String> = [],
                 limit: Int = 100_000, snapshots: (any SnapshotStoring<SessionSnapshot>)? = nil, maxAge: TimeInterval = 60,
                 listTimeout: Duration = .seconds(60),
                 parents: (@Sendable () async -> [String: SessionParent])? = nil,
-                now: @escaping () -> Date = Date.init, calendar: Calendar = .current) {
+                now: @escaping () -> Date = Date.init, calendar: Calendar = .current,
+                searchIndex: URL? = nil, searchIndexingEnabled: Bool? = nil) {
         self.readParents = parents
         self.source = source
         self.ledger = ledger
@@ -326,6 +372,9 @@ public final class SessionsModel {
         self.listTimeout = listTimeout
         self.now = now
         self.calendar = calendar
+        self.searchIndexDirectory = searchIndex
+        self.searchIndexingEnabled = searchIndexingEnabled
+            ?? UserDefaults.standard.bool(forKey: Self.searchIndexingDefaultsKey)
     }
 
     /// Shows the last saved list until swe answers. Does nothing once a list
@@ -784,6 +833,68 @@ public final class SessionsModel {
         return rows.count { matches($0) && isTrivial($0) }
     }
 
+    // MARK: - Transcript search hits
+
+    /// The reader over `searchIndexDirectory` (or the default
+    /// `~/.quiver/data/search`), made on first use.
+    private func searchEngine() -> SearchEngine {
+        if let cachedSearchEngine { return cachedSearchEngine }
+        let directory = searchIndexDirectory ?? SearchLocation.directory(under:
+            FileManager.default.homeDirectoryForCurrentUser.appending(path: ".quiver"))
+        let made = SearchEngine(directory: directory)
+        cachedSearchEngine = made
+        return made
+    }
+
+    /// Re-runs the content search for the current needle on a detached task
+    /// — `matches` stays a sync read of the last committed hits, like
+    /// `resolveProjects`. Only the newest run writes.
+    private func refreshSearch() {
+        searchGeneration += 1
+        let mine = searchGeneration
+        hitsByKey = [:]
+        let needle = filter.search.trimmingCharacters(in: .whitespaces)
+        guard searchIndexingEnabled, !needle.isEmpty else {
+            searchTask = nil
+            return
+        }
+        let engine = searchEngine()
+        let agent = filter.harness
+        let limit = Self.searchHitLimit
+        searchTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let hits = (try? engine.search(query: needle, limit: limit,
+                                           agents: agent.map { [$0] })) ?? []
+            // Every id form the hit can be known by — the recorded
+            // `session_id` and the transcript's stem — maps back to it.
+            var byKey: [String: SearchHit] = [:]
+            for hit in hits {
+                for key in SearchEngine.matchKeys(hit.sessionID) { byKey[key] = hit }
+                for key in SearchEngine.matchKeys(hit.filePath) where byKey[key] == nil {
+                    byKey[key] = hit
+                }
+            }
+            await self?.commitSearch(byKey, generation: mine)
+        }
+    }
+
+    /// A result commits only while it is still the newest one.
+    private func commitSearch(_ hits: [String: SearchHit], generation: Int) {
+        guard searchGeneration == generation else { return }
+        hitsByKey = hits
+    }
+
+    /// Whether the session's transcript content matched the current needle:
+    /// any of its match-keys names an index hit.
+    private func contentMatch(_ sessionID: String) -> Bool {
+        SearchEngine.matchKeys(sessionID).contains { self.hitsByKey[$0] != nil }
+    }
+
+    /// The index hit a listed session matched on, for the row's snippet
+    /// line; nil when it matched on metadata (or didn't match content).
+    public func searchHit(for sessionID: String) -> SearchHit? {
+        SearchEngine.matchKeys(sessionID).lazy.compactMap { self.hitsByKey[$0] }.first
+    }
+
     /// The non-trivial filter terms: harness, window, project, model and
     /// search.
     private func matches(_ row: Row) -> Bool {
@@ -797,7 +908,9 @@ public final class SessionsModel {
             let haystack = ([s.title, s.cwd, project(for: s), s.id, s.agent, row.location.title]
                 + (row.usage?.models ?? []).map(Optional.some))
                 .compactMap { $0 }.joined(separator: " ").lowercased()
-            if !haystack.contains(needle) { return false }
+            // swe's union: a transcript hit keeps a session the metadata
+            // doesn't name, exactly like `swe session --search`.
+            if !haystack.contains(needle), !contentMatch(s.id) { return false }
         }
         return true
     }
