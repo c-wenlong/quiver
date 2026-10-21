@@ -16,7 +16,7 @@ remembering CLI commands.
 | Sidebar | Usage: Overview, Sessions. Manage: Accounts, Harnesses, Compute, Skills, AGENTS.md, MCP servers, Plugins. System: Menu bar, Widgets, Service status, Settings |
 | Accounts page | Limits merged with Switchboard-style profiles: each account card has its limit bars, when they were fetched, and Open app / Terminal buttons |
 | Kept from TokenTracker | Sessions and Limits (the most important), menu bar and widgets, Skills (built on quiver hub), Service Status (extended to more services), Settings, Tokens overview. Claude IP Check at low priority. |
-| Out of scope | Leaderboard, Achievements, Pet, Cloud sync |
+| Out of scope | Leaderboard, Achievements, Pet. Cloud sync narrowed by M9: syncing app state stays out, remote access to sessions is in. |
 | Other apps' data | None shared. Quiver replaces Switchboard, TokenTracker, AIUsage and OpenUsage, which get deleted, so it never reads or writes their files, settings or caches, not even to import. |
 | Profile store | Switchboard's model (one config home and one desktop data folder per profile, launched with the env var and `--user-data-dir`), kept under `~/.quiver/accounts` |
 
@@ -155,6 +155,25 @@ Phases in order. Phase 4 can run alongside 1 to 3.
 - [ ] Don't start the Cursor, Devin cloud and Codex daily pollers for users without those harnesses.
 - [ ] Fan helper: offer it only on Macs with fans, remove it when Quiver is removed, and reinstall a stale helper binary after an update.
 - [ ] Menu bar incidents: show only the providers this Mac uses.
+
+### M9. Remote control
+
+Watch and steer harness sessions from a phone, for every harness `swe`
+reads — not just Claude. Design: [docs/remote-control.md](../docs/remote-control.md).
+Hub-and-spoke: the always-on machine runs `swe remote serve`, other
+machines run a `swe remote agent` satellite that dials out to it, and the
+phone talks only to the hub over Tailscale. Transcript tailing gives the
+read path for every harness; a tiered inject layer gives the write path
+(`opencode serve`, `codex app-server`, headless `claude -p --resume`,
+tmux fallback). A session is `attached` (supervised, writable) or
+`observed` (someone's terminal owns it, read-only) so two writers never
+share one transcript.
+
+- [ ] R1: hub, byte-offset tailers, session catalog, SSE journal, PWA read-only chat
+- [ ] R2: claude headless-resume inject + tmux supervisor + Attach flow
+- [ ] R3: satellite daemon, machine registry, offline command queue
+- [ ] R4: native iOS app, Inbox of pending decisions, push via ntfy
+- [ ] R5: opencode serve + codex app-server adapters, diff pane, Queue/Steer
 
 ### Later
 - [ ] Claude IP check (low priority)
