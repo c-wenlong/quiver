@@ -16,9 +16,10 @@ import Foundation
 /// system — the scan wiring is a later milestone.
 public struct SearchDecoder {
     /// The JSONL transcript formats the index reads; keys match swe's
-    /// `tool_name`s.
+    /// `tool_name`s. `cursor`/`droid` are JSONL like the rest; `cline`'s
+    /// "line" is a whole session document the way devin's is.
     public enum Harness: String, Sendable, CaseIterable {
-        case claude, codex, pi, devin
+        case claude, codex, pi, devin, cursor, droid, cline
     }
 
     private let harness: Harness
@@ -66,6 +67,9 @@ public struct SearchDecoder {
         case .codex: SearchCodexDecoder.markers.contains(where: { line.range(of: $0) != nil })
         case .pi: SearchPiDecoder.markers.contains(where: { line.range(of: $0) != nil })
         case .devin: SearchDevinDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .cursor: SearchCursorDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .droid: SearchDroidDecoder.markers.contains(where: { line.range(of: $0) != nil })
+        case .cline: SearchClineDecoder.markers.contains(where: { line.range(of: $0) != nil })
         }
     }
 
@@ -77,6 +81,9 @@ public struct SearchDecoder {
         case .codex: codex.decode(object: object)
         case .pi: SearchPiDecoder.decode(object: object)
         case .devin: devin.decode(object: object)
+        case .cursor: SearchCursorDecoder.decode(object: object)
+        case .droid: SearchDroidDecoder.decode(object: object)
+        case .cline: SearchClineDecoder.decode(object: object)
         }
         return finish(output)
     }
