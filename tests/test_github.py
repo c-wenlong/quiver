@@ -1624,6 +1624,95 @@ class TestCommands(unittest.TestCase):
         self.assertIsNone(data["path"])
         self.assertIn("Fetch failed", data["error"])
 
+    def test_pr_worktree_env_blocked(self):
+        env = gh.GhEnv(installed=True, authenticated=False)
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "7", "--repo=o/r", "--json"], env=env)
+        self.assertEqual(rc, 1)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["github"]["status"], "auth-required")
+        self.assertIsNone(data["path"])
+        self.assertIn("error", data)
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "7", "--repo=o/r"], env=env)
+        self.assertEqual(rc, 1)
+        self.assertIn("gh auth login", out)
+
+    def test_pr_worktree_no_repo_resolves_error(self):
+        rc, out, _ = self._run_cli(["pr", "worktree", "7", "--json"])
+        self.assertEqual(rc, 1)
+        data = json.loads(out)["data"]
+        self.assertIsNone(data["path"])
+        self.assertIn("No repo to query", data["error"])
+
+    def test_pr_worktree_clone_failure(self):
+        self._patch_paths()
+
+        def run(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            if "repo clone" in joined:
+                return _Proc(returncode=1, stderr="denied")
+            return _Proc(stdout="ok")
+
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "7", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 1)
+        data = json.loads(out)["data"]
+        self.assertIn("Clone failed", data["error"])
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "7", "--repo=o/r"], run=run)
+        self.assertEqual(rc, 1)
+        self.assertIn("Clone failed", out)
+
+    def test_pr_worktree_add_failure(self):
+        self._patch_paths()
+
+        def run(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            if "worktree list" in joined:
+                return _Proc(returncode=1, stderr="bad mirror")
+            if "worktree add" in joined:
+                return _Proc(returncode=1, stderr="locked")
+            if "rev-parse" in joined:
+                return _Proc(stdout="abc\n")
+            return _Proc(stdout="ok")
+
+        # A failing `worktree list` counts as unregistered → tries `add`.
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "7", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 1)
+        data = json.loads(out)["data"]
+        self.assertIn("Worktree failed", data["error"])
+
+    def test_pr_worktree_text_success(self):
+        mirrors, trees = self._patch_paths()
+
+        def run(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            if "worktree list" in joined:
+                return _Proc(stdout="worktree /x\n")
+            if "rev-parse" in joined:
+                return _Proc(stdout="abc123\n")
+            return _Proc(stdout="ok")
+
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "7", "--repo=o/r"], run=run)
+        self.assertEqual(rc, 0)
+        self.assertIn("checked out", out)
+        self.assertIn("o__r-pr7", out)
+
+    def test_run_git_never_raises(self):
+        for exc in (FileNotFoundError, subprocess.TimeoutExpired("git", 1),
+                    OSError("bad")):
+            with patch("subprocess.run", side_effect=exc):
+                result = ghcli._run_git(["status"])
+            self.assertNotEqual(result.status, "ok", exc)
+        with patch("subprocess.run",
+                   return_value=_Proc(returncode=1, stderr="nope")):
+            result = ghcli._run_git(["status"])
+        self.assertEqual(result.status, "upstream-error")
+        self.assertEqual(result.error, "nope")
+
     # -- swe gh run rerun ---------------------------------------------
 
     def test_run_rerun_json(self):
