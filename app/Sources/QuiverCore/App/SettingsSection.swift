@@ -1,7 +1,7 @@
 /// The Settings page's sub-nav, after TokenTracker's: groups of sections,
 /// each with its own title, description and cards.
 public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Sendable {
-    case general, preferences, notifications, updates, providers, services, paths, doctor
+    case general, preferences, notifications, updates, providers, services, paths, doctor, experimental
 
     public var id: String { rawValue }
 
@@ -15,6 +15,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .services: "Services"
         case .paths: "Paths"
         case .doctor: "Doctor"
+        case .experimental: "Experimental"
         }
     }
 
@@ -29,6 +30,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .services: "Keys for the services Quiver itself calls, kept in the Keychain."
         case .paths: "Where Quiver finds swe, your API keys file and your MCP server folders."
         case .doctor: "Checks on PATH, Node and drift between quiver and your harnesses."
+        case .experimental: "Features being tried out. They may change or go away."
         }
     }
 
@@ -43,6 +45,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .services: "key"
         case .paths: "folder"
         case .doctor: "stethoscope"
+        case .experimental: "flask"
         }
     }
 
@@ -76,7 +79,7 @@ public enum SettingsGroup: CaseIterable, Identifiable, Sendable {
         switch self {
         case .app: [.general, .preferences, .notifications, .updates]
         case .usage: [.providers, .services]
-        case .advanced: [.paths, .doctor]
+        case .advanced: [.paths, .doctor, .experimental]
         }
     }
 
