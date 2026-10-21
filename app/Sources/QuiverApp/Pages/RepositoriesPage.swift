@@ -236,11 +236,6 @@ struct RepositoriesPage: View {
                     if let url = URL(string: pr.url) { openURL(url) }
                 }
             }
-            .contextMenu {
-                Button("Open on GitHub") {
-                    if let url = URL(string: pr.url) { openURL(url) }
-                }
-            }
         }
     }
 
