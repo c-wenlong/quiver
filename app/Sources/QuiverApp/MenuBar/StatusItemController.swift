@@ -26,6 +26,7 @@ final class StatusItemController: NSObject {
         let host = NSHostingController(rootView: content.environment(model))
         host.sizingOptions = [.preferredContentSize]
         panel = MenuBarPanel(contentViewController: host)
+        panel.onEscape = { [weak self] in self?.close() }
         if let button = item.button {
             button.action = #selector(toggle)
             button.target = self
@@ -161,6 +162,20 @@ enum LimitRing {
 }
 
 final class MenuBarPanel: NSPanel {
+    /// ⌘W reaches the panel through PopupKeyRouting as a synthesized Esc:
+    /// the controller's close removes the click monitors a bare
+    /// `window.close()` would leave behind.
+    var onEscape: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53,
+           event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty {
+            onEscape?()
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+
     init(contentViewController: NSViewController) {
         super.init(contentRect: .zero,
                    styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],

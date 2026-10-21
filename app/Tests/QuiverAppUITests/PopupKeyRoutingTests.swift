@@ -5,49 +5,61 @@ import Testing
 /// ⌘W/⌘Q must not die on a popup: sheets and panels own key status
 /// while they're up, so the menu's Close/Quit never reach the window.
 @Suite @MainActor struct PopupKeyRoutingTests {
-    private func key(_ chars: String, _ modifiers: NSEvent.ModifierFlags = [.command]) -> NSEvent {
-        NSEvent.keyEvent(with: .keyDown, location: .zero,
-                         modifierFlags: modifiers, timestamp: 0,
-                         windowNumber: 0, context: nil,
-                         characters: chars,
-                         charactersIgnoringModifiers: chars,
-                         isARepeat: false, keyCode: 0)!
+    private func panel() -> NSPanel {
+        NSPanel(contentRect: .zero, styleMask: [.borderless],
+                backing: .buffered, defer: true)
     }
 
-    @Test func cmdWOnAPanelDismissesIt() {
-        let panel = NSPanel(contentRect: .zero, styleMask: [.borderless],
-                            backing: .buffered, defer: true)
-        #expect(PopupKeyRouting.action(for: key("w"), key: panel) == .dismissPopup)
+    @Test func cmdWOnAPanelEscapes() {
+        #expect(PopupKeyRouting.action(chars: "w", flags: [.command],
+                                     key: panel()) == .sendEscape)
     }
 
     @Test func cmdQOnAPanelQuits() {
-        let panel = NSPanel(contentRect: .zero, styleMask: [.borderless],
-                            backing: .buffered, defer: true)
-        #expect(PopupKeyRouting.action(for: key("q"), key: panel) == .quit)
+        #expect(PopupKeyRouting.action(chars: "q", flags: [.command],
+                                     key: panel()) == .quit)
     }
 
-    @Test func cmdWOnAChildWindowDismissesIt() {
+    @Test func escOnTheMenuBarPanelCloses() {
+        let bar = MenuBarPanel(contentViewController: NSViewController())
+        var closed = false
+        bar.onEscape = { closed = true }
+        bar.keyDown(with: NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: 0, context: nil, characters: "\u{1b}",
+            charactersIgnoringModifiers: "\u{1b}", isARepeat: false,
+            keyCode: 53)!)
+        #expect(closed)
+    }
+
+    @Test func cmdWOnAChildWindowEscapes() {
         let parent = NSWindow(contentRect: .zero, styleMask: [.titled],
                               backing: .buffered, defer: true)
         let popover = NSWindow(contentRect: .zero, styleMask: [.borderless],
                                backing: .buffered, defer: true)
         parent.addChildWindow(popover, ordered: .above)
-        #expect(PopupKeyRouting.action(for: key("w"), key: popover) == .dismissPopup)
+        #expect(PopupKeyRouting.action(chars: "w", flags: [.command],
+                                     key: popover) == .sendEscape)
     }
 
     @Test func cmdWOnARealWindowPassesThrough() {
         let window = NSWindow(contentRect: .zero, styleMask: [.titled],
                               backing: .buffered, defer: true)
-        #expect(PopupKeyRouting.action(for: key("w"), key: window) == .passThrough)
-        #expect(PopupKeyRouting.action(for: key("q"), key: window) == .passThrough)
+        #expect(PopupKeyRouting.action(chars: "w", flags: [.command],
+                                     key: window) == .passThrough)
+        #expect(PopupKeyRouting.action(chars: "q", flags: [.command],
+                                     key: window) == .passThrough)
     }
 
     @Test func otherKeysAndModifiersPassThrough() {
-        let panel = NSPanel(contentRect: .zero, styleMask: [.borderless],
-                            backing: .buffered, defer: true)
-        #expect(PopupKeyRouting.action(for: key("w", [.command, .shift]), key: panel) == .passThrough)
-        #expect(PopupKeyRouting.action(for: key("r"), key: panel) == .passThrough)
-        #expect(PopupKeyRouting.action(for: key("w", []), key: panel) == .passThrough)
-        #expect(PopupKeyRouting.action(for: key("w"), key: nil) == .passThrough)
+        let key = panel()
+        #expect(PopupKeyRouting.action(chars: "w", flags: [.command, .shift],
+                                     key: key) == .passThrough)
+        #expect(PopupKeyRouting.action(chars: "r", flags: [.command],
+                                     key: key) == .passThrough)
+        #expect(PopupKeyRouting.action(chars: "w", flags: [],
+                                     key: key) == .passThrough)
+        #expect(PopupKeyRouting.action(chars: "w", flags: [.command],
+                                     key: nil) == .passThrough)
     }
 }
