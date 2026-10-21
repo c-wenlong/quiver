@@ -1338,6 +1338,254 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("swe gh pr", out)
 
+    # -- swe gh pr view ---------------------------------------------
+
+    def _pr_detail_json(self):
+        return json.dumps({
+            "number": 7, "title": "Ship it", "state": "OPEN",
+            "isDraft": False, "author": {"login": "octocat"},
+            "headRefName": "feat/x", "baseRefName": "main",
+            "body": "the body", "url": "https://github.com/o/r/pull/7",
+            "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+            "reviewDecision": "APPROVED",
+            "statusCheckRollup": [
+                {"__typename": "CheckRun", "name": "build",
+                 "workflowName": "CI", "status": "COMPLETED",
+                 "conclusion": "SUCCESS",
+                 "detailsUrl": "https://x/1"},
+                {"__typename": "StatusContext", "context": "lint",
+                 "state": "FAILURE", "targetUrl": "https://x/2"},
+            ],
+            "latestReviews": [
+                {"author": {"login": "rev"}, "state": "APPROVED",
+                 "submittedAt": "t"},
+            ],
+            "reviewRequests": [
+                {"login": "asked"}, {"slug": "team-a"},
+            ],
+            "additions": 10, "deletions": 2, "changedFiles": 3,
+            "labels": [{"name": "bug"}],
+            "createdAt": "c", "updatedAt": "u", "mergedAt": None,
+            "autoMergeRequest": {"mergeMethod": "SQUASH",
+                                 "enabledAt": "e"},
+        })
+
+    def test_pr_view_json(self):
+        run = _gh_run({"pr view": _Proc(stdout=self._pr_detail_json())})
+        rc, out, _ = self._run_cli(
+            ["pr", "view", "7", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["repo"], "o/r")
+        self.assertEqual(data["status"], "ok")
+        pr = data["pr"]
+        self.assertEqual(pr["number"], 7)
+        self.assertEqual(pr["body"], "the body")
+        self.assertEqual(pr["merge_state"], "clean")
+        self.assertEqual(pr["additions"], 10)
+        self.assertEqual(pr["changed_files"], 3)
+        self.assertEqual(pr["check_runs"][0]["name"], "build")
+        self.assertEqual(pr["check_runs"][0]["workflow"], "CI")
+        self.assertEqual(pr["check_runs"][1]["name"], "lint")
+        self.assertEqual(pr["check_runs"][1]["conclusion"], "failure")
+        self.assertEqual(pr["reviews"][0]["author"], "rev")
+        self.assertEqual(pr["review_requests"], ["asked", "team-a"])
+        self.assertEqual(pr["auto_merge"]["method"], "squash")
+
+    def test_pr_view_render(self):
+        run = _gh_run({"pr view": _Proc(stdout=self._pr_detail_json())})
+        rc, out, _ = self._run_cli(
+            ["pr", "view", "7", "--repo=o/r"], run=run)
+        self.assertEqual(rc, 0)
+        self.assertIn("Ship it", out)
+        self.assertIn("build", out)
+        self.assertIn("octocat", out)
+
+    def test_pr_view_not_found(self):
+        run = _gh_run({
+            "pr view": _Proc(returncode=1, stderr="no pull requests found"),
+        })
+        rc, out, _ = self._run_cli(
+            ["pr", "view", "99", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 1)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["status"], "upstream-error")
+        self.assertIsNone(data["pr"])
+        self.assertIn("error", data)
+
+    def test_pr_view_multi_pin_ambiguous(self):
+        repos.add_pinned("o/a", self.store)
+        repos.add_pinned("o/b", self.store)
+        rc, out, _ = self._run_cli(["pr", "view", "7"])
+        self.assertEqual(rc, 1)
+        self.assertIn("--repo", out)
+
+    def test_pr_view_env_blocked(self):
+        env = gh.GhEnv(installed=True, authenticated=False)
+        rc, _, _ = self._run_cli(["pr", "view", "7", "--repo=o/r"], env=env)
+        self.assertEqual(rc, 1)
+
+    def test_pr_view_single_pin_resolves(self):
+        repos.add_pinned("o/r", self.store)
+        run = _gh_run({"pr view": _Proc(stdout=self._pr_detail_json())})
+        rc, out, _ = self._run_cli(["pr", "view", "7", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["data"]["repo"], "o/r")
+
+    # -- swe gh pr merge ---------------------------------------------
+
+    def test_pr_merge_squash_default(self):
+        seen = []
+
+        def run(cmd, **kw):
+            seen.append(" ".join(str(a) for a in cmd))
+            return _Proc(stdout="ok")
+
+        rc, out, _ = self._run_cli(
+            ["pr", "merge", "7", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["method"], "squash")
+        self.assertTrue(data["merged"])
+        self.assertFalse(data["auto"])
+        self.assertIn("--squash", seen[0])
+        self.assertNotIn("--auto", seen[0])
+
+    def test_pr_merge_method_and_auto(self):
+        seen = []
+
+        def run(cmd, **kw):
+            seen.append(" ".join(str(a) for a in cmd))
+            return _Proc(stdout="ok")
+
+        rc, out, _ = self._run_cli(
+            ["pr", "merge", "7", "--repo=o/r", "--method=rebase",
+             "--auto", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["method"], "rebase")
+        self.assertTrue(data["auto"])
+        self.assertFalse(data["merged"])
+        self.assertIn("--rebase", seen[0])
+        self.assertIn("--auto", seen[0])
+
+    def test_pr_merge_bad_method(self):
+        rc, out, _ = self._run_cli(
+            ["pr", "merge", "7", "--repo=o/r", "--method=yolo"])
+        self.assertEqual(rc, 1)
+        self.assertIn("--method", out)
+
+    def test_pr_merge_failure(self):
+        run = _gh_run({
+            "pr merge": _Proc(returncode=1, stderr="not mergeable"),
+        })
+        rc, out, _ = self._run_cli(
+            ["pr", "merge", "7", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 1)
+        data = json.loads(out)["data"]
+        self.assertFalse(data["merged"])
+        self.assertIn("not mergeable", data["error"])
+
+    # -- swe gh run rerun ---------------------------------------------
+
+    def test_run_rerun_json(self):
+        seen = []
+
+        def run(cmd, **kw):
+            seen.append(" ".join(str(a) for a in cmd))
+            return _Proc(stdout="ok")
+
+        rc, out, _ = self._run_cli(
+            ["run", "rerun", "42", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["run"], 42)
+        self.assertTrue(data["rerun"])
+        self.assertFalse(data["failed_only"])
+        self.assertIn("run rerun 42", seen[0])
+
+    def test_run_rerun_failed_flag(self):
+        seen = []
+
+        def run(cmd, **kw):
+            seen.append(" ".join(str(a) for a in cmd))
+            return _Proc(stdout="ok")
+
+        rc, out, _ = self._run_cli(
+            ["run", "rerun", "42", "--repo=o/r", "--failed", "--json"],
+            run=run)
+        self.assertEqual(rc, 0)
+        self.assertTrue(json.loads(out)["data"]["failed_only"])
+        self.assertIn("--failed", seen[0])
+
+    def test_run_rerun_bad_id(self):
+        rc, out, _ = self._run_cli(["run", "rerun", "abc", "--repo=o/r"])
+        self.assertEqual(rc, 1)
+        self.assertIn("numeric", out)
+
+    def test_run_rerun_failure(self):
+        run = _gh_run({
+            "run rerun": _Proc(returncode=1, stderr="not found"),
+        })
+        rc, out, _ = self._run_cli(
+            ["run", "rerun", "42", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 1)
+        data = json.loads(out)["data"]
+        self.assertFalse(data["rerun"])
+        self.assertIn("error", data)
+
+    # -- swe gh inbox read ---------------------------------------------
+
+    def test_inbox_read_ids_json(self):
+        seen = []
+
+        def run(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            seen.append(joined)
+            if "threads/2" in joined:
+                return _Proc(returncode=1, stderr="gone")
+            return _Proc(stdout="{}")
+
+        rc, out, _ = self._run_cli(
+            ["inbox", "read", "1", "2", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)["data"]
+        self.assertFalse(data["all"])
+        self.assertEqual(data["marked"], ["1"])
+        self.assertEqual(data["failed"][0]["id"], "2")
+        self.assertIn("notifications/threads/1", seen[0])
+
+    def test_inbox_read_all(self):
+        seen = []
+
+        def run(cmd, **kw):
+            seen.append(" ".join(str(a) for a in cmd))
+            return _Proc(stdout="{}")
+
+        rc, out, _ = self._run_cli(["inbox", "read", "--all", "--json"],
+                                   run=run)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)["data"]
+        self.assertTrue(data["all"])
+        self.assertEqual(data["marked"], ["*"])
+        self.assertIn("last_read_at=", seen[0])
+        self.assertIn("PUT", seen[0])
+
+    def test_inbox_read_ids_and_all_rejected(self):
+        rc, out, _ = self._run_cli(["inbox", "read", "1", "--all"])
+        self.assertEqual(rc, 1)
+        self.assertIn("not both", out)
+
+    def test_inbox_read_bad_id(self):
+        rc, out, _ = self._run_cli(["inbox", "read", "abc"])
+        self.assertEqual(rc, 1)
+        self.assertIn("Not a notification id", out)
+
+    def test_inbox_read_needs_args(self):
+        rc, out, _ = self._run_cli(["inbox", "read"])
+        self.assertEqual(rc, 1)
+        self.assertIn("Usage", out)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -319,6 +319,21 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     "gh sync": [
         ("--json", "Print the {schema, data} envelope"),
     ],
+    "gh pr merge": [
+        ("--method", "squash | merge | rebase (default: squash)"),
+        ("--auto", "Enable auto-merge instead of merging now"),
+        ("--repo", "Repo as owner/name or a github.com URL"),
+        ("--json", "Print the {schema, data} envelope"),
+    ],
+    "gh run rerun": [
+        ("--failed", "Re-run only the failed jobs"),
+        ("--repo", "Repo as owner/name or a github.com URL"),
+        ("--json", "Print the {schema, data} envelope"),
+    ],
+    "gh inbox read": [
+        ("--all", "Mark every notification read"),
+        ("--json", "Print the {schema, data} envelope"),
+    ],
 }
 
 # Nested flag tables: cmd -> {subcommand: _COMMAND_FLAGS key}. `swe mcp sync
@@ -356,6 +371,8 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
         "inbox": "gh", "notifications": "gh", "notifs": "gh",
         "repo": "gh repo", "repo search": "gh repo search",
         "sync": "gh sync",
+        "pr merge": "gh pr merge", "run rerun": "gh run rerun",
+        "inbox read": "gh inbox read",
     },
     "skills": {
         "link": "skills link", "unlink": "skills unlink",
@@ -425,6 +442,15 @@ _NESTED_SUBCOMMANDS: dict[tuple[str, str], list[tuple[str, str]]] = {
     ("gh", "pr"): [
         ("list", "List pull requests"),
         ("status", "Current branch, authored, needs-review"),
+        ("view", "One PR: checks, reviews, merge state"),
+        ("merge", "Merge a PR (squash by default)"),
+    ],
+    ("gh", "run"): [
+        ("list", "List workflow runs"),
+        ("rerun", "Re-run a workflow run"),
+    ],
+    ("gh", "inbox"): [
+        ("read", "Mark notifications read"),
     ],
     ("report", "followup"): [
         ("add", "Record a follow-up"),

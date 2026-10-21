@@ -595,11 +595,16 @@ to use their own login state and environment."""
   {c('cyan', 'swe gh board [--repo=R]')}            Every surface of a repo in one call
   {c('cyan', 'swe gh pr [--repo=R] [--state=S]')}     Pull requests (default: open)
   {c('cyan', 'swe gh pr status')}                Current branch, authored, needs-review
+  {c('cyan', 'swe gh pr view <N>')}              One PR: checks, reviews, merge state
+  {c('cyan', 'swe gh pr merge <N> [--method=M] [--auto]')}
+                                            Merge a PR (default: squash)
   {c('cyan', 'swe gh issue [--repo=R]')}          Issues
   {c('cyan', 'swe gh run [--repo=R]')}            Workflow runs (alias: actions)
+  {c('cyan', 'swe gh run rerun <id> [--failed]')}  Re-run a workflow run
   {c('cyan', 'swe gh pages [--repo=R]')}          GitHub Pages site + latest build
   {c('cyan', 'swe gh releases|tags|branches')}    Auxiliary repo surfaces
   {c('cyan', 'swe gh inbox')}                    Your GitHub notifications
+  {c('cyan', 'swe gh inbox read <id>...|--all')}   Mark notifications read
 
   Repo resolution: {c('cyan', '--repo=owner/name')} wins, else the working
   directory's git remote, else every pinned repo. So a bare
@@ -618,8 +623,8 @@ to use their own login state and environment."""
                           (not-found, upstream-error) plus the error text
 
   Auth is ambient: swe gh uses your {c('cyan', 'gh auth login')} and never
-  stores tokens. Read-only on purpose — create/merge/comment stay with the
-  agent inside a session."""
+  stores tokens. The few writes (merge, rerun, inbox read) are explicit
+  commands, never side effects of a read."""
     ),
     "version": (
         "Print the swe version",
