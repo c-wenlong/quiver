@@ -775,6 +775,61 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("--limit 7", seen["argv"])
 
+    def test_repo_search_scopes_to_user_and_orgs(self):
+        seen = {}
+        run = _gh_run({
+            "user/orgs": _Proc(stdout="org-one\norg-two\n"),
+            "search repos": _Proc(stdout="[]"),
+        })
+
+        def record(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            if "search repos" in joined:
+                seen["argv"] = joined
+            return run(cmd, **kw)
+
+        rc, out, _ = self._run_cli(["repo", "search", "q"], run=record)
+        self.assertEqual(rc, 0)
+        self.assertIn("--owner octocat", seen["argv"])
+        self.assertIn("--owner org-one", seen["argv"])
+        self.assertIn("--owner org-two", seen["argv"])
+
+    def test_repo_search_all_flag_runs_unscoped(self):
+        seen = {}
+        run = _gh_run({
+            "search repos": _Proc(stdout="[]"),
+        })
+
+        def record(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            if "search repos" in joined:
+                seen["argv"] = joined
+            return run(cmd, **kw)
+
+        rc, out, _ = self._run_cli(["repo", "search", "q", "--all"], run=record)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("--owner", seen["argv"])
+
+    def test_repo_search_org_fetch_failure_still_scopes_login(self):
+        """A failed orgs read shouldn't widen to public GitHub — the
+        search degrades to just the user's own repos."""
+        seen = {}
+        run = _gh_run({
+            "user/orgs": _Proc(returncode=1, stderr="boom"),
+            "search repos": _Proc(stdout="[]"),
+        })
+
+        def record(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            if "search repos" in joined:
+                seen["argv"] = joined
+            return run(cmd, **kw)
+
+        rc, out, _ = self._run_cli(["repo", "search", "q"], run=record)
+        self.assertEqual(rc, 0)
+        self.assertIn("--owner octocat", seen["argv"])
+        self.assertNotIn("org-one", seen["argv"])
+
     def test_json_errors_leave_stdout_clean(self):
         run = _gh_run({
             "repo view": _Proc(returncode=1, stderr="Could not resolve to a "

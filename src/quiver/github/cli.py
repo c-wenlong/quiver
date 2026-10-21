@@ -738,9 +738,13 @@ def _cmd_repo(args: list[str], json_view: bool) -> int:
         if env.status != "ok":
             print(c("red", f"  {_env_error(env)}"), file=err)
             return 1
-        result = gh.run_json([
-            "search", "repos", query, "--limit", str(_limit(opts, 15)),
-            "--json", "fullName,description,stargazersCount,updatedAt"])
+        args = ["search", "repos", query,
+                "--limit", str(_limit(opts, 15)),
+                "--json", "fullName,description,stargazersCount,updatedAt"]
+        owners = [] if opts["all"] else _search_owners(env)
+        for owner in owners:
+            args += ["--owner", owner]
+        result = gh.run_json(args)
         if result.status != "ok":
             print(c("red", result.error or result.status), file=err)
             return 1
@@ -759,8 +763,10 @@ def _cmd_repo(args: list[str], json_view: bool) -> int:
             print(f"  {c('cyan', name.ljust(40)[:40])} "
                   f"{c('dim', stars.rjust(8))}  "
                   f"{sanitize(truncate(r['description'] or '', 60))}")
-        print(c("dim", f"\n  {len(found)} repos — add one with "
-                       "`swe gh repo add <name>`\n"))
+        hint = ("repos — add one with `swe gh repo add <name>`, or "
+                "search all of GitHub with --all" if owners
+                else "repos — add one with `swe gh repo add <name>`")
+        print(c("dim", f"\n  {len(found)} {hint}\n"))
         return 0
 
     if sub != "list":
@@ -797,6 +803,23 @@ def _open_web(kind: str, targets: list[str]) -> None:
            else f"https://github.com/{targets[0]}/{_WEB_PAGES[kind]}"
            if targets else "https://github.com")
     webbrowser.open(url)
+
+
+def _search_owners(env: gh.GhEnv) -> list[str]:
+    """Who a repo search may hit: the login itself plus every org the
+    account belongs to, so results are repos the user can actually pin
+    rather than all of public GitHub. An empty list means the scope
+    couldn't be resolved — the caller then runs the query unscoped.
+    """
+    owners = [env.login] if env.login else []
+    orgs = gh.run_gh(["api", "user/orgs", "--paginate",
+                      "--jq", ".[].login"])
+    if orgs.status == "ok" and isinstance(orgs.data, str):
+        for line in orgs.data.splitlines():
+            name = line.strip()
+            if name and name not in owners:
+                owners.append(name)
+    return owners
 
 
 def _env_error(env: gh.GhEnv) -> str:
