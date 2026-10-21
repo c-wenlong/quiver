@@ -693,4 +693,81 @@ import Testing
         await model.loadInbox(swe: SweClient(runner: calls))
         #expect(model.unreadCount == 1)
     }
+
+    // MARK: - filter
+
+    /// A query matching a repo name narrows the sections to that repo;
+    /// empty and whitespace-only filters show every pin.
+    @Test func filterNarrowsReposByName() async {
+        let swe = SweClient(runner: router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/alpha\",\"added_at\":100},{\"name\":\"o/beta\",\"added_at\":200}]",
+        ]))
+        let model = GitHubModel()
+        await model.load(swe: swe)
+        #expect(model.visibleRepos.map(\.name) == ["o/alpha", "o/beta"])
+        model.filter = "  "
+        #expect(model.visibleRepos.map(\.name) == ["o/alpha", "o/beta"])
+        model.filter = "BETA"
+        #expect(model.visibleRepos.map(\.name) == ["o/beta"])
+        #expect(model.showsAllRows("o/beta"))
+    }
+
+    /// A query matching no repo name is a pure row search: every
+    /// section stays up so a PR title or branch anywhere can match.
+    @Test func filterWithNoRepoMatchKeepsEverySection() async {
+        let swe = SweClient(runner: router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/alpha\",\"added_at\":100},{\"name\":\"o/beta\",\"added_at\":200}]",
+        ]))
+        let model = GitHubModel()
+        await model.load(swe: swe)
+        model.filter = "fix the crash"
+        #expect(model.visibleRepos.map(\.name) == ["o/alpha", "o/beta"])
+        #expect(!model.showsAllRows("o/alpha"))
+    }
+
+    /// Row text matches case-insensitively across title, branch and
+    /// number; a name-matched repo keeps every row regardless.
+    @Test func rowFilterMatchesAnyField() async {
+        let swe = SweClient(runner: router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100},{\"name\":\"o/b\",\"added_at\":200}]",
+        ]))
+        let model = GitHubModel()
+        await model.load(swe: swe)
+        model.filter = "feat"
+        // "o/b" isn't a name match under "feat", so its rows filter.
+        let rows: Loadable<[String]> = .loaded(["feat/login", "main"])
+        guard case .loaded(let kept) = model.filtered(rows, repo: "o/b", { [$0] }) else {
+            Issue.record("rows should stay loaded")
+            return
+        }
+        #expect(kept == ["feat/login"])
+        // nil fields don't match and don't crash the scan.
+        #expect(!model.matches([nil, "main"]))
+        #expect(model.matches(["Fix", "FEAT/login", nil]))
+        // But a repo the query names shows its whole board.
+        model.filter = "o/b"
+        guard case .loaded(let all) = model.filtered(rows, repo: "o/b", { [$0] }) else {
+            Issue.record("rows should stay loaded")
+            return
+        }
+        #expect(all == ["feat/login", "main"])
+    }
+
+    /// Filtering is pure: reading `visibleRepos`/`filtered` issues no
+    /// `swe` calls, so typing in the box never searches GitHub.
+    @Test func filteringIssuesNoRemoteCalls() async {
+        let calls = router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
+        ])
+        let swe = SweClient(runner: calls)
+        let model = GitHubModel()
+        await model.load(swe: swe)
+        let filled = calls.calls.count
+        model.filter = "anything"
+        _ = model.visibleRepos
+        _ = model.filtered(Loadable<[String]>.loaded(["x"]), repo: "o/a") { [$0] }
+        // trailing closure fine here: not inside a guard condition
+        _ = model.matches(["x"])
+        #expect(calls.calls.count == filled)
+    }
 }
