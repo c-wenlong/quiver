@@ -101,6 +101,16 @@ def github_catalog_for(home: Path | None = None) -> Path:
     return data_dir_for(home) / GITHUB_SUBDIR / GITHUB_CATALOG_BASENAME
 
 
+def github_mirrors_for(home: Path | None = None) -> Path:
+    """The bare clones `swe gh pr worktree` fetches PR heads into."""
+    return data_dir_for(home) / GITHUB_SUBDIR / "mirrors"
+
+
+def worktrees_dir_for(home: Path | None = None) -> Path:
+    """The checkouts `swe gh pr worktree` hands sessions, one per PR."""
+    return quiver_dir_for(home) / "worktrees"
+
+
 def mcp_dir_for(home: Path | None = None) -> Path:
     return quiver_dir_for(home) / MCP_SUBDIR
 
@@ -222,6 +232,9 @@ SESSION_COUNTS_CACHE_FILE = CACHE_DIR / "session_counts.json"
 GITHUB_OWNERS_CACHE = CACHE_DIR / "github_owners.json"
 # The synced catalog behind `swe gh sync`; only a resync rewrites it.
 GITHUB_CATALOG = github_catalog_for()
+# The bare mirrors and PR checkouts `swe gh pr worktree` maintains.
+GITHUB_MIRRORS = github_mirrors_for()
+WORKTREES_DIR = worktrees_dir_for()
 
 # Pre-0.2.7 root. Only referenced by the migration path.
 LEGACY_CONFIG_DIR = Path.home() / ".config" / "swe"
@@ -242,6 +255,12 @@ data/devin-cloud/
 # The app's full-text search index: message text from every local session.
 # Personal, and rebuilt by the app whenever it is missing.
 data/search/
+
+# The GitHub mirror clones and per-PR checkouts `swe gh pr worktree`
+# manages: regenerable, potentially large, and each worktree carries
+# its own .git the hub should never see.
+data/github/
+worktrees/
 
 # Credential values: provider API keys in secrets/providers/ and the values
 # behind mcp.json's ${NAME} references in secrets/mcp/. Keeping them out is

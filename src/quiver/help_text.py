@@ -598,6 +598,9 @@ to use their own login state and environment."""
   {c('cyan', 'swe gh pr view <N>')}              One PR: checks, reviews, merge state
   {c('cyan', 'swe gh pr merge <N> [--method=M] [--auto]')}
                                             Merge a PR (default: squash)
+  {c('cyan', 'swe gh pr worktree <N>')}           Checkout the PR head under
+                                            ~/.quiver/worktrees (a session's
+                                            launch point)
   {c('cyan', 'swe gh issue [--repo=R]')}          Issues
   {c('cyan', 'swe gh run [--repo=R]')}            Workflow runs (alias: actions)
   {c('cyan', 'swe gh run rerun <id> [--failed]')}  Re-run a workflow run

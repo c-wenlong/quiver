@@ -30,6 +30,16 @@ import Testing
         #expect(reply.failed.map(\.owner) == ["dead-org"])
     }
 
+    @Test func worktreeDecodesPathAndCreated() async throws {
+        let reply = try await client("swe-gh-worktree").ghPrWorktree(repo: "c-wenlong/quiver", pr: 459)
+        #expect(reply.repo == "c-wenlong/quiver")
+        #expect(reply.pr == 459)
+        #expect(reply.path == "/Users/k/.quiver/worktrees/c-wenlong__quiver-pr459")
+        #expect(reply.head == "a9463720b1c2")
+        #expect(reply.created)
+        #expect(reply.error == nil)
+    }
+
     @Test func pullRequestsDecodeFullRows() async throws {
         let reply = try await client("swe-gh-prs").ghPullRequests(repo: "c-wenlong/quiver")
         #expect(reply.github.status == .ok)
@@ -1044,5 +1054,46 @@ import Testing
         let error = await model.markInboxRead([], all: true, swe: swe)
         #expect(error == nil)
         #expect(model.unreadCount == 0)
+    }
+
+    @Test func prWorktreeReturnsPathAndClearsError() async {
+        let swe = SweClient(runner: router([
+            "gh pr worktree 7 --repo=o/a --json":
+                "\"repo\":\"o/a\",\"pr\":7,\"path\":\"/x/o__a-pr7\","
+                + "\"head\":\"abc\",\"created\":true,\"error\":null",
+        ]))
+        let model = GitHubModel()
+        let path = await model.prWorktree(repo: "o/a", pr: 7, swe: swe)
+        #expect(path == "/x/o__a-pr7")
+        #expect(model.sessionError == nil)
+        #expect(model.worktreeBusy.isEmpty)
+    }
+
+    @Test func prWorktreeFailureSurfacesError() async {
+        let swe = SweClient(runner: router([
+            "gh pr worktree 9 --repo=o/a --json":
+                "\"repo\":\"o/a\",\"pr\":9,\"path\":null,\"created\":false,"
+                + "\"error\":\"Fetch failed: no such ref\"",
+        ]))
+        let model = GitHubModel()
+        let path = await model.prWorktree(repo: "o/a", pr: 9, swe: swe)
+        #expect(path == nil)
+        #expect(model.sessionError == "Fetch failed: no such ref")
+    }
+
+    @Test func sessionHarnessesKeepInstalledOnly() async {
+        let swe = SweClient(runner: router([
+            "list --json": "\"harnesses\":["
+                + "{\"name\":\"claude\",\"command\":\"claude\",\"description\":\"\","
+                + "\"aliases\":[],\"tags\":[],\"state\":\"active\",\"installed\":true},"
+                + "{\"name\":\"codex\",\"command\":\"codex\",\"description\":\"\","
+                + "\"aliases\":[],\"tags\":[],\"state\":\"active\",\"installed\":false},"
+                + "{\"name\":\"old\",\"command\":\"old\",\"description\":\"\","
+                + "\"aliases\":[],\"tags\":[],\"state\":\"archived\",\"installed\":true}"
+                + "]",
+        ]))
+        let model = GitHubModel()
+        await model.loadSessionHarnesses(swe: swe)
+        #expect(model.sessionHarnesses.map(\.name) == ["claude"])
     }
 }
