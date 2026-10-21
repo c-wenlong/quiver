@@ -589,7 +589,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe gh')}                          gh status + pinned repos
   {c('cyan', 'swe gh sync')}                     Snapshot your repos + orgs into the
                                             local catalog (resync-only updates)
-  {c('cyan', 'swe gh repo list|add|remove|search')}   The repos the dashboard watches
+  {c('cyan', 'swe gh repo list|add|remove|reorder|search')}   The repos the dashboard watches
                                             (search reads the catalog, then live;
                                             --all is public)
   {c('cyan', 'swe gh board [--repo=R]')}            Every surface of a repo in one call
@@ -615,7 +615,8 @@ to use their own login state and environment."""
   shows all pinned repos in turn.
 
   {c('bold', 'Flags')}
-  {c('cyan', '--repo=owner/name')}   Repo (a github.com URL works too)
+  {c('cyan', '--repo=owner/name')}   Repo (a github.com URL works too;
+                          comma-separate several: --repo=a/b,c/d)
   {c('cyan', '--state=open|closed|…')}  pr: open/closed/merged/all; issue: open/closed/all
   {c('cyan', '--limit=N')}            Rows to fetch (default 30, cap 200)
   {c('cyan', '--all')}                inbox: include read notifications
