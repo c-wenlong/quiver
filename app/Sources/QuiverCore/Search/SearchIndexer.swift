@@ -162,17 +162,7 @@ public final class SearchIndexer: @unchecked Sendable {
         }
         defer { pending = nil }
 
-        let rows = SearchChunker.rows(from: file.messages).map { chunk -> SearchMessageRow in
-            var row = SearchMessageRow(
-                role: chunk.role.rawValue, ts: chunk.ts,
-                identifiers: identifierShadowText(chunk.text))
-            switch chunk.role {
-            case .user: row.userText = chunk.text
-            case .assistant: row.assistantText = chunk.text
-            case .tool: row.toolText = chunk.text
-            }
-            return row
-        }
+        let rows = Self.messageRows(from: file.messages)
         var fields = SearchSessionFields(
             agent: file.harness.rawValue,
             sessionID: file.hints.sessionId ?? Self.stem(of: path),
@@ -214,6 +204,72 @@ public final class SearchIndexer: @unchecked Sendable {
                               prior: old)
         }
 
+        return try commitWholeRead(
+            path: path, stat: stat, byteOffset: byteOffset,
+            fields: fields, rows: rows, hasSession: hasSession, old: old)
+    }
+
+    /// Commits one session read whole out of a container — the synthetic
+    /// counterpart of `finishFile`, for sources like OpenCode's
+    /// `opencode.db` whose sessions are rows rather than files. `fields`
+    /// comes from the container's own session row, `messages` from its
+    /// transcript rows; `byteOffset` carries the synthetic size, so the
+    /// `.current` check (offset == size) can hold on a later pass.
+    @discardableResult
+    public func finishSession(
+        path: String, stat: SearchFileStat,
+        fields: SearchSessionFields, messages: [SearchMessage]
+    ) throws -> Bool {
+        try commitWholeRead(
+            path: path, stat: stat, byteOffset: stat.sizeBytes ?? 0,
+            fields: fields, rows: Self.messageRows(from: messages),
+            hasSession: true, old: try? store.fileRow(for: path))
+    }
+
+    /// A read that never committed. Counted against the mtime it failed at:
+    /// three failures at the same stat hold the file out until the stat
+    /// itself moves.
+    public func failFile(path: String, mtimeMs: Double) {
+        if pending?.path == path { pending = nil }
+        guard shouldIndex(path: path) else { return }
+        try? store.setFileState(path, .failed, atMtimeMs: mtimeMs)
+    }
+
+    /// Reclaims messages orphaned by session replacements, in bounded batches
+    /// so a scan's tail never stalls on one giant delete.
+    public func finishScan() throws {
+        for _ in 0..<Self.drainBatchLimit {
+            if try store.drainOrphanedMessages(limit: 256) == 0 { break }
+        }
+    }
+
+    /// `SearchChunker.rows` mapped to store rows — the one text column the
+    /// role searches under plus identifier shadow text. Shared by
+    /// `finishFile` and `finishSession`.
+    private static func messageRows(from messages: [SearchMessage]) -> [SearchMessageRow] {
+        SearchChunker.rows(from: messages).map { chunk -> SearchMessageRow in
+            var row = SearchMessageRow(
+                role: chunk.role.rawValue, ts: chunk.ts,
+                identifiers: identifierShadowText(chunk.text))
+            switch chunk.role {
+            case .user: row.userText = chunk.text
+            case .assistant: row.assistantText = chunk.text
+            case .tool: row.toolText = chunk.text
+            }
+            return row
+        }
+    }
+
+    /// The whole-read commit `finishFile` and `finishSession` share: a row
+    /// that already holds a session gets a new generation (`replaceSession`
+    /// swaps it in one transaction), a first session is created, and a read
+    /// that found none commits only its cursor.
+    private func commitWholeRead(
+        path: String, stat: SearchFileStat, byteOffset: Int64,
+        fields: SearchSessionFields, rows: [SearchMessageRow],
+        hasSession: Bool, old: SearchFileRow?
+    ) throws -> Bool {
+        let fence = old.map { SearchFileFence(sessionRowID: $0.sessionRowID, byteOffset: $0.byteOffset) }
         if let old, old.sessionRowID != nil {
             guard let sessionRowID = try store.replaceSession(for: path, expected: fence, fields: fields)
             else { return false }
@@ -232,23 +288,6 @@ public final class SearchIndexer: @unchecked Sendable {
         return try commit(path: path, expected: fence, stat: stat, byteOffset: byteOffset,
                           sessionRowID: sessionRowID, messages: rows, updating: fields,
                           prior: old)
-    }
-
-    /// A read that never committed. Counted against the mtime it failed at:
-    /// three failures at the same stat hold the file out until the stat
-    /// itself moves.
-    public func failFile(path: String, mtimeMs: Double) {
-        if pending?.path == path { pending = nil }
-        guard shouldIndex(path: path) else { return }
-        try? store.setFileState(path, .failed, atMtimeMs: mtimeMs)
-    }
-
-    /// Reclaims messages orphaned by session replacements, in bounded batches
-    /// so a scan's tail never stalls on one giant delete.
-    public func finishScan() throws {
-        for _ in 0..<Self.drainBatchLimit {
-            if try store.drainOrphanedMessages(limit: 256) == 0 { break }
-        }
     }
 
     /// `commitFile` plus what it does not do: move the row's state on. A
