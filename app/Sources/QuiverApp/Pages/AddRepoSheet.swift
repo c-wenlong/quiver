@@ -2,8 +2,8 @@ import QuiverCore
 import SwiftUI
 
 /// Pin a repo on the dashboard. Type `owner/repo`, paste a GitHub URL,
-/// or search GitHub and pin one of the hits. The pin itself is verified
-/// by `swe gh repo add` before it lands.
+/// or search your own repos and orgs and pin one of the hits. The pin
+/// itself is verified by `swe gh repo add` before it lands.
 struct AddRepoSheet: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
@@ -45,7 +45,7 @@ struct AddRepoSheet: View {
                     if model.searching {
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.small)
-                            Text("Searching GitHub…")
+                            Text("Searching your repos…")
                                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         }
                         .padding(.vertical, 8).padding(.horizontal, 12)

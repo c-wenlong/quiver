@@ -211,6 +211,8 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 SESSION_CACHE_FILE = CACHE_DIR / "session_cache.json"
 RATE_LIMITS_CACHE_FILE = CACHE_DIR / "rate_limits_cache.json"
 SESSION_COUNTS_CACHE_FILE = CACHE_DIR / "session_counts.json"
+# `swe gh repo search` owner scope (login + orgs), short TTL per login.
+GITHUB_OWNERS_CACHE = CACHE_DIR / "github_owners.json"
 
 # Pre-0.2.7 root. Only referenced by the migration path.
 LEGACY_CONFIG_DIR = Path.home() / ".config" / "swe"
