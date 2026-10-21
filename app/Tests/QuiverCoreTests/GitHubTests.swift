@@ -550,4 +550,48 @@ import Testing
         }
         #expect(calls.calls.count == filled + 1)
     }
+
+    /// `invalidate` during an in-flight fetch must not drop the refresh:
+    /// the in-flight reply predates the notification, so the surface
+    /// fetches again after it lands.
+    @Test func invalidateQueuesBehindAnInFlightFetch() async {
+        /// First `--repo` call holds until released; later calls return
+        /// immediately.
+        final class Gated: CommandRunning, @unchecked Sendable {
+            private(set) var calls: [[String]] = []
+            var released = false
+            private var held = 0
+            func run(_ arguments: [String]) async throws -> CommandResult {
+                calls.append(arguments)
+                if arguments.joined(separator: " ").contains("--repo=") {
+                    held += 1
+                    if held == 1 {
+                        while !released { try? await Task.sleep(for: .milliseconds(5)) }
+                    }
+                }
+                let payload = "{\"schema\":1,\"data\":{\"github\":{\"status\":\"ok\","
+                    + "\"login\":\"me\",\"error\":null},"
+                    + "\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"pull_requests\":[]}]}}"
+                return .init(status: 0, stdout: Data(payload.utf8), stderr: "")
+            }
+            func run(_ arguments: [String], input: Data?) async throws -> CommandResult {
+                try await run(arguments)
+            }
+        }
+        let calls = Gated()
+        let swe = SweClient(runner: calls)
+        let model = GitHubModel()
+        model.selected = "o/a"
+        let inFlight = Task { await model.loadTab(.pulls, repo: "o/a", swe: swe) }
+        for _ in 0..<200 where calls.calls.isEmpty {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        model.invalidate(repo: "o/a", swe: swe)
+        calls.released = true
+        await inFlight.value
+        for _ in 0..<200 where calls.calls.count < 2 {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(calls.calls.count == 2)
+    }
 }

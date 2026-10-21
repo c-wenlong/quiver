@@ -153,8 +153,8 @@ struct GitHubNotifierTests {
         #expect(posts2.batches.isEmpty)
     }
 
-    /// The delivered set is bounded at 500; the file on disk stays inside
-    /// the bound after eviction.
+    /// The delivered set is bounded at 500; eviction drops the oldest
+    /// first, so a just-bannered id is never the first out.
     @Test func deliveredSetCapsAtBound() async throws {
         let dir = quiverDir()
         let file = dir.appending(path: "cache/github-notified.json")
@@ -170,7 +170,37 @@ struct GitHubNotifierTests {
         notifier.bannersEnabled = true
         await notifier.poll(swe: swe)
         #expect(posts.batches.map { $0.map(\.id) } == [["fresh"]])
-        #expect(try deliveredIds(dir).count == 500)
+        let ids = try deliveredIds(dir)
+        #expect(ids.count == 500)
+        #expect(!ids.contains("n0") && ids.contains("n101") && ids.contains("fresh"))
+    }
+
+    /// An empty first poll still completes the seed: a notification
+    /// that arrived while the app was closed must banner on relaunch,
+    /// not be silently re-seeded because no ids were on disk.
+    @Test func emptyFirstPollStillMarksPrimed() async throws {
+        let dir = quiverDir()
+        let posts = Posts()
+        let router = Router([inboxKey: inbox([])])
+        let swe = SweClient(runner: router)
+        let first = GitHubNotifier(quiver: dir, model: GitHubModel()) {
+            posts.batches.append($0)
+        }
+        first.bannersEnabled = true
+        await first.poll(swe: swe)
+        #expect(posts.batches.isEmpty)
+        #expect(try deliveredIds(dir).isEmpty)
+
+        // A note lands while "closed"; the relaunched instance is
+        // already primed, so it banners rather than seeding it away.
+        router.respond(inboxKey, inbox([note("n1")]))
+        let posts2 = Posts()
+        let second = GitHubNotifier(quiver: dir, model: GitHubModel()) {
+            posts2.batches.append($0)
+        }
+        second.bannersEnabled = true
+        await second.poll(swe: swe)
+        #expect(posts2.batches.map { $0.map(\.id) } == [["n1"]])
     }
 
     /// Banners off still polls: ids are recorded and the notified repo's

@@ -59,6 +59,20 @@ final class AppModel {
         } else if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) {
             window.makeKeyAndOrderFront(nil)
         }
+        // The click can precede the Repositories page — and so its pin
+        // fetch. An empty pin list is "not loaded yet", not "unpinned":
+        // load before routing, or a pinned repo would land on Inbox.
+        if github.pins.isEmpty {
+            Task {
+                await github.load(swe: swe)
+                routeGitHub(repo: repo, type: type)
+            }
+        } else {
+            routeGitHub(repo: repo, type: type)
+        }
+    }
+
+    private func routeGitHub(repo: String, type: String) {
         if github.pins.contains(where: { $0.name == repo }) {
             github.selected = repo
             github.tab = switch type {

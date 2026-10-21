@@ -91,6 +91,10 @@ public final class GitHubModel {
     /// Which (repo, tab) is mid-fetch, so rows keep their last data
     /// while a spinner shows on the tab.
     public private(set) var loading: Set<BoardKey> = []
+    /// A second request while one was already running — its reply
+    /// predates the second call, so the surface refetches after it lands
+    /// rather than dropping the refresh.
+    private var queuedRefreshes: Set<BoardKey> = []
 
     public private(set) var inbox: Loadable<[GhNotification]> = .idle
     /// Newest inbox fetch time; the page polls on a timer and shows
@@ -216,9 +220,17 @@ public final class GitHubModel {
     /// not an empty list.
     public func loadTab(_ tab: RepoTab, repo: String, swe: SweClient) async {
         let key = BoardKey(repo: repo, tab: tab)
-        guard !loading.contains(key) else { return }
+        guard !loading.contains(key) else {
+            queuedRefreshes.insert(key)
+            return
+        }
         loading.insert(key)
-        defer { loading.remove(key) }
+        defer {
+            loading.remove(key)
+            if queuedRefreshes.remove(key) != nil {
+                Task { await loadTab(tab, repo: repo, swe: swe) }
+            }
+        }
         do {
             switch tab {
             case .pulls:

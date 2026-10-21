@@ -24,8 +24,14 @@ final class GitHubNotifier {
     @ObservationIgnored private let model: GitHubModel
     @ObservationIgnored private let stateFile: URL
     @ObservationIgnored private let interval: TimeInterval
+    /// Membership check and eviction order (oldest first): a Set's order
+    /// is arbitrary, so eviction must not blindly drop ids a re-poll
+    /// could still surface.
     @ObservationIgnored private var delivered: Set<String>
-    @ObservationIgnored private var primed = false
+    @ObservationIgnored private var deliveredOrder: [String] = []
+    /// Persisted, not derived: the first completed poll seeds the set,
+    /// so anything that arrived while the app was closed still banners.
+    @ObservationIgnored private var primed: Bool
     /// Sends the batch; `postToSystem` in the app, a capture in tests.
     @ObservationIgnored private let post: ([GhNotification]) async -> Void
 
@@ -40,10 +46,13 @@ final class GitHubNotifier {
         self.post = post ?? { notes in await Self.postToSystem(notes) }
         bannersEnabled = UserDefaults.standard.object(forKey: "githubNotifications") as? Bool ?? true
         stateFile = quiver.appending(path: "cache/github-notified.json")
-        delivered = (try? Data(contentsOf: stateFile))
+        let saved = (try? Data(contentsOf: stateFile))
             .flatMap { try? JSONDecoder().decode(State.self, from: $0) }
-            .map { Set($0.delivered) } ?? []
-        primed = !delivered.isEmpty
+        deliveredOrder = saved?.delivered ?? []
+        delivered = Set(deliveredOrder)
+        // Pre-primed files (v0.1 wrote ids only): non-empty means a seed
+        // already ran.
+        primed = saved?.primed ?? !delivered.isEmpty
     }
 
     /// The AppModel watcher loop: poll, sleep, repeat until the app
@@ -66,22 +75,32 @@ final class GitHubNotifier {
 
         if !primed {
             primed = true
-            delivered.formUnion(notes.map(\.id))
+            for note in notes { record(note.id) }
             save()
             return
         }
 
         let fresh = notes.filter { $0.unread && !delivered.contains($0.id) }
         for note in fresh {
-            delivered.insert(note.id)
+            record(note.id)
             model.invalidate(repo: note.repo, swe: swe)
         }
         if !fresh.isEmpty {
             if bannersEnabled { await post(fresh) }
-            if delivered.count > Self.deliveredCap {
-                delivered = Set(delivered.suffix(Self.deliveredCap))
-            }
+            trim()
             save()
+        }
+    }
+
+    /// Newest ids go last; eviction drops from the front, so an id a
+    /// re-poll could still surface is never the first out.
+    private func record(_ id: String) {
+        if delivered.insert(id).inserted { deliveredOrder.append(id) }
+    }
+
+    private func trim() {
+        while deliveredOrder.count > Self.deliveredCap {
+            delivered.remove(deliveredOrder.removeFirst())
         }
     }
 
@@ -139,7 +158,7 @@ final class GitHubNotifier {
         do {
             try FileManager.default.createDirectory(
                 at: stateFile.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try JSONEncoder().encode(State(delivered: delivered.sorted()))
+            try JSONEncoder().encode(State(delivered: deliveredOrder, primed: primed))
                 .write(to: stateFile, options: .atomic)
         } catch {
             // Worst case a relaunch repeats a notification.
@@ -147,7 +166,22 @@ final class GitHubNotifier {
     }
 
     private struct State: Codable {
+        /// Insertion order, oldest first — `delivered`'s eviction order.
         var delivered: [String]
+        /// The first completed poll ran. Files written before this field
+        /// existed decode it as `!delivered.isEmpty`.
+        var primed: Bool
+
+        init(delivered: [String], primed: Bool) {
+            self.delivered = delivered
+            self.primed = primed
+        }
+
+        init(from decoder: any Decoder) throws {
+            let box = try decoder.container(keyedBy: CodingKeys.self)
+            delivered = try box.decodeIfPresent([String].self, forKey: .delivered) ?? []
+            primed = try box.decodeIfPresent(Bool.self, forKey: .primed) ?? !delivered.isEmpty
+        }
     }
 }
 
