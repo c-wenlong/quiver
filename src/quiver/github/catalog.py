@@ -40,19 +40,25 @@ def _connect(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def write(rows: list[dict], owners_ok: list[str],
-          path: Path | None = None) -> dict:
+def write(rows: list[dict], owners_ok: list[str], path: Path | None = None,
+          login: str | None = None) -> dict:
     """Upsert this sync's rows and return the status summary.
 
     ``owners_ok`` is the owners whose listing actually came back — rows
     they no longer return are pruned, while a failed owner's rows stay
     untouched so one bad `gh repo list` can't wipe its slice of the
-    catalog.
+    catalog. A different ``login`` than the last sync's means the whole
+    snapshot belongs to another account: the store starts over instead
+    of keeping repos the new account could never cover.
     """
     stamp = time.time()
     conn = _connect(path or paths.GITHUB_CATALOG)
     try:
         with conn:
+            prev = conn.execute(
+                "SELECT value FROM meta WHERE key='account'").fetchone()
+            if login and prev and prev[0] != login:
+                conn.execute("DELETE FROM repos")
             conn.executemany(
                 "INSERT INTO repos(full_name, owner, description, stars,"
                 "                updated_at, is_private, synced_at)"
@@ -74,10 +80,19 @@ def write(rows: list[dict], owners_ok: list[str],
                 "INSERT INTO meta(key, value) VALUES('synced_at', ?)"
                 " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (str(stamp),))
+            # Owners the catalog actually holds — a failed owner's kept
+            # rows still count, an empty one drops off the list.
+            held = [r[0] for r in conn.execute(
+                "SELECT DISTINCT owner FROM repos ORDER BY 1")]
             conn.execute(
                 "INSERT INTO meta(key, value) VALUES('owners', ?)"
                 " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (json.dumps(owners_ok),))
+                (json.dumps(held),))
+            if login:
+                conn.execute(
+                    "INSERT INTO meta(key, value) VALUES('account', ?)"
+                    " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (login,))
         return status(path) or {}
     finally:
         conn.close()

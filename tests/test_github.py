@@ -1027,6 +1027,51 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("brew install gh", out)
 
+    def test_sync_account_switch_wipes_previous_rows(self):
+        run = self._sync_run({"octocat": ["quiver"]}, orgs="")
+        self._run_cli(["sync"], run=run)
+        other = gh.GhEnv(installed=True, authenticated=True,
+                         login="someone-else")
+        run = self._sync_run({"someone-else": ["theirs"]}, orgs="")
+        self._run_cli(["sync"], run=run, env=other)
+        self.assertEqual(catalog.search("quiver", 10), [])
+        self.assertEqual(
+            [r["name"] for r in catalog.search("theirs", 10)],
+            ["someone-else/theirs"])
+        self.assertEqual(catalog.status()["owners"], ["someone-else"])
+
+    def test_sync_orgs_failure_is_reported(self):
+        run = _gh_run({
+            "user/orgs": _Proc(returncode=1, stderr="boom"),
+            "repo list octocat": _Proc(stdout=json.dumps([
+                {"nameWithOwner": "octocat/quiver", "description": None,
+                 "stargazerCount": 1, "updatedAt": "2026-10-20T00:00:00Z",
+                 "isPrivate": False}])),
+        })
+        rc, out, _ = self._run_cli(["sync", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["failed"][0]["owner"], "<orgs>")
+        self.assertEqual(data["owners"], ["octocat"])
+
+    def test_sync_nonlist_response_counts_as_failure(self):
+        self._run_cli(["sync"], run=self._sync_run(
+            {"octocat": ["quiver"], "org-one": ["sdk"]}))
+        handlers = {
+            "user/orgs": _Proc(stdout="org-one\n"),
+            # gh exits 0 but prints junk — must not prune the old rows.
+            "repo list org-one": _Proc(stdout="not json"),
+            "repo list octocat": _Proc(stdout="[]"),
+        }
+        rc, out, _ = self._run_cli(["sync", "--json"],
+                                   run=_gh_run(handlers))
+        data = json.loads(out)["data"]
+        self.assertEqual([f["owner"] for f in data["failed"]],
+                         ["org-one"])
+        self.assertEqual(
+            [r["name"] for r in catalog.search("sdk", 10)],
+            ["org-one/sdk"])
+
     def test_repo_search_reads_catalog_without_gh(self):
         catalog.write(self._catalog_rows("octocat", ["quiver"]),
                       ["octocat"])

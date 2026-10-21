@@ -834,4 +834,46 @@ import Testing
         #expect(await load("ok").envSetup == nil)
         #expect(await load("upstream-error").envSetup == nil)
     }
+
+    /// A `load` that was in flight while a sync finished must not paint
+    /// the sync's fresh catalog back to the older overview numbers.
+    @Test func staleOverviewDoesNotOverwriteASync() async {
+        /// Holds `gh --json` until released; `gh sync` answers at once.
+        final class Gated: CommandRunning, @unchecked Sendable {
+            private(set) var calls = 0
+            var released = false
+            func run(_ arguments: [String]) async throws -> CommandResult {
+                calls += 1
+                let joined = arguments.joined(separator: " ")
+                var payload: String
+                if joined.hasSuffix("gh sync --json") {
+                    payload = "\"repos\":9,\"synced_at\":1700000100,"
+                        + "\"owners\":[\"me\"],\"failed\":[]"
+                } else {
+                    while !released { try? await Task.sleep(for: .milliseconds(5)) }
+                    payload = "\"github\":{\"status\":\"ok\",\"login\":\"me\","
+                        + "\"error\":null},\"repos\":[],"
+                        + "\"catalog\":{\"repos\":2,\"synced_at\":1700000000,"
+                        + "\"owners\":[\"me\"]}"
+                }
+                let out = "{\"schema\":1,\"data\":{\(payload)}}"
+                return .init(status: 0, stdout: Data(out.utf8), stderr: "")
+            }
+            func run(_ arguments: [String], input: Data?) async throws -> CommandResult {
+                try await run(arguments)
+            }
+        }
+        let gate = Gated()
+        let swe = SweClient(runner: gate)
+        let model = GitHubModel()
+        let loading = Task { await model.load(swe: swe) }
+        for _ in 0..<200 where gate.calls == 0 {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        await model.syncGitHub(swe: swe)
+        #expect(model.catalog?.repos == 9)
+        gate.released = true
+        await loading.value
+        #expect(model.catalog?.repos == 9)
+    }
 }

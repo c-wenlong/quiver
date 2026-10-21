@@ -757,7 +757,7 @@ def _cmd_repo(args: list[str], json_view: bool) -> int:
         args = ["search", "repos", query,
                 "--limit", str(limit),
                 "--json", "fullName,description,stargazersCount,updatedAt"]
-        owners = [] if opts["all"] else _search_owners(env)
+        owners, _ = ([], None) if opts["all"] else _search_owners(env)
         for owner in owners:
             args += ["--owner", owner]
         result = gh.run_json(args)
@@ -828,7 +828,7 @@ def _cmd_sync(rest: list[str], json_view: bool) -> int:
     if env.status != "ok":
         print(c("red", f"  {_env_error(env)}"), file=err)
         return 1
-    owners = _search_owners(env)
+    owners, owners_error = _search_owners(env)
     if not owners:
         print(c("red", "  Could not resolve the account or its orgs."),
               file=err)
@@ -838,9 +838,15 @@ def _cmd_sync(rest: list[str], json_view: bool) -> int:
         result = gh.run_json(
             ["repo", "list", owner, "--limit", str(_SYNC_REPO_LIMIT),
              "--json", _SYNC_FIELDS], timeout=60)
+        # A non-list reply on a clean exit is a failure too — counting it
+        # as a synced owner would prune that owner's rows on write.
         if result.status != "ok" or not isinstance(result.data, list):
-            return {"owner": owner, "status": result.status,
-                    "error": result.error, "rows": []}
+            return {"owner": owner,
+                    "status": (result.status if result.status != "ok"
+                               else "upstream-error"),
+                    "error": result.error
+                             or "gh returned an invalid repository list",
+                    "rows": []}
         return {"owner": owner, "status": "ok", "rows": [
             {"full_name": r["nameWithOwner"], "owner": owner,
              "description": r.get("description"),
@@ -854,14 +860,20 @@ def _cmd_sync(rest: list[str], json_view: bool) -> int:
     ok = [e for e in entries if e["status"] == "ok"]
     failed = [{"owner": e["owner"], "error": e["error"]}
               for e in entries if e["status"] != "ok"]
+    if owners_error:
+        failed.insert(0, {"owner": "<orgs>", "error": owners_error})
     summary = catalog.write(
-        [r for e in ok for r in e["rows"]], [e["owner"] for e in ok])
+        [r for e in ok for r in e["rows"]], [e["owner"] for e in ok],
+        login=env.login)
     if json_view:
         return emit({"repos": summary.get("repos", 0),
                      "synced_at": summary.get("synced_at"),
-                     "owners": [e["owner"] for e in ok],
+                     "owners": summary.get("owners", []),
                      "failed": failed})
     print()
+    if owners_error:
+        print(f"  {c('red', '●')} {c('cyan', '<orgs>'.ljust(40)[:40])} "
+              f"{owners_error}")
     for e in entries:
         fine = e["status"] == "ok"
         detail = (f"{len(e['rows'])} repos" if fine
@@ -895,15 +907,17 @@ def _open_web(kind: str, targets: list[str]) -> None:
 _OWNERS_TTL = 600
 
 
-def _search_owners(env: gh.GhEnv) -> list[str]:
+def _search_owners(env: gh.GhEnv) -> tuple[list[str], str | None]:
     """Who a repo search may hit: the login itself plus every org the
     account belongs to, so results are repos the user can actually pin
-    rather than all of public GitHub. An empty list means the scope
-    couldn't be resolved — the caller then runs the query unscoped.
+    rather than all of public GitHub. Returns ``(owners, error)`` — the
+    error is why the org list is missing; the search path ignores it
+    (scoping to the login is still useful) but sync reports it so a
+    partial sync doesn't look clean.
     """
     cached = _cached_owners(env.login)
     if cached is not None:
-        return cached
+        return cached, None
     owners = [env.login] if env.login else []
     orgs = gh.run_gh(["api", "user/orgs", "--paginate",
                       "--jq", ".[].login"])
@@ -915,7 +929,8 @@ def _search_owners(env: gh.GhEnv) -> list[str]:
         # Only a successful orgs read may cache — a transient failure
         # would otherwise hide org repos until the TTL ran out.
         _cache_owners(env.login, owners)
-    return owners
+        return owners, None
+    return owners, orgs.error or "gh could not list organizations"
 
 
 def _cached_owners(login: str) -> list[str] | None:

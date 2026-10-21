@@ -127,6 +127,9 @@ public final class GitHubModel {
     /// The last sync's failure, or which owners it skipped — shown as a
     /// warning on the Settings card, cleared on a clean resync.
     public private(set) var syncError: String?
+    /// Bumped every time `syncGitHub` writes a fresh catalog — a `load`
+    /// reply that started before that write must not overwrite it.
+    private var syncGeneration = 0
 
     /// A mutation in flight — add or remove — keyed by repo name so two
     /// taps on the same repo can't run concurrently.
@@ -203,10 +206,13 @@ public final class GitHubModel {
 
     /// First load: probe + pins. Keeps the selection if it is still pinned.
     public func load(swe: SweClient) async {
+        let syncGen = syncGeneration
         do {
             let overview = try await swe.ghOverview()
             env = overview.github
-            catalog = overview.catalog
+            // A reply older than the last sync's write would paint over
+            // the fresher count the sync just reported.
+            if syncGeneration == syncGen { catalog = overview.catalog }
             probed = true
             probeError = nil
             pinsFetchedAt = now()
@@ -427,6 +433,7 @@ public final class GitHubModel {
         defer { syncing = false }
         do {
             let reply = try await swe.ghSync()
+            syncGeneration += 1
             catalog = GhCatalog(repos: reply.repos, syncedAt: reply.syncedAt,
                                 owners: reply.owners)
             syncError = reply.failed.isEmpty ? nil
