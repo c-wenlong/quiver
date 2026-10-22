@@ -25,8 +25,8 @@ struct PanelFanButton: View {
             .help(fans.isHolding ? "Fans: manual" : "Fans")
             .popover(isPresented: $showing, arrowEdge: .bottom) {
                 PanelFanPopover()
-                    .padding(14)
-                    .frame(width: 280)
+                    .padding(12)
+                    .frame(width: 240)
             }
             // One read when the tab's header shows, so the glyph and the
             // popover's rows aren't a stale sample.
@@ -34,9 +34,9 @@ struct PanelFanButton: View {
     }
 }
 
-/// FanPopover compressed for the panel: one line per fan, then the
-/// manual speed alone. The threshold rule and the helper's removal stay
-/// on the Compute page's popover.
+/// FanPopover compressed for the panel: one line per fan, the same
+/// Automatic threshold and Manual speed controls, and the temperatures
+/// as icons. Only the helper's removal stays on the page's popover.
 private struct PanelFanPopover: View {
     @Environment(AppModel.self) private var app
     /// Shown mode, apart from the phase: picking Manual only opens the
@@ -57,8 +57,28 @@ private struct PanelFanPopover: View {
         Binding(get: { fans.level }, set: { fans.level = $0 })
     }
 
+    /// The threshold's slider applies at once; Manual's waits for its button.
+    private var thresholdLevel: Binding<Double> {
+        Binding(get: { fans.level }, set: { fans.setThresholdLevel($0) })
+    }
+
+    /// The dropdown doubles as the rule's switch: picking a degree
+    /// enables it, which may install the helper (the one password
+    /// prompt); Off is immediate.
+    private var thresholdPick: Binding<Double> {
+        Binding(get: { fans.thresholdEnabled ? fans.threshold : 0 },
+                set: { pick in
+                    if pick == 0 {
+                        fans.thresholdEnabled = false
+                    } else {
+                        fans.threshold = pick
+                        Task { await fans.enableThreshold() }
+                    }
+                })
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Fans").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
                 Spacer()
@@ -73,12 +93,11 @@ private struct PanelFanPopover: View {
                 VStack(spacing: 6) {
                     ForEach(fans.fans) { PanelFanRow(fan: $0) }
                 }
-                if let line = temperatureLine {
-                    Text(line).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                }
+                temperatureChips
                 Divider().overlay(Theme.border)
-                Tabs(options: [(false, "Automatic"), (true, "Manual")], selection: mode, style: .segmented)
-                if manual { manualControls }
+                Tabs(options: [(false, "Automatic"), (true, "Manual")], selection: mode,
+                     style: .segmented, fillWidth: true)
+                if manual { manualControls } else { thresholdControls }
                 if case .failed(let message) = fans.phase {
                     Text(message).font(Theme.caption).foregroundStyle(Theme.dangerText)
                 }
@@ -95,18 +114,67 @@ private struct PanelFanPopover: View {
         }
     }
 
-    @ViewBuilder private var manualControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    /// The speed slider, shared by Manual and the threshold.
+    private func speedSlider(_ title: String, value: Binding<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Speed").font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                Text(title).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
                 Spacer()
                 if let rpm = fans.targetRPM {
                     Text("\(Self.rpm(rpm)) · \(Int((fans.level * 100).rounded()))%")
                         .font(Theme.bodySmall.monospacedDigit()).foregroundStyle(Theme.textSecondary)
                 }
             }
-            Slider(value: level, in: 0...1)
+            Slider(value: value, in: 0...1)
                 .tint(Theme.accent)
+        }
+    }
+
+    /// The page's checkbox and stepper folded into one dropdown: Off, or
+    /// the CPU temperature that holds the fans at the picked speed.
+    @ViewBuilder private var thresholdControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Fans up above").font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                Spacer()
+                Picker("Fans up above", selection: thresholdPick) {
+                    Text("Off").tag(0.0)
+                    ForEach(Self.thresholdSteps, id: \.self) { degrees in
+                        Text("\(degrees) °C").tag(Double(degrees))
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+                .disabled(fans.busy)
+            }
+            if fans.thresholdEnabled {
+                speedSlider("Speed above it", value: thresholdLevel)
+            }
+            Text(thresholdCaption)
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var thresholdCaption: String {
+        if !fans.thresholdEnabled {
+            return "Optional: past the picked temperature, Quiver holds the fans at a speed you pick."
+                + (fans.helperInstalled ? ""
+                   : " Turning it on installs the fan helper, which asks for your password once.")
+        }
+        return "Holds this speed until the CPU drops to \(Int(fans.releaseBelow.rounded())) °C. "
+            + "Works while Quiver is open."
+    }
+
+    /// One degree steps, like the page's stepper, so a temperature set
+    /// there always has a row here.
+    private static let thresholdSteps =
+        Array(Int(FanControl.thresholdRange.lowerBound)...Int(FanControl.thresholdRange.upperBound))
+
+    @ViewBuilder private var manualControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            speedSlider("Speed", value: level)
             HStack {
                 Button(buttonTitle) { Task { await fans.applyManual() } }
                     .primaryButton()
@@ -140,12 +208,34 @@ private struct PanelFanPopover: View {
         }
     }
 
-    private var temperatureLine: String? {
-        guard let point = app.compute.history.temperatures.last else { return nil }
-        let parts = [ThermalComponent.cpu, .gpu, .battery].compactMap { component in
-            point[component].map { "\(component.title) \(TemperatureChart.formatted($0))" }
+    /// CPU, GPU and battery as icon chips: the component's chart colour
+    /// on an icon, its reading beside it. The names only fit as words on
+    /// the page; here the icon carries them, with the full name on hover.
+    @ViewBuilder private var temperatureChips: some View {
+        let temps = temperatures
+        if !temps.isEmpty {
+            HStack(spacing: 10) {
+                ForEach(temps, id: \.0) { component, value in
+                    HStack(spacing: 3) {
+                        Image(systemName: component.panelIcon)
+                            .foregroundStyle(component.colour)
+                        Text(TemperatureChart.formatted(value))
+                            .monospacedDigit()
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    .help(component.title)
+                }
+                Spacer()
+            }
+            .font(Theme.caption)
         }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private var temperatures: [(ThermalComponent, Double)] {
+        guard let point = app.compute.history.temperatures.last else { return [] }
+        return [ThermalComponent.cpu, .gpu, .battery].compactMap { component in
+            point[component].map { (component, $0) }
+        }
     }
 
     private static func rpm(_ value: Double) -> String {
@@ -166,18 +256,33 @@ private struct PanelFanRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Text("Fan \(fan.index + 1)").font(Theme.caption).foregroundStyle(Theme.textPrimary)
-            Spacer(minLength: 8)
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Theme.usageTrack)
                     Capsule().fill(Theme.accentFill).frame(width: geometry.size.width * share)
                 }
             }
-            .frame(width: 44, height: 4)
+            .frame(height: 4)
             .accessibilityElement()
             .accessibilityValue("\(Int((share * 100).rounded())) percent")
             Text("\(Int(fan.actual.rounded()).formatted()) rpm")
                 .font(Theme.caption.monospacedDigit()).foregroundStyle(Theme.textSecondary)
+        }
+    }
+}
+
+private extension ThermalComponent {
+    /// The icon that stands in for the name on the panel's temperature
+    /// chips. Covers every case so a new component can't slip through.
+    var panelIcon: String {
+        switch self {
+        case .cpu: "cpu"
+        case .gpu: "rectangle.3.offgrid.fill"
+        case .memory: "memorychip"
+        case .ssd: "internaldrive"
+        case .battery: "battery.100"
+        case .airflow: "wind"
+        case .display: "display"
         }
     }
 }
