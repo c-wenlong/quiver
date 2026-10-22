@@ -590,12 +590,15 @@ public final class GitHubModel {
         switch board[keyPath: boardPath] {
         case .loaded(let fetched):
             let seen = Set(fetched.map(\.id))
-            let rows = fetched + h[keyPath: historyPath].filter { !seen.contains($0.id) }
             // Number order is creation order — gh's list order — and
             // cached rows are all older than the window's first row.
-            h[keyPath: historyPath] = Array(rows.sorted { $0.id > $1.id }
-                .prefix(Self.historyCap))
-            board[keyPath: boardPath] = .loaded(h[keyPath: historyPath])
+            let rows = (fetched + h[keyPath: historyPath]
+                .filter { !seen.contains($0.id) }).sorted { $0.id > $1.id }
+            // The board holds the whole merged listing — a cap here
+            // would stop the scroll loader short of real history —
+            // while what persists keeps its bound.
+            board[keyPath: boardPath] = .loaded(rows)
+            h[keyPath: historyPath] = Array(rows.prefix(Self.historyCap))
         default:
             if h[keyPath: historyPath].isEmpty { return }
             board[keyPath: boardPath] = .loaded(h[keyPath: historyPath])
@@ -763,6 +766,9 @@ public final class GitHubModel {
             for key in focusFetched.keys where key.repo == name { focusFetched[key] = nil }
             for key in focusLimits.keys where key.repo == name { focusLimits[key] = nil }
             focusExhausted = focusExhausted.filter { $0.repo != name }
+            // An unpinned repo forgets its rows too — a re-pin starts
+            // from a fetch, not from what it used to know.
+            history[name] = nil
             if selected == name { selected = pins.first?.name }
             // The focus page dies with its pin — the dashboard takes over.
             if focused == name { focused = nil }

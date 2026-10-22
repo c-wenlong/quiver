@@ -246,5 +246,9 @@ import Testing
         // Ordinary links are left alone.
         #expect(GitHubMarkdown.flatLinks("see [the fix](https://x) now")
             == "see [the fix](https://x) now")
+        // Inside backticks the brackets are an example, not a badge.
+        #expect(GitHubMarkdown.flatLinks(
+            "use `[[label](badge.svg)](url)` for it [![ci](i)](j)")
+            == "use `[[label](badge.svg)](url)` for it [ci](j)")
     }
 }
