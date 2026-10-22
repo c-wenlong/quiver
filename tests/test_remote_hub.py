@@ -497,13 +497,29 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertEqual(status, 404)
 
     def test_new_session_launch(self):
-        status, data = self.srv.request(
-            "POST", "/v1/sessions",
-            body={"harness": "claude", "cwd": "/tmp", "prompt": "hi"},
-            headers=self.hdr,
-        )
-        # 202 when tmux launched it, 422 where tmux is absent
-        self.assertIn(status, (202, 422))
+        # launch_new is mocked: without it this route could spawn a real
+        # claude process wherever tmux happens to be installed.
+        with patch(
+            "quiver.remote.supervise.launch_new",
+            return_value=(True, "launched", "qv-t"),
+        ) as launch:
+            status, data = self.srv.request(
+                "POST", "/v1/sessions",
+                body={"harness": "claude", "cwd": "/tmp", "prompt": "hi"},
+                headers=self.hdr,
+            )
+        self.assertEqual(status, 202, data)
+        launch.assert_called_once()
+        with patch(
+            "quiver.remote.supervise.launch_new",
+            return_value=(False, "tmux is not available", None),
+        ):
+            status, data = self.srv.request(
+                "POST", "/v1/sessions",
+                body={"harness": "claude", "cwd": "/tmp", "prompt": "hi"},
+                headers=self.hdr,
+            )
+        self.assertEqual(status, 422, data)
 
     def test_static_assets(self):
         for path in ("/", "/app.js", "/styles.css",
