@@ -413,7 +413,9 @@ final class AppModel {
         let quiver = home.appending(path: ".quiver")
         primitiveNames = PluginDisplayNames.load(from: PluginDisplayNames.file(home: home))
         limits = LimitsMonitor(quiver: quiver)
-        github = GitHubModel(snapshotFile: quiver.appending(path: "cache/github-snapshot.json"))
+        github = GitHubModel(
+            snapshotFile: quiver.appending(path: "cache/github-snapshot.json"),
+            historyFile: quiver.appending(path: "cache/github-history.db"))
         githubNotify = GitHubNotifier(quiver: quiver, model: github)
         let usage = UsageService(
             transport: URLSessionTransport(),
