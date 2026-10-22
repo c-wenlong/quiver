@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pair a phone by Tailscale identity, no QR needed.** The PWA's pair
+  button posts `/v1/pair/request`; the hub `tailscale whois`es the peer
+  and shows a 6-digit code the phone displays while it polls. A second
+  device — an already-paired one, another Mac sharing the hub owner's
+  tailnet login via `#approve`, or `swe remote devices
+  --requests/--approve=<code>/ --deny=<code>` on the hub — decides it.
+  Self-approval is refused, five wrong codes deny the request, and the
+  credential is delivered to the poller exactly once. The QR/token flow
+  stays as the fallback.
+
 - **First-run setup in the app.** A new Mac with no `~/.quiver/AGENTS.md`
   opens a four-step window. First, tick the coding agents you use: the ones
   found on the Mac come first, and "Show more agents" lists the rest, with

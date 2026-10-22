@@ -972,6 +972,185 @@ class TestSendQueue(unittest.TestCase):
         self.assertTrue(good["data"]["ok"])
 
 
+_PHONE = {
+    "node_name": "iphone-13.taild6a23f.ts.net",
+    "node_short": "iphone-13",
+    "node_id": "nPHONE",
+    "login": "kai@github",
+    "display_name": "Kai",
+    "tagged": False,
+}
+_MAC = {
+    "node_name": "macbook.taild6a23f.ts.net",
+    "node_short": "macbook",
+    "node_id": "nMAC",
+    "login": "kai@github",
+    "display_name": "Kai",
+    "tagged": False,
+}
+
+
+class TestPairRoutes(unittest.TestCase):
+    def setUp(self):
+        self.srv = _Server(sessions=[])
+        self.addCleanup(self.srv.stop)
+        # Peer identity per request IP: phone asks, mac approves.
+        self.srv.state.whois = (
+            lambda ip: dict(_PHONE) if ip == "127.0.0.1" else None
+        )
+        self.srv.state.owner_login = "kai@github"
+
+    def _req(self, name=""):
+        return self.srv.request(
+            "POST", "/v1/pair/request",
+            body={"name": name} if name else {},
+        )
+
+    def _poll(self, rid, secret):
+        return self.srv.request(
+            "GET", f"/v1/pair/request/{rid}?secret={secret}"
+        )
+
+    def _approve(self, code, rid=None, node=None, auth=None):
+        body = {"code": code}
+        if rid:
+            body["request_id"] = rid
+        if node is not None:
+            self.srv.state.whois = lambda ip: dict(node)
+        try:
+            return self.srv.request(
+                "POST", "/v1/pair/requests/approve",
+                body=body, headers=auth or {},
+            )
+        finally:
+            if node is not None:
+                self.srv.state.whois = (
+                    lambda ip: dict(_PHONE) if ip == "127.0.0.1" else None
+                )
+
+    def test_request_403_without_tailnet_identity(self):
+        self.srv.state.whois = lambda ip: None
+        status, data = self._req()
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(data)["error"]["code"], "not_tailnet")
+
+    def test_request_201_shape_and_poll(self):
+        status, data = self._req(name="e2e")
+        self.assertEqual(status, 201, data)
+        r = json.loads(data)
+        self.assertTrue(r["request_id"])
+        self.assertTrue(r["poll_secret"])
+        self.assertTrue(r["code"].isdigit() and len(r["code"]) == 6)
+        status, pdata = self._poll(r["request_id"], r["poll_secret"])
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(pdata)["status"], "pending")
+        status, _ = self._poll(r["request_id"], "wrong")
+        self.assertEqual(status, 404)
+
+    def test_owner_identity_approve_and_delivered_credential(self):
+        _, data = self._req(name="phone")
+        r = json.loads(data)
+        # Approve from a DIFFERENT node sharing the owner's login.
+        status, d = self._approve(r["code"], r["request_id"], node=_MAC)
+        self.assertEqual(status, 200, d)
+        self.assertTrue(json.loads(d)["ok"])
+        status, pdata = self._poll(r["request_id"], r["poll_secret"])
+        out = json.loads(pdata)
+        self.assertEqual(out["status"], "approved")
+        self.assertTrue(out["credential"])
+        # The minted credential authenticates real routes.
+        auth = {"Authorization": f"Bearer {out['credential']}"}
+        status, _ = self.srv.request("GET", "/v1/sessions", headers=auth)
+        self.assertEqual(status, 200)
+
+    def test_same_node_cannot_self_approve(self):
+        _, data = self._req()
+        r = json.loads(data)
+        status, d = self._approve(r["code"], r["request_id"], node=_PHONE)
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(d)["error"]["code"], "self_approval")
+
+    def test_bearer_can_approve(self):
+        cred = self.srv.pair()
+        auth = {"Authorization": f"Bearer {cred['credential']}"}
+        _, data = self._req()
+        r = json.loads(data)
+        # whois for this peer maps to the PHONE (the requester) — the
+        # bearer path must work without a valid owner identity.
+        self.srv.state.owner_login = "other@github"
+        status, d = self._approve(r["code"], r["request_id"], auth=auth)
+        self.assertEqual(status, 200, d)
+
+    def test_approve_unauthenticated_401(self):
+        _, data = self._req()
+        r = json.loads(data)
+        self.srv.state.owner_login = ""  # no owner identity possible
+        status, _ = self._approve(r["code"], r["request_id"])
+        self.assertEqual(status, 401)
+
+    def test_tagged_peer_cannot_approve(self):
+        _, data = self._req()
+        r = json.loads(data)
+        tagged = {**_MAC, "tagged": True, "login": "kai@github"}
+        status, _ = self._approve(r["code"], r["request_id"], node=tagged)
+        self.assertEqual(status, 401)
+
+    def test_approve_wrong_code_404(self):
+        _, data = self._req()
+        r = json.loads(data)
+        wrong = "000000" if r["code"] != "000000" else "999999"
+        status, d = self._approve(wrong, r["request_id"], node=_MAC)
+        self.assertEqual(status, 404)
+        self.assertEqual(json.loads(d)["error"]["code"], "no_match")
+
+    def test_deny_route(self):
+        _, data = self._req()
+        r = json.loads(data)
+        # No bearer and no resolvable owner identity → 401.
+        self.srv.state.owner_login = ""
+        status, _ = self.srv.request(
+            "POST", "/v1/pair/requests/deny",
+            body={"code": r["code"], "request_id": r["request_id"]},
+            headers={},
+        )
+        self.assertEqual(status, 401)
+        status, d = self.srv.request(
+            "POST", "/v1/pair/requests/deny",
+            body={"code": r["code"], "request_id": r["request_id"]},
+            headers={"Authorization": f"Bearer {self.srv.pair()['credential']}"},
+        )
+        self.assertEqual(status, 200, d)
+        status, pdata = self._poll(r["request_id"], r["poll_secret"])
+        self.assertEqual(json.loads(pdata)["status"], "denied")
+
+    def test_requests_list_requires_auth_or_owner(self):
+        self._req()
+        self.srv.state.owner_login = ""
+        status, _ = self.srv.request("GET", "/v1/pair/requests")
+        self.assertEqual(status, 401)
+        self.srv.state.owner_login = "kai@github"
+        # Owner identity alone (no bearer) lists them too.
+        status, data = self.srv.request("GET", "/v1/pair/requests")
+        self.assertEqual(status, 200)
+        status, data = self.srv.request(
+            "GET", "/v1/pair/requests",
+            headers={
+                "Authorization":
+                    f"Bearer {self.srv.pair()['credential']}"
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(json.loads(data)["requests"]), 1)
+
+    def test_rate_limited_after_five(self):
+        for _ in range(5):
+            status, _ = self._req()
+            self.assertEqual(status, 201)
+        status, data = self._req()
+        self.assertEqual(status, 429)
+        self.assertEqual(json.loads(data)["error"]["code"], "rate_limited")
+
+
 class TestServeEntry(unittest.TestCase):
     def test_serve_keyboard_interrupt_returns_0(self):
         from quiver.remote import hub as hub_mod

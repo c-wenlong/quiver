@@ -63,6 +63,11 @@ replays the journal.
 |---|---|
 | `GET /v1/status` | `{ok, v, version, machine, uptime_s}` (unauthenticated) |
 | `POST /v1/pair` | `{device_id, credential, name}` for a live pair token |
+| `POST /v1/pair/request` | unauthenticated; identifies the caller via `tailscale whois` on the peer IP. `201 {request_id, poll_secret, code, expires_in_s, node: {name, login}}`; `403 not_tailnet` when the peer can't be identified; `429 rate_limited` past 5 requests/600s per IP; `429 busy` past the pending cap |
+| `GET /v1/pair/request/{id}?secret=` | unauthenticated; `200 {status: pending, expires_in_s}` or `{status: denied}` or `{status: approved, device_id, credential, name}` (approved answers once, then the row is gone); `404 unknown_request` |
+| `GET /v1/pair/requests` | `{requests: [{request_id, name, node_name, login, peer_ip, created_at, expires_in_s}]}`; a paired bearer OR a peer whose tailnet login matches the hub owner's |
+| `POST /v1/pair/requests/approve` | `{code, request_id?}` → `200 {ok, device_id, name}`; `401`, `403 self_approval` (a device can't approve itself), `404 no_match`; 5 wrong codes deny the request |
+| `POST /v1/pair/requests/deny` | `{code, request_id?}` → `200 {ok}` or `404` |
 | `GET /v1/sessions` | `{sessions: [SessionRow + key, machine_id, ownership, attachable], machines, server_time}` — the SessionRow fields are identical to `swe session --json` |
 | `GET /v1/sessions/{key}/events` | SSE of `message.appended`, `session.status`, `notify`, `compaction`; `?last=seq` replays |
 | `GET /v1/sessions/{key}/messages` | `{messages: [events], next_before, has_more}` journal backfill |
@@ -98,7 +103,7 @@ The CLI side of remote also speaks `--json`:
 | Command | `data` |
 |---|---|
 | `swe remote status --json` | `{hub: {ok, version, uptime_s, machine} or {ok:false}, hub_addr, machines: [{id, name, online, last_seen_at}], devices: [DeviceRow]}`; exits 1 when the hub is unreachable but still emits the envelope |
-| `swe remote devices --json` | `{devices: [DeviceRow]}`; `--revoke=<id>` → `{revoked, ok}` |
+| `swe remote devices --json` | `{devices: [DeviceRow]}`; `--revoke=<id>` → `{revoked, ok}`; `--requests` → `{requests: [PairRequestRow]}`; `--approve=<code>` → `{ok, device_id, name, node_name}`; `--deny=<code>` → `{ok}` |
 | `swe remote pair --json` | `{host, port, token, name, url, deep_link, expires_in_s}` — `url` opens the PWA, `deep_link` is the `quiver://pair?…` form for the iOS shell; `expires_in_s` is the token TTL |
 | `swe remote notify --json` | `{notify: {url?, topic?, ntfy_token?, enabled, action_credential?}}` with credential fields redacted to `***` |
 

@@ -20,6 +20,8 @@ const state = {
   stream: null,
   inboxTimer: null,
   sessionTimer: null,
+  pairTimer: null,
+  approveTimer: null,
   inboxCount: 0,
   openGen: 0,
 };
@@ -57,7 +59,7 @@ function setConn(on) {
 
 function show(view) {
   state.view = view;
-  for (const v of ["pair-view", "sessions-view", "chat-view", "inbox-view"]) {
+  for (const v of ["pair-view", "approve-view", "sessions-view", "chat-view", "inbox-view"]) {
     el(v).classList.add("hidden");
   }
   el(view + "-view").classList.remove("hidden");
@@ -72,6 +74,128 @@ function chatTitle() {
 }
 
 /* ── pairing ─────────────────────────────────────────────── */
+
+async function startTailscalePair(name) {
+  el("pair-error").textContent = "";
+  let status = 0, data = null;
+  try {
+    ({ status, data } = await api("/v1/pair/request", {
+      method: "POST", body: JSON.stringify({ name: name || "" }),
+    }));
+  } catch { status = 0; }
+  if (status === 201 && data) {
+    showPairCode(data);
+    pollPairRequest(data.request_id, data.poll_secret);
+    return;
+  }
+  el("pair-error").textContent = (status === 403)
+    ? "This device isn't identifiable on the tailnet — use a pair token below."
+    : (data && data.error && data.error.message) || `pair request failed (${status})`;
+}
+
+function showPairCode(req) {
+  el("pair-start").classList.add("hidden");
+  el("pair-code-card").classList.remove("hidden");
+  const code = String(req.code || "");
+  el("pair-code").textContent = `${code.slice(0, 3)} ${code.slice(3)}`;
+  el("pair-code-flat").textContent = code;
+  el("pair-node").textContent =
+    `as ${(req.node && req.node.name) || "this device"}` +
+    (req.node && req.node.login ? ` (${req.node.login})` : "");
+  el("pair-code-status").textContent = "waiting for approval…";
+  el("pair-retry").classList.add("hidden");
+}
+
+function pollPairRequest(requestId, secret) {
+  clearInterval(state.pairTimer);
+  state.pairTimer = setInterval(async () => {
+    let status = 0, data = null;
+    try {
+      ({ status, data } = await api(
+        `/v1/pair/request/${encodeURIComponent(requestId)}?secret=${encodeURIComponent(secret)}`
+      ));
+    } catch { return; } // transient — poll again
+    if (!data) return;
+    if (data.status === "approved") {
+      clearInterval(state.pairTimer);
+      state.pairTimer = null;
+      store.cred = {
+        device_id: data.device_id, credential: data.credential,
+        name: data.name,
+      };
+      location.hash = "";
+      boot();
+    } else if (data.status === "denied") {
+      pairFailed("Pairing was denied.");
+    } else if (status === 404) {
+      pairFailed("Request expired.");
+    }
+  }, 2000);
+}
+
+function pairFailed(msg) {
+  clearInterval(state.pairTimer);
+  state.pairTimer = null;
+  el("pair-code-status").textContent = msg;
+  el("pair-retry").classList.remove("hidden");
+}
+
+/* ── #approve: decide pending requests ───────────────────── */
+
+async function loadApprovals() {
+  const { status, data } = await api("/v1/pair/requests");
+  if (status !== 200 || !data) {
+    el("approve-error").textContent =
+      (data && data.error && data.error.message) ||
+      `can't list requests (${status})`;
+    return;
+  }
+  el("approve-error").textContent = "";
+  const list = el("approve-list");
+  const rows = data.requests || [];
+  // Reconcile by request_id — a 3s refresh must not wipe a code the
+  // user is halfway through typing.
+  const wanted = new Set(rows.map((r) => r.request_id));
+  list.querySelectorAll(".approve-row").forEach((row) => {
+    if (!wanted.has(row.dataset.rid)) row.remove();
+  });
+  const have = new Set(
+    [...list.querySelectorAll(".approve-row")].map((r) => r.dataset.rid)
+  );
+  const empty = list.querySelector(".dim");
+  if (rows.length) { if (empty) empty.remove(); }
+  else if (!empty) {
+    list.insertAdjacentHTML("beforeend", `<p class="dim">None pending.</p>`);
+  }
+  for (const r of rows) {
+    if (have.has(r.request_id)) continue;
+    const row = document.createElement("div");
+    row.className = "approve-row";
+    row.dataset.rid = r.request_id;
+    row.innerHTML =
+      `<div class="body"><div class="t">${esc(r.name)}</div>` +
+      `<div class="sub">${esc(r.node_name || "?")} · ${esc(r.login || "")} · ${esc(relTime(r.created_at || 0))} ago</div></div>` +
+      `<input class="code" inputmode="numeric" maxlength="6" placeholder="000 000">` +
+      `<button class="primary act" data-act="approve">Approve</button>` +
+      `<button class="ghost act" data-act="deny">Deny</button>`;
+    const code = () => row.querySelector(".code").value.trim();
+    row.querySelectorAll(".act").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        const { status: s, data: d } = await api(
+          `/v1/pair/requests/${btn.dataset.act}`,
+          { method: "POST",
+            body: JSON.stringify({ code: code(), request_id: r.request_id }) }
+        );
+        if (s === 200) { loadApprovals(); return; }
+        btn.disabled = false;
+        el("approve-error").textContent =
+          (d && d.error && d.error.message) || `${btn.dataset.act} failed (${s})`;
+      });
+    });
+    list.appendChild(row);
+  }
+}
 
 async function doPair(token, name) {
   const { status, data } = await api("/v1/pair", {
@@ -754,6 +878,17 @@ el("pair-go").addEventListener("click", () => {
 el("pair-token").addEventListener("keydown", (e) => {
   if (e.key === "Enter") el("pair-go").click();
 });
+el("pair-ts").addEventListener("click", () => {
+  startTailscalePair(el("pair-name").value.trim());
+});
+el("pair-retry").addEventListener("click", () => {
+  clearInterval(state.pairTimer);
+  state.pairTimer = null;
+  el("pair-code-card").classList.add("hidden");
+  el("pair-start").classList.remove("hidden");
+});
+
+window.addEventListener("hashchange", boot);
 
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => {
@@ -769,6 +904,16 @@ document.querySelectorAll(".tab").forEach((tab) => {
 
 function boot() {
   const hash = location.hash || "";
+  if (hash === "#approve") {
+    show("approve");
+    loadApprovals();
+    clearInterval(state.approveTimer);
+    state.approveTimer = setInterval(() => {
+      if (state.view === "approve") loadApprovals();
+    }, 3000);
+    return;
+  }
+  clearInterval(state.approveTimer);
   const m = hash.match(/#pair=([^&]+)/);
   if (m) {
     show("pair");

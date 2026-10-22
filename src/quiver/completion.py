@@ -85,6 +85,9 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     ],
     "remote devices": [
         ("--revoke=", "Revoke one device id"),
+        ("--requests", "List pending pair requests"),
+        ("--approve=", "Approve a pair request by its 6-digit code"),
+        ("--deny=", "Deny a pair request by its 6-digit code"),
         ("--json", "Print the device list as JSON"),
     ],
     "remote attach": [

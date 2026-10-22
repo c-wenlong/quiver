@@ -114,3 +114,206 @@ class TestPairing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+_PEER = {
+    "node_name": "iphone-13.taild6a23f.ts.net",
+    "node_short": "iphone-13",
+    "node_id": "nABC",
+    "login": "kai@github",
+    "ip": "100.66.1.2",
+    "tagged": False,
+}
+
+
+class TestPairRequests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def _request(self, peer=None, name=""):
+        return pairing.request_pair(self.tmp, dict(peer or _PEER), name)
+
+    def test_request_shape_and_pending_poll(self):
+        r = self._request(name="my phone")
+        self.assertEqual(len(r["code"]), 6)
+        self.assertTrue(r["code"].isdigit())
+        self.assertEqual(r["expires_in_s"], pairing.REQUEST_TTL_S)
+        self.assertEqual(r["node"]["name"], "iphone-13.taild6a23f.ts.net")
+        out = pairing.poll_request(self.tmp, r["request_id"], r["poll_secret"])
+        self.assertEqual(out["status"], "pending")
+        self.assertGreater(out["expires_in_s"], 0)
+
+    def test_request_defaults_name_to_node(self):
+        r = self._request()
+        row = [
+            x for x in pairing._load_requests(self.tmp)
+            if x["request_id"] == r["request_id"]
+        ][0]
+        self.assertEqual(row["name"], "iphone-13")
+
+    def test_poll_bad_secret_and_unknown_id(self):
+        r = self._request()
+        self.assertIsNone(
+            pairing.poll_request(self.tmp, r["request_id"], "wrong")
+        )
+        self.assertIsNone(
+            pairing.poll_request(self.tmp, "nope", r["poll_secret"])
+        )
+
+    def test_approve_delivers_credential_once(self):
+        r = self._request()
+        res = pairing.approve_request(self.tmp, r["code"])
+        self.assertIsNotNone(res)
+        self.assertTrue(res["device_id"])
+        out = pairing.poll_request(self.tmp, r["request_id"], r["poll_secret"])
+        self.assertEqual(out["status"], "approved")
+        self.assertEqual(out["device_id"], res["device_id"])
+        self.assertTrue(out["credential"])
+        # Delivered once; the row is gone after.
+        self.assertIsNone(
+            pairing.poll_request(self.tmp, r["request_id"], r["poll_secret"])
+        )
+        hit = pairing.device_for_credential(self.tmp, out["credential"])
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit[0], res["device_id"])
+        row = hit[1]
+        self.assertEqual(row["paired_via"], "tailscale")
+        self.assertEqual(row["tailscale_node"], "nABC")
+        self.assertEqual(row["tailscale_login"], "kai@github")
+
+    def test_approve_wrong_code_and_lockout(self):
+        r = self._request()
+        for _ in range(pairing.MAX_CODE_ATTEMPTS):
+            self.assertIsNone(
+                pairing.approve_request(
+                    self.tmp, "000000" if r["code"] != "000000" else "999999",
+                    request_id=r["request_id"],
+                )
+            )
+        out = pairing.poll_request(self.tmp, r["request_id"], r["poll_secret"])
+        self.assertEqual(out["status"], "denied")
+
+    def test_wrong_code_without_id_does_not_bump(self):
+        r = self._request()
+        self.assertIsNone(pairing.approve_request(self.tmp, "zzzzzz"))
+        self.assertIsNotNone(pairing.approve_request(self.tmp, r["code"]))
+
+    def test_self_approval_refused(self):
+        r = self._request()
+        with self.assertRaises(pairing.SelfApproval):
+            pairing.approve_request(
+                self.tmp, r["code"], approver_node_id="nABC"
+            )
+        # other node approves fine
+        self.assertIsNotNone(
+            pairing.approve_request(
+                self.tmp, r["code"], approver_node_id="nOTHER"
+            )
+        )
+
+    def test_deny(self):
+        r = self._request()
+        self.assertTrue(pairing.deny_request(self.tmp, r["code"]))
+        self.assertEqual(
+            pairing.poll_request(
+                self.tmp, r["request_id"], r["poll_secret"]
+            )["status"],
+            "denied",
+        )
+
+    def test_expiry(self):
+        import json
+        r = self._request()
+        path = pairing.requests_file(self.tmp)
+        data = json.loads(path.read_text())
+        data["requests"][0]["expires_at"] = time.time() - 1
+        path.write_text(json.dumps(data))
+        self.assertIsNone(
+            pairing.poll_request(self.tmp, r["request_id"], r["poll_secret"])
+        )
+
+    def test_same_node_replaces_pending(self):
+        r1 = self._request()
+        r2 = self._request()
+        self.assertNotEqual(r1["request_id"], r2["request_id"])
+        self.assertIsNone(
+            pairing.poll_request(
+                self.tmp, r1["request_id"], r1["poll_secret"]
+            )
+        )
+        self.assertIsNotNone(
+            pairing.poll_request(
+                self.tmp, r2["request_id"], r2["poll_secret"]
+            )
+        )
+
+    def test_max_pending_raises_pairbusy(self):
+        for i in range(pairing.MAX_PENDING):
+            self._request(peer={**_PEER, "node_id": f"n{i}"})
+        with self.assertRaises(pairing.PairBusy):
+            self._request(peer={**_PEER, "node_id": "nX"})
+
+    def test_list_requests_hides_secrets(self):
+        self._request(name="ph")
+        rows = pairing.list_requests(self.tmp)
+        self.assertEqual(len(rows), 1)
+        self.assertNotIn("code", rows[0])
+        self.assertNotIn("poll_secret_hash", rows[0])
+        self.assertIn("expires_in_s", rows[0])
+
+    def test_requests_file_is_private(self):
+        self._request()
+        mode = stat.S_IMODE(
+            os.stat(pairing.requests_file(self.tmp)).st_mode
+        )
+        self.assertEqual(mode & 0o777, 0o600)
+
+
+    def test_approve_second_pending_by_code_only(self):
+        r1 = self._request(peer={**_PEER, "node_id": "n1"})
+        r2 = self._request(peer={**_PEER, "node_id": "n2"})
+        res = pairing.approve_request(self.tmp, r2["code"])
+        self.assertIsNotNone(res)
+        self.assertEqual(
+            pairing.poll_request(
+                self.tmp, r2["request_id"], r2["poll_secret"]
+            )["status"],
+            "approved",
+        )
+        self.assertEqual(
+            pairing.poll_request(
+                self.tmp, r1["request_id"], r1["poll_secret"]
+            )["status"],
+            "pending",
+        )
+
+    def test_denied_survives_list_and_polls_once(self):
+        r = self._request()
+        self.assertTrue(pairing.deny_request(self.tmp, r["code"]))
+        self.assertEqual(pairing.list_requests(self.tmp), [])
+        out = pairing.poll_request(
+            self.tmp, r["request_id"], r["poll_secret"]
+        )
+        self.assertEqual(out["status"], "denied")
+
+    def test_approve_extends_poll_window(self):
+        import json
+        r = self._request()
+        # Nearly expire the row, then approve: the credential must
+        # still be collectable.
+        path = pairing.requests_file(self.tmp)
+        data = json.loads(path.read_text())
+        data["requests"][0]["expires_at"] = time.time() + 1
+        path.write_text(json.dumps(data))
+        res = pairing.approve_request(self.tmp, r["code"])
+        self.assertIsNotNone(res)
+        rows = pairing._load_requests(self.tmp)
+        self.assertGreater(rows[0]["expires_at"], time.time() + 60)
+
+    def test_token_exchange_still_works(self):
+        token = pairing.mint_pair_token(self.tmp)
+        cred = pairing.exchange(self.tmp, token, "legacy")
+        self.assertIsNotNone(cred)
+        self.assertIsNotNone(
+            pairing.device_for_credential(self.tmp, cred["credential"])
+        )

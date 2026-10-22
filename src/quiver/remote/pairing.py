@@ -32,6 +32,22 @@ TOKEN_TTL_S = 300
 
 _DEVICES_BASENAME = "devices.json"
 _TOKENS_BASENAME = "pair_tokens.json"
+_REQUESTS_BASENAME = "pair_requests.json"
+
+# Tailscale-identity pairing: a phone POSTs /v1/pair/request, shows a
+# code, and a second device (or the hub shell) approves it. Codes die
+# fast and lock after a handful of wrong guesses.
+REQUEST_TTL_S = 300
+MAX_PENDING = 10
+MAX_CODE_ATTEMPTS = 5
+
+
+class PairBusy(Exception):
+    """More than ``MAX_PENDING`` requests are already waiting."""
+
+
+class SelfApproval(Exception):
+    """A device tried to approve the pair request it itself made."""
 
 # Pairing state changes are read-change-save; the lock file makes that
 # atomic across the hub process and any `swe remote` CLI running beside
@@ -59,6 +75,10 @@ def devices_file(home: Path | str | None = None) -> Path:
 
 def tokens_file(home: Path | str | None = None) -> Path:
     return remote_dir_for(home) / _TOKENS_BASENAME
+
+
+def requests_file(home: Path | str | None = None) -> Path:
+    return remote_dir_for(home) / _REQUESTS_BASENAME
 
 
 def _hash_credential(credential: str) -> str:
@@ -176,18 +196,30 @@ def exchange(home: Path | str | None, token: str, name: str = "") -> dict | None
     with _state_lock(home_path):
         if not _consume_token(home_path, token):
             return None
-        device_id = secrets.token_hex(8)
-        credential = secrets.token_urlsafe(32)
-        devices = load_devices(home)
-        devices[device_id] = {
-            "name": name or "device",
-            "credential_hash": _hash_credential(credential),
-            "created_at": time.time(),
-            "last_seen_at": None,
-            "revoked_at": None,
-        }
-        _save_devices(home_path, devices)
+        device_id, credential = _mint_device(home_path, name)
     return {"device_id": device_id, "credential": credential, "name": name or "device"}
+
+
+def _mint_device(
+    home_path: Path | None, name: str, extra: dict | None = None
+) -> tuple[str, str]:
+    """Write one device row; returns ``(device_id, credential)``.
+
+    Caller holds ``_state_lock`` — both pair paths mint inside it.
+    """
+    device_id = secrets.token_hex(8)
+    credential = secrets.token_urlsafe(32)
+    devices = load_devices(home_path)
+    devices[device_id] = {
+        "name": name or "device",
+        "credential_hash": _hash_credential(credential),
+        "created_at": time.time(),
+        "last_seen_at": None,
+        "revoked_at": None,
+        **(extra or {}),
+    }
+    _save_devices(home_path, devices)
+    return device_id, credential
 
 
 def device_for_credential(
@@ -228,3 +260,204 @@ def revoke_device(home: Path | str | None, device_id: str) -> bool:
         row["revoked_at"] = time.time()
         _save_devices(home_path, devices)
         return True
+
+
+# -- tailnet pair requests --------------------------------------------------
+
+
+def _load_requests(home_path: Path | None) -> list[dict]:
+    data = _read_json(requests_file(home_path), {"requests": []})
+    rows = data.get("requests")
+    if not isinstance(rows, list):
+        return []
+    return [r for r in rows if isinstance(r, dict)]
+
+
+def _save_requests(home_path: Path | None, rows: list[dict]) -> None:
+    path = requests_file(home_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(
+        path, json.dumps({"requests": rows}, indent=1), private=True
+    )
+
+
+def _prune_requests(rows: list[dict], now: float) -> list[dict]:
+    """Drop expired rows; denied rows stay until the phone polls them."""
+    # Only expiry prunes: a denied row must survive until the phone's
+    # next poll reads it out, or the denial looks like an expiry.
+    return [r for r in rows if r.get("expires_at", 0) > now]
+
+
+def request_pair(home: Path | str | None, peer: dict, name: str = "") -> dict:
+    """Open a pair request for a tailnet peer; the phone shows ``code``."""
+    home_path = Path(home) if home is not None else None
+    with _state_lock(home_path):
+        now = time.time()
+        node_id = str(peer.get("node_id") or "")
+        rows = [
+            r for r in _prune_requests(_load_requests(home_path), now)
+            if r.get("node_id") != node_id or r.get("status") != "pending"
+        ]
+        if len(rows) >= MAX_PENDING:
+            raise PairBusy("too many pending pair requests")
+        poll_secret = secrets.token_urlsafe(24)
+        code = f"{secrets.randbelow(10**6):06d}"
+        row = {
+            "request_id": secrets.token_hex(8),
+            "code": code,
+            "poll_secret_hash": _hash_credential(poll_secret),
+            "node_name": str(peer.get("node_name") or ""),
+            "node_short": str(peer.get("node_short") or ""),
+            "node_id": node_id,
+            "login": str(peer.get("login") or ""),
+            "peer_ip": str(peer.get("ip") or ""),
+            "name": name or str(peer.get("node_short") or "") or "device",
+            "created_at": now,
+            "expires_at": now + REQUEST_TTL_S,
+            "status": "pending",
+            "attempts": 0,
+        }
+        rows.append(row)
+        _save_requests(home_path, rows)
+    return {
+        "request_id": row["request_id"],
+        "poll_secret": poll_secret,
+        "code": code,
+        "expires_in_s": REQUEST_TTL_S,
+        "node": {"name": row["node_name"], "login": row["login"]},
+    }
+
+
+def list_requests(home: Path | str | None = None) -> list[dict]:
+    """Pending, unexpired requests — never codes or secrets."""
+    home_path = Path(home) if home is not None else None
+    with _state_lock(home_path):
+        now = time.time()
+        rows = _load_requests(home_path)
+        kept = _prune_requests(rows, now)
+        if len(kept) != len(rows):
+            _save_requests(home_path, kept)
+    return [
+        {
+            "request_id": r["request_id"],
+            "name": r["name"],
+            "node_name": r["node_name"],
+            "login": r["login"],
+            "peer_ip": r["peer_ip"],
+            "created_at": r["created_at"],
+            "expires_in_s": int(r["expires_at"] - now),
+        }
+        for r in kept if r.get("status") == "pending"
+    ]
+
+
+def approve_request(
+    home: Path | str | None,
+    code: str,
+    request_id: str | None = None,
+    approver_node_id: str | None = None,
+) -> dict | None:
+    """Approve a pending request by code; mints the device credential."""
+    home_path = Path(home) if home is not None else None
+    with _state_lock(home_path):
+        now = time.time()
+        rows = _prune_requests(_load_requests(home_path), now)
+        for row in rows:
+            if row.get("status") != "pending":
+                continue
+            if request_id is not None and row.get("request_id") != request_id:
+                continue
+            if not hmac.compare_digest(str(row.get("code") or ""), str(code)):
+                if request_id is None:
+                    continue  # another pending row may hold this code
+                row["attempts"] = row.get("attempts", 0) + 1
+                if row["attempts"] >= MAX_CODE_ATTEMPTS:
+                    row["status"] = "denied"
+                _save_requests(home_path, rows)
+                return None
+            if approver_node_id and approver_node_id == row.get("node_id"):
+                raise SelfApproval(row.get("node_id") or "")
+            device_id, credential = _mint_device(
+                home_path, row["name"],
+                extra={
+                    "paired_via": "tailscale",
+                    "tailscale_node": row.get("node_id") or "",
+                    "tailscale_login": row.get("login") or "",
+                },
+            )
+            row["status"] = "approved"
+            row["device_id"] = device_id
+            # Fresh window: a phone mid-poll at the old deadline must
+            # still collect its credential.
+            row["expires_at"] = now + REQUEST_TTL_S
+            # Kept until the phone polls it out; the file is 0600.
+            row["credential"] = credential
+            _save_requests(home_path, rows)
+            return {
+                "device_id": device_id,
+                "name": row["name"],
+                "node_name": row.get("node_name") or "",
+            }
+        _save_requests(home_path, rows)
+        return None
+
+
+def deny_request(
+    home: Path | str | None,
+    code: str,
+    request_id: str | None = None,
+) -> bool:
+    home_path = Path(home) if home is not None else None
+    with _state_lock(home_path):
+        now = time.time()
+        rows = _prune_requests(_load_requests(home_path), now)
+        for row in rows:
+            if row.get("status") != "pending":
+                continue
+            if request_id is not None and row.get("request_id") != request_id:
+                continue
+            if not hmac.compare_digest(str(row.get("code") or ""), str(code)):
+                continue
+            row["status"] = "denied"
+            _save_requests(home_path, rows)
+            return True
+        return False
+
+
+def poll_request(
+    home: Path | str | None, request_id: str, poll_secret: str
+) -> dict | None:
+    """The requester's check: pending/denied/approved, credential once."""
+    home_path = Path(home) if home is not None else None
+    with _state_lock(home_path):
+        now = time.time()
+        rows = _load_requests(home_path)
+        for i, row in enumerate(rows):
+            if row.get("request_id") != request_id:
+                continue
+            if row.get("expires_at", 0) <= now or not hmac.compare_digest(
+                str(row.get("poll_secret_hash") or ""),
+                _hash_credential(str(poll_secret or "")),
+            ):
+                return None
+            status = row.get("status")
+            if status == "pending":
+                return {
+                    "status": "pending",
+                    "expires_in_s": int(row["expires_at"] - now),
+                }
+            if status == "approved":
+                out = {
+                    "status": "approved",
+                    "device_id": row.get("device_id") or "",
+                    "credential": row.get("credential") or "",
+                    "name": row.get("name") or "",
+                }
+                del rows[i]
+                _save_requests(home_path, rows)
+                return out
+            # denied: deliver once, then gone
+            del rows[i]
+            _save_requests(home_path, rows)
+            return {"status": "denied"}
+        return None

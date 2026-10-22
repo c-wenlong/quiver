@@ -133,6 +133,21 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .92em;
 .banner { display: flex; align-items: center; gap: 0.6rem; }
 .banner button { width: auto; margin: 0; margin-left: auto; padding: 0.35rem 0.9rem; }
 
+/* pairing */
+.pair-code {
+  font-size: 2.4rem; font-weight: 700; letter-spacing: .18em;
+  font-variant-numeric: tabular-nums; margin: 10px 0;
+}
+.pair-token { margin-top: 14px; font-size: .85rem; }
+.pair-token input, .pair-token button { margin-top: 8px; }
+.approve-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 0; border-bottom: 1px solid var(--border);
+}
+.approve-row .body { flex: 1; }
+.approve-row .code { width: 6.5rem; text-align: center; letter-spacing: .1em; }
+.approve-row .act { width: auto; margin: 0; padding: 0.35rem 0.7rem; }
+
 /* tabs */
 #tabs {
   display: flex; border-top: 1px solid var(--border); background: var(--panel);
