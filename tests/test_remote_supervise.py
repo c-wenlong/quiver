@@ -568,6 +568,7 @@ class TestAttachMtime(unittest.TestCase):
         os.utime(old, (stale, stale))
         with patch("quiver.remote.tail.resolve_jsonl_path",
                    return_value=old), \
+             patch("shutil.which", return_value="/x/claude"), \
              patch.object(supervise, "_stop_local_writers"):
             ok, _ = supervise.attach(
                 self.home, self.key, self.session,
@@ -689,6 +690,56 @@ class TestAttachModeGates(unittest.TestCase):
         self.assertNotEqual(
             supervise.approval_fingerprint(p1),
             supervise.approval_fingerprint(p3))
+
+
+class TestResolveMode(unittest.TestCase):
+    def test_claude_auto_prefers_tmux(self):
+        with patch.object(supervise, "tmux_bin", return_value="/x/tmux"):
+            self.assertEqual(
+                supervise.resolve_mode(_session(), "auto"), "tmux"
+            )
+
+    def test_claude_auto_headless_without_tmux(self):
+        with patch.object(supervise, "tmux_bin", return_value=None), \
+             patch("shutil.which", return_value="/x/claude"):
+            self.assertEqual(
+                supervise.resolve_mode(_session(), "auto"), "headless"
+            )
+
+    def test_claude_auto_falls_back_to_tmux(self):
+        # Neither binary: still tmux, so attach's launch can 422 plainly.
+        with patch.object(supervise, "tmux_bin", return_value=None), \
+             patch("shutil.which", return_value=None):
+            self.assertEqual(
+                supervise.resolve_mode(_session(), "auto"), "tmux"
+            )
+
+    def test_opencode_auto_unchanged(self):
+        session = _session(tool="opencode", sid="o1")
+        with patch("shutil.which", return_value="/x/opencode"):
+            self.assertEqual(
+                supervise.resolve_mode(session, "auto"), "serve"
+            )
+        with patch("shutil.which", return_value=None):
+            self.assertEqual(
+                supervise.resolve_mode(session, "auto"), "tmux"
+            )
+
+    def test_codex_auto_unchanged(self):
+        session = _session(tool="codex", sid="c1")
+        with patch("shutil.which", return_value="/x/codex"):
+            self.assertEqual(
+                supervise.resolve_mode(session, "auto"), "appserver"
+            )
+        with patch("shutil.which", return_value=None):
+            self.assertEqual(
+                supervise.resolve_mode(session, "auto"), "tmux"
+            )
+
+    def test_headless_attach_checks_claude_binary(self):
+        # headless joins _MODE_BINARY so attach can't register a channel
+        # whose binary is absent.
+        self.assertEqual(supervise._MODE_BINARY["headless"], "claude")
 
 
 if __name__ == "__main__":

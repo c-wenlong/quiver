@@ -53,6 +53,25 @@ class TestCommandValidation(unittest.TestCase):
         self.assertEqual(out["mode"], "queue")
         self.assertEqual(out["attachments"], [])
 
+    def test_message_client_id(self):
+        out = protocol.parse_message_command({"text": "hi"})
+        self.assertEqual(out["client_id"], "")
+        out = protocol.parse_message_command(
+            {"text": "hi", "client_id": "abc-DEF_123"}
+        )
+        self.assertEqual(out["client_id"], "abc-DEF_123")
+
+    def test_message_client_id_invalid(self):
+        with self.assertRaises(ValueError):
+            protocol.parse_message_command(
+                {"text": "hi", "client_id": "x" * 65}
+            )
+        for bad in ("has space", "dot.id", "", "abc\n", 42):
+            with self.assertRaises(ValueError):
+                protocol.parse_message_command(
+                    {"text": "hi", "client_id": bad}
+                )
+
     def test_message_requires_text(self):
         with self.assertRaises(ValueError):
             protocol.parse_message_command({"text": "  "})

@@ -333,6 +333,8 @@ class RemoteAgent:
         # can tell which prompt this result belongs to.
         if data.get("request_id"):
             fields["request_id"] = str(data["request_id"])
+        if data.get("client_id"):
+            fields["client_id"] = str(data["client_id"])
         result = protocol.event(
             "command.result", key, self.machine_id, fields,
         )

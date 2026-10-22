@@ -69,7 +69,8 @@ class TestAttach(unittest.TestCase):
         self.assertFalse(ok)
 
     def test_headless_marks_registry(self):
-        ok, note = self._attach(mode="headless")
+        with patch("shutil.which", return_value="/x/claude"):
+            ok, note = self._attach(mode="headless")
         self.assertTrue(ok, note)
         meta = supervise.meta_for(self.home, self.key)
         self.assertEqual(meta["mode"], "headless")
@@ -103,8 +104,9 @@ class TestAttach(unittest.TestCase):
         self.assertFalse(ok)
 
     def test_double_attach_is_idempotent(self):
-        self._attach(mode="headless")
-        ok, note = self._attach(mode="headless")
+        with patch("shutil.which", return_value="/x/claude"):
+            self._attach(mode="headless")
+            ok, note = self._attach(mode="headless")
         self.assertTrue(ok)
         self.assertIn("already", note)
 
@@ -568,13 +570,16 @@ class TestHubWrites(unittest.TestCase):
         row = self.srv.state.catalog.row_for("claude:abc-123")
         self.assertEqual(row["ownership"], "attached")
 
+        q = self.srv.state.bus.subscribe("claude:abc-123")
         with patch.object(supervise, "send_text", return_value=True) as st:
             status, data = self.srv.request(
                 "POST", "/v1/sessions/claude:abc-123/message",
                 body={"text": "ship it", "mode": "steer"},
                 headers=self.hdr,
             )
-        self.assertEqual(status, 200, data)
+            self.assertEqual(status, 202, data)
+            ev = q.get(timeout=5)
+        self.assertTrue(ev["data"]["ok"])
         self.assertIn("ship it", st.call_args[0][1])
 
     def test_attach_rejects_when_active(self):
@@ -591,7 +596,10 @@ class TestHubWrites(unittest.TestCase):
         self.assertEqual(json.loads(data)["error"]["code"], "not_idle")
 
     def test_attach_422_without_tmux(self):
-        with patch.object(supervise, "tmux_bin", return_value=None):
+        # Auto mode needs SOME channel: with neither tmux nor a claude
+        # binary on PATH there is nothing to attach under.
+        with patch.object(supervise, "tmux_bin", return_value=None), \
+             patch("shutil.which", return_value=None):
             status, data = self.srv.request(
                 "POST", "/v1/sessions/claude:abc-123/control",
                 body={"op": "attach"}, headers=self.hdr,
@@ -600,6 +608,20 @@ class TestHubWrites(unittest.TestCase):
         self.assertEqual(
             json.loads(data)["error"]["code"], "not_attachable"
         )
+
+    def test_attach_auto_headless_when_tmux_missing(self):
+        # The claude fallback: no tmux but claude on PATH resolves the
+        # headless channel instead of 422ing.
+        with patch.object(supervise, "tmux_bin", return_value=None), \
+             patch("shutil.which", return_value="/x/claude"), \
+             patch.object(supervise, "_stop_local_writers"):
+            status, data = self.srv.request(
+                "POST", "/v1/sessions/claude:abc-123/control",
+                body={"op": "attach"}, headers=self.hdr,
+            )
+        self.assertEqual(status, 200, data)
+        meta = supervise.meta_for(self.srv.home, "claude:abc-123")
+        self.assertEqual(meta["mode"], "headless")
 
     def test_attachment_upload_and_message_ref(self):
         with patch.object(supervise, "tmux_bin", return_value="/usr/bin/tmux"), \
@@ -628,13 +650,16 @@ class TestHubWrites(unittest.TestCase):
         finally:
             conn.close()
         ref = payload["ref"]
+        q = self.srv.state.bus.subscribe("claude:abc-123")
         with patch.object(supervise, "send_text", return_value=True) as st:
             status, data = self.srv.request(
                 "POST", "/v1/sessions/claude:abc-123/message",
                 body={"text": "see this", "attachments": [ref]},
                 headers=self.hdr,
             )
-        self.assertEqual(status, 200, data)
+            self.assertEqual(status, 202, data)
+            ev = q.get(timeout=5)
+        self.assertTrue(ev["data"]["ok"])
         sent = st.call_args[0][1]
         self.assertIn("@", sent)
         self.assertIn("shot.png", sent)

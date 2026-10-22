@@ -17,6 +17,7 @@ import email.message
 import json
 import os
 import queue
+import signal
 import socket
 import threading
 import time
@@ -32,6 +33,7 @@ from quiver.remote import (
     notify,
     pairing,
     protocol,
+    sendq,
     supervise,
     tail,
 )
@@ -50,6 +52,14 @@ _REVOCATION_CHECK_S = 5.0
 
 # Journal bucket for non-session events (machine.online, hub-level notify).
 GLOBAL_KEY = "_global"
+
+# ``queue``-mode sends poll a fresh session status on this cadence and
+# give up after the cap — a turn outliving it fails the send honestly.
+QUEUE_POLL_S = 2.0
+QUEUE_WAIT_MAX_S = 1800
+# Per-key in-flight sends (waiting plus running) get an honest 429
+# rather than an unbounded backlog nobody reads.
+MAX_SEND_BACKLOG = 20
 
 # Refuse new commands for a satellite whose unacked queue is deeper
 # than this — the journal trims at ~4k records and silently dropped
@@ -113,6 +123,12 @@ class HubState:
         # floor of what it has executed. queue_command refuses to grow a
         # backlog it would silently trim.
         self._sat_acked: dict[str, int] = {}
+        # Message sends run here — a headless turn or a queue-until-idle
+        # wait must not hold the phone's POST open.
+        self.sendq = sendq.SendQueue()
+        # Fresh per-session status for queued sends; tests stub it.
+        from quiver.sessions.status import session_statuses
+        self.status_of = session_statuses
         # The hub's reachable base — set by serve() before start() so
         # ntfy action buttons can point back at this host.
         self.base_url = ""
@@ -166,6 +182,9 @@ class HubState:
 
     def stop(self) -> None:
         self._stop.set()
+        # Fail every accepted-but-not-yet-started send honestly; the
+        # in-flight one sees _stop and reports the same note.
+        self.sendq.close()
         for t in self._threads:
             t.join(timeout=2)
 
@@ -875,12 +894,20 @@ class _Handler(BaseHTTPRequestHandler):
             queued = self._state.queue_command(mid, "message", key, {
                 "text": cmd["text"], "mode": cmd["mode"],
                 "attachments": cmd["attachments"],
+                "client_id": cmd["client_id"],
                 "status": row.get("status") or "",
             })
             if queued is None:
                 self._send_error(429, "backlog_full",
                                  "machine is too far behind")
                 return
+            # Same shape as the local 202; waiting is always false —
+            # the satellite re-reads status and decides for itself.
+            self._send_json(202, {
+                "ok": True, "queued": True,
+                "client_id": cmd["client_id"], "waiting": False,
+            })
+            return
         elif action == "approval":
             try:
                 cmd = protocol.parse_approval_command(body)
@@ -967,15 +994,96 @@ class _Handler(BaseHTTPRequestHandler):
             paths.append(path)
         cmd["attachments"] = paths
         session = self._state.catalog.session_for(key)
-        status = str(row.get("status") or "")
-        injector = self._injector(key)
-        result = injector.send(session, cmd, status)
-        if not result.ok:
-            self._send_error(409, "send_failed", result.note)
+        # The row's status can lag a just-finished turn — reclassify now
+        # so ``waiting`` and the first poll don't trust a stale read.
+        status = self._fresh_status(session, str(row.get("status") or ""))
+        client_id = cmd["client_id"]
+        state = self._state
+        waiting = cmd["mode"] == "queue" and status == "active"
+
+        def job() -> None:
+            # Re-read at run time: the submit-time status predates any
+            # wait behind earlier jobs on this key — a send that started
+            # a turn since then must still be waited out. The Session
+            # object itself can go stale mid-wait (the status classifier
+            # times out against session.timestamp), so re-fetch it too.
+            current = state.catalog.session_for(key) or session
+            live = self._fresh_status(current, status)
+            if cmd["mode"] == "queue":
+                deadline = time.monotonic() + QUEUE_WAIT_MAX_S
+                while live == "active" and time.monotonic() < deadline:
+                    if state._stop.wait(QUEUE_POLL_S):
+                        self._send_result(
+                            key, client_id, False,
+                            "hub restarted; message not sent", False,
+                        )
+                        return
+                    current = state.catalog.session_for(key) or session
+                    live = self._fresh_status(current, status)
+                if live == "active":
+                    self._send_result(
+                        key, client_id, False,
+                        "session stayed busy for 30 min; message not sent",
+                        False,
+                    )
+                    return
+            try:
+                result = self._injector(key).send(current, cmd, live)
+                ok, note, degraded = (
+                    result.ok, result.note, result.degraded
+                )
+            except Exception as exc:
+                ok, note, degraded = False, str(exc), False
+            self._send_result(key, client_id, ok, note, degraded)
+
+        def cancel() -> None:
+            self._send_result(
+                key, client_id, False,
+                "hub restarted; message not sent", False,
+            )
+
+        # steer jobs get their own key: ordered among themselves but
+        # never stuck behind a queue-mode job waiting out a turn.
+        qkey = key if cmd["mode"] == "queue" else f"{key}\x00steer"
+        if state.sendq.pending(qkey) >= MAX_SEND_BACKLOG:
+            self._send_error(
+                429, "backlog_full",
+                "too many messages waiting for this session",
+            )
             return
-        self._send_json(
-            200,
-            {"ok": True, "note": result.note, "degraded": result.degraded},
+        state.sendq.submit(qkey, job, cancel)
+        self._send_json(202, {
+            "ok": True, "queued": True, "client_id": client_id,
+            "waiting": waiting,
+        })
+
+    def _fresh_status(self, session, fallback: str) -> str:
+        """Reclassify one session now; the catalog row can be stale."""
+        try:
+            got = self._state.status_of([session])
+        except Exception:
+            return fallback
+        return str(got[0]) if got else fallback
+
+    def _send_result(
+        self,
+        key: str,
+        client_id: str,
+        ok: bool,
+        note: str,
+        degraded: bool,
+    ) -> None:
+        """Report a queued send the way a satellite would."""
+        self._state.emit(
+            key,
+            protocol.event(
+                "command.result", key, self._state.machine_id,
+                {
+                    "command_id": "", "op": "message", "ok": ok,
+                    "note": note, "degraded": degraded,
+                    "client_id": client_id,
+                },
+            ),
         )
 
     def _send_approval(self, key: str) -> None:
@@ -1326,11 +1434,21 @@ def serve(state: HubState, host: str, port: int) -> int:
     state.base_url = _advertise_url(host, port)
     state.start()
     server = make_server(state, host, port)
+    # SIGTERM (launchd/systemd stop) must take the same shutdown path as
+    # ^C — without it the process dies mid-write and queued sends drop
+    # silently. shutdown() can't run on the serve_forever thread.
+    def _on_sigterm(_signum, _frame):
+        threading.Thread(target=server.shutdown, daemon=True).start()
+    prev_sigterm = None
+    if threading.current_thread() is threading.main_thread():
+        prev_sigterm = signal.signal(signal.SIGTERM, _on_sigterm)
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
         pass
     finally:
+        if prev_sigterm is not None:
+            signal.signal(signal.SIGTERM, prev_sigterm)
         server.server_close()
         state.stop()
     return 0

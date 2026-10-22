@@ -150,6 +150,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Phone sends return immediately instead of hanging for the turn.**
+  `POST /v1/sessions/{key}/message` now answers `202` and runs the send
+  on a per-session worker: `queue` mode waits for the session to go idle
+  (up to 30 min) before injecting, `steer` writes at once, and the
+  outcome lands as a `command.result` event carrying the caller's
+  `client_id`. The PWA draws an optimistic bubble, keeps the composer
+  visible (disabled) on observed sessions, and treats queued attaches as
+  success. Attaching a claude session with no tmux on PATH now resolves
+  to the headless channel instead of failing.
+
 - **A board load no longer crashes the app on the GitHub pages.** The
   Pages surface's persist closure — a literal formed on the main actor
   and handed to `quiver.gh-history` — inherited `@MainActor` isolation,
