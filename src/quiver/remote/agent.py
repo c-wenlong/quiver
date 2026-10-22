@@ -274,7 +274,9 @@ class RemoteAgent:
                 )
                 if blob is None:
                     return False, "attachment fetch failed"
-                payload, err = attachments.stage(
+                # Keep the hub's ref name — the message op that follows
+                # resolves attachments by it.
+                payload, err = attachments.place(
                     self.home, key, ref, blob
                 )
                 return (payload is not None), (err or "staged")

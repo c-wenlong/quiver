@@ -317,7 +317,7 @@ class TestAgentState(unittest.TestCase):
 
         with patch.object(agent_mod, "_get_bytes",
                           return_value=b"PNG") as get, \
-             patch.object(attachments, "stage", side_effect=fake_stage):
+             patch.object(attachments, "place", side_effect=fake_stage):
             ok, note = a._execute(
                 "claude:s1", "attachment",
                 {"ref": "1-shot.png", "hub_key": "claude:s1@m1"})
@@ -691,3 +691,604 @@ class TestEndToEnd(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAgentEdges(unittest.TestCase):
+    """agent.py: HTTP helpers, pairing, frame handling, op edges."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+
+    def _agent(self):
+        return agent_mod.RemoteAgent("http://h:1", "cred", self.home)
+
+    def test_load_agent_corrupt(self):
+        path = agent_mod.agent_file_for(self.home)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{bad")
+        self.assertIsNone(agent_mod.load_agent(self.home))
+
+    def test_post_http_error_json_and_plain(self):
+        import urllib.error
+
+        def raise_http(req, timeout=None):
+            raise urllib.error.HTTPError(
+                req.full_url, 429, "busy", {},
+                io_bytes(b'{"err": 1}'))
+
+        def io_bytes(data):
+            import io
+            return io.BytesIO(data)
+
+        with patch("urllib.request.urlopen", raise_http):
+            status, payload = agent_mod._post("http://h", "/x", "c", {})
+        self.assertEqual(status, 429)
+        self.assertEqual(payload, {"err": 1})
+
+        def raise_plain(req, timeout=None):
+            raise urllib.error.HTTPError(
+                req.full_url, 500, "boom", {}, io_bytes(b'not json'))
+
+        with patch("urllib.request.urlopen", raise_plain):
+            status, payload = agent_mod._post("http://h", "/x", "c", {})
+        self.assertEqual((status, payload), (500, {}))
+
+    def test_post_network_error_returns_zero(self):
+        with patch("urllib.request.urlopen", side_effect=OSError):
+            self.assertEqual(
+                agent_mod._post("http://h", "/x", "c", {}), (0, {}))
+
+    def test_get_bytes(self):
+        resp = MagicMock()
+        resp.read.return_value = b"blob"
+        resp.__enter__.return_value = resp
+        with patch("urllib.request.urlopen", return_value=resp):
+            self.assertEqual(
+                agent_mod._get_bytes("http://h", "/x", "c"), b"blob")
+        with patch("urllib.request.urlopen", side_effect=OSError):
+            self.assertIsNone(agent_mod._get_bytes("http://h", "/x", "c"))
+
+    def test_pair_agent_success_and_failure(self):
+        with patch.object(agent_mod, "_post",
+                          return_value=(200, {"credential": "c1",
+                                              "device_id": "d1"})):
+            conf = agent_mod.pair_agent("http://h/", "tok", "mbp",
+                                        self.home)
+        self.assertEqual(conf["credential"], "c1")
+        self.assertEqual(conf["hub"], "http://h")
+        self.assertEqual(agent_mod.load_agent(self.home), conf)
+        with patch.object(agent_mod, "_post", return_value=(401, {})):
+            self.assertIsNone(
+                agent_mod.pair_agent("http://h", "tok", "", self.home))
+
+    def test_push_events_requeues_on_failure(self):
+        ag = self._agent()
+        ag.outbox = [{"type": "notify"}]
+        with patch.object(agent_mod, "_post", return_value=(500, {})):
+            self.assertFalse(ag._push_events())
+        self.assertEqual(ag.outbox, [{"type": "notify"}])
+        with patch.object(agent_mod, "_post", return_value=(200, {})):
+            self.assertTrue(ag._push_events())
+        self.assertEqual(ag.outbox, [])
+
+    def test_push_events_empty_ok(self):
+        self.assertTrue(self._agent()._push_events())
+
+    def test_push_catalog_posts_rows(self):
+        ag = self._agent()
+        ag.catalog._fetch = lambda: []
+        ag.catalog._status_of = lambda ss: []
+        calls = []
+        with patch.object(
+            agent_mod, "_post",
+            side_effect=lambda *a: (calls.append(a) or (200, {}))):
+            self.assertTrue(ag._push_catalog())
+        self.assertEqual(calls[0][1], "/v1/agent/catalog")
+        self.assertEqual(calls[0][3]["machine_id"], ag.machine_id)
+
+    def test_handle_frame_malformed_and_noncommand(self):
+        ag = self._agent()
+        ag._handle_frame(b"{nope")                       # bad json
+        ag._handle_frame(json.dumps({"type": "x"}).encode())  # not cmd
+        ag._handle_frame(json.dumps(
+            {"type": "command", "seq": "x", "data": {}}).encode())
+        # A non-int seq still dispatches — no dedup cursor to advance.
+        types = [e["type"] for e in ag.outbox]
+        self.assertEqual(types, ["command.result"])
+
+    def test_handle_frame_dedup_and_advance(self):
+        ag = self._agent()
+        ag._dispatch = lambda c: None
+        cmd = {"type": "command", "seq": 5, "data": {"op": "x"}}
+        ag._handle_frame(json.dumps(cmd).encode())
+        self.assertEqual(ag._last_cmd_seq, 5)
+        ag._handle_frame(json.dumps(cmd).encode())  # replay: no-op
+        ag._handle_frame(json.dumps(
+            {"type": "command", "seq": 4, "data": {"op": "x"}}).encode())
+        self.assertEqual(ag._last_cmd_seq, 5)
+
+    def test_execute_launch_snapshot(self):
+        ag = self._agent()
+        ag.catalog._fetch = lambda: []
+        ag.catalog._status_of = lambda ss: []
+        with patch.object(
+            supervise, "launch_new", return_value=(True, "launched", {})
+        ) as ln:
+            ok, note = ag._execute(
+                "k", "launch",
+                {"harness": "claude", "cwd": "/tmp", "prompt": "hi"})
+        self.assertTrue(ok)
+        self.assertEqual(ln.call_args[1]["known_ids"], [])
+
+    def test_execute_attachment_paths(self):
+        ag = self._agent()
+        ok, note = ag._execute("claude:k", "attachment", {"ref": "r.png"})
+        self.assertFalse(ok)  # _get_bytes fails against no hub
+        with patch.object(agent_mod, "_get_bytes", return_value=b"png"):
+            ok, note = ag._execute("claude:k", "attachment",
+                                   {"ref": "r.png", "hub_key": "hk"})
+        self.assertTrue(ok)
+        # place() keeps the hub's ref so a later message op resolves it.
+        self.assertIsNotNone(
+            attachments.resolve(self.home, "claude:k", "r.png"))
+
+    def test_execute_message_unknown_ref(self):
+        ag = self._agent()
+        sess = _session()
+        ag.catalog.session_for = lambda k: sess
+        ok, note = ag._execute(
+            "k", "message", {"text": "hi", "attachments": ["nope"]})
+        self.assertFalse(ok)
+        self.assertIn("unknown attachment", note)
+
+    def test_execute_approval_and_control_and_error(self):
+        ag = self._agent()
+        sess = _session()
+        ag.catalog.session_for = lambda k: sess
+        fake = MagicMock()
+        fake.approval.return_value = inject.InjectResult(True, "ok")
+        fake.control.return_value = inject.InjectResult(False, "nope")
+        with patch.object(inject, "injector_for", return_value=fake):
+            ok, _ = ag._execute(
+                "k", "approval",
+                {"request_id": "r", "decision": "allow"})
+            self.assertTrue(ok)
+            ok, note = ag._execute(
+                "k", "control", {"ctl": "interrupt"})
+            self.assertFalse(ok)
+            fake.send.side_effect = RuntimeError("kaboom")
+            ok, note = ag._execute("k", "message", {"text": "x"})
+            self.assertFalse(ok)
+            self.assertIn("kaboom", note)
+        # Outside the patch: an unmarked session hits the detach guard.
+        ok, note = ag._execute("k", "message", {"text": "x"})
+        self.assertFalse(ok)
+        self.assertIn("detached", note)
+
+
+class TestAgentRouteValidation(unittest.TestCase):
+    """hub.py satellite routes: malformed bodies and validation 422s."""
+
+    def setUp(self):
+        self.srv = _AgentHub()
+        self.addCleanup(self.srv.stop)
+        self.mid = "sat-m1"
+
+    def _raw(self, method, path, data, ctype="application/json"):
+        conn = http.client.HTTPConnection("127.0.0.1", self.srv.port,
+                                          timeout=5)
+        conn.request(method, path, body=data,
+                     headers={**self.srv.auth, "Content-Type": ctype})
+        resp = conn.getresponse()
+        body = resp.read()
+        conn.close()
+        return resp.status, body
+
+    def test_register_bad_body(self):
+        status, _ = self._raw("POST", "/v1/agent/register", b"{bad")
+        self.assertIn(status, (400, 422))
+
+    def test_catalog_bad_body_and_missing_mid(self):
+        status, _ = self._raw("POST", "/v1/agent/catalog", b"{bad")
+        self.assertEqual(status, 400)
+        status, _ = self.srv.request(
+            "POST", "/v1/agent/catalog", {"rows": []},
+            headers=self.srv.auth)
+        self.assertEqual(status, 422)
+
+    def test_events_bad_body_and_non_list(self):
+        status, _ = self._raw("POST", "/v1/agent/events", b"{bad")
+        self.assertEqual(status, 400)
+        status, _ = self.srv.request(
+            "POST", "/v1/agent/events",
+            {"machine_id": self.mid, "events": "x"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 422)
+        # Events that aren't dicts are skipped, not fatal.
+        status, data = self.srv.request(
+            "POST", "/v1/agent/events",
+            {"machine_id": self.mid, "events": [42, {"type": "notify"}]},
+            headers=self.srv.auth)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data)["accepted"], 1)
+
+    def test_forward_bad_command_bodies(self):
+        self.srv.request(
+            "POST", "/v1/agent/catalog",
+            {"machine_id": self.mid, "rows": [
+                {"key": "claude:r1", "ownership": "attached",
+                 "status": "idle"}]},
+            headers=self.srv.auth)
+        self.srv.state.catalog.refresh()
+        key = "claude%3Ar1%40sat-m1"
+        status, _ = self.srv.request(
+            "POST", f"/v1/sessions/{key}/message", {"text": ""},
+            headers=self.srv.auth)
+        self.assertEqual(status, 422)
+        status, _ = self.srv.request(
+            "POST", f"/v1/sessions/{key}/approval",
+            {"decision": "allow"},  # no request_id
+            headers=self.srv.auth)
+        self.assertEqual(status, 422)
+        status, _ = self.srv.request(
+            "POST", f"/v1/sessions/{key}/control", {"op": "bogus"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 422)
+        status, _ = self.srv.request(
+            "POST", f"/v1/sessions/{key}/nonsense", {},
+            headers=self.srv.auth)
+        self.assertEqual(status, 404)
+
+    def test_forward_control_on_observed_is_409(self):
+        self.srv.request(
+            "POST", "/v1/agent/catalog",
+            {"machine_id": self.mid, "rows": [
+                {"key": "claude:r1", "ownership": "observed"}]},
+            headers=self.srv.auth)
+        self.srv.state.catalog.refresh()
+        status, _ = self.srv.request(
+            "POST", "/v1/sessions/claude%3Ar1%40sat-m1/control",
+            {"op": "interrupt"}, headers=self.srv.auth)
+        self.assertEqual(status, 409)
+
+    def test_launch_unknown_machine_queues_anyway(self):
+        # An unregistered machine still gets the command: it may simply
+        # not have connected yet — the offline queue is the point.
+        status, data = self.srv.request(
+            "POST", "/v1/sessions",
+            {"machine": "ghost", "harness": "claude", "cwd": "/x"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 202)
+        replay, _ = self.srv.state.journal.read_since("_sat_ghost", 0)
+        self.assertEqual(replay[0]["data"]["op"], "launch")
+
+
+class TestAgentCommand(unittest.TestCase):
+    """commands._cmd_agent: pairing flags, missing conf, serve call."""
+
+    def _run(self, flags):
+        from quiver.remote import commands
+        with patch("sys.stdout", __import__("io").StringIO()) as out, \
+             patch("sys.stderr", __import__("io").StringIO()) as err:
+            rc = commands._cmd_agent(flags)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_token_without_hub(self):
+        rc, _o, err = self._run({"--token": "t"})
+        self.assertEqual(rc, 1)
+        self.assertIn("--hub", err)
+
+    def test_pair_failure(self):
+        with patch.object(agent_mod, "pair_agent", return_value=None):
+            rc, _o, err = self._run(
+                {"--token": "t", "--hub": "http://h:1"})
+        self.assertEqual(rc, 1)
+        self.assertIn("pairing failed", err)
+
+    def test_no_conf(self):
+        with patch.object(agent_mod, "load_agent", return_value=None):
+            rc, _o, err = self._run({})
+        self.assertEqual(rc, 1)
+        self.assertIn("no hub credential", err)
+
+    def test_paired_then_serve(self):
+        conf = {"hub": "http://h:1", "credential": "c", "device_id": "d"}
+        with patch.object(agent_mod, "pair_agent", return_value=conf), \
+             patch.object(agent_mod, "serve", return_value=0) as srv:
+            rc, out, _ = self._run(
+                {"--token": "t", "--hub": "http://h:1", "--name": "mbp"})
+        self.assertEqual(rc, 0)
+        self.assertIn("paired", out)
+        srv.assert_called_once_with("http://h:1", "c")
+
+    def test_hub_flag_rewrites_saved_conf(self):
+        conf = {"hub": "http://old:1", "credential": "c"}
+        with patch.object(agent_mod, "load_agent", return_value=conf), \
+             patch.object(agent_mod, "serve", return_value=0) as srv:
+            rc, _o, _e = self._run({"--hub": "http://new:2"})
+        self.assertEqual(rc, 0)
+        srv.assert_called_once_with("http://new:2", "c")
+
+
+class TestAgentLoopEdges(unittest.TestCase):
+    """agent.py: stream loop, run(), save-cursor failure."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+
+    def _agent(self):
+        return agent_mod.RemoteAgent("http://h:1", "cred", self.home)
+
+    def test_save_cmd_cursor_oserror(self):
+        ag = self._agent()
+        ag._last_cmd_seq = 9
+        with patch.object(Path, "write_text", side_effect=OSError):
+            ag._save_cmd_cursor()  # must not raise
+
+    def test_command_stream_reads_frames(self):
+        ag = self._agent()
+        handled = []
+
+        def stop_after(blob):
+            handled.append(blob)
+            ag._stop.set()
+
+        ag._handle_frame = stop_after
+        frame = json.dumps({"type": "command", "seq": 1,
+                            "data": {"op": "x"}}).encode()
+        resp = MagicMock()
+        resp.__iter__.return_value = iter(
+            [b"data: " + frame + b"\n", b"\n"])
+        resp.__enter__.return_value = resp
+        with patch("urllib.request.urlopen", return_value=resp):
+            ag._command_stream()
+        self.assertEqual(len(handled), 1)
+
+    def test_command_stream_network_error_retries(self):
+        ag = self._agent()
+        calls = []
+
+        def boom(req, timeout=None):
+            calls.append(1)
+            ag._stop.set()
+            raise OSError("down")
+
+        with patch("urllib.request.urlopen", boom), \
+             patch.object(agent_mod.time, "sleep"):
+            ag._command_stream()
+        self.assertEqual(calls, [1])
+
+    def test_run_spawns_and_joins_threads(self):
+        ag = self._agent()
+        ag._register = lambda: None
+        ag._push_catalog = lambda: True
+        # Loop bodies exit instantly; run() then waits on _stop.
+        ag._uplink_loop = ag._catalog_loop = ag._tail_loop = \
+            ag._downlink_loop = lambda: None
+        t = threading.Thread(target=ag.run, daemon=True)
+        t.start()
+        time.sleep(0.2)
+        ag._stop.set()
+        t.join(timeout=5)
+        self.assertFalse(t.is_alive())
+
+    def test_serve_builds_and_runs(self):
+        fake = MagicMock()
+        fake.run.return_value = 0
+        with patch.object(agent_mod, "RemoteAgent", return_value=fake):
+            self.assertEqual(agent_mod.serve("http://h", "c"), 0)
+
+
+class TestCatalogEdge(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+
+    def test_merge_skips_non_dict_rows(self):
+        out = catalog_mod.merge_remote_rows(
+            self.home, "m1", ["bad", {"key": "claude:r1"}])
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["key"], "claude:r1@m1")
+
+    def test_merge_write_failure_tolerated(self):
+        with patch.object(
+            catalog_mod, "atomic_write_text", side_effect=OSError):
+            out = catalog_mod.merge_remote_rows(
+                self.home, "m1", [{"key": "claude:r1"}])
+        self.assertEqual(len(out), 1)  # rows still returned
+
+    def test_load_remote_rows_skips_corrupt(self):
+        base = catalog_mod._satellite_dir(self.home)
+        base.mkdir(parents=True)
+        (base / "m1.json").write_text("{bad")
+        (base / "m2.json").write_text(
+            json.dumps({"rows": [{"key": "claude:r1@m2"}, "x"]}))
+        rows = catalog_mod.load_remote_rows(self.home)
+        self.assertEqual(rows, [{"key": "claude:r1@m2"}])
+
+
+class TestUploadRouteEdges(unittest.TestCase):
+    """hub.py upload/attachment-fetch error branches."""
+
+    def setUp(self):
+        self.srv = _AgentHub()
+        self.addCleanup(self.srv.stop)
+        # A satellite row so the remote attachments route engages.
+        self.srv.request(
+            "POST", "/v1/agent/catalog",
+            {"machine_id": "sat-m1", "rows": [
+                {"key": "claude:r1", "ownership": "attached"}]},
+            headers=self.srv.auth)
+        self.srv.state.catalog.refresh()
+
+    def test_empty_upload_400(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.srv.port,
+                                          timeout=5)
+        conn.request(
+            "POST", "/v1/sessions/claude%3Ar1%40sat-m1/attachments?name=x.png",
+            body=b"", headers={**self.srv.auth,
+                               "Content-Type": "application/octet-stream"})
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        self.assertEqual(resp.status, 400)
+
+    def test_too_large_413(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.srv.port,
+                                          timeout=5)
+        with patch.object(attachments, "MAX_BYTES", 4):
+            conn.request(
+                "POST",
+                "/v1/sessions/claude%3Ar1%40sat-m1/attachments?name=x.png",
+                body=b"12345",
+                headers={**self.srv.auth,
+                         "Content-Type": "application/octet-stream"})
+            resp = conn.getresponse()
+            resp.read()
+            conn.close()
+        self.assertEqual(resp.status, 413)
+
+    def test_pull_attachment_unreadable(self):
+        # Stage on the hub key, then delete the file: read fails → 404.
+        payload, err = attachments.stage(
+            self.srv.home, "claude:k@m1", "x.png", b"PNG")
+        self.assertIsNone(err)
+        Path(payload["path"]).unlink()
+        conn = http.client.HTTPConnection("127.0.0.1", self.srv.port,
+                                          timeout=5)
+        conn.request(
+            "GET",
+            f"/v1/agent/attachments/claude%3Ak%40m1/{payload['ref']}",
+            headers=self.srv.auth)
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        self.assertEqual(resp.status, 404)
+
+
+class TestAgentCmdDispatch(unittest.TestCase):
+    def test_agent_subcommand_rejects_extra_args(self):
+        from quiver.remote import commands
+        with patch("sys.stderr", __import__("io").StringIO()) as err:
+            rc = commands.cmd_remote(["agent", "extra"])
+        self.assertEqual(rc, 1)
+        self.assertIn("unexpected", err.getvalue())
+
+
+class TestR3FinalEdges(unittest.TestCase):
+    """Tail of the diff: loop bodies, read failures, upload variants."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+
+    def test_stream_sleep_between_reconnects(self):
+        ag = agent_mod.RemoteAgent("http://h:1", "c", self.home)
+        resp = MagicMock()
+        resp.__iter__.return_value = iter([b"data: {}\n", b"\n"])
+        resp.__enter__.return_value = resp
+
+        def sleepy(_s):
+            ag._stop.set()
+
+        with patch("urllib.request.urlopen", return_value=resp), \
+             patch.object(agent_mod.time, "sleep", sleepy):
+            ag._command_stream()
+
+    def test_loop_bodies_run_once(self):
+        ag = agent_mod.RemoteAgent("http://h:1", "c", self.home)
+        ag._push_events = lambda: ag._stop.set()
+        ag._uplink_loop()
+        ag._stop.clear()
+        ag._push_catalog = lambda: None
+        ag.tail_manager.sync = lambda rows: ag._stop.set()
+        ag._catalog_loop()
+        ag._stop.clear()
+        ag.tail_manager.tick = lambda: ag._stop.set()
+        ag._tail_loop()
+        ag._stop.clear()
+
+        def boom():
+            ag._stop.set()
+            raise OSError("x")
+
+        ag._command_stream = boom
+        with patch.object(agent_mod, "RECONNECT_S", 0):
+            ag._downlink_loop()
+
+    def test_load_remote_rows_glob_failure(self):
+        with patch.object(Path, "glob", side_effect=OSError):
+            self.assertEqual(catalog_mod.load_remote_rows(self.home), [])
+
+    def test_message_op_resolves_attachment(self):
+        ag = agent_mod.RemoteAgent("http://h:1", "c", self.home)
+        sess = _session()
+        ag.catalog.session_for = lambda k: sess
+        payload, err = attachments.stage(self.home, "k", "a.png", b"PNG")
+        self.assertIsNone(err)
+        fake = MagicMock()
+        fake.send.return_value = inject.InjectResult(True, "ok")
+        with patch.object(supervise, "meta_for", return_value={}), \
+             patch.object(inject, "injector_for", return_value=fake):
+            ok, _ = ag._execute(
+                "k", "message",
+                {"text": "hi", "attachments": [payload["ref"]]})
+        self.assertTrue(ok)
+        sent = fake.send.call_args[0][1]
+        # resolve() returns the realpath form of the staged file.
+        self.assertTrue(
+            sent["attachments"][0].endswith(payload["ref"]))
+
+
+class TestUploadVariants(unittest.TestCase):
+    def setUp(self):
+        self.srv = _AgentHub()
+        self.addCleanup(self.srv.stop)
+        self.srv.request(
+            "POST", "/v1/agent/catalog",
+            {"machine_id": "sat-m1", "rows": [
+                {"key": "claude:r1", "ownership": "attached"}]},
+            headers=self.srv.auth)
+        self.srv.state.catalog.refresh()
+
+    def _post_raw(self, path, data, ctype):
+        conn = http.client.HTTPConnection("127.0.0.1", self.srv.port,
+                                          timeout=5)
+        conn.request("POST", path, body=data,
+                     headers={**self.srv.auth, "Content-Type": ctype})
+        resp = conn.getresponse()
+        body = resp.read()
+        conn.close()
+        return resp.status, body
+
+    def test_stage_bad_extension_422(self):
+        status, _ = self._post_raw(
+            "/v1/sessions/claude%3Ar1%40sat-m1/attachments?name=x.exe",
+            b"MZ", "application/octet-stream")
+        self.assertEqual(status, 422)
+
+    def test_multipart_unparseable_400(self):
+        status, _ = self._post_raw(
+            "/v1/sessions/claude%3Ar1%40sat-m1/attachments",
+            b"garbage", "multipart/form-data; boundary=NOPE")
+        self.assertEqual(status, 400)
+
+    def test_pull_attachment_read_failure(self):
+        payload, err = attachments.stage(
+            self.srv.home, "claude:k@m1", "x.png", b"PNG")
+        self.assertIsNone(err)
+        with patch.object(Path, "read_bytes", side_effect=OSError):
+            conn = http.client.HTTPConnection("127.0.0.1",
+                                              self.srv.port, timeout=5)
+            conn.request(
+                "GET",
+                f"/v1/agent/attachments/claude%3Ak%40m1/{payload['ref']}",
+                headers=self.srv.auth)
+            resp = conn.getresponse()
+            resp.read()
+            conn.close()
+        self.assertEqual(resp.status, 404)
+
+    def test_agent_dispatch(self):
+        from quiver.remote import commands
+        with patch.object(commands, "_cmd_agent", return_value=0) as ca:
+            self.assertEqual(commands.cmd_remote(["agent"]), 0)
+        ca.assert_called_once()
