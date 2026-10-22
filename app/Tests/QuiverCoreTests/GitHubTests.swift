@@ -255,6 +255,37 @@ import Testing
         #expect(prs.first?.reviewDecision == .approved)
     }
 
+    /// A loaded board surface's persist closure runs on
+    /// `historyWriteQueue`, off the main actor. Without `@Sendable` on
+    /// the `persist:` parameter a literal argument inherits the model's
+    /// `@MainActor` isolation, and the queue's call into it traps on a
+    /// dispatch assert — the gh-history crash from the field.
+    @Test func boardSurfacesPersistOffTheMainActor() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "gh-history-\(UUID().uuidString).db")
+        defer { try? FileManager.default.removeItem(at: url) }
+        // A repo with a Pages site — its persist closure is the literal
+        // in loadBoards, the shape that trapped.
+        let surfaces = boardSurfaces(repo: "o/a", pulls: prRows)
+            .replacingOccurrences(of: "\"pages\":null",
+                                  with: "\"pages\":{\"url\":\"https://o.github.io/a/\"}")
+        let swe = SweClient(runner: router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
+            "gh board --repo=o/a --json":
+                "\(env),\"boards\":[{\"repo\":\"o/a\",\"surfaces\":{\(surfaces)}}]",
+        ]))
+        let model = GitHubModel(historyFile: url)
+        await model.load(swe: swe)
+        await model.loadIfStale(swe: swe)
+        // The writes ride a serial queue; drain it before reading.
+        model.historyWriteQueue.sync {}
+        let store = GitHubHistory(url: url)
+        let pulls: [GhPr] = store.rows(repo: "o/a", surface: .pulls)
+        #expect(pulls.first?.number == 7)
+        let pages: [GhPages] = store.rows(repo: "o/a", surface: .pages)
+        #expect(pages.first?.url == "https://o.github.io/a/")
+    }
+
     @Test func repoLevelFailureMarksOnlyThatSurface() async {
         let swe = SweClient(runner: router([
             "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
