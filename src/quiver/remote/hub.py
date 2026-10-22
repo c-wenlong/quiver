@@ -629,6 +629,13 @@ class _Handler(BaseHTTPRequestHandler):
                 422, "bad_mode", "headless attach only exists for claude"
             )
             return
+        if mode == "tmux" and supervise.tmux_bin() is None:
+            # Environment failure, not a state conflict: 409/not_idle
+            # would tell the client to retry, which never helps.
+            self._send_error(
+                422, "not_attachable", "tmux is not available"
+            )
+            return
         ok, note = supervise.attach(
             self._state.home, key, session,
             last_append_at=self._state.tail_manager.last_append_at(key),

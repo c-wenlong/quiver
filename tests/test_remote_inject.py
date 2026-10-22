@@ -331,17 +331,15 @@ class TestHubWrites(unittest.TestCase):
         self.hdr = {"Authorization": f"Bearer {self.auth['credential']}"}
 
     def test_attach_then_message(self):
-        status, data = self.srv.request(
-            "POST", "/v1/sessions/claude:abc-123/control",
-            body={"op": "attach"}, headers=self.hdr,
-        )
-        # tmux is present on this machine in dev; if not, the route still
-        # refuses cleanly rather than faking ownership.
-        if status == 409:
-            self.assertIn("idle", json.loads(data)["error"]["message"])
-            return
-        if status == 422:
-            return  # tmux absent or launch failed in this environment
+        # launch_tmux is mocked so the suite never needs (or spawns) a
+        # real tmux session — sandboxed CI has neither tmux nor claude.
+        with patch.object(supervise, "tmux_bin", return_value="/usr/bin/tmux"), \
+             patch.object(supervise, "launch_tmux", return_value="qv-x"), \
+             patch.object(supervise, "_stop_local_writers"):
+            status, data = self.srv.request(
+                "POST", "/v1/sessions/claude:abc-123/control",
+                body={"op": "attach"}, headers=self.hdr,
+            )
         self.assertEqual(status, 200, data)
         row = self.srv.state.catalog.row_for("claude:abc-123")
         self.assertEqual(row["ownership"], "attached")
@@ -368,15 +366,26 @@ class TestHubWrites(unittest.TestCase):
         self.assertEqual(status, 409)
         self.assertEqual(json.loads(data)["error"]["code"], "not_idle")
 
+    def test_attach_422_without_tmux(self):
+        with patch.object(supervise, "tmux_bin", return_value=None):
+            status, data = self.srv.request(
+                "POST", "/v1/sessions/claude:abc-123/control",
+                body={"op": "attach"}, headers=self.hdr,
+            )
+        self.assertEqual(status, 422)
+        self.assertEqual(
+            json.loads(data)["error"]["code"], "not_attachable"
+        )
+
     def test_attachment_upload_and_message_ref(self):
-        if supervise.tmux_bin() is None:
-            self.skipTest("tmux unavailable")
-        with patch.object(supervise, "launch_tmux", return_value="qv-t"):
-            with patch.object(supervise, "tmux_alive", return_value=True):
-                self.srv.request(
-                    "POST", "/v1/sessions/claude:abc-123/control",
-                    body={"op": "attach"}, headers=self.hdr,
-                )
+        with patch.object(supervise, "tmux_bin", return_value="/usr/bin/tmux"), \
+             patch.object(supervise, "launch_tmux", return_value="qv-t"), \
+             patch.object(supervise, "tmux_alive", return_value=True), \
+             patch.object(supervise, "_stop_local_writers"):
+            self.srv.request(
+                "POST", "/v1/sessions/claude:abc-123/control",
+                body={"op": "attach"}, headers=self.hdr,
+            )
         import http.client
         conn = http.client.HTTPConnection("127.0.0.1", self.srv.port, timeout=5)
         try:
