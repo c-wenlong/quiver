@@ -27,16 +27,37 @@ public struct GitHubSnapshot: SnapshotContent {
     /// when the app simply never asked.
     public var inbox: [GhNotification]
     public var inboxLoaded: Bool
+    /// repo name -> accumulated focus-page rows. Fetches merge in by
+    /// number, so a repo's listing grows past any single fetch window;
+    /// a surface whose reply fails keeps its remembered rows. Optional:
+    /// the field postdates v2's shape, and a file without it still
+    /// decodes.
+    public var history: [String: RepoHistory]?
 
     public init(savedAt: Date, pins: [PinnedRepo], selected: String?,
                 boards: [String: RepoBoard], inbox: [GhNotification],
-                inboxLoaded: Bool) {
+                inboxLoaded: Bool, history: [String: RepoHistory]? = nil) {
         self.savedAt = savedAt
         self.pins = pins
         self.selected = selected
         self.boards = boards
         self.inbox = inbox
         self.inboxLoaded = inboxLoaded
+        self.history = history
+    }
+}
+
+/// One repo's remembered focus rows. Only the surfaces where an old
+/// row still matters once it falls out of the fetch window — runs,
+/// releases, tags and branches either churn too fast or list shallow
+/// enough that re-fetching covers them.
+public struct RepoHistory: Codable, Equatable, Sendable {
+    public var pulls: [GhPr]
+    public var issues: [GhIssue]
+
+    public init(pulls: [GhPr] = [], issues: [GhIssue] = []) {
+        self.pulls = pulls
+        self.issues = issues
     }
 }
 

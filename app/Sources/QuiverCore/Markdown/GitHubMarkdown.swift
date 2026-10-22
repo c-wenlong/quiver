@@ -83,6 +83,45 @@ public enum GitHubMarkdown {
             .trimmingCharacters(in: .whitespaces)
     }
 
+    /// Flatten the bracket forms Apple's inline parser mangles before
+    /// it runs: `[![alt](badge)](href)` — and the `!`-less twin
+    /// `[[alt](badge)](href)` greptile writes — collapse to
+    /// `[alt](href)`, and a bare `![alt](src)` image becomes a link to
+    /// its source. An image badge is a label anyway; a link-in-link
+    /// keeps the outer href since that is where a click would go.
+    /// Backtick code spans pass through untouched — a documented
+    /// example is text, not a badge.
+    public static func flatLinks(_ md: String) -> String {
+        var out = ""
+        var rest = md[...]
+        while let tick = rest.firstIndex(of: "`") {
+            out += flattenLinks(String(rest[..<tick]))
+            rest = rest[tick...]
+            let run = rest.prefix { $0 == "`" }
+            guard let close = rest.dropFirst(run.count)
+                    .range(of: String(run)) else {
+                return out + String(rest)   // unclosed — the rest is literal
+            }
+            // `rest` starts at the run, so this slice is the whole
+            // code span, fences included — copied verbatim.
+            out += rest[..<close.upperBound]
+            rest = rest[close.upperBound...]
+        }
+        return out + flattenLinks(String(rest))
+    }
+
+    /// The badge rewrites for one span of non-code text.
+    private static func flattenLinks(_ md: String) -> String {
+        var md = md
+        md = md.replacing(#/\[!?\[([^\]]*)\]\([^)]*\)\]\(([^)\s]+)\)/#) {
+            "[\($0.1)](\($0.2))"
+        }
+        md = md.replacing(#/!\[([^\]]*)\]\(([^)\s]+)\)/#) {
+            "[\($0.1)](\($0.2))"
+        }
+        return md
+    }
+
     // MARK: - block parse
 
     /// Markdown → display blocks for the sheet. Line-scanned: fences,

@@ -501,7 +501,13 @@ import Testing
     /// `count` PR rows — the scroll-window tests need a full page to
     /// keep the surface growable.
     private func prRows(_ count: Int) -> String {
-        "[" + (1...count).map { n in
+        prRows(1...count)
+    }
+
+    /// Rows numbered `numbers` — the history tests need a fetch window
+    /// that shifted since the rows were remembered.
+    private func prRows(_ numbers: ClosedRange<Int>) -> String {
+        "[" + numbers.map { n in
             "{\"number\":\(n),\"title\":\"Fix \(n)\",\"state\":\"open\",\"draft\":false,"
             + "\"author\":\"me\",\"branch\":\"f\",\"base\":\"main\",\"labels\":[],"
             + "\"mergeable\":\"mergeable\",\"review_decision\":\"approved\",\"checks\":\"passing\","
@@ -829,6 +835,86 @@ import Testing
         #expect(model.focusExhausted.contains(.init(repo: "o/a", tab: .pulls)))
         #expect(await model.removeRepo("o/a", swe: swe))
         #expect(model.focusExhausted.isEmpty)
+    }
+
+    /// Rows outlive the window that fetched them: 30 newer PRs push the
+    /// oldest 30 out of the limit-50 reply, and the merged listing keeps
+    /// them — the page's history grows past any single fetch window.
+    @Test func focusHistoryGrowsPastTheFetchWindow() async {
+        let calls = focusRouter(repo: "o/a", pulls: prRows(50))
+        let swe = SweClient(runner: calls)
+        let model = GitHubModel()
+        await model.loadFocusTab(.pulls, repo: "o/a", swe: swe)
+        calls.replies["gh pr --state=all --limit=50 --repo=o/a --json"] = .init(
+            status: 0,
+            stdout: envelope(
+                "\(env),\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"pull_requests\":\(prRows(32...81))}]"),
+            stderr: "")
+        await model.loadFocusTab(.pulls, repo: "o/a", swe: swe)
+        guard case .loaded(let prs) = model.focusBoard(for: "o/a").pulls else {
+            Issue.record("focus pulls should be loaded"); return
+        }
+        #expect(prs.count == 81)
+        #expect(prs.first?.number == 81)
+        #expect(prs.last?.number == 1)
+    }
+
+    /// Exhaustion measures the reply, not the merged listing history
+    /// makes bigger — a short page still marks the end even when
+    /// remembered rows bring the board back to the limit.
+    @Test func focusExhaustionCountsTheReplyNotTheHistory() async {
+        let calls = focusRouter(repo: "o/a", pulls: prRows(50))
+        let swe = SweClient(runner: calls)
+        let model = GitHubModel()
+        await model.loadFocusTab(.pulls, repo: "o/a", swe: swe)
+        #expect(!model.focusExhausted.contains(.init(repo: "o/a", tab: .pulls)))
+        calls.replies["gh pr --state=all --limit=50 --repo=o/a --json"] = .init(
+            status: 0,
+            stdout: envelope(
+                "\(env),\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"pull_requests\":\(prRows(20))}]"),
+            stderr: "")
+        await model.loadFocusTab(.pulls, repo: "o/a", swe: swe)
+        #expect(model.focusExhausted.contains(.init(repo: "o/a", tab: .pulls)))
+        // The 30 remembered rows the reply dropped are still shown.
+        guard case .loaded(let prs) = model.focusBoard(for: "o/a").pulls else {
+            Issue.record("focus pulls should be loaded"); return
+        }
+        #expect(prs.count == 50)
+    }
+
+    /// A failed fetch must not blank rows the page already knows:
+    /// the remembered listing stands in for the error.
+    @Test func focusFetchFailureKeepsRememberedRows() async {
+        let calls = focusRouter(repo: "o/a", pulls: prRows(50))
+        let swe = SweClient(runner: calls)
+        let model = GitHubModel()
+        await model.loadFocusTab(.pulls, repo: "o/a", swe: swe)
+        calls.replies["gh pr --state=all --limit=50 --repo=o/a --json"] =
+            .init(status: 1, stdout: Data(), stderr: "gh died")
+        await model.loadFocusTab(.pulls, repo: "o/a", swe: swe)
+        guard case .loaded(let prs) = model.focusBoard(for: "o/a").pulls else {
+            Issue.record("failed fetch should keep remembered rows"); return
+        }
+        #expect(prs.count == 50)
+    }
+
+    /// Remembered rows ride the snapshot: a relaunched model whose
+    /// fetch never lands still opens the page on what it knew.
+    @Test func focusHistorySurvivesARelaunch() async {
+        let file = tempSnapshot()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let calls = focusRouter(repo: "o/a", pulls: prRows(50))
+        let first = GitHubModel(snapshotFile: file)
+        await first.loadFocusTab(.pulls, repo: "o/a", swe: SweClient(runner: calls))
+        first.saveNow()
+
+        let dead = SweClient(runner: router([:]))
+        let second = GitHubModel(snapshotFile: file)
+        await second.loadFocus(repo: "o/a", swe: dead)
+        guard case .loaded(let prs) = second.focusBoard(for: "o/a").pulls else {
+            Issue.record("relaunch should show remembered pulls"); return
+        }
+        #expect(prs.count == 50)
     }
 
     /// A surface the board reports failed refetches on its tab's next
