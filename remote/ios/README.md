@@ -25,19 +25,30 @@ once in each is expected, not a bug.
 
 ## Building
 
-Xcode projects aren't checked in (they churn); the four Swift files
-under `Sources/QuiverRemote/` are the whole app. To build:
+Xcode projects aren't checked in (they churn); `project.yml` generates
+one. To build and install on a phone:
 
-1. Xcode → New Project → iOS App → SwiftUI, bundle id
-   `com.quiver.remote`, deployment target iOS 17+.
-2. Delete the generated `ContentView.swift`/`*App.swift`, drag
-   `Sources/QuiverRemote/` into the target.
-3. Info: add URL scheme `quiver` (`CFBundleURLTypes`) so the pair QR
-   opens the app.
-4. `NSAppTransportSecurity` — the hub is plain HTTP on the tailnet, so
-   add `NSAllowsArbitraryLoads` or an exception domain for
-   `*.ts.net`/your tailnet range.
-5. Run on a device enrolled in the same tailnet.
+```sh
+cd remote/ios
+xcodegen generate                 # writes QuiverRemote.xcodeproj
+xcodebuild -project QuiverRemote.xcodeproj -scheme QuiverRemote \
+  -destination 'platform=iOS,name=<your phone>' \
+  -allowProvisioningUpdates -derivedDataPath build build
+xcrun devicectl device install app --device <device-id> \
+  build/Build/Products/Debug-iphoneos/QuiverRemote.app
+```
+
+`project.yml` carries the pieces that matter: bundle id
+`com.quiver.remote`, the `quiver` URL scheme (`CFBundleURLTypes`) so
+`--app` pair QRs open the app, `NSAllowsArbitraryLoads` (the hub is
+plain HTTP on the tailnet), iOS 17+ deployment, and `DEVELOPMENT_TEAM`
+set to the account's team id. The icon in `Assets.xcassets` is the PWA
+icon upscaled to 1024.
+
+On-device launch needs Developer Mode (Settings → Privacy & Security →
+Developer Mode) and, on a personal (free) team, a one-time trust of the
+profile under Settings → General → VPN & Device Management. Paid-team
+development profiles are trusted automatically.
 
 ## Explicit non-goals (for now)
 

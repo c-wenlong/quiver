@@ -36,7 +36,8 @@ struct HubWebView: UIViewRepresentable {
         // can't be re-registered on an existing WKWebView, so the seed
         // goes through evaluateJavaScript here.
         let coord = context.coordinator
-        guard coord.loaded != (baseURL, credentialJSON) else { return }
+        if let loaded = coord.loaded,
+           loaded.0 == baseURL, loaded.1 == credentialJSON { return }
         coord.loaded = (baseURL, credentialJSON)
         if let credentialJSON {
             let seed = "localStorage.setItem(\"quiver.remote\", \(Self.jsString(credentialJSON)));"

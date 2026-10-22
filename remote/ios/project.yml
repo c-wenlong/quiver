@@ -1,0 +1,32 @@
+name: QuiverRemote
+options:
+  bundleIdPrefix: com.quiver
+targets:
+  QuiverRemote:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Sources/QuiverRemote
+      - path: Assets.xcassets
+    info:
+      path: QuiverRemote-Info.plist
+      properties:
+        CFBundleDisplayName: Quiver Remote
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen_Generation: true
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        CFBundleURLTypes:
+          - CFBundleURLName: com.quiver.remote.pair
+            CFBundleURLSchemes: [quiver]
+        # The hub is plain HTTP on the tailnet, not TLS.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.quiver.remote
+        DEVELOPMENT_TEAM: XXXXXXXXXX
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.0"
