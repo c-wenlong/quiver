@@ -11,6 +11,35 @@ public indirect enum MarkdownSegment: Equatable, Sendable {
     case details(title: String, body: [MarkdownSegment])
 }
 
+/// A markdown block — the unit a body renders as. Lists keep their
+/// items (depth, bullet/number/task) so the view can draw real
+/// structure instead of marker characters.
+public enum MarkdownBlock: Equatable, Sendable {
+    case heading(Int, String)
+    case paragraph(String)
+    case code(String, String?)
+    case quote([MarkdownBlock])
+    case list([MarkdownListItem])
+    case rule
+}
+
+public struct MarkdownListItem: Equatable, Sendable {
+    public enum Kind: Equatable, Sendable {
+        case bullet
+        case ordered(Int)
+        case task(Bool)
+    }
+    public var depth: Int
+    public var kind: Kind
+    public var text: String
+
+    public init(depth: Int, kind: Kind, text: String) {
+        self.depth = depth
+        self.kind = kind
+        self.text = text
+    }
+}
+
 public enum GitHubMarkdown {
 
     /// Split `body` into renderable segments, top-level `<details>`
@@ -52,6 +81,190 @@ public enum GitHubMarkdown {
         htmlToMarkdown(html)
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespaces)
+    }
+
+    // MARK: - block parse
+
+    /// Markdown → display blocks for the sheet. Line-scanned: fences,
+    /// ATX and setext headings, `>` quotes (their contents re-parse,
+    /// so nested blocks survive), `-`/`+`/`*` bullets, `N.` items,
+    /// `[ ]`/`[x]` tasks and `---` rules; anything else accumulates
+    /// into a paragraph whose soft breaks stay newlines — GitHub
+    /// wraps issue and PR bodies hard, so a source line is a
+    /// rendered line.
+    public static func blocks(_ md: String) -> [MarkdownBlock] {
+        var out: [MarkdownBlock] = []
+        var para: [String] = []
+        var items: [MarkdownListItem]?
+        var quote: [String]?
+        var code: [String]?
+        var fence = ""
+        var lang: String?
+
+        func flushPara() {
+            guard !para.isEmpty else { return }
+            out.append(.paragraph(para.joined(separator: "\n")))
+            para = []
+        }
+        func flushList() {
+            guard let l = items, !l.isEmpty else { return }
+            out.append(.list(l))
+            items = nil
+        }
+        func flushQuote() {
+            guard let q = quote, !q.isEmpty else { return }
+            out.append(.quote(blocks(q.joined(separator: "\n"))))
+            quote = nil
+        }
+
+        for raw in md.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(raw)
+            if code != nil {
+                if fenceClose(line, marker: fence) {
+                    out.append(.code(code!.joined(separator: "\n"), lang))
+                    code = nil; fence = ""; lang = nil
+                } else { code!.append(line) }
+                continue
+            }
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty {
+                flushPara(); flushList(); flushQuote()
+                continue
+            }
+            if let f = fenceOpen(line) {
+                flushPara(); flushList(); flushQuote()
+                code = []; fence = f.marker; lang = f.lang
+                continue
+            }
+            if let (level, text) = heading(line) {
+                flushPara(); flushList(); flushQuote()
+                out.append(.heading(level, text))
+                continue
+            }
+            if trimmed.allSatisfy({ $0 == "=" }), !para.isEmpty {
+                // Setext h1: `===` directly under a paragraph.
+                out.append(.heading(1, para.joined(separator: " ")))
+                para = []
+                continue
+            }
+            if isRule(trimmed) {
+                // A dash-only line under paragraph text is a setext
+                // h2, not a rule.
+                if !para.isEmpty, trimmed.contains("-"),
+                   !trimmed.contains("*"), !trimmed.contains("_") {
+                    out.append(.heading(2, para.joined(separator: " ")))
+                    para = []
+                } else {
+                    flushPara(); flushList(); flushQuote()
+                    out.append(.rule)
+                }
+                continue
+            }
+            if let inner = quoteLine(line) {
+                flushPara(); flushList()
+                if quote == nil { quote = [] }
+                quote!.append(inner)
+                continue
+            }
+            if let item = listItem(line) {
+                flushPara(); flushQuote()
+                if items == nil { items = [] }
+                items!.append(item)
+                continue
+            }
+            flushList(); flushQuote()
+            para.append(line)
+        }
+        if let c = code {   // unclosed fence: keep what was typed
+            out.append(.code(c.joined(separator: "\n"), lang))
+        }
+        flushPara(); flushList(); flushQuote()
+        return out
+    }
+
+    /// ```` ```swift ````-style fence open: marker (` ```` ` ``` or `~~~`)
+    /// plus the optional info string. At most three leading spaces.
+    private static func fenceOpen(_ line: String) -> (marker: String, lang: String?)? {
+        guard line.prefix(while: { $0 == " " }).count <= 3 else { return nil }
+        let t2 = line.trimmingCharacters(in: .whitespaces)
+        if t2.hasPrefix("```") || t2.hasPrefix("~~~") {
+            let marker = String(t2.prefix(3))
+            let rest = t2.dropFirst(3).trimmingCharacters(in: .whitespaces)
+            return (marker, rest.isEmpty ? nil : String(rest))
+        }
+        return nil
+    }
+
+    /// A line that closes the open fence: same marker, nothing after.
+    private static func fenceClose(_ line: String, marker: String) -> Bool {
+        let t = line.trimmingCharacters(in: .whitespaces)
+        return t.hasPrefix(marker)
+            && t.allSatisfy { String($0) == String(marker.first!) }
+    }
+
+    /// `#`–`###### ` ATX heading → (level, text); trailing `#`s strip.
+    private static func heading(_ line: String) -> (Int, String)? {
+        let t = line.trimmingCharacters(in: .whitespaces)
+        var level = 0
+        while level < t.count, t[t.index(t.startIndex, offsetBy: level)] == "#" {
+            level += 1
+        }
+        guard level >= 1, level <= 6 else { return nil }
+        let rest = t.dropFirst(level)
+        guard rest.isEmpty || rest.hasPrefix(" ") || rest.hasPrefix("\t")
+        else { return nil }
+        var text = String(rest).trimmingCharacters(in: .whitespaces)
+        if let cut = text.range(of: " #+$", options: .regularExpression) {
+            text = String(text[..<cut.lowerBound])
+        } else if text.allSatisfy({ $0 == "#" }) { text = "" }
+        return (level, text)
+    }
+
+    /// `- - -`-style rule: at least three of one of `-`, `*`, `_`.
+    private static func isRule(_ trimmed: String) -> Bool {
+        let chars = trimmed.filter { $0 != " " }
+        guard chars.count >= 3, let first = chars.first,
+              "-*_".contains(first) else { return false }
+        return chars.allSatisfy { $0 == first }
+    }
+
+    /// A `>`-prefixed line → its contents minus the marker (and one
+    /// optional space); a bare `>` yields "".
+    private static func quoteLine(_ line: String) -> String? {
+        var s = Substring(line)
+        var lead = 0
+        while lead < 3, s.first == " " { s.removeFirst(); lead += 1 }
+        guard s.first == ">" else { return nil }
+        s.removeFirst()
+        if s.first == " " { s.removeFirst() }
+        return String(s)
+    }
+
+    /// `- `/`+ `/`* `/`1. ` list row → its item; a leading `[ ]`/`[x]`
+    /// makes it a task. Two-space steps nest.
+    private static func listItem(_ line: String) -> MarkdownListItem? {
+        var s = Substring(line)
+        var spaces = 0
+        while s.first == " " { s.removeFirst(); spaces += 1 }
+        var kind: MarkdownListItem.Kind?
+        if let m = s.range(of: #"^([-*+])\s+"#, options: .regularExpression) {
+            kind = .bullet
+            s = s[m.upperBound...]
+        } else if let m = s.range(of: #"^(\d+)[.)]\s+"#,
+                                  options: .regularExpression) {
+            let digits = s[m.lowerBound...].prefix(while: { $0.isNumber })
+            kind = .ordered(Int(digits) ?? 1)
+            s = s[m.upperBound...]
+        }
+        guard kind != nil else { return nil }
+        var text = String(s)
+        if let m = text.range(of: #"^\[( |x|X)\]\s+"#,
+                              options: .regularExpression) {
+            let done = text[text.index(after: m.lowerBound)] != " "
+            kind = .task(done)
+            text = String(text[m.upperBound...])
+        }
+        return MarkdownListItem(depth: spaces / 2, kind: kind!, text: text)
     }
 
     private static func flush(_ prose: inout String,

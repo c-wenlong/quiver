@@ -152,4 +152,83 @@ import Testing
         #expect(prose.contains("- **a/b** → 1 → 2"))
         #expect(prose.contains("Updates `a/b` from 1 to 2"))
     }
+
+    // MARK: - blocks
+
+    @Test func blocksSplitHeadingsAndParagraphs() {
+        let blocks = GitHubMarkdown.blocks(
+            "## Summary\n\ntext **bold**\n\n### Next\n\ntail")
+        #expect(blocks == [
+            .heading(2, "Summary"),
+            .paragraph("text **bold**"),
+            .heading(3, "Next"),
+            .paragraph("tail"),
+        ])
+    }
+
+    @Test func blocksKeepSoftBreaks() {
+        // GitHub wraps bodies hard — one source line is a rendered line.
+        let blocks = GitHubMarkdown.blocks("line one\nline two")
+        #expect(blocks == [.paragraph("line one\nline two")])
+    }
+
+    @Test func blocksFenceKeepsCodeAndLang() {
+        let blocks = GitHubMarkdown.blocks("```swift\nlet x = 1\n```\ndone")
+        #expect(blocks == [
+            .code("let x = 1", "swift"),
+            .paragraph("done"),
+        ])
+    }
+
+    @Test func blocksUnclosedFenceKeepsText() {
+        let blocks = GitHubMarkdown.blocks("```\nnever closed\nstill in it")
+        #expect(blocks == [.code("never closed\nstill in it", nil)])
+    }
+
+    @Test func blocksQuoteReparsesInner() {
+        let blocks = GitHubMarkdown.blocks("> first\n> - a\n> - b\nafter")
+        #expect(blocks == [
+            .quote([.paragraph("first"), .list([
+                .init(depth: 0, kind: .bullet, text: "a"),
+                .init(depth: 0, kind: .bullet, text: "b"),
+            ])]),
+            .paragraph("after"),
+        ])
+    }
+
+    @Test func blocksNestedQuoteNests() {
+        let blocks = GitHubMarkdown.blocks("> outer\n>> inner")
+        #expect(blocks == [
+            .quote([.paragraph("outer"), .quote([.paragraph("inner")])]),
+        ])
+    }
+
+    @Test func blocksTasksBulletsAndOrdered() {
+        let blocks = GitHubMarkdown.blocks(
+            "- [x] done\n- [ ] todo\n- plain\n1. one\n  - nested")
+        guard case .list(let items) = blocks.first, blocks.count == 1 else {
+            Issue.record("expected one list"); return
+        }
+        #expect(items == [
+            .init(depth: 0, kind: .task(true), text: "done"),
+            .init(depth: 0, kind: .task(false), text: "todo"),
+            .init(depth: 0, kind: .bullet, text: "plain"),
+            .init(depth: 0, kind: .ordered(1), text: "one"),
+            .init(depth: 1, kind: .bullet, text: "nested"),
+        ])
+    }
+
+    @Test func blocksRuleAndSetext() {
+        #expect(GitHubMarkdown.blocks("a\n\n---") == [.paragraph("a"), .rule])
+        // Under paragraph text a dash line is a setext h2, not a rule.
+        #expect(GitHubMarkdown.blocks("Title\n---") == [.heading(2, "Title")])
+    }
+
+    @Test func blocksBlankLineEndsList() {
+        let blocks = GitHubMarkdown.blocks("- a\n\n- b")
+        #expect(blocks == [
+            .list([.init(depth: 0, kind: .bullet, text: "a")]),
+            .list([.init(depth: 0, kind: .bullet, text: "b")]),
+        ])
+    }
 }
