@@ -140,9 +140,14 @@ public final class GitHubModel {
     /// Every row the focus page has ever fetched, per repo. Seeding
     /// shows it before the network answers; each ok reply merges in by
     /// number, so the listing accumulates past the fetch window rather
-    /// than resetting to it. Written through the snapshot like the
-    /// dashboard's boards.
+    /// than resetting to it. The dictionary is the in-session cache;
+    /// `historyStore` is what survives the quit — a repo's rows load
+    /// from SQLite on first touch.
     private var history: [String: RepoHistory] = [:]
+    /// The SQLite store history persists through; nil in tests or when
+    /// the file cannot open — the in-memory dictionary still covers
+    /// the session either way.
+    private let historyStore: GitHubHistory?
 
     public private(set) var inbox: Loadable<[GhNotification]> = .idle
     /// Unread lines in the loaded inbox — the sidebar badge and the
@@ -212,10 +217,11 @@ public final class GitHubModel {
     private var snapshotInboxLoaded = false
 
     public init(now: @escaping () -> Date = Date.init, staleAfter: TimeInterval = 60,
-                snapshotFile: URL? = nil) {
+                snapshotFile: URL? = nil, historyFile: URL? = nil) {
         self.now = now
         self.staleAfter = staleAfter
         snapshot = snapshotFile.map { SnapshotFile(url: $0) }
+        historyStore = historyFile.map { GitHubHistory(url: $0) }
         restore()
     }
 
@@ -477,11 +483,22 @@ public final class GitHubModel {
     /// an already-loaded surface is left alone, so a re-focus does not
     /// blink fresh rows back to older ones.
     private func seedFocus(repo: String) {
-        guard let h = history[repo] else { return }
+        let h = history(repo: repo)
         var board = focusBoards[repo] ?? RepoBoard()
         if !h.pulls.isEmpty, !board.isLoaded(.pulls) { board.pulls = .loaded(h.pulls) }
         if !h.issues.isEmpty, !board.isLoaded(.issues) { board.issues = .loaded(h.issues) }
         focusBoards[repo] = board
+    }
+
+    /// The repo's remembered rows: the session dictionary first, then
+    /// the SQLite store — one read per repo, cached either way.
+    private func history(repo: String) -> RepoHistory {
+        if let h = history[repo] { return h }
+        let h = RepoHistory(
+            pulls: historyStore?.pulls(repo: repo) ?? [],
+            issues: historyStore?.issues(repo: repo) ?? [])
+        history[repo] = h
+        return h
     }
 
     /// `loadTabIfStale` against the focus store: a surface never fetched
@@ -568,9 +585,13 @@ public final class GitHubModel {
     private func remember(_ tab: RepoTab, repo: String) {
         switch tab {
         case .pulls:
-            mergeHistory(repo: repo, board: \.pulls, into: \.pulls)
+            mergeHistory(repo: repo, board: \.pulls, into: \.pulls) {
+                historyStore?.remember(repo: repo, pulls: $0)
+            }
         case .issues:
-            mergeHistory(repo: repo, board: \.issues, into: \.issues)
+            mergeHistory(repo: repo, board: \.issues, into: \.issues) {
+                historyStore?.remember(repo: repo, issues: $0)
+            }
         default:
             return
         }
@@ -583,9 +604,10 @@ public final class GitHubModel {
     private func mergeHistory<Row: Identifiable>(
         repo: String,
         board boardPath: WritableKeyPath<RepoBoard, Loadable<[Row]>>,
-        into historyPath: WritableKeyPath<RepoHistory, [Row]>
+        into historyPath: WritableKeyPath<RepoHistory, [Row]>,
+        persist: ([Row]) -> Void
     ) where Row.ID == Int {
-        var h = history[repo] ?? RepoHistory()
+        var h = history(repo: repo)
         var board = focusBoards[repo] ?? RepoBoard()
         switch board[keyPath: boardPath] {
         case .loaded(let fetched):
@@ -599,13 +621,13 @@ public final class GitHubModel {
             // while what persists keeps its bound.
             board[keyPath: boardPath] = .loaded(rows)
             h[keyPath: historyPath] = Array(rows.prefix(Self.historyCap))
+            persist(h[keyPath: historyPath])
         default:
             if h[keyPath: historyPath].isEmpty { return }
             board[keyPath: boardPath] = .loaded(h[keyPath: historyPath])
         }
         history[repo] = h
         focusBoards[repo] = board
-        scheduleSave()
     }
 
     /// The scroll loader's fetch: grow the surface's window by
@@ -769,6 +791,7 @@ public final class GitHubModel {
             // An unpinned repo forgets its rows too — a re-pin starts
             // from a fetch, not from what it used to know.
             history[name] = nil
+            historyStore?.remove(repo: name)
             if selected == name { selected = pins.first?.name }
             // The focus page dies with its pin — the dashboard takes over.
             if focused == name { focused = nil }
@@ -1107,7 +1130,12 @@ public final class GitHubModel {
         snapshotInbox = snap.inbox
         snapshotInboxLoaded = snap.inboxLoaded
         inbox = snap.inboxLoaded ? .loaded(snap.inbox) : .idle
-        history = snap.history ?? [:]
+        // Rows a JSON-era snapshot remembered move into SQLite once;
+        // the field stays decodable for exactly this, and new snapshots
+        // write it as nil.
+        for (repo, h) in snap.history ?? [:] where historyStore != nil {
+            historyStore?.import(repo: repo, pulls: h.pulls, issues: h.issues)
+        }
         // A snapshot exists only because replies were received before.
         probed = true
     }
@@ -1130,7 +1158,7 @@ public final class GitHubModel {
         snapshot?.saveNow(GitHubSnapshot(
             savedAt: now(), pins: pins, selected: selected,
             boards: boards, inbox: snapshotInbox,
-            inboxLoaded: snapshotInboxLoaded, history: history))
+            inboxLoaded: snapshotInboxLoaded))
     }
 }
 

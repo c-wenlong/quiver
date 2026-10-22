@@ -898,23 +898,62 @@ import Testing
         #expect(prs.count == 50)
     }
 
-    /// Remembered rows ride the snapshot: a relaunched model whose
+    /// Remembered rows ride the SQLite store: a relaunched model whose
     /// fetch never lands still opens the page on what it knew.
     @Test func focusHistorySurvivesARelaunch() async {
-        let file = tempSnapshot()
-        defer { try? FileManager.default.removeItem(at: file) }
+        let db = tempDB()
+        defer { try? FileManager.default.removeItem(at: db) }
         let calls = focusRouter(repo: "o/a", pulls: prRows(50))
-        let first = GitHubModel(snapshotFile: file)
+        let first = GitHubModel(historyFile: db)
         await first.loadFocusTab(.pulls, repo: "o/a", swe: SweClient(runner: calls))
-        first.saveNow()
 
         let dead = SweClient(runner: router([:]))
-        let second = GitHubModel(snapshotFile: file)
+        let second = GitHubModel(historyFile: db)
         await second.loadFocus(repo: "o/a", swe: dead)
         guard case .loaded(let prs) = second.focusBoard(for: "o/a").pulls else {
             Issue.record("relaunch should show remembered pulls"); return
         }
         #expect(prs.count == 50)
+    }
+
+    /// History a JSON-era snapshot still carries is imported into
+    /// SQLite at restore — the upgrade keeps what the page knew.
+    @Test func jsonEraHistoryMigratesIntoTheStore() async {
+        let file = tempSnapshot()
+        let db = tempDB()
+        defer {
+            try? FileManager.default.removeItem(at: file)
+            try? FileManager.default.removeItem(at: db)
+        }
+        // Hand-write a v2 snapshot carrying the legacy history field —
+        // snapshot payloads are camelCase with epoch times, not the
+        // snake_case gh wire shape.
+        let snapshotPulls = "[" + (7...9).map { n in
+            "{\"number\":\(n),\"title\":\"Fix \(n)\",\"state\":\"open\",\"draft\":false,"
+            + "\"author\":\"me\",\"branch\":\"f\",\"base\":\"main\",\"labels\":[],"
+            + "\"mergeable\":\"mergeable\",\"reviewDecision\":\"approved\",\"checks\":\"passing\","
+            + "\"updatedAt\":1761000000,\"url\":\"https://github.com/o/a/pull/\(n)\"}"
+        }.joined(separator: ",") + "]"
+        try? Data("""
+            {"version":2,"savedAt":0,"pins":[],"selected":null,"boards":{},
+            "inbox":[],"inboxLoaded":false,
+            "history":{"o/a":{"pulls":\(snapshotPulls),"issues":[]}}}
+            """.utf8).write(to: file)
+
+        let dead = SweClient(runner: router([:]))
+        let model = GitHubModel(snapshotFile: file, historyFile: db)
+        // The restore should have imported the legacy rows already.
+        #expect(GitHubHistory(url: db).pulls(repo: "o/a").count == 3)
+        await model.loadFocus(repo: "o/a", swe: dead)
+        guard case .loaded(let prs) = model.focusBoard(for: "o/a").pulls else {
+            Issue.record("migrated history should seed the board"); return
+        }
+        #expect(prs.map(\.number) == [9, 8, 7])
+    }
+
+    private func tempDB() -> URL {
+        FileManager.default.temporaryDirectory
+            .appending(path: "gh-history-\(UUID().uuidString).db")
     }
 
     /// A surface the board reports failed refetches on its tab's next
