@@ -571,5 +571,138 @@ class TestTailManager(unittest.TestCase):
         self.assertIsNotNone(mgr.last_append_at("claude:y"))
 
 
+class TestApprovalWatcher(unittest.TestCase):
+    """TailManager._poll_approvals: pane prompt → requested/resolved."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.events = []
+        self.mgr = tail.TailManager(
+            lambda k, ev: self.events.append((k, ev)), "mbp",
+            home=self.tmp)
+        # Only the key matters to the watcher; no transcript needed.
+        self.mgr.tailers["k1"] = object()
+        self._t = time.time()
+
+    def _poll(self, pane="", meta=None):
+        # Each call lands past the PANE_APPROVAL_S throttle window.
+        self._t += 10
+        with patch.object(
+            tail.supervise, "meta_for", return_value=meta
+        ), patch.object(
+            tail.supervise, "capture_pane", return_value=pane
+        ):
+            self.mgr._poll_approvals(self._t)
+
+    def _approval_events(self):
+        return [ev for _k, ev in self.events
+                if ev["type"].startswith("approval.")]
+
+    def test_prompt_appears_emits_requested(self):
+        from quiver.remote import supervise
+        pane = "Do you want to proceed?\n1. Yes\n2. No\nesc to cancel"
+        self._poll(pane, meta={"mode": "tmux", "tmux": "qv-k1"})
+        evs = self._approval_events()
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(evs[0]["type"], "approval.requested")
+        rid = evs[0]["data"]["request_id"]
+        self.assertTrue(rid.startswith("req-"))
+        self.assertEqual(supervise.pending_approval("k1"), rid)
+        self.assertIn("Do you want", evs[0]["data"]["prompt"])
+
+    def test_prompt_same_pane_no_duplicate(self):
+        pane = "Do you want to proceed?\n1. Yes\n2. No"
+        self._poll(pane, meta={"mode": "tmux"})
+        self._poll(pane, meta={"mode": "tmux"})
+        self.assertEqual(len(self._approval_events()), 1)
+
+    def test_prompt_disappears_emits_resolved(self):
+        from quiver.remote import supervise
+        pane = "Do you want to proceed?\n1. Yes\n2. No"
+        self._poll(pane, meta={"mode": "tmux"})
+        rid = self._approval_events()[0]["data"]["request_id"]
+        self._poll("❯ idle", meta={"mode": "tmux"})
+        evs = self._approval_events()
+        self.assertEqual(evs[-1]["type"], "approval.resolved")
+        self.assertEqual(evs[-1]["data"]["request_id"], rid)
+        self.assertEqual(evs[-1]["data"]["source"], "dismissed")
+        self.assertIsNone(supervise.pending_approval("k1"))
+
+    def test_detach_resolves_outstanding(self):
+        from quiver.remote import supervise
+        pane = "Do you want to proceed?\n1. Yes\n2. No"
+        self._poll(pane, meta={"mode": "tmux"})
+        rid = self._approval_events()[0]["data"]["request_id"]
+        self._poll(meta=None)  # detached — registry row gone
+        evs = self._approval_events()
+        self.assertEqual(evs[-1]["type"], "approval.resolved")
+        self.assertEqual(evs[-1]["data"]["source"], "detached")
+        self.assertIsNone(supervise.pending_approval("k1"))
+
+    def test_headless_meta_skips_pane_check(self):
+        # mode != tmux → never captures a pane, never emits.
+        with patch.object(tail.supervise, "meta_for",
+                          return_value={"mode": "headless"}), \
+             patch.object(tail.supervise, "capture_pane") as cap:
+            self.mgr._poll_approvals(time.time() + 10)
+        cap.assert_not_called()
+        self.assertEqual(self._approval_events(), [])
+
+    def test_none_home_uses_default_registry(self):
+        # HubState() on the documented CLI path passes home=None — the
+        # watcher must still consult the default remote dir, not skip.
+        mgr = tail.TailManager(lambda k, ev: None, "mbp", home=None)
+        mgr.tailers["k1"] = object()
+        with patch.object(tail.supervise, "meta_for") as mf:
+            mgr._poll_approvals(time.time() + 10)
+        mf.assert_called_once_with(None, "k1")
+
+    def test_prompt_swap_rotates_request_id(self):
+        # A menu answered locally then replaced by another one must not
+        # keep the old request_id — a delayed reply for prompt A must
+        # never answer prompt B.
+        from quiver.remote import supervise
+        meta = {"mode": "tmux"}
+        self._poll("Do you want to run ls?\n1. Yes\n2. No", meta=meta)
+        evs = self._approval_events()
+        rid_a = evs[0]["data"]["request_id"]
+        self._poll("Do you want to run rm -rf?\n1. Yes\n2. No", meta=meta)
+        evs = self._approval_events()
+        self.assertEqual(evs[-2]["type"], "approval.resolved")
+        self.assertEqual(evs[-2]["data"]["request_id"], rid_a)
+        self.assertEqual(evs[-2]["data"]["source"], "superseded")
+        self.assertEqual(evs[-1]["type"], "approval.requested")
+        rid_b = evs[-1]["data"]["request_id"]
+        self.assertNotEqual(rid_a, rid_b)
+        self.assertEqual(supervise.pending_approval("k1"), rid_b)
+
+    def test_poll_throttled(self):
+        meta = {"mode": "tmux"}
+        self._poll("", meta=meta)
+        with patch.object(tail.supervise, "meta_for") as mf:
+            # A second call inside the 3s window doesn't even look.
+            self.mgr._poll_approvals(self._t + 1)
+        mf.assert_not_called()
+
+    def test_prompt_line_fallback(self):
+        pane = "x\ny"  # no keyword line → generic prompt text
+        self._poll("esc to cancel\n" + pane, meta={"mode": "tmux"})
+        ev = self._approval_events()[0]
+        self.assertEqual(ev["data"]["prompt"], "Approval requested")
+
+
+class TestApprovalPromptLine(unittest.TestCase):
+    def test_skips_blank_and_unmatched_lines(self):
+        pane = "\n   \nsome random output\nDo you want to allow this?\n❯ yes"
+        self.assertEqual(
+            tail._approval_prompt_line(pane), "Do you want to allow this?")
+
+    def test_fallback_when_no_marker(self):
+        self.assertEqual(
+            tail._approval_prompt_line("plain\noutput\n"),
+            "Approval requested")
+        self.assertEqual(tail._approval_prompt_line(""), "Approval requested")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -644,8 +644,12 @@ to use their own login state and environment."""
                                             and paired devices.
   {c('cyan', 'swe remote devices [--revoke=<id>]')}     List or revoke paired devices.
   {c('cyan', 'swe remote attach <session>')}            Take an observed session
-                                            under supervision: relaunched in
-                                            tmux with its harness resume flags.
+                                            under supervision. Default
+                                            {c('cyan', '--mode=auto')} picks the
+                                            harness's API channel (opencode
+                                            serve, codex app-server) when the
+                                            binary exists, else relaunches in
+                                            tmux with resume flags.
                                             {c('cyan', '--mode=headless')} sends
                                             each prompt via claude -p instead.
   {c('cyan', 'swe remote agent --hub=URL [--token=T]')}   Satellite: pushes this
@@ -658,6 +662,12 @@ to use their own login state and environment."""
   The phone only ever talks to the hub, over Tailscale. Sessions list as
   {c('bold', 'observed')} (a human terminal owns them: read-only) until they run
   under quiver's supervisor, which marks them {c('bold', 'attached')} and writable.
+
+  {c('cyan', 'swe remote notify --ntfy=<url> --topic=<t>')}  Push notifications via a
+                                            self-hosted ntfy: needs-you, finished,
+                                            error. Approval prompts get lock-screen
+                                            Allow/Deny buttons posting back over
+                                            the tailnet. {c('cyan', '--off')} disables.
 
   State lives under {c('dim', '~/.quiver/data/remote/')}: device credentials in
   devices.json (0600), per-session event journals and transcript cursors."""

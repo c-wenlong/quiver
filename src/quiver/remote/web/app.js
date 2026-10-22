@@ -92,7 +92,8 @@ async function doPair(token, name) {
 
 const STATUS_LABEL = {
   active: "active", done: "done", followup: "needs you",
-  error: "error", interrupted: "interrupted", "": "idle",
+  error: "error", interrupted: "interrupted",
+  approval: "approval needed", "": "idle",
 };
 
 function renderSessions() {
@@ -234,9 +235,164 @@ function appendEvent(ev, live = true) {
       updateOwnership(row);
     }
   } else if (ev.type === "approval.requested") {
-    appendMessage({ kind: "approval", text: (ev.data || {}).prompt || "approval requested" }, ev.seq);
+    appendMessage({
+      kind: "approval",
+      text: (ev.data || {}).prompt || "approval requested",
+      request_id: (ev.data || {}).request_id || "",
+    }, ev.seq);
+  } else if (ev.type === "command.result") {
+    // Satellite sends answer async — surface failures and degrades,
+    // and settle any queued approval card this result answers.
+    const d = ev.data || {};
+    if (d.op === "approval" && d.request_id) {
+      el("chat-log").querySelectorAll(".msg.approval").forEach((card) => {
+        if (card.dataset.req !== d.request_id || !card.dataset.queued) return;
+        delete card.dataset.queued;
+        const note = card.querySelector(".approval-note");
+        if (d.ok) {
+          card.classList.add("resolved");
+          if (note) note.remove();
+        } else {
+          card.querySelectorAll(".approval-actions button").forEach((b) => { b.disabled = false; });
+          if (note) {
+            note.classList.remove("queued");
+            note.textContent = `approval failed: ${d.note || "satellite rejected it"}`;
+          }
+        }
+      });
+    }
+    if (d.ok === false || d.degraded || d.note === "approval_not_supported") {
+      appendMessage({
+        kind: "system",
+        text: d.ok === false
+          ? `${d.op || "command"} failed: ${d.note || "unknown error"}`
+          : (d.note || "queued"),
+      }, ev.seq);
+    }
+  } else if (ev.type === "approval.resolved") {
+    const rid = (ev.data || {}).request_id || "";
+    el("chat-log").querySelectorAll(".msg.approval").forEach((card) => {
+      if (!rid || card.dataset.req === rid) {
+        card.querySelectorAll(".approval-actions button").forEach((b) => { b.disabled = true; });
+        card.classList.add("resolved");
+      }
+    });
   }
   if (live) scrollBottom();
+}
+
+/* ── diff pane ──────────────────────────────────────────────
+   Edit/Write tool calls carry parseable file args in args_full —
+   render them as a unified diff instead of raw JSON. */
+
+const DIFF_TOOLS = new Set([
+  "edit", "multiedit", "write", "notebookedit",
+  "apply_patch", "patch", "file_edit",
+]);
+
+function diffLines(oldText, newText) {
+  /* Common-affix diff: identical leading/trailing lines collapse to
+     context; the differing middle renders removed then added. */
+  const a = (oldText || "").split("\n");
+  const b = (newText || "").split("\n");
+  let pre = 0;
+  while (pre < a.length && pre < b.length && a[pre] === b[pre]) pre++;
+  let suf = 0;
+  while (suf < a.length - pre && suf < b.length - pre &&
+         a[a.length - 1 - suf] === b[b.length - 1 - suf]) suf++;
+  return {
+    ctxTop: a.slice(0, pre),
+    del: a.slice(pre, a.length - suf),
+    add: b.slice(pre, b.length - suf),
+    ctxBot: a.slice(a.length - suf),
+  };
+}
+
+function renderDiff(filePath, oldText, newText) {
+  const d = diffLines(oldText, newText);
+  const frag = document.createElement("div");
+  frag.className = "diff";
+  if (filePath) {
+    const f = document.createElement("div");
+    f.className = "diff-file";
+    f.textContent = filePath;
+    frag.appendChild(f);
+  }
+  const emit = (lines, cls, sign) => {
+    for (const ln of lines) {
+      const row = document.createElement("div");
+      row.className = `diff-line ${cls}`;
+      row.textContent = `${sign} ${ln}`;
+      frag.appendChild(row);
+    }
+  };
+  const top = d.ctxTop.slice(-3);
+  if (d.ctxTop.length > 3) emit([`+ ${d.ctxTop.length - 3} unchanged`], "diff-meta", "");
+  emit(top, "diff-ctx", " ");
+  emit(d.del, "diff-del", "-");
+  emit(d.add, "diff-add", "+");
+  if (d.ctxBot.length) {
+    emit(d.ctxBot.slice(0, 2), "diff-ctx", " ");
+    if (d.ctxBot.length > 2) emit([`+ ${d.ctxBot.length - 2} more`], "diff-meta", "");
+  }
+  return frag;
+}
+
+function renderPatch(filePath, patch) {
+  /* Raw patch text (codex apply_patch): color by line sigil. */
+  const frag = document.createElement("div");
+  frag.className = "diff";
+  if (filePath) {
+    const f = document.createElement("div");
+    f.className = "diff-file";
+    f.textContent = filePath;
+    frag.appendChild(f);
+  }
+  for (const ln of String(patch || "").split("\n").slice(0, 400)) {
+    const row = document.createElement("div");
+    row.className =
+      "diff-line " +
+      (ln.startsWith("+") ? "diff-add"
+        : ln.startsWith("-") ? "diff-del"
+        : ln.startsWith("@@") ? "diff-meta"
+        : "diff-ctx");
+    row.textContent = ln;
+    frag.appendChild(row);
+  }
+  return frag;
+}
+
+function toolDiff(tool) {
+  /* A diff DOM node for edit-ish tools, or null for anything else. */
+  const name = String(tool.name || "").toLowerCase();
+  if (!DIFF_TOOLS.has(name) || !tool.args_full) return null;
+  let args;
+  try { args = JSON.parse(tool.args_full); } catch { return null; }
+  if (!args || typeof args !== "object") return null;
+  const file = args.file_path || args.path || args.filename || "";
+  if (name === "write" || name === "notebookedit" || name === "file_edit") {
+    const content = args.content || args.new_source || "";
+    if (!content) return null;
+    return renderDiff(file, "", content);
+  }
+  if (name === "apply_patch" || name === "patch") {
+    const patch = args.patch || args.diff || tool.args_full;
+    return renderPatch(file, patch);
+  }
+  if (name === "multiedit" && Array.isArray(args.edits)) {
+    const frag = document.createElement("div");
+    for (const e of args.edits.slice(0, 8)) {
+      if (e && (e.old_string != null || e.new_string != null)) {
+        frag.appendChild(renderDiff(file, e.old_string, e.new_string));
+      }
+    }
+    return frag.childNodes.length ? frag : null;
+  }
+  // edit + friends: {old_string, new_string}
+  if (args.old_string != null || args.new_string != null) {
+    return renderDiff(file, args.old_string || "", args.new_string || "");
+  }
+  return null;
 }
 
 function appendMessage(msg, seq) {
@@ -256,10 +412,15 @@ function appendMessage(msg, seq) {
     const d = document.createElement("details");
     d.className = "tool";
     d.innerHTML = `<summary>${esc(msg.tool.name)} · ${esc(msg.tool.args_summary || "")}</summary><div class="tool-body"></div>`;
-    if (msg.tool.args_full) {
+    const body = d.querySelector(".tool-body");
+    const diff = toolDiff(msg.tool);
+    if (diff) {
+      d.classList.add("has-diff");
+      body.appendChild(diff);
+    } else if (msg.tool.args_full) {
       const pre = document.createElement("pre");
       pre.textContent = msg.tool.args_full.slice(0, 8000);
-      d.querySelector(".tool-body").appendChild(pre);
+      body.appendChild(pre);
     }
     if (msg.tool.call_id) toolCards.set(msg.tool.call_id, d);
     log.appendChild(d);
@@ -275,7 +436,49 @@ function appendMessage(msg, seq) {
   } else if (kind === "thinking") {
     div.innerHTML = `<details><summary class="dim">${role}</summary><div class="text">${md(msg.text)}</div></details>`;
   } else if (kind === "approval") {
-    div.innerHTML = `<div class="role">approval</div><div class="card">${md(msg.text)}</div>`;
+    div.dataset.req = msg.request_id || "";
+    div.innerHTML = `<div class="role">approval</div><div class="card">${md(msg.text)}</div>` +
+      (msg.request_id
+        ? `<div class="approval-actions">
+             <button data-dec="allow">Allow</button>
+             <button data-dec="always">Always</button>
+             <button data-dec="deny" class="deny">Deny</button>
+           </div>`
+        : "");
+    div.querySelectorAll(".approval-actions button").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        div.querySelectorAll(".approval-actions button").forEach((b) => { b.disabled = true; });
+        const note = div.querySelector(".approval-note") || document.createElement("div");
+        note.className = "approval-note";
+        let status = 0;
+        try {
+          ({ status } = await api(
+            `/v1/sessions/${encodeURIComponent(state.currentKey)}/approval`,
+            { method: "POST", body: JSON.stringify({ decision: btn.dataset.dec, request_id: msg.request_id }) },
+          ));
+        } catch {
+          status = 0; // network failure — the hub never saw it
+        }
+        // An approval.resolved that raced us wins — don't reopen.
+        if (div.classList.contains("resolved")) return;
+        if (status === 202) {
+          // The hub queued it for a satellite; the card stays pending
+          // until a command.result / approval.resolved event closes it.
+          div.dataset.queued = "1";
+          note.classList.add("queued");
+          note.textContent = "queued — waiting for the satellite";
+          div.appendChild(note);
+        } else if (status >= 400 || status === 0) {
+          div.querySelectorAll(".approval-actions button").forEach((b) => { b.disabled = false; });
+          note.textContent = status === 0
+            ? "request failed — connection lost"
+            : "approval failed — the prompt may have closed";
+          div.appendChild(note);
+        } else {
+          div.classList.add("resolved");
+        }
+      });
+    });
   } else {
     div.innerHTML = `<div class="role">${role || kind}</div><div class="text">${md(msg.text)}</div>`;
   }
@@ -396,7 +599,14 @@ el("composer").addEventListener("submit", async (e) => {
     `/v1/sessions/${encodeURIComponent(state.currentKey)}/message`,
     { method: "POST", body: JSON.stringify({ text, mode }) }
   );
-  if (status !== 200 && data && data.error) {
+  if (status === 200 && data && data.degraded) {
+    // steer fell back to queue on this channel — say so, don't pretend.
+    appendMessage({
+      kind: "system",
+      text: data.note || "sent (queued: mid-turn input isn't supported here)",
+    }, 0);
+    scrollBottom();
+  } else if (status !== 200 && data && data.error) {
     appendMessage({ kind: "error", text: data.error.message || "send failed" }, 0);
     scrollBottom();
   }

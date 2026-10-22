@@ -253,8 +253,10 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   Tailscale IP only, so no LAN/WAN port ever opens. Tailscale's OAuth
   login is how a device joins the tailnet; this feature does not
   re-implement it.
-- Pairing: `swe remote pair` prints a QR (`quiver://pair?host&token`,
-  one-time, short-lived) → phone exchanges it for a stored device
+- Pairing: `swe remote pair` prints a QR (`http://hub/#pair=token` for
+  the PWA; `--app` swaps the QR payload for `quiver://pair?host&token`
+  so the Camera app opens the iOS wrapper directly) — one-time,
+  short-lived → phone exchanges it for a stored device
   credential in `devices.json` (0600), revocable per device — Trusted
   Devices minus biometrics. The token guards the pairing window, not
   the transport: only a tailnet device can even reach `/v1/pair`.
