@@ -148,6 +148,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A board load no longer crashes the app on the GitHub pages.** The
+  Pages surface's persist closure — a literal formed on the main actor
+  and handed to `quiver.gh-history` — inherited `@MainActor` isolation,
+  and the runtime's queue assert trapped the moment the write queue
+  called it. Repos with a Pages site hit it on their first board
+  refresh. The persist parameters are `@Sendable` now, which keeps the
+  closures nonisolated so the write queue can run them.
+
 - **Resumed Codex threads are one session again.** Every `codex resume`
   writes another `rollout-<iso>-<thread>_<rollout>.jsonl`, and the parser
   keyed each file on the trailing uuid — the resume's own rollout id, which
