@@ -62,17 +62,30 @@ private struct PanelFanPopover: View {
         Binding(get: { fans.level }, set: { fans.setThresholdLevel($0) })
     }
 
+    /// What the dropdown last picked, so an enable still installing
+    /// when Off is picked cannot switch the rule back on.
+    @State private var wantedPick: Double = 0
+
     /// The dropdown doubles as the rule's switch: picking a degree
-    /// enables it, which may install the helper (the one password
-    /// prompt); Off is immediate.
+    /// while off enables it, which may install the helper (the one
+    /// password prompt); picking one while on just moves the line.
+    /// Off is immediate.
     private var thresholdPick: Binding<Double> {
         Binding(get: { fans.thresholdEnabled ? fans.threshold : 0 },
                 set: { pick in
+                    wantedPick = pick
                     if pick == 0 {
                         fans.thresholdEnabled = false
                     } else {
                         fans.threshold = pick
-                        Task { await fans.enableThreshold() }
+                        if !fans.thresholdEnabled {
+                            Task {
+                                await fans.enableThreshold()
+                                // An Off picked while the install waited
+                                // must win over this call's enable.
+                                if wantedPick == 0 { fans.thresholdEnabled = false }
+                            }
+                        }
                     }
                 })
     }
@@ -219,10 +232,13 @@ private struct PanelFanPopover: View {
                     HStack(spacing: 3) {
                         Image(systemName: component.panelIcon)
                             .foregroundStyle(component.colour)
+                            .accessibilityHidden(true)
                         Text(TemperatureChart.formatted(value))
                             .monospacedDigit()
                             .foregroundStyle(Theme.textSecondary)
                     }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(component.title) \(TemperatureChart.formatted(value))")
                     .help(component.title)
                 }
                 Spacer()
