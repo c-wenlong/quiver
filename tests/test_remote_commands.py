@@ -311,5 +311,109 @@ class TestAttachFail(unittest.TestCase):
         self.assertIn("busy", err)
 
 
+class TestPairApp(unittest.TestCase):
+    def test_pair_app_encodes_deep_link(self):
+        ran = []
+        with patch("quiver.remote.pairing.mint_pair_token",
+                   return_value="tok9"), \
+             patch("quiver.remote.commands._tailscale_ip",
+                   return_value="100.1.2.3"), \
+             patch.object(commands.shutil, "which",
+                          return_value="/x/qrencode"), \
+             patch.object(commands.subprocess, "run",
+                          lambda cmd, **k: ran.append(cmd)):
+            rc, out, _ = _run(["pair", "--app"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(ran), 1)
+        self.assertIn("quiver://pair", ran[0][-1])
+
+    def test_pair_default_qr_uses_http_url(self):
+        ran = []
+        with patch("quiver.remote.pairing.mint_pair_token",
+                   return_value="tok9"), \
+             patch("quiver.remote.commands._tailscale_ip",
+                   return_value="100.1.2.3"), \
+             patch.object(commands.shutil, "which",
+                          return_value="/x/qrencode"), \
+             patch.object(commands.subprocess, "run",
+                          lambda cmd, **k: ran.append(cmd)):
+            rc, out, _ = _run(["pair"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(ran[0][-1].startswith("http"))
+
+
+class TestNotifyCmd(unittest.TestCase):
+    def test_notify_on_flag(self):
+        with patch.object(commands.notify, "configure",
+                          return_value={"enabled": True,
+                                        "url": "https://ntfy.sh",
+                                        "topic": "t"}) as conf:
+            rc, out, _ = _run(["notify", "--on"])
+        self.assertEqual(rc, 0)
+        conf.assert_called_once_with(None, enabled=True)
+
+    def test_notify_off_flag(self):
+        with patch.object(commands.notify, "configure",
+                          return_value={"enabled": False}) as conf:
+            rc, out, _ = _run(["notify", "--off"])
+        self.assertEqual(rc, 0)
+        conf.assert_called_once_with(None, enabled=False)
+
+    def test_notify_unexpected_args(self):
+        rc, _, err = _run(["notify", "extra"])
+        self.assertEqual(rc, 1)
+        self.assertIn("unexpected args", err)
+
+    def test_notify_bare_no_config(self):
+        with patch.object(commands.notify, "load_config",
+                          return_value={}):
+            rc, out, _ = _run(["notify"])
+        self.assertEqual(rc, 0)
+        self.assertIn("not configured", out)
+
+    def test_notify_json_redacts_tokens(self):
+        cfg = {"enabled": True, "url": "https://ntfy.sh", "topic": "t",
+               "ntfy_token": "sekrit", "action_credential": "cred"}
+        with patch.object(commands.notify, "load_config",
+                          return_value=cfg):
+            rc, out, _ = _run(["notify", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)["data"]["notify"]
+        self.assertEqual(data["ntfy_token"], "***")
+        self.assertEqual(data["action_credential"], "***")
+
+
+class TestTailscaleIp(unittest.TestCase):
+    def test_no_binary(self):
+        with patch.object(commands.catalog_mod.shutil, "which",
+                          return_value=None):
+            self.assertEqual(commands.catalog_mod.tailscale_ip(), "")
+
+    def test_first_ipv4_line(self):
+        import subprocess as sp
+        proc = sp.CompletedProcess([], 0, "100.64.2.3\n100.64.2.4\n", "")
+        with patch.object(commands.catalog_mod.shutil, "which",
+                          return_value="/usr/bin/tailscale"), \
+             patch("subprocess.run", return_value=proc):
+            self.assertEqual(
+                commands.catalog_mod.tailscale_ip(), "100.64.2.3")
+
+    def test_tailscale_fails(self):
+        import subprocess as sp
+        proc = sp.CompletedProcess([], 1, "", "err")
+        with patch.object(commands.catalog_mod.shutil, "which",
+                          return_value="/usr/bin/tailscale"), \
+             patch("subprocess.run", return_value=proc):
+            self.assertEqual(commands.catalog_mod.tailscale_ip(), "")
+
+    def test_tailscale_oserror(self):
+        import subprocess as sp
+        with patch.object(commands.catalog_mod.shutil, "which",
+                          return_value="/usr/bin/tailscale"), \
+             patch("subprocess.run",
+                   side_effect=sp.TimeoutExpired("tailscale", 5)):
+            self.assertEqual(commands.catalog_mod.tailscale_ip(), "")
+
+
 if __name__ == "__main__":
     unittest.main()

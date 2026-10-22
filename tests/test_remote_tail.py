@@ -691,5 +691,18 @@ class TestApprovalWatcher(unittest.TestCase):
         self.assertEqual(ev["data"]["prompt"], "Approval requested")
 
 
+class TestApprovalPromptLine(unittest.TestCase):
+    def test_skips_blank_and_unmatched_lines(self):
+        pane = "\n   \nsome random output\nDo you want to allow this?\n❯ yes"
+        self.assertEqual(
+            tail._approval_prompt_line(pane), "Do you want to allow this?")
+
+    def test_fallback_when_no_marker(self):
+        self.assertEqual(
+            tail._approval_prompt_line("plain\noutput\n"),
+            "Approval requested")
+        self.assertEqual(tail._approval_prompt_line(""), "Approval requested")
+
+
 if __name__ == "__main__":
     unittest.main()

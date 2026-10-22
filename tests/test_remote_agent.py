@@ -274,6 +274,19 @@ class TestAgentState(unittest.TestCase):
         self.assertEqual(ev["data"]["command_id"], "c9")
         self.assertTrue(ev["data"]["ok"])
 
+    def test_dispatch_echoes_request_id(self):
+        a = self._agent()
+        a._execute = MagicMock(return_value=(True, "answered", False))
+        a._dispatch({
+            "type": "command", "session": "claude:a",
+            "data": {"op": "approval", "command_id": "c2",
+                     "request_id": "req-77"},
+        })
+        ev = a.outbox[0]
+        self.assertEqual(ev["type"], "command.result")
+        self.assertEqual(ev["data"]["request_id"], "req-77")
+        self.assertFalse(ev["data"]["degraded"])
+
     def test_execute_message_uses_injector(self):
         a = self._agent()
         sess = _session()

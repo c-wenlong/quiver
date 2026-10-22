@@ -822,10 +822,13 @@ class CodexAppServerInjector:
 
     def _call(
         self, server: _AppServer, method: str, params: dict | None,
-        timeout: float = _APPSERVER_CALL_S,
+        timeout: float | None = None,
     ):
         """One request/response; returns the reply dict or None."""
         import queue as queue_mod
+
+        if timeout is None:
+            timeout = _APPSERVER_CALL_S
 
         q: queue_mod.Queue = queue_mod.Queue()
         with server.wlock:

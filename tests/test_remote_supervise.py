@@ -645,5 +645,51 @@ class TestAttachMtime(unittest.TestCase):
         self.assertEqual(meta["mode"], "tmux")
 
 
+class TestAttachModeGates(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.session = Session(
+            timestamp=0, agent="Claude Code", path="/tmp/p",
+            session_id="abc", tool_name="claude")
+
+    def test_appserver_rejects_non_codex(self):
+        ok, note = supervise.attach(
+            self.home, "claude:abc", self.session,
+            last_append_at=None, status="done", mode="appserver")
+        self.assertFalse(ok)
+        self.assertIn("codex", note)
+
+    def test_unknown_mode(self):
+        ok, note = supervise.attach(
+            self.home, "claude:abc", self.session,
+            last_append_at=None, status="done", mode="bogus")
+        self.assertFalse(ok)
+        self.assertIn("unknown attach mode", note)
+
+    def test_serve_needs_opencode_binary(self):
+        session = Session(
+            timestamp=0, agent="opencode", path="/tmp/p",
+            session_id="o1", tool_name="opencode")
+        with patch("shutil.which", return_value=None):
+            ok, note = supervise.attach(
+                self.home, "opencode:o1", session,
+                last_append_at=None, status="done", mode="serve")
+        self.assertFalse(ok)
+        self.assertIn("not installed", note)
+
+    def test_fingerprint_hashes_non_marker_lines(self):
+        # The `or _APPROVAL_ITEM` clause fires on non-marker lines;
+        # non-qualifying chatter must not rotate the fingerprint.
+        p1 = "chatter\n\nDo you want to proceed?\n❯ 1. Yes\n❯ 2. No"
+        p2 = "different chatter\n\n\nDo you want to proceed?\n❯ 1. Yes\n❯ 2. No"
+        self.assertEqual(
+            supervise.approval_fingerprint(p1),
+            supervise.approval_fingerprint(p2))
+        p3 = "chatter\nDo you want to proceed?\n❯ 1. Yes\n❯ 2. Never"
+        self.assertNotEqual(
+            supervise.approval_fingerprint(p1),
+            supervise.approval_fingerprint(p3))
+
+
 if __name__ == "__main__":
     unittest.main()
