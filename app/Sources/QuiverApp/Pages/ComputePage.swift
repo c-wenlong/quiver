@@ -268,15 +268,18 @@ private struct CleanupLimitsView: View {
 // MARK: - Harness cards
 
 /// One running starred harness: name, totals, and a disclosure with a row
-/// per process. The rows carry their own Quit menu; quitting the harness's
-/// root asks first, since that closes the app or CLI itself.
+/// per process. The rows carry their own Quit menu; the footer's Quit all
+/// quits the whole set at once. Quitting the harness's root asks first,
+/// since that closes the app or CLI itself.
 private struct HarnessCard: View {
     static let visibleRows = 5
 
+    @Environment(AppModel.self) private var app
     var usage: HarnessUsage
     var rows: [ComputeModel.ProcessRow]
     @State private var expanded = true
     @State private var showsAll = false
+    @State private var confirmingQuitAll = false
 
     /// Rows are already sorted by memory, largest first: the first five,
     /// or all of them once Show more opens.
@@ -317,11 +320,33 @@ private struct HarnessCard: View {
                                 withAnimation(.easeOut(duration: Theme.fadeDuration)) { showsAll.toggle() }
                             }
                         }
+                        if !rows.isEmpty {
+                            Divider().overlay(Theme.border)
+                            HStack {
+                                Spacer(minLength: 8)
+                                Button("Quit all") { confirmingQuitAll = true }
+                                    .secondaryButton()
+                                    .help("Quit every process \(UsageFormat.harness(usage.harness)) runs")
+                            }
+                            .padding(.top, 10)
+                        }
                     }
                     .padding(.top, 10)
                 }
             }
         }
+        .alert("Quit all \(UsageFormat.harness(usage.harness)) processes?",
+               isPresented: $confirmingQuitAll) {
+            Button("Quit all", role: .destructive) { quitAll() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Its \(rows.count) \(rows.count == 1 ? "process gets" : "processes get") a quit signal."
+                 + (rows.contains(where: \.isMain) ? " Its open windows close." : ""))
+        }
+    }
+
+    private func quitAll() {
+        Task { await app.compute.quitHarness(usage.harness) }
     }
 
     private var header: some View {
