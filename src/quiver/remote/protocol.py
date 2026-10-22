@@ -18,9 +18,14 @@ what ``?last=seq`` replays from.
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 
 PROTOCOL_VERSION = 1
+
+# ``client_id`` on a message POST lets the caller match the async
+# ``command.result`` to an optimistic bubble it already drew.
+_CLIENT_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 EVENT_TYPES = frozenset(
     {
@@ -186,7 +191,21 @@ def parse_message_command(body: dict) -> dict:
         isinstance(a, str) for a in attachments
     ):
         raise ValueError("message.attachments must be a list of staged refs")
-    return {"text": text, "mode": mode, "attachments": attachments}
+    client_id = body.get("client_id")
+    if client_id is None:
+        client_id = ""
+    elif (
+        not isinstance(client_id, str)
+        or not 1 <= len(client_id) <= 64
+        or not _CLIENT_ID_RE.fullmatch(client_id)
+    ):
+        raise ValueError(
+            "message.client_id must be 1-64 chars of [A-Za-z0-9_-]"
+        )
+    return {
+        "text": text, "mode": mode, "attachments": attachments,
+        "client_id": client_id,
+    }
 
 
 def parse_approval_command(body: dict) -> dict:
