@@ -9,6 +9,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+command -v jq >/dev/null || {
+  echo "build_ios: jq is required (brew install jq)" >&2
+  exit 1
+}
+
 app=build/Build/Products/Debug-iphoneos/QuiverRemote.app
 json=$(mktemp)
 trap 'rm -f "$json"' EXIT

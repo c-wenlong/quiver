@@ -26,8 +26,8 @@ once in each is expected, not a bug.
 ## Building
 
 Xcode projects aren't checked in (they churn); `project.yml` generates
-one. `build_ios.sh` does all of the below on the first paired iPhone —
-or by hand:
+one. `build_ios.sh` does all of the below on the first paired iPhone
+(needs `xcodegen` and `jq`, both on Homebrew) — or by hand:
 
 ```sh
 cd remote/ios
