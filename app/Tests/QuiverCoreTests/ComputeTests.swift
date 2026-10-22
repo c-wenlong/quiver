@@ -532,16 +532,46 @@ import Testing
             Self.proc(10, 1, path: "/opt/homebrew/bin/claude"),
             Self.proc(11, 10, path: "/x/helper"),
             Self.proc(12, 11, path: "/x/worker"),
-            Self.proc(20, 1, path: "/usr/local/bin/codex"),
+            // claude spawned codex: it is codex's card's business, and
+            // claude's quit must not reach across the attribution.
+            Self.proc(20, 11, path: "/usr/local/bin/codex"),
+            Self.proc(21, 20, path: "/x/codex-helper"),
         ])
         let model = ComputeModel(sampler: fake, matchers: { [Self.claude, Self.codex] },
                                  signaller: fake, selfPID: 99)
         await model.loadMatchers()
         await model.refresh()
         await model.quitHarness("claude")
-        // Helpers go before the entry process; codex is not claude's.
+        // Helpers go before the entry process; codex's tree is not claude's.
         #expect(fake.signalled.map(\.0) == [12, 11, 10])
         #expect(Set(fake.signalled.map(\.1)) == [SIGTERM])
+    }
+
+    @MainActor @Test func quitHarnessCatchesAProcessSpawnedAfterTheRefresh() async {
+        final class Flip: ProcessSampling, ProcessSignaller, @unchecked Sendable {
+            let tables: [[ProcessSample]]
+            private var calls = 0
+            private let lock = NSLock()
+            var signalled: [(Int32, Int32)] = []
+            init(_ tables: [[ProcessSample]]) { self.tables = tables }
+            func sample() -> [ProcessSample] {
+                lock.lock()
+                defer { lock.unlock() }
+                calls += 1
+                return tables[min(calls, tables.count) - 1]
+            }
+            func signal(_ pid: Int32, _ sig: Int32) -> Bool { signalled.append((pid, sig)); return true }
+        }
+        let root = Self.proc(10, 1, path: "/opt/homebrew/bin/claude")
+        let helper = Self.proc(11, 10, path: "/x/helper")
+        // The page's last sample predates the helper; quit's own has it.
+        let fake = Flip([[root], [root, helper]])
+        let model = ComputeModel(sampler: fake, matchers: { [Self.claude] },
+                                 signaller: fake, selfPID: 99)
+        await model.loadMatchers()
+        await model.refresh()
+        await model.quitHarness("claude")
+        #expect(fake.signalled.map(\.0) == [11, 10])
     }
 
     @MainActor @Test func quitHarnessForceKillsAndAnIdleHarnessSignalsNothing() async {
