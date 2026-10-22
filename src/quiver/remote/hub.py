@@ -629,6 +629,14 @@ class _Handler(BaseHTTPRequestHandler):
                 422, "bad_mode", "headless attach only exists for claude"
             )
             return
+        if str(row.get("status") or "") == "active":
+            # Busy beats environment: on a box with no tmux the truest
+            # answer for a mid-turn session is still not_idle.
+            self._send_error(
+                409, "not_idle",
+                "session is mid-turn; try again when it is idle",
+            )
+            return
         if mode == "tmux" and supervise.tmux_bin() is None:
             # Environment failure, not a state conflict: 409/not_idle
             # would tell the client to retry, which never helps.
