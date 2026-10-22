@@ -26,7 +26,8 @@ once in each is expected, not a bug.
 ## Building
 
 Xcode projects aren't checked in (they churn); `project.yml` generates
-one. To build and install on a phone:
+one. `build_ios.sh` does all of the below on the first paired iPhone —
+or by hand:
 
 ```sh
 cd remote/ios
