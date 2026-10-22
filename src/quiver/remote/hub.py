@@ -49,6 +49,11 @@ _REVOCATION_CHECK_S = 5.0
 # Journal bucket for non-session events (machine.online, hub-level notify).
 GLOBAL_KEY = "_global"
 
+# Refuse new commands for a satellite whose unacked queue is deeper
+# than this — the journal trims at ~4k records and silently dropped
+# commands are worse than an honest 429.
+MAX_SAT_PENDING = 2000
+
 
 class EventBus:
     """Fan-out to SSE subscriber queues, keyed by session or global."""
@@ -102,6 +107,10 @@ class HubState:
         self._sat_subs: dict[str, int] = {}
         self._cmd_seq = 0
         self._cmd_lock = threading.Lock()
+        # Last command-stream seq each satellite connected with — the
+        # floor of what it has executed. queue_command refuses to grow a
+        # backlog it would silently trim.
+        self._sat_acked: dict[str, int] = {}
 
     def _journal_has(self, key: str) -> bool:
         return self.journal.last_seq(key) > 0
@@ -138,6 +147,15 @@ class HubState:
         catalog_mod.upsert_machine(
             self.home, {**self.machine, "online": True}
         )
+        # Presence is this process's live streams — a restart opens with
+        # zero satellite connections, so every persisted ``online`` flag
+        # for another machine is stale until that machine dials back in.
+        for mid in catalog_mod.load_machines(self.home):
+            if mid != self.machine_id:
+                catalog_mod.upsert_machine(
+                    self.home, {"id": mid, "online": False,
+                                "last_seen_at": time.time()}
+                )
 
     # -- satellites ---------------------------------------------------------
 
@@ -186,7 +204,25 @@ class HubState:
 
         The satellite replays ``_sat_<mid>`` on reconnect, so this IS the
         offline queue — nothing else to build.
+
+        Returns ``None`` when the machine's unacked backlog exceeds
+        ``MAX_SAT_PENDING``: the journal trims and silently dropped
+        commands are worse than an honest "machine too far behind".
         """
+        pending = self.journal.last_seq(
+            self.sat_journal_key(mid)
+        ) - self._sat_acked.get(mid, 0)
+        if pending >= MAX_SAT_PENDING:
+            if session_key:
+                self.emit(
+                    session_key,
+                    protocol.event(
+                        "session.error", session_key, self.machine_id,
+                        {"message": f"{mid} is {pending} commands behind; "
+                                    f"not queueing more"},
+                    ),
+                )
+            return None
         with self._cmd_lock:
             self._cmd_seq += 1
             command_id = f"c{self._cmd_seq}"
@@ -418,16 +454,23 @@ class _Handler(BaseHTTPRequestHandler):
         finally:
             self._state.bus.unsubscribe(q)
 
-    def _agent_stream(self, mid: str, after_seq: int) -> None:
+    def _agent_stream(
+        self, mid: str, after_seq: int, device_id: str | None = None
+    ) -> None:
         """Command SSE for one satellite; presence = this stream's lifetime."""
-        self._state.sat_connected(mid)
+        state = self._state
+        # The seq the satellite acknowledges: new queues past
+        # MAX_SAT_PENDING over this floor are refused.
+        state._sat_acked[mid] = after_seq
+        state.sat_connected(mid)
         try:
             self._sse_stream(
                 HubState.sat_journal_key(mid), after_seq,
+                device_id=device_id,
                 subscribe_key=HubState.sat_journal_key(mid),
             )
         finally:
-            self._state.sat_disconnected(mid)
+            state.sat_disconnected(mid)
 
     def _pull_attachment(self, key: str, ref: str) -> None:
         target = attachments.resolve(self._state.home, key, ref)
@@ -517,7 +560,7 @@ class _Handler(BaseHTTPRequestHandler):
                 )
                 return
             after = _int_arg(args.get("last"), 0)
-            self._agent_stream(mid, after)
+            self._agent_stream(mid, after, device_id=device_id)
             return
 
         if path.startswith("/v1/agent/attachments/"):
@@ -543,6 +586,13 @@ class _Handler(BaseHTTPRequestHandler):
                 if session is not None:
                     self._state.tail_manager.ensure(
                         key, session, str(row.get("status") or "")
+                    )
+                elif row.get("remote") and row.get("machine_id"):
+                    # A satellite session has no local Session to tail —
+                    # ask its agent to start one instead.
+                    self._state.queue_command(
+                        str(row["machine_id"]), "tail", key,
+                        {"status": str(row.get("status") or "")},
                     )
             if sep and action == "events":
                 after = _int_arg(args.get("last"), 0)
@@ -664,10 +714,14 @@ class _Handler(BaseHTTPRequestHandler):
             cwd = str(body.get("cwd") or "")
             prompt = str(body.get("prompt") or "")
             if machine and machine != self._state.machine_id:
-                self._state.queue_command(
+                queued = self._state.queue_command(
                     machine, "launch", "",
                     {"harness": harness, "cwd": cwd, "prompt": prompt},
                 )
+                if queued is None:
+                    self._send_error(429, "backlog_full",
+                                     "machine is too far behind")
+                    return
                 self._send_json(
                     202, {"ok": True, "queued": True,
                           "note": "queued for satellite"}
@@ -762,11 +816,15 @@ class _Handler(BaseHTTPRequestHandler):
                     422, "bad_attachment", err or "stage failed"
                 )
                 return
-            self._state.queue_command(mid, "attachment", key, {
+            cmd = self._state.queue_command(mid, "attachment", key, {
                 "ref": payload["ref"],
                 "hub_key": key,
                 "machine": mid,
             })
+            if cmd is None:
+                self._send_error(429, "backlog_full",
+                                 "machine is too far behind")
+                return
             self._send_json(202, {**payload, "queued": True})
             return
         body = self._read_body()
@@ -779,21 +837,29 @@ class _Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self._send_error(422, "bad_command", str(exc))
                 return
-            self._state.queue_command(mid, "message", key, {
+            queued = self._state.queue_command(mid, "message", key, {
                 "text": cmd["text"], "mode": cmd["mode"],
                 "attachments": cmd["attachments"],
                 "status": row.get("status") or "",
             })
+            if queued is None:
+                self._send_error(429, "backlog_full",
+                                 "machine is too far behind")
+                return
         elif action == "approval":
             try:
                 cmd = protocol.parse_approval_command(body)
             except ValueError as exc:
                 self._send_error(422, "bad_command", str(exc))
                 return
-            self._state.queue_command(mid, "approval", key, {
+            queued = self._state.queue_command(mid, "approval", key, {
                 "request_id": cmd["request_id"],
                 "decision": cmd["decision"],
             })
+            if queued is None:
+                self._send_error(429, "backlog_full",
+                                 "machine is too far behind")
+                return
         elif action == "control":
             try:
                 cmd = protocol.parse_control_command(body)
@@ -802,7 +868,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             op = cmd["op"]
             if op == "attach":
-                self._state.queue_command(mid, "attach", key, {
+                queued = self._state.queue_command(mid, "attach", key, {
                     "mode": body.get("mode") or "tmux",
                     "status": row.get("status") or "",
                 })
@@ -813,9 +879,14 @@ class _Handler(BaseHTTPRequestHandler):
                         "session is observed: read-only until attached",
                     )
                     return
-                self._state.queue_command(mid, "control", key, {
-                    "ctl": op, "value": cmd.get("value") or "",
-                })
+                queued = self._state.queue_command(
+                    mid, "control", key,
+                    {"ctl": op, "value": cmd.get("value") or ""},
+                )
+            if queued is None:
+                self._send_error(429, "backlog_full",
+                                 "machine is too far behind")
+                return
         else:
             self._send_error(404, "not_found", "unknown route")
             return

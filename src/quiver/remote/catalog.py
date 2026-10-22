@@ -12,7 +12,9 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -99,27 +101,45 @@ def load_machines(home: Path | str | None = None) -> dict[str, dict]:
     return {}
 
 
+_machines_lock = threading.Lock()
+
+
 def upsert_machine(home: Path | None, row: dict) -> dict[str, dict]:
-    """Insert or update one machine row and persist the registry."""
-    machines = load_machines(home)
-    mid = str(row.get("id") or "")
-    if not mid:
+    """Insert or update one machine row and persist the registry.
+
+    The whole read-modify-write runs under a lock: satellite connect,
+    disconnect and register calls hit this concurrently and would
+    otherwise lose each other's rows.
+    """
+    with _machines_lock:
+        machines = load_machines(home)
+        mid = str(row.get("id") or "")
+        if not mid:
+            return machines
+        existing = machines.get(mid, {})
+        machines[mid] = {**existing, **row}
+        path = _machines_file(home)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(
+                path, json.dumps({"machines": machines}, indent=1)
+            )
+        except OSError:
+            pass
         return machines
-    existing = machines.get(mid, {})
-    machines[mid] = {**existing, **row}
-    path = _machines_file(home)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(
-            path, json.dumps({"machines": machines}, indent=1)
-        )
-    except OSError:
-        pass
-    return machines
 
 
 def _satellite_dir(home: Path | None) -> Path:
     return remote_dir_for(home) / "satellite"
+
+
+def _safe_mid(machine_id: str) -> str:
+    """``machine_id`` as a filename: alphanumeric run, else its slug."""
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", machine_id)
+    # "..", ".", "" escape the satellite dir — collapse to a slug.
+    if not safe or set(safe) <= {".", "_", "-"}:
+        safe = protocol.key_slug(machine_id)
+    return safe
 
 
 def merge_remote_rows(
@@ -144,7 +164,7 @@ def merge_remote_rows(
     try:
         path.mkdir(parents=True, exist_ok=True)
         atomic_write_text(
-            path / f"{machine_id}.json",
+            path / f"{_safe_mid(machine_id)}.json",
             json.dumps({"rows": out}, indent=1),
         )
     except OSError:

@@ -10,6 +10,7 @@ simply drops offline on the hub until it wakes and replays the queue.
 
 import json
 import os
+import queue as queue_mod
 import threading
 import time
 import urllib.error
@@ -18,12 +19,13 @@ from pathlib import Path
 
 from quiver.paths import remote_dir_for
 from quiver.remote import attachments, catalog as catalog_mod
-from quiver.remote import inject, protocol, supervise, tail
+from quiver.remote import inject, journal, protocol, supervise, tail
 
 AGENT_FILE = "agent.json"          # satellite's stored hub credential
 PUSH_BATCH = 50                    # events per /v1/agent/events POST
 RECONNECT_S = 5.0
 CATALOG_PUSH_S = 10.0
+OUTBOX_KEY = "_outbox"             # journal key for unsent uplink events
 
 
 def agent_file_for(home: Path | None) -> Path:
@@ -119,18 +121,47 @@ class RemoteAgent:
         self.outbox: "list[dict]" = []
         self._outbox_lock = threading.Lock()
         self._stop = threading.Event()
+        # Commands dispatch on the stream thread except ``message``,
+        # which can run minutes (headless claude): those go through
+        # ``_work_q`` so a queued interrupt/detach isn't stuck behind it.
+        self._work_q: "queue_mod.Queue" = queue_mod.Queue()
+        # Two cursors: ``_last_cmd_seq`` dedups frames seen on the wire;
+        # ``_done_cmd_seq`` is the persisted *completed* floor the
+        # ``?last=`` replay starts from — a crash mid-dispatch replays
+        # the command instead of skipping it.
         self._last_cmd_seq = self._load_cmd_cursor()
+        self._done_cmd_seq = self._last_cmd_seq
+        self._done_set: set[int] = set()
         self.tail_manager = tail.TailManager(
             emit=self._capture, machine_id=self.machine_id, home=self.home,
         )
+        # Requeue uplink events the hub never acknowledged — the
+        # transcript cursor is saved on read, so an in-memory buffer
+        # would lose them across a restart.
+        self._outbox_ack = self._load_outbox_ack()
+        self._outbox = journal.Journal(self.home)
+        events, _truncated = self._outbox.read_since(
+            OUTBOX_KEY, self._outbox_ack)
+        self.outbox = list(events)
 
     def _cmd_cursor_file(self) -> Path:
-        return agent_file_for(self.home).parent / "agent-cursor"
+        return agent_file_for(self.home).parent / "agent-cursor.json"
 
     def _load_cmd_cursor(self) -> int:
-        """Last handled command seq, so a restart never re-executes."""
+        """Last *completed* command seq for this hub; 0 for a new one."""
+        path = self._cmd_cursor_file()
         try:
-            return int(self._cmd_cursor_file().read_text().strip())
+            data = json.loads(path.read_text())
+            if isinstance(data, dict) and data.get("hub") == self.hub:
+                return int(data.get("seq") or 0)
+            return 0  # paired to a different hub — replay its queue
+        except (OSError, ValueError):
+            pass
+        # Pre-migration cursor was a bare int for whatever hub was
+        # paired then; honor it once rather than replay the backlog.
+        legacy = path.with_name("agent-cursor")
+        try:
+            return int(legacy.read_text().strip())
         except (OSError, ValueError):
             return 0
 
@@ -138,17 +169,51 @@ class RemoteAgent:
         path = self._cmd_cursor_file()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(str(self._last_cmd_seq))
+            path.write_text(json.dumps(
+                {"hub": self.hub, "seq": self._done_cmd_seq}))
         except OSError:
             pass
+
+    def _outbox_ack_file(self) -> Path:
+        return agent_file_for(self.home).parent / "agent-outbox-ack"
+
+    def _load_outbox_ack(self) -> int:
+        try:
+            return int(self._outbox_ack_file().read_text().strip())
+        except (OSError, ValueError):
+            return 0
+
+    def _save_outbox_ack(self) -> None:
+        try:
+            self._outbox_ack_file().write_text(str(self._outbox_ack))
+        except OSError:
+            pass
+
+    def _mark_done(self, seq: int | None) -> None:
+        """Advance the completed cursor to the highest contiguous seq."""
+        if not isinstance(seq, int):
+            return
+        self._done_set.add(seq)
+        while self._done_cmd_seq + 1 in self._done_set:
+            self._done_cmd_seq += 1
+            self._done_set.discard(self._done_cmd_seq)
+        self._save_cmd_cursor()
 
     # -- upstream ----------------------------------------------------------
 
     def _capture(self, key: str, event: dict) -> dict:
-        """TailManager's emit: buffer for the uplink thread."""
+        """TailManager's emit: buffer for the uplink thread.
+
+        Events are journaled before they're buffered — the transcript
+        cursor is committed on read, so anything unacked must survive a
+        restart or transcript output is lost while the hub is down.
+        """
+        stamped = self._outbox.append(OUTBOX_KEY, event)
         with self._outbox_lock:
-            self.outbox.append(event)
-        return event
+            # Buffer the stamped copy: the seq is what the ack file
+            # records once the hub accepts the batch.
+            self.outbox.append(stamped or event)
+        return stamped or event
 
     def _push_events(self) -> bool:
         with self._outbox_lock:
@@ -164,10 +229,20 @@ class RemoteAgent:
             with self._outbox_lock:
                 self.outbox = batch + self.outbox
             return False
+        seq = batch[-1].get("seq")
+        if isinstance(seq, int) and seq > self._outbox_ack:
+            self._outbox_ack = seq
+            self._save_outbox_ack()
         return True
 
     def _push_catalog(self) -> bool:
+        # Launch adoption runs here too: `launch` marks a pending file
+        # and the new session must claim its tmux pane before the push
+        # reports it, or it reaches the hub still `observed` — writable
+        # nowhere.
         rows = self.catalog.refresh()
+        if supervise.adopt_pending(self.home, self.catalog.tail_rows()):
+            rows = self.catalog.refresh()
         status, _ = _post(
             self.hub, "/v1/agent/catalog", self.cred,
             {"machine_id": self.machine_id, "rows": rows},
@@ -187,7 +262,7 @@ class RemoteAgent:
         """GET /v1/agent/commands as an SSE stream; dispatch each command."""
         url = (
             f"{self.hub}/v1/agent/commands"
-            f"?machine={self.machine_id}&last={self._last_cmd_seq}"
+            f"?machine={self.machine_id}&last={self._done_cmd_seq}"
         )
         req = urllib.request.Request(url, headers=_headers(self.cred, None))
         try:
@@ -226,8 +301,24 @@ class RemoteAgent:
             if seq <= self._last_cmd_seq:
                 return
             self._last_cmd_seq = seq
-            self._save_cmd_cursor()
+        if (ev.get("data") or {}).get("op") == "message":
+            # Headless sends block for the whole turn — queue them so a
+            # later interrupt/detach isn't stuck behind the run.
+            self._work_q.put((seq, ev))
+            return
         self._dispatch(ev)
+        self._mark_done(seq)
+
+    def _work_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                seq, cmd = self._work_q.get(timeout=0.5)
+            except queue_mod.Empty:
+                continue
+            try:
+                self._dispatch(cmd)
+            finally:
+                self._mark_done(seq)
 
     def _dispatch(self, cmd: dict) -> None:
         """Execute one command envelope; report back as command.result."""
@@ -240,8 +331,13 @@ class RemoteAgent:
             "command.result", key, self.machine_id,
             {"command_id": command_id, "op": op, "ok": ok, "note": note},
         )
+        self._buffer_result(result)
+
+    def _buffer_result(self, event: dict) -> None:
+        """Journal + buffer a command.result the same way _capture does."""
+        stamped = self._outbox.append(OUTBOX_KEY, event)
         with self._outbox_lock:
-            self.outbox.append(result)
+            self.outbox.append(stamped or event)
 
     def _execute(self, key: str, op: str, data: dict) -> tuple[bool, str]:
         session = self.catalog.session_for(key)
@@ -289,6 +385,12 @@ class RemoteAgent:
                     status=str(data.get("status") or ""),
                     mode=str(data.get("mode") or "tmux"),
                 )
+            if op == "tail":
+                # The hub is asking us to stream an older session a
+                # phone just opened (past the background tail cap).
+                self.tail_manager.ensure(
+                    key, session, str(data.get("status") or ""))
+                return True, "tailing"
             injector = inject.injector_for(
                 self.home, key, supervise.meta_for(self.home, key)
             )
@@ -301,12 +403,17 @@ class RemoteAgent:
                     if path is None:
                         return False, f"unknown attachment {ref}"
                     paths.append(path)
+                # The status in the queued command is stale — the
+                # session may have gone idle or errored while we were
+                # offline. Our own tail manager knows the current one.
+                live = (self.tail_manager.statuses.get(key)
+                        or str(data.get("status") or "done"))
                 result = injector.send(
                     session,
                     {"text": data.get("text") or "",
                      "mode": data.get("mode") or "queue",
                      "attachments": paths},
-                    str(data.get("status") or "done"),
+                    live,
                 )
                 return result.ok, result.note
             if op == "approval":
@@ -356,6 +463,13 @@ class RemoteAgent:
 
     def _downlink_loop(self) -> None:
         while not self._stop.is_set():
+            # Re-register on every reconnect: the first attempt can run
+            # while the hub is down, and the stream itself only tells
+            # the hub {id, online} — name/os/harnesses come from here.
+            try:
+                self._register()
+            except Exception:
+                pass
             try:
                 self._command_stream()
             except Exception:
@@ -373,6 +487,8 @@ class RemoteAgent:
                              name="agent-tail"),
             threading.Thread(target=self._downlink_loop, daemon=True,
                              name="agent-downlink"),
+            threading.Thread(target=self._work_loop, daemon=True,
+                             name="agent-worker"),
         ]
         for t in threads:
             t.start()

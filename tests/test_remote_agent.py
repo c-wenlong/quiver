@@ -232,10 +232,19 @@ class TestAgentState(unittest.TestCase):
 
     def test_cursor_persists(self):
         a = self._agent()
-        a._last_cmd_seq = 42
+        a._done_cmd_seq = 42
         a._save_cmd_cursor()
         b = self._agent()
+        self.assertEqual(b._done_cmd_seq, 42)
         self.assertEqual(b._last_cmd_seq, 42)
+
+    def test_cursor_scoped_to_hub(self):
+        a = self._agent()
+        a._done_cmd_seq = 42
+        a._save_cmd_cursor()
+        # A re-paired hub must not skip its own command queue.
+        other = agent_mod.RemoteAgent("http://other:9", "c", self.home)
+        self.assertEqual(other._done_cmd_seq, 0)
 
     def test_handle_frame_skips_replay_overlap(self):
         a = self._agent()
@@ -1021,7 +1030,7 @@ class TestAgentLoopEdges(unittest.TestCase):
 
     def test_save_cmd_cursor_oserror(self):
         ag = self._agent()
-        ag._last_cmd_seq = 9
+        ag._done_cmd_seq = 9
         with patch.object(Path, "write_text", side_effect=OSError):
             ag._save_cmd_cursor()  # must not raise
 
@@ -1292,3 +1301,134 @@ class TestUploadVariants(unittest.TestCase):
         with patch.object(commands, "_cmd_agent", return_value=0) as ca:
             self.assertEqual(commands.cmd_remote(["agent"]), 0)
         ca.assert_called_once()
+
+
+class TestReviewFixes(unittest.TestCase):
+    """Coverage for the R3 review fixes: cursor semantics, durability,
+    dispatch threading, backlog cap, path safety, tail op."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+
+    def _agent(self):
+        return agent_mod.RemoteAgent("http://h:1", "cred", self.home)
+
+    def test_message_op_goes_to_worker(self):
+        ag = self._agent()
+        ag._dispatch = MagicMock()
+        ag._handle_frame(json.dumps({
+            "type": "command", "seq": 1,
+            "data": {"op": "message", "command_id": "c1"},
+        }).encode())
+        ag._dispatch.assert_not_called()
+        seq, cmd = ag._work_q.get_nowait()
+        self.assertEqual(seq, 1)
+        # Control ops still run inline.
+        ag._handle_frame(json.dumps({
+            "type": "command", "seq": 2,
+            "data": {"op": "control", "command_id": "c2"},
+        }).encode())
+        ag._dispatch.assert_called_once()
+
+    def test_done_cursor_contiguous(self):
+        ag = self._agent()
+        ag._done_cmd_seq = 0
+        ag._mark_done(2)
+        self.assertEqual(ag._done_cmd_seq, 0)   # seq 1 unfinished
+        ag._mark_done(1)
+        self.assertEqual(ag._done_cmd_seq, 2)   # contiguous advance
+        ag._mark_done(4)
+        ag._mark_done(3)
+        self.assertEqual(ag._done_cmd_seq, 4)
+
+    def test_done_cursor_persists_as_json(self):
+        ag = self._agent()
+        ag._done_cmd_seq = 7
+        ag._save_cmd_cursor()
+        data = json.loads(ag._cmd_cursor_file().read_text())
+        self.assertEqual(data, {"hub": "http://h:1", "seq": 7})
+
+    def test_outbox_durable_across_restart(self):
+        ag = self._agent()
+        ag._capture("k", protocol.event(
+            "message.appended", "k", ag.machine_id,
+            protocol.message("user", "keep me")))
+        b = self._agent()
+        self.assertEqual(len(b.outbox), 1)
+        self.assertEqual(b.outbox[0]["data"]["text"], "keep me")
+        # Acked events don't requeue.
+        ag2 = self._agent()
+        ag2._outbox_ack = 1
+        ag2._save_outbox_ack()
+        c = self._agent()
+        self.assertEqual(c.outbox, [])
+
+    def test_push_events_ack_advances(self):
+        ag = self._agent()
+        ag._capture("k", protocol.event("notify", "k", ag.machine_id,
+                                      {"kind": "finished"}))
+        with patch.object(agent_mod, "_post", return_value=(200, {})):
+            self.assertTrue(ag._push_events())
+        self.assertEqual(ag._outbox_ack, 1)
+        self.assertEqual(ag.outbox, [])
+
+    def test_tail_op_starts_tailer(self):
+        ag = self._agent()
+        sess = _session()
+        ag.catalog.session_for = lambda k: sess
+        with patch.object(ag.tail_manager, "ensure") as en:
+            ok, note = ag._execute("claude:s1", "tail",
+                                   {"status": "idle"})
+        self.assertTrue(ok)
+        en.assert_called_once_with("claude:s1", sess, "idle")
+
+    def test_message_op_uses_live_status(self):
+        ag = self._agent()
+        sess = _session()
+        ag.catalog.session_for = lambda k: sess
+        ag.tail_manager.statuses["k"] = "done"   # queue said "active"
+        fake = MagicMock()
+        fake.send.return_value = inject.InjectResult(True, "ok")
+        with patch.object(supervise, "meta_for", return_value={}), \
+             patch.object(inject, "injector_for", return_value=fake):
+            ag._execute("k", "message",
+                        {"text": "hi", "status": "active"})
+        self.assertEqual(fake.send.call_args[0][2], "done")
+
+
+class TestReviewHubFixes(unittest.TestCase):
+    """Hub side: path safety, offline sweep, backlog cap."""
+
+    def setUp(self):
+        self.srv = _AgentHub()
+        self.addCleanup(self.srv.stop)
+
+    def test_machine_id_traversal_stays_in_satellite_dir(self):
+        rows = [{"key": "claude:x", "title": "t"}]
+        catalog_mod.merge_remote_rows(self.srv.home, "../devices", rows)
+        base = catalog_mod._satellite_dir(self.srv.home)
+        self.assertTrue(list(base.glob("*.json")))
+        # devices.json untouched — the traversal wrote nowhere near it.
+        self.assertNotEqual(
+            pairing.load_devices(self.srv.home), {})
+
+    def test_restart_marks_satellites_offline(self):
+        catalog_mod.upsert_machine(
+            self.srv.home, {"id": "sat-x", "online": True})
+        self.srv.state._register_machine()
+        row = catalog_mod.load_machines(self.srv.home)["sat-x"]
+        self.assertFalse(row["online"])
+
+    def test_backlog_cap_returns_429(self):
+        st = self.srv.state
+        st._sat_acked["sat-m1"] = 0
+        with patch.object(st.journal, "last_seq", return_value=3000):
+            self.assertIsNone(
+                st.queue_command("sat-m1", "message", "k", {}))
+
+    def test_acked_cursor_relaxes_cap(self):
+        st = self.srv.state
+        st._sat_acked["sat-m1"] = 2500
+        with patch.object(st.journal, "last_seq", return_value=3000):
+            self.assertIsNotNone(
+                st.queue_command("sat-m1", "message", "k", {}))
