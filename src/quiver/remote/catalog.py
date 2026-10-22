@@ -12,6 +12,9 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
+import shutil
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -53,6 +56,22 @@ def load_machine_id(home: Path | str | None = None) -> str:
     return machine_id
 
 
+def detected_harnesses() -> list[str]:
+    """Tool names whose launch binary is on this machine's PATH."""
+    from quiver.sessions.resume import (
+        LIMITED_RESUME,
+        RESUME_FLAGS,
+        launch_tool_name,
+    )
+
+    out = []
+    for tool_name in sorted(set(RESUME_FLAGS) | set(LIMITED_RESUME)):
+        binary = launch_tool_name(tool_name)
+        if binary and shutil.which(binary):
+            out.append(tool_name)
+    return out
+
+
 def local_machine(home: Path | str | None = None) -> dict:
     """This machine's ``/v1/machines`` row."""
     return {
@@ -61,7 +80,7 @@ def local_machine(home: Path | str | None = None) -> dict:
         "os": platform.system().lower() or os.name,
         "online": True,
         "last_seen_at": time.time(),
-        "harnesses": [],
+        "harnesses": detected_harnesses(),
     }
 
 
@@ -82,23 +101,92 @@ def load_machines(home: Path | str | None = None) -> dict[str, dict]:
     return {}
 
 
+_machines_lock = threading.Lock()
+
+
 def upsert_machine(home: Path | None, row: dict) -> dict[str, dict]:
-    """Insert or update one machine row and persist the registry."""
-    machines = load_machines(home)
-    mid = str(row.get("id") or "")
-    if not mid:
+    """Insert or update one machine row and persist the registry.
+
+    The whole read-modify-write runs under a lock: satellite connect,
+    disconnect and register calls hit this concurrently and would
+    otherwise lose each other's rows.
+    """
+    with _machines_lock:
+        machines = load_machines(home)
+        mid = str(row.get("id") or "")
+        if not mid:
+            return machines
+        existing = machines.get(mid, {})
+        machines[mid] = {**existing, **row}
+        path = _machines_file(home)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(
+                path, json.dumps({"machines": machines}, indent=1)
+            )
+        except OSError:
+            pass
         return machines
-    existing = machines.get(mid, {})
-    machines[mid] = {**existing, **row}
-    path = _machines_file(home)
+
+
+def _satellite_dir(home: Path | None) -> Path:
+    return remote_dir_for(home) / "satellite"
+
+
+def _safe_mid(machine_id: str) -> str:
+    """``machine_id`` as a filename: alphanumeric run, else its slug."""
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", machine_id)
+    # "..", ".", "" escape the satellite dir — collapse to a slug.
+    if not safe or set(safe) <= {".", "_", "-"}:
+        safe = protocol.key_slug(machine_id)
+    return safe
+
+
+def merge_remote_rows(
+    home: Path | None, machine_id: str, rows: list[dict]
+) -> list[dict]:
+    """Persist a satellite's catalog push; rows get ``@mid`` keys.
+
+    The file lets the hub keep showing a sleeping satellite's sessions
+    (marked offline) instead of dropping them on restart.
+    """
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        row = dict(row)
+        local = str(row.get("key") or "")
+        row["key"] = protocol.remote_key(machine_id, local)
+        row["machine_id"] = machine_id
+        row["remote"] = True
+        out.append(row)
+    path = _satellite_dir(home)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.mkdir(parents=True, exist_ok=True)
         atomic_write_text(
-            path, json.dumps({"machines": machines}, indent=1)
+            path / f"{_safe_mid(machine_id)}.json",
+            json.dumps({"rows": out}, indent=1),
         )
     except OSError:
         pass
-    return machines
+    return out
+
+
+def load_remote_rows(home: Path | None) -> list[dict]:
+    """All persisted satellite rows (``(key, row)``-ready dicts)."""
+    base = _satellite_dir(home)
+    out: list[dict] = []
+    try:
+        files = list(base.glob("*.json"))
+    except OSError:
+        return out
+    for f in files:
+        try:
+            rows = json.loads(f.read_text()).get("rows") or []
+        except (OSError, ValueError):
+            continue
+        out.extend(r for r in rows if isinstance(r, dict))
+    return out
 
 
 def _supervised_keys(home: Path | None) -> set[str]:
@@ -154,7 +242,7 @@ class Catalog:
         self._fetch = fetch_sessions
         self._status_of = status_of
         self.max_rows = max_rows
-        self._rows: list[tuple[str, Session, dict, str]] = []
+        self._rows: list[tuple[str, Session | None, dict, str]] = []
         self._refreshed_at = 0.0
 
     @property
@@ -172,12 +260,19 @@ class Catalog:
         except Exception:
             statuses = [""] * len(sessions)
         supervised = _supervised_keys(self.home)
-        rows: list[tuple[str, Session, dict, str]] = []
+        rows: list[tuple[str, Session | None, dict, str]] = []
         for session, status in zip(sessions, statuses):
             key, row = session_to_row(
                 session, status, self.machine_id, supervised
             )
             rows.append((key, session, row, status))
+        # Satellite sessions travel as row dicts (no Session object — the
+        # satellite owns execution); remote entries stay out of tail_rows.
+        for row in load_remote_rows(self.home):
+            rows.append((
+                str(row.get("key") or ""), None, row,
+                str(row.get("status") or ""),
+            ))
         self._rows = rows
         self._refreshed_at = time.time()
         return [row for _key, _s, row, _st in rows]
@@ -190,6 +285,7 @@ class Catalog:
         return [
             (key, session, status)
             for key, session, _row, status in self._rows
+            if session is not None
         ]
 
     def row_for(self, key: str) -> dict | None:

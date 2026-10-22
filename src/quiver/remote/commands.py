@@ -22,16 +22,19 @@ from quiver.console import c
 from quiver.flags import expand_value_flags
 from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.paths import remote_dir_for
+from quiver.remote import agent as agent_mod
 from quiver.remote import catalog as catalog_mod
 from quiver.remote import pairing, protocol, supervise, tail
 from quiver.remote.hub import DEFAULT_PORT, HubState, serve
 
-_SUBCOMMANDS = {"serve", "pair", "status", "devices", "attach"}
+_SUBCOMMANDS = {"serve", "pair", "status", "devices", "attach", "agent"}
 
-_VALUE_FLAGS = {"--host", "--port", "--name", "--tail-days", "--revoke", "--mode"}
+_VALUE_FLAGS = {"--host", "--port", "--name", "--tail-days", "--revoke",
+                "--mode", "--hub", "--token"}
 
 _USAGE = f"""\
   {c('cyan', 'swe remote serve [--host=H] [--port=N]')}   Run the hub (REST + SSE)
+  {c('cyan', 'swe remote agent --hub=URL [--token=T]')}   Satellite: dial out to the hub
   {c('cyan', 'swe remote pair [--name=N] [--host=H] [--port=N]')}
                                   Print a pairing URL + token for a phone
   {c('cyan', 'swe remote status [--host=H] [--port=N]')}  Probe the hub + list machines
@@ -294,6 +297,40 @@ def _cmd_attach(flags: dict, rest: list[str]) -> int:
     return 0
 
 
+def _cmd_agent(flags: dict) -> int:
+    """Satellite: pair on first run (``--token``), then dial the hub."""
+    hub = (flags.get("--hub") or "").rstrip("/")
+    token = flags.get("--token") or ""
+    conf = agent_mod.load_agent()
+    if token:
+        if not hub:
+            print(c("red", "--token needs --hub=http://<host>:<port>"),
+                  file=sys.stderr)
+            return 1
+        conf = agent_mod.pair_agent(
+            hub, token, flags.get("--name") or ""
+        )
+        if conf is None:
+            print(c("red", "pairing failed — check the token and hub"),
+                  file=sys.stderr)
+            return 1
+        print(c("green", f"paired with {conf['hub']}"))
+    elif hub:
+        conf = dict(conf or {}, hub=hub)
+    if not conf or not conf.get("credential") or not conf.get("hub"):
+        print(c("red",
+                "no hub credential — run: "
+                "swe remote agent --hub=http://<host>:<port> --token=T"),
+              file=sys.stderr)
+        return 1
+    machine = catalog_mod.local_machine()
+    print(
+        f"remote agent {c('cyan', conf['hub'])} "
+        f"as {c('bold', machine['name'])} ({machine['id']})"
+    )
+    return agent_mod.serve(conf["hub"], conf["credential"])
+
+
 def cmd_remote(args: list[str]) -> int:
     try:
         sub, flags, rest, json_view = _parse_flags(list(args))
@@ -325,4 +362,10 @@ def cmd_remote(args: list[str]) -> int:
         return _cmd_devices(flags, json_view)
     if sub == "attach":
         return _cmd_attach(flags, rest)
+    if sub == "agent":
+        if rest:
+            print(c("red", f"unexpected args: {' '.join(rest)}"),
+                  file=sys.stderr)
+            return 1
+        return _cmd_agent(flags)
     return 0

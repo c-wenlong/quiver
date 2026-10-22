@@ -69,6 +69,25 @@ NOTIFY_KINDS = frozenset({"needs_you", "finished", "error", "limit"})
 OWNERSHIP_ATTACHED = "attached"
 OWNERSHIP_OBSERVED = "observed"
 
+# Satellite-facing command envelope ops (hub → satellite journal).
+COMMAND_OPS = frozenset(
+    {"message", "approval", "control", "attach", "launch", "attachment"}
+)
+
+# Hub-scoped session keys for satellite rows: ``tool:sid@machine``.
+REMOTE_SEP = "@"
+
+
+def remote_key(machine_id: str, key: str) -> str:
+    """Namespace a satellite-local session key for hub-wide use."""
+    return f"{key}{REMOTE_SEP}{machine_id}"
+
+
+def split_remote_key(key: str) -> tuple[str, str | None]:
+    """``(local_key, machine_id)`` — machine_id is None for local keys."""
+    base, sep, mid = key.rpartition(REMOTE_SEP)
+    return (base, mid) if sep and mid else (key, None)
+
 
 def session_key(tool_name: str, session_id: str, path: str = "") -> str:
     """``tool:sid`` — the hub-scoped name one session is streamed under.
@@ -123,6 +142,27 @@ def message(
         "ts": ts if ts is not None else time.time(),
         "tool": tool,
         "result_ref": result_ref,
+    }
+
+
+def command(
+    op: str,
+    session: str,
+    machine: str,
+    command_id: str,
+    data: dict,
+    *,
+    ts: float | None = None,
+) -> dict:
+    """A downstream command envelope, journaled under ``_sat_<mid>``."""
+    return {
+        "v": PROTOCOL_VERSION,
+        "type": "command",
+        "session": session,
+        "machine": machine,
+        "seq": 0,
+        "ts": ts if ts is not None else time.time(),
+        "data": {"op": op, "command_id": command_id, **data},
     }
 
 

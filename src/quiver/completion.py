@@ -88,6 +88,11 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     "remote attach": [
         ("--mode=", "Supervision mode: tmux or headless"),
     ],
+    "remote agent": [
+        ("--hub=", "Hub URL (http://<tailscale-ip>:8477)"),
+        ("--token=", "One-time pair token from swe remote pair"),
+        ("--name=", "Device name recorded on pair"),
+    ],
     "session": [
         ("--search=", "Filter sessions"), ("-q", "Short for --search"),
         ("--grep=", "Alias for --search"),
@@ -427,7 +432,7 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
     "remote": {
         "serve": "remote serve", "pair": "remote pair",
         "status": "remote status", "devices": "remote devices",
-        "attach": "remote attach",
+        "attach": "remote attach", "agent": "remote agent",
     },
     "report": {
         "daily": "report", "weekly": "report", "followups": "report followups",
@@ -540,6 +545,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
     ],
     "remote": [
         ("serve", "Run the hub (REST + SSE for the phone)"),
+        ("agent", "Satellite: dial out to the hub, no listener"),
         ("pair", "Pair a device: URL, QR and one-time token"),
         ("status", "Probe the hub, list machines and devices"),
         ("devices", "List or revoke paired devices"),
