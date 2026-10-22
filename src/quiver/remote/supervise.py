@@ -21,7 +21,9 @@ import contextlib
 import fcntl
 import json
 import os
+import re
 import secrets
+import shlex
 import shutil
 import signal
 import subprocess
@@ -142,17 +144,26 @@ def supervised_keys(home: Path | str | None) -> set[str]:
 
 def mark(home: Path | None, session_key: str, meta: dict) -> dict:
     with _registry_lock(home):
-        entries = _load_registry(home)
-        entries[session_key] = meta
-        _save_registry(home, entries)
+        _mark_locked(home, session_key, meta)
     return meta
+
+
+def _mark_locked(home: Path | None, session_key: str, meta: dict) -> None:
+    """mark() with the registry lock already held (attach's handoff)."""
+    entries = _load_registry(home)
+    entries[session_key] = meta
+    _save_registry(home, entries)
 
 
 def unmark(home: Path | None, session_key: str) -> None:
     with _registry_lock(home):
-        entries = _load_registry(home)
-        if entries.pop(session_key, None) is not None:
-            _save_registry(home, entries)
+        _unmark_locked(home, session_key)
+
+
+def _unmark_locked(home: Path | None, session_key: str) -> None:
+    entries = _load_registry(home)
+    if entries.pop(session_key, None) is not None:
+        _save_registry(home, entries)
 
 
 def meta_for(home: Path | None, session_key: str) -> dict | None:
@@ -243,87 +254,105 @@ def attach(
 
     The phone offers Attach only when the session looks idle; this
     server-side re-check is the one that actually prevents the race —
-    a session can go active between list and tap.
+    a session can go active between list and tap. The whole handoff —
+    already-attached check, writer replacement, registry write — runs
+    under the registry lock so concurrent attaches cannot split it.
     """
-    if session_key in _load_registry(home):
-        return True, "already attached"
-    if status == "active":
-        return False, "session is mid-turn; try again when it is idle"
-    if last_append_at is not None and time.time() - last_append_at < ATTACH_IDLE_S:
-        return False, "transcript is still moving; try again when it is idle"
-    # The cached status/append time is up to ~10s stale; the transcript
-    # file's own mtime is not. Stat it so a turn that started after the
-    # last poll still blocks the attach.
-    from quiver.remote import tail
-
-    transcript = tail.resolve_jsonl_path(session)
-    try:
-        if transcript is not None and \
-                time.time() - transcript.stat().st_mtime < ATTACH_IDLE_S:
-            return False, "transcript is still moving; try again when it is idle"
-    except OSError:
-        pass
     flags = resume_flags(session)
-    if not flags:
-        return False, f"{session.tool_name} cannot be resumed"
-    if mode == "headless" and session.tool_name != "claude":
-        return False, "headless attach only supports claude"
+    with _registry_lock(home):
+        if session_key in _load_registry(home):
+            return True, "already attached"
+        if status == "active":
+            return False, "session is mid-turn; try again when it is idle"
+        if last_append_at is not None and \
+                time.time() - last_append_at < ATTACH_IDLE_S:
+            return False, (
+                "transcript is still moving; try again when it is idle"
+            )
+        # The cached status/append time is seconds-stale; the
+        # transcript's own mtime is not. Stat it so a turn that started
+        # after the last poll still blocks the attach.
+        from quiver.remote import tail
 
-    # The original terminal still holds the harness process and would
-    # keep writing the same transcript — split brain. Kill matching
-    # writers before relaunching under the supervisor (best-effort: an
-    # interactive `claude` run has no session id in argv, so a plain
-    # foreground TUI can't always be found — the catalog row stays
-    # authoritative for who may write).
-    _stop_local_writers(session)
+        transcript = tail.resolve_jsonl_path(session)
+        try:
+            if transcript is not None and \
+                    time.time() - transcript.stat().st_mtime < ATTACH_IDLE_S:
+                return False, (
+                    "transcript is still moving; try again when it is idle"
+                )
+        except OSError:
+            pass
+        if not flags:
+            return False, f"{session.tool_name} cannot be resumed"
+        if mode == "headless" and session.tool_name != "claude":
+            return False, "headless attach only supports claude"
 
-    if mode == "headless":
         meta = {
-            "mode": "headless",
+            "mode": mode,
             "tool_name": session.tool_name,
             "session_id": session.session_id,
             "cwd": session.path or "",
             "attached_at": time.time(),
         }
-        mark(home, session_key, meta)
-        return True, "attached (headless)"
+        if mode == "headless":
+            # The original terminal still owns a writer process — stop
+            # it before claiming the session or both sides write.
+            _stop_local_writers(session)
+            _mark_locked(home, session_key, meta)
+            return True, "attached (headless)"
 
-    binary = launch_tool_name(session.tool_name)
-    name = launch_tmux(
-        session_key, [binary, *flags], session.path or None
-    )
-    if name is None:
-        return False, "tmux is not available or the launch failed"
-    mark(home, session_key, {
-        "mode": "tmux",
-        "tmux": name,
-        "tool_name": session.tool_name,
-        "session_id": session.session_id,
-        "cwd": session.path or "",
-        "attached_at": time.time(),
-    })
-    return True, f"attached under tmux {name}"
+        # tmux mode: stand the replacement up BEFORE killing the
+        # original, so a failed handoff leaves the human's session
+        # running rather than stopped with nothing to show for it.
+        binary = launch_tool_name(session.tool_name)
+        name = launch_tmux(
+            session_key, [binary, *flags], session.path or None
+        )
+        if name is None:
+            return False, "tmux is not available or the launch failed"
+        meta["tmux"] = name
+        _stop_local_writers(session)
+        _mark_locked(home, session_key, meta)
+        return True, f"attached under tmux {name}"
+
+
+def _writer_targets(session: Session) -> list[str]:
+    """Arg values a resumed writer's command line must carry.
+
+    Taken from ``resume_flags`` rather than ``session_id`` itself:
+    ``codex resume`` takes the thread uuid, which lives inside the
+    rollout filename stem — searching for ``session_id`` never finds
+    the running ``codex resume <uuid>``.
+    """
+    return [
+        tok for tok in resume_flags(session)
+        if tok and not tok.startswith("-") and tok != "resume"
+    ]
 
 
 def _stop_local_writers(session: Session) -> None:
     """SIGTERM harness processes that still own ``session``.
 
-    Matches on the session id appearing in the command line — i.e. a
-    process started via ``--resume <id>`` — and requires the harness
-    binary name too, so a stray `grep sid` never qualifies. A session
-    started bare (``claude`` with no id flag) is not identifiable this
-    way; its terminal keeps write access and the doc's "don't type in
-    both places" guidance applies.
+    A process qualifies only when its executable's basename is the
+    harness binary AND a resume-flag value appears as a whole argv
+    token — so `curl .../claude:<sid>/control` (wrong binary, id buried
+    in a URL) never gets killed. A session started bare (``claude``
+    with no id flag) is not identifiable this way; its terminal keeps
+    write access and the doc's "don't type in both places" guidance
+    applies.
     """
-    sid = str(session.session_id or "")
+    targets = _writer_targets(session)
     binary = os.path.basename(
         launch_tool_name(session.tool_name) or ""
     )
-    if not sid or not binary:
+    if not targets or not binary:
         return
     try:
         out = subprocess.run(
-            ["pgrep", "-f", sid],
+            ["pgrep", "-f", "|".join(
+                re.escape(t) for t in targets
+            )],
             capture_output=True, text=True, timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
@@ -339,10 +368,16 @@ def _stop_local_writers(session: Session) -> None:
             cmdline = subprocess.run(
                 ["ps", "-p", pid_s, "-o", "command="],
                 capture_output=True, text=True, timeout=5,
-            ).stdout
+            ).stdout.strip()
         except (OSError, subprocess.SubprocessError):
             continue
-        if binary not in cmdline:
+        try:
+            argv = shlex.split(cmdline)
+        except ValueError:
+            continue
+        if not argv or os.path.basename(argv[0]) != binary:
+            continue
+        if not any(t in argv[1:] for t in targets):
             continue
         try:
             os.kill(pid, signal.SIGTERM)
@@ -351,13 +386,18 @@ def _stop_local_writers(session: Session) -> None:
 
 
 def detach(home: Path | None, session_key: str) -> bool:
-    """attached → observed: kill the tmux session, drop the registry row."""
-    meta = meta_for(home, session_key)
-    killed = True
-    if meta and meta.get("mode") == "tmux":
-        killed = kill(channel_name(home, session_key))
-    unmark(home, session_key)
-    return killed
+    """attached → observed: kill the tmux session, drop the registry row.
+
+    The whole read-kill-write sequence holds the registry lock so a
+    concurrent attach cannot interleave and resurrect the entry.
+    """
+    with _registry_lock(home):
+        meta = _load_registry(home).get(session_key)
+        killed = True
+        if meta and meta.get("mode") == "tmux":
+            killed = kill(channel_name(home, session_key))
+        _unmark_locked(home, session_key)
+        return killed
 
 
 def _pending_dir(home: Path | None) -> Path:
@@ -369,13 +409,17 @@ def launch_new(
     tool_name: str,
     cwd: str,
     prompt: str,
+    *,
+    known_ids: list[str] | None = None,
 ) -> tuple[bool, str, str | None]:
     """``POST /v1/sessions``: start a fresh harness run under tmux.
 
     The harness picks its own session id, so the placeholder key cannot
     be marked supervised directly — a pending marker lets the catalog
-    adopt the new transcript on its next refresh. Returns
-    ``(ok, note, tmux_name)``.
+    adopt the new transcript on its next refresh. ``known_ids`` is the
+    catalog's session ids at launch time: adoption refuses any of them,
+    so a pre-existing same-cwd session can never be claimed as ours.
+    Returns ``(ok, note, tmux_name)``.
     """
     binary = launch_tool_name(tool_name)
     if not binary or not shutil.which(binary):
@@ -394,33 +438,49 @@ def launch_new(
             "tmux": name,
             "tool_name": tool_name,
             "cwd": cwd or "",
+            "exclude": list(known_ids or []),
             "launched_at": time.time(),
         }))
     except OSError:
         pass
-    if prompt:
-        prime_pane(name, prompt)
+    if prompt and not prime_pane(name, prompt):
+        return True, (
+            "launched under tmux but the prompt could not be "
+            "delivered — attach from a terminal or retry"
+        ), name
     return True, "launched under tmux; the session appears on refresh", name
 
 
-def prime_pane(name: str, prompt: str) -> None:
+def prime_pane(name: str, prompt: str, *, timeout: float = 30.0) -> bool:
     """Boot the TUI past its trust dialog, then type ``prompt``.
 
-    Claude (and friends) show a folder-trust gate in a fresh directory;
-    typing a prompt into that dialog loses it. Confirm first.
+    Polls the pane until a usable screen is up — a fresh launch can sit
+    on a blank frame, a trust gate, or a confirm prompt for a while.
+    Sends nothing into an unknown screen; returns False on the deadline
+    so the caller can tell the phone the prompt never landed.
     """
-    time.sleep(1.0)
-    pane = capture_pane(name).lower()
-    if "trust this folder" in pane:
-        # Claude's trust menu defaults to "No, exit": move to "Yes, I
-        # trust this folder" before confirming.
-        send_key(name, "Down")
-        send_key(name, "Enter")
-        time.sleep(1.0)
-    elif "enter to confirm" in pane:
-        send_key(name, "Enter")
-        time.sleep(1.0)
-    send_text(name, prompt)
+    deadline = time.time() + timeout
+    confirmed = False
+    while time.time() < deadline:
+        pane = capture_pane(name).lower()
+        if not pane.strip():
+            time.sleep(0.5)
+            continue
+        if "trust this folder" in pane and not confirmed:
+            # Claude's trust menu defaults to "No, exit": move to
+            # "Yes, I trust this folder" before confirming.
+            send_key(name, "Down")
+            send_key(name, "Enter")
+            confirmed = True
+            time.sleep(0.5)
+            continue
+        if "enter to confirm" in pane and not confirmed:
+            send_key(name, "Enter")
+            confirmed = True
+            time.sleep(0.5)
+            continue
+        return send_text(name, prompt)
+    return False
 
 
 def adopt_pending(
@@ -478,23 +538,38 @@ def _pending_match(
     tool = str(pending.get("tool_name") or "")
     cwd = os.path.realpath(str(pending.get("cwd") or ""))
     launched = float(pending.get("launched_at") or 0)
+    # Session ids the catalog already knew at launch — ours can only be
+    # one the catalog did NOT have, so these never qualify regardless of
+    # what the filesystem timestamps say.
+    exclude = {str(s) for s in pending.get("exclude") or ()}
     candidates: list[tuple[str, float]] = []
     for key, session, _status in rows:
         if key in _load_registry(home):
             continue
         if session.tool_name != tool:
             continue
+        if session.session_id in exclude:
+            continue
         if os.path.realpath(session.path or "") != cwd:
             continue
         transcript = tail.resolve_jsonl_path(session)
         try:
-            mtime = transcript.stat().st_mtime if transcript else 0
+            st = transcript.stat() if transcript else None
         except OSError:
-            mtime = 0
-        # -120s slack: mtime ordering against launch time is enough to
-        # distinguish a transcript this launch created from older ones.
-        if mtime >= launched - 120:
-            candidates.append((key, mtime))
+            st = None
+        if st is None:
+            continue
+        # Creation time, not mtime: a pre-existing session that was
+        # written to after launch has a new mtime but an old birth time
+        # — adopting it would bind someone else's session to our pane.
+        # st_birthtime exists on macOS and statx-capable Linux; ctime is
+        # the fallback (still older than mtime for a recycled file).
+        created = getattr(st, "st_birthtime", None)
+        if created is None:
+            created = min(st.st_mtime, st.st_ctime)
+        # 30s slack for clock/timestamp skew on the same machine.
+        if created >= launched - 30:
+            candidates.append((key, created))
     if len(candidates) != 1:
         # Zero matches: nothing to adopt yet. Two or more: a human may
         # have started a same-cwd session in the window — adopting would

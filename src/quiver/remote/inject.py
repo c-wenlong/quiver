@@ -20,6 +20,7 @@ steer degrades to queue and one run is in flight per session at a time.
 
 from __future__ import annotations
 
+import collections
 import json
 import subprocess
 import threading
@@ -69,6 +70,12 @@ class InjectResult(NamedTuple):
 class TmuxInjector:
     """Tier B: everything is a keystroke into the supervised pane."""
 
+    # request_ids already answered — a retried approval must not answer
+    # whichever menu happens to be on screen now. Class-level because an
+    # injector is built per request; bounded so a long-lived hub does
+    # not grow it forever.
+    _answered: dict[str, "collections.deque[str]"] = {}
+
     def __init__(self, home: Path | None, session_key: str) -> None:
         self.home = home
         self.key = session_key
@@ -100,14 +107,22 @@ class TmuxInjector:
         key = _APPROVAL_KEYS.get(decision)
         if key is None:
             return InjectResult(False, f"unknown decision {decision}")
-        # The tmux pane is shared state: a stale approval would answer
-        # whatever menu happens to be on screen. Require a visible
-        # permission prompt before sending a menu key.
+        # The TUI menu does not display request ids, so we cannot bind a
+        # reply to *the* on-screen prompt. What we can bind: reject a
+        # request_id we already answered, and require a visible
+        # permission prompt before sending a menu key — a stale retry
+        # then can't consume a different pending menu under its old id.
+        answered = self._answered.setdefault(
+            self.key, collections.deque(maxlen=512)
+        )
+        if request_id in answered:
+            return InjectResult(False, "approval already answered")
         if not _pane_shows_approval(supervise.capture_pane(self.name)):
             return InjectResult(
                 False, "no approval prompt is on screen"
             )
         if supervise.send_key(self.name, key):
+            answered.append(request_id)
             return InjectResult(True, f"sent menu key {key}")
         return InjectResult(False, "tmux session is not reachable")
 

@@ -13,7 +13,9 @@ Auth: every ``/v1/*`` route except ``/v1/status`` and ``/v1/pair`` wants
 
 from __future__ import annotations
 
+import email.message
 import json
+import os
 import queue
 import threading
 import time
@@ -464,11 +466,24 @@ class _Handler(BaseHTTPRequestHandler):
             if body is None:
                 self._send_error(400, "bad_body", "unreadable JSON body")
                 return
+            tool = str(body.get("harness") or body.get("tool") or "")
+            cwd = str(body.get("cwd") or "")
+            # Snapshot the catalog before launch: adoption later refuses
+            # any of these ids, so a pre-existing same-cwd session can
+            # never be claimed as the one we just started.
+            real_cwd = os.path.realpath(cwd)
+            known = [
+                s.session_id
+                for _k, s, _st in self._state.catalog.tail_rows()
+                if s.tool_name == tool
+                and os.path.realpath(s.path or "") == real_cwd
+            ]
             ok, note, _name = supervise.launch_new(
                 self._state.home,
-                str(body.get("harness") or body.get("tool") or ""),
-                str(body.get("cwd") or ""),
+                tool,
+                cwd,
                 str(body.get("prompt") or ""),
+                known_ids=known,
             )
             if not ok:
                 self._send_error(422, "launch_failed", note)
@@ -765,7 +780,16 @@ class _Handler(BaseHTTPRequestHandler):
 def _parse_multipart(ctype: str, body: bytes) -> tuple[str, bytes | None]:
     """Minimal single-file multipart reader: returns (filename, bytes)."""
     try:
-        boundary = ctype.split("boundary=", 1)[1].strip().strip('"')
+        # Parse the Content-Type header properly: `boundary=` may be
+        # followed by more params (`; charset=utf-8`) or quoted — taking
+        # everything after it would corrupt the delimiter marker.
+        msg = email.message.Message()
+        msg["content-type"] = ctype
+        boundary = msg.get_param("boundary", header="content-type")
+        # RFC 2231 continuation params come back as tuples — not a
+        # boundary we can build a marker from.
+        if not isinstance(boundary, str) or not boundary:
+            return "", None
         marker = ("--" + boundary).encode()
         for part in body.split(marker):
             if b"Content-Disposition" not in part:

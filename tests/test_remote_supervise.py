@@ -153,6 +153,22 @@ class TestPrimePane(unittest.TestCase):
         sk.assert_called_once_with("qv-x", "Enter")
         st.assert_called_once_with("qv-x", "hello")
 
+    def test_blank_pane_times_out_without_sending(self):
+        # A pane that never draws must not eat the prompt — the launch
+        # reports "could not be delivered" instead of typing into void.
+        with patch.object(supervise, "capture_pane", return_value=""), \
+             patch.object(supervise, "send_text") as st, \
+             patch.object(time, "sleep"), \
+             patch.object(time, "time",
+                          side_effect=[0, 0, 100]):  # past deadline
+            self.assertFalse(supervise.prime_pane("qv-x", "hello"))
+        st.assert_not_called()
+
+    def test_prompt_send_failure_propagates_false(self):
+        with patch.object(supervise, "capture_pane", return_value="❯"), \
+             patch.object(supervise, "send_text", return_value=False):
+            self.assertFalse(supervise.prime_pane("qv-x", "hello"))
+
 
 class TestAdoptPending(unittest.TestCase):
     def setUp(self):
@@ -216,6 +232,52 @@ class TestAdoptPending(unittest.TestCase):
                    return_value=transcript):
             self.assertEqual(supervise.adopt_pending(self.home, rows), [])
         self.assertTrue((folder / "qv-new.json").exists())
+
+    def test_preexisting_recently_written_session_not_adopted(self):
+        # A human's same-cwd session written to right after our launch
+        # has a fresh mtime but an old birth time — mtime alone would
+        # adopt it and bind their transcript to our pane.
+        import types
+
+        folder = supervise._pending_dir(self.home)
+        folder.mkdir(parents=True)
+        proj = Path(tempfile.mkdtemp())
+        now = time.time()
+        pending = {"tmux": "qv-new", "tool_name": "claude",
+                   "cwd": str(proj), "launched_at": now}
+        (folder / "qv-new.json").write_text(json.dumps(pending))
+        rows = [(protocol.session_key("claude", "s1", str(proj)),
+                 _session(path=str(proj)), "done")]
+        fake_stat = types.SimpleNamespace(
+            st_birthtime=now - 3600,  # created an hour before launch
+            st_mtime=now,             # but written to just now
+            st_ctime=now,
+        )
+        transcript = MagicMock()
+        transcript.stat.return_value = fake_stat
+        with patch("quiver.remote.tail.resolve_jsonl_path",
+                   return_value=transcript):
+            self.assertEqual(supervise.adopt_pending(self.home, rows), [])
+        self.assertTrue((folder / "qv-new.json").exists())  # stays pending
+
+    def test_exclude_ids_never_adopt(self):
+        # The marker's exclude list snapshots the catalog at launch: a
+        # session it names can never be claimed as ours even with a
+        # fresh transcript and unambiguous candidacy.
+        folder = supervise._pending_dir(self.home)
+        folder.mkdir(parents=True)
+        proj = Path(tempfile.mkdtemp())
+        pending = {"tmux": "qv-new", "tool_name": "claude",
+                   "cwd": str(proj), "exclude": ["s1"],
+                   "launched_at": time.time()}
+        (folder / "qv-new.json").write_text(json.dumps(pending))
+        rows = [(protocol.session_key("claude", "s1", str(proj)),
+                 _session(path=str(proj)), "done")]
+        transcript = proj / "t.jsonl"
+        transcript.write_text("{}\n")  # created now — mtime alone would pass
+        with patch("quiver.remote.tail.resolve_jsonl_path",
+                   return_value=transcript):
+            self.assertEqual(supervise.adopt_pending(self.home, rows), [])
 
     def test_corrupt_marker_removed(self):
         folder = supervise._pending_dir(self.home)
@@ -305,6 +367,30 @@ class TestLaunchNew(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIsNone(name)
 
+    def test_undelivered_prompt_is_reported(self):
+        home = Path(tempfile.mkdtemp())
+        with patch.object(supervise, "launch_tmux", return_value="qv-n"), \
+             patch.object(supervise.shutil, "which",
+                          return_value="/usr/bin/claude"), \
+             patch.object(supervise, "prime_pane", return_value=False):
+            ok, note, name = supervise.launch_new(home, "claude", "/tmp", "hi")
+        self.assertTrue(ok)   # the pane exists; only the prompt failed
+        self.assertIn("could not be delivered", note)
+
+    def test_known_ids_land_in_marker(self):
+        home = Path(tempfile.mkdtemp())
+        with patch.object(supervise, "launch_tmux", return_value="qv-n"), \
+             patch.object(supervise.shutil, "which",
+                          return_value="/usr/bin/claude"), \
+             patch.object(supervise, "prime_pane", return_value=True):
+            supervise.launch_new(
+                home, "claude", "/tmp", "hi", known_ids=["old-1", "old-2"]
+            )
+        marker = supervise._pending_dir(home) / "qv-n.json"
+        self.assertEqual(
+            json.loads(marker.read_text())["exclude"], ["old-1", "old-2"]
+        )
+
     def test_detach_kills_tmux(self):
         home = Path(tempfile.mkdtemp())
         supervise.mark(home, "k1", {"mode": "tmux", "tmux": "qv-z"})
@@ -345,6 +431,54 @@ class TestStopLocalWriters(unittest.TestCase):
         )
         # 1003's ps lookup returns "" → skipped by the binary check
         self.assertEqual(calls, [(1001, supervise.signal.SIGTERM)])
+
+    def test_curl_with_session_url_not_killed(self):
+        # `curl .../claude:abc-123/control` matches the pgrep -f sweep
+        # but argv[0] is curl, not the harness — it must survive.
+        calls = self._run_with(
+            "2001\n2002\n",
+            {
+                "2001": "curl -X POST http://hub/v1/sessions/claude:abc-123/control",
+                "2002": "claude --resume abc-123",
+            },
+        )
+        self.assertEqual(calls, [(2002, supervise.signal.SIGTERM)])
+
+    def test_codex_writer_matched_by_thread_uuid(self):
+        # codex resume takes the thread uuid lifted out of the rollout
+        # stem — the stored session_id never appears on the cmdline.
+        sid = ("rollout-2026-01-02T03-04-05-"
+               "deadbeef-1234-1234-1234-123456789abc")
+        sess = _session(tool="codex", sid=sid)
+        calls = []
+
+        def fake_run(argv, **_kw):
+            cp = MagicMock()
+            if argv[0] == "pgrep":
+                cp.stdout = "3001\n3002\n"
+            else:
+                cp.stdout = {
+                    "3001": "codex resume "
+                            "deadbeef-1234-1234-1234-123456789abc",
+                    "3002": f"curl http://x/{sid}",
+                }[argv[2]]
+            return cp
+
+        with patch.object(supervise.subprocess, "run",
+                          side_effect=fake_run), \
+             patch.object(supervise.os, "kill") as kill:
+            supervise._stop_local_writers(sess)
+            calls.extend(c[0] for c in kill.call_args_list)
+        self.assertEqual(calls, [(3001, supervise.signal.SIGTERM)])
+
+    def test_writer_with_id_only_in_env_not_killed(self):
+        # The id as a substring of an unrelated token ("log-abc-123")
+        # must not qualify — only whole argv tokens count.
+        calls = self._run_with(
+            "4001\n",
+            {"4001": "claude --resume log-abc-123-other"},
+        )
+        self.assertEqual(calls, [])
 
     def test_skips_self_pid(self):
         calls = self._run_with(
@@ -402,6 +536,75 @@ class TestAttachMtime(unittest.TestCase):
                 last_append_at=None, status="done", mode="headless",
             )
         self.assertTrue(ok)
+
+    def test_tmux_handoff_failure_leaves_writer_alive(self):
+        # When the tmux replacement can't be stood up the original
+        # writer must stay: killing it first would leave the user with
+        # a dead session and no supervision.
+        old = Path(tempfile.mkdtemp()) / "old.jsonl"
+        old.write_text("{}\n")
+        import os
+        stale = time.time() - 3600
+        os.utime(old, (stale, stale))
+        with patch("quiver.remote.tail.resolve_jsonl_path",
+                   return_value=old), \
+             patch.object(supervise, "launch_tmux",
+                          return_value=None) as launch, \
+             patch.object(supervise, "_stop_local_writers") as stop:
+            ok, note = supervise.attach(
+                self.home, self.key, self.session,
+                last_append_at=None, status="done", mode="tmux",
+            )
+        self.assertFalse(ok)
+        self.assertIn("tmux", note)
+        launch.assert_called_once()
+        stop.assert_not_called()
+        self.assertIsNone(supervise.meta_for(self.home, self.key))
+
+    def test_second_attach_is_noop_under_lock(self):
+        # Two attaches racing the same session: the loser sees the
+        # winner's registry row instead of relaunching over it.
+        supervise.mark(self.home, self.key,
+                       {"mode": "tmux", "tmux": "qv-winner"})
+        with patch.object(supervise, "launch_tmux") as launch, \
+             patch.object(supervise, "_stop_local_writers") as stop:
+            ok, note = supervise.attach(
+                self.home, self.key, self.session,
+                last_append_at=None, status="done",
+            )
+        self.assertTrue(ok)
+        self.assertIn("already", note)
+        launch.assert_not_called()
+        stop.assert_not_called()
+        self.assertEqual(
+            supervise.meta_for(self.home, self.key)["tmux"], "qv-winner"
+        )
+
+    def test_tmux_handoff_replaces_then_marks(self):
+        # Happy path: new pane stands up, original writer is stopped,
+        # registry claims the session — in that order.
+        old = Path(tempfile.mkdtemp()) / "old.jsonl"
+        old.write_text("{}\n")
+        import os
+        stale = time.time() - 3600
+        os.utime(old, (stale, stale))
+        order = []
+        with patch("quiver.remote.tail.resolve_jsonl_path",
+                   return_value=old), \
+             patch.object(supervise, "launch_tmux",
+                          side_effect=lambda *a, **k: order.append(
+                              "launch") or "qv-new"), \
+             patch.object(supervise, "_stop_local_writers",
+                          side_effect=lambda *a, **k: order.append("stop")):
+            ok, note = supervise.attach(
+                self.home, self.key, self.session,
+                last_append_at=None, status="done", mode="tmux",
+            )
+        self.assertTrue(ok)
+        self.assertEqual(order, ["launch", "stop"])
+        meta = supervise.meta_for(self.home, self.key)
+        self.assertEqual(meta["tmux"], "qv-new")
+        self.assertEqual(meta["mode"], "tmux")
 
 
 if __name__ == "__main__":

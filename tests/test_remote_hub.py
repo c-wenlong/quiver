@@ -432,6 +432,39 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertIsNotNone(staged)
         self.assertEqual(Path(staged).read_bytes(), content)
 
+    def test_multipart_boundary_with_extra_params(self):
+        # `boundary=X; charset=utf-8` must extract only X — the old
+        # split-on-"boundary=" swallowed the trailing params into the
+        # marker and no part ever matched.
+        boundary = "PARAMS123"
+        blob = (
+            b"--PARAMS123\r\n"
+            b'Content-Disposition: form-data; name="file"; '
+            b'filename="a.txt"\r\n'
+            b"Content-Type: text/plain\r\n\r\n"
+            b"hello\r\n--PARAMS123--\r\n"
+        )
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.srv.port, timeout=5
+        )
+        try:
+            conn.request(
+                "POST", "/v1/sessions/claude:s1/attachments",
+                body=blob,
+                headers={
+                    "Authorization": self.hdr["Authorization"],
+                    "Content-Type":
+                        f'multipart/form-data; boundary={boundary}; '
+                        'charset=utf-8',
+                },
+            )
+            resp = conn.getresponse()
+            payload = json.loads(resp.read())
+            self.assertEqual(resp.status, 200, payload)
+            self.assertTrue(payload["ref"].endswith("a.txt"))
+        finally:
+            conn.close()
+
     def test_inbox_item_shape(self):
         srv = _Server(
             sessions=[_session(sid="f1")],

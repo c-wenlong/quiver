@@ -114,6 +114,7 @@ class TestTmuxInjector(unittest.TestCase):
         self.home = Path(tempfile.mkdtemp())
         self.key = "claude:abc-123"
         self.session = _session()
+        inject.TmuxInjector._answered.clear()  # class-level replay state
         # send() re-checks supervision at write time — an unmarked
         # session is refused even when the route already cleared it.
         supervise.mark(self.home, self.key, {"mode": "tmux", "tmux": "qv-x"})
@@ -165,6 +166,22 @@ class TestTmuxInjector(unittest.TestCase):
         self.assertFalse(out.ok)
         self.assertIn("no approval", out.note)
         sk.assert_not_called()
+
+    def test_approval_replay_rejected(self):
+        # A retried request_id must not consume a different menu.
+        pane = "Do you want to proceed? 1. Yes"
+        with patch.object(supervise, "capture_pane", return_value=pane), \
+             patch.object(supervise, "send_key", return_value=True) as sk:
+            self.assertTrue(
+                self.inj.approval(self.session, "r1", "allow").ok
+            )
+            # A retried approval builds a fresh injector — the replay
+            # guard lives on the class, keyed by session.
+            again = inject.TmuxInjector(self.home, self.key)
+            out = again.approval(self.session, "r1", "deny")
+        self.assertFalse(out.ok)
+        self.assertIn("already answered", out.note)
+        self.assertEqual(sk.call_count, 1)
 
     def test_interrupt_escape(self):
         with patch.object(supervise, "send_key", return_value=True) as sk:

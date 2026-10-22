@@ -221,7 +221,12 @@ function appendEvent(ev, live = true) {
     appendMessage(ev.data || {}, ev.seq);
   } else if (ev.type === "session.status") {
     const row = state.sessions.find((r) => r.key === ev.session);
-    if (row) row.status = (ev.data || {}).status || "";
+    if (row) {
+      row.status = (ev.data || {}).status || "";
+      // An open chat polls nothing — a turn ending here should un-hide
+      // the Attach button / reword the banner on its own.
+      if (row.key === state.currentKey) updateOwnership(row);
+    }
   } else if (ev.type === "session.ownership") {
     const row = state.sessions.find((r) => r.key === ev.session);
     if (row) {
