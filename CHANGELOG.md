@@ -140,11 +140,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   third button is now the tab's own: Usage keeps Refresh, and Compute
   gets the fan button instead (its charts tick on their own, so a reload
   bought nothing). The button opens a compressed take on the Compute
-  page's fan popover — one line per fan with a short bar and the rpm,
-  the Mac's temperatures, and the manual speed controls; the
-  above-temperature rule stays on the page. Choosing Automatic hands the
-  fans back to macOS. Clicks inside the popover no longer read as
-  outside clicks that close the panel.
+  page's fan popover — one line per fan, the bar filling the gap to the
+  rpm, the Mac's temperatures as icons, and full-width Automatic and
+  Manual controls. Automatic offers a "Fans up above" dropdown for the
+  above-temperature rule, the same as the page; Manual keeps the
+  speed slider. Choosing Automatic hands the fans back to macOS. Clicks
+  inside the popover no longer read as outside clicks that close the
+  panel.
 
 ### Fixed
 
