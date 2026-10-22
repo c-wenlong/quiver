@@ -66,7 +66,7 @@ class TestCommandValidation(unittest.TestCase):
             protocol.parse_message_command(
                 {"text": "hi", "client_id": "x" * 65}
             )
-        for bad in ("has space", "dot.id", "", 42):
+        for bad in ("has space", "dot.id", "", "abc\n", 42):
             with self.assertRaises(ValueError):
                 protocol.parse_message_command(
                     {"text": "hi", "client_id": bad}

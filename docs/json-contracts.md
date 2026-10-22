@@ -89,6 +89,10 @@ The send's outcome lands as a `command.result` event on the session key
 note, degraded, client_id}`. Validation failures (bad body, unknown
 attachment) still answer synchronously — `400`, `422` — before the 202.
 
+For sessions owned by a satellite (`key@machine`) the same route returns
+the same `202` shape, except `waiting` is always `false` — the satellite
+re-reads status and decides for itself.
+
 The CLI side of remote also speaks `--json`:
 
 | Command | `data` |

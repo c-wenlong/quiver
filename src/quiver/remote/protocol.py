@@ -25,7 +25,7 @@ PROTOCOL_VERSION = 1
 
 # ``client_id`` on a message POST lets the caller match the async
 # ``command.result`` to an optimistic bubble it already drew.
-_CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_CLIENT_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 EVENT_TYPES = frozenset(
     {
@@ -197,7 +197,7 @@ def parse_message_command(body: dict) -> dict:
     elif (
         not isinstance(client_id, str)
         or not 1 <= len(client_id) <= 64
-        or not _CLIENT_ID_RE.match(client_id)
+        or not _CLIENT_ID_RE.fullmatch(client_id)
     ):
         raise ValueError(
             "message.client_id must be 1-64 chars of [A-Za-z0-9_-]"

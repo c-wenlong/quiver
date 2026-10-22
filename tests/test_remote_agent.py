@@ -439,7 +439,12 @@ class TestAgentRoutes(unittest.TestCase):
             {"text": "yo", "mode": "queue", "client_id": "cid-9"},
             headers=self.srv.auth)
         self.assertEqual(status, 202)
-        self.assertTrue(json.loads(data)["queued"])
+        body = json.loads(data)
+        self.assertTrue(body["queued"])
+        # Same shape as the local 202; the satellite re-reads status and
+        # decides for itself, so waiting is always false here.
+        self.assertEqual(body["client_id"], "cid-9")
+        self.assertFalse(body["waiting"])
         replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
         self.assertEqual(len(replay), 1)
         self.assertEqual(replay[0]["session"], "claude:r1")

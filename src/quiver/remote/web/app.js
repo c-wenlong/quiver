@@ -227,7 +227,7 @@ async function backfill(key, gen) {
 
 function appendEvent(ev, live = true) {
   if (ev.type === "message.appended") {
-    appendMessage(ev.data || {}, ev.seq);
+    appendMessage(ev.data || {}, ev.seq, live);
   } else if (ev.type === "session.status") {
     const row = state.sessions.find((r) => r.key === ev.session);
     if (row) {
@@ -247,7 +247,7 @@ function appendEvent(ev, live = true) {
       kind: "approval",
       text: (ev.data || {}).prompt || "approval requested",
       request_id: (ev.data || {}).request_id || "",
-    }, ev.seq);
+    }, ev.seq, live);
   } else if (ev.type === "command.result") {
     // Sends answer async — settle the optimistic bubble this result
     // belongs to, plus any queued approval card it answers.
@@ -429,7 +429,7 @@ function toolDiff(tool) {
   return null;
 }
 
-function appendMessage(msg, seq) {
+function appendMessage(msg, seq, live = true) {
   const log = el("chat-log");
   const kind = msg.kind || "assistant";
   if (kind === "tool_result" && msg.result_ref && toolCards.has(msg.result_ref)) {
@@ -460,13 +460,18 @@ function appendMessage(msg, seq) {
     log.appendChild(d);
     return;
   }
-  if (kind === "user") {
+  if (kind === "user" && live) {
     // A queued send's real bubble lands via message.appended — swap it
     // for the optimistic one we already drew (attachments prefix the
-    // stored text with "@path ", hence the endsWith).
+    // stored text with "@path ", hence the endsWith). Backfill never
+    // dedupes: history replay must not erase a queued bubble.
     const hit = [...log.querySelectorAll(".msg.user[data-client-id]:not(.failed)")].find(
-      (b) => b.dataset.text &&
-        (msg.text === b.dataset.text || (msg.text || "").endsWith(b.dataset.text))
+      (b) => {
+        const t = b.dataset.text;
+        if (!t || (msg.text !== t && !(msg.text || "").endsWith(t))) return false;
+        const sentAt = Number(b.dataset.sentAt || 0);
+        return !msg.ts || !sentAt || msg.ts >= sentAt - 5;
+      }
     );
     if (hit) hit.remove();
   }
@@ -645,6 +650,7 @@ function appendOptimistic(text, clientId) {
   div.className = "msg user pending";
   div.dataset.clientId = clientId;
   div.dataset.text = text;
+  div.dataset.sentAt = String(Math.floor(Date.now() / 1000));
   div.innerHTML =
     `<div class="role">you</div><div class="text">${md(text)}</div>` +
     `<div class="send-note">sending…</div>`;
@@ -680,6 +686,9 @@ el("composer").addEventListener("submit", async (e) => {
   } catch {
     status = 0; // network failure — the hub never saw it
   }
+  // A fast command.result may already have settled this bubble —
+  // .pending is gone then, and the response must not clobber it.
+  if (!bubble.classList.contains("pending")) return;
   if (status === 202) {
     // The send itself resolves later as command.result; the note says
     // where it stands until then.

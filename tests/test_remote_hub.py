@@ -832,6 +832,129 @@ class TestSendQueue(unittest.TestCase):
         sent = [c[0][1]["text"] for c in fake.send.call_args_list]
         self.assertEqual(sent, ["first", "second"])
 
+    def test_steer_bypasses_a_waiting_queue_job(self):
+        # Steers get their own queue key: one queue job parked on an
+        # active session must not hold a steer back.
+        from quiver.remote import hub as hub_mod
+        from quiver.remote import inject
+        fake = self._injector()
+        self.live = ["active"]
+        q = self.srv.state.bus.subscribe(self.key)
+        with patch.object(inject, "injector_for", return_value=fake), \
+             patch.object(hub_mod, "QUEUE_POLL_S", 0.05):
+            status, data = self._post({"text": "q1"})
+            self.assertEqual(status, 202)
+            self.assertTrue(json.loads(data)["waiting"])
+            status, data = self._post({"text": "s1", "mode": "steer"})
+            self.assertEqual(status, 202)
+            self.assertFalse(json.loads(data)["waiting"])
+            ev = q.get(timeout=5)
+            self.assertTrue(ev["data"]["ok"])
+            # The queue job is still parked; only the steer has sent.
+            self.assertEqual(
+                [c[0][1]["text"] for c in fake.send.call_args_list],
+                ["s1"],
+            )
+            self.live = ["done"]
+            ev2 = q.get(timeout=5)
+        self.assertTrue(ev2["data"]["ok"])
+        self.assertEqual(
+            [c[0][1]["text"] for c in fake.send.call_args_list],
+            ["s1", "q1"],
+        )
+
+    def test_job_refetches_session_during_wait(self):
+        # The Session captured at submit can go stale mid-wait — each
+        # poll and the final send must see the catalog's current one.
+        from quiver.remote import hub as hub_mod
+        from quiver.remote import inject
+        fake = self._injector()
+        newer = _session(sid="s1")
+        flip = threading.Event()
+        job_started = threading.Event()
+        seen = []
+
+        def status_of(sessions):
+            seen.append(sessions[0])
+            if len(seen) >= 2:  # handler's read plus the job's first
+                job_started.set()
+            return ["done" if flip.is_set() else "active"]
+
+        self.srv.state.status_of = status_of
+        real_session_for = self.srv.state.catalog.session_for
+        self.srv.state.catalog.session_for = (
+            lambda k: newer if flip.is_set() else real_session_for(k)
+        )
+        q = self.srv.state.bus.subscribe(self.key)
+        with patch.object(inject, "injector_for", return_value=fake), \
+             patch.object(hub_mod, "QUEUE_POLL_S", 0.05):
+            self.assertEqual(self._post({"text": "hi"})[0], 202)
+            self.assertTrue(job_started.wait(2))
+            flip.set()
+            ev = q.get(timeout=5)
+        self.assertTrue(ev["data"]["ok"])
+        self.assertIs(seen[-1], newer)
+        self.assertIs(fake.send.call_args[0][0], newer)
+
+    def test_close_cancels_queued_and_stop_fails_running(self):
+        # Restart semantics: queued jobs are cancelled outright; a job
+        # already in its wait loop exits on _stop with the same note.
+        from quiver.remote import hub as hub_mod
+        from quiver.remote import inject
+        fake = self._injector()
+        calls = [0]
+        job_started = threading.Event()
+
+        def status_of(sessions):
+            calls[0] += 1
+            if calls[0] >= 2:
+                job_started.set()
+            return ["active"]
+
+        self.srv.state.status_of = status_of
+        q = self.srv.state.bus.subscribe(self.key)
+        with patch.object(inject, "injector_for", return_value=fake), \
+             patch.object(hub_mod, "QUEUE_POLL_S", 0.05):
+            self.assertEqual(
+                self._post({"text": "one", "client_id": "j1"})[0], 202
+            )
+            self.assertTrue(job_started.wait(2))
+            self.assertEqual(
+                self._post({"text": "two", "client_id": "j2"})[0], 202
+            )
+            self.srv.state.sendq.close()
+            cancelled = q.get(timeout=5)
+            self.assertEqual(cancelled["data"]["client_id"], "j2")
+            self.assertFalse(cancelled["data"]["ok"])
+            self.assertEqual(
+                cancelled["data"]["note"],
+                "hub restarted; message not sent",
+            )
+            self.srv.state._stop.set()
+            stopped = q.get(timeout=5)
+        self.assertEqual(stopped["data"]["client_id"], "j1")
+        self.assertFalse(stopped["data"]["ok"])
+        self.assertEqual(
+            stopped["data"]["note"], "hub restarted; message not sent"
+        )
+        fake.send.assert_not_called()
+
+    def test_send_backlog_cap_429s(self):
+        from quiver.remote import hub as hub_mod
+        from quiver.remote import inject
+        fake = self._injector()
+        self.live = ["active"]
+        with patch.object(inject, "injector_for", return_value=fake), \
+             patch.object(hub_mod, "QUEUE_POLL_S", 0.05), \
+             patch.object(hub_mod, "MAX_SEND_BACKLOG", 3):
+            for i in range(3):
+                self.assertEqual(self._post({"text": f"m{i}"})[0], 202)
+            status, data = self._post({"text": "m3"})
+        self.assertEqual(status, 429)
+        self.assertEqual(
+            json.loads(data)["error"]["code"], "backlog_full"
+        )
+
     def test_injector_exception_fails_job_not_worker(self):
         from quiver.remote import inject
         fake = self._injector()
@@ -862,6 +985,35 @@ class TestServeEntry(unittest.TestCase):
         state.start.assert_called_once()
         state.stop.assert_called_once()
         server.server_close.assert_called_once()
+
+    def test_serve_sigterm_takes_the_shutdown_path(self):
+        # SIGTERM must reach state.stop(), not kill the process outright —
+        # otherwise accepted sends drop without their command.result.
+        import signal
+        from quiver.remote import hub as hub_mod
+
+        state = MagicMock()
+        server = MagicMock()
+        shutdown_called = threading.Event()
+        server.shutdown.side_effect = shutdown_called.set
+
+        def forever(**_kw):
+            handler = signal.getsignal(signal.SIGTERM)
+            handler(signal.SIGTERM, None)
+
+        server.serve_forever.side_effect = forever
+        prev = signal.getsignal(signal.SIGTERM)
+        try:
+            with patch.object(hub_mod, "make_server",
+                              return_value=server):
+                rc = hub_mod.serve(state, "127.0.0.1", 0)
+            self.assertEqual(rc, 0)
+            self.assertTrue(shutdown_called.wait(2))
+            state.stop.assert_called_once()
+            server.server_close.assert_called_once()
+            self.assertIs(signal.getsignal(signal.SIGTERM), prev)
+        finally:
+            signal.signal(signal.SIGTERM, prev)
 
     def test_state_start_stop(self):
         state = HubState(Path(tempfile.mkdtemp()))
