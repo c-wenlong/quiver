@@ -394,6 +394,44 @@ class TestHubWriteRoutes(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_multipart_keeps_trailing_dash_newline_bytes(self):
+        # The old parser rstripped "\r\n-" from the tail, corrupting
+        # content that legitimately ended in dash or newline bytes.
+        from quiver.remote import attachments as att
+
+        boundary = "KEEPBYTES"
+        content = b"log tail ends with dash-\r\n"
+        blob = (
+            b"--KEEPBYTES\r\n"
+            b'Content-Disposition: form-data; name="file"; '
+            b'filename="note.log"\r\n'
+            b"Content-Type: text/plain\r\n\r\n" + content +
+            b"\r\n--KEEPBYTES--\r\n"
+        )
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.srv.port, timeout=5
+        )
+        try:
+            conn.request(
+                "POST", "/v1/sessions/claude:s1/attachments",
+                body=blob,
+                headers={
+                    "Authorization": self.hdr["Authorization"],
+                    "Content-Type":
+                        f"multipart/form-data; boundary={boundary}",
+                },
+            )
+            resp = conn.getresponse()
+            payload = json.loads(resp.read())
+            self.assertEqual(resp.status, 200, payload)
+        finally:
+            conn.close()
+        staged = att.resolve(
+            self.srv.state.home, "claude:s1", payload["ref"]
+        )
+        self.assertIsNotNone(staged)
+        self.assertEqual(Path(staged).read_bytes(), content)
+
     def test_inbox_item_shape(self):
         srv = _Server(
             sessions=[_session(sid="f1")],
@@ -511,9 +549,13 @@ class TestServeEntry(unittest.TestCase):
             self.assertTrue(all(t.is_alive() for t in state._threads))
         finally:
             state.stop()
-        self.assertTrue(
-            all(not t.is_alive() for t in state._threads)
-        )
+        # stop() joins each thread with a 2s cap; a thread caught
+        # mid-refresh under suite load may outlive it briefly.
+        deadline = time.time() + 5
+        while any(t.is_alive() for t in state._threads):
+            if time.time() > deadline:
+                self.fail("state.stop() left live threads")
+            time.sleep(0.05)
 
 
 class TestGlobalEvents(HubBase):

@@ -124,6 +124,28 @@ class TestAdoptPending(unittest.TestCase):
         self.assertFalse((folder / "old.json").exists())   # expired
         self.assertTrue((folder / "other.json").exists())  # unmatched stays
 
+    def test_ambiguous_candidates_never_adopt(self):
+        # Two same-cwd sessions with fresh transcripts: adopting either
+        # could bind a human session to our pane — stay pending.
+        folder = supervise._pending_dir(self.home)
+        folder.mkdir(parents=True)
+        proj = Path(tempfile.mkdtemp())
+        pending = {"tmux": "qv-new", "tool_name": "claude",
+                   "cwd": str(proj), "launched_at": time.time()}
+        (folder / "qv-new.json").write_text(json.dumps(pending))
+        rows = [
+            (protocol.session_key("claude", "s1", str(proj)),
+             _session(path=str(proj)), "active"),
+            (protocol.session_key("claude", "s2", str(proj)),
+             _session(path=str(proj), sid="s2"), "active"),
+        ]
+        transcript = proj / "t.jsonl"
+        transcript.write_text("{}\n")
+        with patch("quiver.remote.tail.resolve_jsonl_path",
+                   return_value=transcript):
+            self.assertEqual(supervise.adopt_pending(self.home, rows), [])
+        self.assertTrue((folder / "qv-new.json").exists())
+
     def test_corrupt_marker_removed(self):
         folder = supervise._pending_dir(self.home)
         folder.mkdir(parents=True)
@@ -136,6 +158,7 @@ class TestLaunchNew(unittest.TestCase):
     def test_launch_writes_pending_and_primes(self):
         home = Path(tempfile.mkdtemp())
         with patch.object(supervise, "launch_tmux", return_value="qv-n"), \
+             patch.object(supervise.shutil, "which", return_value="/usr/bin/claude"), \
              patch.object(supervise, "prime_pane") as prime:
             ok, note, name = supervise.launch_new(home, "claude", "/tmp", "hi")
         self.assertTrue(ok)
@@ -145,6 +168,19 @@ class TestLaunchNew(unittest.TestCase):
         self.assertEqual(
             json.loads(marker.read_text())["tool_name"], "claude"
         )
+
+    def test_same_second_launches_get_distinct_names(self):
+        home = Path(tempfile.mkdtemp())
+        seen = []
+        with patch.object(supervise.shutil, "which", return_value="/x/claude"), \
+             patch.object(supervise, "launch_tmux",
+                          side_effect=lambda key, *a: seen.append(
+                              supervise.tmux_name(key)) or
+                              supervise.tmux_name(key)), \
+             patch.object(supervise, "prime_pane"):
+            supervise.launch_new(home, "claude", "/tmp", "one")
+            supervise.launch_new(home, "claude", "/tmp", "two")
+        self.assertEqual(len(set(seen)), 2)
 
     def test_unknown_harness(self):
         ok, note, name = supervise.launch_new(

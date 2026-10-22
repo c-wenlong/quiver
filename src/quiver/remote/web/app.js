@@ -188,13 +188,19 @@ function updateOwnership(row) {
   const observed = !row || row.ownership !== "attached";
   el("composer").classList.toggle("hidden", observed);
   el("chat-banner").classList.toggle("hidden", !observed);
-  const canAttach = observed && row && row.attachable;
+  // attachable means "has resume flags"; the server also refuses when
+  // the session is mid-turn, so hide the button then rather than have
+  // every tap bounce off the 409.
+  const busy = row && row.status === "active";
+  const canAttach = observed && row && row.attachable && !busy;
   el("attach-btn").classList.toggle("hidden", !canAttach);
   el("chat-banner-text").textContent = !observed
     ? ""
     : canAttach
       ? "Observed session: read-only until attached."
-      : "Observed session: read-only (this harness cannot be attached).";
+      : busy
+        ? "Observed session: mid-turn — attach once it is idle."
+        : "Observed session: read-only (this harness cannot be attached).";
 }
 
 async function backfill(key, gen) {

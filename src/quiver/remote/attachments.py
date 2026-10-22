@@ -14,6 +14,7 @@ days or at session end (``detach``/``kill`` removes the directory).
 from __future__ import annotations
 
 import os
+import secrets
 import time
 from pathlib import Path
 
@@ -22,6 +23,10 @@ from quiver.remote.protocol import key_slug
 
 MAX_BYTES = 20 << 20
 MAX_AGE_S = 7 * 24 * 3600
+
+# stage() builds refs as "<ts>-<rand>-<name>"; the name is capped so the
+# ref stays under _safe_name's 80-char limit and resolve() round-trips.
+_NAME_MAX = 60
 
 ALLOWED_EXTS = {
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic",
@@ -53,13 +58,16 @@ def stage(
         return None, "empty upload"
     if len(data) > MAX_BYTES:
         return None, "attachment exceeds 20 MB"
-    name = _safe_name(filename)
+    name = _safe_name(filename)[:_NAME_MAX]
     if Path(name).suffix.lower() not in ALLOWED_EXTS:
         return None, f"unsupported file type {Path(name).suffix or '?'}"
     folder = inbox_dir(home, session_key)
     try:
         folder.mkdir(parents=True, exist_ok=True)
-        ref = f"{int(time.time())}-{name}"
+        # The random segment keeps two same-named uploads in one second
+        # from overwriting each other (phone photo batches all call
+        # themselves image.png).
+        ref = f"{int(time.time())}-{secrets.token_hex(3)}-{name}"
         target = folder / ref
         target.write_bytes(data)
     except OSError as exc:
