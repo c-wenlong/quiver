@@ -325,6 +325,8 @@ final class AppModel {
     let serviceStatus: ServiceStatusModel
     /// Which providers show, in what order (Settings).
     let providers: ProviderVisibilityModel
+    /// Which pages the sidebar lists, and their order inside each group.
+    let sidebar = SidebarVisibilityModel(store: UserDefaultsStore())
     /// The order of Settings › Providers › Inference's rows.
     let inferenceOrder = InferenceOrder(store: UserDefaultsStore())
     /// What the starred harnesses are running right now (the Compute page).
@@ -699,6 +701,9 @@ final class AppModel {
             Task { await fans.checkTemperature(reading[.cpu]) }
         }
         compute.startTrends()
+        // A page hidden in Settings › Sidebar never comes back as the
+        // open one on launch.
+        if let selection, sidebar.isHidden(selection) { self.selection = .overview }
     }
 
     /// Pids launchd manages, from `launchctl list`: user agents look like
