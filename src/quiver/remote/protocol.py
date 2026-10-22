@@ -58,7 +58,8 @@ MESSAGE_MODES = frozenset({"queue", "steer"})
 
 # POST /v1/sessions/{id}/control ``op`` values.
 CONTROL_OPS = frozenset(
-    {"interrupt", "compact", "clear", "model", "effort", "attach", "kill"}
+    {"interrupt", "compact", "clear", "model", "effort", "attach",
+     "detach", "kill"}
 )
 
 NOTIFY_KINDS = frozenset({"needs_you", "finished", "error", "limit"})
