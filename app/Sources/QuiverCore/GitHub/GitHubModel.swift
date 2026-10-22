@@ -417,12 +417,14 @@ public final class GitHubModel {
     /// Write one board surface's entry into `path`: ok loads the rows and
     /// the fetched stamp, anything else is the entry's typed failure. A
     /// loaded value also lands in SQLite through `persist`, called on the
-    /// write queue so the reply never blocks on disk.
+    /// write queue so the reply never blocks on disk. `persist` must be
+    /// `@Sendable`: a plain closure formed on this actor inherits
+    /// `@MainActor` isolation and traps when the write queue runs it.
     private func fill<Entry: GhEntryFields, Row: Equatable & Sendable>(
         _ entry: Entry?, into board: inout RepoBoard,
         _ path: WritableKeyPath<RepoBoard, Loadable<Row>>,
         repo: String, tab: RepoTab, stamp: Date,
-        persist: ((Row) -> Void)? = nil,
+        persist: (@Sendable (Row) -> Void)? = nil,
         rows: (Entry) -> Row
     ) {
         let value: Loadable<Row>
@@ -500,9 +502,11 @@ public final class GitHubModel {
     /// the closure talks to the store directly. The surface picks the
     /// write mode: pulls, issues and runs accumulate past the window;
     /// releases, tags and branches are list state and rewrite whole.
+    /// The `@Sendable` return is load-bearing: it keeps the closure
+    /// nonisolated, so the write queue can call it.
     private func persist<Row: Codable & Identifiable & Sendable>(
         repo: String, surface: GitHubHistory.Surface
-    ) -> ([Row]) -> Void {
+    ) -> @Sendable ([Row]) -> Void {
         { [historyStore] rows in
             switch surface {
             case .pulls, .issues, .runs:
@@ -1203,12 +1207,14 @@ public final class GitHubModel {
     /// the board slot `path`. `.ok` loads the rows; any other status —
     /// or no entry at all — is a failure carrying swe's `error`. A loaded
     /// value also lands in SQLite through `persist`, called on the write
-    /// queue so the reply never blocks on disk.
+    /// queue so the reply never blocks on disk. `persist` must be
+    /// `@Sendable`: a plain closure formed on this actor inherits
+    /// `@MainActor` isolation and traps when the write queue runs it.
     private func apply<Entry: GhEntryFields, Row: Equatable & Sendable>(
         _ reply: GhResults<Entry>, to key: BoardKey,
         _ path: WritableKeyPath<RepoBoard, Loadable<Row>>,
         store: Store = .dashboard,
-        persist: ((Row) -> Void)? = nil,
+        persist: (@Sendable (Row) -> Void)? = nil,
         rows: (Entry) -> Row
     ) {
         env = reply.github
