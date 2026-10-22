@@ -21,16 +21,39 @@
 
 <main>
   <section id="pair-view" class="view hidden">
-    <div class="card center">
+    <div class="card center" id="pair-start">
       <h1>Pair this device</h1>
-      <p class="dim">Run <code>swe remote pair</code> on the hub and open the
-      link it prints, or paste the token here.</p>
-      <input id="pair-token" type="text" inputmode="text" autocomplete="off"
-             placeholder="pair token" spellcheck="false">
+      <p class="dim">The hub identifies you by your Tailscale device.</p>
       <input id="pair-name" type="text" autocomplete="off"
              placeholder="device name (e.g. iPhone)">
-      <button id="pair-go" class="primary">Pair</button>
+      <button id="pair-ts" class="primary">Pair with Tailscale</button>
       <p id="pair-error" class="error"></p>
+      <details class="pair-token">
+        <summary>Have a pair token?</summary>
+        <input id="pair-token" type="text" inputmode="text" autocomplete="off"
+               placeholder="pair token" spellcheck="false">
+        <button id="pair-go" class="primary">Pair with token</button>
+      </details>
+    </div>
+    <div class="card center hidden" id="pair-code-card">
+      <h1>Approve this device</h1>
+      <div id="pair-code" class="pair-code"></div>
+      <p id="pair-node" class="dim"></p>
+      <p class="dim">Approve on another device: run
+        <code>swe remote devices --approve=<span id="pair-code-flat"></span></code>
+        on the hub, or open this hub's address with <code>#approve</code>
+        on your Mac.</p>
+      <p id="pair-code-status" class="dim"></p>
+      <button id="pair-retry" class="ghost hidden">Try again</button>
+    </div>
+  </section>
+
+  <section id="approve-view" class="view hidden">
+    <div class="card">
+      <h1>Pending pair requests</h1>
+      <p class="dim">Type the code shown on the requesting device.</p>
+      <div id="approve-list"></div>
+      <p id="approve-error" class="error"></p>
     </div>
   </section>
 

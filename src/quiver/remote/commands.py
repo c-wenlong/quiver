@@ -33,8 +33,9 @@ _SUBCOMMANDS = {"serve", "pair", "status", "devices", "attach", "agent",
 _VALUE_FLAGS = {
     "--host", "--port", "--name", "--tail-days", "--revoke", "--mode",
     "--hub", "--token", "--ntfy", "--topic", "--ntfy-token",
+    "--approve", "--deny",
 }
-_BOOL_FLAGS = {"--on", "--off", "--app"}
+_BOOL_FLAGS = {"--on", "--off", "--app", "--requests"}
 
 _USAGE = f"""\
   {c('cyan', 'swe remote serve [--host=H] [--port=N]')}   Run the hub (REST + SSE)
@@ -42,7 +43,8 @@ _USAGE = f"""\
   {c('cyan', 'swe remote pair [--name=N] [--host=H] [--port=N] [--app] [--json]')}
                                   Print a pairing URL + token for a phone
   {c('cyan', 'swe remote status [--host=H] [--port=N]')}  Probe the hub + list machines
-  {c('cyan', 'swe remote devices [--revoke=<id>]')}       List or revoke paired devices
+  {c('cyan', 'swe remote devices [--revoke=<id>] [--requests] [--approve=<code>] [--deny=<code>]')}
+                                  List/revoke devices and approve pair requests
   {c('cyan', 'swe remote attach <session> [--mode=tmux|headless]')}
                                   Move an observed session under supervision
   {c('cyan', 'swe remote notify [--ntfy=URL --topic=T] [--on|--off]')}
@@ -220,6 +222,51 @@ def _cmd_status(flags: dict, json_view: bool) -> int:
 
 
 def _cmd_devices(flags: dict, json_view: bool) -> int:
+    if flags.get("--requests"):
+        rows = pairing.list_requests()
+        if json_view:
+            return emit({"requests": rows})
+        if not rows:
+            print(c("dim", "no pending pair requests"))
+            return 0
+        for r in rows:
+            print(
+                f"  {r['request_id']}  {r.get('name', 'device')}  "
+                f"{r.get('node_name') or '?'}  "
+                f"{r.get('login') or 'no login'}  "
+                f"{r.get('peer_ip', '?')}  expires in {r['expires_in_s']}s"
+            )
+        return 0
+    approve = flags.get("--approve")
+    if approve is not None:
+        code = "".join(ch for ch in approve if ch.isdigit())
+        res = pairing.approve_request(None, code)
+        if json_view:
+            if res is None:
+                emit({"ok": False})
+                return 1
+            return emit({**res, "ok": True})
+        if res is None:
+            print(c("red", "no pending request matches that code"),
+                  file=error_stream(json_view))
+            return 1
+        print(
+            f"approved {res['name']} ({res.get('node_name', '?')}) "
+            f"→ device {res['device_id']}"
+        )
+        return 0
+    deny = flags.get("--deny")
+    if deny is not None:
+        code = "".join(ch for ch in deny if ch.isdigit())
+        ok = pairing.deny_request(None, code)
+        if json_view:
+            return emit({"ok": ok})
+        if not ok:
+            print(c("red", "no pending request matches that code"),
+                  file=error_stream(json_view))
+            return 1
+        print("denied")
+        return 0
     revoke = flags.get("--revoke")
     if revoke:
         ok = pairing.revoke_device(None, revoke)

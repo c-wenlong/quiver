@@ -643,6 +643,9 @@ to use their own login state and environment."""
   {c('cyan', 'swe remote status [--host=H]')}           Probe the hub, list machines
                                             and paired devices.
   {c('cyan', 'swe remote devices [--revoke=<id>]')}     List or revoke paired devices.
+                                            {c('cyan', '--requests')} lists pending
+                                            pair requests; {c('cyan', '--approve=<code>')}
+                                            and {c('cyan', '--deny=<code>')} decide one.
   {c('cyan', 'swe remote attach <session>')}            Take an observed session
                                             under supervision. Default
                                             {c('cyan', '--mode=auto')} picks the
