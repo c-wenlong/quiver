@@ -96,8 +96,9 @@ final class StatusItemController: NSObject {
         panel.makeKeyAndOrderFront(nil)
         // Clicks in other apps arrive at the global monitor; clicks in
         // Quiver's own windows only at a local one. Either closes the panel,
-        // except a click on the panel itself or on the status item (which
-        // toggles it).
+        // except a click on the panel itself, on a popover it is hosting
+        // (a child window, like the fan popover's), or on the status item
+        // (which toggles it).
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
         ) { [weak self] _ in
@@ -106,7 +107,9 @@ final class StatusItemController: NSObject {
         localClickMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
         ) { [weak self] event in
-            if let self, event.window !== self.panel, event.window !== self.item.button?.window {
+            if let self, event.window !== self.panel,
+               event.window?.parent !== self.panel,
+               event.window !== self.item.button?.window {
                 self.close()
             }
             return event
@@ -205,14 +208,21 @@ struct MenuBarContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // The tabs where the title was; refresh, open and quit as
-            // icons beside them, so the panel has no button row at the
-            // bottom.
+            // The tabs where the title was; one per-tab action, open and
+            // quit as icons beside them, so the panel has no button row
+            // at the bottom.
             HStack(spacing: 12) {
                 PopupTabBar(current: tab)
                 Spacer()
-                PanelIconButton(title: "Refresh", symbol: "arrow.clockwise") { tab.refresh(app) }
-                    .disabled(tab.isRefreshing(app))
+                // Usage's action is Refresh; Compute's is the fans — its
+                // charts tick on their own, so a reload buys nothing.
+                switch tab {
+                case .usage:
+                    PanelIconButton(title: "Refresh", symbol: "arrow.clockwise") { tab.refresh(app) }
+                        .disabled(tab.isRefreshing(app))
+                case .compute:
+                    PanelFanButton()
+                }
                 PanelIconButton(title: "Open Quiver", symbol: "macwindow", action: openMain)
                 PanelIconButton(title: "Quit Quiver", symbol: "power") { NSApp.terminate(nil) }
             }
