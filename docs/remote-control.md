@@ -253,13 +253,18 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   Tailscale IP only, so no LAN/WAN port ever opens. Tailscale's OAuth
   login is how a device joins the tailnet; this feature does not
   re-implement it.
-- Pairing: `swe remote pair` prints a QR (`http://hub/#pair=token` for
-  the PWA; `--app` swaps the QR payload for `quiver://pair?host&token`
-  so the Camera app opens the iOS wrapper directly) — one-time,
-  short-lived → phone exchanges it for a stored device
-  credential in `devices.json` (0600), revocable per device — Trusted
-  Devices minus biometrics. The token guards the pairing window, not
-  the transport: only a tailnet device can even reach `/v1/pair`.
+- Pairing: the phone posts `POST /v1/pair/request`; the hub resolves
+  its Tailscale node with `tailscale whois <peer ip>` and hands back a
+  6-digit code + a poll secret. A second device — or the hub's own
+  shell — approves it (`swe remote devices --approve=<code>`, the
+  `#approve` page on another Mac's browser, or any already-paired
+  device). Approving mints a stored credential in `devices.json`
+  (0600), revocable per device — Trusted Devices minus biometrics. A
+  device can't approve its own request; five wrong codes deny it. The
+  QR/token path (`swe remote pair`, `http://hub/#pair=token`; `--app`
+  swaps in the `quiver://` deep link) stays as the fallback for devices
+  `whois` can't identify. Either way, only a tailnet device can reach
+  the pairing routes at all.
 - Threat model for the README: the hub executes on your machines by
   design; the credential gates the app layer on top of the tailnet —
   per-device revocation is what "revoke my lost phone" means without

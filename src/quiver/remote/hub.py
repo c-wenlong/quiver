@@ -36,6 +36,7 @@ from quiver.remote import (
     sendq,
     supervise,
     tail,
+    tsid,
 )
 from quiver.remote.journal import Journal
 
@@ -129,6 +130,17 @@ class HubState:
         # Fresh per-session status for queued sends; tests stub it.
         from quiver.sessions.status import session_statuses
         self.status_of = session_statuses
+        # Tailscale identity lookup for pair requests; tests stub it.
+        self.whois = tsid.whois
+        # The hub owner's tailnet login — set by serve() from whois of
+        # the bind address; "" means owner-identity approval is off.
+        self.owner_login = ""
+        # Unauthenticated /v1/pair/request rate limit: ip → timestamps.
+        self._pair_req_times: dict[str, list[float]] = {}
+        self._pair_req_lock = threading.Lock()
+        # Host values the owner-identity approval path accepts (filled
+        # by serve() from the bind host + whois); empty disables it.
+        self.allowed_hosts: set[str] = set()
         # The hub's reachable base — set by serve() before start() so
         # ntfy action buttons can point back at this host.
         self.base_url = ""
@@ -414,6 +426,128 @@ class _Handler(BaseHTTPRequestHandler):
         row = pairing.load_devices(home).get(device_id) or {}
         return bool(row.get("revoked_at"))
 
+    def _approver_node(self, peer: dict | None) -> str | None:
+        """The peer's node id when it shares the hub owner's login —
+        else None. Tagged nodes never qualify."""
+        if (
+            peer is None or peer.get("tagged")
+            or not self._state.owner_login
+            or peer.get("login") != self._state.owner_login
+        ):
+            return None
+        return str(peer.get("node_id") or "") or None
+
+    def _bad_origin(self) -> bool:
+        """Origin must name this hub when present — a cross-site page
+        can't satisfy either form."""
+        origin = self.headers.get("Origin")
+        if origin is not None and (
+            origin != f"http://{self.headers.get('Host')}"
+        ):
+            return True
+        return False
+
+    def _identity_ok(self) -> bool:
+        """The unauthenticated approval path's CSRF gate: a cross-site
+        form can't send a custom header, and the Host must be a name
+        this hub actually answers (DNS-rebinding check)."""
+        if (self.headers.get("X-Quiver-Pair") or "") != "1":
+            return False
+        allowed = self._state.allowed_hosts
+        if allowed and (self.headers.get("Host") or "") not in allowed:
+            return False
+        return True
+
+    def _pair_request(self) -> None:
+        ip = self.client_address[0]
+        now = time.time()
+        # Rate limit BEFORE the whois fork — a flood must not spawn a
+        # subprocess per request. Locked: read-check-append must be
+        # atomic across handler threads.
+        with self._state._pair_req_lock:
+            times = [t for t in self._state._pair_req_times.get(ip, [])
+                     if now - t < 600]
+            if len(times) >= 5:
+                self._send_error(429, "rate_limited",
+                                 "too many pair requests")
+                return
+            times.append(now)
+            self._state._pair_req_times[ip] = times
+        peer = self._state.whois(ip)
+        if peer is None:
+            self._send_error(
+                403, "not_tailnet",
+                "can't identify this device on the tailnet; "
+                "use a pair token",
+            )
+            return
+        body = self._read_body() or {}
+        try:
+            result = pairing.request_pair(
+                self._state.home, {**peer, "ip": ip},
+                str(body.get("name") or ""),
+            )
+        except pairing.PairBusy:
+            self._send_error(429, "busy",
+                             "too many pending pair requests")
+            return
+        self._send_json(201, result)
+
+    def _pair_decide(self, approve: bool) -> None:
+        ct = self.headers.get("Content-Type") or ""
+        if not ct.startswith("application/json"):
+            self._send_error(
+                403, "bad_origin", "request blocked by origin policy"
+            )
+            return
+        device_id = self._device()
+        # The peer's node decides self-approval no matter how the
+        # caller proved itself — bearer or owner identity alike.
+        peer = self._state.whois(self.client_address[0])
+        node_id = (
+            str(peer.get("node_id") or "") or None
+        ) if peer else None
+        if device_id is None and self._approver_node(peer) is None:
+            self._send_error(401, "unauthorized",
+                             "pair this device first")
+            return
+        if self._bad_origin() or (
+            device_id is None and not self._identity_ok()
+        ):
+            self._send_error(
+                403, "bad_origin", "request blocked by origin policy"
+            )
+            return
+        body = self._read_body() or {}
+        code = str(body.get("code") or "")
+        rid = body.get("request_id")
+        rid = str(rid) if rid else None
+        if approve:
+            try:
+                result = pairing.approve_request(
+                    self._state.home, code, rid, approver_node_id=node_id
+                )
+            except pairing.SelfApproval:
+                self._send_error(
+                    403, "self_approval",
+                    "approve from a different device",
+                )
+                return
+            if result is None:
+                self._send_error(404, "no_match",
+                                 "no pending request matches that code")
+                return
+            self._send_json(200, {
+                "ok": True, "device_id": result["device_id"],
+                "name": result["name"],
+            })
+            return
+        if pairing.deny_request(self._state.home, code, rid):
+            self._send_json(200, {"ok": True})
+        else:
+            self._send_error(404, "no_match",
+                             "no pending request matches that code")
+
     # -- SSE --------------------------------------------------------------
 
     def _sse_stream(
@@ -562,6 +696,41 @@ class _Handler(BaseHTTPRequestHandler):
             })
             return
 
+        # The requester's poll is unauthenticated — the request id +
+        # poll secret it carries are the capability.
+        if path.startswith("/v1/pair/request/"):
+            rid = unquote(path[len("/v1/pair/request/"):])
+            secret = str((args.get("secret") or [""])[0])
+            result = pairing.poll_request(self._state.home, rid, secret)
+            if result is None:
+                self._send_error(
+                    404, "unknown_request", "unknown or expired request"
+                )
+                return
+            self._send_json(200, result)
+            return
+
+        # Approving devices get in two ways: a paired bearer, or the
+        # tailnet login that owns this hub node.
+        if path == "/v1/pair/requests":
+            peer = self._state.whois(self.client_address[0])
+            device_id = self._device()
+            if device_id is None and self._approver_node(peer) is None:
+                self._send_error(401, "unauthorized",
+                                 "pair this device first")
+                return
+            if self._bad_origin() or (
+                device_id is None and not self._identity_ok()
+            ):
+                self._send_error(
+                    403, "bad_origin", "request blocked by origin policy"
+                )
+                return
+            self._send_json(
+                200, {"requests": pairing.list_requests(self._state.home)}
+            )
+            return
+
         # Everything else under /v1 wants a paired device credential.
         device_id = None
         if path.startswith("/v1/"):
@@ -675,6 +844,14 @@ class _Handler(BaseHTTPRequestHandler):
                 )
                 return
             self._send_json(200, result)
+            return
+
+        if path == "/v1/pair/request":
+            self._pair_request()
+            return
+
+        if path in {"/v1/pair/requests/approve", "/v1/pair/requests/deny"}:
+            self._pair_decide(path.endswith("/approve"))
             return
 
         device_id = self._device()
@@ -1432,6 +1609,16 @@ def serve(state: HubState, host: str, port: int) -> int:
     # ntfy action buttons must point at a real address — the tailnet IP
     # first, then the machine hostname.
     state.base_url = _advertise_url(host, port)
+    # Owner identity for pair-request approval: the tailnet login that
+    # owns this node. Loopback binds and tagged nodes get none.
+    if host not in {"127.0.0.1", "::1", "localhost", "0.0.0.0"}:
+        peer = state.whois(host)
+        state.allowed_hosts = {f"{host}:{port}"}
+        if peer and not peer.get("tagged"):
+            state.owner_login = str(peer.get("login") or "")
+            for name in (peer.get("node_name"), peer.get("node_short")):
+                if name:
+                    state.allowed_hosts.add(f"{name}:{port}")
     state.start()
     server = make_server(state, host, port)
     # SIGTERM (launchd/systemd stop) must take the same shutdown path as

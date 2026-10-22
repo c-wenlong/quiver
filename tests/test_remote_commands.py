@@ -434,3 +434,66 @@ class TestTailscaleIp(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+_PEER = {
+    "node_name": "iphone-13.taild6a23f.ts.net",
+    "node_short": "iphone-13",
+    "node_id": "nABC",
+    "login": "kai@github",
+    "ip": "100.66.1.2",
+    "tagged": False,
+}
+
+
+class TestDeviceRequests(unittest.TestCase):
+    """devices --requests/--approve/--deny act on the hub's own state."""
+
+    def setUp(self):
+        import os
+        home = tempfile.mkdtemp()
+        self._env = patch.dict(os.environ, {"HOME": home})
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def test_requests_empty_and_listed(self):
+        rc, out, _ = _run(["devices", "--requests"])
+        self.assertEqual(rc, 0)
+        self.assertIn("no pending", out)
+        r = pairing.request_pair(None, dict(_PEER), name="phone")
+        rc, out, _ = _run(["devices", "--requests"])
+        self.assertEqual(rc, 0)
+        self.assertIn("phone", out)
+        self.assertIn(r["request_id"], out)
+        self.assertNotIn(r["code"], out)
+
+    def test_requests_json(self):
+        r = pairing.request_pair(None, dict(_PEER))
+        rc, out, _ = _run(["devices", "--requests", "--json"])
+        self.assertEqual(rc, 0)
+        rows = json.loads(out)["data"]["requests"]
+        self.assertEqual(rows[0]["request_id"], r["request_id"])
+        self.assertNotIn("code", rows[0])
+
+    def test_approve_and_deny(self):
+        r = pairing.request_pair(None, dict(_PEER))
+        rc, out, _ = _run(["devices", f"--approve={r['code']}"])
+        self.assertEqual(rc, 0)
+        self.assertIn("approved", out)
+        r2 = pairing.request_pair(
+            None, dict({**_PEER, "node_id": "nOTHER"})
+        )
+        rc, out, _ = _run(["devices", f"--deny={r2['code']}"])
+        self.assertEqual(rc, 0)
+        self.assertIn("denied", out)
+
+    def test_approve_json_and_no_match(self):
+        r = pairing.request_pair(None, dict(_PEER))
+        rc, out, _ = _run(
+            ["devices", f"--approve={r['code']}", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)["data"]
+        self.assertTrue(data["ok"])
+        self.assertTrue(data["device_id"])
+        rc, out, _ = _run(["devices", "--approve=000000"])
+        self.assertEqual(rc, 1)
