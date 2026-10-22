@@ -17,10 +17,15 @@ supervisor cleanly reverts a session to ``observed``.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
+import secrets
 import shutil
+import signal
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -32,6 +37,35 @@ from quiver.sessions.resume import resume_flags, launch_tool_name
 # Attach is offered only for idle sessions; the hub re-checks at command
 # time. "Idle" = no transcript append in this window.
 ATTACH_IDLE_S = 5.0
+
+# The supervised registry is read-change-save; the hub, satellite agents
+# and `swe remote attach` CLI calls can all touch it. In-process lock
+# plus an flock'd sidecar make the read-write atomic across both.
+_REGISTRY_LOCK = threading.RLock()
+
+# Keystrokes into a tmux pane are multi-call (text, then Enter): per-pane
+# locks keep two concurrent writes from interleaving into one prompt.
+_PANE_LOCKS: dict[str, threading.Lock] = {}
+_PANE_LOCKS_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def _registry_lock(home: Path | None):
+    """Exclusive section around supervised.json read-modify-write."""
+    path = remote_dir_for(home)
+    path.mkdir(parents=True, exist_ok=True)
+    with _REGISTRY_LOCK:
+        with open(path / "supervised.lock", "w") as fh:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def _pane_lock(name: str) -> threading.Lock:
+    with _PANE_LOCKS_LOCK:
+        return _PANE_LOCKS.setdefault(name, threading.Lock())
 
 
 def tmux_bin() -> str | None:
@@ -87,15 +121,18 @@ def tmux_alive(name: str) -> bool:
 
 def supervised(home: Path | str | None) -> dict[str, dict]:
     """Live supervised entries; dead tmux rows pruned on read."""
-    entries = _load_registry(home)
-    dead = [
-        key for key, meta in entries.items()
-        if meta.get("mode") == "tmux" and not tmux_alive(str(meta.get("tmux") or ""))
-    ]
-    if dead:
-        for key in dead:
-            entries.pop(key, None)
-        _save_registry(home, entries)
+    home_path = Path(home) if home is not None else None
+    with _registry_lock(home_path):
+        entries = _load_registry(home_path)
+        dead = [
+            key for key, meta in entries.items()
+            if meta.get("mode") == "tmux"
+            and not tmux_alive(str(meta.get("tmux") or ""))
+        ]
+        if dead:
+            for key in dead:
+                entries.pop(key, None)
+            _save_registry(home_path, entries)
     return entries
 
 
@@ -104,16 +141,18 @@ def supervised_keys(home: Path | str | None) -> set[str]:
 
 
 def mark(home: Path | None, session_key: str, meta: dict) -> dict:
-    entries = _load_registry(home)
-    entries[session_key] = meta
-    _save_registry(home, entries)
+    with _registry_lock(home):
+        entries = _load_registry(home)
+        entries[session_key] = meta
+        _save_registry(home, entries)
     return meta
 
 
 def unmark(home: Path | None, session_key: str) -> None:
-    entries = _load_registry(home)
-    if entries.pop(session_key, None) is not None:
-        _save_registry(home, entries)
+    with _registry_lock(home):
+        entries = _load_registry(home)
+        if entries.pop(session_key, None) is not None:
+            _save_registry(home, entries)
 
 
 def meta_for(home: Path | None, session_key: str) -> dict | None:
@@ -147,13 +186,18 @@ def _shquote(arg: str) -> str:
 
 
 def send_text(name: str, text: str) -> bool:
-    """Type ``text`` into tmux session ``name`` and press Enter."""
-    try:
-        if _tmux("send-keys", "-t", name, "-l", text).returncode != 0:
+    """Type ``text`` into tmux session ``name`` and press Enter.
+
+    Serialized per pane: the literal-text and Enter send-keys are two
+    tmux calls, and an interleaved second writer would merge prompts.
+    """
+    with _pane_lock(name):
+        try:
+            if _tmux("send-keys", "-t", name, "-l", text).returncode != 0:
+                return False
+            return _tmux("send-keys", "-t", name, "Enter").returncode == 0
+        except (OSError, subprocess.SubprocessError):
             return False
-        return _tmux("send-keys", "-t", name, "Enter").returncode == 0
-    except (OSError, subprocess.SubprocessError):
-        return False
 
 
 def send_key(name: str, key: str) -> bool:
@@ -210,6 +254,16 @@ def attach(
     flags = resume_flags(session)
     if not flags:
         return False, f"{session.tool_name} cannot be resumed"
+    if mode == "headless" and session.tool_name != "claude":
+        return False, "headless attach only supports claude"
+
+    # The original terminal still holds the harness process and would
+    # keep writing the same transcript — split brain. Kill matching
+    # writers before relaunching under the supervisor (best-effort: an
+    # interactive `claude` run has no session id in argv, so a plain
+    # foreground TUI can't always be found — the catalog row stays
+    # authoritative for who may write).
+    _stop_local_writers(session)
 
     if mode == "headless":
         meta = {
@@ -237,6 +291,51 @@ def attach(
         "attached_at": time.time(),
     })
     return True, f"attached under tmux {name}"
+
+
+def _stop_local_writers(session: Session) -> None:
+    """SIGTERM harness processes that still own ``session``.
+
+    Matches on the session id appearing in the command line — i.e. a
+    process started via ``--resume <id>`` — and requires the harness
+    binary name too, so a stray `grep sid` never qualifies. A session
+    started bare (``claude`` with no id flag) is not identifiable this
+    way; its terminal keeps write access and the doc's "don't type in
+    both places" guidance applies.
+    """
+    sid = str(session.session_id or "")
+    binary = os.path.basename(
+        launch_tool_name(session.tool_name) or ""
+    )
+    if not sid or not binary:
+        return
+    try:
+        out = subprocess.run(
+            ["pgrep", "-f", sid],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return
+    for pid_s in out.stdout.split():
+        try:
+            pid = int(pid_s)
+        except ValueError:
+            continue
+        if pid == os.getpid():
+            continue
+        try:
+            cmdline = subprocess.run(
+                ["ps", "-p", pid_s, "-o", "command="],
+                capture_output=True, text=True, timeout=5,
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if binary not in cmdline:
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            continue
 
 
 def detach(home: Path | None, session_key: str) -> bool:
@@ -269,7 +368,9 @@ def launch_new(
     binary = launch_tool_name(tool_name)
     if not binary or not shutil.which(binary):
         return False, f"unknown harness {tool_name}", None
-    key = f"new:{tool_name}:{int(time.time())}-{os.getpid()}"
+    # The nonce matters: pid+second collide for two same-harness launches
+    # inside one second, and the tmux name derives from the key.
+    key = f"new:{tool_name}:{int(time.time())}-{os.getpid()}-{secrets.token_hex(3)}"
     argv = [binary]
     name = launch_tmux(key, argv, cwd or None)
     if name is None:
@@ -365,6 +466,7 @@ def _pending_match(
     tool = str(pending.get("tool_name") or "")
     cwd = os.path.realpath(str(pending.get("cwd") or ""))
     launched = float(pending.get("launched_at") or 0)
+    candidates: list[tuple[str, float]] = []
     for key, session, _status in rows:
         if key in _load_registry(home):
             continue
@@ -380,5 +482,11 @@ def _pending_match(
         # -120s slack: mtime ordering against launch time is enough to
         # distinguish a transcript this launch created from older ones.
         if mtime >= launched - 120:
-            return key
-    return None
+            candidates.append((key, mtime))
+    if len(candidates) != 1:
+        # Zero matches: nothing to adopt yet. Two or more: a human may
+        # have started a same-cwd session in the window — adopting would
+        # bind their transcript to our pane, so stay pending until the
+        # marker ages out instead of guessing.
+        return None
+    return candidates[0][0]

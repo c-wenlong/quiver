@@ -56,7 +56,8 @@ class TestAttach(unittest.TestCase):
     def _attach(self, **kw):
         kw.setdefault("last_append_at", None)
         kw.setdefault("status", "done")
-        return supervise.attach(self.home, self.key, self.session, **kw)
+        with patch.object(supervise, "_stop_local_writers"):
+            return supervise.attach(self.home, self.key, self.session, **kw)
 
     def test_active_session_refused(self):
         ok, note = self._attach(status="active")
@@ -72,6 +73,15 @@ class TestAttach(unittest.TestCase):
         self.assertTrue(ok, note)
         meta = supervise.meta_for(self.home, self.key)
         self.assertEqual(meta["mode"], "headless")
+
+    def test_headless_nonclaude_refused(self):
+        ok, note = supervise.attach(
+            self.home, "opencode:x",
+            _session(tool="opencode", sid="x"),
+            last_append_at=None, status="done", mode="headless",
+        )
+        self.assertFalse(ok)
+        self.assertIn("claude", note)
 
     def test_tmux_launch_uses_resume_flags(self):
         with patch.object(
@@ -104,11 +114,22 @@ class TestTmuxInjector(unittest.TestCase):
         self.home = Path(tempfile.mkdtemp())
         self.key = "claude:abc-123"
         self.session = _session()
+        # send() re-checks supervision at write time — an unmarked
+        # session is refused even when the route already cleared it.
+        supervise.mark(self.home, self.key, {"mode": "tmux", "tmux": "qv-x"})
         self.inj = inject.TmuxInjector(self.home, self.key)
 
     def test_queue_refuses_active(self):
         out = self.inj.send(self.session, {"text": "hi", "mode": "queue"}, "active")
         self.assertFalse(out.ok)
+
+    def test_send_refuses_after_detach(self):
+        supervise.unmark(self.home, self.key)
+        out = self.inj.send(
+            self.session, {"text": "hi", "mode": "steer"}, "done"
+        )
+        self.assertFalse(out.ok)
+        self.assertIn("detached", out.note)
 
     def test_steer_sends(self):
         with patch.object(supervise, "send_text", return_value=True) as st:
@@ -120,17 +141,30 @@ class TestTmuxInjector(unittest.TestCase):
         with patch.object(supervise, "send_text", return_value=True) as st:
             out = self.inj.send(
                 self.session,
-                {"text": "look", "mode": "queue", "attachments": ["/tmp/a.png"]},
+                {"text": "look", "mode": "queue",
+                 "attachments": ["/tmp/a.png", "/tmp/b.png"]},
                 "done",
             )
         self.assertTrue(out.ok)
-        self.assertIn("@/tmp/a.png", st.call_args[0][1])
+        sent = st.call_args[0][1]
+        self.assertIn("@/tmp/a.png", sent)
+        self.assertIn("@/tmp/b.png", sent)
 
     def test_approval_digit(self):
-        with patch.object(supervise, "send_key", return_value=True) as sk:
+        pane = "Do you want to proceed? 1. Yes 2. Yes, and don't ask again"
+        with patch.object(supervise, "capture_pane", return_value=pane), \
+             patch.object(supervise, "send_key", return_value=True) as sk:
             out = self.inj.approval(self.session, "r1", "always")
         self.assertTrue(out.ok)
         self.assertEqual(sk.call_args[0][1], "2")
+
+    def test_approval_refused_without_prompt(self):
+        with patch.object(supervise, "capture_pane", return_value="❯ idle"), \
+             patch.object(supervise, "send_key", return_value=True) as sk:
+            out = self.inj.approval(self.session, "r1", "allow")
+        self.assertFalse(out.ok)
+        self.assertIn("no approval", out.note)
+        sk.assert_not_called()
 
     def test_interrupt_escape(self):
         with patch.object(supervise, "send_key", return_value=True) as sk:
@@ -164,11 +198,26 @@ class TestHeadless(unittest.TestCase):
         self.assertIn("approval_not_supported", out.note)
 
 
+class _FakeStdout:
+    def __init__(self, lines):
+        self._it = iter(lines)
+        self.closed = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._it)
+
+    def close(self):
+        self.closed = True
+
+
 class _FakeProc:
     """Popen stand-in: canned stream-json lines + exit code."""
 
     def __init__(self, lines, rc=0):
-        self.stdout = iter(lines)
+        self.stdout = _FakeStdout(lines)
         self._rc = rc
         self.killed = False
 
@@ -187,6 +236,7 @@ class TestHeadlessRun(unittest.TestCase):
         )
 
     def _send(self, lines, rc=0):
+        supervise.mark(self.inj.home, self.inj.key, {"mode": "headless"})
         with patch.object(inject.subprocess, "Popen",
                           return_value=_FakeProc(lines, rc)):
             return self.inj.send(

@@ -133,6 +133,10 @@ class HubState:
     def _catalog_loop(self) -> None:
         while not self._stop.is_set():
             try:
+                prev_own = {
+                    row["key"]: row.get("ownership")
+                    for row in self.catalog.rows()
+                }
                 self.catalog.refresh()
                 adopted = supervise.adopt_pending(
                     self.home, self.catalog.tail_rows()
@@ -141,6 +145,20 @@ class HubState:
                     # Newly adopted keys need a second refresh pass so the
                     # rows carry ownership: attached.
                     self.catalog.refresh()
+                # Ownership can change outside HTTP — `swe remote
+                # attach`, pending adoption, dead-tmux pruning — and the
+                # phone needs the event either way.
+                for row in self.catalog.rows():
+                    new_own = row.get("ownership")
+                    if prev_own.get(row["key"]) not in (None, new_own):
+                        self.emit(
+                            row["key"],
+                            protocol.event(
+                                "session.ownership", row["key"],
+                                self.machine_id,
+                                {"ownership": new_own},
+                            ),
+                        )
                 self.tail_manager.sync(self.catalog.tail_rows())
             except Exception:
                 pass
@@ -740,7 +758,10 @@ def _parse_multipart(ctype: str, body: bytes) -> tuple[str, bytes | None]:
             head, _, blob = part.partition(b"\r\n\r\n")
             if not blob:
                 continue
-            blob = blob.rstrip(b"\r\n-")
+            # The CRLF before the closing boundary is separator, not
+            # content — strip exactly that pair, never content bytes.
+            if blob.endswith(b"\r\n"):
+                blob = blob[:-2]
             name = ""
             for line in head.decode("utf-8", "replace").splitlines():
                 if "content-disposition" not in line.lower():

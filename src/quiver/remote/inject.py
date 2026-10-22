@@ -46,6 +46,20 @@ _OPS_TEXT = {
     "effort": "/effort {value}",
 }
 
+# Markers a claude permission menu prints on screen; a pane without one
+# is not waiting on an approval.
+_APPROVAL_MARKERS = (
+    "do you want to",
+    "don't ask again",
+    "esc to cancel",
+    "allow",
+)
+
+
+def _pane_shows_approval(pane: str) -> bool:
+    text = pane.lower()
+    return any(marker in text for marker in _APPROVAL_MARKERS)
+
 
 class InjectResult(NamedTuple):
     ok: bool
@@ -69,9 +83,15 @@ class TmuxInjector:
             )
         text = str(cmd.get("text") or "")
         for path in cmd.get("attachments") or []:
-            text = f"@{path} {text}" if "@" not in text else text
+            text = f"@{path} {text}"
         if not text.strip():
             return InjectResult(False, "empty message")
+        # A detach could land between the route's ownership check and
+        # this write; re-check under the pane lock's read side.
+        if supervise.meta_for(self.home, self.key) is None:
+            return InjectResult(
+                False, "session detached; refusing the write"
+            )
         if supervise.send_text(self.name, text):
             return InjectResult(True, "sent to tmux pane")
         return InjectResult(False, "tmux session is not reachable")
@@ -80,6 +100,13 @@ class TmuxInjector:
         key = _APPROVAL_KEYS.get(decision)
         if key is None:
             return InjectResult(False, f"unknown decision {decision}")
+        # The tmux pane is shared state: a stale approval would answer
+        # whatever menu happens to be on screen. Require a visible
+        # permission prompt before sending a menu key.
+        if not _pane_shows_approval(supervise.capture_pane(self.name)):
+            return InjectResult(
+                False, "no approval prompt is on screen"
+            )
         if supervise.send_key(self.name, key):
             return InjectResult(True, f"sent menu key {key}")
         return InjectResult(False, "tmux session is not reachable")
@@ -130,14 +157,25 @@ class ClaudeHeadlessInjector:
         except OSError as exc:
             return False, f"claude failed to launch: {exc}"
         self._procs[self.key] = proc
+        # The stdout loop can block mid-read forever on a stalled run, so
+        # the deadline lives in a watchdog: kill() closes the pipe and
+        # ends the iteration.
+        timed_out = {"hit": False}
+
+        def _expire() -> None:
+            timed_out["hit"] = True
+            try:
+                proc.kill()
+            except OSError:
+                pass
+
+        watchdog = threading.Timer(HEADLESS_TIMEOUT_S, _expire)
+        watchdog.daemon = True
+        watchdog.start()
         try:
             result_text = ""
             assert proc.stdout is not None
-            deadline = time.time() + HEADLESS_TIMEOUT_S
             for line in proc.stdout:
-                if time.time() > deadline:
-                    proc.kill()
-                    return False, "headless run timed out"
                 line = line.strip()
                 if not line:
                     continue
@@ -149,6 +187,8 @@ class ClaudeHeadlessInjector:
                     result_text = str(rec.get("result") or "")
                     if rec.get("is_error"):
                         return False, result_text or "claude reported an error"
+            if timed_out["hit"]:
+                return False, "headless run timed out"
             rc = proc.wait(timeout=10)
             if rc != 0:
                 return False, result_text or f"claude exited {rc}"
@@ -157,12 +197,24 @@ class ClaudeHeadlessInjector:
             proc.kill()
             return False, "headless run timed out"
         finally:
+            watchdog.cancel()
+            # Reap whatever the run left: an errored or killed child
+            # otherwise stays a zombie with an open pipe.
+            try:
+                if proc.stdout is not None:
+                    proc.stdout.close()
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout=5)
+            except (OSError, subprocess.SubprocessError):
+                pass
             self._procs.pop(self.key, None)
 
     def send(self, session: Session, cmd: dict, status: str) -> InjectResult:
         text = str(cmd.get("text") or "")
         for path in cmd.get("attachments") or []:
-            text = f"@{path} {text}" if "@" not in text else text
+            text = f"@{path} {text}"
         if not text.strip():
             return InjectResult(False, "empty message")
         # steer degrades to queue: a print-mode run is atomic.
@@ -170,6 +222,13 @@ class ClaudeHeadlessInjector:
         if not lock.acquire(timeout=_QUEUE_WAIT_S):
             return InjectResult(False, "a headless turn is still in flight")
         try:
+            # A detach could land between the route's ownership check and
+            # this write; under the session lock the registry is the
+            # last word.
+            if supervise.meta_for(self.home, self.key) is None:
+                return InjectResult(
+                    False, "session detached; refusing the write"
+                )
             ok, note = self._run(session, self.argv(session, text))
             return InjectResult(ok, note)
         finally:
@@ -187,11 +246,19 @@ class ClaudeHeadlessInjector:
             if proc is None:
                 return InjectResult(False, "no headless run in flight")
             proc.kill()
+            try:
+                proc.wait(timeout=5)
+            except (OSError, subprocess.SubprocessError):
+                pass
             return InjectResult(True, "killed the in-flight run")
         if op in {"kill", "detach"}:
-            proc = self._procs.get(self.key)
+            proc = self._procs.pop(self.key, None)
             if proc is not None:
                 proc.kill()
+                try:
+                    proc.wait(timeout=5)
+                except (OSError, subprocess.SubprocessError):
+                    pass
             supervise.unmark(self.home, self.key)
             return InjectResult(True, "detached; session is observed again")
         return InjectResult(
