@@ -107,14 +107,17 @@ final class GitHubHistory: @unchecked Sendable {
         }
     }
 
-    /// A surface's remembered rows in board order.
+    /// A surface's remembered rows — accumulating surfaces rank by
+    /// numeric key (id order is age order); list surfaces replay the
+    /// written `pos` order.
     func rows<Row: Codable>(repo: String, surface: Surface) -> [Row] {
         lock.lock()
         defer { lock.unlock() }
+        let order = surface.accumulates ? "CAST(key AS INTEGER) DESC" : "pos"
         guard let db,
               let statement = try? db.prepare("""
                   SELECT payload FROM history
-                  WHERE repo = ? AND surface = ? ORDER BY pos
+                  WHERE repo = ? AND surface = ? ORDER BY \(order)
                   """)
         else { return [] }
         _ = try? statement.bind([.text(repo), .text(surface.rawValue)])
@@ -182,14 +185,24 @@ final class GitHubHistory: @unchecked Sendable {
         write(repo: repo, surface: surface, rows: rows, accumulate: false, key: key)
     }
 
-    /// Whether a JSON-era snapshot import already committed. Once true
-    /// it stays true: a snapshot that still carries the fields because
-    /// its save failed must not re-import stale rows over newer ones.
-    var importedLegacy: Bool {
+    /// Whether a JSON-era snapshot history import already committed.
+    /// Once true it stays true: a snapshot that still carries the field
+    /// because its save failed must not re-import stale rows over
+    /// newer ones.
+    var importedLegacy: Bool { meta("legacy_imported") }
+
+    /// Whether a snapshot's saved boards already moved in. Tracked
+    /// apart from `importedLegacy`: a database made by the
+    /// pulls/issues-only build carries that flag yet never imported
+    /// boards, and skipping them here would lose those surfaces when
+    /// the snapshot stops writing them.
+    var boardsImported: Bool { meta("boards_imported") }
+
+    private func meta(_ key: String) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         return (try? db?.scalar(
-            "SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'legacy_imported'")) == 1
+            "SELECT CAST(value AS INTEGER) FROM meta WHERE key = '\(key)'")) == 1
     }
 
     /// One-shot import of what a JSON-era snapshot carried — the legacy
@@ -220,9 +233,11 @@ final class GitHubHistory: @unchecked Sendable {
                 if case .loaded(let rows) = board.runs {
                     try importRows(rows, repo: repo, surface: .runs, db: db)
                 }
-                if case .loaded(let site) = board.pages, let site {
-                    try importRows([site], repo: repo, surface: .pages,
-                                   db: db) { _ in "site" }
+                // `.loaded(nil)` is fetched state too — the marker must
+                // land so the repo does not re-ask Pages it lacks.
+                if case .loaded(let site) = board.pages {
+                    try importRows(site.map { [$0] } ?? [], repo: repo,
+                                   surface: .pages, db: db) { _ in "site" }
                 }
                 if case .loaded(let rows) = board.releases {
                     try importRows(rows, repo: repo, surface: .releases, db: db)
@@ -236,7 +251,7 @@ final class GitHubHistory: @unchecked Sendable {
             }
             try db.execute("""
                 INSERT OR REPLACE INTO meta (key, value)
-                VALUES ('legacy_imported', '1')
+                VALUES ('legacy_imported', '1'), ('boards_imported', '1')
                 """)
             try db.execute("COMMIT")
             return true
@@ -265,11 +280,19 @@ final class GitHubHistory: @unchecked Sendable {
     /// under `runs` for the payload it carries.
     enum Surface: String {
         case pulls, issues, runs, pages, releases, tags, branches
+
+        /// Surfaces whose ids are numbers where bigger means newer —
+        /// the ordering and the cap trim both rank them by key rather
+        /// than by `pos`, so windows written out of order cannot
+        /// shuffle or evict newer rows.
+        var accumulates: Bool {
+            self == .pulls || self == .issues || self == .runs
+        }
     }
 
     /// Whether a write ever landed for the surface — the difference
     /// between `.loaded([])` and `.idle` on a restored board.
-    private func fetched(repo: String, surface: Surface) -> Bool {
+    func fetched(repo: String, surface: Surface) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         guard let db,
@@ -304,11 +327,12 @@ final class GitHubHistory: @unchecked Sendable {
             }
             if accumulate {
                 // Whatever the merged list did not keep no longer counts
-                // as remembered — the table mirrors the newest window.
+                // as remembered — ranked by key, so partial writes still
+                // evict the oldest rows, never the newest.
                 try db.prepare("""
                     DELETE FROM history WHERE repo = ? AND surface = ? AND key NOT IN (
                         SELECT key FROM history WHERE repo = ? AND surface = ?
-                        ORDER BY pos LIMIT ?)
+                        ORDER BY CAST(key AS INTEGER) DESC LIMIT ?)
                     """).bind([.text(repo), .text(surface.rawValue), .text(repo),
                                .text(surface.rawValue), .int(Int64(Self.cap))]).run()
             }

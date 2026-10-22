@@ -157,6 +157,10 @@ public final class GitHubModel {
     /// the main actor on a busy or slow disk; order is preserved, so a
     /// `removeRepo` still wins over the remembers queued before it.
     let historyWriteQueue = DispatchQueue(label: "quiver.gh-history")
+    /// Set once the store has provably taken the snapshot's boards —
+    /// `saveNow` drops the file's `boards` field only then, so an
+    /// unopened database or a failed import never erases the last copy.
+    private var storeOwnsBoards = false
 
     public private(set) var inbox: Loadable<[GhNotification]> = .idle
     /// Unread lines in the loaded inbox — the sidebar badge and the
@@ -679,11 +683,13 @@ public final class GitHubModel {
         case .branches:
             restoreRemembered(repo: repo, surface: .branches, into: \.branches)
         case .pages:
-            // A failed Pages read keeps whatever the store remembered —
-            // site or confirmed absence — rather than an error card.
-            guard let seeded = historyStore?.board(repo: repo),
+            // Only a failed read looks backwards — a live reply is
+            // fresher than anything the store holds, and its own
+            // persist may not have run yet.
+            guard var board = focusBoards[repo],
+                  case .failed = board.pages,
+                  let seeded = historyStore?.board(repo: repo),
                   case .loaded = seeded.pages else { return }
-            var board = focusBoards[repo] ?? RepoBoard()
             board.pages = seeded.pages
             focusBoards[repo] = board
         }
@@ -697,9 +703,12 @@ public final class GitHubModel {
         into path: WritableKeyPath<RepoBoard, Loadable<[Row]>>
     ) {
         guard var board = focusBoards[repo],
-              case .failed = board[keyPath: path] else { return }
+              case .failed = board[keyPath: path],
+              // The marker is the answer, not the row count — a surface
+              // that fetched empty restores .loaded([]), not the error.
+              historyStore?.fetched(repo: repo, surface: surface) == true
+        else { return }
         let rows: [Row] = historyStore?.rows(repo: repo, surface: surface) ?? []
-        guard !rows.isEmpty else { return }
         board[keyPath: path] = .loaded(rows)
         focusBoards[repo] = board
     }
@@ -1245,29 +1254,29 @@ public final class GitHubModel {
         snapshotInbox = snap.inbox
         snapshotInboxLoaded = snap.inboxLoaded
         inbox = snap.inboxLoaded ? .loaded(snap.inbox) : .idle
-        // Rows a JSON-era snapshot remembered — its history field and
-        // every loaded board surface — move into SQLite once, then the
-        // boards seed from the store. `legacyHistory` holds the field
-        // until the import is confirmed: `saveNow` keeps writing it
-        // while the database cannot take it, so a failed import never
-        // erases the only copy. Without a store at all the file is the
-        // fallback — boards restore from it as before.
+        // Boards seed from the file first so a store that cannot take
+        // them yet never blanks the warm start; the store's own copy
+        // overlays per repo once it is known good. `legacyHistory`
+        // holds the field until the import commits — `saveNow` keeps
+        // writing it, and keeps writing boards while the store does
+        // not own them, so a failed import never erases the only copy.
+        boards = snap.boards
         legacyHistory = snap.history
-        if let store = historyStore {
-            if store.importedLegacy
-                || store.importAll(legacyHistory ?? [:], boards: snap.boards) {
+        if let store = historyStore, store.openError == nil {
+            if store.importedLegacy, store.boardsImported {
                 legacyHistory = nil
+                storeOwnsBoards = true
+            } else if store.importAll(legacyHistory ?? [:], boards: snap.boards) {
+                legacyHistory = nil
+                storeOwnsBoards = true
             }
             for name in snap.pins.map(\.name) {
                 let seeded = store.board(repo: name)
                 if seeded != RepoBoard() { boards[name] = seeded }
             }
-        } else {
-            boards = snap.boards
-            if let legacy = legacyHistory {
-                // No database at all — the rows still cover this session.
-                history.merge(legacy) { _, old in old }
-            }
+        } else if let legacy = legacyHistory {
+            // No usable database at all — the rows still cover this session.
+            history.merge(legacy) { _, old in old }
         }
         // A snapshot exists only because replies were received before.
         probed = true
@@ -1290,9 +1299,10 @@ public final class GitHubModel {
     public func saveNow() {
         snapshot?.saveNow(GitHubSnapshot(
             savedAt: now(), pins: pins, selected: selected,
-            // The store owns board rows once it opens — the file keeps
-            // carrying them only when there is no database to ask.
-            boards: historyStore == nil ? boards : [:],
+            // The file keeps carrying boards until the store owns
+            // them — open plus a confirmed import — so a bad database
+            // never costs the last copy.
+            boards: storeOwnsBoards ? [:] : boards,
             inbox: snapshotInbox,
             inboxLoaded: snapshotInboxLoaded, history: legacyHistory))
     }
