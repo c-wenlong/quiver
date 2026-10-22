@@ -946,7 +946,8 @@ import Testing
         let dead = SweClient(runner: router([:]))
         let model = GitHubModel(snapshotFile: file, historyFile: db)
         // The restore should have imported the legacy rows already.
-        #expect(GitHubHistory(url: db).pulls(repo: "o/a").count == 3)
+        let pulls: [GhPr] = GitHubHistory(url: db).rows(repo: "o/a", surface: .pulls)
+        #expect(pulls.count == 3)
         await model.loadFocus(repo: "o/a", swe: dead)
         guard case .loaded(let prs) = model.focusBoard(for: "o/a").pulls else {
             Issue.record("migrated history should seed the board"); return
