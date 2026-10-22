@@ -158,7 +158,7 @@ private struct Sidebar: View {
                     // Same spacing as between groups.
                     .padding(.bottom, Theme.gutter)
                 VStack(alignment: .leading, spacing: 18) {
-                    ForEach(SidebarGroup.allCases) { group in
+                    ForEach(model.sidebar.visibleGroups) { group in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(group.title)
                                 .font(.system(size: 11))
@@ -168,7 +168,7 @@ private struct Sidebar: View {
                                 // The rail keeps its height so the icons
                                 // never move vertically.
                                 .opacity(isExpanded ? 1 : 0)
-                            ForEach(group.sections) { section in
+                            ForEach(model.sidebar.sections(in: group)) { section in
                                 NavItem(section: section, isSelected: model.selection == section,
                                         isFocused: focused == section,
                                         collapsed: !isExpanded,
@@ -286,7 +286,7 @@ private struct Sidebar: View {
 
 
     private func move(_ offset: Int) -> KeyPress.Result {
-        let next = (focused ?? model.selection ?? .overview).step(offset)
+        let next = model.sidebar.step(focused ?? model.selection ?? .overview, by: offset)
         model.selection = next
         if focused != nil { focused = next }
         return .handled

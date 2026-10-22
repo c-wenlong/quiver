@@ -53,6 +53,24 @@ public enum AppSection: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .settings: "gearshape"
         }
     }
+
+    /// Core pages always show in the sidebar — Settings must stay
+    /// reachable so a hidden page can be brought back. Every other page
+    /// can be switched off in Settings › Sidebar.
+    public var isCore: Bool {
+        switch self {
+        case .overview, .accounts, .settings: true
+        default: false
+        }
+    }
+
+    /// The group the sidebar lists this page under.
+    public var group: SidebarGroup {
+        for group in SidebarGroup.allCases where group.sections.contains(self) {
+            return group
+        }
+        preconditionFailure("AppSection \(rawValue) is in no SidebarGroup")
+    }
 }
 
 public enum SidebarGroup: CaseIterable, Identifiable, Sendable {

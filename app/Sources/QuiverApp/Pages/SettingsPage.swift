@@ -145,6 +145,7 @@ private struct SettingsSectionView: View {
             switch section {
             case .general: generalCard
             case .preferences: preferencesCard
+            case .sidebar: SidebarSection()
             case .notifications: notificationsCard
             case .updates: updatesCard
             case .github: githubCard
