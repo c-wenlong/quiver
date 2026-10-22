@@ -659,6 +659,12 @@ to use their own login state and environment."""
   {c('bold', 'observed')} (a human terminal owns them: read-only) until they run
   under quiver's supervisor, which marks them {c('bold', 'attached')} and writable.
 
+  {c('cyan', 'swe remote notify --ntfy=<url> --topic=<t>')}  Push notifications via a
+                                            self-hosted ntfy: needs-you, finished,
+                                            error. Approval prompts get lock-screen
+                                            Allow/Deny buttons posting back over
+                                            the tailnet. {c('cyan', '--off')} disables.
+
   State lives under {c('dim', '~/.quiver/data/remote/')}: device credentials in
   devices.json (0600), per-session event journals and transcript cursors."""
     ),

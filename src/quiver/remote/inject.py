@@ -47,21 +47,6 @@ _OPS_TEXT = {
     "effort": "/effort {value}",
 }
 
-# Markers a claude permission menu prints on screen; a pane without one
-# is not waiting on an approval.
-_APPROVAL_MARKERS = (
-    "do you want to",
-    "don't ask again",
-    "esc to cancel",
-    "allow",
-)
-
-
-def _pane_shows_approval(pane: str) -> bool:
-    text = pane.lower()
-    return any(marker in text for marker in _APPROVAL_MARKERS)
-
-
 class InjectResult(NamedTuple):
     ok: bool
     note: str = ""
@@ -117,7 +102,15 @@ class TmuxInjector:
         )
         if request_id in answered:
             return InjectResult(False, "approval already answered")
-        if not _pane_shows_approval(supervise.capture_pane(self.name)):
+        # When the tailer issued a request_id for the prompt currently
+        # on screen, only that id may answer it — a stale or superseded
+        # id cannot consume the new menu.
+        outstanding = supervise.pending_approval(self.key)
+        if outstanding and request_id != outstanding:
+            return InjectResult(False, "stale approval request id")
+        if not supervise.pane_shows_approval(
+            supervise.capture_pane(self.name)
+        ):
             return InjectResult(
                 False, "no approval prompt is on screen"
             )

@@ -29,19 +29,35 @@ import glob
 import hashlib
 import json
 import os
+import secrets
 import sqlite3
 import time
 from pathlib import Path
 from typing import Any, Callable
 
 from quiver.paths import expand_user, remote_dir_for
-from quiver.remote import protocol
+from quiver.remote import protocol, supervise
 from quiver.reports import transcripts as _tr
 from quiver.sessions.models import Session
 
 # Poll cadence: tight while the session is mid-turn, relaxed otherwise.
 POLL_ACTIVE_S = 1.0
 POLL_IDLE_S = 8.0
+# Tmux-pane approval prompt watch — a subprocess per attached session,
+# so slower than the transcript poll.
+PANE_APPROVAL_S = 3.0
+
+
+def _approval_prompt_line(pane: str) -> str:
+    """A one-line summary of the on-screen permission question."""
+    for line in pane.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        low = text.lower()
+        if "do you want" in low or "allow" in low or "permission" in low:
+            return text[:140]
+    return "Approval requested"
 
 # How many of the most recent sessions get a live tailer.
 TAIL_MAX_SESSIONS = 100
@@ -738,9 +754,8 @@ class TailManager:
     ) -> None:
         self.emit = emit
         self.machine_id = machine_id
-        self.cursors_dir = remote_dir_for(
-            Path(home) if home is not None else None
-        ) / "cursors"
+        self.home = Path(home) if home is not None else None
+        self.cursors_dir = remote_dir_for(self.home) / "cursors"
         self._journal_has = journal_has or (lambda key: False)
         self.max_sessions = max_sessions
         self.tailers: dict[str, Tailer] = {}
@@ -748,6 +763,10 @@ class TailManager:
         # Last time each key emitted a transcript append; the attach
         # idle check reads this server-side.
         self.last_append: dict[str, float] = {}
+        # key -> request_id of the approval prompt the pane watcher last
+        # issued (None = none outstanding); key -> last pane check time.
+        self._approval_outstanding: dict[str, str] = {}
+        self._approval_checked_at: dict[str, float] = {}
 
     def last_append_at(self, key: str) -> float | None:
         return self.last_append.get(key)
@@ -902,4 +921,61 @@ class TailManager:
             if messages:
                 self.last_append[key] = now
             tailer.commit_cursor()
+        self._poll_approvals(now)
         return n
+
+    def _poll_approvals(self, now: float) -> None:
+        """Watch supervised tmux panes for permission prompts.
+
+        The transcript never shows a tmux-mode approval menu, so a
+        phone notification has to come from the pane itself. A prompt
+        appearing emits ``approval.requested`` with a fresh request_id;
+        it disappearing emits ``approval.resolved``. Cheap: one
+        capture-pane per attached session every few seconds.
+        """
+        if self.home is None:
+            return
+        for key in list(self.tailers):
+            if (
+                now - self._approval_checked_at.get(key, 0)
+                < PANE_APPROVAL_S
+            ):
+                continue
+            self._approval_checked_at[key] = now
+            meta = supervise.meta_for(self.home, key)
+            if not meta or meta.get("mode") != "tmux":
+                if key in self._approval_outstanding:
+                    rid = self._approval_outstanding.pop(key)
+                    supervise.set_pending_approval(key, None)
+                    self._emit_approval(
+                        "approval.resolved", key,
+                        {"request_id": rid, "source": "detached"},
+                    )
+                continue
+            pane = supervise.capture_pane(
+                supervise.channel_name(self.home, key)
+            )
+            if supervise.pane_shows_approval(pane):
+                if key not in self._approval_outstanding:
+                    rid = f"req-{secrets.token_hex(6)}"
+                    self._approval_outstanding[key] = rid
+                    supervise.set_pending_approval(key, rid)
+                    prompt = _approval_prompt_line(pane)
+                    self._emit_approval(
+                        "approval.requested", key,
+                        {"request_id": rid, "prompt": prompt},
+                    )
+            else:
+                rid = self._approval_outstanding.pop(key, None)
+                if rid is not None:
+                    supervise.set_pending_approval(key, None)
+                    self._emit_approval(
+                        "approval.resolved", key,
+                        {"request_id": rid, "source": "dismissed"},
+                    )
+
+    def _emit_approval(self, etype: str, key: str, data: dict) -> None:
+        self.emit(
+            key,
+            protocol.event(etype, key, self.machine_id, data),
+        )

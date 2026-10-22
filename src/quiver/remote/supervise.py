@@ -219,6 +219,56 @@ def send_key(name: str, key: str) -> bool:
         return False
 
 
+# Markers a permission menu prints on screen; a pane without one is not
+# waiting on an approval. Bare words like "allow" are deliberately not
+# here — scrollback mentions them constantly.
+APPROVAL_MARKERS = (
+    "do you want to",
+    "don't ask again",
+    "esc to cancel",
+    "permission to proceed",
+)
+
+# Short stacked option lines ("1. Yes", "❯ Allow once", "Deny") are the
+# other shape a permission menu takes — only 2+ in a row counts, so one
+# "allow" in normal output can't fake a prompt.
+_APPROVAL_ITEM = re.compile(
+    r"^\s*(?:[❯>•*\-]\s*)?(?:\d+[.)]\s*)?"
+    r"(?:yes|no|allow|deny|approve|reject)\b",
+    re.IGNORECASE,
+)
+
+
+def pane_shows_approval(pane: str) -> bool:
+    text = pane.lower()
+    if any(marker in text for marker in APPROVAL_MARKERS):
+        return True
+    tail = [ln.strip() for ln in pane.splitlines()[-15:]]
+    hits = sum(
+        1 for ln in tail
+        if 0 < len(ln) <= 40 and _APPROVAL_ITEM.match(ln)
+    )
+    return hits >= 2
+
+
+# The pane cannot report which prompt an approval id belongs to, so the
+# tailer records the id it issued for the currently-visible prompt here.
+# Injectors reject a request_id that does not match — a stale or
+# superseded id then cannot answer a newer menu.
+_PENDING_APPROVALS: dict[str, str] = {}
+
+
+def set_pending_approval(key: str, request_id: str | None) -> None:
+    if request_id:
+        _PENDING_APPROVALS[key] = request_id
+    else:
+        _PENDING_APPROVALS.pop(key, None)
+
+
+def pending_approval(key: str) -> str | None:
+    return _PENDING_APPROVALS.get(key)
+
+
 def capture_pane(name: str, lines: int = 200) -> str:
     try:
         out = _tmux("capture-pane", "-p", "-t", name,

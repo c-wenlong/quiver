@@ -24,13 +24,17 @@ from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.paths import remote_dir_for
 from quiver.remote import agent as agent_mod
 from quiver.remote import catalog as catalog_mod
-from quiver.remote import pairing, protocol, supervise, tail
+from quiver.remote import notify, pairing, protocol, supervise, tail
 from quiver.remote.hub import DEFAULT_PORT, HubState, serve
 
-_SUBCOMMANDS = {"serve", "pair", "status", "devices", "attach", "agent"}
+_SUBCOMMANDS = {"serve", "pair", "status", "devices", "attach", "agent",
+                "notify"}
 
-_VALUE_FLAGS = {"--host", "--port", "--name", "--tail-days", "--revoke",
-                "--mode", "--hub", "--token"}
+_VALUE_FLAGS = {
+    "--host", "--port", "--name", "--tail-days", "--revoke", "--mode",
+    "--hub", "--token", "--ntfy", "--topic", "--ntfy-token",
+}
+_BOOL_FLAGS = {"--on", "--off"}
 
 _USAGE = f"""\
   {c('cyan', 'swe remote serve [--host=H] [--port=N]')}   Run the hub (REST + SSE)
@@ -41,6 +45,8 @@ _USAGE = f"""\
   {c('cyan', 'swe remote devices [--revoke=<id>]')}       List or revoke paired devices
   {c('cyan', 'swe remote attach <session> [--mode=tmux|headless]')}
                                   Move an observed session under supervision
+  {c('cyan', 'swe remote notify [--ntfy=URL --topic=T] [--on|--off]')}
+                                  Configure ntfy push notifications
 """
 
 
@@ -77,6 +83,9 @@ def _parse_flags(args):
                 raise ValueError(f"{arg} takes a value: write it as {arg}=<value>")
             flags[arg] = args[i + 1]
             i += 2
+        elif arg in _BOOL_FLAGS:
+            flags[arg] = "1"
+            i += 1
         elif arg.startswith("-") and arg != "-":
             raise ValueError(f"unknown flag: {arg}")
         else:
@@ -331,6 +340,41 @@ def _cmd_agent(flags: dict) -> int:
     return agent_mod.serve(conf["hub"], conf["credential"])
 
 
+def _cmd_notify(flags: dict, json_view: bool) -> int:
+    """Configure the ntfy fan-out the running hub reads at startup."""
+    updates = {}
+    if "--ntfy" in flags:
+        updates["url"] = flags["--ntfy"]
+    if "--topic" in flags:
+        updates["topic"] = flags["--topic"]
+    if "--ntfy-token" in flags:
+        updates["ntfy_token"] = flags["--ntfy-token"]
+    if "--on" in flags:
+        updates["enabled"] = True
+    if "--off" in flags:
+        updates["enabled"] = False
+    if "--ntfy" in flags or "--topic" in flags:
+        updates.setdefault("enabled", True)  # configuring implies on
+    cfg = notify.configure(None, **updates) if updates else \
+        notify.load_config()
+    if json_view:
+        redacted = dict(cfg)
+        for k in ("ntfy_token", "action_credential"):
+            if redacted.get(k):
+                redacted[k] = "***"
+        return emit({"notify": redacted})
+    if not cfg.get("url") or not cfg.get("topic"):
+        print(c("dim", "ntfy not configured — swe remote notify "
+                      "--ntfy=<url> --topic=<t>"))
+        return 0
+    state = c("green", "on") if cfg.get("enabled") else c("dim", "off")
+    print(f"ntfy {state}  {cfg['url']}/{cfg['topic']}")
+    if not cfg.get("enabled"):
+        print(c("dim", "  enable: swe remote notify --on"))
+    print(c("dim", "  changes apply on the next `swe remote serve`"))
+    return 0
+
+
 def cmd_remote(args: list[str]) -> int:
     try:
         sub, flags, rest, json_view = _parse_flags(list(args))
@@ -368,4 +412,9 @@ def cmd_remote(args: list[str]) -> int:
                   file=sys.stderr)
             return 1
         return _cmd_agent(flags)
+    if sub == "notify":
+        if rest:
+            print(c("red", f"unexpected args: {' '.join(rest)}"), file=sys.stderr)
+            return 1
+        return _cmd_notify(flags, json_view)
     return 0

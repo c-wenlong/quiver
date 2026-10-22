@@ -28,6 +28,7 @@ from quiver.remote import (
     attachments,
     catalog as catalog_mod,
     inject,
+    notify,
     pairing,
     protocol,
     supervise,
@@ -111,6 +112,9 @@ class HubState:
         # floor of what it has executed. queue_command refuses to grow a
         # backlog it would silently trim.
         self._sat_acked: dict[str, int] = {}
+        # The hub's reachable base — set by serve() before start() so
+        # ntfy action buttons can point back at this host.
+        self.base_url = ""
 
     def _journal_has(self, key: str) -> bool:
         return self.journal.last_seq(key) > 0
@@ -130,10 +134,16 @@ class HubState:
 
     def start(self) -> None:
         self._register_machine()
-        for target, name in (
+        targets: list = [
             (self._catalog_loop, "remote-catalog"),
             (self._tail_loop, "remote-tail"),
-        ):
+        ]
+        if notify.load_config(self.home).get("enabled"):
+            notifier = notify.Notifier(
+                self, self.base_url, subscribe_key=GLOBAL_KEY
+            )
+            targets.append((notifier.run, "remote-notify"))
+        for target, name in targets:
             t = threading.Thread(target=target, name=name, daemon=True)
             t.start()
             self._threads.append(t)
@@ -1252,6 +1262,7 @@ def make_server(
 
 def serve(state: HubState, host: str, port: int) -> int:
     """Blocking entry point for ``swe remote serve``."""
+    state.base_url = f"http://{host}:{port}"
     state.start()
     server = make_server(state, host, port)
     try:

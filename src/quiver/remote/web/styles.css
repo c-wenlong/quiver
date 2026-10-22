@@ -141,3 +141,15 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .92em;
   background: var(--red); color: #fff; border-radius: 99px;
   font-size: .7rem; font-weight: 700;
 }
+
+/* approval cards */
+.msg.approval .card { border-left: 3px solid var(--red, #e5534b); padding-left: 10px; }
+.approval-actions { display: flex; gap: 8px; margin-top: 8px; }
+.approval-actions button {
+  flex: 1; padding: 8px 0; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--panel2); color: var(--text); font-weight: 600;
+}
+.approval-actions button.deny { color: var(--red, #e5534b); }
+.approval-actions button:disabled { opacity: 0.4; }
+.msg.approval.resolved { opacity: 0.55; }
+.approval-note { font-size: 0.8rem; color: var(--red, #e5534b); margin-top: 6px; }

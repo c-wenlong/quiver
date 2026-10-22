@@ -234,7 +234,19 @@ function appendEvent(ev, live = true) {
       updateOwnership(row);
     }
   } else if (ev.type === "approval.requested") {
-    appendMessage({ kind: "approval", text: (ev.data || {}).prompt || "approval requested" }, ev.seq);
+    appendMessage({
+      kind: "approval",
+      text: (ev.data || {}).prompt || "approval requested",
+      request_id: (ev.data || {}).request_id || "",
+    }, ev.seq);
+  } else if (ev.type === "approval.resolved") {
+    const rid = (ev.data || {}).request_id || "";
+    el("chat-log").querySelectorAll(".msg.approval").forEach((card) => {
+      if (!rid || card.dataset.req === rid) {
+        card.querySelectorAll(".approval-actions button").forEach((b) => { b.disabled = true; });
+        card.classList.add("resolved");
+      }
+    });
   }
   if (live) scrollBottom();
 }
@@ -275,7 +287,33 @@ function appendMessage(msg, seq) {
   } else if (kind === "thinking") {
     div.innerHTML = `<details><summary class="dim">${role}</summary><div class="text">${md(msg.text)}</div></details>`;
   } else if (kind === "approval") {
-    div.innerHTML = `<div class="role">approval</div><div class="card">${md(msg.text)}</div>`;
+    div.dataset.req = msg.request_id || "";
+    div.innerHTML = `<div class="role">approval</div><div class="card">${md(msg.text)}</div>` +
+      (msg.request_id
+        ? `<div class="approval-actions">
+             <button data-dec="allow">Allow</button>
+             <button data-dec="always">Always</button>
+             <button data-dec="deny" class="deny">Deny</button>
+           </div>`
+        : "");
+    div.querySelectorAll(".approval-actions button").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        div.querySelectorAll(".approval-actions button").forEach((b) => { b.disabled = true; });
+        const { status } = await api(
+          `/v1/sessions/${encodeURIComponent(state.currentKey)}/approval`,
+          { method: "POST", body: JSON.stringify({ decision: btn.dataset.dec, request_id: msg.request_id }) },
+        );
+        if (status >= 400) {
+          div.querySelectorAll(".approval-actions button").forEach((b) => { b.disabled = false; });
+          const note = div.querySelector(".approval-note") || document.createElement("div");
+          note.className = "approval-note";
+          note.textContent = "approval failed — the prompt may have closed";
+          div.appendChild(note);
+        } else {
+          div.classList.add("resolved");
+        }
+      });
+    });
   } else {
     div.innerHTML = `<div class="role">${role || kind}</div><div class="text">${md(msg.text)}</div>`;
   }
