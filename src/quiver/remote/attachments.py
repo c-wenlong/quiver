@@ -87,6 +87,36 @@ def stage(
     }, None
 
 
+def place(
+    home: Path | None,
+    session_key: str,
+    ref: str,
+    data: bytes,
+) -> tuple[dict | None, str | None]:
+    """Persist ``data`` under the *existing* ``ref`` a hub staged.
+
+    Satellite pull path: the hub already minted the ref when the phone
+    uploaded; the message command that follows references that same
+    name, so this must not re-mint the way ``stage`` does.
+    """
+    if not data:
+        return None, "empty payload"
+    if len(data) > MAX_BYTES:
+        return None, "attachment exceeds 20 MB"
+    name = _safe_name(ref)
+    if not name or name in {".", ".."}:
+        return None, "bad ref"
+    folder = inbox_dir(home, session_key)
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / name
+        target.write_bytes(data)
+    except OSError as exc:
+        return None, f"could not stage file: {exc}"
+    return {"ref": name, "name": name, "path": str(target),
+            "size": len(data)}, None
+
+
 def resolve(
     home: Path | None, session_key: str, ref: str
 ) -> str | None:
