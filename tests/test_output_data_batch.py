@@ -471,7 +471,7 @@ class CrLfReadLineTest(unittest.TestCase):
         import threading
         import time
 
-        from quiver.prompt import _read_line_bytes
+        from quiver import prompt
 
         r, w = os.pipe()
         os.write(w, b"a\r")
@@ -486,10 +486,14 @@ class CrLfReadLineTest(unittest.TestCase):
 
         threading.Thread(target=_rest, daemon=True).start()
         try:
-            self.assertEqual(_read_line_bytes(r, echo=False), "a")
-            self.assertEqual(_read_line_bytes(r, echo=False), "b")
-            with self.assertRaises(EOFError):
-                _read_line_bytes(r, echo=False)
+            # Pad the 50ms production window: on a loaded builder the writer
+            # thread's 20ms nap can slip past it and the leftover LF reads as
+            # a phantom empty line. The test pins the branch, not the race.
+            with patch.object(prompt, "_CRLF_PEEK_TIMEOUT", 1.0):
+                self.assertEqual(prompt._read_line_bytes(r, echo=False), "a")
+                self.assertEqual(prompt._read_line_bytes(r, echo=False), "b")
+                with self.assertRaises(EOFError):
+                    prompt._read_line_bytes(r, echo=False)
         finally:
             os.close(r)
 
