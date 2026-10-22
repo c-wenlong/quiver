@@ -383,13 +383,22 @@ struct RepoSurfaces: View {
     }
 
     /// The rows, filtered when `query` is on and the surface is not
-    /// exempt — a match on any of the row's fields keeps it.
-    private func filtered<Row>(_ state: Loadable<[Row]>,
-                               _ parts: @escaping (Row) -> [String?]) -> Loadable<[Row]> {
-        guard case .loaded(let rows) = state, !unfiltered else { return state }
+    /// exempt — a match on any of the row's fields keeps it. An empty
+    /// query exempts too: `contains("")` is false on this Foundation,
+    /// so filtering with no query would drop every row.
+    static func filtered<Row>(_ state: Loadable<[Row]>,
+                              _ parts: @escaping (Row) -> [String?],
+                              query: String, unfiltered: Bool) -> Loadable<[Row]> {
+        guard case .loaded(let rows) = state, !unfiltered, !query.isEmpty
+        else { return state }
         return .loaded(rows.filter { row in
             parts(row).contains { $0?.localizedCaseInsensitiveContains(query) ?? false }
         })
+    }
+
+    private func filtered<Row>(_ state: Loadable<[Row]>,
+                               _ parts: @escaping (Row) -> [String?]) -> Loadable<[Row]> {
+        Self.filtered(state, parts, query: query, unfiltered: unfiltered)
     }
 
     /// Under a row filter an empty list means "nothing matched", not
