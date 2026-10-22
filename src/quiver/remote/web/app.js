@@ -21,6 +21,7 @@ const state = {
   inboxTimer: null,
   sessionTimer: null,
   pairTimer: null,
+  pairGen: 0,
   approveTimer: null,
   inboxCount: 0,
   openGen: 0,
@@ -107,17 +108,19 @@ function showPairCode(req) {
 }
 
 function pollPairRequest(requestId, secret) {
-  clearInterval(state.pairTimer);
-  state.pairTimer = setInterval(async () => {
+  // One in-flight request at a time; a new request or Try again bumps
+  // the generation and stale responses drop.
+  const gen = ++state.pairGen;
+  const tick = async () => {
+    if (gen !== state.pairGen) return;
     let status = 0, data = null;
     try {
       ({ status, data } = await api(
         `/v1/pair/request/${encodeURIComponent(requestId)}?secret=${encodeURIComponent(secret)}`
       ));
-    } catch { return; } // transient — poll again
-    if (!data) return;
-    if (data.status === "approved") {
-      clearInterval(state.pairTimer);
+    } catch { /* transient — poll again */ }
+    if (gen !== state.pairGen) return;
+    if (data && data.status === "approved") {
       state.pairTimer = null;
       store.cred = {
         device_id: data.device_id, credential: data.credential,
@@ -125,16 +128,24 @@ function pollPairRequest(requestId, secret) {
       };
       location.hash = "";
       boot();
-    } else if (data.status === "denied") {
-      pairFailed("Pairing was denied.");
-    } else if (status === 404) {
-      pairFailed("Request expired.");
+      return;
     }
-  }, 2000);
+    if (data && data.status === "denied") {
+      pairFailed("Pairing was denied.");
+      return;
+    }
+    if (status === 404) {
+      pairFailed("Request expired.");
+      return;
+    }
+    state.pairTimer = setTimeout(tick, 2000);
+  };
+  state.pairTimer = setTimeout(tick, 2000);
 }
 
 function pairFailed(msg) {
-  clearInterval(state.pairTimer);
+  ++state.pairGen; // stop the poll chain
+  clearTimeout(state.pairTimer);
   state.pairTimer = null;
   el("pair-code-status").textContent = msg;
   el("pair-retry").classList.remove("hidden");
@@ -143,7 +154,9 @@ function pairFailed(msg) {
 /* ── #approve: decide pending requests ───────────────────── */
 
 async function loadApprovals() {
-  const { status, data } = await api("/v1/pair/requests");
+  const { status, data } = await api(
+    "/v1/pair/requests", { headers: { "X-Quiver-Pair": "1" } }
+  );
   if (status !== 200 || !data) {
     el("approve-error").textContent =
       (data && data.error && data.error.message) ||
@@ -175,22 +188,31 @@ async function loadApprovals() {
     row.innerHTML =
       `<div class="body"><div class="t">${esc(r.name)}</div>` +
       `<div class="sub">${esc(r.node_name || "?")} · ${esc(r.login || "")} · ${esc(relTime(r.created_at || 0))} ago</div></div>` +
-      `<input class="code" inputmode="numeric" maxlength="6" placeholder="000 000">` +
+      `<input class="code" inputmode="numeric" maxlength="7" placeholder="000 000">` +
       `<button class="primary act" data-act="approve">Approve</button>` +
       `<button class="ghost act" data-act="deny">Deny</button>`;
-    const code = () => row.querySelector(".code").value.trim();
+    const code = () => row.querySelector(".code").value.replace(/\D/g, "");
     row.querySelectorAll(".act").forEach((btn) => {
       btn.addEventListener("click", async () => {
         btn.disabled = true;
-        const { status: s, data: d } = await api(
-          `/v1/pair/requests/${btn.dataset.act}`,
-          { method: "POST",
-            body: JSON.stringify({ code: code(), request_id: r.request_id }) }
-        );
+        let s = 0, d = null;
+        try {
+          ({ status: s, data: d } = await api(
+            `/v1/pair/requests/${btn.dataset.act}`,
+            { method: "POST",
+              headers: { "X-Quiver-Pair": "1" },
+              body: JSON.stringify({ code: code(), request_id: r.request_id }) }
+          ));
+        } catch {
+          el("approve-error").textContent = "request failed: connection lost";
+        } finally {
+          if (s !== 200) btn.disabled = false;
+        }
         if (s === 200) { loadApprovals(); return; }
-        btn.disabled = false;
-        el("approve-error").textContent =
-          (d && d.error && d.error.message) || `${btn.dataset.act} failed (${s})`;
+        if (d) {
+          el("approve-error").textContent =
+            (d.error && d.error.message) || `${btn.dataset.act} failed (${s})`;
+        }
       });
     });
     list.appendChild(row);
@@ -882,7 +904,8 @@ el("pair-ts").addEventListener("click", () => {
   startTailscalePair(el("pair-name").value.trim());
 });
 el("pair-retry").addEventListener("click", () => {
-  clearInterval(state.pairTimer);
+  ++state.pairGen;
+  clearTimeout(state.pairTimer);
   state.pairTimer = null;
   el("pair-code-card").classList.add("hidden");
   el("pair-start").classList.remove("hidden");

@@ -449,6 +449,13 @@ _PEER = {
 class TestDeviceRequests(unittest.TestCase):
     """devices --requests/--approve/--deny act on the hub's own state."""
 
+    def setUp(self):
+        import os
+        home = tempfile.mkdtemp()
+        self._env = patch.dict(os.environ, {"HOME": home})
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
     def test_requests_empty_and_listed(self):
         rc, out, _ = _run(["devices", "--requests"])
         self.assertEqual(rc, 0)

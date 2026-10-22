@@ -239,7 +239,8 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
         return 0
     approve = flags.get("--approve")
     if approve is not None:
-        res = pairing.approve_request(None, approve)
+        code = "".join(ch for ch in approve if ch.isdigit())
+        res = pairing.approve_request(None, code)
         if json_view:
             if res is None:
                 emit({"ok": False})
@@ -256,7 +257,8 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
         return 0
     deny = flags.get("--deny")
     if deny is not None:
-        ok = pairing.deny_request(None, deny)
+        code = "".join(ch for ch in deny if ch.isdigit())
+        ok = pairing.deny_request(None, code)
         if json_view:
             return emit({"ok": ok})
         if not ok:

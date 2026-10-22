@@ -310,6 +310,31 @@ class TestPairRequests(unittest.TestCase):
         rows = pairing._load_requests(self.tmp)
         self.assertGreater(rows[0]["expires_at"], time.time() + 60)
 
+    def test_codes_never_duplicate(self):
+        seq = iter([123456, 123456, 654321])
+        with patch.object(
+            pairing.secrets, "randbelow", lambda n: next(seq)
+        ):
+            r1 = self._request(peer={**_PEER, "node_id": "n1"})
+            r2 = self._request(peer={**_PEER, "node_id": "n2"})
+        self.assertEqual(r1["code"], "123456")
+        self.assertEqual(r2["code"], "654321")
+
+    def test_row_cap_counts_all_states(self):
+        # Resolved rows still occupy the file — the total cap stops a
+        # spammer from churning it open.
+        with patch.object(pairing, "MAX_REQUEST_ROWS", 3):
+            r = self._request(peer={**_PEER, "node_id": "n1"})
+            self._request(peer={**_PEER, "node_id": "n2"})
+            self.assertTrue(
+                pairing.deny_request(self.tmp, r["code"])
+            )
+            # 1 denied + 1 pending = 2 live rows; a third fits, a
+            # fourth does not — even though pending < MAX_PENDING.
+            self._request(peer={**_PEER, "node_id": "n3"})
+            with self.assertRaises(pairing.PairBusy):
+                self._request(peer={**_PEER, "node_id": "nX"})
+
     def test_token_exchange_still_works(self):
         token = pairing.mint_pair_token(self.tmp)
         cred = pairing.exchange(self.tmp, token, "legacy")

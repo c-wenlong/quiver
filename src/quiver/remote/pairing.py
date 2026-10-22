@@ -40,6 +40,9 @@ _REQUESTS_BASENAME = "pair_requests.json"
 REQUEST_TTL_S = 300
 MAX_PENDING = 10
 MAX_CODE_ATTEMPTS = 5
+# Hard cap on every live row (pending + resolved), so a spammer can't
+# grow the file even as rows churn through states.
+MAX_REQUEST_ROWS = 50
 
 
 class PairBusy(Exception):
@@ -298,10 +301,17 @@ def request_pair(home: Path | str | None, peer: dict, name: str = "") -> dict:
             r for r in _prune_requests(_load_requests(home_path), now)
             if r.get("node_id") != node_id or r.get("status") != "pending"
         ]
-        if len(rows) >= MAX_PENDING:
+        if len(rows) >= MAX_REQUEST_ROWS or sum(
+            r.get("status") == "pending" for r in rows
+        ) >= MAX_PENDING:
             raise PairBusy("too many pending pair requests")
         poll_secret = secrets.token_urlsafe(24)
+        used = {
+            str(r.get("code")) for r in rows if r.get("status") == "pending"
+        }
         code = f"{secrets.randbelow(10**6):06d}"
+        while code in used:
+            code = f"{secrets.randbelow(10**6):06d}"
         row = {
             "request_id": secrets.token_hex(8),
             "code": code,

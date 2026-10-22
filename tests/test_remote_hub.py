@@ -1011,16 +1011,23 @@ class TestPairRoutes(unittest.TestCase):
             "GET", f"/v1/pair/request/{rid}?secret={secret}"
         )
 
-    def _approve(self, code, rid=None, node=None, auth=None):
+    _CSRF = {"Content-Type": "application/json", "X-Quiver-Pair": "1"}
+
+    def _approve(self, code, rid=None, node=None, auth=None, headers=None):
         body = {"code": code}
         if rid:
             body["request_id"] = rid
+        hdrs = dict(self._CSRF)
+        hdrs.update(headers or {})
+        if auth:
+            hdrs.pop("X-Quiver-Pair", None)
+            hdrs.update(auth)
         if node is not None:
             self.srv.state.whois = lambda ip: dict(node)
         try:
             return self.srv.request(
                 "POST", "/v1/pair/requests/approve",
-                body=body, headers=auth or {},
+                body=body, headers=hdrs,
             )
         finally:
             if node is not None:
@@ -1078,7 +1085,8 @@ class TestPairRoutes(unittest.TestCase):
         # whois for this peer maps to the PHONE (the requester) — the
         # bearer path must work without a valid owner identity.
         self.srv.state.owner_login = "other@github"
-        status, d = self._approve(r["code"], r["request_id"], auth=auth)
+        status, d = self._approve(
+            r["code"], r["request_id"], node=_MAC, auth=auth)
         self.assertEqual(status, 200, d)
 
     def test_approve_unauthenticated_401(self):
@@ -1111,13 +1119,17 @@ class TestPairRoutes(unittest.TestCase):
         status, _ = self.srv.request(
             "POST", "/v1/pair/requests/deny",
             body={"code": r["code"], "request_id": r["request_id"]},
-            headers={},
+            headers=dict(self._CSRF),
         )
         self.assertEqual(status, 401)
         status, d = self.srv.request(
             "POST", "/v1/pair/requests/deny",
             body={"code": r["code"], "request_id": r["request_id"]},
-            headers={"Authorization": f"Bearer {self.srv.pair()['credential']}"},
+            headers={
+                "Content-Type": "application/json",
+                "Authorization":
+                    f"Bearer {self.srv.pair()['credential']}",
+            },
         )
         self.assertEqual(status, 200, d)
         status, pdata = self._poll(r["request_id"], r["poll_secret"])
@@ -1129,8 +1141,10 @@ class TestPairRoutes(unittest.TestCase):
         status, _ = self.srv.request("GET", "/v1/pair/requests")
         self.assertEqual(status, 401)
         self.srv.state.owner_login = "kai@github"
-        # Owner identity alone (no bearer) lists them too.
-        status, data = self.srv.request("GET", "/v1/pair/requests")
+        # Owner identity alone (no bearer) lists them too — with the
+        # CSRF header a cross-site page can't send.
+        status, data = self.srv.request(
+            "GET", "/v1/pair/requests", headers={"X-Quiver-Pair": "1"})
         self.assertEqual(status, 200)
         status, data = self.srv.request(
             "GET", "/v1/pair/requests",
@@ -1141,6 +1155,64 @@ class TestPairRoutes(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(len(json.loads(data)["requests"]), 1)
+
+    def test_decide_requires_json_content_type(self):
+        _, data = self._req()
+        r = json.loads(data)
+        status, d = self.srv.request(
+            "POST", "/v1/pair/requests/approve",
+            body={"code": r["code"], "request_id": r["request_id"]},
+            headers={"X-Quiver-Pair": "1",
+                     "Content-Type": "text/plain"},
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(d)["error"]["code"], "bad_origin")
+
+    def test_decide_requires_pair_header_on_identity(self):
+        _, data = self._req()
+        r = json.loads(data)
+        status, d = self.srv.request(
+            "POST", "/v1/pair/requests/approve",
+            body={"code": r["code"], "request_id": r["request_id"]},
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(d)["error"]["code"], "bad_origin")
+
+    def test_decide_rejects_foreign_origin_and_host(self):
+        _, data = self._req()
+        r = json.loads(data)
+        status, d = self._approve(
+            r["code"], r["request_id"], node=_MAC,
+            headers={"Origin": "http://evil.example"},
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(d)["error"]["code"], "bad_origin")
+        # With an allowed-host set, a foreign Host is refused too.
+        self.srv.state.allowed_hosts = {"100.1.2.3:8477"}
+        status, d = self._approve(
+            r["code"], r["request_id"], node=_MAC,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(d)["error"]["code"], "bad_origin")
+
+    def test_bearer_from_same_node_is_self_approval(self):
+        _, data = self._req()
+        r = json.loads(data)
+        # Bearer auth, but the peer IS the requesting node — the
+        # whois check must still refuse self-approval.
+        self.srv.state.whois = lambda ip: dict(_PHONE)
+        cred = self.srv.pair()
+        status, d = self.srv.request(
+            "POST", "/v1/pair/requests/approve",
+            body={"code": r["code"], "request_id": r["request_id"]},
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {cred['credential']}",
+            },
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(d)["error"]["code"], "self_approval")
 
     def test_rate_limited_after_five(self):
         for _ in range(5):
