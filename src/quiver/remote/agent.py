@@ -326,10 +326,15 @@ class RemoteAgent:
         op = str(data.get("op") or "")
         key = str(cmd.get("session") or "")
         command_id = str(data.get("command_id") or "")
-        ok, note = self._execute(key, op, data)
+        ok, note, degraded = self._execute(key, op, data)
+        fields = {"command_id": command_id, "op": op, "ok": ok,
+                  "note": note, "degraded": degraded}
+        # Echo request_id back so a queued approval card on the phone
+        # can tell which prompt this result belongs to.
+        if data.get("request_id"):
+            fields["request_id"] = str(data["request_id"])
         result = protocol.event(
-            "command.result", key, self.machine_id,
-            {"command_id": command_id, "op": op, "ok": ok, "note": note},
+            "command.result", key, self.machine_id, fields,
         )
         self._buffer_result(result)
 
@@ -339,7 +344,9 @@ class RemoteAgent:
         with self._outbox_lock:
             self.outbox.append(stamped or event)
 
-    def _execute(self, key: str, op: str, data: dict) -> tuple[bool, str]:
+    def _execute(
+        self, key: str, op: str, data: dict
+    ) -> tuple[bool, str, bool]:
         session = self.catalog.session_for(key)
         try:
             if op == "launch":
@@ -358,7 +365,7 @@ class RemoteAgent:
                     self.home, harness, cwd,
                     str(data.get("prompt") or ""), known_ids=known,
                 )
-                return ok, note
+                return ok, note, False
             if op == "attachment":
                 ref = str(data.get("ref") or "")
                 # The hub staged the upload under the hub-scoped key —
@@ -369,30 +376,32 @@ class RemoteAgent:
                     f"/v1/agent/attachments/{hub_key}/{ref}", self.cred,
                 )
                 if blob is None:
-                    return False, "attachment fetch failed"
+                    return False, "attachment fetch failed", False
                 # Keep the hub's ref name — the message op that follows
                 # resolves attachments by it.
                 payload, err = attachments.place(
                     self.home, key, ref, blob
                 )
-                return (payload is not None), (err or "staged")
+                return payload is not None, (err or "staged"), False
             if session is None:
-                return False, "unknown session on this machine"
+                return False, "unknown session on this machine", False
             if op == "attach":
-                return supervise.attach(
+                ok, note = supervise.attach(
                     self.home, key, session,
                     last_append_at=self.tail_manager.last_append_at(key),
                     status=str(data.get("status") or ""),
-                    mode=str(data.get("mode") or "tmux"),
+                    mode=str(data.get("mode") or "auto"),
                 )
+                return ok, note, False
             if op == "tail":
                 # The hub is asking us to stream an older session a
                 # phone just opened (past the background tail cap).
                 self.tail_manager.ensure(
                     key, session, str(data.get("status") or ""))
-                return True, "tailing"
+                return True, "tailing", False
             injector = inject.injector_for(
-                self.home, key, supervise.meta_for(self.home, key)
+                self.home, key, supervise.meta_for(self.home, key),
+                emit=self._capture, machine=self.machine_id,
             )
             if op == "message":
                 # Resolve attachment refs to the paths the attachment
@@ -401,7 +410,7 @@ class RemoteAgent:
                 for ref in data.get("attachments") or []:
                     path = attachments.resolve(self.home, key, str(ref))
                     if path is None:
-                        return False, f"unknown attachment {ref}"
+                        return False, f"unknown attachment {ref}", False
                     paths.append(path)
                 # The status in the queued command is stale — the
                 # session may have gone idle or errored while we were
@@ -415,24 +424,24 @@ class RemoteAgent:
                      "attachments": paths},
                     live,
                 )
-                return result.ok, result.note
+                return result.ok, result.note, result.degraded
             if op == "approval":
                 result = injector.approval(
                     session,
                     str(data.get("request_id") or ""),
                     str(data.get("decision") or ""),
                 )
-                return result.ok, result.note
+                return result.ok, result.note, result.degraded
             if op == "control":
                 result = injector.control(
                     session,
                     str(data.get("ctl") or ""),
                     str(data.get("value") or ""),
                 )
-                return result.ok, result.note
-            return False, f"unknown op {op}"
+                return result.ok, result.note, result.degraded
+            return False, f"unknown op {op}", False
         except Exception as exc:
-            return False, str(exc)
+            return False, str(exc), False
 
     # -- loops -------------------------------------------------------------
 

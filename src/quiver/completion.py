@@ -75,6 +75,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--host=", "Hub address to put in the pairing URL"),
         ("--port=", "Hub port for the pairing URL"),
         ("--name=", "Device name recorded on pair"),
+        ("--app", "QR encodes the quiver:// deep link for the iOS app"),
     ],
     "remote status": [
         ("--host=", "Hub address to probe"),
@@ -86,12 +87,19 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--json", "Print the device list as JSON"),
     ],
     "remote attach": [
-        ("--mode=", "Supervision mode: tmux or headless"),
+        ("--mode=", "Channel: auto|tmux|headless|serve|appserver"),
     ],
     "remote agent": [
         ("--hub=", "Hub URL (http://<tailscale-ip>:8477)"),
         ("--token=", "One-time pair token from swe remote pair"),
         ("--name=", "Device name recorded on pair"),
+    ],
+    "remote notify": [
+        ("--ntfy=", "ntfy base URL (e.g. https://ntfy.example.com)"),
+        ("--topic=", "ntfy topic to publish to"),
+        ("--ntfy-token=", "ntfy access token, if the topic needs one"),
+        ("--on", "Enable push notifications"),
+        ("--off", "Disable push notifications"),
     ],
     "session": [
         ("--search=", "Filter sessions"), ("-q", "Short for --search"),
@@ -433,6 +441,7 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
         "serve": "remote serve", "pair": "remote pair",
         "status": "remote status", "devices": "remote devices",
         "attach": "remote attach", "agent": "remote agent",
+        "notify": "remote notify",
     },
     "report": {
         "daily": "report", "weekly": "report", "followups": "report followups",
@@ -550,6 +559,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("status", "Probe the hub, list machines and devices"),
         ("devices", "List or revoke paired devices"),
         ("attach", "Move an observed session under supervision"),
+        ("notify", "Configure ntfy push notifications"),
     ],
     "mcp": [
         ("discover", "Find MCP servers across tool configs"),

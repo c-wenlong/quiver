@@ -72,6 +72,25 @@ def detected_harnesses() -> list[str]:
     return out
 
 
+def tailscale_ip() -> str:
+    """This machine's tailnet IPv4, or '' when Tailscale is absent."""
+    exe = shutil.which("tailscale")
+    if not exe:
+        return ""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            [exe, "ip", "-4"], capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if out.returncode != 0:
+        return ""
+    lines = out.stdout.strip().splitlines()
+    return lines[0].strip() if lines else ""
+
+
 def local_machine(home: Path | str | None = None) -> dict:
     """This machine's ``/v1/machines`` row."""
     return {
@@ -304,21 +323,32 @@ class Catalog:
         now = time.time() if now is None else now
         return now - self._refreshed_at >= REFRESH_INTERVAL_S
 
-    def inbox(self) -> list[dict]:
-        """Pending decisions: sessions asking for input or in trouble."""
+    def inbox(self, pending: dict[str, str] | None = None) -> list[dict]:
+        """Pending decisions: sessions asking for input or in trouble.
+
+        ``pending`` maps session key -> outstanding approval request id.
+        A session waiting on an approval belongs in the inbox even when
+        its transcript status is still ``active``.
+        """
+        pending = pending or {}
         items = []
         for _key, _s, row, status in self._rows:
-            if status in {"followup", "error", "interrupted"}:
-                items.append(
-                    {
-                        "key": row["key"],
-                        "machine_id": row["machine_id"],
-                        "harness": row["harness"],
-                        "agent": row["agent"],
-                        "title": row["title"],
-                        "cwd": row["cwd"],
-                        "status": status,
-                        "last_active_at": row["last_active_at"],
-                    }
-                )
+            rid = pending.get(row["key"])
+            if rid is not None:
+                status = "approval"
+            elif status not in {"followup", "error", "interrupted"}:
+                continue
+            item = {
+                "key": row["key"],
+                "machine_id": row["machine_id"],
+                "harness": row["harness"],
+                "agent": row["agent"],
+                "title": row["title"],
+                "cwd": row["cwd"],
+                "status": status,
+                "last_active_at": row["last_active_at"],
+            }
+            if rid is not None:
+                item["request_id"] = rid
+            items.append(item)
         return items

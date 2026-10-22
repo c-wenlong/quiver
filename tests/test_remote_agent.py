@@ -262,7 +262,7 @@ class TestAgentState(unittest.TestCase):
 
     def test_dispatch_reports_command_result(self):
         a = self._agent()
-        a._execute = MagicMock(return_value=(True, "sent"))
+        a._execute = MagicMock(return_value=(True, "sent", False))
         a._dispatch({
             "type": "command", "session": "claude:a",
             "data": {"op": "message", "command_id": "c9"},
@@ -274,6 +274,19 @@ class TestAgentState(unittest.TestCase):
         self.assertEqual(ev["data"]["command_id"], "c9")
         self.assertTrue(ev["data"]["ok"])
 
+    def test_dispatch_echoes_request_id(self):
+        a = self._agent()
+        a._execute = MagicMock(return_value=(True, "answered", False))
+        a._dispatch({
+            "type": "command", "session": "claude:a",
+            "data": {"op": "approval", "command_id": "c2",
+                     "request_id": "req-77"},
+        })
+        ev = a.outbox[0]
+        self.assertEqual(ev["type"], "command.result")
+        self.assertEqual(ev["data"]["request_id"], "req-77")
+        self.assertFalse(ev["data"]["degraded"])
+
     def test_execute_message_uses_injector(self):
         a = self._agent()
         sess = _session()
@@ -282,7 +295,7 @@ class TestAgentState(unittest.TestCase):
         fake.send.return_value = inject.InjectResult(True, "ok")
         with patch.object(inject, "injector_for", return_value=fake), \
              patch.object(supervise, "meta_for", return_value={}):
-            ok, note = a._execute(
+            ok, note, _deg = a._execute(
                 "claude:s1", "message",
                 {"text": "hello", "mode": "steer", "status": "active"})
         self.assertTrue(ok)
@@ -296,7 +309,7 @@ class TestAgentState(unittest.TestCase):
         with patch.object(
             supervise, "attach", return_value=(True, "attached")
         ) as att:
-            ok, _ = a._execute("claude:s1", "attach",
+            ok, _, _deg = a._execute("claude:s1", "attach",
                                {"mode": "tmux", "status": "idle"})
         self.assertTrue(ok)
         self.assertEqual(att.call_args[1]["mode"], "tmux")
@@ -304,7 +317,7 @@ class TestAgentState(unittest.TestCase):
     def test_execute_unknown_session(self):
         a = self._agent()
         a.catalog.session_for = MagicMock(return_value=None)
-        ok, note = a._execute("claude:ghost", "message", {"text": "x"})
+        ok, note, _deg = a._execute("claude:ghost", "message", {"text": "x"})
         self.assertFalse(ok)
         self.assertIn("unknown session", note)
 
@@ -312,7 +325,7 @@ class TestAgentState(unittest.TestCase):
         a = self._agent()
         a.catalog.session_for = MagicMock(return_value=_session())
         with patch.object(supervise, "meta_for", return_value={}):
-            ok, note = a._execute("claude:s1", "nonsense", {})
+            ok, note, _deg = a._execute("claude:s1", "nonsense", {})
         self.assertFalse(ok)
         self.assertIn("unknown op", note)
 
@@ -327,7 +340,7 @@ class TestAgentState(unittest.TestCase):
         with patch.object(agent_mod, "_get_bytes",
                           return_value=b"PNG") as get, \
              patch.object(attachments, "place", side_effect=fake_stage):
-            ok, note = a._execute(
+            ok, note, _deg = a._execute(
                 "claude:s1", "attachment",
                 {"ref": "1-shot.png", "hub_key": "claude:s1@m1"})
         self.assertTrue(ok)
@@ -823,7 +836,7 @@ class TestAgentEdges(unittest.TestCase):
         with patch.object(
             supervise, "launch_new", return_value=(True, "launched", {})
         ) as ln:
-            ok, note = ag._execute(
+            ok, note, _deg = ag._execute(
                 "k", "launch",
                 {"harness": "claude", "cwd": "/tmp", "prompt": "hi"})
         self.assertTrue(ok)
@@ -831,10 +844,10 @@ class TestAgentEdges(unittest.TestCase):
 
     def test_execute_attachment_paths(self):
         ag = self._agent()
-        ok, note = ag._execute("claude:k", "attachment", {"ref": "r.png"})
+        ok, note, _deg = ag._execute("claude:k", "attachment", {"ref": "r.png"})
         self.assertFalse(ok)  # _get_bytes fails against no hub
         with patch.object(agent_mod, "_get_bytes", return_value=b"png"):
-            ok, note = ag._execute("claude:k", "attachment",
+            ok, note, _deg = ag._execute("claude:k", "attachment",
                                    {"ref": "r.png", "hub_key": "hk"})
         self.assertTrue(ok)
         # place() keeps the hub's ref so a later message op resolves it.
@@ -845,7 +858,7 @@ class TestAgentEdges(unittest.TestCase):
         ag = self._agent()
         sess = _session()
         ag.catalog.session_for = lambda k: sess
-        ok, note = ag._execute(
+        ok, note, _deg = ag._execute(
             "k", "message", {"text": "hi", "attachments": ["nope"]})
         self.assertFalse(ok)
         self.assertIn("unknown attachment", note)
@@ -858,19 +871,19 @@ class TestAgentEdges(unittest.TestCase):
         fake.approval.return_value = inject.InjectResult(True, "ok")
         fake.control.return_value = inject.InjectResult(False, "nope")
         with patch.object(inject, "injector_for", return_value=fake):
-            ok, _ = ag._execute(
+            ok, _, _deg = ag._execute(
                 "k", "approval",
                 {"request_id": "r", "decision": "allow"})
             self.assertTrue(ok)
-            ok, note = ag._execute(
+            ok, note, _deg = ag._execute(
                 "k", "control", {"ctl": "interrupt"})
             self.assertFalse(ok)
             fake.send.side_effect = RuntimeError("kaboom")
-            ok, note = ag._execute("k", "message", {"text": "x"})
+            ok, note, _deg = ag._execute("k", "message", {"text": "x"})
             self.assertFalse(ok)
             self.assertIn("kaboom", note)
         # Outside the patch: an unmarked session hits the detach guard.
-        ok, note = ag._execute("k", "message", {"text": "x"})
+        ok, note, _deg = ag._execute("k", "message", {"text": "x"})
         self.assertFalse(ok)
         self.assertIn("detached", note)
 
@@ -1237,7 +1250,7 @@ class TestR3FinalEdges(unittest.TestCase):
         fake.send.return_value = inject.InjectResult(True, "ok")
         with patch.object(supervise, "meta_for", return_value={}), \
              patch.object(inject, "injector_for", return_value=fake):
-            ok, _ = ag._execute(
+            ok, _, _deg = ag._execute(
                 "k", "message",
                 {"text": "hi", "attachments": [payload["ref"]]})
         self.assertTrue(ok)
@@ -1377,7 +1390,7 @@ class TestReviewFixes(unittest.TestCase):
         sess = _session()
         ag.catalog.session_for = lambda k: sess
         with patch.object(ag.tail_manager, "ensure") as en:
-            ok, note = ag._execute("claude:s1", "tail",
+            ok, note, _deg = ag._execute("claude:s1", "tail",
                                    {"status": "idle"})
         self.assertTrue(ok)
         en.assert_called_once_with("claude:s1", sess, "idle")

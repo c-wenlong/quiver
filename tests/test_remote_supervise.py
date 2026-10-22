@@ -60,6 +60,44 @@ class TestTmuxHelpers(unittest.TestCase):
                           return_value=self._cp(rc=1, stdout="x")):
             self.assertEqual(supervise.capture_pane("qv-x"), "")
 
+    def test_capture_pane_visible_only_by_default(self):
+        # Approval detection reads the live menu — scrollback is opt-in
+        # because an answered prompt lingering in history must not look
+        # pending.
+        with patch.object(supervise, "_tmux",
+                          return_value=self._cp(stdout="x")) as t:
+            supervise.capture_pane("qv-x")
+            supervise.capture_pane("qv-x", lines=200)
+        self.assertEqual(
+            list(t.call_args_list[0][0]),
+            ["capture-pane", "-p", "-t", "qv-x"])
+        self.assertEqual(
+            list(t.call_args_list[1][0]),
+            ["capture-pane", "-p", "-t", "qv-x", "-S", "-200"])
+
+    def test_pane_shows_approval_needs_stacked_choices(self):
+        # Scattered "No errors found"/"No files changed" prose is not a
+        # menu — the choices must be a consecutive block.
+        scattered = (
+            "working…\nNo errors found\nstill working\n"
+            "2 warnings\nNo files changed\ndone")
+        self.assertFalse(supervise.pane_shows_approval(scattered))
+        menu = "Do you want to proceed?\n1. Yes\n2. No"
+        self.assertTrue(supervise.pane_shows_approval(menu))
+        stacked = "Choose:\n❯ Allow once\nDeny"
+        self.assertTrue(supervise.pane_shows_approval(stacked))
+
+    def test_approval_fingerprint_tracks_prompt_text(self):
+        a = supervise.approval_fingerprint(
+            "Do you want to run ls?\n1. Yes\n2. No")
+        b = supervise.approval_fingerprint(
+            "Do you want to run rm -rf?\n1. Yes\n2. No")
+        # Same menu re-rendered (spinner moved elsewhere) keeps its id.
+        a2 = supervise.approval_fingerprint(
+            "spinner | working\nDo you want to run ls?\n1. Yes\n2. No")
+        self.assertEqual(a, a2)
+        self.assertNotEqual(a, b)
+
     def test_tmux_real_call(self):
         cp = self._cp(rc=0)
         with patch.object(supervise, "tmux_bin", return_value="/x/tmux"), \
@@ -605,6 +643,52 @@ class TestAttachMtime(unittest.TestCase):
         meta = supervise.meta_for(self.home, self.key)
         self.assertEqual(meta["tmux"], "qv-new")
         self.assertEqual(meta["mode"], "tmux")
+
+
+class TestAttachModeGates(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.session = Session(
+            timestamp=0, agent="Claude Code", path="/tmp/p",
+            session_id="abc", tool_name="claude")
+
+    def test_appserver_rejects_non_codex(self):
+        ok, note = supervise.attach(
+            self.home, "claude:abc", self.session,
+            last_append_at=None, status="done", mode="appserver")
+        self.assertFalse(ok)
+        self.assertIn("codex", note)
+
+    def test_unknown_mode(self):
+        ok, note = supervise.attach(
+            self.home, "claude:abc", self.session,
+            last_append_at=None, status="done", mode="bogus")
+        self.assertFalse(ok)
+        self.assertIn("unknown attach mode", note)
+
+    def test_serve_needs_opencode_binary(self):
+        session = Session(
+            timestamp=0, agent="opencode", path="/tmp/p",
+            session_id="o1", tool_name="opencode")
+        with patch("shutil.which", return_value=None):
+            ok, note = supervise.attach(
+                self.home, "opencode:o1", session,
+                last_append_at=None, status="done", mode="serve")
+        self.assertFalse(ok)
+        self.assertIn("not installed", note)
+
+    def test_fingerprint_hashes_non_marker_lines(self):
+        # The `or _APPROVAL_ITEM` clause fires on non-marker lines;
+        # non-qualifying chatter must not rotate the fingerprint.
+        p1 = "chatter\n\nDo you want to proceed?\n❯ 1. Yes\n❯ 2. No"
+        p2 = "different chatter\n\n\nDo you want to proceed?\n❯ 1. Yes\n❯ 2. No"
+        self.assertEqual(
+            supervise.approval_fingerprint(p1),
+            supervise.approval_fingerprint(p2))
+        p3 = "chatter\nDo you want to proceed?\n❯ 1. Yes\n❯ 2. Never"
+        self.assertNotEqual(
+            supervise.approval_fingerprint(p1),
+            supervise.approval_fingerprint(p3))
 
 
 if __name__ == "__main__":

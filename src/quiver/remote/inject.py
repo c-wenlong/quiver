@@ -12,19 +12,38 @@ Two channels ship in R2:
 - ``TmuxInjector`` (tier B): ``send-keys`` for prompts, menu digits for
   approvals, Escape for interrupt — best-effort against whatever TUI is
   running under the supervisor.
+- ``OpencodeServeInjector`` (tier A): REST against a managed ``opencode
+  serve`` bound to the session's project — ``prompt_async`` for
+  messages, permission replies for approvals, ``abort`` for interrupt.
+  A background ``GET /event`` SSE subscription translates permission
+  asks into ``approval.requested`` events.
+- ``CodexAppServerInjector`` (tier A): a persistent ``codex app-server``
+  JSON-RPC process per session — ``thread/resume`` once, ``turn/start``
+  per message, ``turn/interrupt`` for interrupt; server-initiated
+  approval requests become ``approval.requested`` and decisions are
+  written back as JSON-RPC responses.
 
 ``queue|steer``: queue refuses while a turn looks active; steer writes
-immediately (the TUI buffers input). Headless invocations are atomic —
-steer degrades to queue and one run is in flight per session at a time.
+immediately where the channel accepts mid-turn input (tmux buffers
+keystrokes, app-server queues server-side). Headless invocations are
+atomic — steer degrades to queue and one run is in flight per session
+at a time; a degraded send reports ``degraded=True`` so the client can
+say so.
 """
 
 from __future__ import annotations
 
 import collections
 import json
+import os
+import select
+import shutil
+import socket
 import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import NamedTuple
 
@@ -47,24 +66,12 @@ _OPS_TEXT = {
     "effort": "/effort {value}",
 }
 
-# Markers a claude permission menu prints on screen; a pane without one
-# is not waiting on an approval.
-_APPROVAL_MARKERS = (
-    "do you want to",
-    "don't ask again",
-    "esc to cancel",
-    "allow",
-)
-
-
-def _pane_shows_approval(pane: str) -> bool:
-    text = pane.lower()
-    return any(marker in text for marker in _APPROVAL_MARKERS)
-
-
 class InjectResult(NamedTuple):
     ok: bool
     note: str = ""
+    # steer asked for mid-turn delivery but the channel queued it —
+    # clients surface this as "sent (queued)" instead of pretending.
+    degraded: bool = False
 
 
 class TmuxInjector:
@@ -117,9 +124,24 @@ class TmuxInjector:
         )
         if request_id in answered:
             return InjectResult(False, "approval already answered")
-        if not _pane_shows_approval(supervise.capture_pane(self.name)):
+        # When the tailer issued a request_id for the prompt currently
+        # on screen, only that id may answer it — a stale or superseded
+        # id cannot consume the new menu.
+        outstanding = supervise.pending_approval(self.key)
+        if outstanding and request_id != outstanding:
+            return InjectResult(False, "stale approval request id")
+        pane = supervise.capture_pane(self.name)
+        if not supervise.pane_shows_approval(pane):
             return InjectResult(
                 False, "no approval prompt is on screen"
+            )
+        # The id was minted for the prompt that was on screen then —
+        # re-fingerprint now so a menu swapped in between polls can't
+        # be answered by the old id.
+        fp = supervise.pending_approval_fp(self.key)
+        if fp and fp != supervise.approval_fingerprint(pane):
+            return InjectResult(
+                False, "approval prompt changed since the request"
             )
         if supervise.send_key(self.name, key):
             answered.append(request_id)
@@ -243,6 +265,7 @@ class ClaudeHeadlessInjector:
         if not text.strip():
             return InjectResult(False, "empty message")
         # steer degrades to queue: a print-mode run is atomic.
+        degraded = cmd.get("mode") == "steer"
         lock = self._locks[self.key]
         if not lock.acquire(timeout=_QUEUE_WAIT_S):
             return InjectResult(False, "a headless turn is still in flight")
@@ -255,7 +278,10 @@ class ClaudeHeadlessInjector:
                     False, "session detached; refusing the write"
                 )
             ok, note = self._run(session, self.argv(session, text))
-            return InjectResult(ok, note)
+            if ok and degraded:
+                note = (note or "turn complete") + \
+                    " (steer queued: headless runs are atomic)"
+            return InjectResult(ok, note, degraded=ok and degraded)
         finally:
             lock.release()
 
@@ -291,17 +317,653 @@ class ClaudeHeadlessInjector:
         )
 
 
+# ---------------------------------------------------------------------
+# Tier A: opencode serve
+#
+# `opencode serve` exposes the project over HTTP + one SSE event stream.
+# The hub owns a serve proc per project directory (refcounted across
+# attached sessions) and translates `permission.*` events into the same
+# `approval.requested`/`approval.resolved` protocol events the tmux
+# watcher emits, so phone and ntfy paths need no second channel.
+
+# How long a spawned serve gets to answer /session before we give up.
+_SERVE_READY_S = 15.0
+_SERVE_REQ_TIMEOUT = 20.0
+
+# opencode decisions differ from ours: allow once / always / reject.
+_OPENCODE_DECISIONS = {
+    "allow": "once", "always": "always", "deny": "reject",
+}
+
+
+def _free_port() -> int:
+    """An ephemeral loopback port for a spawned serve."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def _serve_call(
+    base: str, method: str, path: str, payload: dict | None,
+    timeout: float = _SERVE_REQ_TIMEOUT,
+) -> tuple[int, bytes]:
+    """One HTTP call against a serve proc; ``(status, body)``."""
+    req = urllib.request.Request(
+        base.rstrip("/") + path,
+        data=None if payload is None else json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method=method,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        try:
+            return exc.code, exc.read()
+        except Exception:
+            return exc.code, b""
+    except Exception:
+        return 0, b""
+
+
+class _ServeProc:
+    """One ``opencode serve`` child plus its SSE reader state."""
+
+    def __init__(self, proc: subprocess.Popen, base: str) -> None:
+        self.proc = proc
+        self.base = base
+        self.refs = 0
+        self.lock = threading.Lock()
+        # opencode session id -> (session_key, emit, machine)
+        self.subs: dict[str, tuple[str, object, str]] = {}
+        # permission id -> session id (for reply routing)
+        self.permissions: dict[str, str] = {}
+        self.reader_started = False
+        self.dead = False
+
+
+def _serve_event_loop(serve: _ServeProc) -> None:
+    """Read ``GET /event``; permission asks become approval events."""
+    from quiver.remote import protocol
+
+    try:
+        req = urllib.request.Request(
+            serve.base + "/event", headers={"Accept": "text/event-stream"}
+        )
+        resp = urllib.request.urlopen(req, timeout=None)
+    except Exception:
+        return
+    data_lines: list[bytes] = []
+    try:
+        with resp:
+            for raw in resp:
+                line = raw.rstrip(b"\n")
+                if line == b"":
+                    if data_lines:
+                        blob = b"\n".join(data_lines)
+                        data_lines = []
+                        _serve_event(serve, blob)
+                    continue
+                if line.startswith(b"data:"):
+                    data_lines.append(line[5:].lstrip())
+    except Exception:
+        pass
+
+
+def _serve_event(serve: _ServeProc, blob: bytes) -> None:
+    """One SSE payload: route permission asks/replies to subscribers."""
+    from quiver.remote import protocol
+
+    try:
+        ev = json.loads(blob.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return
+    if not isinstance(ev, dict):
+        return
+    etype = str(ev.get("type") or "")
+    props = ev.get("properties") if isinstance(
+        ev.get("properties"), dict) else ev.get("payload")
+    if not isinstance(props, dict) or "permission" not in etype.lower():
+        return
+    perm_id = str(
+        props.get("id") or props.get("permissionID") or "")
+    session_id = str(
+        props.get("sessionID") or props.get("sessionId")
+        or serve.permissions.get(perm_id) or "")
+    sub = serve.subs.get(session_id)
+    if sub is None:
+        return
+    key, emit, machine = sub
+    if emit is None:
+        return
+    # asked/updated/replied naming has drifted; treat anything that is
+    # not a reply/resolve as a fresh ask.
+    resolved = any(w in etype.lower() for w in ("replied", "resolved"))
+    if resolved:
+        serve.permissions.pop(perm_id, None)
+        emit(key, protocol.event(
+            "approval.resolved", key, machine,
+            {"request_id": perm_id},
+        ))
+        return
+    if not perm_id:
+        return
+    serve.permissions[perm_id] = session_id
+    prompt = str(
+        props.get("title") or props.get("permission")
+        or props.get("message") or "permission requested"
+    )
+    patterns = props.get("patterns") or props.get("metadata") or {}
+    if isinstance(patterns, (list, tuple)):
+        prompt += "\n\n" + "\n".join(f"`{p}`" for p in patterns[:8])
+    emit(key, protocol.event(
+        "approval.requested", key, machine,
+        {"request_id": perm_id, "prompt": prompt},
+    ))
+
+
+class OpencodeServeInjector:
+    """Tier A over a managed ``opencode serve`` for the session's cwd."""
+
+    _serves: "dict[str, _ServeProc]" = {}
+    _serves_lock = threading.Lock()
+
+    def __init__(
+        self,
+        home: Path | None,
+        session_key: str,
+        emit=None,
+        machine: str = "",
+    ) -> None:
+        self.home = home
+        self.key = session_key
+        self.emit = emit
+        self.machine = machine
+
+    # -- serve proc lifecycle -------------------------------------------
+
+    @staticmethod
+    def _spawn(cwd: str, port: int) -> subprocess.Popen:
+        return subprocess.Popen(
+            ["opencode", "serve",
+             "--hostname", "127.0.0.1", "--port", str(port)],
+            cwd=cwd or None,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def _serve_for(self, session: Session) -> _ServeProc | None:
+        """The shared serve proc for this session's project, spawning
+        it (and waiting for readiness) on first use."""
+        cwd = os.path.realpath(session.path or ".")
+        sid = session.session_id
+        with self._serves_lock:
+            serve = self._serves.get(cwd)
+            if serve is not None and serve.proc.poll() is not None:
+                serve.dead = True
+                self._serves.pop(cwd, None)
+                serve = None
+            if serve is None:
+                port = _free_port()
+                try:
+                    proc = self._spawn(cwd, port)
+                except OSError:
+                    return None
+                serve = _ServeProc(proc, f"http://127.0.0.1:{port}")
+                self._serves[cwd] = serve
+                if not serve.reader_started:
+                    serve.reader_started = True
+                    threading.Thread(
+                        target=_serve_event_loop, args=(serve,),
+                        daemon=True, name=f"opencode-events-{sid}",
+                    ).start()
+        # Wait for readiness outside the lock — slow starts shouldn't
+        # serialize unrelated sessions.
+        deadline = time.monotonic() + _SERVE_READY_S
+        while time.monotonic() < deadline:
+            if serve.proc.poll() is not None:
+                with self._serves_lock:
+                    self._serves.pop(cwd, None)
+                return None
+            status, _ = _serve_call(serve.base, "GET", "/session", None,
+                                    timeout=2.0)
+            if status != 0:
+                with self._serves_lock:
+                    if sid not in serve.subs:
+                        serve.refs += 1
+                    serve.subs[sid] = (self.key, self.emit, self.machine)
+                return serve
+            time.sleep(0.25)
+        return None
+
+    def _release(self, session: Session) -> None:
+        """Drop this session's hold; kill the serve when unused."""
+        cwd = os.path.realpath(session.path or ".")
+        with self._serves_lock:
+            serve = self._serves.get(cwd)
+            if serve is None:
+                return
+            serve.subs.pop(session.session_id, None)
+            serve.refs = max(0, serve.refs - 1)
+            if serve.refs:
+                return
+            self._serves.pop(cwd, None)
+            serve.dead = True
+        try:
+            serve.proc.kill()
+            serve.proc.wait(timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    # -- injector interface ----------------------------------------------
+
+    def send(self, session: Session, cmd: dict, status: str) -> InjectResult:
+        text = str(cmd.get("text") or "")
+        for path in cmd.get("attachments") or []:
+            text = f"@{path} {text}"
+        if not text.strip():
+            return InjectResult(False, "empty message")
+        if supervise.meta_for(self.home, self.key) is None:
+            return InjectResult(False, "session detached; refusing the write")
+        serve = self._serve_for(session)
+        if serve is None:
+            return InjectResult(False, "opencode serve failed to start")
+        # prompt_async queues server-side — steer and queue are the same
+        # call; opencode decides whether mid-turn input lands or waits.
+        status_code, body = _serve_call(
+            serve.base, "POST",
+            f"/session/{session.session_id}/prompt_async",
+            {"parts": [{"type": "text", "text": text}]},
+        )
+        if status_code not in (200, 204):
+            return InjectResult(
+                False, f"opencode refused the prompt ({status_code})"
+            )
+        queued = cmd.get("mode") == "steer" and status == "active"
+        note = "queued with opencode" if queued else "sent to opencode"
+        return InjectResult(True, note, degraded=queued)
+
+    def approval(
+        self, session: Session, request_id: str, decision: str
+    ) -> InjectResult:
+        response = _OPENCODE_DECISIONS.get(decision)
+        if response is None:
+            return InjectResult(False, f"unknown decision {decision}")
+        serve = self._serve_for(session)
+        if serve is None:
+            return InjectResult(False, "opencode serve failed to start")
+        session_id = serve.permissions.get(request_id) or session.session_id
+        status_code, _ = _serve_call(
+            serve.base, "POST",
+            f"/session/{session_id}/permissions/{request_id}",
+            {"response": response},
+        )
+        if status_code in (404, 405):
+            # Older opencode: /permission/{id}/reply {reply}.
+            status_code, _ = _serve_call(
+                serve.base, "POST",
+                f"/permission/{request_id}/reply",
+                {"reply": response},
+            )
+        if status_code not in (200, 204):
+            return InjectResult(
+                False, f"opencode refused the reply ({status_code})"
+            )
+        serve.permissions.pop(request_id, None)
+        return InjectResult(True, f"replied {response}")
+
+    def control(
+        self, session: Session, op: str, value: str
+    ) -> InjectResult:
+        if op == "interrupt":
+            serve = self._serve_for(session)
+            if serve is None:
+                return InjectResult(False, "opencode serve failed to start")
+            status_code, _ = _serve_call(
+                serve.base, "POST",
+                f"/session/{session.session_id}/abort", {},
+            )
+            if status_code not in (200, 204):
+                return InjectResult(
+                    False, f"opencode refused abort ({status_code})"
+                )
+            return InjectResult(True, "abort sent")
+        if op in {"kill", "detach"}:
+            self._release(session)
+            supervise.unmark(self.home, self.key)
+            return InjectResult(True, "detached; session is observed again")
+        return InjectResult(
+            False, f"unsupported_control: {op} needs a live TUI"
+        )
+
+
+# ---------------------------------------------------------------------
+# Tier A: codex app-server
+#
+# `codex app-server` speaks newline-delimited JSON-RPC 2.0 on stdio. One
+# proc per attached session: initialize + initialized, thread/resume
+# once, then turn/start per prompt. Server-initiated approval requests
+# arrive as JSON-RPC *requests* on our read side; a decision is the
+# matching response.
+
+_APPSERVER_CALL_S = 60.0
+_CODEX_DECISIONS = {
+    "allow": "accept", "always": "acceptForSession", "deny": "decline",
+}
+
+
+class _AppServer:
+    """One ``codex app-server`` child: writer lock + reader fan-out."""
+
+    def __init__(self, proc: subprocess.Popen, thread_id: str) -> None:
+        self.proc = proc
+        self.thread_id = thread_id
+        self.turn_id = ""
+        self.wlock = threading.Lock()
+        self.next_id = 1
+        # rpc id -> Queue for the matching response
+        self.replies: dict = {}
+        # request_id (str rpc id) -> raw id, for approval() replies
+        self.approvals: dict[str, object] = {}
+        self.dead = False
+        # Set once initialize+thread/resume finished (or failed) — a
+        # second caller must not turn/start mid-handshake.
+        self.ready = threading.Event()
+        self.handshake_ok = False
+
+
+def _rpc_line(proc: subprocess.Popen, payload: dict) -> bool:
+    try:
+        proc.stdin.write(json.dumps(payload).encode() + b"\n")
+        proc.stdin.flush()
+        return True
+    except (BrokenPipeError, OSError):
+        return False
+
+
+def _appserver_read_loop(server: _AppServer, key: str, emit, machine: str) -> None:
+    """Demux stdout: responses go to waiting calls; server-initiated
+    approval requests become protocol events."""
+    from quiver.remote import protocol
+
+    proc = server.proc
+    try:
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            try:
+                msg = json.loads(raw.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                continue
+            if not isinstance(msg, dict):
+                continue
+            method = str(msg.get("method") or "")
+            if method:
+                # Server -> client request or notification.
+                if "requestApproval" in method or "Approval" in method:
+                    req_id = msg.get("id")
+                    if req_id is not None:
+                        request_id = str(req_id)
+                        server.approvals[request_id] = req_id
+                        params = msg.get("params") or {}
+                        prompt = str(
+                            params.get("reason")
+                            or params.get("command")
+                            or params.get("itemId")
+                            or method
+                        )
+                        if emit is not None:
+                            emit(key, protocol.event(
+                                "approval.requested", key, machine,
+                                {"request_id": request_id,
+                                 "prompt": prompt},
+                            ))
+                elif method in ("turn/started", "codex/turnStarted"):
+                    params = msg.get("params") or {}
+                    turn = params.get("turn") or {}
+                    if isinstance(turn, dict) and turn.get("id"):
+                        server.turn_id = str(turn["id"])
+                elif method in ("turn/completed", "turn/failed",
+                                "codex/turnCompleted"):
+                    server.turn_id = ""
+                continue
+            if "id" in msg:
+                q = server.replies.pop(msg["id"], None)
+                if q is not None:
+                    q.put(msg)
+    except Exception:
+        pass
+    server.dead = True
+
+
+class CodexAppServerInjector:
+    """Tier A over a persistent ``codex app-server`` per session."""
+
+    _servers: "dict[str, _AppServer]" = {}
+    _servers_lock = threading.Lock()
+
+    def __init__(
+        self,
+        home: Path | None,
+        session_key: str,
+        emit=None,
+        machine: str = "",
+    ) -> None:
+        self.home = home
+        self.key = session_key
+        self.emit = emit
+        self.machine = machine
+
+    # -- proc + rpc plumbing --------------------------------------------
+
+    @staticmethod
+    def _spawn(cwd: str) -> subprocess.Popen:
+        return subprocess.Popen(
+            ["codex", "app-server"],
+            cwd=cwd or None,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def _server_for(self, session: Session) -> _AppServer | None:
+        spawned = False
+        with self._servers_lock:
+            server = self._servers.get(self.key)
+            if server is not None and server.proc.poll() is None:
+                spawned = False
+            else:
+                if server is not None:
+                    self._servers.pop(self.key, None)
+                thread_id = self._thread_id(session)
+                if not thread_id:
+                    return None
+                try:
+                    proc = self._spawn(session.path or ".")
+                except OSError:
+                    return None
+                server = _AppServer(proc, thread_id)
+                self._servers[self.key] = server
+                spawned = True
+                threading.Thread(
+                    target=_appserver_read_loop,
+                    args=(server, self.key, self.emit, self.machine),
+                    daemon=True, name=f"codex-rpc-{self.key}",
+                ).start()
+        if not spawned:
+            # Another caller (or an earlier call) owns the handshake —
+            # wait for it rather than interleave writes mid-handshake.
+            server.ready.wait(timeout=_SERVE_READY_S)
+            return server if server.handshake_ok else None
+        # Handshake outside the registry lock.
+        from quiver import __version__
+
+        try:
+            hello = self._call(server, "initialize", {
+                "clientInfo": {"name": "quiver", "version": __version__},
+            })
+            if hello is None or "error" in hello:
+                return None
+            _rpc_line(proc, {"jsonrpc": "2.0", "method": "initialized"})
+            resumed = self._call(server, "thread/resume",
+                                 {"threadId": server.thread_id})
+            if resumed is None or "error" in resumed:
+                return None
+            server.handshake_ok = True
+            return server
+        finally:
+            server.ready.set()
+            if not server.handshake_ok:
+                self._kill(server)
+
+    @staticmethod
+    def _thread_id(session: Session) -> str:
+        from quiver.sessions.parsers import codex_thread_id
+
+        return str(codex_thread_id(session.session_id) or "")
+
+    def _call(
+        self, server: _AppServer, method: str, params: dict | None,
+        timeout: float | None = None,
+    ):
+        """One request/response; returns the reply dict or None."""
+        import queue as queue_mod
+
+        if timeout is None:
+            timeout = _APPSERVER_CALL_S
+
+        q: queue_mod.Queue = queue_mod.Queue()
+        with server.wlock:
+            rpc_id = server.next_id
+            server.next_id += 1
+            server.replies[rpc_id] = q
+            if not _rpc_line(server.proc, {
+                "jsonrpc": "2.0", "id": rpc_id,
+                "method": method, "params": params,
+            }):
+                server.replies.pop(rpc_id, None)
+                return None
+        try:
+            return q.get(timeout=timeout)
+        except queue_mod.Empty:
+            server.replies.pop(rpc_id, None)
+            return None
+
+    def _kill(self, server: _AppServer) -> None:
+        with self._servers_lock:
+            if self._servers.get(self.key) is server:
+                self._servers.pop(self.key, None)
+        server.dead = True
+        try:
+            server.proc.kill()
+            server.proc.wait(timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    # -- injector interface ----------------------------------------------
+
+    def send(self, session: Session, cmd: dict, status: str) -> InjectResult:
+        text = str(cmd.get("text") or "")
+        for path in cmd.get("attachments") or []:
+            text = f"@{path} {text}"
+        if not text.strip():
+            return InjectResult(False, "empty message")
+        # queue waits for idle; steer writes mid-turn (the server queues
+        # or interleaves it — either way the write is attempted).
+        if cmd.get("mode") == "queue" and status == "active":
+            return InjectResult(
+                False, "session is mid-turn; steer to write anyway"
+            )
+        if supervise.meta_for(self.home, self.key) is None:
+            return InjectResult(False, "session detached; refusing the write")
+        server = self._server_for(session)
+        if server is None:
+            return InjectResult(False, "codex app-server failed to start")
+        resp = self._call(server, "turn/start", {
+            "threadId": server.thread_id,
+            "input": [{"type": "text", "text": text}],
+        })
+        if resp is None:
+            return InjectResult(False, "codex app-server timed out")
+        if "error" in resp:
+            msg = str((resp.get("error") or {}).get("message") or "error")
+            return InjectResult(False, f"codex refused: {msg}")
+        turn = ((resp.get("result") or {}).get("turn") or {})
+        if isinstance(turn, dict) and turn.get("id"):
+            server.turn_id = str(turn["id"])
+        return InjectResult(True, "turn started")
+
+    def approval(
+        self, session: Session, request_id: str, decision: str
+    ) -> InjectResult:
+        mapped = _CODEX_DECISIONS.get(decision)
+        if mapped is None:
+            return InjectResult(False, f"unknown decision {decision}")
+        server = self._servers.get(self.key)
+        if server is None or server.proc.poll() is not None:
+            return InjectResult(False, "codex app-server is not running")
+        rpc_id = server.approvals.pop(request_id, None)
+        if rpc_id is None:
+            return InjectResult(
+                False, "unknown or already-answered approval request"
+            )
+        ok = _rpc_line(server.proc, {
+            "jsonrpc": "2.0", "id": rpc_id,
+            "result": {"decision": mapped},
+        })
+        if not ok:
+            server.approvals[request_id] = rpc_id  # don't lose it
+            return InjectResult(False, "codex app-server is unreachable")
+        return InjectResult(True, f"replied {mapped}")
+
+    def control(
+        self, session: Session, op: str, value: str
+    ) -> InjectResult:
+        if op == "interrupt":
+            server = self._servers.get(self.key)
+            if server is None or server.proc.poll() is not None:
+                return InjectResult(False, "codex app-server is not running")
+            params = {"threadId": server.thread_id}
+            if server.turn_id:
+                params["turnId"] = server.turn_id
+            resp = self._call(server, "turn/interrupt", params)
+            if resp is None or "error" in resp:
+                return InjectResult(False, "interrupt failed")
+            return InjectResult(True, "interrupted")
+        if op in {"kill", "detach"}:
+            server = self._servers.pop(self.key, None)
+            if server is not None:
+                server.dead = True
+                try:
+                    server.proc.kill()
+                    server.proc.wait(timeout=5)
+                except (OSError, subprocess.SubprocessError):
+                    pass
+            supervise.unmark(self.home, self.key)
+            return InjectResult(True, "detached; session is observed again")
+        return InjectResult(
+            False, f"unsupported_control: {op} needs a live TUI"
+        )
+
+
 def injector_for(
     home: Path | str | None,
     session_key: str,
     meta: dict | None,
-) -> TmuxInjector | ClaudeHeadlessInjector:
+    emit=None,
+    machine: str = "",
+) -> TmuxInjector | ClaudeHeadlessInjector | OpencodeServeInjector | CodexAppServerInjector:
     """Pick the channel from the supervised registry row."""
     meta = meta or {}
-    if meta.get("mode") == "headless" and meta.get("tool_name") == "claude":
-        return ClaudeHeadlessInjector(
-            Path(home) if home is not None else None, session_key
+    home_path = Path(home) if home is not None else None
+    mode = meta.get("mode")
+    tool = meta.get("tool_name")
+    if mode == "headless" and tool == "claude":
+        return ClaudeHeadlessInjector(home_path, session_key)
+    if mode == "serve" and tool == "opencode":
+        return OpencodeServeInjector(
+            home_path, session_key, emit=emit, machine=machine
         )
-    return TmuxInjector(
-        Path(home) if home is not None else None, session_key
-    )
+    if mode == "appserver" and tool == "codex":
+        return CodexAppServerInjector(
+            home_path, session_key, emit=emit, machine=machine
+        )
+    return TmuxInjector(home_path, session_key)

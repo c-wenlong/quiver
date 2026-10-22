@@ -183,6 +183,25 @@ class TestTmuxInjector(unittest.TestCase):
         self.assertIn("already answered", out.note)
         self.assertEqual(sk.call_count, 1)
 
+    def test_approval_rejected_when_prompt_swapped(self):
+        # The watcher minted rid for prompt A; prompt B is on screen
+        # now — the stale id must not send a key to B.
+        key = self.key
+        fp_a = supervise.approval_fingerprint(
+            "Do you want to run ls?\n1. Yes\n2. No")
+        supervise.set_pending_approval(key, "req-a", fp_a)
+        try:
+            pane_b = "Do you want to run rm -rf?\n1. Yes\n2. No"
+            with patch.object(
+                supervise, "capture_pane", return_value=pane_b
+            ), patch.object(supervise, "send_key") as sk:
+                out = self.inj.approval(self.session, "req-a", "allow")
+            self.assertFalse(out.ok)
+            self.assertIn("changed", out.note)
+            sk.assert_not_called()
+        finally:
+            supervise.set_pending_approval(key, None)
+
     def test_interrupt_escape(self):
         with patch.object(supervise, "send_key", return_value=True) as sk:
             out = self.inj.control(self.session, "interrupt", "")

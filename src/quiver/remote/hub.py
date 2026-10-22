@@ -17,6 +17,7 @@ import email.message
 import json
 import os
 import queue
+import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,6 +29,7 @@ from quiver.remote import (
     attachments,
     catalog as catalog_mod,
     inject,
+    notify,
     pairing,
     protocol,
     supervise,
@@ -111,12 +113,26 @@ class HubState:
         # floor of what it has executed. queue_command refuses to grow a
         # backlog it would silently trim.
         self._sat_acked: dict[str, int] = {}
+        # The hub's reachable base — set by serve() before start() so
+        # ntfy action buttons can point back at this host.
+        self.base_url = ""
+        # session key -> request_id for every approval.requested that has
+        # not yet been answered — local panes and satellites both flow
+        # through emit(), so the inbox sees them uniformly.
+        self.pending_approvals: dict[str, str] = {}
 
     def _journal_has(self, key: str) -> bool:
         return self.journal.last_seq(key) > 0
 
     # The one funnel: every event is journaled, then fanned out.
     def emit(self, key: str, event: dict) -> dict:
+        etype = event.get("type")
+        if etype == "approval.requested":
+            rid = str((event.get("data") or {}).get("request_id") or "")
+            if rid:
+                self.pending_approvals[key] = rid
+        elif etype == "approval.resolved":
+            self.pending_approvals.pop(key, None)
         written = self.journal.append(key, event)
         self.bus.publish(key, written)
         if key != GLOBAL_KEY:
@@ -130,10 +146,20 @@ class HubState:
 
     def start(self) -> None:
         self._register_machine()
-        for target, name in (
+        targets: list = [
             (self._catalog_loop, "remote-catalog"),
             (self._tail_loop, "remote-tail"),
-        ):
+        ]
+        if notify.load_config(self.home).get("enabled"):
+            notifier = notify.Notifier(
+                self, self.base_url, subscribe_key=GLOBAL_KEY
+            )
+            # Subscribe before the producers start — an approval prompt
+            # already visible at boot would otherwise be emitted into a
+            # bus with no listener and never reach the phone.
+            notifier.subscribe()
+            targets.append((notifier.run, "remote-notify"))
+        for target, name in targets:
             t = threading.Thread(target=target, name=name, daemon=True)
             t.start()
             self._threads.append(t)
@@ -544,7 +570,11 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/inbox":
-            self._send_json(200, {"items": self._state.catalog.inbox()})
+            self._send_json(200, {
+                "items": self._state.catalog.inbox(
+                    pending=self._state.pending_approvals
+                )
+            })
             return
 
         if path == "/v1/events":
@@ -784,7 +814,12 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _injector(self, key: str):
         meta = supervise.meta_for(self._state.home, key)
-        return inject.injector_for(self._state.home, key, meta)
+        # emit + machine let tier-A channels raise approval events from
+        # their server streams, same path the tmux watcher uses.
+        return inject.injector_for(
+            self._state.home, key, meta,
+            emit=self._state.emit, machine=self._state.machine_id,
+        )
 
     def _forward(
         self, key: str, mid: str, action: str, row: dict
@@ -869,7 +904,7 @@ class _Handler(BaseHTTPRequestHandler):
             op = cmd["op"]
             if op == "attach":
                 queued = self._state.queue_command(mid, "attach", key, {
-                    "mode": body.get("mode") or "tmux",
+                    "mode": body.get("mode") or "auto",
                     "status": row.get("status") or "",
                 })
             else:
@@ -938,7 +973,10 @@ class _Handler(BaseHTTPRequestHandler):
         if not result.ok:
             self._send_error(409, "send_failed", result.note)
             return
-        self._send_json(200, {"ok": True, "note": result.note})
+        self._send_json(
+            200,
+            {"ok": True, "note": result.note, "degraded": result.degraded},
+        )
 
     def _send_approval(self, key: str) -> None:
         body = self._read_body()
@@ -1021,10 +1059,26 @@ class _Handler(BaseHTTPRequestHandler):
         if session is None:
             self._send_error(404, "unknown_session", "no such session")
             return
-        mode = str(body.get("mode") or "tmux")
+        mode = str(body.get("mode") or "auto")
+        if mode not in supervise.ATTACH_MODES:
+            self._send_error(
+                422, "bad_mode",
+                f"mode must be one of {sorted(supervise.ATTACH_MODES)}",
+            )
+            return
         if mode == "headless" and session.tool_name != "claude":
             self._send_error(
                 422, "bad_mode", "headless attach only exists for claude"
+            )
+            return
+        if mode == "serve" and session.tool_name != "opencode":
+            self._send_error(
+                422, "bad_mode", "serve attach only exists for opencode"
+            )
+            return
+        if mode == "appserver" and session.tool_name != "codex":
+            self._send_error(
+                422, "bad_mode", "appserver attach only exists for codex"
             )
             return
         if str(row.get("status") or "") == "active":
@@ -1035,7 +1089,8 @@ class _Handler(BaseHTTPRequestHandler):
                 "session is mid-turn; try again when it is idle",
             )
             return
-        if mode == "tmux" and supervise.tmux_bin() is None:
+        resolved = supervise.resolve_mode(session, mode)
+        if resolved == "tmux" and supervise.tmux_bin() is None:
             # Environment failure, not a state conflict: 409/not_idle
             # would tell the client to retry, which never helps.
             self._send_error(
@@ -1250,8 +1305,25 @@ def make_server(
     return server
 
 
+def _advertise_url(host: str, port: int) -> str:
+    """The base URL handed to phones/ntfy — never a wildcard bind."""
+    advertised = host
+    if host in ("0.0.0.0", "::", ""):
+        advertised = (
+            catalog_mod.tailscale_ip()
+            or socket.gethostname()
+            or "127.0.0.1"
+        )
+    return f"http://{advertised}:{port}"
+
+
 def serve(state: HubState, host: str, port: int) -> int:
     """Blocking entry point for ``swe remote serve``."""
+    # The listen address and the advertised URL are different things:
+    # `0.0.0.0` is fine to bind but unreachable as a link target, so
+    # ntfy action buttons must point at a real address — the tailnet IP
+    # first, then the machine hostname.
+    state.base_url = _advertise_url(host, port)
     state.start()
     server = make_server(state, host, port)
     try:

@@ -329,6 +329,46 @@ class TestHubWriteRoutes(unittest.TestCase):
         )
         self.assertEqual(status, 200, data)
 
+    def test_attach_unknown_mode_422(self):
+        srv = _Server(
+            sessions=[_session(sid="bm")], statuses=lambda ss: ["done"],
+        )
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        status, data = srv.request(
+            "POST", "/v1/sessions/claude:bm/control",
+            body={"op": "attach", "mode": "bogus"},
+            headers={"Authorization": f"Bearer {cred['credential']}"},
+        )
+        self.assertEqual(status, 422)
+        self.assertEqual(json.loads(data)["error"]["code"], "bad_mode")
+
+    def test_attach_serve_needs_opencode(self):
+        srv = _Server(
+            sessions=[_session(sid="sc")], statuses=lambda ss: ["done"],
+        )
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        status, data = srv.request(
+            "POST", "/v1/sessions/claude:sc/control",
+            body={"op": "attach", "mode": "serve"},
+            headers={"Authorization": f"Bearer {cred['credential']}"},
+        )
+        self.assertEqual(status, 422)
+
+    def test_attach_appserver_needs_codex(self):
+        srv = _Server(
+            sessions=[_session(sid="ac")], statuses=lambda ss: ["done"],
+        )
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        status, data = srv.request(
+            "POST", "/v1/sessions/claude:ac/control",
+            body={"op": "attach", "mode": "appserver"},
+            headers={"Authorization": f"Bearer {cred['credential']}"},
+        )
+        self.assertEqual(status, 422)
+
     def test_attachment_staging(self):
         import http.client as hc
         conn = hc.HTTPConnection("127.0.0.1", self.srv.port, timeout=5)
@@ -480,6 +520,46 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["status"], "followup")
         self.assertEqual(items[0]["key"], "claude:f1")
+
+    def test_inbox_shows_pending_approval_on_active(self):
+        # A pane-only prompt leaves the transcript "active" — the inbox
+        # must still surface it, and drop it once resolved.
+        srv = _Server(sessions=[_session(sid="a1")],
+                      statuses=lambda ss: ["active"])
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        hdr = {"Authorization": f"Bearer {cred['credential']}"}
+        srv.state.emit("claude:a1", protocol.event(
+            "approval.requested", "claude:a1", "mbp",
+            {"request_id": "req-1", "prompt": "run it?"}))
+        status, data = srv.request("GET", "/v1/inbox", headers=hdr)
+        items = json.loads(data)["items"]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["status"], "approval")
+        self.assertEqual(items[0]["request_id"], "req-1")
+        srv.state.emit("claude:a1", protocol.event(
+            "approval.resolved", "claude:a1", "mbp",
+            {"request_id": "req-1"}))
+        status, data = srv.request("GET", "/v1/inbox", headers=hdr)
+        self.assertEqual(json.loads(data)["items"], [])
+
+    def test_advertise_url_never_wildcard(self):
+        from quiver.remote import catalog, hub
+        with patch.object(
+            catalog, "tailscale_ip", return_value="100.64.1.2"
+        ):
+            self.assertEqual(
+                hub._advertise_url("0.0.0.0", 8477),
+                "http://100.64.1.2:8477")
+        with patch.object(
+            catalog, "tailscale_ip", return_value=""
+        ), patch("socket.gethostname", return_value="srv.lan"):
+            self.assertEqual(
+                hub._advertise_url("0.0.0.0", 8477),
+                "http://srv.lan:8477")
+        self.assertEqual(
+            hub._advertise_url("100.64.9.9", 9000),
+            "http://100.64.9.9:9000")
 
     def test_machines_lists_self(self):
         self.srv.state._register_machine()
@@ -857,6 +937,38 @@ class TestServerHardening(HubBase):
             )
         self.assertEqual(status, 200)
         self.assertIn("claude:s1", self.srv.state.tail_manager.tailers)
+
+
+class TestStartNotify(unittest.TestCase):
+    def test_start_spawns_notifier_when_enabled(self):
+        from quiver.remote import hub as hub_mod, notify
+
+        home = Path(tempfile.mkdtemp())
+        state = HubState(home)
+        state.catalog._fetch = lambda: []
+        cfg = {"enabled": True, "url": "https://ntfy.sh",
+               "topic": "t", "ntfy_token": "x"}
+        with patch.object(notify, "load_config", return_value=cfg):
+            state.start()
+            try:
+                names = [t.name for t in state._threads]
+                self.assertIn("remote-notify", names)
+            finally:
+                state.stop()
+
+    def test_start_skips_notifier_when_disabled(self):
+        from quiver.remote import notify
+
+        home = Path(tempfile.mkdtemp())
+        state = HubState(home)
+        state.catalog._fetch = lambda: []
+        with patch.object(notify, "load_config", return_value={}):
+            state.start()
+            try:
+                names = [t.name for t in state._threads]
+                self.assertNotIn("remote-notify", names)
+            finally:
+                state.stop()
 
 
 if __name__ == "__main__":
