@@ -28,6 +28,7 @@ _PRIMARY_COMMANDS: list[tuple[str, str]] = [
     ("plugins", "Browse every marketplace, install per harness"),
     ("providers", "Manage API keys"),
     ("config", "View or update configuration"),
+    ("remote", "Watch and steer sessions from a phone"),
     ("report", "Summarize coding sessions"),
     ("discover", "Scan PATH for AI coding CLIs"),
     ("setup", "Onboarding wizard"),
@@ -65,6 +66,24 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     ],
     "list edit": [
         ("--reset", "Restore default columns and window"),
+    ],
+    "remote serve": [
+        ("--host=", "Bind address (default: this machine's Tailscale IP)"),
+        ("--port=", "Port (default 8477)"),
+    ],
+    "remote pair": [
+        ("--host=", "Hub address to put in the pairing URL"),
+        ("--port=", "Hub port for the pairing URL"),
+        ("--name=", "Device name recorded on pair"),
+    ],
+    "remote status": [
+        ("--host=", "Hub address to probe"),
+        ("--port=", "Hub port to probe"),
+        ("--json", "Print the result as JSON"),
+    ],
+    "remote devices": [
+        ("--revoke=", "Revoke one device id"),
+        ("--json", "Print the device list as JSON"),
     ],
     "session": [
         ("--search=", "Filter sessions"), ("-q", "Short for --search"),
@@ -402,6 +421,10 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
     "pv": {
         "list": "providers list", "ls": "providers list", "add": "providers add",
     },
+    "remote": {
+        "serve": "remote serve", "pair": "remote pair",
+        "status": "remote status", "devices": "remote devices",
+    },
     "report": {
         "daily": "report", "weekly": "report", "followups": "report followups",
         # `followup <action>` takes its own tables below; bare `followup`
@@ -510,6 +533,12 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
     ],
     "session": [
         ("use", "Resume a session by index"),
+    ],
+    "remote": [
+        ("serve", "Run the hub (REST + SSE for the phone)"),
+        ("pair", "Pair a device: URL, QR and one-time token"),
+        ("status", "Probe the hub, list machines and devices"),
+        ("devices", "List or revoke paired devices"),
     ],
     "mcp": [
         ("discover", "Find MCP servers across tool configs"),
