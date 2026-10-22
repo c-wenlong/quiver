@@ -40,6 +40,35 @@ class TestTmuxHelpers(unittest.TestCase):
             self.assertTrue(supervise.send_key("qv-x", "Escape"))
             self.assertEqual(supervise.capture_pane("qv-x"), "pane text")
 
+    def test_helpers_tolerate_tmux_errors(self):
+        # _tmux raising OSError/SubprocessError degrades each helper to
+        # its False/"" result instead of propagating.
+        import subprocess as sp
+
+        with patch.object(supervise, "_tmux", side_effect=OSError("gone")):
+            self.assertFalse(supervise.send_text("qv-x", "hi"))
+            self.assertFalse(supervise.send_key("qv-x", "Escape"))
+            self.assertEqual(supervise.capture_pane("qv-x"), "")
+            self.assertFalse(supervise.kill("qv-x"))
+        with patch.object(supervise, "tmux_bin", return_value="/x/tmux"), \
+             patch.object(supervise, "_tmux",
+                          side_effect=sp.TimeoutExpired("tmux", 10)):
+            self.assertFalse(supervise.tmux_alive("qv-x"))
+
+    def test_capture_pane_nonzero_rc(self):
+        with patch.object(supervise, "_tmux",
+                          return_value=self._cp(rc=1, stdout="x")):
+            self.assertEqual(supervise.capture_pane("qv-x"), "")
+
+    def test_tmux_real_call(self):
+        cp = self._cp(rc=0)
+        with patch.object(supervise, "tmux_bin", return_value="/x/tmux"), \
+             patch.object(supervise.subprocess, "run",
+                          return_value=cp) as run:
+            self.assertTrue(supervise.tmux_alive("qv-x"))
+        self.assertEqual(run.call_args[0][0][:3],
+                         ["/x/tmux", "has-session", "-t"])
+
     def test_kill_and_alive(self):
         with patch.object(supervise, "_tmux",
                           return_value=self._cp()), \
@@ -59,6 +88,37 @@ class TestTmuxHelpers(unittest.TestCase):
         self.assertEqual(args[:4], ["new-session", "-d", "-s", name])
         self.assertIn("--resume s1", args[-1])
         self.assertIn("claude", args[-1])
+
+    def test_launch_tmux_edges(self):
+        # No tmux → None. Existing pane → reuse its name. Failed
+        # new-session → None. _tmux blowing up → None.
+        with patch.object(supervise, "tmux_bin", return_value=None):
+            self.assertIsNone(supervise.launch_tmux("k", ["claude"], "/tmp"))
+        with patch.object(supervise, "tmux_bin", return_value="/x/tmux"), \
+             patch.object(supervise, "tmux_alive", return_value=True):
+            self.assertEqual(
+                supervise.launch_tmux("claude:s1", ["claude"], "/tmp"),
+                supervise.tmux_name("claude:s1"),
+            )
+        with patch.object(supervise, "tmux_bin", return_value="/x/tmux"), \
+             patch.object(supervise, "tmux_alive", return_value=False), \
+             patch.object(supervise, "_tmux", return_value=self._cp(rc=1)):
+            self.assertIsNone(
+                supervise.launch_tmux("claude:s1", ["claude"], "/tmp")
+            )
+        with patch.object(supervise, "tmux_bin", return_value="/x/tmux"), \
+             patch.object(supervise, "tmux_alive", return_value=False), \
+             patch.object(supervise, "_tmux", side_effect=OSError):
+            self.assertIsNone(
+                supervise.launch_tmux("claude:s1", ["claude"], "/tmp")
+            )
+
+    def test_shquote_quotes_specials(self):
+        self.assertEqual(supervise._shquote("plain-1.x"), "plain-1.x")
+        self.assertEqual(
+            supervise._shquote("it's a path"), "'it'\\''s a path'"
+        )
+        self.assertEqual(supervise._shquote(""), "''")
 
 
 class TestPrimePane(unittest.TestCase):
@@ -80,6 +140,17 @@ class TestPrimePane(unittest.TestCase):
              patch.object(time, "sleep"):
             supervise.prime_pane("qv-x", "hello")
         sk.assert_not_called()
+        st.assert_called_once_with("qv-x", "hello")
+
+    def test_confirm_dialog_bare_enter(self):
+        with patch.object(
+            supervise, "capture_pane",
+            return_value="Warning! Press Enter to confirm"
+        ), patch.object(supervise, "send_key") as sk, \
+             patch.object(supervise, "send_text") as st, \
+             patch.object(time, "sleep"):
+            supervise.prime_pane("qv-x", "hello")
+        sk.assert_called_once_with("qv-x", "Enter")
         st.assert_called_once_with("qv-x", "hello")
 
 
@@ -153,6 +224,51 @@ class TestAdoptPending(unittest.TestCase):
         self.assertEqual(supervise.adopt_pending(self.home, []), [])
         self.assertFalse((folder / "bad.json").exists())
 
+    def test_no_pending_dir_returns_empty(self):
+        self.assertEqual(supervise.adopt_pending(self.home, []), [])
+
+    def test_registered_keys_are_skipped(self):
+        # A row already in the registry can't be adopted by a pending
+        # marker — supervision wins over the pending claim.
+        folder = supervise._pending_dir(self.home)
+        folder.mkdir(parents=True)
+        proj = Path(tempfile.mkdtemp())
+        pending = {"tmux": "qv-new", "tool_name": "claude",
+                   "cwd": str(proj), "launched_at": time.time()}
+        (folder / "qv-new.json").write_text(json.dumps(pending))
+        key = protocol.session_key("claude", "s1", str(proj))
+        supervise.mark(self.home, key, {"mode": "tmux", "tmux": "qv-other"})
+        rows = [(key, _session(path=str(proj)), "active")]
+        transcript = proj / "t.jsonl"
+        transcript.write_text("{}\n")
+        with patch("quiver.remote.tail.resolve_jsonl_path",
+                   return_value=transcript):
+            self.assertEqual(supervise.adopt_pending(self.home, rows), [])
+        self.assertTrue((folder / "qv-new.json").exists())  # stays pending
+
+
+class TestRegistryEdges(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+
+    def test_load_filters_nondict_values(self):
+        supervise._registry_file(self.home).parent.mkdir(
+            parents=True, exist_ok=True
+        )
+        supervise._registry_file(self.home).write_text(
+            json.dumps({"k": {"mode": "tmux"}, "junk": 5, "s": "x"})
+        )
+        self.assertEqual(set(supervise._load_registry(self.home)), {"k"})
+
+    def test_unmark_missing_key_is_noop(self):
+        # pops nothing, writes nothing — no crash, no file churn
+        supervise.unmark(self.home, "never-marked")
+
+    def test_save_registry_chmod_failure_tolerated(self):
+        with patch.object(supervise.os, "chmod", side_effect=OSError):
+            supervise.mark(self.home, "k1", {"mode": "headless"})
+        self.assertIn("k1", supervise._load_registry(self.home))
+
 
 class TestLaunchNew(unittest.TestCase):
     def test_launch_writes_pending_and_primes(self):
@@ -196,6 +312,96 @@ class TestLaunchNew(unittest.TestCase):
             self.assertTrue(supervise.detach(home, "k1"))
         k.assert_called_once_with("qv-z")
         self.assertIsNone(supervise.meta_for(home, "k1"))
+
+
+class TestStopLocalWriters(unittest.TestCase):
+    """Attach SIGTERMs the original resumed writer when identifiable."""
+
+    def _run_with(self, pgrep_out, ps_map):
+        """ps_map: pid-string -> command line (or None for no process)."""
+        calls = []
+
+        def fake_run(argv, **_kw):
+            cp = MagicMock()
+            if argv[0] == "pgrep":
+                cp.stdout = pgrep_out
+            elif argv[0] == "ps":
+                cp.stdout = ps_map.get(argv[2], "") or ""
+            return cp
+
+        with patch.object(supervise.subprocess, "run", side_effect=fake_run), \
+             patch.object(supervise.os, "kill") as kill:
+            supervise._stop_local_writers(_session(sid="abc-123"))
+            calls.extend(c[0] for c in kill.call_args_list)
+        return calls
+
+    def test_kills_matching_writer_only(self):
+        calls = self._run_with(
+            "1001\n1002\n1003\n",
+            {
+                "1001": "claude --resume abc-123",
+                "1002": "vim notes-about-abc-123",   # wrong binary
+            },
+        )
+        # 1003's ps lookup returns "" → skipped by the binary check
+        self.assertEqual(calls, [(1001, supervise.signal.SIGTERM)])
+
+    def test_skips_self_pid(self):
+        calls = self._run_with(
+            f"{supervise.os.getpid()}\n",
+            {str(supervise.os.getpid()): "claude --resume abc-123"},
+        )
+        self.assertEqual(calls, [])
+
+    def test_pgrep_failure_tolerated(self):
+        with patch.object(
+            supervise.subprocess, "run", side_effect=OSError("no pgrep")
+        ), patch.object(supervise.os, "kill") as kill:
+            supervise._stop_local_writers(_session(sid="abc-123"))
+        kill.assert_not_called()
+
+    def test_empty_sid_returns_early(self):
+        with patch.object(
+            supervise.subprocess, "run", side_effect=AssertionError("pgrep ran")
+        ):
+            supervise._stop_local_writers(_session(sid=""))
+
+
+class TestAttachMtime(unittest.TestCase):
+    """The fresh-mtime recheck: cached status lies, the file does not."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.key = "claude:abc-123"
+        self.session = _session(sid="abc-123", path="/tmp/proj")
+
+    def test_fresh_transcript_refused(self):
+        fresh = Path(tempfile.mkdtemp()) / "live.jsonl"
+        fresh.write_text("{}\n")  # mtime = now
+        with patch("quiver.remote.tail.resolve_jsonl_path",
+                   return_value=fresh), \
+             patch.object(supervise, "_stop_local_writers"):
+            ok, note = supervise.attach(
+                self.home, self.key, self.session,
+                last_append_at=None, status="done",
+            )
+        self.assertFalse(ok)
+        self.assertIn("idle", note)
+
+    def test_stale_transcript_passes(self):
+        old = Path(tempfile.mkdtemp()) / "old.jsonl"
+        old.write_text("{}\n")
+        import os
+        stale = time.time() - 3600
+        os.utime(old, (stale, stale))
+        with patch("quiver.remote.tail.resolve_jsonl_path",
+                   return_value=old), \
+             patch.object(supervise, "_stop_local_writers"):
+            ok, _ = supervise.attach(
+                self.home, self.key, self.session,
+                last_append_at=None, status="done", mode="headless",
+            )
+        self.assertTrue(ok)
 
 
 if __name__ == "__main__":

@@ -58,9 +58,16 @@ def stage(
         return None, "empty upload"
     if len(data) > MAX_BYTES:
         return None, "attachment exceeds 20 MB"
-    name = _safe_name(filename)[:_NAME_MAX]
-    if Path(name).suffix.lower() not in ALLOWED_EXTS:
-        return None, f"unsupported file type {Path(name).suffix or '?'}"
+    name = _safe_name(filename)
+    # The extension check must look at the raw basename: _safe_name
+    # truncates, and a long enough name loses its suffix entirely.
+    suffix = Path(os.path.basename(filename or "")).suffix.lower()
+    if suffix not in ALLOWED_EXTS:
+        return None, f"unsupported file type {suffix or '?'}"
+    if len(name) > _NAME_MAX:
+        # Truncate the stem, keep the suffix — a blunt [:N] can eat the
+        # extension entirely and leave an unusable file.
+        name = name[: _NAME_MAX - len(suffix)] + suffix
     folder = inbox_dir(home, session_key)
     try:
         folder.mkdir(parents=True, exist_ok=True)

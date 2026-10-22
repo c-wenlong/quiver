@@ -178,6 +178,39 @@ class TestTmuxInjector(unittest.TestCase):
         self.assertTrue(out.ok)
         self.assertEqual(st.call_args[0][1], "/compact")
 
+    def test_send_empty_and_unreachable(self):
+        out = self.inj.send(self.session, {"text": "", "mode": "steer"}, "done")
+        self.assertFalse(out.ok)
+        self.assertIn("empty", out.note)
+        with patch.object(supervise, "send_text", return_value=False):
+            out = self.inj.send(
+                self.session, {"text": "hi", "mode": "steer"}, "done"
+            )
+        self.assertFalse(out.ok)
+        self.assertIn("not reachable", out.note)
+
+    def test_approval_unknown_and_unreachable(self):
+        out = self.inj.approval(self.session, "r1", "bogus")
+        self.assertFalse(out.ok)
+        self.assertIn("unknown decision", out.note)
+        pane = "Do you want to proceed? 1. Yes"
+        with patch.object(supervise, "capture_pane", return_value=pane), \
+             patch.object(supervise, "send_key", return_value=False):
+            out = self.inj.approval(self.session, "r1", "allow")
+        self.assertFalse(out.ok)
+        self.assertIn("not reachable", out.note)
+
+    def test_control_kill_and_unknown(self):
+        supervise.mark(self.home, self.key, {"mode": "tmux", "tmux": "qv-x"})
+        with patch.object(supervise, "kill", return_value=True) as k:
+            out = self.inj.control(self.session, "kill", "")
+        self.assertTrue(out.ok)
+        k.assert_called_once_with("qv-x")
+        self.assertIsNone(supervise.meta_for(self.home, self.key))
+        out = self.inj.control(self.session, "nonsense", "")
+        self.assertFalse(out.ok)
+        self.assertIn("unsupported", out.note)
+
 
 class TestHeadless(unittest.TestCase):
     def setUp(self):
@@ -283,6 +316,118 @@ class TestHeadlessRun(unittest.TestCase):
         self.assertTrue(out.ok)
         self.assertIsNone(supervise.meta_for(self.inj.home, self.inj.key))
 
+    def test_send_empty_and_detached(self):
+        out = self.inj.send(
+            self.session, {"text": "", "mode": "queue"}, "done"
+        )
+        self.assertFalse(out.ok)
+        self.assertIn("empty", out.note)
+        # No registry mark → the write-time recheck refuses.
+        out = self.inj.send(
+            self.session, {"text": "go", "mode": "queue"}, "done"
+        )
+        self.assertFalse(out.ok)
+        self.assertIn("detached", out.note)
+
+    def test_popen_launch_failure(self):
+        supervise.mark(self.inj.home, self.inj.key, {"mode": "headless"})
+        with patch.object(inject.subprocess, "Popen",
+                          side_effect=OSError("no claude")):
+            out = self.inj.send(
+                self.session, {"text": "go", "mode": "queue"}, "done"
+            )
+        self.assertFalse(out.ok)
+        self.assertIn("failed to launch", out.note)
+
+    def test_detach_between_spawn_and_register(self):
+        # A detach landing after Popen() but before _procs registration
+        # would orphan the child; the post-register recheck kills it.
+        proc = _FakeProc([json.dumps({"type": "result", "result": "x"})])
+        supervise.mark(self.inj.home, self.inj.key, {"mode": "headless"})
+
+        def spawn(*_a, **_kw):
+            supervise.unmark(self.inj.home, self.inj.key)  # detach lands
+            return proc
+
+        with patch.object(inject.subprocess, "Popen", side_effect=spawn):
+            out = self.inj.send(
+                self.session, {"text": "go", "mode": "queue"}, "done"
+            )
+        self.assertFalse(out.ok)
+        self.assertIn("detached", out.note)
+        self.assertTrue(proc.killed)
+        self.assertNotIn(self.inj.key, self.inj._procs)
+
+    def test_watchdog_kills_silent_run(self):
+        # A run that never emits a line must still die at the deadline;
+        # the stdout loop alone cannot bound it.
+        class _BlockingStdout:
+            def __init__(self, proc):
+                self.proc = proc
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                while not self.proc.killed:
+                    time.sleep(0.005)
+                raise StopIteration
+
+            def close(self):
+                pass
+
+        class _SilentProc:
+            def __init__(self):
+                self.killed = False
+                self.stdout = _BlockingStdout(self)
+
+            def wait(self, timeout=None):
+                return -9
+
+            def kill(self):
+                self.killed = True
+
+        proc = _SilentProc()
+        supervise.mark(self.inj.home, self.inj.key, {"mode": "headless"})
+        with patch.object(inject, "HEADLESS_TIMEOUT_S", 0.05), \
+             patch.object(inject.subprocess, "Popen", return_value=proc):
+            out = self.inj.send(
+                self.session, {"text": "go", "mode": "queue"}, "done"
+            )
+        self.assertFalse(out.ok)
+        self.assertIn("timed out", out.note)
+        self.assertTrue(proc.killed)
+        self.assertNotIn(self.inj.key, self.inj._procs)
+
+    def test_second_sender_is_refused_while_held(self):
+        lock = self.inj._locks[self.inj.key]
+        lock.acquire()
+        try:
+            with patch.object(inject, "_QUEUE_WAIT_S", 0.01):
+                out = self.inj.send(
+                    self.session, {"text": "go", "mode": "queue"}, "done"
+                )
+        finally:
+            lock.release()
+        self.assertFalse(out.ok)
+        self.assertIn("in flight", out.note)
+
+    def test_control_kill_reaps_inflight(self):
+        proc = _FakeProc([])
+        self.inj._procs[self.inj.key] = proc
+        supervise.mark(self.inj.home, self.inj.key, {"mode": "headless"})
+        out = self.inj.control(self.session, "kill", "")
+        self.assertTrue(out.ok)
+        self.assertTrue(proc.killed)
+        self.assertIsNone(
+            supervise.meta_for(self.inj.home, self.inj.key)
+        )
+
+    def test_interrupt_with_nothing_in_flight(self):
+        out = self.inj.control(self.session, "interrupt", "")
+        self.assertFalse(out.ok)
+        self.assertIn("no headless run", out.note)
+
 
 class TestAttachments(unittest.TestCase):
     def setUp(self):
@@ -321,6 +466,49 @@ class TestAttachments(unittest.TestCase):
         payload, _ = attachments.stage(self.home, self.key, "n.txt", b"y")
         attachments.drop_session(self.home, self.key)
         self.assertFalse(Path(payload["path"]).exists())
+
+    def test_empty_upload_refused(self):
+        payload, err = attachments.stage(self.home, self.key, "a.txt", b"")
+        self.assertIsNone(payload)
+        self.assertIn("empty", err)
+
+    def test_same_name_uploads_get_distinct_refs(self):
+        p1, _ = attachments.stage(self.home, self.key, "image.png", b"one")
+        p2, _ = attachments.stage(self.home, self.key, "image.png", b"two")
+        self.assertNotEqual(p1["ref"], p2["ref"])
+        # and both files survive with their own bytes
+        self.assertEqual(
+            Path(attachments.resolve(self.home, self.key, p1["ref"]))
+            .read_bytes(), b"one")
+        self.assertEqual(
+            Path(attachments.resolve(self.home, self.key, p2["ref"]))
+            .read_bytes(), b"two")
+
+    def test_long_names_still_resolve(self):
+        name = "a" * 120 + ".png"
+        payload, err = attachments.stage(self.home, self.key, name, b"x")
+        self.assertIsNone(err)
+        staged = attachments.resolve(self.home, self.key, payload["ref"])
+        self.assertIsNotNone(staged)
+        self.assertEqual(Path(staged).read_bytes(), b"x")
+
+    def test_resolve_missing_returns_none(self):
+        self.assertIsNone(
+            attachments.resolve(self.home, self.key, "nope-abc-f.txt")
+        )
+
+    def test_stage_oserror_reported(self):
+        with patch("quiver.remote.attachments.Path.write_bytes",
+                   side_effect=OSError("disk full")):
+            payload, err = attachments.stage(
+                self.home, self.key, "a.txt", b"x"
+            )
+        self.assertIsNone(payload)
+        self.assertIn("could not stage", err)
+
+    def test_sweep_unreadable_root(self):
+        with patch("pathlib.Path.iterdir", side_effect=OSError("denied")):
+            self.assertEqual(attachments.sweep(self.home), 0)
 
 
 class TestHubWrites(unittest.TestCase):
