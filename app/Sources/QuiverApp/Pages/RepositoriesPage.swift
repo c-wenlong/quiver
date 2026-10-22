@@ -19,8 +19,6 @@ struct RepositoriesPage: View {
     /// Repo names whose section is folded to just the header — keyed by
     /// repo alone, so a collapse follows the repo across every tab.
     @State private var collapsed: Set<String> = []
-    /// "repo:surface" keys whose row list was opened past the preview.
-    @State private var expanded: Set<String> = []
     /// The PR whose detail sheet is open, if any.
     @State private var detail: PrSelection?
 
@@ -28,7 +26,16 @@ struct RepositoriesPage: View {
 
     var body: some View {
         @Bindable var model = model
-        Page(title: "Repositories",
+        if let repo = model.focused {
+            RepoDetailPage(repo: repo) { model.focused = nil }
+        } else {
+            dashboard
+        }
+    }
+
+    private var dashboard: some View {
+        @Bindable var model = model
+        return Page(title: "Repositories",
              subtitle: "Your pinned repos' pull requests, issues and CI, from swe gh.") {
             if model.envBlocked == nil {
                 Button("Add repository", systemImage: "plus") { adding = true }
@@ -190,13 +197,6 @@ struct RepositoriesPage: View {
     /// The repos whose sections show — the model's filter logic.
     private var visibleRepos: [PinnedRepo] { model.visibleRepos }
 
-    /// The board's rows, filtered when this repo is shown by fallback
-    /// rather than by name.
-    private func filtered<Row>(_ state: Loadable<[Row]>, repo: String,
-                               _ parts: @escaping (Row) -> [String?]) -> Loadable<[Row]> {
-        model.filtered(state, repo: repo, parts)
-    }
-
     /// One pinned repo's section: a callout holding its header (grip +
     /// chevron + name, a link out) and, unless folded or empty, the
     /// active tab's surface. The section is one ReorderableRows item —
@@ -249,6 +249,12 @@ struct RepositoriesPage: View {
                     }
                     .plainButton()
                     .help("Open on GitHub")
+                    Button { model.focused = repo } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                    }
+                    .plainButton()
+                    .help("Open \(repo) in full")
                 }
                 .padding(.bottom, empty || collapsed.contains(repo) ? 0 : 10)
                 if !empty, !collapsed.contains(repo) {
@@ -258,14 +264,10 @@ struct RepositoriesPage: View {
                     VStack(spacing: 0) {
                         Divider().overlay(Theme.rowDivider)
                             .padding(.bottom, 4)
-                        switch model.tab {
-                        case .pulls: pulls(repo: repo, board: board)
-                        case .issues: issues(repo: repo, board: board)
-                        case .actions: actions(repo: repo, board: board)
-                        case .pages: pages(repo: repo, board: board)
-                        case .releases: releases(repo: repo, board: board)
-                        case .tags: tags(repo: repo, board: board)
-                        case .branches: branches(repo: repo, board: board)
+                        RepoSurfaces(repo: repo, board: board, tab: model.tab,
+                                     query: model.query,
+                                     unfiltered: model.showsAllRows(repo)) {
+                            detail = PrSelection(repo: repo, number: $0)
                         }
                     }
                     .padding(.horizontal, -Theme.cardPadding)
@@ -284,50 +286,153 @@ struct RepositoriesPage: View {
     /// visible.
     private func surfaceEmpty(_ repo: String, board: RepoBoard) -> Bool {
         switch model.tab {
-        case .pulls: return !model.hasRows(board.pulls, repo: repo, Self.prParts)
-        case .issues: return !model.hasRows(board.issues, repo: repo, Self.issueParts)
-        case .actions: return !model.hasRows(board.runs, repo: repo, Self.runParts)
-        case .releases: return !model.hasRows(board.releases, repo: repo, Self.releaseParts)
-        case .tags: return !model.hasRows(board.tags, repo: repo, Self.tagParts)
-        case .branches: return !model.hasRows(board.branches, repo: repo, Self.branchParts)
+        case .pulls: return !model.hasRows(board.pulls, repo: repo, RepoSurfaces.prParts)
+        case .issues: return !model.hasRows(board.issues, repo: repo, RepoSurfaces.issueParts)
+        case .actions: return !model.hasRows(board.runs, repo: repo, RepoSurfaces.runParts)
+        case .releases: return !model.hasRows(board.releases, repo: repo, RepoSurfaces.releaseParts)
+        case .tags: return !model.hasRows(board.tags, repo: repo, RepoSurfaces.tagParts)
+        case .branches: return !model.hasRows(board.branches, repo: repo, RepoSurfaces.branchParts)
         case .pages:
             if case .loaded(let site) = board.pages { return site == nil }
             return false
         }
     }
 
-    /// The surface's empty text: under a row filter an empty list means
-    /// "nothing matched", not "nothing exists" — but a repo the query
-    /// named keeps the normal text, since its rows were never filtered.
-    private func emptyText(_ base: String, repo: String) -> String {
-        model.showsAllRows(repo) ? base : "Nothing matches \"\(model.query)\"."
+}
+
+// MARK: - Repo surfaces
+
+/// One repo's tab surfaces — pull requests, issues, workflow runs,
+/// Pages, releases, tags and branches — shared verbatim between the
+/// dashboard's repo callouts and the single-repo focus page. What
+/// differs is the board they read (the dashboard's open-state store vs
+/// the focus page's every-state one) and the row filter.
+struct RepoSurfaces: View {
+    @Environment(AppModel.self) private var app
+    @Environment(\.openURL) private var openURL
+    var repo: String
+    var board: RepoBoard
+    var tab: RepoTab
+    /// The row-filter text; empty keeps every row.
+    var query = ""
+    /// Skip row filtering — a dashboard section the query named keeps
+    /// its whole board.
+    var unfiltered = false
+    /// The focus page's scroll loading: lists reveal `batch` rows at a
+    /// time and the end sentinel grows the fetch window. Off here, the
+    /// dashboard's 3-row collapse preview stays.
+    var scrollFetch = false
+    /// A PR row tap opens the page's detail sheet.
+    var openPr: (Int) -> Void
+    /// "repo:surface" keys opened past their 3-row preview — this
+    /// view's own set, so expanding one repo never unfolds another's.
+    @State private var expanded: Set<String> = []
+    /// Rows revealed per surface under `scrollFetch`, keyed "repo:tab"
+    /// so switching tabs (or repos) never hands one list another's
+    /// position.
+    @State private var shown: [String: Int] = [:]
+
+    private var model: GitHubModel { app.github }
+
+    /// Rows each scroll-load fill reveals — the first screenful, then
+    /// every completed ring.
+    private static let batch = 10
+
+    /// The tab's list window: `nil` keeps the callout's collapse
+    /// preview; under `scrollFetch` the sentinel reveals `batch` more
+    /// while rows remain, then asks the model for the next page.
+    private func window(for tab: RepoTab, rows: Int) -> ListWindow? {
+        guard scrollFetch, tab != .pages else { return nil }
+        let key = GitHubModel.BoardKey(repo: repo, tab: tab)
+        return ListWindow(
+            shown: shown["\(repo):\(tab)"] ?? Self.batch,
+            fetching: model.focusLoading.contains(key),
+            canGrow: model.focusCanGrow(key),
+            advance: { advance(tab, filtered: rows) })
     }
 
-    // MARK: - Surfaces
+    /// One filled ring: show another `batch` of the rows already
+    /// fetched, or — at the end of them — fetch the next page.
+    private func advance(_ tab: RepoTab, filtered rows: Int) {
+        let key = "\(repo):\(tab)"
+        let now = shown[key] ?? Self.batch
+        if now < rows {
+            shown[key] = now + Self.batch
+        } else {
+            Task { await model.loadMoreFocus(tab, repo: repo, swe: app.swe) }
+        }
+    }
+
+    /// A loaded surface's row count for the window's reveal math;
+    /// anything not `.loaded` reports 0 and the sentinel stays hidden.
+    private func count<Row>(_ state: Loadable<[Row]>) -> Int {
+        if case .loaded(let rows) = state { return rows.count }
+        return 0
+    }
+
+    var body: some View {
+        switch tab {
+        case .pulls: pulls()
+        case .issues: issues()
+        case .actions: actions()
+        case .pages: pages()
+        case .releases: releases()
+        case .tags: tags()
+        case .branches: branches()
+        }
+    }
+
+    /// The rows, filtered when `query` is on and the surface is not
+    /// exempt — a match on any of the row's fields keeps it. An empty
+    /// query exempts too: `contains("")` is false on this Foundation,
+    /// so filtering with no query would drop every row.
+    static func filtered<Row>(_ state: Loadable<[Row]>,
+                              _ parts: @escaping (Row) -> [String?],
+                              query: String, unfiltered: Bool) -> Loadable<[Row]> {
+        guard case .loaded(let rows) = state, !unfiltered, !query.isEmpty
+        else { return state }
+        return .loaded(rows.filter { row in
+            parts(row).contains { $0?.localizedCaseInsensitiveContains(query) ?? false }
+        })
+    }
+
+    private func filtered<Row>(_ state: Loadable<[Row]>,
+                               _ parts: @escaping (Row) -> [String?]) -> Loadable<[Row]> {
+        Self.filtered(state, parts, query: query, unfiltered: unfiltered)
+    }
+
+    /// Under a row filter an empty list means "nothing matched", not
+    /// "nothing exists" — an unfiltered surface keeps the base text.
+    private func emptyText(_ base: String) -> String {
+        unfiltered || query.isEmpty ? base : "Nothing matches \"\(query)\"."
+    }
 
     /// What the row filter searches per surface — shared by the list's
-    /// filtered state and `surfaceEmpty`, so they can never disagree.
-    private static let prParts: (GhPr) -> [String?] = {
+    /// filtered state and the callout's `surfaceEmpty`, so they can
+    /// never disagree.
+    static let prParts: (GhPr) -> [String?] = {
         [$0.title, "\($0.number)", $0.branch, $0.base, $0.author] + $0.labels }
-    private static let issueParts: (GhIssue) -> [String?] = {
+    static let issueParts: (GhIssue) -> [String?] = {
         [$0.title, "\($0.number)", $0.author] + $0.labels + $0.assignees }
-    private static let runParts: (GhRun) -> [String?] = {
+    static let runParts: (GhRun) -> [String?] = {
         [$0.title, $0.workflow, $0.branch, $0.event] }
-    private static let releaseParts: (GhRelease) -> [String?] = { [$0.name, $0.tag] }
-    private static let tagParts: (GhTag) -> [String?] = { [$0.name, $0.sha] }
-    private static let branchParts: (GhBranch) -> [String?] = { [$0.name, $0.sha] }
+    static let releaseParts: (GhRelease) -> [String?] = { [$0.name, $0.tag] }
+    static let tagParts: (GhTag) -> [String?] = { [$0.name, $0.sha] }
+    static let branchParts: (GhBranch) -> [String?] = { [$0.name, $0.sha] }
 
     /// The tab's rows after the search filter.
-    private func pullsState(_ repo: String, board: RepoBoard) -> Loadable<[GhPr]> {
-        filtered(board.pulls, repo: repo, Self.prParts)
+    private func pullsState() -> Loadable<[GhPr]> {
+        filtered(board.pulls, Self.prParts)
     }
 
     @ViewBuilder
-    private func pulls(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(pullsState(repo, board: board),
-                    empty: emptyText("No open pull requests.", repo: repo),
-                    expandKey: "\(repo):pulls", expanded: $expanded) { pr in
-            OpenRow(act: { detail = PrSelection(repo: repo, number: pr.number) }) {
+    private func pulls() -> some View {
+        let state = pullsState()
+        SurfaceList(state,
+                    empty: emptyText("No pull requests."),
+                    expandKey: "\(repo):pulls", expanded: $expanded,
+                    window: window(for: .pulls, rows: count(state))) { pr in
+            OpenRow(act: { openPr(pr.number) }) {
                 PrIcon(state: pr.state, draft: pr.draft)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
@@ -379,15 +484,17 @@ struct RepositoriesPage: View {
         }
     }
 
-    private func issuesState(_ repo: String, board: RepoBoard) -> Loadable<[GhIssue]> {
-        filtered(board.issues, repo: repo, Self.issueParts)
+    private func issuesState() -> Loadable<[GhIssue]> {
+        filtered(board.issues, Self.issueParts)
     }
 
     @ViewBuilder
-    private func issues(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(issuesState(repo, board: board),
-                    empty: emptyText("No open issues.", repo: repo),
-                    expandKey: "\(repo):issues", expanded: $expanded) { issue in
+    private func issues() -> some View {
+        let state = issuesState()
+        SurfaceList(state,
+                    empty: emptyText("No issues."),
+                    expandKey: "\(repo):issues", expanded: $expanded,
+                    window: window(for: .issues, rows: count(state))) { issue in
             OpenRow(url: issue.url, open: openURL.callAsFunction) {
                 Image(systemName: issue.state == .open ? "exclamationmark.circle" : "checkmark.circle")
                     .font(.system(size: 15))
@@ -412,15 +519,17 @@ struct RepositoriesPage: View {
         }
     }
 
-    private func actionsState(_ repo: String, board: RepoBoard) -> Loadable<[GhRun]> {
-        filtered(board.runs, repo: repo, Self.runParts)
+    private func actionsState() -> Loadable<[GhRun]> {
+        filtered(board.runs, Self.runParts)
     }
 
     @ViewBuilder
-    private func actions(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(actionsState(repo, board: board),
-                    empty: emptyText("No workflow runs.", repo: repo),
-                    expandKey: "\(repo):actions", expanded: $expanded) { run in
+    private func actions() -> some View {
+        let state = actionsState()
+        SurfaceList(state,
+                    empty: emptyText("No workflow runs."),
+                    expandKey: "\(repo):actions", expanded: $expanded,
+                    window: window(for: .actions, rows: count(state))) { run in
             OpenRow(url: run.url, open: openURL.callAsFunction) {
                 RunIcon(status: run.status, conclusion: run.conclusion)
                 VStack(alignment: .leading, spacing: 3) {
@@ -460,7 +569,7 @@ struct RepositoriesPage: View {
     /// Pages is a single facts panel, not a row list — inside the repo
     /// callout it keeps the card's inset rather than bleeding.
     @ViewBuilder
-    private func pages(repo: String, board: RepoBoard) -> some View {
+    private func pages() -> some View {
         Group {
             switch board.pages {
             case .idle, .loading:
@@ -516,15 +625,17 @@ struct RepositoriesPage: View {
         .padding([.horizontal, .bottom], Theme.cardPadding)
     }
 
-    private func releasesState(_ repo: String, board: RepoBoard) -> Loadable<[GhRelease]> {
-        filtered(board.releases, repo: repo, Self.releaseParts)
+    private func releasesState() -> Loadable<[GhRelease]> {
+        filtered(board.releases, Self.releaseParts)
     }
 
     @ViewBuilder
-    private func releases(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(releasesState(repo, board: board),
-                    empty: emptyText("No releases.", repo: repo),
-                    expandKey: "\(repo):releases", expanded: $expanded) { release in
+    private func releases() -> some View {
+        let state = releasesState()
+        SurfaceList(state,
+                    empty: emptyText("No releases."),
+                    expandKey: "\(repo):releases", expanded: $expanded,
+                    window: window(for: .releases, rows: count(state))) { release in
             OpenRow(url: release.url, open: openURL.callAsFunction) {
                 Image(systemName: "tag").font(.system(size: 14))
                     .foregroundStyle(Theme.accent)
@@ -545,15 +656,17 @@ struct RepositoriesPage: View {
         }
     }
 
-    private func tagsState(_ repo: String, board: RepoBoard) -> Loadable<[GhTag]> {
-        filtered(board.tags, repo: repo, Self.tagParts)
+    private func tagsState() -> Loadable<[GhTag]> {
+        filtered(board.tags, Self.tagParts)
     }
 
     @ViewBuilder
-    private func tags(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(tagsState(repo, board: board),
-                    empty: emptyText("No tags.", repo: repo),
-                    expandKey: "\(repo):tags", expanded: $expanded) { tag in
+    private func tags() -> some View {
+        let state = tagsState()
+        SurfaceList(state,
+                    empty: emptyText("No tags."),
+                    expandKey: "\(repo):tags", expanded: $expanded,
+                    window: window(for: .tags, rows: count(state))) { tag in
             OpenRow(url: tag.url, open: openURL.callAsFunction) {
                 Image(systemName: "tag").font(.system(size: 14))
                     .foregroundStyle(Theme.textSecondary)
@@ -565,15 +678,17 @@ struct RepositoriesPage: View {
         }
     }
 
-    private func branchesState(_ repo: String, board: RepoBoard) -> Loadable<[GhBranch]> {
-        filtered(board.branches, repo: repo, Self.branchParts)
+    private func branchesState() -> Loadable<[GhBranch]> {
+        filtered(board.branches, Self.branchParts)
     }
 
     @ViewBuilder
-    private func branches(repo: String, board: RepoBoard) -> some View {
-        SurfaceList(branchesState(repo, board: board),
-                    empty: emptyText("No branches.", repo: repo),
-                    expandKey: "\(repo):branches", expanded: $expanded) { branch in
+    private func branches() -> some View {
+        let state = branchesState()
+        SurfaceList(state,
+                    empty: emptyText("No branches."),
+                    expandKey: "\(repo):branches", expanded: $expanded,
+                    window: window(for: .branches, rows: count(state))) { branch in
             OpenRow(url: branch.url, open: openURL.callAsFunction) {
                 Image(systemName: "arrow.triangle.branch").font(.system(size: 14))
                     .foregroundStyle(branch.default ? Theme.accent : Theme.textSecondary)
@@ -593,6 +708,21 @@ struct RepositoriesPage: View {
 /// load, the error card on failure, the empty line on `.loaded([])`,
 /// else a preview of `preview` rows plus a `.cardBottom` expander that
 /// sits flush on the callout's bottom edge when more exist.
+/// A scroll-load window for a list: `shown` rows on screen, a sentinel
+/// at the end whose ring fills to `advance` — revealing the next rows,
+/// or fetching the next page once the local ones run out.
+struct ListWindow {
+    var shown: Int
+    /// A fetch for more rows is already in flight — the sentinel shows
+    /// a spinner instead of a fresh ring.
+    var fetching: Bool
+    /// The remote may hold more rows; false ends the sentinel for good.
+    var canGrow: Bool
+    /// One fill's work: reveal more rows, or ask the model for another
+    /// page when the local ones are all out.
+    var advance: () -> Void
+}
+
 private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: View>: View {
     var state: Loadable<[Row]>
     var empty: String
@@ -600,15 +730,20 @@ private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: Vi
     var expandKey: String?
     @Binding var expanded: Set<String>
     var preview = 3
+    /// Scroll loading (the focus page): replaces the collapse preview
+    /// with reveal-while-scrolling. nil keeps the 3-row preview.
+    var window: ListWindow?
     @ViewBuilder var row: (Row) -> Content
 
     init(_ state: Loadable<[Row]>, empty: String,
          expandKey: String? = nil, expanded: Binding<Set<String>>? = nil,
+         window: ListWindow? = nil,
          @ViewBuilder row: @escaping (Row) -> Content) {
         self.state = state
         self.empty = empty
         self.expandKey = expandKey
         self._expanded = expanded ?? .constant([])
+        self.window = window
         self.row = row
     }
 
@@ -639,6 +774,16 @@ private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: Vi
     }
 
     @ViewBuilder private func content(_ rows: [Row]) -> some View {
+        if let window {
+            windowed(rows, window)
+        } else {
+            collapsible(rows)
+        }
+    }
+
+    /// The dashboard callout's list: three rows, then a row that opens
+    /// the rest on click.
+    @ViewBuilder private func collapsible(_ rows: [Row]) -> some View {
         VStack(spacing: 0) {
             let visible = isOpen ? rows : Array(rows.prefix(preview))
             let hasMore = expandKey != nil && rows.count > preview
@@ -657,6 +802,76 @@ private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: Vi
                     else { expanded.insert(expandKey) }
                 }
             }
+        }
+    }
+
+    /// The focus page's list: `window.shown` rows, then a sentinel
+    /// whose ring fills as it stays in view — a full ring reveals the
+    /// next slice or fetches the next page.
+    @ViewBuilder private func windowed(_ rows: [Row], _ window: ListWindow) -> some View {
+        VStack(spacing: 0) {
+            let visible = Array(rows.prefix(window.shown))
+            let pending = window.fetching || rows.count > window.shown || window.canGrow
+            ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
+                row(item)
+                if index < visible.count - 1 || pending {
+                    Divider().overlay(Theme.rowDivider)
+                }
+            }
+            if pending {
+                ScrollSentinel(fetching: window.fetching,
+                               advance: window.advance)
+                    .id("sentinel:\(window.shown):\(rows.count):\(window.fetching)")
+            }
+        }
+    }
+}
+
+/// The load-more trigger at the end of a windowed list: a ring that
+/// fills while it stays in the scroll viewport (~650ms), then runs
+/// `advance` once — scroll away mid-fill and the ring resets instead
+/// of firing. Its `.id` rides on the revealed count, so each reveal
+/// re-arms it: parked at the end, fills keep coming until the surface
+/// runs out of local rows and the remote page is in.
+private struct ScrollSentinel: View {
+    var fetching: Bool
+    var advance: () -> Void
+    @State private var fill = 0.0
+    /// Half the row must be inside the scroll viewport to count — a
+    /// peek of a pixel at the fold shouldn't start the fill.
+    @State private var visible = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if fetching {
+                ProgressView().controlSize(.small)
+            } else {
+                ZStack {
+                    Circle().stroke(Theme.rowDivider, lineWidth: 2)
+                    Circle()
+                        .trim(from: 0, to: fill)
+                        .stroke(Theme.accent,
+                                style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                }
+                .frame(width: 14, height: 14)
+            }
+            Text(fetching ? "Fetching more…" : "Keep scrolling for more")
+                .font(Theme.caption).foregroundStyle(Theme.textMuted)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 14)
+        .onScrollVisibilityChange(threshold: 0.5) { seen in
+            visible = seen
+            if !seen { fill = 0 }
+        }
+        .task(id: "\(visible)-\(fetching)") {
+            guard visible, !fetching else { return }
+            withAnimation(.linear(duration: 0.6)) { fill = 1 }
+            try? await Task.sleep(for: .milliseconds(650))
+            guard !Task.isCancelled else { return }
+            advance()
         }
     }
 }

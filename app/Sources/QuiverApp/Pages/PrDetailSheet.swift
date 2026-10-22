@@ -334,7 +334,7 @@ private struct MarkdownBody: View {
             ForEach(Array(segments.enumerated()), id: \.offset) { _, seg in
                 switch seg {
                 case .markdown(let md):
-                    Text(Self.markdown(md))
+                    MarkdownBlocks(blocks: GitHubMarkdown.blocks(md))
                 case .details(let title, let inner):
                     DetailsSection(title: title, segments: inner)
                 }
@@ -342,56 +342,107 @@ private struct MarkdownBody: View {
         }
     }
 
-    /// Rendered markdown: Apple's parser covers emphasis, links, lists
-    /// and code through presentation intent — but paragraphs live only
-    /// in the intent, not the characters, so `Text` would fuse them.
-    /// A `\n` goes in wherever the paragraph component's id changes,
-    /// then the heading pass gives `##` lines real sizes.
-    static func markdown(_ md: String) -> AttributedString {
-        let parsed = (try? AttributedString(
-            markdown: md,
-            options: .init(interpretedSyntax: .full,
-                           failurePolicy: .returnPartiallyParsedIfPossible)))
-            ?? AttributedString(md)
-        var text = AttributedString()
-        var paragraph: PresentationIntent.IntentType?
-        for run in parsed.runs {
-            let intent = run.presentationIntent
-            let para = intent?.components
-                .first { $0.kind == .paragraph }
-            if let intent, let para, para != paragraph,
-               !text.characters.isEmpty {
-                text += AttributedString("\n")
-                // Text draws no list bullets or quote rail — the
-                // markers are characters, so they show.
-                let kinds = intent.components.map(\.kind)
-                let quoteDepth = kinds.filter { $0 == .blockQuote }.count
-                text += AttributedString(String(repeating: "│ ", count: quoteDepth))
-                if kinds.contains(.unorderedList) {
-                    let depth = kinds.filter { $0 == .unorderedList }.count
-                    text += AttributedString(String(repeating: "  ", count: depth - 1) + "• ")
-                } else if kinds.contains(.orderedList),
-                          let item = intent.components.first(where: {
-                              if case .listItem = $0.kind { return true }
-                              return false }),
-                          case .listItem(let ordinal) = item.kind {
-                    text += AttributedString("\(ordinal). ")
+    /// One line of inline markdown → styled runs. Apple's parser does
+    /// spans fine; what it can't do is the pre-pass here: `![alt](src)`
+    /// and `[![alt](badge)](href)` become plain links — nested
+    /// link-image brackets parse as garbage, and an image badge is a
+    /// label anyway. Lines parse one at a time so a soft break stays a
+    /// rendered newline, matching how GitHub wraps bodies.
+    static func inline(_ md: String) -> AttributedString {
+        var md = md
+        md = md.replacing(#/\[!\[([^\]]*)\]\([^)]*\)\]\(([^)\s]+)\)/#) {
+            "[\($0.1)](\($0.2))"
+        }
+        md = md.replacing(#/!\[([^\]]*)\]\(([^)\s]+)\)/#) {
+            "[\($0.1)](\($0.2))"
+        }
+        var out = AttributedString()
+        for (i, line) in md.split(separator: "\n",
+                                  omittingEmptySubsequences: false).enumerated() {
+            if i > 0 { out += AttributedString("\n") }
+            out += (try? AttributedString(
+                markdown: String(line),
+                options: .init(interpretedSyntax: .full,
+                               failurePolicy: .returnPartiallyParsedIfPossible)))
+                ?? AttributedString(String(line))
+        }
+        return out
+    }
+}
+
+/// The body's blocks as real views: sized headings, monospaced fences,
+/// a quote rail, and list markers that draw — the structures Apple's
+/// fused-text render could only hint at with characters.
+private struct MarkdownBlocks: View {
+    let blocks: [MarkdownBlock]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                switch block {
+                case .heading(let level, let text):
+                    Text(MarkdownBody.inline(text))
+                        .font(.system(size: headingSize(level), weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                case .paragraph(let text):
+                    Text(MarkdownBody.inline(text))
+                case .code(let code, let lang):
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let lang {
+                            Text(lang).font(Theme.caption)
+                                .foregroundStyle(Theme.textMuted)
+                        }
+                        Text(code)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(Theme.textPrimary)
+                            .textSelection(.enabled)
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.code)
+                    .clipShape(.rect(cornerRadius: 6))
+                case .quote(let inner):
+                    HStack(alignment: .top, spacing: 0) {
+                        Capsule().fill(Theme.border).frame(width: 3)
+                        MarkdownBlocks(blocks: inner)
+                            .padding(.leading, 8)
+                    }
+                    .foregroundStyle(Theme.textSecondary)
+                case .list(let items):
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                marker(item)
+                                Text(MarkdownBody.inline(item.text))
+                                    .foregroundStyle(Theme.textPrimary)
+                            }
+                            .padding(.leading, CGFloat(item.depth) * 14)
+                        }
+                    }
+                case .rule:
+                    Divider().overlay(Theme.border)
                 }
             }
-            paragraph = para
-            text += AttributedString(parsed[run.range])
         }
-        for run in text.runs {
-            guard let intent = run.presentationIntent else { continue }
-            for component in intent.components {
-                guard case .header(let level) = component.kind else { continue }
-                let sizes: [CGFloat] = [17, 15, 14, 13, 13, 13]
-                text[run.range].font = NSFont.systemFont(
-                    ofSize: sizes[min(max(level, 1), 6) - 1], weight: .semibold)
-                text[run.range].foregroundColor = NSColor(Theme.textPrimary)
-            }
+    }
+
+    private func headingSize(_ level: Int) -> CGFloat {
+        [17, 15, 14, 13, 13, 13][min(max(level, 1), 6) - 1]
+    }
+
+    @ViewBuilder
+    private func marker(_ item: MarkdownListItem) -> some View {
+        switch item.kind {
+        case .bullet:
+            Text("•").foregroundStyle(Theme.textSecondary)
+        case .ordered(let n):
+            Text("\(n).").foregroundStyle(Theme.textSecondary)
+                .monospacedDigit()
+        case .task(let done):
+            Image(systemName: done ? "checkmark.square.fill" : "square")
+                .foregroundStyle(done ? Theme.success : Theme.textMuted)
+                .font(.system(size: 11))
         }
-        return text
     }
 }
 
@@ -412,7 +463,7 @@ private struct DetailsSection: View {
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(Theme.textMuted)
                         .rotationEffect(open ? .degrees(90) : .zero)
-                    Text(MarkdownBody.markdown(title))
+                    Text(MarkdownBody.inline(title))
                         .font(Theme.bodySmall)
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
