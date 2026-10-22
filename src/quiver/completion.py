@@ -76,6 +76,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--port=", "Hub port for the pairing URL"),
         ("--name=", "Device name recorded on pair"),
         ("--app", "QR encodes the quiver:// deep link for the iOS app"),
+        ("--json", "Print the pair payload as JSON"),
     ],
     "remote status": [
         ("--host=", "Hub address to probe"),

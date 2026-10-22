@@ -39,7 +39,7 @@ _BOOL_FLAGS = {"--on", "--off", "--app"}
 _USAGE = f"""\
   {c('cyan', 'swe remote serve [--host=H] [--port=N]')}   Run the hub (REST + SSE)
   {c('cyan', 'swe remote agent --hub=URL [--token=T]')}   Satellite: dial out to the hub
-  {c('cyan', 'swe remote pair [--name=N] [--host=H] [--port=N] [--app]')}
+  {c('cyan', 'swe remote pair [--name=N] [--host=H] [--port=N] [--app] [--json]')}
                                   Print a pairing URL + token for a phone
   {c('cyan', 'swe remote status [--host=H] [--port=N]')}  Probe the hub + list machines
   {c('cyan', 'swe remote devices [--revoke=<id>]')}       List or revoke paired devices
@@ -128,11 +128,11 @@ def _cmd_serve(flags: dict) -> int:
         return 1
 
 
-def _cmd_pair(flags: dict) -> int:
+def _cmd_pair(flags: dict, json_view: bool) -> int:
     try:
         host, port = _host_port(flags)
     except ValueError as exc:
-        print(c("red", str(exc)), file=sys.stderr)
+        print(c("red", str(exc)), file=error_stream(json_view))
         return 1
     if not host:
         host = _tailscale_ip() or "127.0.0.1"
@@ -140,6 +140,16 @@ def _cmd_pair(flags: dict) -> int:
     token = pairing.mint_pair_token()
     url = pairing.pair_url(host, port, token, name)
     payload = pairing.pair_payload(host, port, token, name)
+    if json_view:
+        return emit({
+            "host": host,
+            "port": port,
+            "token": token,
+            "name": name,
+            "url": url,
+            "deep_link": payload,
+            "expires_in_s": int(pairing.TOKEN_TTL_S),
+        })
     print(f"Pair a device ({int(pairing.TOKEN_TTL_S / 60)} min window):\n")
     print(f"  {c('cyan', url)}")
     print(f"  {c('dim', payload)}\n")
@@ -388,7 +398,7 @@ def cmd_remote(args: list[str]) -> int:
         if rest:
             print(c("red", f"unexpected args: {' '.join(rest)}"), file=sys.stderr)
             return 1
-        return _cmd_pair(flags)
+        return _cmd_pair(flags, json_view)
     if sub == "status":
         if rest:
             print(c("red", f"unexpected args: {' '.join(rest)}"), file=sys.stderr)

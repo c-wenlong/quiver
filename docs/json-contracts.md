@@ -76,6 +76,17 @@ ts, tool: {name, call_id, args_summary, args_full}?, result_ref?}`.
 Writes (`POST /v1/sessions/{key}/message|approval|control`, `POST
 /v1/sessions`) answer `409 not_attached` while a session is `observed`.
 
+The CLI side of remote also speaks `--json`:
+
+| Command | `data` |
+|---|---|
+| `swe remote status --json` | `{hub: {ok, version, uptime_s, machine} or {ok:false}, hub_addr, machines: [{id, name, online, last_seen_at}], devices: [DeviceRow]}`; exits 1 when the hub is unreachable but still emits the envelope |
+| `swe remote devices --json` | `{devices: [DeviceRow]}`; `--revoke=<id>` → `{revoked, ok}` |
+| `swe remote pair --json` | `{host, port, token, name, url, deep_link, expires_in_s}` — `url` opens the PWA, `deep_link` is the `quiver://pair?…` form for the iOS shell; `expires_in_s` is the token TTL |
+| `swe remote notify --json` | `{notify: {url?, topic?, ntfy_token?, enabled, action_credential?}}` with credential fields redacted to `***` |
+
+`DeviceRow`: `{id, name, created_at, last_seen_at, revoked}`.
+
 ## Shape notes
 
 - `Harness`: `state` is `active` | `starred` | `archived`; `rate_limit` is
