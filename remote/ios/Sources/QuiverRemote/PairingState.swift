@@ -5,9 +5,9 @@ import SwiftUI
 /// one-time-token exchange for `quiver://pair` deep links.
 ///
 /// The credential is exactly what the PWA keeps in
-/// `localStorage["quiver.remote"]` — `{ device, credential }` — so seeding
-/// it into the webview localStorage puts the PWA straight into the
-/// sessions view.
+/// `localStorage["quiver.remote"]` — the verbatim `/v1/pair` response,
+/// `{ device_id, credential, name }` — so seeding it into the webview
+/// localStorage puts the PWA straight into the sessions view.
 @MainActor
 final class PairingState: ObservableObject {
     /// E.g. `http://100.x.y.z:8477` — the hub's Tailscale address.
@@ -36,8 +36,10 @@ final class PairingState: ObservableObject {
         guard url.scheme == "quiver", url.host == "pair",
               let parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
         else { return }
+        // `uniquingKeysWith` — a duplicated query key must not trap.
         let query = Dictionary(
-            uniqueKeysWithValues: (parts.queryItems ?? []).map { ($0.name, $0.value ?? "") }
+            (parts.queryItems ?? []).map { ($0.name, $0.value ?? "") },
+            uniquingKeysWith: { first, _ in first }
         )
         guard let host = query["host"], let token = query["token"], !token.isEmpty
         else {
@@ -56,19 +58,19 @@ final class PairingState: ObservableObject {
         )
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
+            // /v1/pair answers { device_id, credential, name }; store it
+            // verbatim so localStorage looks exactly like the PWA's own
+            // `store.cred = response` write.
             guard (response as? HTTPURLResponse)?.statusCode == 200,
                   let body = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let credential = body["credential"] as? String,
-                  let device = body["device"] as? String
+                  body["credential"] is String,
+                  body["device_id"] is String
             else {
                 pairingError = "pairing failed — token expired or hub unreachable"
                 return
             }
-            let stored = try JSONSerialization.data(
-                withJSONObject: ["device": device, "credential": credential]
-            )
             baseURL = hub
-            credentialJSON = String(decoding: stored, as: UTF8.self)
+            credentialJSON = String(decoding: data, as: UTF8.self)
             pairingError = nil
         } catch {
             pairingError = error.localizedDescription

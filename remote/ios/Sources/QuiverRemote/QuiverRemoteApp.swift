@@ -8,7 +8,7 @@ import SwiftUI
 /// Face ID gate / share-sheet target. Push notifications come from
 /// ntfy, never from this app — the wrapper holds no push code.
 ///
-/// Pairing: scanning the `swe remote pair` QR opens
+/// Pairing: scanning the `swe remote pair --app` QR opens
 /// `quiver://pair?host=…&port=…&token=…`. The wrapper exchanges the
 /// one-time token for a device credential, stores it, and seeds the
 /// webview's localStorage (`quiver.remote`) so the PWA sees itself as

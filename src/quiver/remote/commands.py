@@ -34,12 +34,12 @@ _VALUE_FLAGS = {
     "--host", "--port", "--name", "--tail-days", "--revoke", "--mode",
     "--hub", "--token", "--ntfy", "--topic", "--ntfy-token",
 }
-_BOOL_FLAGS = {"--on", "--off"}
+_BOOL_FLAGS = {"--on", "--off", "--app"}
 
 _USAGE = f"""\
   {c('cyan', 'swe remote serve [--host=H] [--port=N]')}   Run the hub (REST + SSE)
   {c('cyan', 'swe remote agent --hub=URL [--token=T]')}   Satellite: dial out to the hub
-  {c('cyan', 'swe remote pair [--name=N] [--host=H] [--port=N]')}
+  {c('cyan', 'swe remote pair [--name=N] [--host=H] [--port=N] [--app]')}
                                   Print a pairing URL + token for a phone
   {c('cyan', 'swe remote status [--host=H] [--port=N]')}  Probe the hub + list machines
   {c('cyan', 'swe remote devices [--revoke=<id>]')}       List or revoke paired devices
@@ -50,20 +50,7 @@ _USAGE = f"""\
 """
 
 
-def _tailscale_ip() -> str:
-    """This machine's tailnet IPv4, or '' when Tailscale is absent."""
-    exe = shutil.which("tailscale")
-    if not exe:
-        return ""
-    try:
-        out = subprocess.run(
-            [exe, "ip", "-4"], capture_output=True, text=True, timeout=5
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    if out.returncode != 0:
-        return ""
-    return out.stdout.strip().splitlines()[0].strip() if out.stdout.strip() else ""
+_tailscale_ip = catalog_mod.tailscale_ip
 
 
 def _parse_flags(args):
@@ -159,8 +146,11 @@ def _cmd_pair(flags: dict) -> int:
     qrencode = shutil.which("qrencode")
     if qrencode:
         try:
+            # --app encodes the quiver:// deep link so the Camera app
+            # opens the iOS wrapper instead of Safari/the PWA.
+            qr = payload if flags.get("--app") else url
             subprocess.run(
-                [qrencode, "-t", "ANSIUTF8", url], check=False, timeout=10
+                [qrencode, "-t", "ANSIUTF8", qr], check=False, timeout=10
             )
             print()
         except (OSError, subprocess.TimeoutExpired):
@@ -263,9 +253,11 @@ def _cmd_attach(flags: dict, rest: list[str]) -> int:
               file=sys.stderr)
         return 1
     want = rest[0]
-    mode = flags.get("--mode") or "tmux"
-    if mode not in {"tmux", "headless"}:
-        print(c("red", "--mode must be tmux or headless"), file=sys.stderr)
+    mode = flags.get("--mode") or "auto"
+    if mode not in supervise.ATTACH_MODES:
+        print(c("red", "--mode must be one of "
+                + ", ".join(sorted(supervise.ATTACH_MODES))),
+              file=sys.stderr)
         return 1
     from quiver.sessions.aggregator import get_all_sessions
     from quiver.sessions.status import session_statuses

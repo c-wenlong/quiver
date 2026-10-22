@@ -8,8 +8,11 @@ not this app — there is deliberately no push code here.
 
 ## What it does
 
-1. Scan `swe remote pair`'s QR with the Camera app. It encodes
-   `quiver://pair?host=…&port=…&token=…`; iOS routes it here.
+1. Run `swe remote pair --app` on the hub and scan the QR with the
+   Camera app. With `--app` the QR encodes
+   `quiver://pair?host=…&port=…&token=…`, so iOS routes it here rather
+   than to Safari. (Without `--app` the QR carries the `http://` PWA
+   link for pairing in a browser.)
 2. `PairingState.handle` POSTs the one-time token to `/v1/pair` on the
    hub and stores the returned device credential.
 3. `HubWebView` loads `http://<tailscale-ip>:8477/` with the credential

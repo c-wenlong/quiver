@@ -648,12 +648,33 @@ class TestApprovalWatcher(unittest.TestCase):
         cap.assert_not_called()
         self.assertEqual(self._approval_events(), [])
 
-    def test_none_home_short_circuits(self):
+    def test_none_home_uses_default_registry(self):
+        # HubState() on the documented CLI path passes home=None — the
+        # watcher must still consult the default remote dir, not skip.
         mgr = tail.TailManager(lambda k, ev: None, "mbp", home=None)
         mgr.tailers["k1"] = object()
         with patch.object(tail.supervise, "meta_for") as mf:
             mgr._poll_approvals(time.time() + 10)
-        mf.assert_not_called()
+        mf.assert_called_once_with(None, "k1")
+
+    def test_prompt_swap_rotates_request_id(self):
+        # A menu answered locally then replaced by another one must not
+        # keep the old request_id — a delayed reply for prompt A must
+        # never answer prompt B.
+        from quiver.remote import supervise
+        meta = {"mode": "tmux"}
+        self._poll("Do you want to run ls?\n1. Yes\n2. No", meta=meta)
+        evs = self._approval_events()
+        rid_a = evs[0]["data"]["request_id"]
+        self._poll("Do you want to run rm -rf?\n1. Yes\n2. No", meta=meta)
+        evs = self._approval_events()
+        self.assertEqual(evs[-2]["type"], "approval.resolved")
+        self.assertEqual(evs[-2]["data"]["request_id"], rid_a)
+        self.assertEqual(evs[-2]["data"]["source"], "superseded")
+        self.assertEqual(evs[-1]["type"], "approval.requested")
+        rid_b = evs[-1]["data"]["request_id"]
+        self.assertNotEqual(rid_a, rid_b)
+        self.assertEqual(supervise.pending_approval("k1"), rid_b)
 
     def test_poll_throttled(self):
         meta = {"mode": "tmux"}

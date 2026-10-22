@@ -254,6 +254,32 @@ class TestRun(unittest.TestCase):
             self.assertFalse(t.is_alive())
             self.assertEqual(state.bus._subs, [])
 
+    def test_early_subscribe_captures_events_before_run(self):
+        # HubState.start() calls subscribe() before the producers spawn —
+        # an approval emitted in that gap must still reach _handle when
+        # run() finally starts consuming.
+        _cfg(self.home)
+        state = _state(self.home)
+        n = notify.Notifier(state, "http://h:1", subscribe_key=GLOBAL_KEY)
+        posts = []
+        n._post = lambda cfg, payload: posts.append(payload)
+        n.subscribe()
+        state.emit("k1", protocol.event(
+            "approval.requested", "k1", "m1",
+            {"request_id": "req-early", "prompt": "run it?"}))
+        with patch.object(notify, "_action_credential",
+                          return_value="c"):
+            t = threading.Thread(target=n.run, daemon=True)
+            t.start()
+            for _ in range(100):
+                if posts:
+                    break
+                time.sleep(0.01)
+            state._stop.set()
+            t.join(timeout=3)
+        self.assertEqual(len(posts), 1)
+        self.assertIn("approval", posts[0]["title"])
+
     def test_handle_exception_does_not_kill_loop(self):
         _cfg(self.home)
         state = _state(self.home)

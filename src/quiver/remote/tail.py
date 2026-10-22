@@ -763,9 +763,9 @@ class TailManager:
         # Last time each key emitted a transcript append; the attach
         # idle check reads this server-side.
         self.last_append: dict[str, float] = {}
-        # key -> request_id of the approval prompt the pane watcher last
-        # issued (None = none outstanding); key -> last pane check time.
-        self._approval_outstanding: dict[str, str] = {}
+        # key -> (request_id, prompt fingerprint) of the approval the
+        # pane watcher last issued; key -> last pane check time.
+        self._approval_outstanding: dict[str, tuple[str, str]] = {}
         self._approval_checked_at: dict[str, float] = {}
 
     def last_append_at(self, key: str) -> float | None:
@@ -933,8 +933,6 @@ class TailManager:
         it disappearing emits ``approval.resolved``. Cheap: one
         capture-pane per attached session every few seconds.
         """
-        if self.home is None:
-            return
         for key in list(self.tailers):
             if (
                 now - self._approval_checked_at.get(key, 0)
@@ -956,22 +954,35 @@ class TailManager:
                 supervise.channel_name(self.home, key)
             )
             if supervise.pane_shows_approval(pane):
-                if key not in self._approval_outstanding:
+                fp = supervise.approval_fingerprint(pane)
+                outstanding = self._approval_outstanding.get(key)
+                if outstanding is not None and outstanding[1] != fp:
+                    # Prompt A was dismissed and prompt B appeared
+                    # between polls — retiring A's id so a delayed
+                    # reply cannot answer B.
+                    supervise.set_pending_approval(key, None)
+                    self._emit_approval(
+                        "approval.resolved", key,
+                        {"request_id": outstanding[0],
+                         "source": "superseded"},
+                    )
+                    outstanding = None
+                if outstanding is None:
                     rid = f"req-{secrets.token_hex(6)}"
-                    self._approval_outstanding[key] = rid
-                    supervise.set_pending_approval(key, rid)
+                    self._approval_outstanding[key] = (rid, fp)
+                    supervise.set_pending_approval(key, rid, fp)
                     prompt = _approval_prompt_line(pane)
                     self._emit_approval(
                         "approval.requested", key,
                         {"request_id": rid, "prompt": prompt},
                     )
             else:
-                rid = self._approval_outstanding.pop(key, None)
-                if rid is not None:
+                cur = self._approval_outstanding.pop(key, None)
+                if cur is not None:
                     supervise.set_pending_approval(key, None)
                     self._emit_approval(
                         "approval.resolved", key,
-                        {"request_id": rid, "source": "dismissed"},
+                        {"request_id": cur[0], "source": "dismissed"},
                     )
 
     def _emit_approval(self, etype: str, key: str, data: dict) -> None:

@@ -644,8 +644,12 @@ to use their own login state and environment."""
                                             and paired devices.
   {c('cyan', 'swe remote devices [--revoke=<id>]')}     List or revoke paired devices.
   {c('cyan', 'swe remote attach <session>')}            Take an observed session
-                                            under supervision: relaunched in
-                                            tmux with its harness resume flags.
+                                            under supervision. Default
+                                            {c('cyan', '--mode=auto')} picks the
+                                            harness's API channel (opencode
+                                            serve, codex app-server) when the
+                                            binary exists, else relaunches in
+                                            tmux with resume flags.
                                             {c('cyan', '--mode=headless')} sends
                                             each prompt via claude -p instead.
   {c('cyan', 'swe remote agent --hub=URL [--token=T]')}   Satellite: pushes this

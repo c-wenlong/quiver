@@ -481,6 +481,46 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertEqual(items[0]["status"], "followup")
         self.assertEqual(items[0]["key"], "claude:f1")
 
+    def test_inbox_shows_pending_approval_on_active(self):
+        # A pane-only prompt leaves the transcript "active" — the inbox
+        # must still surface it, and drop it once resolved.
+        srv = _Server(sessions=[_session(sid="a1")],
+                      statuses=lambda ss: ["active"])
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        hdr = {"Authorization": f"Bearer {cred['credential']}"}
+        srv.state.emit("claude:a1", protocol.event(
+            "approval.requested", "claude:a1", "mbp",
+            {"request_id": "req-1", "prompt": "run it?"}))
+        status, data = srv.request("GET", "/v1/inbox", headers=hdr)
+        items = json.loads(data)["items"]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["status"], "approval")
+        self.assertEqual(items[0]["request_id"], "req-1")
+        srv.state.emit("claude:a1", protocol.event(
+            "approval.resolved", "claude:a1", "mbp",
+            {"request_id": "req-1"}))
+        status, data = srv.request("GET", "/v1/inbox", headers=hdr)
+        self.assertEqual(json.loads(data)["items"], [])
+
+    def test_advertise_url_never_wildcard(self):
+        from quiver.remote import catalog, hub
+        with patch.object(
+            catalog, "tailscale_ip", return_value="100.64.1.2"
+        ):
+            self.assertEqual(
+                hub._advertise_url("0.0.0.0", 8477),
+                "http://100.64.1.2:8477")
+        with patch.object(
+            catalog, "tailscale_ip", return_value=""
+        ), patch("socket.gethostname", return_value="srv.lan"):
+            self.assertEqual(
+                hub._advertise_url("0.0.0.0", 8477),
+                "http://srv.lan:8477")
+        self.assertEqual(
+            hub._advertise_url("100.64.9.9", 9000),
+            "http://100.64.9.9:9000")
+
     def test_machines_lists_self(self):
         self.srv.state._register_machine()
         status, data = self.srv.request(

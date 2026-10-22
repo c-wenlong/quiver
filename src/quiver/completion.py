@@ -75,6 +75,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--host=", "Hub address to put in the pairing URL"),
         ("--port=", "Hub port for the pairing URL"),
         ("--name=", "Device name recorded on pair"),
+        ("--app", "QR encodes the quiver:// deep link for the iOS app"),
     ],
     "remote status": [
         ("--host=", "Hub address to probe"),
@@ -86,7 +87,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--json", "Print the device list as JSON"),
     ],
     "remote attach": [
-        ("--mode=", "Supervision mode: tmux or headless"),
+        ("--mode=", "Channel: auto|tmux|headless|serve|appserver"),
     ],
     "remote agent": [
         ("--hub=", "Hub URL (http://<tailscale-ip>:8477)"),

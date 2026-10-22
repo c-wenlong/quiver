@@ -60,6 +60,44 @@ class TestTmuxHelpers(unittest.TestCase):
                           return_value=self._cp(rc=1, stdout="x")):
             self.assertEqual(supervise.capture_pane("qv-x"), "")
 
+    def test_capture_pane_visible_only_by_default(self):
+        # Approval detection reads the live menu — scrollback is opt-in
+        # because an answered prompt lingering in history must not look
+        # pending.
+        with patch.object(supervise, "_tmux",
+                          return_value=self._cp(stdout="x")) as t:
+            supervise.capture_pane("qv-x")
+            supervise.capture_pane("qv-x", lines=200)
+        self.assertEqual(
+            list(t.call_args_list[0][0]),
+            ["capture-pane", "-p", "-t", "qv-x"])
+        self.assertEqual(
+            list(t.call_args_list[1][0]),
+            ["capture-pane", "-p", "-t", "qv-x", "-S", "-200"])
+
+    def test_pane_shows_approval_needs_stacked_choices(self):
+        # Scattered "No errors found"/"No files changed" prose is not a
+        # menu — the choices must be a consecutive block.
+        scattered = (
+            "working…\nNo errors found\nstill working\n"
+            "2 warnings\nNo files changed\ndone")
+        self.assertFalse(supervise.pane_shows_approval(scattered))
+        menu = "Do you want to proceed?\n1. Yes\n2. No"
+        self.assertTrue(supervise.pane_shows_approval(menu))
+        stacked = "Choose:\n❯ Allow once\nDeny"
+        self.assertTrue(supervise.pane_shows_approval(stacked))
+
+    def test_approval_fingerprint_tracks_prompt_text(self):
+        a = supervise.approval_fingerprint(
+            "Do you want to run ls?\n1. Yes\n2. No")
+        b = supervise.approval_fingerprint(
+            "Do you want to run rm -rf?\n1. Yes\n2. No")
+        # Same menu re-rendered (spinner moved elsewhere) keeps its id.
+        a2 = supervise.approval_fingerprint(
+            "spinner | working\nDo you want to run ls?\n1. Yes\n2. No")
+        self.assertEqual(a, a2)
+        self.assertNotEqual(a, b)
+
     def test_tmux_real_call(self):
         cp = self._cp(rc=0)
         with patch.object(supervise, "tmux_bin", return_value="/x/tmux"), \

@@ -134,6 +134,14 @@ class Notifier:
         self._base = base_url.rstrip("/")
         self._subscribe_key = subscribe_key
         self._stop = state._stop
+        self._q: queue.Queue | None = None
+
+    def subscribe(self) -> None:
+        """Claim the bus queue. HubState.start() calls this *before*
+        spawning the producer threads so an approval already on screen
+        at boot lands in the queue instead of racing the subscribe."""
+        if self._q is None:
+            self._q = self._state.bus.subscribe(self._subscribe_key)
 
     def run(self) -> None:
         cfg = load_config(self._state.home)
@@ -141,7 +149,8 @@ class Notifier:
                 not cfg.get("topic"):
             return
         cred = _action_credential(self._state.home, cfg)
-        q = self._state.bus.subscribe(self._subscribe_key)
+        self.subscribe()
+        q = self._q
         try:
             while not self._stop.is_set():
                 try:

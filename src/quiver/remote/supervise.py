@@ -1,13 +1,20 @@
 """Supervision: sessions running under our tmux (or headless) control.
 
 An ``observed`` session belongs to a human terminal; an ``attached`` one
-runs under quiver's supervisor and the phone can write to it. Two modes:
+runs under quiver's supervisor and the phone can write to it. Modes:
 
 - ``tmux``: ``tmux new-session -d`` relaunches the harness with its
   resume flags. The session keeps a real TUI — ``tmux attach -t`` still
   works locally — and writes go in through ``send-keys``.
 - ``headless``: no persistent process. Each prompt spawns a one-shot
   harness invocation (``claude -p --resume``); ``inject.py`` owns it.
+- ``serve`` (opencode): the tier-A channel — ``inject.py`` lazily runs
+  ``opencode serve`` for the project and writes over REST/SSE.
+- ``appserver`` (codex): ``inject.py`` keeps a ``codex app-server``
+  JSON-RPC proc per session and writes over ``turn/start``.
+
+``auto`` resolves to the tier-A mode when the harness has one, else
+tmux; ``--mode=tmux`` stays the explicit escape hatch.
 
 The registry is ``data/remote/supervised.json``: ``{key: {mode, tmux,
 tool_name, session_id, cwd, attached_at}}``. Catalog reads the same file
@@ -19,6 +26,7 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -39,6 +47,31 @@ from quiver.sessions.resume import resume_flags, launch_tool_name
 # Attach is offered only for idle sessions; the hub re-checks at command
 # time. "Idle" = no transcript append in this window.
 ATTACH_IDLE_S = 5.0
+
+# Harness -> tier-A channel mode for ``attach(mode="auto")``. Harnesses
+# not listed keep the tmux channel.
+_AUTO_MODE = {"opencode": "serve", "codex": "appserver"}
+
+# Which binary each API mode needs; checked before the registry write so
+# an attached session never points at a channel that cannot exist.
+_MODE_BINARY = {"serve": "opencode", "appserver": "codex"}
+
+# ``attach`` accepts exactly these; anything else is a 422 at the route.
+ATTACH_MODES = frozenset({"auto", "tmux", "headless", "serve", "appserver"})
+
+
+def resolve_mode(session: Session, mode: str) -> str:
+    """The concrete channel for ``mode`` on this session.
+
+    ``auto`` picks the tier-A channel when the harness has one *and* its
+    binary is on PATH; otherwise tmux. Explicit modes pass through.
+    """
+    if mode != "auto":
+        return mode
+    want = _AUTO_MODE.get(session.tool_name)
+    if want and shutil.which(_MODE_BINARY[want]):
+        return want
+    return "tmux"
 
 # The supervised registry is read-change-save; the hub, satellite agents
 # and `swe remote attach` CLI calls can all touch it. In-process lock
@@ -244,35 +277,77 @@ def pane_shows_approval(pane: str) -> bool:
     if any(marker in text for marker in APPROVAL_MARKERS):
         return True
     tail = [ln.strip() for ln in pane.splitlines()[-15:]]
-    hits = sum(
-        1 for ln in tail
-        if 0 < len(ln) <= 40 and _APPROVAL_ITEM.match(ln)
-    )
-    return hits >= 2
+    # Menu choices must be a stacked block — "No errors found" and
+    # "No files changed" separated by real output are not a menu.
+    run = best = 0
+    for ln in tail:
+        if 0 < len(ln) <= 40 and _APPROVAL_ITEM.match(ln):
+            run += 1
+            best = max(best, run)
+        else:
+            run = 0
+    return best >= 2
 
 
 # The pane cannot report which prompt an approval id belongs to, so the
 # tailer records the id it issued for the currently-visible prompt here.
 # Injectors reject a request_id that does not match — a stale or
 # superseded id then cannot answer a newer menu.
-_PENDING_APPROVALS: dict[str, str] = {}
+_PENDING_APPROVALS: dict[str, tuple[str, str | None]] = {}
 
 
-def set_pending_approval(key: str, request_id: str | None) -> None:
+def set_pending_approval(
+    key: str, request_id: str | None, fingerprint: str | None = None
+) -> None:
     if request_id:
-        _PENDING_APPROVALS[key] = request_id
+        _PENDING_APPROVALS[key] = (request_id, fingerprint)
     else:
         _PENDING_APPROVALS.pop(key, None)
 
 
 def pending_approval(key: str) -> str | None:
-    return _PENDING_APPROVALS.get(key)
+    entry = _PENDING_APPROVALS.get(key)
+    return entry[0] if entry else None
 
 
-def capture_pane(name: str, lines: int = 200) -> str:
+def pending_approval_fp(key: str) -> str | None:
+    entry = _PENDING_APPROVALS.get(key)
+    return entry[1] if entry else None
+
+
+def approval_fingerprint(pane: str) -> str:
+    """Hash the prompt-looking lines so a swapped menu gets a fresh id.
+
+    Only marker/question/option lines count — a spinner or clock ticking
+    elsewhere on screen must not rotate the outstanding request id.
+    """
+    lines = []
+    for ln in pane.splitlines():
+        text = ln.strip()
+        if not text:
+            continue
+        low = text.lower()
+        if (
+            any(m in low for m in APPROVAL_MARKERS)
+            or _APPROVAL_ITEM.match(text)
+            or text.endswith("?")
+        ):
+            lines.append(text)
+    return hashlib.sha1("\n".join(lines).encode()).hexdigest()[:16]
+
+
+def capture_pane(name: str, lines: int = 0) -> str:
+    """The visible pane; ``lines`` > 0 also pulls that much scrollback.
+
+    Menu detection (``pane_shows_approval``, ``prime_pane``) must see only
+    what is on screen — a prompt that scrolled into history is already
+    answered, so scrollback stays opt-in.
+    """
     try:
-        out = _tmux("capture-pane", "-p", "-t", name,
-                    "-S", f"-{lines}")
+        args = ["capture-pane", "-p", "-t", name]
+        if lines > 0:
+            args += ["-S", f"-{lines}"]
+        out = _tmux(*args)
         return out.stdout if out.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -298,7 +373,7 @@ def attach(
     *,
     last_append_at: float | None,
     status: str,
-    mode: str = "tmux",
+    mode: str = "auto",
 ) -> tuple[bool, str]:
     """observed → attached: relaunch under the supervisor.
 
@@ -335,8 +410,21 @@ def attach(
             pass
         if not flags:
             return False, f"{session.tool_name} cannot be resumed"
+        # Tier-A only when the harness binary is actually here —
+        # an opencode session on a box without `opencode` still
+        # gets the tmux channel.
+        mode = resolve_mode(session, mode)
         if mode == "headless" and session.tool_name != "claude":
             return False, "headless attach only supports claude"
+        if mode == "serve" and session.tool_name != "opencode":
+            return False, "serve attach only supports opencode"
+        if mode == "appserver" and session.tool_name != "codex":
+            return False, "appserver attach only supports codex"
+        if mode not in ATTACH_MODES:
+            return False, f"unknown attach mode {mode}"
+        binary = _MODE_BINARY.get(mode)
+        if binary and shutil.which(binary) is None:
+            return False, f"{binary} is not installed"
 
         meta = {
             "mode": mode,
@@ -345,12 +433,14 @@ def attach(
             "cwd": session.path or "",
             "attached_at": time.time(),
         }
-        if mode == "headless":
+        if mode in {"headless", "serve", "appserver"}:
             # The original terminal still owns a writer process — stop
-            # it before claiming the session or both sides write.
+            # it before claiming the session or both sides write. The
+            # API channel itself is spawned lazily by the injector on
+            # first write, so nothing else to start here.
             _stop_local_writers(session)
             _mark_locked(home, session_key, meta)
-            return True, "attached (headless)"
+            return True, f"attached ({mode})"
 
         # tmux mode: stand the replacement up BEFORE killing the
         # original, so a failed handoff leaves the human's session
