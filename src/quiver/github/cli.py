@@ -371,7 +371,13 @@ def _repo_result(repo: str, key: str, result: gh.GhResult,
                  shape) -> dict:
     """Uniform per-repo entry: ok carries shaped rows, errors stay typed."""
     if result.status == "ok":
-        rows = [shape(item) for item in (result.data or [])
+        # A non-list reply on a clean exit is an anomaly, not an empty
+        # listing — an eaten `gh` reply must read as a failure, not as
+        # "no rows", or a real transient blip lies to the board.
+        if not isinstance(result.data, list):
+            return {"repo": repo, "status": "upstream-error", key: [],
+                    "error": "gh returned an unexpected reply"}
+        rows = [shape(item) for item in result.data
                 if isinstance(item, dict)]
         return {"repo": repo, "status": "ok", key: rows}
     return {"repo": repo, "status": result.status, key: [],

@@ -126,6 +126,7 @@ struct RepoJumper: View {
     private func jump(_ name: String) {
         let land: (String) -> Void = { repo in
             model.filter = ""
+            model.focused = nil
             model.selected = repo
             model.scrollTarget = repo
             dismiss()

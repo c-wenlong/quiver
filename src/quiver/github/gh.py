@@ -102,7 +102,11 @@ def run_json(args: list[str], timeout: int = GH_TIMEOUT) -> GhResult:
         return result
     text = (result.data or "").strip()
     if not text:
-        return GhResult("ok", data=None)
+        # Every JSON endpoint this is used for prints a body on success;
+        # a clean exit with nothing on stdout means the reply got eaten,
+        # and "ok + no data" would otherwise surface as an empty list.
+        return GhResult("upstream-error",
+                        error="gh exited cleanly but printed nothing")
     try:
         return GhResult("ok", data=json.loads(text))
     except json.JSONDecodeError as exc:

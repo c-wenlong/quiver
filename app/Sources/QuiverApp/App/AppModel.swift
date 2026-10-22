@@ -75,6 +75,9 @@ final class AppModel {
     private func routeGitHub(repo: String, type: String) {
         if github.pins.contains(where: { $0.name == repo }) {
             github.selected = repo
+            // A click-through lands on the repo's board section, never
+            // inside a focus page left open for another repo.
+            github.focused = nil
             // A filter that hid the repo would make the click-through
             // land on nothing; the target section also needs scrolling
             // to once it's rendered.

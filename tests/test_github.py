@@ -529,6 +529,24 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(entry["status"], "upstream-error")
         self.assertIn("rate limit", entry["error"])
 
+    def test_pr_empty_stdout_is_an_error_not_an_empty_list(self):
+        # gh exiting 0 with nothing on stdout is an eaten reply, not a
+        # zero-PR repo — the entry must fail so a transient blip shows
+        # as an error instead of "no pull requests".
+        run = _gh_run({"pr list": _Proc(stdout="")})
+        rc, out, _ = self._run_cli(["pr", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        entry = json.loads(out)["data"]["results"][0]
+        self.assertEqual(entry["status"], "upstream-error")
+        self.assertEqual(entry["pull_requests"], [])
+
+    def test_pr_non_list_reply_is_an_error(self):
+        run = _gh_run({"pr list": _Proc(stdout='{"unexpected": true}')})
+        rc, out, _ = self._run_cli(["pr", "--repo=o/r", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        entry = json.loads(out)["data"]["results"][0]
+        self.assertEqual(entry["status"], "upstream-error")
+
     def test_pr_status_json(self):
         run = _gh_run({
             "pr status": _Proc(stdout=json.dumps({
