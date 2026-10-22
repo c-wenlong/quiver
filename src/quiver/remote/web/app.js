@@ -21,6 +21,7 @@ const state = {
   inboxTimer: null,
   sessionTimer: null,
   inboxCount: 0,
+  openGen: 0,
 };
 
 function esc(s) {
@@ -167,6 +168,7 @@ const toolCards = new Map(); // call_id → card element
 
 async function openChat(key) {
   state.currentKey = key;
+  const gen = ++state.openGen; // a second openChat supersedes this one
   toolCards.clear();
   el("chat-log").innerHTML = "";
   show("chat");
@@ -181,16 +183,19 @@ async function openChat(key) {
     el("chat-banner").textContent =
       "Observed session: read-only. Run swe remote attach locally to steer it.";
   }
-  const seq = store.lastSeq[key] || 0;
-  if (seq === 0) await backfill(key);
-  openStream(key, seq);
+  // Always backfill — the DOM was just cleared, and the stream must
+  // start after the seq backfill actually reached, not a stale save.
+  await backfill(key, gen);
+  if (gen !== state.openGen || state.currentKey !== key) return;
+  openStream(key, store.lastSeq[key] || 0);
 }
 
-async function backfill(key) {
+async function backfill(key, gen) {
   const { status, data } = await api(
     `/v1/sessions/${encodeURIComponent(key)}/messages?limit=500`
   );
   if (status !== 200 || !data) return;
+  if (gen !== undefined && gen !== state.openGen) return; // user moved on
   for (const ev of data.messages || []) appendEvent(ev, false);
   if (data.messages && data.messages.length) {
     rememberSeq(key, data.messages[data.messages.length - 1].seq);
@@ -267,6 +272,7 @@ function openStream(key, lastSeq) {
   closeStream();
   const url = `/v1/sessions/${encodeURIComponent(key)}/events?last=${lastSeq}`;
   const cred = store.cred || {};
+  const mine = {};
   fetch(url, { headers: { Authorization: `Bearer ${cred.credential || ""}` } })
     .then(async (resp) => {
       if (resp.status === 401) { store.cred = null; boot(); return; }
@@ -275,7 +281,8 @@ function openStream(key, lastSeq) {
       const reader = resp.body.getReader();
       const dec = new TextDecoder();
       let buf = "";
-      state.stream = { reader, key };
+      mine.reader = reader;
+      state.stream = mine;
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -290,6 +297,9 @@ function openStream(key, lastSeq) {
       throw new Error("stream closed");
     })
     .catch(() => {
+      // Only clear if this stream is still the live one — a newer
+      // openChat may have already replaced it.
+      if (state.stream === mine) state.stream = null;
       setConn("err");
       // Reconnect with replay from the last seq we saw.
       if (state.currentKey === key) {
@@ -399,7 +409,12 @@ function boot() {
   const m = hash.match(/#pair=([^&]+)/);
   if (m) {
     show("pair");
-    doPair(decodeURIComponent(m[1]), el("pair-name").value.trim() || "phone");
+    const nm = hash.match(/[?&]name=([^&]+)/);
+    const fromUrl = nm ? decodeURIComponent(nm[1]) : "";
+    doPair(
+      decodeURIComponent(m[1]),
+      el("pair-name").value.trim() || fromUrl || "phone"
+    );
     return;
   }
   if (!store.cred || !store.cred.credential) {

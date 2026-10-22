@@ -96,6 +96,17 @@ class TestDecoders(unittest.TestCase):
         self.assertEqual(out[0]["kind"], "assistant")
         self.assertIn("[REDACTED]", out[0]["text"])
 
+    def test_args_full_is_redacted(self):
+        # args_full lands in the journal verbatim — it must get the same
+        # secret redaction as the one-line summary.
+        rec = _claude_assistant([
+            {"type": "tool_use", "id": "t1", "name": "Bash",
+             "input": {"command": "export A=sk-proj-abcdefghijklmnop1234"}},
+        ])
+        tool = tail.decode_record("claude", rec)[0]["tool"]
+        self.assertIn("[REDACTED]", tool["args_full"])
+        self.assertNotIn("sk-proj", tool["args_full"])
+
     def test_decode_never_raises(self):
         self.assertEqual(tail.decode_record("claude", {"type": "weird"}), [])
         self.assertEqual(tail.decode_record("codex", {"payload": 1}), [])
@@ -143,6 +154,22 @@ class TestJsonlTailSource(unittest.TestCase):
         self.assertEqual(src2.poll(), [])
         self._write([_claude_user("two")])
         self.assertEqual(src2.poll()[0]["text"], "two")
+
+    def test_oversized_record_is_skipped_not_wedged(self):
+        # A single JSONL record larger than the read chunk used to stall
+        # the tailer on that offset forever; now it's skipped once.
+        big = {"type": "user",
+               "message": {"role": "user",
+                           "content": "x" * (tail._MAX_CHUNK + 4096)}}
+        self._write([_claude_user("before"), big, _claude_user("after")])
+        src = tail.JsonlTailSource(self.path, "claude")
+        self.assertEqual([m["text"] for m in src.poll()], ["before"])
+        out = src.poll()
+        self.assertEqual(out[0]["kind"], "system")
+        self.assertIn("oversized", out[0]["text"])
+        self.assertEqual([m["text"] for m in src.poll()], ["after"])
+        self._write([_claude_user("next")])
+        self.assertEqual(src.poll()[0]["text"], "next")
 
 
 class TestSnapshotSource(unittest.TestCase):
@@ -259,6 +286,25 @@ class TestTailer(unittest.TestCase):
         src = tail.JsonlTailSource(path, "claude")
         t = tail.Tailer("k", _session_for(), src, self.tmp, has_journal=True)
         self.assertEqual(t.poll(time.time(), True), [])
+
+    def test_cursor_commits_only_after_emit(self):
+        # The cursor must lag the journal write: a crash between poll
+        # and commit replays events (duplicates) instead of losing them.
+        path = self.tmp / "t.jsonl"
+        path.write_text(json.dumps(_claude_user("a")) + "\n")
+        cursors = self.tmp / "cursors"
+        t = tail.Tailer(
+            "claude:k", _session_for(),
+            tail.JsonlTailSource(path, "claude"), cursors, False,
+        )
+        msgs = t.poll(time.time(), active=True)
+        self.assertEqual(len(msgs), 1)
+        self.assertFalse(t._cursor_path.exists())  # not yet committed
+        t.commit_cursor()
+        self.assertTrue(t._cursor_path.exists())
+        # Second poll with nothing new keeps the cursor settled.
+        self.assertEqual(t.poll(time.time(), active=False), [])
+        t.commit_cursor()
 
 
 def _session_for():
@@ -434,6 +480,57 @@ class TestTailManager(unittest.TestCase):
                        self.tmp / "claude-home" / "projects"
                    ) if p == "~/.claude/projects" else real_expand(p)):
             self.assertEqual(tail.resolve_jsonl_path(sess), nested)
+
+    def test_reresolve_follows_new_transcript_path(self):
+        # A resumed session's transcript can move (claude --resume from
+        # a different cwd); sync must swap the source, not tail the dead
+        # file.
+        path_a = self.tmp / "a.jsonl"
+        path_a.write_text(json.dumps(_claude_user("a0")) + "\n")
+        path_b = self.tmp / "b.jsonl"
+        path_b.write_text(json.dumps(_claude_user("b0")) + "\n")
+        sess_a = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                         session_id=str(path_a), tool_name="claude")
+        sess_b = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                         session_id=str(path_b), tool_name="claude")
+        mgr = self._manager()
+        mgr.sync([("claude:s", sess_a, "active")])
+        mgr.tick(time.time())
+        self.assertEqual(self.events[-1][1]["data"]["text"], "a0")
+        mgr.sync([("claude:s", sess_b, "active")])
+        src = mgr.tailers["claude:s"].source
+        self.assertEqual(getattr(src, "path", None), path_b)
+        with open(path_a, "a") as fh:
+            fh.write(json.dumps(_claude_user("stale")) + "\n")
+        with open(path_b, "a") as fh:
+            fh.write(json.dumps(_claude_user("b1")) + "\n")
+        mgr.tick(time.time() + 2)  # past next_poll_at
+        texts = [e["data"]["text"] for _k, e in self.events
+                 if e["type"] == "message.appended"]
+        self.assertNotIn("stale", texts)
+        self.assertIn("b1", texts)
+
+    def test_ensure_on_demand_tailer_survives_cap(self):
+        path = self.tmp / "s.jsonl"
+        path.write_text(json.dumps(_claude_user("hi")) + "\n")
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id=str(path), tool_name="claude")
+        mgr = self._manager()
+        mgr.max_sessions = 1
+        sess2 = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                        session_id="", tool_name="claude")
+        with patch.object(tail, "make_source", return_value=None):
+            mgr.sync([("claude:hot", sess2, "active")])
+        # The capped-out session gets a tailer when a client opens it.
+        mgr.ensure("claude:cold", sess, "done")
+        self.assertIn("claude:cold", mgr.tailers)
+        # A later background sync must not drop the on-demand tailer.
+        mgr.sync([("claude:hot", sess2, "active"),
+                  ("claude:cold", sess, "done")])
+        self.assertIn("claude:cold", mgr.tailers)
+        # ...but it does go away when the session leaves the catalog.
+        mgr.sync([("claude:hot", sess2, "active")])
+        self.assertNotIn("claude:cold", mgr.tailers)
 
     def test_make_source_dispatch(self):
         sess = _session_for()

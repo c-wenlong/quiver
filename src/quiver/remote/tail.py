@@ -91,6 +91,9 @@ def _summarize_args(name: str, args: Any) -> tuple[str, str]:
         full = json.dumps(args, ensure_ascii=False) if args is not None else ""
     except (TypeError, ValueError):
         full = str(args)
+    # args_full lands in the journal and on phones — redact like the
+    # one-line summary does, or a `KEY=sk-...` Bash arg leaks verbatim.
+    full = _tr._redact_secrets(full)
     if isinstance(args, dict):
         for key in _ARG_HINT_KEYS:
             value = args.get(key)
@@ -395,7 +398,15 @@ class JsonlTailSource:
         # is re-read from the same offset on the next poll.
         last_nl = chunk.rfind(b"\n")
         if last_nl < 0:
-            return []
+            if size - self.offset <= _MAX_CHUNK:
+                return []  # writer still mid-line; wait for the rest
+            # One record bigger than the chunk cap: consume through its
+            # newline so it can't wedge every later message forever.
+            self.offset = self._skip_oversized()
+            return [protocol.message(
+                "system",
+                "[skipped an oversized transcript record]",
+            )]
         self.offset += last_nl + 1
         out: list[dict] = []
         for raw in chunk[:last_nl].split(b"\n"):
@@ -409,6 +420,29 @@ class JsonlTailSource:
             if isinstance(rec, dict):
                 out.extend(decode_record(self.tool_name, rec))
         return out
+
+    def _skip_oversized(self) -> int:
+        """Advance past a record larger than the chunk cap.
+
+        Scans forward from the current offset to the next newline so a
+        multi-MB single line can't starve everything appended after it.
+        """
+        offset = self.offset + _MAX_CHUNK
+        try:
+            size = self.path.stat().st_size
+            with open(self.path, "rb") as fh:
+                while offset < size:
+                    fh.seek(offset)
+                    piece = fh.read(_MAX_CHUNK)
+                    idx = piece.find(b"\n")
+                    if idx >= 0:
+                        return offset + idx + 1
+                    offset += len(piece)
+                    if not piece:
+                        break
+        except OSError:
+            pass
+        return size
 
 
 class OpencodeSource:
@@ -641,6 +675,7 @@ class Tailer:
             # history is not duplicated; live appends still land.
             source.skip_to_end()
         self.next_poll_at = 0.0
+        self._pending_save = False
 
     def _load_cursor(self) -> dict:
         try:
@@ -664,13 +699,24 @@ class Tailer:
         return now >= self.next_poll_at
 
     def poll(self, now: float, active: bool) -> list[dict]:
+        """Poll the source; the cursor is only marked dirty here.
+
+        ``commit_cursor`` runs the save — the manager calls it after the
+        events are journaled, so a crash between poll and write replays
+        (duplicates, recoverable) instead of skipping messages forever.
+        """
         self.next_poll_at = now + (
             POLL_ACTIVE_S if active else POLL_IDLE_S
         )
         out = self.source.poll()
         if out or active:
-            self.save_cursor()
+            self._pending_save = True
         return out
+
+    def commit_cursor(self) -> None:
+        if self._pending_save:
+            self._pending_save = False
+            self.save_cursor()
 
 
 class TailManager:
@@ -699,17 +745,59 @@ class TailManager:
         self.tailers: dict[str, Tailer] = {}
         self.statuses: dict[str, str] = {}
 
+    def ensure(self, key: str, session: Session, status: str) -> None:
+        """Start a tailer on demand — a client opened this session.
+
+        Background tailing stays capped at ``max_sessions``; a phone
+        opening an older session gets history and live updates anyway.
+        """
+        if key in self.tailers:
+            return
+        source = make_source(session)
+        if source is None:
+            return
+        self.tailers[key] = Tailer(
+            key, session, source, self.cursors_dir,
+            self._journal_has(key),
+        )
+        self.statuses[key] = status
+
+    def _source_path(self, source) -> Path | None:
+        path = getattr(source, "path", None)
+        return Path(path) if path else None
+
+    def _reresolve(self, tailer: Tailer, session: Session) -> None:
+        """Follow a resumed session into its new transcript file.
+
+        Claude ``--resume`` from another folder writes a new JSONL under
+        that project; the old source would keep polling a dead path.
+        The journal already holds the history the new file rewrites, so
+        the fresh source starts at its end — only new turns stream.
+        """
+        new_path = resolve_jsonl_path(session)
+        if new_path is None or new_path == self._source_path(tailer.source):
+            return
+        source = make_source(session)
+        if source is None:
+            return
+        source.skip_to_end()
+        tailer.source = source
+        tailer.save_cursor()
+
     def sync(self, rows: list[tuple[str, Session, str]]) -> None:
         """Reconcile tailers with the catalog.
 
         ``rows`` is ``(session_key, session, status)`` newest-first. New
-        keys get a source when resolvable; gone keys drop their tailer;
-        status transitions emit ``session.status`` and ``notify``.
+        keys in the top slice get a source when resolvable; gone keys
+        drop their tailer; status transitions emit ``session.status``
+        and ``notify``. On-demand tailers (``ensure``) outside the top
+        slice keep running while their session exists.
         """
+        by_key = {key: (s, st) for key, s, st in rows}
         wanted = rows[: self.max_sessions]
         wanted_keys = {key for key, _s, _st in wanted}
         for key in list(self.tailers):
-            if key not in wanted_keys:
+            if key not in by_key:
                 self.tailers.pop(key, None)
                 self.statuses.pop(key, None)
         for key, session, status in wanted:
@@ -723,8 +811,11 @@ class TailManager:
                 )
             else:
                 # Refresh the session object: title/cwd can change as the
-                # aggregator re-parses.
-                self.tailers[key].session = session
+                # aggregator re-parses; the source may need re-resolving
+                # when a resume moved the transcript file.
+                tailer = self.tailers[key]
+                tailer.session = session
+                self._reresolve(tailer, session)
             if self.statuses.get(key) != status:
                 previous = self.statuses.get(key)
                 self.statuses[key] = status
@@ -734,6 +825,22 @@ class TailManager:
                 # sighting of a session already in error/followup is
                 # state, not news (and would spam push at hub startup).
                 if previous is not None:
+                    self._emit_notify(key, previous, status)
+        # On-demand tailers past the cap: refresh session/status but
+        # keep them alive while their session still exists.
+        for key in self.tailers:
+            if key in wanted_keys:
+                continue
+            session, status = by_key.get(key, (None, None))
+            if session is None:
+                continue
+            self.tailers[key].session = session
+            self._reresolve(self.tailers[key], session)
+            if self.statuses.get(key) != status:
+                previous = self.statuses.get(key)
+                self.statuses[key] = status
+                if previous is not None:
+                    self._emit_status(key, status)
                     self._emit_notify(key, previous, status)
 
     def _emit_status(self, key: str, status: str) -> None:
@@ -785,4 +892,5 @@ class TailManager:
                     ),
                 )
                 n += 1
+            tailer.commit_cursor()
         return n

@@ -87,6 +87,22 @@ class TestJournal(unittest.TestCase):
             ev = j.append("k", protocol.event("t", "k", "m", {}))
         self.assertEqual(ev["seq"], 1)
 
+    def test_seq_recovers_past_large_final_event(self):
+        # A final record bigger than the initial tail window must not
+        # reset numbering: the reader grows the window until it parses.
+        key = "a:big"
+        self._append(key, 1)
+        big = protocol.event(
+            "message.appended", key, "m",
+            {"kind": "assistant", "text": "x" * 200_000},
+        )
+        written = self.journal.append(key, big)
+        self.assertEqual(written["seq"], 2)
+        journal2 = Journal(Path(self.tmp))
+        self.assertEqual(journal2.last_seq(key), 2)
+        # And a subsequent append keeps counting, not restarting at 1.
+        self.assertEqual(journal2.append(key, big)["seq"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()

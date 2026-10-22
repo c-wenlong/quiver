@@ -29,6 +29,13 @@ from quiver.remote.journal import Journal
 DEFAULT_PORT = 8477
 _MAX_BODY = 4 << 20  # 4 MB JSON cap; attachments go through their own route
 _SSE_HEARTBEAT_S = 15.0
+# A request that stalls mid-read (declared Content-Length, no bytes)
+# can't hold a handler thread forever; SSE writes get the same cap,
+# which is harmless — a healthy client's socket never blocks for 30 s.
+_REQ_TIMEOUT_S = 30.0
+_MAX_WORKERS = 64
+# How often an open SSE stream re-checks that its device wasn't revoked.
+_REVOCATION_CHECK_S = 5.0
 
 # Journal bucket for non-session events (machine.online, hub-level notify).
 GLOBAL_KEY = "_global"
@@ -91,8 +98,11 @@ class HubState:
         self.bus.publish(key, written)
         if key != GLOBAL_KEY:
             # The global journal mirrors everything so /v1/events replays
-            # a whole-machine timeline, not only machine.* events.
-            self.journal.append(GLOBAL_KEY, written)
+            # a whole-machine timeline. Global subscribers get the
+            # *global*-numbered copy so their ``?last=`` cursor lines up
+            # with replay.
+            mirrored = self.journal.append(GLOBAL_KEY, written)
+            self.bus.publish(GLOBAL_KEY, mirrored)
         return written
 
     def start(self) -> None:
@@ -140,6 +150,13 @@ class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     state: HubState  # stamped on the server, set in make_server
 
+    def setup(self) -> None:
+        super().setup()
+        # Without a deadline a tailnet peer can park threads by never
+        # finishing a request. Reads only happen while parsing headers
+        # and body — SSE never reads again after dispatch.
+        self.connection.settimeout(_REQ_TIMEOUT_S)
+
     # -- plumbing ---------------------------------------------------------
 
     @property
@@ -184,34 +201,81 @@ class _Handler(BaseHTTPRequestHandler):
         auth = self.headers.get("Authorization") or ""
         cred = auth[7:].strip() if auth.startswith("Bearer ") else ""
         hit = pairing.device_for_credential(self._state.home, cred)
-        return hit[0] if hit else None
+        if hit is None:
+            return None
+        device_id, row = hit
+        # Throttled last_seen update: a write per request would churn
+        # devices.json; five-minute freshness is plenty for the list.
+        seen = row.get("last_seen_at") or 0
+        if time.time() - seen > 300:
+            try:
+                pairing.touch_device(self._state.home, device_id)
+            except Exception:
+                pass
+        return device_id
+
+    @staticmethod
+    def _device_revoked(home: Path | None, device_id: str) -> bool:
+        row = pairing.load_devices(home).get(device_id) or {}
+        return bool(row.get("revoked_at"))
 
     # -- SSE --------------------------------------------------------------
 
-    def _sse_stream(self, key: str | None, after_seq: int) -> None:
+    def _sse_stream(
+        self,
+        key: str | None,
+        after_seq: int,
+        device_id: str | None = None,
+    ) -> None:
         journal_key = key if key is not None else GLOBAL_KEY
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Connection", "keep-alive")
-        self.end_headers()
-        replay, truncated = self._state.journal.read_since(
-            journal_key, after_seq
-        )
+        # Subscribe BEFORE replay: an event appended between read_since
+        # and subscribe would be lost from both. Queued events are then
+        # deduped by seq against what replay already sent.
+        q = self._state.bus.subscribe(journal_key)
         try:
-            if truncated:
-                self._sse_write({"type": "journal.truncated", "seq": after_seq})
-            for ev in replay:
-                self._sse_write(ev)
-            self._sse_write({"type": "journal.caught-up", "seq": self._state.journal.last_seq(journal_key)})
-        except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
-            return
-        q = self._state.bus.subscribe(key)
-        try:
+            replay, truncated = self._state.journal.read_since(
+                journal_key, after_seq
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+            # An SSE response is the last thing this connection ever
+            # does. Must come after end_headers — send_header parses the
+            # Connection field and would flip this back off.
+            self.close_connection = True
+            replayed = after_seq
+            try:
+                if truncated:
+                    self._sse_write(
+                        {"type": "journal.truncated", "seq": after_seq})
+                for ev in replay:
+                    self._sse_write(ev)
+                    if isinstance(ev.get("seq"), int):
+                        replayed = max(replayed, ev["seq"])
+                self._sse_write({
+                    "type": "journal.caught-up",
+                    "seq": replayed,
+                })
+            except (BrokenPipeError, ConnectionResetError,
+                    TimeoutError, OSError):
+                return
+            last_revocation_check = 0.0
             while True:
                 try:
                     ev = q.get(timeout=_SSE_HEARTBEAT_S)
                 except queue.Empty:
+                    ev = None
+                now = time.time()
+                if (
+                    device_id
+                    and now - last_revocation_check > _REVOCATION_CHECK_S
+                ):
+                    last_revocation_check = now
+                    if self._device_revoked(self._state.home, device_id):
+                        return
+                if ev is None:
                     try:
                         self.wfile.write(b": ka\n\n")
                         self.wfile.flush()
@@ -221,8 +285,14 @@ class _Handler(BaseHTTPRequestHandler):
                     ):
                         return
                     continue
+                if (
+                    isinstance(ev.get("seq"), int)
+                    and ev["seq"] <= replayed
+                ):
+                    continue  # already delivered by the replay pass
                 try:
                     self._sse_write(ev)
+                    replayed = max(replayed, ev["seq"])
                 except (
                     BrokenPipeError, ConnectionResetError,
                     TimeoutError, OSError,
@@ -289,7 +359,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/v1/events":
             after = _int_arg(args.get("last"), 0)
-            self._sse_stream(None, after)
+            self._sse_stream(None, after, device_id=device_id)
             return
 
         if path.startswith("/v1/sessions/"):
@@ -302,9 +372,17 @@ class _Handler(BaseHTTPRequestHandler):
                         404, "unknown_session", "no such session"
                     )
                     return
+                # Sessions past the background tail cap get a tailer on
+                # demand so an opened chat isn't an empty journal.
+                session = self._state.catalog.session_for(key)
+                row = self._state.catalog.row_for(key) or {}
+                if session is not None:
+                    self._state.tail_manager.ensure(
+                        key, session, str(row.get("status") or "")
+                    )
             if sep and action == "events":
                 after = _int_arg(args.get("last"), 0)
-                self._sse_stream(key, after)
+                self._sse_stream(key, after, device_id=device_id)
                 return
             if sep and action == "messages":
                 self._messages(key, args)
@@ -446,12 +524,39 @@ def _int_arg(values, default: int) -> int:
         return default
 
 
+class _BoundedHTTPServer(ThreadingHTTPServer):
+    """Thread-per-connection, but capped — slowloris peers get refused
+    at the socket instead of spawning unbounded handler threads."""
+
+    daemon_threads = True
+
+    def __init__(self, *args, **kwargs):
+        self._slots = threading.BoundedSemaphore(_MAX_WORKERS)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            # All workers busy: refuse the connection outright.
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
+
 def make_server(
     state: HubState, host: str, port: int
 ) -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer((host, port), _Handler)
+    server = _BoundedHTTPServer((host, port), _Handler)
     server.state = state  # type: ignore[attr-defined]
-    server.daemon_threads = True
     return server
 
 

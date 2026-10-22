@@ -135,10 +135,10 @@ def _cmd_pair(flags: dict) -> int:
         return 1
     if not host:
         host = _tailscale_ip() or "127.0.0.1"
-    token = pairing.mint_pair_token()
-    url = pairing.pair_url(host, port, token)
-    payload = pairing.pair_payload(host, port, token)
     name = flags.get("--name") or ""
+    token = pairing.mint_pair_token()
+    url = pairing.pair_url(host, port, token, name)
+    payload = pairing.pair_payload(host, port, token, name)
     print(f"Pair a device ({int(pairing.TOKEN_TTL_S / 60)} min window):\n")
     print(f"  {c('cyan', url)}")
     print(f"  {c('dim', payload)}\n")
@@ -208,7 +208,10 @@ def _cmd_status(flags: dict, json_view: bool) -> int:
 def _cmd_devices(flags: dict, json_view: bool) -> int:
     revoke = flags.get("--revoke")
     if revoke:
-        if pairing.revoke_device(None, revoke):
+        ok = pairing.revoke_device(None, revoke)
+        if json_view:
+            return emit({"revoked": revoke, "ok": ok})
+        if ok:
             print(f"revoked {revoke}")
             return 0
         print(c("red", f"no such device: {revoke}"),

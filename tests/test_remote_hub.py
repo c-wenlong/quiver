@@ -2,13 +2,16 @@
 
 import http.client
 import json
+import socket
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from quiver.remote import protocol
+from quiver.remote import tail
 from quiver.remote.hub import HubState, make_server
 from quiver.remote import pairing
 from quiver.sessions.models import Session
@@ -305,6 +308,33 @@ class TestServeEntry(unittest.TestCase):
 
 
 class TestGlobalEvents(HubBase):
+    def test_global_events_use_global_seq(self):
+        # Live global subscribers must see the *global* journal seq on
+        # mirrored events, so their ?last= cursor stays aligned with
+        # replay. A direct _global emit first makes the counters differ.
+        self.srv.state.emit(
+            "_global",
+            protocol.event("machine.online", "_global", "mbp", {}),
+        )
+        self.srv.state.emit(
+            "claude:s1",
+            protocol.event("message.appended", "claude:s1", "mbp",
+                           protocol.message("assistant", "m")),
+        )
+        events, _ = self.srv.state.journal.read_since("_global", 0)
+        # [session.status from fixture sync, machine.online, mirror]
+        seqs = [e["seq"] for e in events]
+        self.assertEqual(seqs, sorted(seqs))  # strictly global-numbered
+        mirrored = events[-1]
+        self.assertEqual(mirrored["type"], "message.appended")
+        self.assertEqual(
+            mirrored["seq"], self.srv.state.journal.last_seq("_global")
+        )
+        # The session copy keeps its own numbering.
+        sess_events, _ = self.srv.state.journal.read_since("claude:s1", 0)
+        self.assertEqual(sess_events[0]["seq"], 1)
+        self.assertNotEqual(mirrored["seq"], sess_events[0]["seq"])
+
     def test_global_stream_replays(self):
         self.srv.state.emit(
             "claude:s1",
@@ -380,6 +410,153 @@ class TestSSE(HubBase):
             self.assertTrue(got_live)
         finally:
             conn.close()
+
+    def test_event_during_replay_is_not_duplicated(self):
+        # subscribe() runs before read_since(), so an event emitted
+        # while the replay is being read lands in BOTH places; the
+        # stream must send it once (seq-deduped).
+        key = "claude:s1"
+        self.srv.state.emit(
+            key, protocol.event(
+                "message.appended", key, "mbp",
+                protocol.message("assistant", "first"),
+            )
+        )
+        real_read = self.srv.state.journal.read_since
+
+        def emit_mid_replay(journal_key, after_seq, limit=None):
+            self.srv.state.emit(
+                key, protocol.event(
+                    "message.appended", key, "mbp",
+                    protocol.message("assistant", "midflight"),
+                )
+            )
+            return real_read(journal_key, after_seq, limit)
+
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.srv.port, timeout=5
+        )
+        try:
+            with patch.object(
+                self.srv.state.journal, "read_since",
+                side_effect=emit_mid_replay,
+            ):
+                conn.request(
+                    "GET", f"/v1/sessions/{key}/events?last=0",
+                    headers=self.auth(),
+                )
+                resp = conn.getresponse()
+            self.assertEqual(resp.status, 200)
+            buf = b""
+            for _ in range(60):
+                line = resp.readline()
+                if not line:
+                    break
+                buf += line
+                if b"journal.caught-up" in buf:
+                    break
+            self.assertEqual(buf.count(b"midflight"), 1)
+            self.assertEqual(buf.count(b"first"), 1)
+        finally:
+            conn.close()
+
+    def test_revoked_device_drops_stream(self):
+        from quiver.remote import hub as hub_mod
+        cred = self.srv.pair()
+        auth = {"Authorization": f"Bearer {cred['credential']}"}
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.srv.port, timeout=5
+        )
+        try:
+            with patch.object(hub_mod, "_SSE_HEARTBEAT_S", 0.1), \
+                    patch.object(hub_mod, "_REVOCATION_CHECK_S", 0.05):
+                conn.request(
+                    "GET", "/v1/events?last=0", headers=auth
+                )
+                resp = conn.getresponse()
+                self.assertEqual(resp.status, 200)
+                pairing.revoke_device(self.srv.home, cred["device_id"])
+                # Stream must end once the revocation check runs —
+                # readline() returns "" at EOF.
+                deadline = time.time() + 5
+                closed = False
+                while time.time() < deadline:
+                    if resp.readline() == b"":
+                        closed = True
+                        break
+                self.assertTrue(closed, "stream stayed open after revoke")
+        finally:
+            conn.close()
+
+
+class TestServerHardening(HubBase):
+    def test_stalled_request_times_out_and_hub_survives(self):
+        from quiver.remote import hub as hub_mod
+        with patch.object(hub_mod, "_REQ_TIMEOUT_S", 0.5):
+            sock = socket.create_connection(
+                ("127.0.0.1", self.srv.port), timeout=5
+            )
+            try:
+                # Headers declare a body that never arrives. Without a
+                # socket deadline the handler thread would wait forever.
+                sock.sendall(
+                    b"POST /v1/pair HTTP/1.1\r\n"
+                    b"Host: x\r\nContent-Length: 4096\r\n\r\n"
+                    b"{\"token\":"
+                )
+                # The server must end the connection — 408, a close, or
+                # an error response — well inside the patched timeout.
+                sock.settimeout(4)
+                try:
+                    sock.recv(256)
+                except socket.timeout:
+                    self.fail("stalled request never timed out")
+                except OSError:
+                    pass  # reset counts as "ended" too
+            finally:
+                sock.close()
+        status, _ = self.srv.request("GET", "/v1/status")
+        self.assertEqual(status, 200)
+
+    def test_worker_pool_is_bounded(self):
+        from quiver.remote import hub as hub_mod
+        self.assertIsInstance(self.srv.server, hub_mod._BoundedHTTPServer)
+        # Exhaust every slot; the next connection is refused at the
+        # socket instead of spawning an unbounded thread.
+        slots = self.srv.server._slots
+        for _ in range(hub_mod._MAX_WORKERS):
+            self.assertTrue(slots.acquire(blocking=False))
+        self.assertFalse(slots.acquire(blocking=False))
+        try:
+            conn = http.client.HTTPConnection(
+                "127.0.0.1", self.srv.port, timeout=3
+            )
+            try:
+                with self.assertRaises((http.client.HTTPException, OSError)):
+                    conn.request("GET", "/v1/status")
+                    conn.getresponse().read()
+            finally:
+                conn.close()
+        finally:
+            for _ in range(hub_mod._MAX_WORKERS):
+                slots.release()
+        status, _ = self.srv.request("GET", "/v1/status")
+        self.assertEqual(status, 200)
+
+    def test_open_session_gets_on_demand_tailer(self):
+        # Drop all tailers (as if the session were past the cap), then
+        # open the messages route — a tailer must appear.
+        self.srv.state.tail_manager.tailers.clear()
+        self.srv.state.tail_manager.statuses.clear()
+        self.assertNotIn("claude:s1", self.srv.state.tail_manager.tailers)
+        with patch.object(tail, "make_source",
+                          return_value=MagicMock()):
+            status, _ = self.srv.request(
+                "GET", "/v1/sessions/claude:s1/messages",
+                headers=self.auth(),
+            )
+        self.assertEqual(status, 200)
+        self.assertIn("claude:s1", self.srv.state.tail_manager.tailers)
 
 
 if __name__ == "__main__":

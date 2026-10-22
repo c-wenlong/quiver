@@ -43,31 +43,41 @@ class Journal:
         return self.dir / f"{key_slug(session_key)}.jsonl"
 
     def _load_seq(self, session_key: str) -> int:
-        """Recover the last seq written for ``session_key`` (tail read)."""
+        """Recover the last seq written for ``session_key``.
+
+        Reads a tail window and walks it backward. A single event can
+        exceed the window (full tool args run large), so the window
+        doubles until a complete record parses or the file is spent —
+        a >64 KiB final event must not reset numbering to 1.
+        """
         path = self._file(session_key)
         try:
             size = path.stat().st_size
         except OSError:
             return 0
-        try:
-            with open(path, "rb") as fh:
-                if size > 65536:
-                    fh.seek(-65536, os.SEEK_END)
-                tail = fh.read().decode("utf-8", errors="replace")
-        except OSError:
-            return 0
-        for line in reversed(tail.splitlines()):
-            line = line.strip()
-            if not line:
-                continue
+        window = 65536
+        while True:
             try:
-                rec = json.loads(line)
-            except ValueError:
-                continue
-            seq = rec.get("seq")
-            if isinstance(seq, int) and seq > 0:
-                return seq
-        return 0
+                with open(path, "rb") as fh:
+                    if size > window:
+                        fh.seek(-window, os.SEEK_END)
+                    tail = fh.read().decode("utf-8", errors="replace")
+            except OSError:
+                return 0
+            for line in reversed(tail.splitlines()):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                seq = rec.get("seq")
+                if isinstance(seq, int) and seq > 0:
+                    return seq
+            if window >= size:
+                return 0
+            window = min(window * 4, size)
 
     def last_seq(self, session_key: str) -> int:
         with _LOCK:

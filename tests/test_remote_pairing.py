@@ -61,6 +61,56 @@ class TestPairing(unittest.TestCase):
         url = pairing.pair_url("100.1.2.3", 8477, "tok")
         self.assertIn("#pair=tok", url)
 
+    def test_pair_payload_carries_name(self):
+        payload = pairing.pair_payload("h", 1, "tok", "kai's phone")
+        self.assertIn("name=kai%27s%20phone", payload)
+        url = pairing.pair_url("h", 1, "tok", "iphone 13")
+        self.assertIn("name=iphone%2013", url)
+
+    def test_concurrent_exchange_spend_token_once(self):
+        # Two racing requests for one token: exactly one mints a device.
+        import threading
+        token = pairing.mint_pair_token(self.tmp)
+        results = []
+        lock = threading.Lock()
+
+        def race():
+            out = pairing.exchange(self.tmp, token, "phone")
+            with lock:
+                results.append(out)
+
+        threads = [threading.Thread(target=race) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        wins = [r for r in results if r is not None]
+        self.assertEqual(len(wins), 1)
+        self.assertEqual(len(pairing.load_devices(self.tmp)), 1)
+
+    def test_concurrent_mints_keep_every_token(self):
+        import json
+        import threading
+        tokens = []
+        lock = threading.Lock()
+
+        def mint():
+            with lock:
+                tokens.append(pairing.mint_pair_token(self.tmp))
+
+        threads = [threading.Thread(target=mint) for _ in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        saved = {
+            t["token"]
+            for t in json.loads(
+                pairing.tokens_file(self.tmp).read_text()
+            )["tokens"]
+        }
+        self.assertEqual(set(tokens), saved)
+
 
 if __name__ == "__main__":
     unittest.main()
