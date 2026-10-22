@@ -157,6 +157,16 @@ class ClaudeHeadlessInjector:
         except OSError as exc:
             return False, f"claude failed to launch: {exc}"
         self._procs[self.key] = proc
+        # A detach that landed between Popen() and registration missed
+        # this child — kill it ourselves rather than run detached.
+        if supervise.meta_for(self.home, self.key) is None:
+            proc.kill()
+            try:
+                proc.wait(timeout=5)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            self._procs.pop(self.key, None)
+            return False, "session detached; refusing the write"
         # The stdout loop can block mid-read forever on a stalled run, so
         # the deadline lives in a watchdog: kill() closes the pipe and
         # ends the iteration.

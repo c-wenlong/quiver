@@ -251,6 +251,18 @@ def attach(
         return False, "session is mid-turn; try again when it is idle"
     if last_append_at is not None and time.time() - last_append_at < ATTACH_IDLE_S:
         return False, "transcript is still moving; try again when it is idle"
+    # The cached status/append time is up to ~10s stale; the transcript
+    # file's own mtime is not. Stat it so a turn that started after the
+    # last poll still blocks the attach.
+    from quiver.remote import tail
+
+    transcript = tail.resolve_jsonl_path(session)
+    try:
+        if transcript is not None and \
+                time.time() - transcript.stat().st_mtime < ATTACH_IDLE_S:
+            return False, "transcript is still moving; try again when it is idle"
+    except OSError:
+        pass
     flags = resume_flags(session)
     if not flags:
         return False, f"{session.tool_name} cannot be resumed"
