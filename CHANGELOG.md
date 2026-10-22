@@ -136,6 +136,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   feed it, `swe install --json` entries now carry `description` and
   `registered`; the sheet degrades cleanly against an older swe.
 
+- **Fan control in the menu bar popup's Compute tab.** The header's
+  third button is now the tab's own: Usage keeps Refresh, and Compute
+  gets the fan button instead (its charts tick on their own, so a reload
+  bought nothing). The button opens a compressed take on the Compute
+  page's fan popover — one line per fan with a short bar and the rpm,
+  the Mac's temperatures, and the manual speed controls; the
+  above-temperature rule stays on the page. Choosing Automatic hands the
+  fans back to macOS. Clicks inside the popover no longer read as
+  outside clicks that close the panel.
+
 ### Fixed
 
 - **Resumed Codex threads are one session again.** Every `codex resume`

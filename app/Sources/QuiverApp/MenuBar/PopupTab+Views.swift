@@ -26,7 +26,9 @@ extension PopupTab {
         }
     }
 
-    /// The header's Refresh: reload what this tab shows.
+    /// The header's Refresh: reload what this tab shows. Only Usage's
+    /// header offers the button — Compute's is the fans — but the compute
+    /// arm stays a valid "tick now" if a caller asks for it.
     func refresh(_ app: AppModel) {
         switch self {
         case .usage:
