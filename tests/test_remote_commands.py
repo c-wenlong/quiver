@@ -327,6 +327,23 @@ class TestPairApp(unittest.TestCase):
         self.assertEqual(len(ran), 1)
         self.assertIn("quiver://pair", ran[0][-1])
 
+    def test_pair_json(self):
+        with patch("quiver.remote.pairing.mint_pair_token",
+                   return_value="tok9"), \
+             patch("quiver.remote.commands._tailscale_ip",
+                   return_value="100.1.2.3"):
+            rc, out, _ = _run(["pair", "--json", "--name=phone"])
+        self.assertEqual(rc, 0)
+        d = json.loads(out)["data"]
+        self.assertEqual(d["host"], "100.1.2.3")
+        self.assertEqual(d["port"], 8477)
+        self.assertEqual(d["token"], "tok9")
+        self.assertEqual(d["name"], "phone")
+        self.assertIn("#pair=tok9", d["url"])
+        self.assertTrue(d["deep_link"].startswith("quiver://pair?"))
+        self.assertIn("token=tok9", d["deep_link"])
+        self.assertEqual(d["expires_in_s"], 300)
+
     def test_pair_default_qr_uses_http_url(self):
         ran = []
         with patch("quiver.remote.pairing.mint_pair_token",

@@ -1,7 +1,7 @@
 /// The Settings page's sub-nav, after TokenTracker's: groups of sections,
 /// each with its own title, description and cards.
 public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Sendable {
-    case general, preferences, sidebar, notifications, updates, github, providers, services, paths, doctor, experimental
+    case general, preferences, sidebar, notifications, updates, github, remote, providers, services, paths, doctor, experimental
 
     public var id: String { rawValue }
 
@@ -13,6 +13,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .notifications: "Notifications"
         case .updates: "Updates"
         case .github: "GitHub"
+        case .remote: "Remote"
         case .providers: "Providers"
         case .services: "Services"
         case .paths: "Paths"
@@ -30,6 +31,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .notifications: "Alerts when a usage limit runs low."
         case .updates: "Which version you're running and where updates come from."
         case .github: "The gh install behind the GitHub pages, and the synced repo catalog the Add-repo search reads."
+        case .remote: "Pair a phone to watch and steer sessions, and see which devices are paired."
         case .providers: "Which harnesses show up across the app, and the inference plans and API keys behind them."
         case .services: "Keys for the services Quiver itself calls, kept in the Keychain."
         case .paths: "Where Quiver finds swe, your API keys file and your MCP server folders."
@@ -47,6 +49,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .notifications: "bell"
         case .updates: "arrow.triangle.2.circlepath"
         case .github: "arrow.down.circle.dotted"
+        case .remote: "iphone"
         case .providers: "square.stack.3d.up"
         case .services: "key"
         case .paths: "folder"
@@ -83,7 +86,7 @@ public enum SettingsGroup: CaseIterable, Identifiable, Sendable {
 
     public var sections: [SettingsSection] {
         switch self {
-        case .app: [.general, .preferences, .sidebar, .notifications, .updates, .github]
+        case .app: [.general, .preferences, .sidebar, .notifications, .updates, .github, .remote]
         case .usage: [.providers, .services]
         case .advanced: [.paths, .doctor, .experimental]
         }
