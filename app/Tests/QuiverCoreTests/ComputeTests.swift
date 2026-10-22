@@ -520,6 +520,49 @@ import Testing
         #expect(model.processes["claude"]?.first { $0.sample.pid == 11 }?.stillRunning == true)
     }
 
+    @MainActor @Test func quitHarnessSignalsTheWholeHarnessHelpersFirst() async {
+        final class Fake: ProcessSampling, ProcessSignaller, @unchecked Sendable {
+            var table: [ProcessSample]
+            var signalled: [(Int32, Int32)] = []
+            init(_ table: [ProcessSample]) { self.table = table }
+            func sample() -> [ProcessSample] { table }
+            func signal(_ pid: Int32, _ sig: Int32) -> Bool { signalled.append((pid, sig)); return true }
+        }
+        let fake = Fake([
+            Self.proc(10, 1, path: "/opt/homebrew/bin/claude"),
+            Self.proc(11, 10, path: "/x/helper"),
+            Self.proc(12, 11, path: "/x/worker"),
+            Self.proc(20, 1, path: "/usr/local/bin/codex"),
+        ])
+        let model = ComputeModel(sampler: fake, matchers: { [Self.claude, Self.codex] },
+                                 signaller: fake, selfPID: 99)
+        await model.loadMatchers()
+        await model.refresh()
+        await model.quitHarness("claude")
+        // Helpers go before the entry process; codex is not claude's.
+        #expect(fake.signalled.map(\.0) == [12, 11, 10])
+        #expect(Set(fake.signalled.map(\.1)) == [SIGTERM])
+    }
+
+    @MainActor @Test func quitHarnessForceKillsAndAnIdleHarnessSignalsNothing() async {
+        final class Fake: ProcessSampling, ProcessSignaller, @unchecked Sendable {
+            var table: [ProcessSample]
+            var signalled: [(Int32, Int32)] = []
+            init(_ table: [ProcessSample]) { self.table = table }
+            func sample() -> [ProcessSample] { table }
+            func signal(_ pid: Int32, _ sig: Int32) -> Bool { signalled.append((pid, sig)); return true }
+        }
+        let fake = Fake([Self.proc(10, 1, path: "/opt/homebrew/bin/claude")])
+        let model = ComputeModel(sampler: fake, matchers: { [Self.claude, Self.codex] },
+                                 signaller: fake, selfPID: 99)
+        await model.loadMatchers()
+        await model.quitHarness("codex")
+        #expect(fake.signalled.isEmpty)
+        await model.quitHarness("claude", force: true)
+        #expect(fake.signalled.map(\.0) == [10])
+        #expect(fake.signalled.map(\.1) == [SIGKILL])
+    }
+
     // MARK: Earlier-launch leftovers
 
     static let appMain = "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"

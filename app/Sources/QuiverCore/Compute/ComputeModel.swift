@@ -361,10 +361,39 @@ public final class ComputeModel {
 
     /// The batch form: one fresh sample for every item's kill plan, so a
     /// clean-up confirm costs one table no matter how long the list is,
-    /// then one refresh. A pid two items share is signalled once.
+    /// then one refresh.
     public func quit(_ items: [CleanupItem], force: Bool = false) async {
         let sampler = self.sampler
         let fresh = await runOffPool { sampler.sample() }
+        signal(items, force: force, in: fresh)
+        await refresh()
+    }
+
+    /// Everything `harness` has running, as one batch. The set is
+    /// attributed on this call's own fresh sample, so a process the
+    /// harness spawned after the page's last refresh still quits. Helpers
+    /// go first, the harness's own entry processes last: an app or CLI
+    /// shuts its helpers down itself on the way out.
+    public func quitHarness(_ harness: String, force: Bool = false) async {
+        let sampler = self.sampler
+        let fresh = await runOffPool { sampler.sample() }
+        let found = ProcessAttribution.attribute(fresh, matchers: matchers,
+                                                 managedPIDs: managedPIDs).byHarness[harness] ?? []
+        let matcher = matchers.first { $0.harness == harness }
+        let items = found
+            .sorted { ($0.memoryBytes, $0.pid) > ($1.memoryBytes, $1.pid) }
+            .map { sample in
+                CleanupItem.process(sample, harness: harness,
+                                    isMain: matcher.map { ProcessAttribution.isMainProcess(sample, of: $0) } ?? false)
+            }
+        signal(items.filter { !$0.isMain } + items.filter { $0.isMain },
+               force: force, in: fresh)
+        await refresh()
+    }
+
+    /// SIGTERM (SIGKILL when `force`) to each item's kill plan over
+    /// `fresh`; a pid two items share is signalled once.
+    private func signal(_ items: [CleanupItem], force: Bool, in fresh: [ProcessSample]) {
         let ancestors = selfAncestors(in: fresh)
         let startedAt = Dictionary(fresh.map { ($0.pid, $0.startedAt) }, uniquingKeysWith: { a, _ in a })
         var seen: Set<Int32> = []
@@ -376,7 +405,6 @@ public final class ComputeModel {
                 if !force, let started = startedAt[pid] { signalledAt[pid] = (at: .now, startedAt: started) }
             }
         }
-        await refresh()
     }
 
     /// Which of an item's pids are still in the last sample; the clean-up
