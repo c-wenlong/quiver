@@ -231,4 +231,20 @@ import Testing
             .list([.init(depth: 0, kind: .bullet, text: "b")]),
         ])
     }
+
+    /// Greptile's footer writes a badge as a link inside a link —
+    /// `[[View in Greptile](badge.svg)](app-url)` — which Apple's
+    /// inline parser mangles into literal brackets. `flatLinks` keeps
+    /// the label and the outer href.
+    @Test func flatLinksCollapsesNestedBadgeLinks() {
+        #expect(GitHubMarkdown.flatLinks(
+            "[Retrigger](https://app.greptile.com/r)[[View in Greptile](https://cdn/x.svg?v=2)](https://app.greptile.com/p)Confidence Score: 4/5")
+            == "[Retrigger](https://app.greptile.com/r)[View in Greptile](https://app.greptile.com/p)Confidence Score: 4/5")
+        // The `!`-form badge and a bare image flatten the same way.
+        #expect(GitHubMarkdown.flatLinks("[![ci](img)](job) ![pic](shot.png)")
+            == "[ci](job) [pic](shot.png)")
+        // Ordinary links are left alone.
+        #expect(GitHubMarkdown.flatLinks("see [the fix](https://x) now")
+            == "see [the fix](https://x) now")
+    }
 }

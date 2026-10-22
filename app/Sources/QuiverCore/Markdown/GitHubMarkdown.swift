@@ -83,6 +83,23 @@ public enum GitHubMarkdown {
             .trimmingCharacters(in: .whitespaces)
     }
 
+    /// Flatten the bracket forms Apple's inline parser mangles before
+    /// it runs: `[![alt](badge)](href)` — and the `!`-less twin
+    /// `[[alt](badge)](href)` greptile writes — collapse to
+    /// `[alt](href)`, and a bare `![alt](src)` image becomes a link to
+    /// its source. An image badge is a label anyway; a link-in-link
+    /// keeps the outer href since that is where a click would go.
+    public static func flatLinks(_ md: String) -> String {
+        var md = md
+        md = md.replacing(#/\[!?\[([^\]]*)\]\([^)]*\)\]\(([^)\s]+)\)/#) {
+            "[\($0.1)](\($0.2))"
+        }
+        md = md.replacing(#/!\[([^\]]*)\]\(([^)\s]+)\)/#) {
+            "[\($0.1)](\($0.2))"
+        }
+        return md
+    }
+
     // MARK: - block parse
 
     /// Markdown → display blocks for the sheet. Line-scanned: fences,

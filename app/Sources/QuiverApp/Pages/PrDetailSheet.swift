@@ -350,12 +350,7 @@ private struct MarkdownBody: View {
     /// rendered newline, matching how GitHub wraps bodies.
     static func inline(_ md: String) -> AttributedString {
         var md = md
-        md = md.replacing(#/\[!\[([^\]]*)\]\([^)]*\)\]\(([^)\s]+)\)/#) {
-            "[\($0.1)](\($0.2))"
-        }
-        md = md.replacing(#/!\[([^\]]*)\]\(([^)\s]+)\)/#) {
-            "[\($0.1)](\($0.2))"
-        }
+        md = GitHubMarkdown.flatLinks(md)
         var out = AttributedString()
         for (i, line) in md.split(separator: "\n",
                                   omittingEmptySubsequences: false).enumerated() {

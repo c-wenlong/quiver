@@ -137,6 +137,12 @@ public final class GitHubModel {
     /// Focus surfaces whose last reply came back short of the limit —
     /// the remote has no more, so the scroll loader stops asking.
     public private(set) var focusExhausted: Set<BoardKey> = []
+    /// Every row the focus page has ever fetched, per repo. Seeding
+    /// shows it before the network answers; each ok reply merges in by
+    /// number, so the listing accumulates past the fetch window rather
+    /// than resetting to it. Written through the snapshot like the
+    /// dashboard's boards.
+    private var history: [String: RepoHistory] = [:]
 
     public private(set) var inbox: Loadable<[GhNotification]> = .idle
     /// Unread lines in the loaded inbox — the sidebar badge and the
@@ -456,12 +462,26 @@ public final class GitHubModel {
     /// The focus page's opening fetch: all seven surfaces together,
     /// each fresh-skipped, so the initial view fills at the price of
     /// the slowest surface and a quick out-and-back costs nothing.
+    /// Remembered rows go up first — the page shows what it knows
+    /// while the network answers.
     public func loadFocus(repo: String, swe: SweClient) async {
+        seedFocus(repo: repo)
         await withTaskGroup(of: Void.self) { group in
             for tab in RepoTab.allCases {
                 group.addTask { await self.loadFocusTabIfStale(tab, repo: repo, swe: swe) }
             }
         }
+    }
+
+    /// Put the repo's remembered rows on the board before any reply —
+    /// an already-loaded surface is left alone, so a re-focus does not
+    /// blink fresh rows back to older ones.
+    private func seedFocus(repo: String) {
+        guard let h = history[repo] else { return }
+        var board = focusBoards[repo] ?? RepoBoard()
+        if !h.pulls.isEmpty, !board.isLoaded(.pulls) { board.pulls = .loaded(h.pulls) }
+        if !h.issues.isEmpty, !board.isLoaded(.issues) { board.issues = .loaded(h.issues) }
+        focusBoards[repo] = board
     }
 
     /// `loadTabIfStale` against the focus store: a surface never fetched
@@ -490,14 +510,23 @@ public final class GitHubModel {
             }
         }
         let limit = focusLimit(for: key)
+        // The reply's own row count — exhaustion is measured on what
+        // arrived, not on the merged listing history makes bigger.
+        var fetched: Int? = nil
         do {
             switch tab {
             case .pulls:
                 apply(try await swe.ghPullRequests(repo: repo, state: "all", limit: limit),
-                      to: key, \.pulls, store: .focus) { $0.pullRequests ?? [] }
+                      to: key, \.pulls, store: .focus) {
+                    fetched = ($0.pullRequests ?? []).count
+                    return $0.pullRequests ?? []
+                }
             case .issues:
                 apply(try await swe.ghIssues(repo: repo, state: "all", limit: limit),
-                      to: key, \.issues, store: .focus) { $0.issues ?? [] }
+                      to: key, \.issues, store: .focus) {
+                    fetched = ($0.issues ?? []).count
+                    return $0.issues ?? []
+                }
             case .actions:
                 apply(try await swe.ghRuns(repo: repo, limit: limit),
                       to: key, \.runs, store: .focus) { $0.runs ?? [] }
@@ -514,9 +543,10 @@ public final class GitHubModel {
                 apply(try await swe.ghBranches(repo: repo, limit: limit),
                       to: key, \.branches, store: .focus) { $0.branches ?? [] }
             }
+            remember(tab, repo: repo)
             // A short page means the listing ended — the scroll loader
             // stops growing the window on this surface.
-            if let rows = focusBoard(for: repo).rowCount(tab), rows < limit {
+            if let fetched, fetched < limit {
                 focusExhausted.insert(key)
             }
         } catch is CancellationError {
@@ -524,7 +554,55 @@ public final class GitHubModel {
             var board = focusBoards[repo] ?? RepoBoard()
             board.fail(tab, message: error.localizedDescription)
             focusBoards[repo] = board
+            // Remembered rows stand in for the error — a blip must not
+            // blank a listing the app already knows.
+            remember(tab, repo: repo)
         }
+    }
+
+    /// Fold the surface's reply into the repo's history, or put the
+    /// remembered rows back when the reply failed. On `.loaded` the
+    /// fetched rows win on number — their state may have moved on —
+    /// and cached rows beyond the fetch window stay, so the board's
+    /// listing grows instead of capping at the window.
+    private func remember(_ tab: RepoTab, repo: String) {
+        switch tab {
+        case .pulls:
+            mergeHistory(repo: repo, board: \.pulls, into: \.pulls)
+        case .issues:
+            mergeHistory(repo: repo, board: \.issues, into: \.issues)
+        default:
+            return
+        }
+    }
+
+    /// Rows a repo remembers past a single fetch — the file stays small
+    /// and even heavy repos' recent work fits well under it.
+    private static let historyCap = 500
+
+    private func mergeHistory<Row: Identifiable>(
+        repo: String,
+        board boardPath: WritableKeyPath<RepoBoard, Loadable<[Row]>>,
+        into historyPath: WritableKeyPath<RepoHistory, [Row]>
+    ) where Row.ID == Int {
+        var h = history[repo] ?? RepoHistory()
+        var board = focusBoards[repo] ?? RepoBoard()
+        switch board[keyPath: boardPath] {
+        case .loaded(let fetched):
+            let seen = Set(fetched.map(\.id))
+            let rows = fetched + h[keyPath: historyPath].filter { !seen.contains($0.id) }
+            // Number order is creation order — gh's list order — and
+            // cached rows are all older than the window's first row.
+            h[keyPath: historyPath] = Array(rows.sorted { $0.id > $1.id }
+                .prefix(Self.historyCap))
+            board[keyPath: boardPath] = .loaded(h[keyPath: historyPath])
+        default:
+            if h[keyPath: historyPath].isEmpty { return }
+            board[keyPath: boardPath] = .loaded(h[keyPath: historyPath])
+        }
+        history[repo] = h
+        focusBoards[repo] = board
+        scheduleSave()
     }
 
     /// The scroll loader's fetch: grow the surface's window by
@@ -1023,6 +1101,7 @@ public final class GitHubModel {
         snapshotInbox = snap.inbox
         snapshotInboxLoaded = snap.inboxLoaded
         inbox = snap.inboxLoaded ? .loaded(snap.inbox) : .idle
+        history = snap.history ?? [:]
         // A snapshot exists only because replies were received before.
         probed = true
     }
@@ -1045,7 +1124,7 @@ public final class GitHubModel {
         snapshot?.saveNow(GitHubSnapshot(
             savedAt: now(), pins: pins, selected: selected,
             boards: boards, inbox: snapshotInbox,
-            inboxLoaded: snapshotInboxLoaded))
+            inboxLoaded: snapshotInboxLoaded, history: history))
     }
 }
 
