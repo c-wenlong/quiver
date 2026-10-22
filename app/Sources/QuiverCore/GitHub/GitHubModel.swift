@@ -148,6 +148,15 @@ public final class GitHubModel {
     /// the file cannot open — the in-memory dictionary still covers
     /// the session either way.
     private let historyStore: GitHubHistory?
+    /// Snapshot-era rows not yet confirmed inside SQLite. `saveNow`
+    /// keeps writing them into the JSON file until `importAll` commits —
+    /// dropping them earlier would erase the only copy when the
+    /// database cannot open.
+    private var legacyHistory: [String: RepoHistory]?
+    /// SQLite writes ride a serial queue so a fetch reply never blocks
+    /// the main actor on a busy or slow disk; order is preserved, so a
+    /// `removeRepo` still wins over the remembers queued before it.
+    let historyWriteQueue = DispatchQueue(label: "quiver.gh-history")
 
     public private(set) var inbox: Loadable<[GhNotification]> = .idle
     /// Unread lines in the loaded inbox — the sidebar badge and the
@@ -585,12 +594,16 @@ public final class GitHubModel {
     private func remember(_ tab: RepoTab, repo: String) {
         switch tab {
         case .pulls:
-            mergeHistory(repo: repo, board: \.pulls, into: \.pulls) {
-                historyStore?.remember(repo: repo, pulls: $0)
+            mergeHistory(repo: repo, board: \.pulls, into: \.pulls) { rows in
+                historyWriteQueue.async { [historyStore] in
+                    historyStore?.remember(repo: repo, pulls: rows)
+                }
             }
         case .issues:
-            mergeHistory(repo: repo, board: \.issues, into: \.issues) {
-                historyStore?.remember(repo: repo, issues: $0)
+            mergeHistory(repo: repo, board: \.issues, into: \.issues) { rows in
+                historyWriteQueue.async { [historyStore] in
+                    historyStore?.remember(repo: repo, issues: rows)
+                }
             }
         default:
             return
@@ -791,7 +804,10 @@ public final class GitHubModel {
             // An unpinned repo forgets its rows too — a re-pin starts
             // from a fetch, not from what it used to know.
             history[name] = nil
-            historyStore?.remove(repo: name)
+            legacyHistory?[name] = nil
+            historyWriteQueue.async { [historyStore] in
+                historyStore?.remove(repo: name)
+            }
             if selected == name { selected = pins.first?.name }
             // The focus page dies with its pin — the dashboard takes over.
             if focused == name { focused = nil }
@@ -1130,11 +1146,20 @@ public final class GitHubModel {
         snapshotInbox = snap.inbox
         snapshotInboxLoaded = snap.inboxLoaded
         inbox = snap.inboxLoaded ? .loaded(snap.inbox) : .idle
-        // Rows a JSON-era snapshot remembered move into SQLite once;
-        // the field stays decodable for exactly this, and new snapshots
-        // write it as nil.
-        for (repo, h) in snap.history ?? [:] where historyStore != nil {
-            historyStore?.import(repo: repo, pulls: h.pulls, issues: h.issues)
+        // Rows a JSON-era snapshot remembered move into SQLite once.
+        // `legacyHistory` holds them until the import is confirmed —
+        // `saveNow` keeps writing the field while the database cannot
+        // take it, so a failed import never erases the only copy. A
+        // store that already imported skips the write entirely, which
+        // also drops the field on the next save.
+        legacyHistory = snap.history
+        if let legacy = legacyHistory {
+            if historyStore?.importedLegacy == true || historyStore?.importAll(legacy) == true {
+                legacyHistory = nil
+            } else if historyStore == nil {
+                // No database at all — the rows still cover this session.
+                history.merge(legacy) { _, old in old }
+            }
         }
         // A snapshot exists only because replies were received before.
         probed = true
@@ -1158,7 +1183,7 @@ public final class GitHubModel {
         snapshot?.saveNow(GitHubSnapshot(
             savedAt: now(), pins: pins, selected: selected,
             boards: boards, inbox: snapshotInbox,
-            inboxLoaded: snapshotInboxLoaded))
+            inboxLoaded: snapshotInboxLoaded, history: legacyHistory))
     }
 }
 

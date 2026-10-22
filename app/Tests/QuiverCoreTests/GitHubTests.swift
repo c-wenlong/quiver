@@ -906,6 +906,9 @@ import Testing
         let calls = focusRouter(repo: "o/a", pulls: prRows(50))
         let first = GitHubModel(historyFile: db)
         await first.loadFocusTab(.pulls, repo: "o/a", swe: SweClient(runner: calls))
+        // History writes ride a serial queue — flush before the
+        // relaunched model opens the file.
+        first.historyWriteQueue.sync {}
 
         let dead = SweClient(runner: router([:]))
         let second = GitHubModel(historyFile: db)

@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// The focus page's remembered rows, in SQLite: pulls and issues keyed
 /// by (repo, number), upserted as replies land. Each row keeps its wire
@@ -14,6 +15,8 @@ final class GitHubHistory: @unchecked Sendable {
     /// Rows kept per repo per surface. Reads stay instant, and even
     /// heavy repos' recent history fits well under it.
     static let cap = 500
+
+    private static let log = Logger(subsystem: "com.cwenlong.quiver", category: "gh-history")
 
     /// The open error, when the database could not be opened — the
     /// store reports it once and answers empty instead of throwing
@@ -43,6 +46,9 @@ final class GitHubHistory: @unchecked Sendable {
                     number INTEGER NOT NULL,
                     payload TEXT NOT NULL,
                     PRIMARY KEY (repo, number));
+                CREATE TABLE IF NOT EXISTS meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL);
                 """)
             self.db = db
             openError = nil
@@ -64,11 +70,57 @@ final class GitHubHistory: @unchecked Sendable {
     func remember(repo: String, pulls: [GhPr]) { remember(repo: repo, table: "pulls", rows: pulls) }
     func remember(repo: String, issues: [GhIssue]) { remember(repo: repo, table: "issues", rows: issues) }
 
-    /// One-shot import of rows a JSON-era snapshot carried; the same
-    /// upsert-and-trim write path, so nothing special happens twice.
-    func `import`(repo: String, pulls: [GhPr], issues: [GhIssue]) {
-        remember(repo: repo, pulls: pulls)
-        remember(repo: repo, issues: issues)
+    /// Whether a JSON-era snapshot import already committed. Once true
+    /// it stays true: a snapshot that still carries the field because
+    /// its save failed must not re-import stale rows over newer ones.
+    var importedLegacy: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return (try? db?.scalar(
+            "SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'legacy_imported'")) == 1
+    }
+
+    /// One-shot import of the rows a JSON-era snapshot carried, all in
+    /// a single transaction. `INSERT OR IGNORE` keeps rows the live
+    /// store already knows — those are newer than anything a leftover
+    /// snapshot could hold — and the flag marks the import done even if
+    /// the snapshot itself never saves again.
+    @discardableResult
+    func importAll(_ history: [String: RepoHistory]) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let db else { return false }
+        do {
+            try db.execute("BEGIN IMMEDIATE")
+            for (repo, rows) in history {
+                try importRows(rows.pulls, repo: repo, table: "pulls", db: db)
+                try importRows(rows.issues, repo: repo, table: "issues", db: db)
+            }
+            try db.execute("""
+                INSERT OR REPLACE INTO meta (key, value)
+                VALUES ('legacy_imported', '1')
+                """)
+            try db.execute("COMMIT")
+            return true
+        } catch {
+            try? db.execute("ROLLBACK")
+            Self.log.error("legacy history import failed: \(error)")
+            return false
+        }
+    }
+
+    private func importRows<Row: Codable & Identifiable>(
+        _ rows: [Row], repo: String, table: String, db: SQLiteDatabase
+    ) throws where Row.ID == Int {
+        let insert = try db.prepare("""
+            INSERT OR IGNORE INTO \(table) (repo, number, payload) VALUES (?, ?, ?)
+            """)
+        for row in rows {
+            guard let payload = try? encoder.encode(row),
+                  let text = String(data: payload, encoding: .utf8)
+            else { continue }
+            try insert.bind([.text(repo), .int(row.id), .text(text)]).run()
+        }
     }
 
     /// Forget a repo outright — an unpin drops every remembered row.
@@ -128,6 +180,7 @@ final class GitHubHistory: @unchecked Sendable {
             try db.execute("COMMIT")
         } catch {
             try? db.execute("ROLLBACK")
+            Self.log.error("remember(\(repo), \(table)) failed: \(error)")
         }
     }
 }
