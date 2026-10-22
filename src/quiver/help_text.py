@@ -648,6 +648,12 @@ to use their own login state and environment."""
                                             tmux with its harness resume flags.
                                             {c('cyan', '--mode=headless')} sends
                                             each prompt via claude -p instead.
+  {c('cyan', 'swe remote agent --hub=URL [--token=T]')}   Satellite: pushes this
+                                            machine's catalog + transcript
+                                            events to the hub and runs the
+                                            commands it queues. Pair once with
+                                            a token, then keep it running —
+                                            outbound only, nothing listens.
 
   The phone only ever talks to the hub, over Tailscale. Sessions list as
   {c('bold', 'observed')} (a human terminal owns them: read-only) until they run

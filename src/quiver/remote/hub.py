@@ -97,6 +97,11 @@ class HubState:
         self.started_at = time.time()
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
+        # Satellite presence: command-stream subscribers are the online
+        # signal — a sleeping MacBook just drops offline until it dials in.
+        self._sat_subs: dict[str, int] = {}
+        self._cmd_seq = 0
+        self._cmd_lock = threading.Lock()
 
     def _journal_has(self, key: str) -> bool:
         return self.journal.last_seq(key) > 0
@@ -130,7 +135,74 @@ class HubState:
             t.join(timeout=2)
 
     def _register_machine(self) -> None:
-        catalog_mod.upsert_machine(self.home, self.machine)
+        catalog_mod.upsert_machine(
+            self.home, {**self.machine, "online": True}
+        )
+
+    # -- satellites ---------------------------------------------------------
+
+    @staticmethod
+    def sat_journal_key(machine_id: str) -> str:
+        return f"_sat_{machine_id}"
+
+    def machine_online(self, mid: str) -> bool:
+        return self._sat_subs.get(mid, 0) > 0 or mid == self.machine_id
+
+    def sat_connected(self, mid: str) -> None:
+        first = self._sat_subs.get(mid, 0) == 0
+        self._sat_subs[mid] = self._sat_subs.get(mid, 0) + 1
+        if first:
+            catalog_mod.upsert_machine(
+                self.home, {"id": mid, "online": True,
+                            "last_seen_at": time.time()}
+            )
+            self.emit(
+                GLOBAL_KEY,
+                protocol.event(
+                    "machine.online", "", mid, {"machine_id": mid}
+                ),
+            )
+
+    def sat_disconnected(self, mid: str) -> None:
+        left = max(0, self._sat_subs.get(mid, 0) - 1)
+        self._sat_subs[mid] = left
+        if left:
+            return
+        catalog_mod.upsert_machine(
+            self.home, {"id": mid, "online": False,
+                        "last_seen_at": time.time()}
+        )
+        self.emit(
+            GLOBAL_KEY,
+            protocol.event(
+                "machine.offline", "", mid, {"machine_id": mid}
+            ),
+        )
+
+    def queue_command(
+        self, mid: str, op: str, session_key: str, data: dict
+    ) -> dict:
+        """Append a command to the satellite's journal; returns the envelope.
+
+        The satellite replays ``_sat_<mid>`` on reconnect, so this IS the
+        offline queue — nothing else to build.
+        """
+        with self._cmd_lock:
+            self._cmd_seq += 1
+            command_id = f"c{self._cmd_seq}"
+        local_key, _mid = protocol.split_remote_key(session_key)
+        cmd = protocol.command(op, local_key, mid, command_id, data)
+        written = self.journal.append(self.sat_journal_key(mid), cmd)
+        self.bus.publish(self.sat_journal_key(mid), written)
+        if session_key:
+            self.emit(
+                session_key,
+                protocol.event(
+                    "command.queued", session_key, self.machine_id,
+                    {"command_id": command_id, "op": op},
+                ),
+            )
+        return written
 
     def _catalog_loop(self) -> None:
         while not self._stop.is_set():
@@ -268,12 +340,15 @@ class _Handler(BaseHTTPRequestHandler):
         key: str | None,
         after_seq: int,
         device_id: str | None = None,
+        subscribe_key: str | None = None,
     ) -> None:
         journal_key = key if key is not None else GLOBAL_KEY
         # Subscribe BEFORE replay: an event appended between read_since
         # and subscribe would be lost from both. Queued events are then
         # deduped by seq against what replay already sent.
-        q = self._state.bus.subscribe(journal_key)
+        q = self._state.bus.subscribe(
+            subscribe_key if subscribe_key is not None else journal_key
+        )
         try:
             replay, truncated = self._state.journal.read_since(
                 journal_key, after_seq
@@ -343,6 +418,36 @@ class _Handler(BaseHTTPRequestHandler):
         finally:
             self._state.bus.unsubscribe(q)
 
+    def _agent_stream(self, mid: str, after_seq: int) -> None:
+        """Command SSE for one satellite; presence = this stream's lifetime."""
+        self._state.sat_connected(mid)
+        try:
+            self._sse_stream(
+                HubState.sat_journal_key(mid), after_seq,
+                subscribe_key=HubState.sat_journal_key(mid),
+            )
+        finally:
+            self._state.sat_disconnected(mid)
+
+    def _pull_attachment(self, key: str, ref: str) -> None:
+        target = attachments.resolve(self._state.home, key, ref)
+        if target is None:
+            self._send_error(404, "not_found", "no such attachment")
+            return
+        try:
+            body = Path(target).read_bytes()
+        except OSError:
+            self._send_error(404, "not_found", "attachment unreadable")
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
     def _sse_write(self, ev: dict) -> None:
         frame = (
             f"id: {ev.get('seq', 0)}\n"
@@ -404,6 +509,23 @@ class _Handler(BaseHTTPRequestHandler):
             self._sse_stream(None, after, device_id=device_id)
             return
 
+        if path == "/v1/agent/commands":
+            mid = str((args.get("machine") or [""])[0])
+            if not mid:
+                self._send_error(
+                    422, "bad_command", "machine is required"
+                )
+                return
+            after = _int_arg(args.get("last"), 0)
+            self._agent_stream(mid, after)
+            return
+
+        if path.startswith("/v1/agent/attachments/"):
+            stem = path[len("/v1/agent/attachments/"):]
+            key_part, _sep, ref = stem.rpartition("/")
+            self._pull_attachment(unquote(key_part), unquote(ref))
+            return
+
         if path.startswith("/v1/sessions/"):
             stem = path[len("/v1/sessions/"):]
             key_part, sep, action = stem.rpartition("/")
@@ -461,13 +583,96 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(401, "unauthorized", "pair this device first")
             return
 
+        if path == "/v1/agent/register":
+            body = self._read_body()
+            machine = (body or {}).get("machine") or {}
+            mid = str(machine.get("id") or "")
+            if not mid:
+                self._send_error(
+                    422, "bad_command", "machine.id is required"
+                )
+                return
+            catalog_mod.upsert_machine(
+                self._state.home,
+                {**machine, "last_seen_at": time.time()},
+            )
+            self._send_json(200, {"ok": True, "machine_id": mid})
+            return
+
+        if path == "/v1/agent/catalog":
+            body = self._read_body()
+            if body is None:
+                self._send_error(400, "bad_body", "unreadable JSON body")
+                return
+            mid = str(body.get("machine_id") or "")
+            rows = body.get("rows") or []
+            if not mid or not isinstance(rows, list):
+                self._send_error(
+                    422, "bad_command",
+                    "machine_id and rows are required",
+                )
+                return
+            # Snapshot ownership before the merge so attach/detach done
+            # on the satellite surfaces as an event the PWA reacts to.
+            before = {
+                protocol.remote_key(mid, str(r.get("key") or "")):
+                    r.get("ownership")
+                for r in rows if isinstance(r, dict)
+            }
+            old = {
+                k: (self._state.catalog.row_for(k) or {}).get("ownership")
+                for k in before
+            }
+            catalog_mod.merge_remote_rows(self._state.home, mid, rows)
+            self._state.catalog.refresh()
+            for hub_key, ownership in before.items():
+                if ownership and ownership != old.get(hub_key):
+                    self._state.emit(
+                        hub_key,
+                        protocol.event(
+                            "session.ownership", hub_key,
+                            self._state.machine_id,
+                            {"ownership": ownership},
+                        ),
+                    )
+            self._send_json(200, {"ok": True, "rows": len(rows)})
+            return
+
+        if path == "/v1/agent/events":
+            body = self._read_body()
+            if body is None:
+                self._send_error(400, "bad_body", "unreadable JSON body")
+                return
+            events = body.get("events") or []
+            mid = str(body.get("machine_id") or "")
+            if not isinstance(events, list):
+                self._send_error(
+                    422, "bad_command", "events must be a list"
+                )
+                return
+            accepted = self._accept_agent_events(mid, events)
+            self._send_json(200, {"ok": True, "accepted": accepted})
+            return
+
         if path == "/v1/sessions":
             body = self._read_body()
             if body is None:
                 self._send_error(400, "bad_body", "unreadable JSON body")
                 return
-            tool = str(body.get("harness") or body.get("tool") or "")
+            machine = str(body.get("machine") or "")
+            harness = str(body.get("harness") or body.get("tool") or "")
             cwd = str(body.get("cwd") or "")
+            prompt = str(body.get("prompt") or "")
+            if machine and machine != self._state.machine_id:
+                self._state.queue_command(
+                    machine, "launch", "",
+                    {"harness": harness, "cwd": cwd, "prompt": prompt},
+                )
+                self._send_json(
+                    202, {"ok": True, "queued": True,
+                          "note": "queued for satellite"}
+                )
+                return
             # Snapshot the catalog before launch: adoption later refuses
             # any of these ids, so a pre-existing same-cwd session can
             # never be claimed as the one we just started.
@@ -475,15 +680,11 @@ class _Handler(BaseHTTPRequestHandler):
             known = [
                 s.session_id
                 for _k, s, _st in self._state.catalog.tail_rows()
-                if s.tool_name == tool
+                if s.tool_name == harness
                 and os.path.realpath(s.path or "") == real_cwd
             ]
             ok, note, _name = supervise.launch_new(
-                self._state.home,
-                tool,
-                cwd,
-                str(body.get("prompt") or ""),
-                known_ids=known,
+                self._state.home, harness, cwd, prompt, known_ids=known
             )
             if not ok:
                 self._send_error(422, "launch_failed", note)
@@ -499,6 +700,10 @@ class _Handler(BaseHTTPRequestHandler):
             row = self._state.catalog.row_for(key)
             if row is None:
                 self._send_error(404, "unknown_session", "no such session")
+                return
+            remote_mid = row.get("machine_id")
+            if remote_mid and remote_mid != self._state.machine_id:
+                self._forward(key, remote_mid, action, row)
                 return
             if action == "attachments":
                 self._stage_attachment(key)
@@ -526,6 +731,113 @@ class _Handler(BaseHTTPRequestHandler):
     def _injector(self, key: str):
         meta = supervise.meta_for(self._state.home, key)
         return inject.injector_for(self._state.home, key, meta)
+
+    def _forward(
+        self, key: str, mid: str, action: str, row: dict
+    ) -> None:
+        """Route a write to the satellite owning ``key``.
+
+        Same ownership rules as local writes: observed sessions only
+        accept ``attach``. Everything lands in the machine's command
+        journal, so the phone gets 202 whether the satellite is live or
+        asleep — results arrive later as ``command.result`` events.
+        """
+        if action != "attach" and action != "control":
+            if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
+                self._send_error(
+                    409, "not_attached",
+                    "session is observed: read-only until attached",
+                )
+                return
+        if action == "attachments":
+            upload = self._read_upload()
+            if upload is None:
+                return
+            name, data = upload
+            payload, err = attachments.stage(
+                self._state.home, key, name, data
+            )
+            if payload is None:
+                self._send_error(
+                    422, "bad_attachment", err or "stage failed"
+                )
+                return
+            self._state.queue_command(mid, "attachment", key, {
+                "ref": payload["ref"],
+                "hub_key": key,
+                "machine": mid,
+            })
+            self._send_json(202, {**payload, "queued": True})
+            return
+        body = self._read_body()
+        if body is None:
+            self._send_error(400, "bad_body", "unreadable JSON body")
+            return
+        if action == "message":
+            try:
+                cmd = protocol.parse_message_command(body)
+            except ValueError as exc:
+                self._send_error(422, "bad_command", str(exc))
+                return
+            self._state.queue_command(mid, "message", key, {
+                "text": cmd["text"], "mode": cmd["mode"],
+                "attachments": cmd["attachments"],
+                "status": row.get("status") or "",
+            })
+        elif action == "approval":
+            try:
+                cmd = protocol.parse_approval_command(body)
+            except ValueError as exc:
+                self._send_error(422, "bad_command", str(exc))
+                return
+            self._state.queue_command(mid, "approval", key, {
+                "request_id": cmd["request_id"],
+                "decision": cmd["decision"],
+            })
+        elif action == "control":
+            try:
+                cmd = protocol.parse_control_command(body)
+            except ValueError as exc:
+                self._send_error(422, "bad_command", str(exc))
+                return
+            op = cmd["op"]
+            if op == "attach":
+                self._state.queue_command(mid, "attach", key, {
+                    "mode": body.get("mode") or "tmux",
+                    "status": row.get("status") or "",
+                })
+            else:
+                if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
+                    self._send_error(
+                        409, "not_attached",
+                        "session is observed: read-only until attached",
+                    )
+                    return
+                self._state.queue_command(mid, "control", key, {
+                    "ctl": op, "value": cmd.get("value") or "",
+                })
+        else:
+            self._send_error(404, "not_found", "unknown route")
+            return
+        self._send_json(202, {"ok": True, "queued": True})
+
+    def _accept_agent_events(
+        self, mid: str, events: list
+    ) -> int:
+        """Journal upstream events under the hub-scoped ``key@mid``."""
+        accepted = 0
+        for ev in events:
+            if not isinstance(ev, dict) or "type" not in ev:
+                continue
+            local_key = str(ev.get("session") or "")
+            if local_key:
+                hub_key = protocol.remote_key(mid, local_key)
+                ev = dict(ev, session=hub_key, machine=mid)
+                self._state.emit(hub_key, ev)
+            else:
+                self._state.emit(GLOBAL_KEY, dict(ev, machine=mid))
+            accepted += 1
+        return accepted
 
     def _send_message(self, key: str, row: dict) -> None:
         body = self._read_body()
@@ -682,32 +994,39 @@ class _Handler(BaseHTTPRequestHandler):
             ),
         )
 
-    def _stage_attachment(self, key: str) -> None:
+    def _read_upload(self):
+        """Returns ``(name, data)`` or sends the error and returns None."""
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = 0
         if length <= 0:
             self._send_error(400, "bad_body", "empty upload")
-            return
+            return None
         if length > attachments.MAX_BYTES:
             self._send_error(413, "too_large", "attachment exceeds 20 MB")
-            return
+            return None
         data = self.rfile.read(length)
         ctype = self.headers.get("Content-Type") or ""
-        name = ""
         if ctype.startswith("multipart/form-data"):
             name, data = _parse_multipart(ctype, data)
             if data is None:
                 self._send_error(
                     400, "bad_body", "unreadable multipart upload"
                 )
-                return
-        else:
-            from urllib.parse import parse_qs, urlparse
+                return None
+            return name, data
+        from urllib.parse import parse_qs, urlparse
 
-            args = parse_qs(urlparse(self.path).query)
-            name = (args.get("name") or [self.headers.get("X-Filename") or ""])[0]
+        args = parse_qs(urlparse(self.path).query)
+        name = (args.get("name") or [self.headers.get("X-Filename") or ""])[0]
+        return name, data
+
+    def _stage_attachment(self, key: str) -> None:
+        upload = self._read_upload()
+        if upload is None:
+            return
+        name, data = upload
         payload, err = attachments.stage(self._state.home, key, name, data)
         if payload is None:
             self._send_error(422, "bad_attachment", err or "stage failed")
