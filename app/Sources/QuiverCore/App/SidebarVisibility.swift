@@ -122,23 +122,25 @@ public final class SidebarVisibilityModel {
         store.set(hidden.map(\.rawValue).sorted(), forKey: Self.hiddenKey)
     }
 
-    /// The saved order, minus pages the enum dropped, plus pages it
-    /// gained — each new one slots in after its nearest ordered neighbour
-    /// in the default group layout, so it lands inside its own group
-    /// rather than at the end of the list.
+    /// The saved order per group, joined back up — each group keeps its
+    /// pinned pages in their saved order, and a page the save didn't know
+    /// takes its default slot among them. Rebuilding per group, not
+    /// against the full list, keeps a saved row from pulling a new page
+    /// inside another group.
     private static func completeOrder(_ saved: [AppSection]) -> [AppSection] {
         var seen = Set<AppSection>()
-        var order = saved.filter { seen.insert($0).inserted }
-        let natural = SidebarGroup.order
-        for (index, section) in natural.enumerated() where !seen.contains(section) {
-            seen.insert(section)
-            let at = natural[..<index].last { order.contains($0) }
-                .flatMap { order.firstIndex(of: $0) }.map { $0 + 1 }
-                ?? natural[(index + 1)...].first { order.contains($0) }
-                    .flatMap { order.firstIndex(of: $0) }
-                ?? order.endIndex
-            order.insert(section, at: at)
+        let pinned = saved.filter { seen.insert($0).inserted }
+        return SidebarGroup.allCases.flatMap { group in
+            var sections = pinned.filter { $0.group == group }
+            for (index, section) in group.sections.enumerated() where !sections.contains(section) {
+                let at = group.sections[..<index].last { sections.contains($0) }
+                    .flatMap { sections.firstIndex(of: $0) }.map { $0 + 1 }
+                    ?? group.sections[(index + 1)...].first { sections.contains($0) }
+                        .flatMap { sections.firstIndex(of: $0) }
+                    ?? sections.endIndex
+                sections.insert(section, at: at)
+            }
+            return sections
         }
-        return order
     }
 }

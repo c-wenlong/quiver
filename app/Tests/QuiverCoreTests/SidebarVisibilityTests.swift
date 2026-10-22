@@ -101,6 +101,24 @@ import Testing
         #expect(model.sections(in: .primitives) == [.plugins, .skills, .agentsMd, .mcpServers, .models])
     }
 
+    @Test func aMissingPageJoinsItsGroupNotItsNeighbour() {
+        let store = MemoryStore()
+        // Manage was reordered and the save predates .plugins. Its
+        // default neighbour Compute sits mid-Manage; joining there would
+        // interleave the groups.
+        var saved = SidebarGroup.order.map(\.rawValue).filter { $0 != "plugins" }
+        saved.removeAll { ["accounts", "harnesses", "compute"].contains($0) }
+        saved.insert(contentsOf: ["compute", "accounts", "harnesses"],
+                     at: saved.firstIndex(of: "inbox")! + 1)
+        store.set(saved, forKey: "sidebarOrder")
+        let model = SidebarVisibilityModel(store: store)
+        #expect(model.sections(in: .manage) == [.compute, .accounts, .harnesses])
+        #expect(model.sections(in: .primitives) == [.plugins, .skills, .agentsMd, .mcpServers, .models])
+        // Arrow keys never cross a group boundary.
+        #expect(model.step(.compute, by: 1) == .accounts)
+        #expect(model.step(.harnesses, by: 1) == .plugins)
+    }
+
     @Test func aSavedOrderWithDeadIdsIsCleanedUp() {
         let store = MemoryStore()
         store.set(["sessions", "gone", "overview", "calendar", "pricing", "accounts", "settings"],
