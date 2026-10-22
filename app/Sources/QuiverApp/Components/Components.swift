@@ -336,6 +336,9 @@ struct Tabs<Value: Hashable>: View {
     /// Runs on every tap, including on the tab already selected, so a
     /// detail page under a tab can go back on a reselect.
     var onSelect: ((Value) -> Void)? = nil
+    /// Segmented only: the track takes the offered width and the tabs
+    /// split it evenly, instead of hugging their titles.
+    var fillWidth = false
     @FocusState private var focused: Int?
 
     var body: some View {
@@ -351,7 +354,7 @@ struct Tabs<Value: Hashable>: View {
                     .padding(2)
                     .background(Theme.segmentTrack, in: .rect(cornerRadius: Theme.blockRadius))
                     .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
-                    .fixedSize()
+                    .fixedSize(horizontal: !fillWidth, vertical: true)
             case .period, .table:
                 HStack(spacing: 2) { buttons }.fixedSize()
             }
@@ -364,7 +367,7 @@ struct Tabs<Value: Hashable>: View {
     private var buttons: some View {
         ForEach(Array(options.enumerated()), id: \.element.value) { index, option in
             TabButton(title: option.title, icon: icons[option.value], isSelected: option.value == selection,
-                      isFocused: focused == index, style: style, onPanel: onPanel) {
+                      isFocused: focused == index, style: style, onPanel: onPanel, fillWidth: fillWidth) {
                 selection = option.value
                 onSelect?(option.value)
             }
@@ -400,6 +403,7 @@ private struct TabButton<Value: Hashable>: View {
     var isFocused: Bool
     var style: Tabs<Value>.Style
     var onPanel: Bool
+    var fillWidth = false
     var action: () -> Void
     @State private var hovering = false
 
@@ -441,6 +445,7 @@ private struct TabButton<Value: Hashable>: View {
                 .font(Theme.control)
                 .foregroundStyle(isSelected || hovering ? Theme.textPrimary : Theme.textTab)
                 .padding(.horizontal, 12)
+                .frame(maxWidth: fillWidth ? .infinity : nil)
                 .frame(height: Theme.controlHeight)
                 .background(fill, in: .rect(cornerRadius: radius))
                 .shadow(color: style == .segmented && isSelected ? .black.opacity(0.08) : .clear, radius: 1, y: 1)
