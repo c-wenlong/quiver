@@ -102,18 +102,10 @@ def upsert_machine(home: Path | None, row: dict) -> dict[str, dict]:
 
 
 def _supervised_keys(home: Path | None) -> set[str]:
-    """Session keys running under our supervisor (empty until R2 ships
-    ``supervise.py``; the file is the seam)."""
-    path = remote_dir_for(home) / "supervised.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            return {k for k in data if isinstance(k, str)}
-        if isinstance(data, list):
-            return {str(k) for k in data}
-    except Exception:
-        pass
-    return set()
+    """Session keys under our supervisor; dead tmux entries prune out."""
+    from quiver.remote import supervise
+
+    return supervise.supervised_keys(home)
 
 
 def session_to_row(

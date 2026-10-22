@@ -85,6 +85,9 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--revoke=", "Revoke one device id"),
         ("--json", "Print the device list as JSON"),
     ],
+    "remote attach": [
+        ("--mode=", "Supervision mode: tmux or headless"),
+    ],
     "session": [
         ("--search=", "Filter sessions"), ("-q", "Short for --search"),
         ("--grep=", "Alias for --search"),
@@ -424,6 +427,7 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
     "remote": {
         "serve": "remote serve", "pair": "remote pair",
         "status": "remote status", "devices": "remote devices",
+        "attach": "remote attach",
     },
     "report": {
         "daily": "report", "weekly": "report", "followups": "report followups",
@@ -539,6 +543,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("pair", "Pair a device: URL, QR and one-time token"),
         ("status", "Probe the hub, list machines and devices"),
         ("devices", "List or revoke paired devices"),
+        ("attach", "Move an observed session under supervision"),
     ],
     "mcp": [
         ("discover", "Find MCP servers across tool configs"),

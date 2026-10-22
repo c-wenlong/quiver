@@ -272,25 +272,29 @@ def _decode_generic(rec: dict) -> list[dict]:
                 return got
     out: list[dict] = []
     for msg in _tr._messages_from_record(rec):
-        if msg.role == "tool":
-            label, _, _sep = msg.text.partition(":")
-            name = label.strip()[:40] or "tool"
-            out.append(protocol.message(
-                "tool_use", "",
-                ts=msg.timestamp,
-                tool={
-                    "name": name,
-                    "call_id": "",
-                    "args_summary": msg.text[:160],
-                    "args_full": msg.text[:8000],
-                },
-            ))
-            continue
-        out.append(protocol.message(
-            "user" if msg.role == "human" else "assistant",
-            msg.text, ts=msg.timestamp,
-        ))
+        out.append(_normalized_to_payload(msg))
     return out
+
+
+def _normalized_to_payload(msg) -> dict:
+    """One ``NormalizedMessage`` → a RemoteMessage payload."""
+    if msg.role == "tool":
+        label, _, _sep = msg.text.partition(":")
+        name = label.strip()[:40] or "tool"
+        return protocol.message(
+            "tool_use", "",
+            ts=msg.timestamp,
+            tool={
+                "name": name,
+                "call_id": "",
+                "args_summary": msg.text[:160],
+                "args_full": msg.text[:8000],
+            },
+        )
+    return protocol.message(
+        "user" if msg.role == "human" else "assistant",
+        msg.text, ts=msg.timestamp,
+    )
 
 
 _DECODERS: dict[str, Callable[[dict], list[dict]]] = {
@@ -622,10 +626,7 @@ class SnapshotSource:
             common += 1
         out: list[dict] = []
         for msg in tr.messages[common:]:
-            kind = {"human": "user", "assistant": "assistant"}.get(
-                msg.role, "tool_use"
-            )
-            out.append(protocol.message(kind, msg.text, ts=msg.timestamp))
+            out.append(_normalized_to_payload(msg))
         self._fps = fps
         return out
 
@@ -744,6 +745,12 @@ class TailManager:
         self.max_sessions = max_sessions
         self.tailers: dict[str, Tailer] = {}
         self.statuses: dict[str, str] = {}
+        # Last time each key emitted a transcript append; the attach
+        # idle check reads this server-side.
+        self.last_append: dict[str, float] = {}
+
+    def last_append_at(self, key: str) -> float | None:
+        return self.last_append.get(key)
 
     def ensure(self, key: str, session: Session, status: str) -> None:
         """Start a tailer on demand — a client opened this session.
@@ -892,5 +899,7 @@ class TailManager:
                     ),
                 )
                 n += 1
+            if messages:
+                self.last_append[key] = now
             tailer.commit_cursor()
         return n

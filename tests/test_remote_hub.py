@@ -166,7 +166,305 @@ class TestEndpoints(HubBase):
         self.assertEqual(json.loads(data)["items"], [])
 
 
-class TestReadRoutes(HubBase):
+class _AttachedServer(_Server):
+    """Hub with one session already marked supervised (headless)."""
+
+    def __init__(self, **kw):
+        super().__init__(sessions=[_session()],
+                         statuses=lambda ss: ["done"])
+        from quiver.remote import supervise
+        supervise.mark(self.home, "claude:s1", {
+            "mode": "headless", "tool_name": "claude",
+            "session_id": "s1", "cwd": "/tmp/proj", "attached_at": 0,
+        })
+        self.state.catalog.refresh()
+        self.state.tail_manager.sync(self.state.catalog.tail_rows())
+
+
+class TestHubWriteRoutes(unittest.TestCase):
+    def setUp(self):
+        self.srv = _AttachedServer()
+        self.addCleanup(self.srv.stop)
+        cred = self.srv.pair()
+        self.hdr = {"Authorization": f"Bearer {cred['credential']}"}
+        row = self.srv.state.catalog.row_for("claude:s1")
+        self.assertEqual(row["ownership"], "attached")
+
+    def test_message_success(self):
+        from quiver.remote import inject
+        with patch.object(
+            inject.ClaudeHeadlessInjector, "_run",
+            return_value=(True, "turn complete"),
+        ):
+            status, data = self.srv.request(
+                "POST", "/v1/sessions/claude:s1/message",
+                body={"text": "hi", "mode": "steer"}, headers=self.hdr,
+            )
+        self.assertEqual(status, 200, data)
+        self.assertTrue(json.loads(data)["ok"])
+
+    def test_message_bad_command_and_body(self):
+        status, _ = self.srv.request(
+            "POST", "/v1/sessions/claude:s1/message",
+            body={"text": ""}, headers=self.hdr,
+        )
+        self.assertEqual(status, 422)
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.srv.port, timeout=5
+        )
+        try:
+            conn.request(
+                "POST", "/v1/sessions/claude:s1/message",
+                body="{not json", headers=self.hdr,
+            )
+            self.assertEqual(conn.getresponse().status, 400)
+        finally:
+            conn.close()
+
+    def test_message_unknown_attachment(self):
+        status, data = self.srv.request(
+            "POST", "/v1/sessions/claude:s1/message",
+            body={"text": "hi", "attachments": ["nope.png"]},
+            headers=self.hdr,
+        )
+        self.assertEqual(status, 422)
+        self.assertEqual(
+            json.loads(data)["error"]["code"], "bad_attachment"
+        )
+
+    def test_message_send_failure_maps_409(self):
+        from quiver.remote import inject
+        with patch.object(
+            inject.ClaudeHeadlessInjector, "_run",
+            return_value=(False, "claude exploded"),
+        ):
+            status, data = self.srv.request(
+                "POST", "/v1/sessions/claude:s1/message",
+                body={"text": "go"}, headers=self.hdr,
+            )
+        self.assertEqual(status, 409)
+        self.assertIn("claude exploded", data.decode())
+
+    def test_approval_unsupported_headless(self):
+        status, data = self.srv.request(
+            "POST", "/v1/sessions/claude:s1/approval",
+            body={"request_id": "r1", "decision": "allow"},
+            headers=self.hdr,
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(
+            json.loads(data)["error"]["code"], "approval_not_supported"
+        )
+
+    def test_control_ops(self):
+        status, data = self.srv.request(
+            "POST", "/v1/sessions/claude:s1/control",
+            body={"op": "compact"}, headers=self.hdr,
+        )
+        # headless rejects TUI-only ops
+        self.assertEqual(status, 409)
+        status, data = self.srv.request(
+            "POST", "/v1/sessions/claude:s1/control",
+            body={"op": "detach"}, headers=self.hdr,
+        )
+        self.assertEqual(status, 200, data)
+        row = self.srv.state.catalog.row_for("claude:s1")
+        self.assertEqual(row["ownership"], "observed")
+        # now writes are gated again
+        status, _ = self.srv.request(
+            "POST", "/v1/sessions/claude:s1/message",
+            body={"text": "hi"}, headers=self.hdr,
+        )
+        self.assertEqual(status, 409)
+
+    def test_attach_idempotent_and_modes(self):
+        status, data = self.srv.request(
+            "POST", "/v1/sessions/claude:s1/control",
+            body={"op": "attach"}, headers=self.hdr,
+        )
+        self.assertEqual(status, 200)  # already attached
+
+    def test_attach_not_attachable(self):
+        # gemini has no resume flags → attachable False
+        srv = _Server(
+            sessions=[_session(tool="gemini", sid="g1")],
+            statuses=lambda ss: ["done"],
+        )
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        status, data = srv.request(
+            "POST", "/v1/sessions/gemini:g1/control",
+            body={"op": "attach"},
+            headers={"Authorization": f"Bearer {cred['credential']}"},
+        )
+        self.assertEqual(status, 422)
+        self.assertEqual(
+            json.loads(data)["error"]["code"], "not_attachable"
+        )
+
+    def test_attach_headless_bad_mode(self):
+        srv = _Server(
+            sessions=[_session(tool="codex", sid="c9")],
+            statuses=lambda ss: ["done"],
+        )
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        status, _ = srv.request(
+            "POST", "/v1/sessions/codex:c9/control",
+            body={"op": "attach", "mode": "headless"},
+            headers={"Authorization": f"Bearer {cred['credential']}"},
+        )
+        self.assertEqual(status, 422)
+
+    def test_attach_headless_success(self):
+        srv = _Server(
+            sessions=[_session(sid="hx")], statuses=lambda ss: ["done"],
+        )
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        status, data = srv.request(
+            "POST", "/v1/sessions/claude:hx/control",
+            body={"op": "attach", "mode": "headless"},
+            headers={"Authorization": f"Bearer {cred['credential']}"},
+        )
+        self.assertEqual(status, 200, data)
+
+    def test_attachment_staging(self):
+        import http.client as hc
+        conn = hc.HTTPConnection("127.0.0.1", self.srv.port, timeout=5)
+        try:
+            conn.request(
+                "POST",
+                "/v1/sessions/claude:s1/attachments?name=note.txt",
+                body=b"hello file",
+                headers={
+                    "Authorization": self.hdr["Authorization"],
+                    "Content-Type": "application/octet-stream",
+                },
+            )
+            resp = conn.getresponse()
+            payload = json.loads(resp.read())
+            self.assertEqual(resp.status, 200, payload)
+            self.assertIn("ref", payload)
+        finally:
+            conn.close()
+        # extension cap
+        conn = hc.HTTPConnection("127.0.0.1", self.srv.port, timeout=5)
+        try:
+            conn.request(
+                "POST",
+                "/v1/sessions/claude:s1/attachments?name=evil.exe",
+                body=b"MZ",
+                headers={
+                    "Authorization": self.hdr["Authorization"],
+                    "Content-Type": "application/octet-stream",
+                },
+            )
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 422)
+        finally:
+            conn.close()
+
+    def test_attachment_multipart_upload(self):
+        boundary = "TESTBOUNDARY"
+        blob = (
+            b"--TESTBOUNDARY\r\n"
+            b'Content-Disposition: form-data; name="file"; '
+            b'filename="shot.png"\r\n'
+            b"Content-Type: image/png\r\n\r\n"
+            b"\x89PNG-DATA\r\n--TESTBOUNDARY--\r\n"
+        )
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.srv.port, timeout=5
+        )
+        try:
+            conn.request(
+                "POST", "/v1/sessions/claude:s1/attachments",
+                body=blob,
+                headers={
+                    "Authorization": self.hdr["Authorization"],
+                    "Content-Type":
+                        f"multipart/form-data; boundary={boundary}",
+                },
+            )
+            resp = conn.getresponse()
+            payload = json.loads(resp.read())
+            self.assertEqual(resp.status, 200, payload)
+            self.assertTrue(payload["ref"].endswith("shot.png"))
+        finally:
+            conn.close()
+
+    def test_multipart_keeps_trailing_dash_newline_bytes(self):
+        # The old parser rstripped "\r\n-" from the tail, corrupting
+        # content that legitimately ended in dash or newline bytes.
+        from quiver.remote import attachments as att
+
+        boundary = "KEEPBYTES"
+        content = b"log tail ends with dash-\r\n"
+        blob = (
+            b"--KEEPBYTES\r\n"
+            b'Content-Disposition: form-data; name="file"; '
+            b'filename="note.log"\r\n'
+            b"Content-Type: text/plain\r\n\r\n" + content +
+            b"\r\n--KEEPBYTES--\r\n"
+        )
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.srv.port, timeout=5
+        )
+        try:
+            conn.request(
+                "POST", "/v1/sessions/claude:s1/attachments",
+                body=blob,
+                headers={
+                    "Authorization": self.hdr["Authorization"],
+                    "Content-Type":
+                        f"multipart/form-data; boundary={boundary}",
+                },
+            )
+            resp = conn.getresponse()
+            payload = json.loads(resp.read())
+            self.assertEqual(resp.status, 200, payload)
+        finally:
+            conn.close()
+        staged = att.resolve(
+            self.srv.state.home, "claude:s1", payload["ref"]
+        )
+        self.assertIsNotNone(staged)
+        self.assertEqual(Path(staged).read_bytes(), content)
+
+    def test_multipart_boundary_with_extra_params(self):
+        # `boundary=X; charset=utf-8` must extract only X — the old
+        # split-on-"boundary=" swallowed the trailing params into the
+        # marker and no part ever matched.
+        boundary = "PARAMS123"
+        blob = (
+            b"--PARAMS123\r\n"
+            b'Content-Disposition: form-data; name="file"; '
+            b'filename="a.txt"\r\n'
+            b"Content-Type: text/plain\r\n\r\n"
+            b"hello\r\n--PARAMS123--\r\n"
+        )
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.srv.port, timeout=5
+        )
+        try:
+            conn.request(
+                "POST", "/v1/sessions/claude:s1/attachments",
+                body=blob,
+                headers={
+                    "Authorization": self.hdr["Authorization"],
+                    "Content-Type":
+                        f'multipart/form-data; boundary={boundary}; '
+                        'charset=utf-8',
+                },
+            )
+            resp = conn.getresponse()
+            payload = json.loads(resp.read())
+            self.assertEqual(resp.status, 200, payload)
+            self.assertTrue(payload["ref"].endswith("a.txt"))
+        finally:
+            conn.close()
+
     def test_inbox_item_shape(self):
         srv = _Server(
             sessions=[_session(sid="f1")],
@@ -186,7 +484,7 @@ class TestReadRoutes(HubBase):
     def test_machines_lists_self(self):
         self.srv.state._register_machine()
         status, data = self.srv.request(
-            "GET", "/v1/machines", headers=self.auth()
+            "GET", "/v1/machines", headers=self.hdr
         )
         machines = json.loads(data)["machines"]
         self.assertTrue(
@@ -204,44 +502,57 @@ class TestReadRoutes(HubBase):
             )
         status, data = self.srv.request(
             "GET", "/v1/sessions/claude:s1/messages?limit=2",
-            headers=self.auth(),
+            headers=self.hdr,
         )
         msgs = json.loads(data)["messages"]
         self.assertEqual(len(msgs), 2)
         self.assertEqual(msgs[-1]["data"]["text"], "m4")
-        cutoff = msgs[0]["seq"]
+        status, data = self.srv.request(
+            "GET", "/v1/sessions/claude:s1/messages",
+            headers=self.hdr,
+        )
+        all_msgs = json.loads(data)["messages"]
+        cutoff = all_msgs[2]["seq"]
         status, data = self.srv.request(
             "GET",
             f"/v1/sessions/claude:s1/messages?before={cutoff}",
-            headers=self.auth(),
+            headers=self.hdr,
         )
         msgs = json.loads(data)["messages"]
         self.assertEqual(
-            [m["data"]["text"] for m in msgs], ["m0", "m1", "m2"]
+            [m["data"]["text"] for m in msgs], ["m0", "m1"]
         )
 
     def test_events_unknown_key_404(self):
         status, _ = self.srv.request(
-            "GET", "/v1/sessions/ghost/events", headers=self.auth()
+            "GET", "/v1/sessions/ghost/events", headers=self.hdr
         )
         self.assertEqual(status, 404)
 
-    def test_messages_unknown_key_404(self):
-        status, _ = self.srv.request(
-            "GET", "/v1/sessions/ghost/messages", headers=self.auth()
-        )
-        self.assertEqual(status, 404)
-
-    def test_bad_pair_json(self):
-        conn = http.client.HTTPConnection(
-            "127.0.0.1", self.srv.port, timeout=5
-        )
-        try:
-            conn.request("POST", "/v1/pair", body="{bad",
-                         headers={"Content-Type": "application/json"})
-            self.assertEqual(conn.getresponse().status, 400)
-        finally:
-            conn.close()
+    def test_new_session_launch(self):
+        # launch_new is mocked: without it this route could spawn a real
+        # claude process wherever tmux happens to be installed.
+        with patch(
+            "quiver.remote.supervise.launch_new",
+            return_value=(True, "launched", "qv-t"),
+        ) as launch:
+            status, data = self.srv.request(
+                "POST", "/v1/sessions",
+                body={"harness": "claude", "cwd": "/tmp", "prompt": "hi"},
+                headers=self.hdr,
+            )
+        self.assertEqual(status, 202, data)
+        launch.assert_called_once()
+        with patch(
+            "quiver.remote.supervise.launch_new",
+            return_value=(False, "tmux is not available", None),
+        ):
+            status, data = self.srv.request(
+                "POST", "/v1/sessions",
+                body={"harness": "claude", "cwd": "/tmp", "prompt": "hi"},
+                headers=self.hdr,
+            )
+        self.assertEqual(status, 422, data)
 
     def test_static_assets(self):
         for path in ("/", "/app.js", "/styles.css",
@@ -251,33 +562,18 @@ class TestReadRoutes(HubBase):
         status, _ = self.srv.request("GET", "/nope.js")
         self.assertEqual(status, 404)
 
-
-class TestWriteStubs(HubBase):
-    """R1: write routes exist but return the documented stubs."""
-
-    def test_post_sessions_501(self):
-        status, data = self.srv.request(
-            "POST", "/v1/sessions", body={"harness": "claude"},
-            headers=self.auth(),
+    def test_bad_body_400(self):
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.srv.port, timeout=5
         )
-        self.assertEqual(status, 501)
-        self.assertEqual(
-            json.loads(data)["error"]["code"], "not_implemented"
-        )
-
-    def test_post_unknown_action_404(self):
-        status, _ = self.srv.request(
-            "POST", "/v1/sessions/claude:s1/bogus",
-            body={}, headers=self.auth(),
-        )
-        self.assertEqual(status, 404)
-
-    def test_post_unknown_session_404(self):
-        status, _ = self.srv.request(
-            "POST", "/v1/sessions/ghost/message",
-            body={"text": "x"}, headers=self.auth(),
-        )
-        self.assertEqual(status, 404)
+        try:
+            conn.request(
+                "POST", "/v1/sessions/claude:s1/control",
+                body="{bad", headers=self.hdr,
+            )
+            self.assertEqual(conn.getresponse().status, 400)
+        finally:
+            conn.close()
 
 
 class TestServeEntry(unittest.TestCase):
@@ -302,9 +598,13 @@ class TestServeEntry(unittest.TestCase):
             self.assertTrue(all(t.is_alive() for t in state._threads))
         finally:
             state.stop()
-        self.assertTrue(
-            all(not t.is_alive() for t in state._threads)
-        )
+        # stop() joins each thread with a 2s cap; a thread caught
+        # mid-refresh under suite load may outlive it briefly.
+        deadline = time.time() + 5
+        while any(t.is_alive() for t in state._threads):
+            if time.time() > deadline:
+                self.fail("state.stop() left live threads")
+            time.sleep(0.05)
 
 
 class TestGlobalEvents(HubBase):

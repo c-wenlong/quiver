@@ -1,0 +1,625 @@
+"""R2: supervise registry + tmux/headless injectors + hub write routes."""
+
+import json
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from quiver.remote import attachments, inject, protocol, supervise
+from quiver.sessions.models import Session
+
+from tests.test_remote_hub import _Server
+
+
+def _session(tool="claude", sid="abc-123", path="/tmp/proj"):
+    return Session(timestamp=0, agent="Claude Code", path=path,
+                   session_id=sid, tool_name=tool)
+
+
+class TestSuperviseRegistry(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.key = "claude:abc-123"
+
+    def test_mark_read_unmark(self):
+        supervise.mark(self.home, self.key, {"mode": "headless"})
+        self.assertIn(self.key, supervise.supervised_keys(self.home))
+        supervise.unmark(self.home, self.key)
+        self.assertNotIn(self.key, supervise.supervised_keys(self.home))
+
+    def test_dead_tmux_pruned(self):
+        supervise.mark(
+            self.home, self.key,
+            {"mode": "tmux", "tmux": "qv-dead"},
+        )
+        with patch.object(supervise, "tmux_alive", return_value=False):
+            self.assertNotIn(self.key, supervise.supervised_keys(self.home))
+        # and the registry file no longer lists it
+        self.assertNotIn(self.key, supervise.meta_for(self.home, self.key) or {})
+
+    def test_alive_tmux_survives(self):
+        supervise.mark(
+            self.home, self.key, {"mode": "tmux", "tmux": "qv-live"}
+        )
+        with patch.object(supervise, "tmux_alive", return_value=True):
+            self.assertIn(self.key, supervise.supervised_keys(self.home))
+
+
+class TestAttach(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.key = "claude:abc-123"
+        self.session = _session()
+
+    def _attach(self, **kw):
+        kw.setdefault("last_append_at", None)
+        kw.setdefault("status", "done")
+        with patch.object(supervise, "_stop_local_writers"):
+            return supervise.attach(self.home, self.key, self.session, **kw)
+
+    def test_active_session_refused(self):
+        ok, note = self._attach(status="active")
+        self.assertFalse(ok)
+        self.assertIn("idle", note)
+
+    def test_recent_append_refused(self):
+        ok, _ = self._attach(last_append_at=time.time() - 1)
+        self.assertFalse(ok)
+
+    def test_headless_marks_registry(self):
+        ok, note = self._attach(mode="headless")
+        self.assertTrue(ok, note)
+        meta = supervise.meta_for(self.home, self.key)
+        self.assertEqual(meta["mode"], "headless")
+
+    def test_headless_nonclaude_refused(self):
+        ok, note = supervise.attach(
+            self.home, "opencode:x",
+            _session(tool="opencode", sid="x"),
+            last_append_at=None, status="done", mode="headless",
+        )
+        self.assertFalse(ok)
+        self.assertIn("claude", note)
+
+    def test_tmux_launch_uses_resume_flags(self):
+        with patch.object(
+            supervise, "launch_tmux", return_value="qv-x"
+        ) as launch:
+            ok, note = self._attach(mode="tmux")
+        self.assertTrue(ok, note)
+        argv = launch.call_args[0][1]
+        self.assertEqual(argv[0], "claude")
+        self.assertIn("--resume", argv)
+        self.assertIn("abc-123", argv)
+
+    def test_unresumable_refused(self):
+        ok, note = supervise.attach(
+            self.home, "gemini:x",
+            _session(tool="gemini", sid="x"),
+            last_append_at=None, status="done",
+        )
+        self.assertFalse(ok)
+
+    def test_double_attach_is_idempotent(self):
+        self._attach(mode="headless")
+        ok, note = self._attach(mode="headless")
+        self.assertTrue(ok)
+        self.assertIn("already", note)
+
+
+class TestTmuxInjector(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.key = "claude:abc-123"
+        self.session = _session()
+        inject.TmuxInjector._answered.clear()  # class-level replay state
+        # send() re-checks supervision at write time — an unmarked
+        # session is refused even when the route already cleared it.
+        supervise.mark(self.home, self.key, {"mode": "tmux", "tmux": "qv-x"})
+        self.inj = inject.TmuxInjector(self.home, self.key)
+
+    def test_queue_refuses_active(self):
+        out = self.inj.send(self.session, {"text": "hi", "mode": "queue"}, "active")
+        self.assertFalse(out.ok)
+
+    def test_send_refuses_after_detach(self):
+        supervise.unmark(self.home, self.key)
+        out = self.inj.send(
+            self.session, {"text": "hi", "mode": "steer"}, "done"
+        )
+        self.assertFalse(out.ok)
+        self.assertIn("detached", out.note)
+
+    def test_steer_sends(self):
+        with patch.object(supervise, "send_text", return_value=True) as st:
+            out = self.inj.send(self.session, {"text": "hi", "mode": "steer"}, "active")
+        self.assertTrue(out.ok)
+        self.assertEqual(st.call_args[0][1], "hi")
+
+    def test_attachment_paths_atref(self):
+        with patch.object(supervise, "send_text", return_value=True) as st:
+            out = self.inj.send(
+                self.session,
+                {"text": "look", "mode": "queue",
+                 "attachments": ["/tmp/a.png", "/tmp/b.png"]},
+                "done",
+            )
+        self.assertTrue(out.ok)
+        sent = st.call_args[0][1]
+        self.assertIn("@/tmp/a.png", sent)
+        self.assertIn("@/tmp/b.png", sent)
+
+    def test_approval_digit(self):
+        pane = "Do you want to proceed? 1. Yes 2. Yes, and don't ask again"
+        with patch.object(supervise, "capture_pane", return_value=pane), \
+             patch.object(supervise, "send_key", return_value=True) as sk:
+            out = self.inj.approval(self.session, "r1", "always")
+        self.assertTrue(out.ok)
+        self.assertEqual(sk.call_args[0][1], "2")
+
+    def test_approval_refused_without_prompt(self):
+        with patch.object(supervise, "capture_pane", return_value="❯ idle"), \
+             patch.object(supervise, "send_key", return_value=True) as sk:
+            out = self.inj.approval(self.session, "r1", "allow")
+        self.assertFalse(out.ok)
+        self.assertIn("no approval", out.note)
+        sk.assert_not_called()
+
+    def test_approval_replay_rejected(self):
+        # A retried request_id must not consume a different menu.
+        pane = "Do you want to proceed? 1. Yes"
+        with patch.object(supervise, "capture_pane", return_value=pane), \
+             patch.object(supervise, "send_key", return_value=True) as sk:
+            self.assertTrue(
+                self.inj.approval(self.session, "r1", "allow").ok
+            )
+            # A retried approval builds a fresh injector — the replay
+            # guard lives on the class, keyed by session.
+            again = inject.TmuxInjector(self.home, self.key)
+            out = again.approval(self.session, "r1", "deny")
+        self.assertFalse(out.ok)
+        self.assertIn("already answered", out.note)
+        self.assertEqual(sk.call_count, 1)
+
+    def test_interrupt_escape(self):
+        with patch.object(supervise, "send_key", return_value=True) as sk:
+            out = self.inj.control(self.session, "interrupt", "")
+        self.assertTrue(out.ok)
+        self.assertEqual(sk.call_args[0][1], "Escape")
+
+    def test_compact_slash(self):
+        with patch.object(supervise, "send_text", return_value=True) as st:
+            out = self.inj.control(self.session, "compact", "")
+        self.assertTrue(out.ok)
+        self.assertEqual(st.call_args[0][1], "/compact")
+
+    def test_send_empty_and_unreachable(self):
+        out = self.inj.send(self.session, {"text": "", "mode": "steer"}, "done")
+        self.assertFalse(out.ok)
+        self.assertIn("empty", out.note)
+        with patch.object(supervise, "send_text", return_value=False):
+            out = self.inj.send(
+                self.session, {"text": "hi", "mode": "steer"}, "done"
+            )
+        self.assertFalse(out.ok)
+        self.assertIn("not reachable", out.note)
+
+    def test_approval_unknown_and_unreachable(self):
+        out = self.inj.approval(self.session, "r1", "bogus")
+        self.assertFalse(out.ok)
+        self.assertIn("unknown decision", out.note)
+        pane = "Do you want to proceed? 1. Yes"
+        with patch.object(supervise, "capture_pane", return_value=pane), \
+             patch.object(supervise, "send_key", return_value=False):
+            out = self.inj.approval(self.session, "r1", "allow")
+        self.assertFalse(out.ok)
+        self.assertIn("not reachable", out.note)
+
+    def test_control_kill_and_unknown(self):
+        supervise.mark(self.home, self.key, {"mode": "tmux", "tmux": "qv-x"})
+        with patch.object(supervise, "kill", return_value=True) as k:
+            out = self.inj.control(self.session, "kill", "")
+        self.assertTrue(out.ok)
+        k.assert_called_once_with("qv-x")
+        self.assertIsNone(supervise.meta_for(self.home, self.key))
+        out = self.inj.control(self.session, "nonsense", "")
+        self.assertFalse(out.ok)
+        self.assertIn("unsupported", out.note)
+
+
+class TestHeadless(unittest.TestCase):
+    def setUp(self):
+        self.session = _session()
+        self.inj = inject.ClaudeHeadlessInjector(Path(tempfile.mkdtemp()), "claude:x")
+
+    def test_argv_shape(self):
+        argv = self.inj.argv(self.session, "hello")
+        self.assertEqual(argv[:2], ["claude", "-p"])
+        self.assertIn("--resume", argv)
+        self.assertIn("abc-123", argv)
+        self.assertIn("stream-json", argv)
+        self.assertEqual(argv[-1], "hello")
+
+    def test_approval_unsupported(self):
+        out = self.inj.approval(self.session, "r1", "allow")
+        self.assertFalse(out.ok)
+        self.assertIn("approval_not_supported", out.note)
+
+
+class _FakeStdout:
+    def __init__(self, lines):
+        self._it = iter(lines)
+        self.closed = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._it)
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeProc:
+    """Popen stand-in: canned stream-json lines + exit code."""
+
+    def __init__(self, lines, rc=0):
+        self.stdout = _FakeStdout(lines)
+        self._rc = rc
+        self.killed = False
+
+    def wait(self, timeout=None):
+        return self._rc
+
+    def kill(self):
+        self.killed = True
+
+
+class TestHeadlessRun(unittest.TestCase):
+    def setUp(self):
+        self.session = _session()
+        self.inj = inject.ClaudeHeadlessInjector(
+            Path(tempfile.mkdtemp()), "claude:x"
+        )
+
+    def _send(self, lines, rc=0):
+        supervise.mark(self.inj.home, self.inj.key, {"mode": "headless"})
+        with patch.object(inject.subprocess, "Popen",
+                          return_value=_FakeProc(lines, rc)):
+            return self.inj.send(
+                self.session, {"text": "go", "mode": "queue"}, "done"
+            )
+
+    def test_result_text_returned(self):
+        lines = [
+            json.dumps({"type": "system", "subtype": "init"}),
+            json.dumps({"type": "assistant"}),
+            json.dumps({"type": "result", "result": "PONG"}),
+        ]
+        out = self._send(lines)
+        self.assertTrue(out.ok)
+        self.assertEqual(out.note, "PONG")
+
+    def test_error_result_fails(self):
+        lines = [json.dumps(
+            {"type": "result", "result": "boom", "is_error": True}
+        )]
+        out = self._send(lines)
+        self.assertFalse(out.ok)
+        self.assertIn("boom", out.note)
+
+    def test_nonzero_exit(self):
+        out = self._send([], rc=2)
+        self.assertFalse(out.ok)
+        self.assertIn("exited 2", out.note)
+
+    def test_interrupt_kills_inflight(self):
+        proc = _FakeProc([])
+        with patch.object(inject.subprocess, "Popen", return_value=proc):
+            self.inj._procs[self.inj.key] = proc
+            out = self.inj.control(self.session, "interrupt", "")
+        self.assertTrue(out.ok)
+        self.assertTrue(proc.killed)
+        # no run in flight → interrupt reports that
+        out = self.inj.control(self.session, "interrupt", "")
+        self.assertFalse(out.ok)
+
+    def test_detach_unmarks(self):
+        supervise.mark(self.inj.home, self.inj.key, {"mode": "headless"})
+        out = self.inj.control(self.session, "detach", "")
+        self.assertTrue(out.ok)
+        self.assertIsNone(supervise.meta_for(self.inj.home, self.inj.key))
+
+    def test_send_empty_and_detached(self):
+        out = self.inj.send(
+            self.session, {"text": "", "mode": "queue"}, "done"
+        )
+        self.assertFalse(out.ok)
+        self.assertIn("empty", out.note)
+        # No registry mark → the write-time recheck refuses.
+        out = self.inj.send(
+            self.session, {"text": "go", "mode": "queue"}, "done"
+        )
+        self.assertFalse(out.ok)
+        self.assertIn("detached", out.note)
+
+    def test_popen_launch_failure(self):
+        supervise.mark(self.inj.home, self.inj.key, {"mode": "headless"})
+        with patch.object(inject.subprocess, "Popen",
+                          side_effect=OSError("no claude")):
+            out = self.inj.send(
+                self.session, {"text": "go", "mode": "queue"}, "done"
+            )
+        self.assertFalse(out.ok)
+        self.assertIn("failed to launch", out.note)
+
+    def test_detach_between_spawn_and_register(self):
+        # A detach landing after Popen() but before _procs registration
+        # would orphan the child; the post-register recheck kills it.
+        proc = _FakeProc([json.dumps({"type": "result", "result": "x"})])
+        supervise.mark(self.inj.home, self.inj.key, {"mode": "headless"})
+
+        def spawn(*_a, **_kw):
+            supervise.unmark(self.inj.home, self.inj.key)  # detach lands
+            return proc
+
+        with patch.object(inject.subprocess, "Popen", side_effect=spawn):
+            out = self.inj.send(
+                self.session, {"text": "go", "mode": "queue"}, "done"
+            )
+        self.assertFalse(out.ok)
+        self.assertIn("detached", out.note)
+        self.assertTrue(proc.killed)
+        self.assertNotIn(self.inj.key, self.inj._procs)
+
+    def test_watchdog_kills_silent_run(self):
+        # A run that never emits a line must still die at the deadline;
+        # the stdout loop alone cannot bound it.
+        class _BlockingStdout:
+            def __init__(self, proc):
+                self.proc = proc
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                while not self.proc.killed:
+                    time.sleep(0.005)
+                raise StopIteration
+
+            def close(self):
+                pass
+
+        class _SilentProc:
+            def __init__(self):
+                self.killed = False
+                self.stdout = _BlockingStdout(self)
+
+            def wait(self, timeout=None):
+                return -9
+
+            def kill(self):
+                self.killed = True
+
+        proc = _SilentProc()
+        supervise.mark(self.inj.home, self.inj.key, {"mode": "headless"})
+        with patch.object(inject, "HEADLESS_TIMEOUT_S", 0.05), \
+             patch.object(inject.subprocess, "Popen", return_value=proc):
+            out = self.inj.send(
+                self.session, {"text": "go", "mode": "queue"}, "done"
+            )
+        self.assertFalse(out.ok)
+        self.assertIn("timed out", out.note)
+        self.assertTrue(proc.killed)
+        self.assertNotIn(self.inj.key, self.inj._procs)
+
+    def test_second_sender_is_refused_while_held(self):
+        lock = self.inj._locks[self.inj.key]
+        lock.acquire()
+        try:
+            with patch.object(inject, "_QUEUE_WAIT_S", 0.01):
+                out = self.inj.send(
+                    self.session, {"text": "go", "mode": "queue"}, "done"
+                )
+        finally:
+            lock.release()
+        self.assertFalse(out.ok)
+        self.assertIn("in flight", out.note)
+
+    def test_control_kill_reaps_inflight(self):
+        proc = _FakeProc([])
+        self.inj._procs[self.inj.key] = proc
+        supervise.mark(self.inj.home, self.inj.key, {"mode": "headless"})
+        out = self.inj.control(self.session, "kill", "")
+        self.assertTrue(out.ok)
+        self.assertTrue(proc.killed)
+        self.assertIsNone(
+            supervise.meta_for(self.inj.home, self.inj.key)
+        )
+
+    def test_interrupt_with_nothing_in_flight(self):
+        out = self.inj.control(self.session, "interrupt", "")
+        self.assertFalse(out.ok)
+        self.assertIn("no headless run", out.note)
+
+
+class TestAttachments(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.key = "claude:s1"
+
+    def test_stage_resolve_roundtrip(self):
+        payload, err = attachments.stage(self.home, self.key, "shot.png", b"\x89PNG")
+        self.assertIsNone(err)
+        path = attachments.resolve(self.home, self.key, payload["ref"])
+        self.assertEqual(Path(path).read_bytes(), b"\x89PNG")
+
+    def test_caps_and_types(self):
+        payload, err = attachments.stage(self.home, self.key, "x.exe", b"x")
+        self.assertIsNone(payload)
+        self.assertIn("type", err)
+        payload, err = attachments.stage(
+            self.home, self.key, "big.png", b"0" * (attachments.MAX_BYTES + 1)
+        )
+        self.assertIsNone(payload)
+        self.assertIn("20 MB", err)
+
+    def test_traversal_refused(self):
+        attachments.stage(self.home, self.key, "a.txt", b"x")
+        self.assertIsNone(
+            attachments.resolve(self.home, self.key, "../../etc/passwd")
+        )
+
+    def test_sweep_and_drop(self):
+        payload, _ = attachments.stage(self.home, self.key, "old.txt", b"x")
+        path = Path(payload["path"])
+        old = time.time() - attachments.MAX_AGE_S - 10
+        import os
+        os.utime(path, (old, old))
+        self.assertEqual(attachments.sweep(self.home, now=time.time()), 1)
+        payload, _ = attachments.stage(self.home, self.key, "n.txt", b"y")
+        attachments.drop_session(self.home, self.key)
+        self.assertFalse(Path(payload["path"]).exists())
+
+    def test_empty_upload_refused(self):
+        payload, err = attachments.stage(self.home, self.key, "a.txt", b"")
+        self.assertIsNone(payload)
+        self.assertIn("empty", err)
+
+    def test_same_name_uploads_get_distinct_refs(self):
+        p1, _ = attachments.stage(self.home, self.key, "image.png", b"one")
+        p2, _ = attachments.stage(self.home, self.key, "image.png", b"two")
+        self.assertNotEqual(p1["ref"], p2["ref"])
+        # and both files survive with their own bytes
+        self.assertEqual(
+            Path(attachments.resolve(self.home, self.key, p1["ref"]))
+            .read_bytes(), b"one")
+        self.assertEqual(
+            Path(attachments.resolve(self.home, self.key, p2["ref"]))
+            .read_bytes(), b"two")
+
+    def test_long_names_still_resolve(self):
+        name = "a" * 120 + ".png"
+        payload, err = attachments.stage(self.home, self.key, name, b"x")
+        self.assertIsNone(err)
+        staged = attachments.resolve(self.home, self.key, payload["ref"])
+        self.assertIsNotNone(staged)
+        self.assertEqual(Path(staged).read_bytes(), b"x")
+
+    def test_resolve_missing_returns_none(self):
+        self.assertIsNone(
+            attachments.resolve(self.home, self.key, "nope-abc-f.txt")
+        )
+
+    def test_stage_oserror_reported(self):
+        with patch("quiver.remote.attachments.Path.write_bytes",
+                   side_effect=OSError("disk full")):
+            payload, err = attachments.stage(
+                self.home, self.key, "a.txt", b"x"
+            )
+        self.assertIsNone(payload)
+        self.assertIn("could not stage", err)
+
+    def test_sweep_unreadable_root(self):
+        with patch("pathlib.Path.iterdir", side_effect=OSError("denied")):
+            self.assertEqual(attachments.sweep(self.home), 0)
+
+
+class TestHubWrites(unittest.TestCase):
+    def setUp(self):
+        self.srv = _Server(sessions=[_session()], statuses=lambda ss: ["done"])
+        self.addCleanup(self.srv.stop)
+        self.auth = self.srv.pair()
+        self.hdr = {"Authorization": f"Bearer {self.auth['credential']}"}
+
+    def test_attach_then_message(self):
+        # launch_tmux is mocked so the suite never needs (or spawns) a
+        # real tmux session — sandboxed CI has neither tmux nor claude.
+        with patch.object(supervise, "tmux_bin", return_value="/usr/bin/tmux"), \
+             patch.object(supervise, "launch_tmux", return_value="qv-x"), \
+             patch.object(supervise, "_stop_local_writers"):
+            status, data = self.srv.request(
+                "POST", "/v1/sessions/claude:abc-123/control",
+                body={"op": "attach"}, headers=self.hdr,
+            )
+        self.assertEqual(status, 200, data)
+        row = self.srv.state.catalog.row_for("claude:abc-123")
+        self.assertEqual(row["ownership"], "attached")
+
+        with patch.object(supervise, "send_text", return_value=True) as st:
+            status, data = self.srv.request(
+                "POST", "/v1/sessions/claude:abc-123/message",
+                body={"text": "ship it", "mode": "steer"},
+                headers=self.hdr,
+            )
+        self.assertEqual(status, 200, data)
+        self.assertIn("ship it", st.call_args[0][1])
+
+    def test_attach_rejects_when_active(self):
+        # status lambda reports active → server-side idle check fires
+        srv = _Server(sessions=[_session()], statuses=lambda ss: ["active"])
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        status, data = srv.request(
+            "POST", "/v1/sessions/claude:abc-123/control",
+            body={"op": "attach"},
+            headers={"Authorization": f"Bearer {cred['credential']}"},
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(json.loads(data)["error"]["code"], "not_idle")
+
+    def test_attach_422_without_tmux(self):
+        with patch.object(supervise, "tmux_bin", return_value=None):
+            status, data = self.srv.request(
+                "POST", "/v1/sessions/claude:abc-123/control",
+                body={"op": "attach"}, headers=self.hdr,
+            )
+        self.assertEqual(status, 422)
+        self.assertEqual(
+            json.loads(data)["error"]["code"], "not_attachable"
+        )
+
+    def test_attachment_upload_and_message_ref(self):
+        with patch.object(supervise, "tmux_bin", return_value="/usr/bin/tmux"), \
+             patch.object(supervise, "launch_tmux", return_value="qv-t"), \
+             patch.object(supervise, "tmux_alive", return_value=True), \
+             patch.object(supervise, "_stop_local_writers"):
+            self.srv.request(
+                "POST", "/v1/sessions/claude:abc-123/control",
+                body={"op": "attach"}, headers=self.hdr,
+            )
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.srv.port, timeout=5)
+        try:
+            conn.request(
+                "POST",
+                "/v1/sessions/claude:abc-123/attachments?name=shot.png",
+                body=b"\x89PNG",
+                headers={
+                    "Authorization": self.hdr["Authorization"],
+                    "Content-Type": "application/octet-stream",
+                },
+            )
+            resp = conn.getresponse()
+            payload = json.loads(resp.read())
+            self.assertEqual(resp.status, 200, payload)
+        finally:
+            conn.close()
+        ref = payload["ref"]
+        with patch.object(supervise, "send_text", return_value=True) as st:
+            status, data = self.srv.request(
+                "POST", "/v1/sessions/claude:abc-123/message",
+                body={"text": "see this", "attachments": [ref]},
+                headers=self.hdr,
+            )
+        self.assertEqual(status, 200, data)
+        sent = st.call_args[0][1]
+        self.assertIn("@", sent)
+        self.assertIn("shot.png", sent)
+
+
+if __name__ == "__main__":
+    unittest.main()
