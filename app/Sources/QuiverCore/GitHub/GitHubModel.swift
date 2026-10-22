@@ -157,6 +157,10 @@ public final class GitHubModel {
     /// the main actor on a busy or slow disk; order is preserved, so a
     /// `removeRepo` still wins over the remembers queued before it.
     let historyWriteQueue = DispatchQueue(label: "quiver.gh-history")
+    /// Set once the store has provably taken the snapshot's boards —
+    /// `saveNow` drops the file's `boards` field only then, so an
+    /// unopened database or a failed import never erases the last copy.
+    private var storeOwnsBoards = false
 
     public private(set) var inbox: Loadable<[GhNotification]> = .idle
     /// Unread lines in the loaded inbox — the sidebar badge and the
@@ -380,13 +384,23 @@ public final class GitHubModel {
                 else { continue }
                 var board = boards[repo] ?? RepoBoard()
                 let s = payload.surfaces
-                fill(s.pullRequests, into: &board, \.pulls, repo: repo, tab: .pulls, stamp: stamp) { $0.pullRequests ?? [] }
-                fill(s.issues, into: &board, \.issues, repo: repo, tab: .issues, stamp: stamp) { $0.issues ?? [] }
-                fill(s.runs, into: &board, \.runs, repo: repo, tab: .actions, stamp: stamp) { $0.runs ?? [] }
-                fill(s.pages, into: &board, \.pages, repo: repo, tab: .pages, stamp: stamp) { $0.pages }
-                fill(s.releases, into: &board, \.releases, repo: repo, tab: .releases, stamp: stamp) { $0.releases ?? [] }
-                fill(s.tags, into: &board, \.tags, repo: repo, tab: .tags, stamp: stamp) { $0.tags ?? [] }
-                fill(s.branches, into: &board, \.branches, repo: repo, tab: .branches, stamp: stamp) { $0.branches ?? [] }
+                fill(s.pullRequests, into: &board, \.pulls, repo: repo, tab: .pulls, stamp: stamp,
+                     persist: persist(repo: repo, surface: .pulls)) { $0.pullRequests ?? [] }
+                fill(s.issues, into: &board, \.issues, repo: repo, tab: .issues, stamp: stamp,
+                     persist: persist(repo: repo, surface: .issues)) { $0.issues ?? [] }
+                fill(s.runs, into: &board, \.runs, repo: repo, tab: .actions, stamp: stamp,
+                     persist: persist(repo: repo, surface: .runs)) { $0.runs ?? [] }
+                fill(s.pages, into: &board, \.pages, repo: repo, tab: .pages, stamp: stamp,
+                     persist: { [historyStore] site in
+                         historyStore?.replace(repo: repo, surface: .pages,
+                                               rows: site.map { [$0] } ?? []) { _ in "site" }
+                     }) { $0.pages }
+                fill(s.releases, into: &board, \.releases, repo: repo, tab: .releases, stamp: stamp,
+                     persist: persist(repo: repo, surface: .releases)) { $0.releases ?? [] }
+                fill(s.tags, into: &board, \.tags, repo: repo, tab: .tags, stamp: stamp,
+                     persist: persist(repo: repo, surface: .tags)) { $0.tags ?? [] }
+                fill(s.branches, into: &board, \.branches, repo: repo, tab: .branches, stamp: stamp,
+                     persist: persist(repo: repo, surface: .branches)) { $0.branches ?? [] }
                 boards[repo] = board
             }
             scheduleSave()
@@ -401,11 +415,14 @@ public final class GitHubModel {
     }
 
     /// Write one board surface's entry into `path`: ok loads the rows and
-    /// the fetched stamp, anything else is the entry's typed failure.
+    /// the fetched stamp, anything else is the entry's typed failure. A
+    /// loaded value also lands in SQLite through `persist`, called on the
+    /// write queue so the reply never blocks on disk.
     private func fill<Entry: GhEntryFields, Row: Equatable & Sendable>(
         _ entry: Entry?, into board: inout RepoBoard,
         _ path: WritableKeyPath<RepoBoard, Loadable<Row>>,
         repo: String, tab: RepoTab, stamp: Date,
+        persist: ((Row) -> Void)? = nil,
         rows: (Entry) -> Row
     ) {
         let value: Loadable<Row>
@@ -417,7 +434,10 @@ public final class GitHubModel {
             value = .failed("swe board returned no \(tab.rawValue) entry")
         }
         board[keyPath: path] = value
-        if case .loaded = value { fetched[BoardKey(repo: repo, tab: tab)] = stamp }
+        if case .loaded(let r) = value {
+            fetched[BoardKey(repo: repo, tab: tab)] = stamp
+            if let persist { historyWriteQueue.async { persist(r) } }
+        }
     }
 
     /// Fetch one surface of one repo into its board slot. The reply's
@@ -439,19 +459,29 @@ public final class GitHubModel {
         do {
             switch tab {
             case .pulls:
-                apply(try await swe.ghPullRequests(repo: repo), to: key, \.pulls) { $0.pullRequests ?? [] }
+                apply(try await swe.ghPullRequests(repo: repo), to: key, \.pulls,
+                      persist: persist(repo: repo, surface: .pulls)) { $0.pullRequests ?? [] }
             case .issues:
-                apply(try await swe.ghIssues(repo: repo), to: key, \.issues) { $0.issues ?? [] }
+                apply(try await swe.ghIssues(repo: repo), to: key, \.issues,
+                      persist: persist(repo: repo, surface: .issues)) { $0.issues ?? [] }
             case .actions:
-                apply(try await swe.ghRuns(repo: repo), to: key, \.runs) { $0.runs ?? [] }
+                apply(try await swe.ghRuns(repo: repo), to: key, \.runs,
+                      persist: persist(repo: repo, surface: .runs)) { $0.runs ?? [] }
             case .pages:
-                apply(try await swe.ghPages(repo: repo), to: key, \.pages) { $0.pages }
+                apply(try await swe.ghPages(repo: repo), to: key, \.pages,
+                      persist: { [historyStore] site in
+                          historyStore?.replace(repo: repo, surface: .pages,
+                                                rows: site.map { [$0] } ?? []) { _ in "site" }
+                      }) { $0.pages }
             case .releases:
-                apply(try await swe.ghReleases(repo: repo), to: key, \.releases) { $0.releases ?? [] }
+                apply(try await swe.ghReleases(repo: repo), to: key, \.releases,
+                      persist: persist(repo: repo, surface: .releases)) { $0.releases ?? [] }
             case .tags:
-                apply(try await swe.ghTags(repo: repo), to: key, \.tags) { $0.tags ?? [] }
+                apply(try await swe.ghTags(repo: repo), to: key, \.tags,
+                      persist: persist(repo: repo, surface: .tags)) { $0.tags ?? [] }
             case .branches:
-                apply(try await swe.ghBranches(repo: repo), to: key, \.branches) { $0.branches ?? [] }
+                apply(try await swe.ghBranches(repo: repo), to: key, \.branches,
+                      persist: persist(repo: repo, surface: .branches)) { $0.branches ?? [] }
             }
         } catch is CancellationError {
         } catch {
@@ -464,6 +494,25 @@ public final class GitHubModel {
     /// The board for `repo`, always non-nil so views can read directly.
     public func board(for repo: String) -> RepoBoard {
         boards[repo] ?? RepoBoard()
+    }
+
+    /// A persist closure for `apply` — the queue hop happens there, so
+    /// the closure talks to the store directly. The surface picks the
+    /// write mode: pulls, issues and runs accumulate past the window;
+    /// releases, tags and branches are list state and rewrite whole.
+    private func persist<Row: Codable & Identifiable & Sendable>(
+        repo: String, surface: GitHubHistory.Surface
+    ) -> ([Row]) -> Void {
+        { [historyStore] rows in
+            switch surface {
+            case .pulls, .issues, .runs:
+                historyStore?.remember(repo: repo, surface: surface, rows: rows)
+            case .releases, .tags, .branches:
+                historyStore?.replace(repo: repo, surface: surface, rows: rows)
+            case .pages:
+                break // pages persists through its own closure — GhPages has no id
+            }
+        }
     }
 
     // MARK: - focus page (one repo in full)
@@ -490,22 +539,31 @@ public final class GitHubModel {
 
     /// Put the repo's remembered rows on the board before any reply —
     /// an already-loaded surface is left alone, so a re-focus does not
-    /// blink fresh rows back to older ones.
+    /// blink fresh rows back to older ones. The store's board covers
+    /// the state surfaces; the accumulating three merge their session
+    /// dictionary over it.
     private func seedFocus(repo: String) {
         let h = history(repo: repo)
-        var board = focusBoards[repo] ?? RepoBoard()
+        var board = focusBoards[repo] ?? historyStore?.board(repo: repo) ?? RepoBoard()
         if !h.pulls.isEmpty, !board.isLoaded(.pulls) { board.pulls = .loaded(h.pulls) }
         if !h.issues.isEmpty, !board.isLoaded(.issues) { board.issues = .loaded(h.issues) }
+        if !h.runs.isEmpty, !board.isLoaded(.actions) { board.runs = .loaded(h.runs) }
         focusBoards[repo] = board
     }
 
-    /// The repo's remembered rows: the session dictionary first, then
-    /// the SQLite store — one read per repo, cached either way.
+    /// The repo's remembered accumulating rows: the session dictionary
+    /// first, then the SQLite store — one read per repo, cached either
+    /// way. Reads sort newest-first, the invariant `mergeHistory` keeps
+    /// — stored positions can drift when imports meet live writes.
     private func history(repo: String) -> RepoHistory {
         if let h = history[repo] { return h }
+        let pulls: [GhPr] = historyStore?.rows(repo: repo, surface: .pulls) ?? []
+        let issues: [GhIssue] = historyStore?.rows(repo: repo, surface: .issues) ?? []
+        let runs: [GhRun] = historyStore?.rows(repo: repo, surface: .runs) ?? []
         let h = RepoHistory(
-            pulls: historyStore?.pulls(repo: repo) ?? [],
-            issues: historyStore?.issues(repo: repo) ?? [])
+            pulls: pulls.sorted { $0.id > $1.id },
+            issues: issues.sorted { $0.id > $1.id },
+            runs: runs.sorted { $0.id > $1.id })
         history[repo] = h
         return h
     }
@@ -558,16 +616,23 @@ public final class GitHubModel {
                       to: key, \.runs, store: .focus) { $0.runs ?? [] }
             case .pages:
                 apply(try await swe.ghPages(repo: repo),
-                      to: key, \.pages, store: .focus) { $0.pages }
+                      to: key, \.pages, store: .focus,
+                      persist: { [historyStore] site in
+                          historyStore?.replace(repo: repo, surface: .pages,
+                                                rows: site.map { [$0] } ?? []) { _ in "site" }
+                      }) { $0.pages }
             case .releases:
                 apply(try await swe.ghReleases(repo: repo, limit: limit),
-                      to: key, \.releases, store: .focus) { $0.releases ?? [] }
+                      to: key, \.releases, store: .focus,
+                      persist: persist(repo: repo, surface: .releases)) { $0.releases ?? [] }
             case .tags:
                 apply(try await swe.ghTags(repo: repo, limit: limit),
-                      to: key, \.tags, store: .focus) { $0.tags ?? [] }
+                      to: key, \.tags, store: .focus,
+                      persist: persist(repo: repo, surface: .tags)) { $0.tags ?? [] }
             case .branches:
                 apply(try await swe.ghBranches(repo: repo, limit: limit),
-                      to: key, \.branches, store: .focus) { $0.branches ?? [] }
+                      to: key, \.branches, store: .focus,
+                      persist: persist(repo: repo, surface: .branches)) { $0.branches ?? [] }
             }
             remember(tab, repo: repo)
             // A short page means the listing ended — the scroll loader
@@ -596,18 +661,56 @@ public final class GitHubModel {
         case .pulls:
             mergeHistory(repo: repo, board: \.pulls, into: \.pulls) { rows in
                 historyWriteQueue.async { [historyStore] in
-                    historyStore?.remember(repo: repo, pulls: rows)
+                    historyStore?.remember(repo: repo, surface: .pulls, rows: rows)
                 }
             }
         case .issues:
             mergeHistory(repo: repo, board: \.issues, into: \.issues) { rows in
                 historyWriteQueue.async { [historyStore] in
-                    historyStore?.remember(repo: repo, issues: rows)
+                    historyStore?.remember(repo: repo, surface: .issues, rows: rows)
                 }
             }
-        default:
-            return
+        case .actions:
+            mergeHistory(repo: repo, board: \.runs, into: \.runs) { rows in
+                historyWriteQueue.async { [historyStore] in
+                    historyStore?.remember(repo: repo, surface: .runs, rows: rows)
+                }
+            }
+        case .releases:
+            restoreRemembered(repo: repo, surface: .releases, into: \.releases)
+        case .tags:
+            restoreRemembered(repo: repo, surface: .tags, into: \.tags)
+        case .branches:
+            restoreRemembered(repo: repo, surface: .branches, into: \.branches)
+        case .pages:
+            // Only a failed read looks backwards — a live reply is
+            // fresher than anything the store holds, and its own
+            // persist may not have run yet.
+            guard var board = focusBoards[repo],
+                  case .failed = board.pages,
+                  let seeded = historyStore?.board(repo: repo),
+                  case .loaded = seeded.pages else { return }
+            board.pages = seeded.pages
+            focusBoards[repo] = board
         }
+    }
+
+    /// A state-list surface whose reply failed shows what the store
+    /// remembered instead of the error — same rule as the accumulating
+    /// surfaces, just without a merge to run.
+    private func restoreRemembered<Row: Codable & Equatable & Sendable>(
+        repo: String, surface: GitHubHistory.Surface,
+        into path: WritableKeyPath<RepoBoard, Loadable<[Row]>>
+    ) {
+        guard var board = focusBoards[repo],
+              case .failed = board[keyPath: path],
+              // The marker is the answer, not the row count — a surface
+              // that fetched empty restores .loaded([]), not the error.
+              historyStore?.fetched(repo: repo, surface: surface) == true
+        else { return }
+        let rows: [Row] = historyStore?.rows(repo: repo, surface: surface) ?? []
+        board[keyPath: path] = .loaded(rows)
+        focusBoards[repo] = board
     }
 
     /// Rows a repo remembers past a single fetch — the file stays small
@@ -619,7 +722,7 @@ public final class GitHubModel {
         board boardPath: WritableKeyPath<RepoBoard, Loadable<[Row]>>,
         into historyPath: WritableKeyPath<RepoHistory, [Row]>,
         persist: ([Row]) -> Void
-    ) where Row.ID == Int {
+    ) where Row.ID: Comparable & Hashable {
         var h = history(repo: repo)
         var board = focusBoards[repo] ?? RepoBoard()
         switch board[keyPath: boardPath] {
@@ -1098,11 +1201,14 @@ public final class GitHubModel {
 
     /// Pull the entry for the repo out of a surface reply and write it to
     /// the board slot `path`. `.ok` loads the rows; any other status —
-    /// or no entry at all — is a failure carrying swe's `error`.
+    /// or no entry at all — is a failure carrying swe's `error`. A loaded
+    /// value also lands in SQLite through `persist`, called on the write
+    /// queue so the reply never blocks on disk.
     private func apply<Entry: GhEntryFields, Row: Equatable & Sendable>(
         _ reply: GhResults<Entry>, to key: BoardKey,
         _ path: WritableKeyPath<RepoBoard, Loadable<Row>>,
         store: Store = .dashboard,
+        persist: ((Row) -> Void)? = nil,
         rows: (Entry) -> Row
     ) {
         env = reply.github
@@ -1114,6 +1220,9 @@ public final class GitHubModel {
                 : .failed(entry.error ?? entry.status.rawValue)
         } else {
             value = .failed("swe returned no result for \(key.repo)")
+        }
+        if case .loaded(let r) = value, let persist {
+            historyWriteQueue.async { persist(r) }
         }
         switch store {
         case .dashboard:
@@ -1142,24 +1251,32 @@ public final class GitHubModel {
         selected = snap.selected.flatMap { name in
             snap.pins.contains { $0.name == name } ? name : nil
         } ?? snap.pins.first?.name
-        boards = snap.boards
         snapshotInbox = snap.inbox
         snapshotInboxLoaded = snap.inboxLoaded
         inbox = snap.inboxLoaded ? .loaded(snap.inbox) : .idle
-        // Rows a JSON-era snapshot remembered move into SQLite once.
-        // `legacyHistory` holds them until the import is confirmed —
-        // `saveNow` keeps writing the field while the database cannot
-        // take it, so a failed import never erases the only copy. A
-        // store that already imported skips the write entirely, which
-        // also drops the field on the next save.
+        // Boards seed from the file first so a store that cannot take
+        // them yet never blanks the warm start; the store's own copy
+        // overlays per repo once it is known good. `legacyHistory`
+        // holds the field until the import commits — `saveNow` keeps
+        // writing it, and keeps writing boards while the store does
+        // not own them, so a failed import never erases the only copy.
+        boards = snap.boards
         legacyHistory = snap.history
-        if let legacy = legacyHistory {
-            if historyStore?.importedLegacy == true || historyStore?.importAll(legacy) == true {
+        if let store = historyStore, store.openError == nil {
+            if store.importedLegacy, store.boardsImported {
                 legacyHistory = nil
-            } else if historyStore == nil {
-                // No database at all — the rows still cover this session.
-                history.merge(legacy) { _, old in old }
+                storeOwnsBoards = true
+            } else if store.importAll(legacyHistory ?? [:], boards: snap.boards) {
+                legacyHistory = nil
+                storeOwnsBoards = true
             }
+            for name in snap.pins.map(\.name) {
+                let seeded = store.board(repo: name)
+                if seeded != RepoBoard() { boards[name] = seeded }
+            }
+        } else if let legacy = legacyHistory {
+            // No usable database at all — the rows still cover this session.
+            history.merge(legacy) { _, old in old }
         }
         // A snapshot exists only because replies were received before.
         probed = true
@@ -1182,7 +1299,11 @@ public final class GitHubModel {
     public func saveNow() {
         snapshot?.saveNow(GitHubSnapshot(
             savedAt: now(), pins: pins, selected: selected,
-            boards: boards, inbox: snapshotInbox,
+            // The file keeps carrying boards until the store owns
+            // them — open plus a confirmed import — so a bad database
+            // never costs the last copy.
+            boards: storeOwnsBoards ? [:] : boards,
+            inbox: snapshotInbox,
             inboxLoaded: snapshotInboxLoaded, history: legacyHistory))
     }
 }

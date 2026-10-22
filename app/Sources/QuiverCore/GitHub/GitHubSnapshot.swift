@@ -47,17 +47,29 @@ public struct GitHubSnapshot: SnapshotContent {
     }
 }
 
-/// One repo's remembered focus rows. Only the surfaces where an old
-/// row still matters once it falls out of the fetch window — runs,
-/// releases, tags and branches either churn too fast or list shallow
-/// enough that re-fetching covers them.
+/// One repo's remembered rows on the accumulating surfaces — the ones
+/// where an old row still matters once it falls out of the fetch
+/// window. Releases, tags and branches are list state instead: what
+/// the reply did not list no longer exists, so they persist by
+/// replacement in the SQLite store, not here.
 public struct RepoHistory: Codable, Equatable, Sendable {
     public var pulls: [GhPr]
     public var issues: [GhIssue]
+    public var runs: [GhRun]
 
-    public init(pulls: [GhPr] = [], issues: [GhIssue] = []) {
+    public init(pulls: [GhPr] = [], issues: [GhIssue] = [], runs: [GhRun] = []) {
         self.pulls = pulls
         self.issues = issues
+        self.runs = runs
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        pulls = try box.decodeIfPresent([GhPr].self, forKey: .pulls) ?? []
+        issues = try box.decodeIfPresent([GhIssue].self, forKey: .issues) ?? []
+        // `runs` postdates the snapshot field — decode-or-empty keeps
+        // files written before it existed loading.
+        runs = try box.decodeIfPresent([GhRun].self, forKey: .runs) ?? []
     }
 }
 
