@@ -187,7 +187,15 @@ async function openChat(key) {
 
 function updateOwnership(row) {
   const observed = !row || row.ownership !== "attached";
-  el("composer").classList.toggle("hidden", observed);
+  // The composer always renders: on observed sessions it's disabled so
+  // the phone still shows where typing will happen once attached.
+  el("composer-text").disabled = observed;
+  el("composer-text").placeholder = observed
+    ? "Read-only: tap Attach to send"
+    : "Message the session";
+  el("composer-send").disabled = observed;
+  el("interrupt-btn").disabled = observed;
+  el("composer-mode").classList.toggle("hidden", observed);
   el("chat-banner").classList.toggle("hidden", !observed);
   // attachable means "has resume flags"; the server also refuses when
   // the session is mid-turn, so hide the button then rather than have
@@ -241,9 +249,34 @@ function appendEvent(ev, live = true) {
       request_id: (ev.data || {}).request_id || "",
     }, ev.seq);
   } else if (ev.type === "command.result") {
-    // Satellite sends answer async — surface failures and degrades,
-    // and settle any queued approval card this result answers.
+    // Sends answer async — settle the optimistic bubble this result
+    // belongs to, plus any queued approval card it answers.
     const d = ev.data || {};
+    let settled = false;
+    if (d.op === "message" && d.client_id) {
+      const b = el("chat-log").querySelector(
+        `.msg.user.pending[data-client-id="${CSS.escape(d.client_id)}"]`
+      );
+      if (b) {
+        settled = true;
+        b.classList.remove("pending");
+        const note = b.querySelector(".send-note");
+        if (d.ok) {
+          // A degraded send still landed — keep the why visible.
+          if (note) {
+            if (d.degraded) {
+              note.textContent = d.note ||
+                "sent (queued: mid-turn input isn't supported here)";
+            } else {
+              note.remove();
+            }
+          }
+        } else {
+          b.classList.add("failed");
+          if (note) note.textContent = d.note || "send failed";
+        }
+      }
+    }
     if (d.op === "approval" && d.request_id) {
       el("chat-log").querySelectorAll(".msg.approval").forEach((card) => {
         if (card.dataset.req !== d.request_id || !card.dataset.queued) return;
@@ -261,7 +294,8 @@ function appendEvent(ev, live = true) {
         }
       });
     }
-    if (d.ok === false || d.degraded || d.note === "approval_not_supported") {
+    if (!settled &&
+        (d.ok === false || d.degraded || d.note === "approval_not_supported")) {
       appendMessage({
         kind: "system",
         text: d.ok === false
@@ -426,6 +460,16 @@ function appendMessage(msg, seq) {
     log.appendChild(d);
     return;
   }
+  if (kind === "user") {
+    // A queued send's real bubble lands via message.appended — swap it
+    // for the optimistic one we already drew (attachments prefix the
+    // stored text with "@path ", hence the endsWith).
+    const hit = [...log.querySelectorAll(".msg.user[data-client-id]:not(.failed)")].find(
+      (b) => b.dataset.text &&
+        (msg.text === b.dataset.text || (msg.text || "").endsWith(b.dataset.text))
+    );
+    if (hit) hit.remove();
+  }
   const div = document.createElement("div");
   div.className = `msg ${kind}`;
   const role = { user: "you", assistant: "agent", thinking: "thought", error: "error" }[kind];
@@ -588,27 +632,69 @@ async function loadInbox() {
 
 /* ── composer + controls ─────────────────────────────────── */
 
+function newClientId() {
+  // Server accepts 1-64 of [A-Za-z0-9_-]; uuid dashes are already legal.
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+  return [...crypto.getRandomValues(new Uint8Array(24))]
+    .map((b) => alphabet[b % 64]).join("");
+}
+
+function appendOptimistic(text, clientId) {
+  const div = document.createElement("div");
+  div.className = "msg user pending";
+  div.dataset.clientId = clientId;
+  div.dataset.text = text;
+  div.innerHTML =
+    `<div class="role">you</div><div class="text">${md(text)}</div>` +
+    `<div class="send-note">sending…</div>`;
+  el("chat-log").appendChild(div);
+  scrollBottom();
+  return div;
+}
+
+function failBubble(bubble, text) {
+  bubble.classList.remove("pending");
+  bubble.classList.add("failed");
+  const note = bubble.querySelector(".send-note") || document.createElement("div");
+  note.className = "send-note";
+  note.textContent = text;
+  bubble.appendChild(note);
+}
+
 el("composer").addEventListener("submit", async (e) => {
   e.preventDefault();
   const input = el("composer-text");
   const text = input.value.trim();
-  if (!text || !state.currentKey) return;
+  if (!text || !state.currentKey || input.disabled) return;
   input.value = "";
   const mode = el("composer-mode").value;
-  const { status, data } = await api(
-    `/v1/sessions/${encodeURIComponent(state.currentKey)}/message`,
-    { method: "POST", body: JSON.stringify({ text, mode }) }
-  );
-  if (status === 200 && data && data.degraded) {
-    // steer fell back to queue on this channel — say so, don't pretend.
-    appendMessage({
-      kind: "system",
-      text: data.note || "sent (queued: mid-turn input isn't supported here)",
-    }, 0);
-    scrollBottom();
-  } else if (status !== 200 && data && data.error) {
-    appendMessage({ kind: "error", text: data.error.message || "send failed" }, 0);
-    scrollBottom();
+  const clientId = newClientId();
+  const bubble = appendOptimistic(text, clientId);
+  let status = 0, data = null;
+  try {
+    ({ status, data } = await api(
+      `/v1/sessions/${encodeURIComponent(state.currentKey)}/message`,
+      { method: "POST", body: JSON.stringify({ text, mode, client_id: clientId }) }
+    ));
+  } catch {
+    status = 0; // network failure — the hub never saw it
+  }
+  if (status === 202) {
+    // The send itself resolves later as command.result; the note says
+    // where it stands until then.
+    const note = bubble.querySelector(".send-note");
+    if (note) {
+      note.textContent = data && data.waiting
+        ? "queued until the agent is idle"
+        : "sent";
+    }
+  } else {
+    failBubble(
+      bubble,
+      (data && data.error && data.error.message)
+        || (status ? `send failed (${status})` : "request failed — connection lost")
+    );
   }
 });
 
@@ -626,7 +712,15 @@ el("attach-btn").addEventListener("click", async () => {
     `/v1/sessions/${encodeURIComponent(state.currentKey)}/control`,
     { method: "POST", body: JSON.stringify({ op: "attach" }) }
   );
-  if (status !== 200) {
+  if (status === 202) {
+    // The attach went to a satellite's command journal — ownership
+    // changes when the command.result lands.
+    appendMessage({
+      kind: "system",
+      text: "attach queued: waiting for the satellite",
+    }, 0);
+    scrollBottom();
+  } else if (status !== 200) {
     appendMessage({
       kind: "error",
       text: (data && data.error && data.error.message) || "attach failed",

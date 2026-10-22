@@ -2,6 +2,7 @@
 
 import http.client
 import json
+import queue
 import socket
 import tempfile
 import threading
@@ -192,6 +193,7 @@ class TestHubWriteRoutes(unittest.TestCase):
 
     def test_message_success(self):
         from quiver.remote import inject
+        q = self.srv.state.bus.subscribe("claude:s1")
         with patch.object(
             inject.ClaudeHeadlessInjector, "_run",
             return_value=(True, "turn complete"),
@@ -200,8 +202,11 @@ class TestHubWriteRoutes(unittest.TestCase):
                 "POST", "/v1/sessions/claude:s1/message",
                 body={"text": "hi", "mode": "steer"}, headers=self.hdr,
             )
-        self.assertEqual(status, 200, data)
+            self.assertEqual(status, 202, data)
+            ev = q.get(timeout=5)
         self.assertTrue(json.loads(data)["ok"])
+        self.assertEqual(ev["type"], "command.result")
+        self.assertTrue(ev["data"]["ok"])
 
     def test_message_bad_command_and_body(self):
         status, _ = self.srv.request(
@@ -232,8 +237,11 @@ class TestHubWriteRoutes(unittest.TestCase):
             json.loads(data)["error"]["code"], "bad_attachment"
         )
 
-    def test_message_send_failure_maps_409(self):
+    def test_message_send_failure_lands_in_result(self):
+        # The POST itself still answers 202; the injector's failure lands
+        # as a command.result event on the session key.
         from quiver.remote import inject
+        q = self.srv.state.bus.subscribe("claude:s1")
         with patch.object(
             inject.ClaudeHeadlessInjector, "_run",
             return_value=(False, "claude exploded"),
@@ -242,8 +250,10 @@ class TestHubWriteRoutes(unittest.TestCase):
                 "POST", "/v1/sessions/claude:s1/message",
                 body={"text": "go"}, headers=self.hdr,
             )
-        self.assertEqual(status, 409)
-        self.assertIn("claude exploded", data.decode())
+            self.assertEqual(status, 202, data)
+            ev = q.get(timeout=5)
+        self.assertFalse(ev["data"]["ok"])
+        self.assertIn("claude exploded", ev["data"]["note"])
 
     def test_approval_unsupported_headless(self):
         status, data = self.srv.request(
@@ -322,11 +332,13 @@ class TestHubWriteRoutes(unittest.TestCase):
         )
         self.addCleanup(srv.stop)
         cred = srv.pair()
-        status, data = srv.request(
-            "POST", "/v1/sessions/claude:hx/control",
-            body={"op": "attach", "mode": "headless"},
-            headers={"Authorization": f"Bearer {cred['credential']}"},
-        )
+        with patch("shutil.which", return_value="/x/claude"), \
+             patch("quiver.remote.supervise._stop_local_writers"):
+            status, data = srv.request(
+                "POST", "/v1/sessions/claude:hx/control",
+                body={"op": "attach", "mode": "headless"},
+                headers={"Authorization": f"Bearer {cred['credential']}"},
+            )
         self.assertEqual(status, 200, data)
 
     def test_attach_unknown_mode_422(self):
@@ -654,6 +666,187 @@ class TestHubWriteRoutes(unittest.TestCase):
             self.assertEqual(conn.getresponse().status, 400)
         finally:
             conn.close()
+
+
+class TestSendQueue(unittest.TestCase):
+    """POST message → 202, then the send runs on the per-key worker."""
+
+    def setUp(self):
+        self.srv = _AttachedServer()
+        self.addCleanup(self.srv.stop)
+        cred = self.srv.pair()
+        self.hdr = {"Authorization": f"Bearer {cred['credential']}"}
+        self.key = "claude:s1"
+        # Fresh-status reads stub out to this box; tests flip it.
+        self.live = ["done"]
+        self.srv.state.status_of = lambda sessions: list(self.live)
+
+    def _post(self, body):
+        return self.srv.request(
+            "POST", f"/v1/sessions/{self.key}/message",
+            body=body, headers=self.hdr,
+        )
+
+    def _injector(self):
+        from quiver.remote import inject
+        fake = MagicMock()
+        fake.send.return_value = inject.InjectResult(True, "sent")
+        return fake
+
+    def test_message_202_then_result_event(self):
+        from quiver.remote import inject
+        fake = self._injector()
+        q = self.srv.state.bus.subscribe(self.key)
+        with patch.object(inject, "injector_for", return_value=fake):
+            status, data = self._post(
+                {"text": "hi", "client_id": "cid-1"}
+            )
+            self.assertEqual(status, 202, data)
+            body = json.loads(data)
+            ev = q.get(timeout=5)
+        self.assertTrue(body["ok"])
+        self.assertTrue(body["queued"])
+        self.assertEqual(body["client_id"], "cid-1")
+        self.assertFalse(body["waiting"])
+        self.assertEqual(ev["type"], "command.result")
+        self.assertTrue(ev["data"]["ok"])
+        self.assertEqual(ev["data"]["op"], "message")
+        self.assertEqual(ev["data"]["client_id"], "cid-1")
+        # Same event is durable: replaying the journal sees it.
+        evs, _ = self.srv.state.journal.read_since(self.key, 0)
+        self.assertEqual(evs[-1]["type"], "command.result")
+
+    def test_queue_waits_for_idle(self):
+        from quiver.remote import hub as hub_mod
+        from quiver.remote import inject
+        fake = self._injector()
+        polled = threading.Event()
+        flip = threading.Event()
+
+        def status_of(sessions):
+            polled.set()
+            return ["done" if flip.is_set() else "active"]
+
+        self.srv.state.status_of = status_of
+        q = self.srv.state.bus.subscribe(self.key)
+        with patch.object(inject, "injector_for", return_value=fake), \
+             patch.object(hub_mod, "QUEUE_POLL_S", 0.05):
+            status, data = self._post({"text": "hi"})
+            self.assertEqual(status, 202, data)
+            self.assertTrue(json.loads(data)["waiting"])
+            self.assertTrue(polled.wait(2))
+            self.assertFalse(fake.send.called)
+            flip.set()
+            ev = q.get(timeout=5)
+        self.assertTrue(ev["data"]["ok"])
+        fake.send.assert_called_once()
+        # The injector saw the fresh status, not the stale row's.
+        self.assertEqual(fake.send.call_args[0][2], "done")
+
+    def test_queue_timeout_reports_failure(self):
+        from quiver.remote import hub as hub_mod
+        from quiver.remote import inject
+        fake = self._injector()
+        self.live = ["active"]
+        q = self.srv.state.bus.subscribe(self.key)
+        with patch.object(inject, "injector_for", return_value=fake), \
+             patch.object(hub_mod, "QUEUE_WAIT_MAX_S", 0.1), \
+             patch.object(hub_mod, "QUEUE_POLL_S", 0.02):
+            status, _ = self._post({"text": "hi"})
+            self.assertEqual(status, 202)
+            ev = q.get(timeout=5)
+        self.assertFalse(ev["data"]["ok"])
+        self.assertIn("stayed busy", ev["data"]["note"])
+        fake.send.assert_not_called()
+
+    def test_steer_sends_immediately_while_active(self):
+        from quiver.remote import inject
+        fake = self._injector()
+        self.live = ["active"]
+        q = self.srv.state.bus.subscribe(self.key)
+        with patch.object(inject, "injector_for", return_value=fake):
+            status, data = self._post({"text": "go", "mode": "steer"})
+            self.assertEqual(status, 202, data)
+            self.assertFalse(json.loads(data)["waiting"])
+            ev = q.get(timeout=5)
+        self.assertTrue(ev["data"]["ok"])
+        fake.send.assert_called_once()
+        self.assertEqual(fake.send.call_args[0][2], "active")
+
+    def test_second_queue_send_rechecks_status_at_run(self):
+        # Job 2 submitted while its key still read idle must not inject
+        # into the turn job 1 just started: the wait uses a fresh read
+        # taken when the job runs, not the submit-time one.
+        from quiver.remote import hub as hub_mod
+        from quiver.remote import inject
+        fake = self._injector()
+        job1_in_send = threading.Event()
+        release_job1 = threading.Event()
+        turn_idle = threading.Event()
+
+        def send(session, cmd, status):
+            if cmd["text"] == "one":
+                job1_in_send.set()
+                release_job1.wait(5)
+            return inject.InjectResult(True, "sent")
+
+        fake.send.side_effect = send
+
+        def status_of(sessions):
+            busy = job1_in_send.is_set() and not turn_idle.is_set()
+            return ["active" if busy else "done"]
+
+        self.srv.state.status_of = status_of
+        q = self.srv.state.bus.subscribe(self.key)
+        with patch.object(inject, "injector_for", return_value=fake), \
+             patch.object(hub_mod, "QUEUE_POLL_S", 0.05):
+            self.assertEqual(self._post({"text": "one"})[0], 202)
+            self.assertTrue(job1_in_send.wait(2))
+            # Job 1 is mid-turn now; queueing a second message reports it.
+            status, data = self._post({"text": "two"})
+            self.assertEqual(status, 202)
+            self.assertTrue(json.loads(data)["waiting"])
+            release_job1.set()
+            ev1 = q.get(timeout=5)
+            self.assertTrue(ev1["data"]["ok"])
+            # No result for job 2 while the turn is still hot.
+            with self.assertRaises(queue.Empty):
+                q.get(timeout=0.5)
+            turn_idle.set()
+            ev2 = q.get(timeout=5)
+        self.assertTrue(ev2["data"]["ok"])
+        sent = [c[0] for c in fake.send.call_args_list]
+        self.assertEqual([s[1]["text"] for s in sent], ["one", "two"])
+        # Job 2 waited for the flip, then sent with the fresh status.
+        self.assertEqual(sent[1][2], "done")
+
+    def test_sends_run_fifo_per_key(self):
+        from quiver.remote import inject
+        fake = self._injector()
+        q = self.srv.state.bus.subscribe(self.key)
+        with patch.object(inject, "injector_for", return_value=fake):
+            self.assertEqual(self._post({"text": "first"})[0], 202)
+            self.assertEqual(self._post({"text": "second"})[0], 202)
+            evs = [q.get(timeout=5), q.get(timeout=5)]
+        self.assertTrue(all(e["data"]["ok"] for e in evs))
+        sent = [c[0][1]["text"] for c in fake.send.call_args_list]
+        self.assertEqual(sent, ["first", "second"])
+
+    def test_injector_exception_fails_job_not_worker(self):
+        from quiver.remote import inject
+        fake = self._injector()
+        fake.send.side_effect = [
+            RuntimeError("boom"), inject.InjectResult(True, "sent")
+        ]
+        q = self.srv.state.bus.subscribe(self.key)
+        with patch.object(inject, "injector_for", return_value=fake):
+            self.assertEqual(self._post({"text": "one"})[0], 202)
+            bad = q.get(timeout=5)
+            self.assertEqual(self._post({"text": "two"})[0], 202)
+            good = q.get(timeout=5)
+        self.assertFalse(bad["data"]["ok"])
+        self.assertIn("boom", bad["data"]["note"])
+        self.assertTrue(good["data"]["ok"])
 
 
 class TestServeEntry(unittest.TestCase):

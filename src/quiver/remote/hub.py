@@ -32,6 +32,7 @@ from quiver.remote import (
     notify,
     pairing,
     protocol,
+    sendq,
     supervise,
     tail,
 )
@@ -50,6 +51,11 @@ _REVOCATION_CHECK_S = 5.0
 
 # Journal bucket for non-session events (machine.online, hub-level notify).
 GLOBAL_KEY = "_global"
+
+# ``queue``-mode sends poll a fresh session status on this cadence and
+# give up after the cap — a turn outliving it fails the send honestly.
+QUEUE_POLL_S = 2.0
+QUEUE_WAIT_MAX_S = 1800
 
 # Refuse new commands for a satellite whose unacked queue is deeper
 # than this — the journal trims at ~4k records and silently dropped
@@ -113,6 +119,12 @@ class HubState:
         # floor of what it has executed. queue_command refuses to grow a
         # backlog it would silently trim.
         self._sat_acked: dict[str, int] = {}
+        # Message sends run here — a headless turn or a queue-until-idle
+        # wait must not hold the phone's POST open.
+        self.sendq = sendq.SendQueue()
+        # Fresh per-session status for queued sends; tests stub it.
+        from quiver.sessions.status import session_statuses
+        self.status_of = session_statuses
         # The hub's reachable base — set by serve() before start() so
         # ntfy action buttons can point back at this host.
         self.base_url = ""
@@ -875,6 +887,7 @@ class _Handler(BaseHTTPRequestHandler):
             queued = self._state.queue_command(mid, "message", key, {
                 "text": cmd["text"], "mode": cmd["mode"],
                 "attachments": cmd["attachments"],
+                "client_id": cmd["client_id"],
                 "status": row.get("status") or "",
             })
             if queued is None:
@@ -967,15 +980,72 @@ class _Handler(BaseHTTPRequestHandler):
             paths.append(path)
         cmd["attachments"] = paths
         session = self._state.catalog.session_for(key)
-        status = str(row.get("status") or "")
-        injector = self._injector(key)
-        result = injector.send(session, cmd, status)
-        if not result.ok:
-            self._send_error(409, "send_failed", result.note)
-            return
-        self._send_json(
-            200,
-            {"ok": True, "note": result.note, "degraded": result.degraded},
+        # The row's status can lag a just-finished turn — reclassify now
+        # so ``waiting`` and the first poll don't trust a stale read.
+        status = self._fresh_status(session, str(row.get("status") or ""))
+        client_id = cmd["client_id"]
+        state = self._state
+        waiting = cmd["mode"] == "queue" and status == "active"
+
+        def job() -> None:
+            # Re-read at run time: the submit-time status predates any
+            # wait behind earlier jobs on this key — a send that started
+            # a turn since then must still be waited out.
+            live = self._fresh_status(session, status)
+            if cmd["mode"] == "queue":
+                deadline = time.monotonic() + QUEUE_WAIT_MAX_S
+                while live == "active" and time.monotonic() < deadline:
+                    time.sleep(QUEUE_POLL_S)
+                    live = self._fresh_status(session, status)
+                if live == "active":
+                    self._send_result(
+                        key, client_id, False,
+                        "session stayed busy for 30 min; message not sent",
+                        False,
+                    )
+                    return
+            try:
+                result = self._injector(key).send(session, cmd, live)
+                ok, note, degraded = (
+                    result.ok, result.note, result.degraded
+                )
+            except Exception as exc:
+                ok, note, degraded = False, str(exc), False
+            self._send_result(key, client_id, ok, note, degraded)
+
+        state.sendq.submit(key, job)
+        self._send_json(202, {
+            "ok": True, "queued": True, "client_id": client_id,
+            "waiting": waiting,
+        })
+
+    def _fresh_status(self, session, fallback: str) -> str:
+        """Reclassify one session now; the catalog row can be stale."""
+        try:
+            got = self._state.status_of([session])
+        except Exception:
+            return fallback
+        return str(got[0]) if got else fallback
+
+    def _send_result(
+        self,
+        key: str,
+        client_id: str,
+        ok: bool,
+        note: str,
+        degraded: bool,
+    ) -> None:
+        """Report a queued send the way a satellite would."""
+        self._state.emit(
+            key,
+            protocol.event(
+                "command.result", key, self._state.machine_id,
+                {
+                    "command_id": "", "op": "message", "ok": ok,
+                    "note": note, "degraded": degraded,
+                    "client_id": client_id,
+                },
+            ),
         )
 
     def _send_approval(self, key: str) -> None:

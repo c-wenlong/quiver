@@ -76,6 +76,19 @@ ts, tool: {name, call_id, args_summary, args_full}?, result_ref?}`.
 Writes (`POST /v1/sessions/{key}/message|approval|control`, `POST
 /v1/sessions`) answer `409 not_attached` while a session is `observed`.
 
+`POST /v1/sessions/{key}/message` takes `{text, mode: queue|steer,
+attachments: [refs], client_id?}` and answers `202 {ok, queued: true,
+client_id, waiting}` — the send runs off the request: `queue` waits for
+the session to leave `active` (`waiting` reports whether it is), `steer`
+writes immediately. `client_id` is optional, 1-64 chars of
+`[A-Za-z0-9_-]`, and comes back both in the response and in the
+`command.result` event so a client can settle an optimistic bubble.
+
+The send's outcome lands as a `command.result` event on the session key
+(same shape satellite results use): `{command_id, op: "message", ok,
+note, degraded, client_id}`. Validation failures (bad body, unknown
+attachment) still answer synchronously — `400`, `422` — before the 202.
+
 The CLI side of remote also speaks `--json`:
 
 | Command | `data` |

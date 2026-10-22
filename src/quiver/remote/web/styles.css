@@ -101,6 +101,10 @@ button.ghost { background: none; border: none; font-size: 26px; line-height: 1; 
 .msg.system, .msg.compaction { text-align: center; color: var(--dim); font-size: .78rem; }
 .msg.compaction { border-top: 1px dashed var(--border); padding-top: 10px; }
 .msg.error .text { color: var(--red); }
+.msg.user.pending { opacity: .65; }
+.msg.user .send-note { font-size: .75rem; color: var(--dim); margin-top: 4px; }
+.msg.user.failed { opacity: 1; }
+.msg.user.failed .send-note { color: var(--red); }
 details.tool {
   background: var(--panel); border: 1px solid var(--border);
   border-radius: 10px; margin: 6px 0;

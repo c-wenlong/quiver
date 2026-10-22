@@ -54,7 +54,8 @@ _AUTO_MODE = {"opencode": "serve", "codex": "appserver"}
 
 # Which binary each API mode needs; checked before the registry write so
 # an attached session never points at a channel that cannot exist.
-_MODE_BINARY = {"serve": "opencode", "appserver": "codex"}
+_MODE_BINARY = {"serve": "opencode", "appserver": "codex",
+                "headless": "claude"}
 
 # ``attach`` accepts exactly these; anything else is a 422 at the route.
 ATTACH_MODES = frozenset({"auto", "tmux", "headless", "serve", "appserver"})
@@ -68,6 +69,14 @@ def resolve_mode(session: Session, mode: str) -> str:
     """
     if mode != "auto":
         return mode
+    if session.tool_name == "claude":
+        # Claude's tier-A channel is headless print mode — no tmux pane
+        # to own. Prefer tmux when it's here (steer mid-turn works);
+        # headless is the fallback for tmux-less boxes, and tmux is the
+        # fallback when neither binary exists so attach can 422 plainly.
+        if tmux_bin() is not None:
+            return "tmux"
+        return "headless" if shutil.which("claude") else "tmux"
     want = _AUTO_MODE.get(session.tool_name)
     if want and shutil.which(_MODE_BINARY[want]):
         return want

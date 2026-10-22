@@ -287,6 +287,18 @@ class TestAgentState(unittest.TestCase):
         self.assertEqual(ev["data"]["request_id"], "req-77")
         self.assertFalse(ev["data"]["degraded"])
 
+    def test_dispatch_echoes_client_id(self):
+        a = self._agent()
+        a._execute = MagicMock(return_value=(True, "sent", False))
+        a._dispatch({
+            "type": "command", "session": "claude:a",
+            "data": {"op": "message", "command_id": "c3",
+                     "client_id": "cid-9"},
+        })
+        ev = a.outbox[0]
+        self.assertEqual(ev["type"], "command.result")
+        self.assertEqual(ev["data"]["client_id"], "cid-9")
+
     def test_execute_message_uses_injector(self):
         a = self._agent()
         sess = _session()
@@ -424,7 +436,8 @@ class TestAgentRoutes(unittest.TestCase):
         self.srv.state.catalog.refresh()
         status, data = self.srv.request(
             "POST", "/v1/sessions/claude%3Ar1%40sat-m1/message",
-            {"text": "yo", "mode": "queue"}, headers=self.srv.auth)
+            {"text": "yo", "mode": "queue", "client_id": "cid-9"},
+            headers=self.srv.auth)
         self.assertEqual(status, 202)
         self.assertTrue(json.loads(data)["queued"])
         replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
@@ -432,6 +445,7 @@ class TestAgentRoutes(unittest.TestCase):
         self.assertEqual(replay[0]["session"], "claude:r1")
         self.assertEqual(replay[0]["data"]["op"], "message")
         self.assertEqual(replay[0]["data"]["text"], "yo")
+        self.assertEqual(replay[0]["data"]["client_id"], "cid-9")
 
     def test_observed_remote_rejects_message_allows_attach(self):
         self._push_catalog([{
