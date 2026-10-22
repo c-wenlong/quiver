@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Quiver</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header id="top">
+  <button id="back" class="ghost hidden" aria-label="Back">‹</button>
+  <div id="title">Quiver</div>
+  <div id="conn" class="dot off" title="connection"></div>
+</header>
+
+<main>
+  <section id="pair-view" class="view hidden">
+    <div class="card center">
+      <h1>Pair this device</h1>
+      <p class="dim">Run <code>swe remote pair</code> on the hub and open the
+      link it prints, or paste the token here.</p>
+      <input id="pair-token" type="text" inputmode="text" autocomplete="off"
+             placeholder="pair token" spellcheck="false">
+      <input id="pair-name" type="text" autocomplete="off"
+             placeholder="device name (e.g. iPhone)">
+      <button id="pair-go" class="primary">Pair</button>
+      <p id="pair-error" class="error"></p>
+    </div>
+  </section>
+
+  <section id="sessions-view" class="view hidden">
+    <div id="session-groups"></div>
+  </section>
+
+  <section id="chat-view" class="view hidden">
+    <div id="chat-meta" class="dim"></div>
+    <div id="chat-banner" class="banner hidden"></div>
+    <div id="chat-log"></div>
+    <form id="composer" class="hidden">
+      <input id="composer-text" type="text" autocomplete="off"
+             placeholder="Message the session">
+      <button class="primary" type="submit">Send</button>
+    </form>
+  </section>
+</main>
+
+<nav id="tabs" class="hidden">
+  <button data-tab="sessions" class="tab active">Sessions</button>
+  <button data-tab="inbox" class="tab">Inbox <span id="inbox-badge" class="badge hidden"></span></button>
+</nav>
+
+<section id="inbox-view" class="view hidden">
+  <div id="inbox-list"></div>
+</section>
+
+<script src="/app.js"></script>
+</body>
+</html>

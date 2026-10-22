@@ -40,8 +40,9 @@ queued commands until it reconnects.
 
 Tailscale is the transport because the relay is our own server: nothing
 third-party stores transcripts (Claude RC stores them on Anthropic
-servers; we don't need to). Fallback for no-tailnet: hub TLS with a cert
-pinned at pairing.
+servers; we don't need to). v1 is tailnet-only: the hub binds its
+Tailscale IP, never `0.0.0.0`. A TLS fallback with a cert pinned at
+pairing is deferred until a non-tailnet device actually needs in.
 
 ## Precedents
 
@@ -67,7 +68,10 @@ reports (CLI session invisible to mobile; write-lock conflict). Rule:
 Composer renders only on `attached` sessions. `observed` sessions offer
 **Attach**: relaunch under the supervisor via the resume flags
 `sessions/resume.py` already knows (`claude --resume`, `codex resume`,
-`--session`, `--continue`, …). `LIMITED_RESUME` harnesses stay observed.
+`--session`, `--continue`, …). Attach is offered only while the session
+looks idle (no transcript append in ~5s, status not running), and the
+hub re-checks at execution time: killing a terminal mid-keystroke is
+the failure mode. `LIMITED_RESUME` harnesses stay observed.
 
 ## New domain: `src/quiver/remote/`
 
@@ -86,7 +90,7 @@ remote/
   journal.py     # per-session seq-numbered event log (replay on reconnect)
   hub.py         # http.server ThreadingHTTPServer: REST + SSE, device auth
   agent.py       # satellite daemon: dial hub, run local tail/inject
-  notify.py      # needs-you/finished/error fan-out (ntfy first, APNs later)
+  notify.py      # needs-you/finished/error fan-out via self-hosted ntfy
   commands.py    # swe remote serve|agent|pair|attach|status — argv + print
 ```
 
@@ -127,6 +131,12 @@ materialize completed records. True deltas come free on tier-A channels
 (opencode SSE, codex notifications, `claude -p --output-format
 stream-json`) where the harness emits them; `kind` survives both paths.
 
+`needs_you` detection is tiered the same way: tier A gets it free from
+structured events (approval requests, `permission.asked`); for tail-only
+sessions the tailer infers "waiting for input" from transcript state,
+reusing the `reports/followups.py` classification where it applies
+rather than a second heuristic.
+
 ## Write path — `inject.py`
 
 Registry keyed by `tool_name`, same shape as `PARSER_REGISTRY` /
@@ -149,6 +159,7 @@ events upstream and receive command envelopes downstream):
 GET  /v1/sessions                    catalog: SessionRow shape + machine + ownership
 GET  /v1/sessions/{id}/events        SSE stream; ?last=seq replays journal
 POST /v1/sessions/{id}/message       {text, mode: queue|steer, attachments[]}
+POST /v1/sessions/{id}/attachments   multipart upload → staged file, returns ref
 POST /v1/sessions/{id}/approval      {request_id, decision}
 POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill
 POST /v1/sessions                    new session {machine, harness, cwd, prompt}
@@ -171,6 +182,14 @@ disk; client resumes with `?last=seq`. "Open the app, catch up on 30 min
 of agent work" replays the journal instead of refetching a transcript —
 this is what Claude RC's server-side transcript buys them.
 
+Attachments stage through the hub: `POST .../attachments` lands the
+bytes under `remote/inbox/<session>/` on the machine running the session
+(a satellite writes them via its own connection when the session is
+remote), and the prompt references the path: `@`-ref syntax where the
+harness supports it, an inlined path otherwise. Caps: 20 MB per file,
+image/pdf/text only, swept after 7 days or at session end, whichever
+comes first.
+
 ## Satellite — `agent.py`
 
 Same `tail.py`/`inject.py`, no listener: persistent outbound connection
@@ -188,11 +207,18 @@ writes-go-through-tested-Python rule.
 
 ## Phone client
 
-PWA first, native second. The hub serves a static SPA (`remote/web/`)
-— the whole feature works over Tailscale with "add to home screen",
-zero store friction. Native SwiftUI follows for push, share sheet,
-dictation, offline cache. Share only protocol DTOs with QuiverCore —
-decoding stays server-side and most of QuiverCore is AppKit-bound.
+Three tiers. The hub serves a static SPA (`remote/web/`): the whole
+feature works over Tailscale with "add to home screen", zero store
+friction. Then a thin WKWebView wrapper buys a real icon, a share-sheet
+target, a Face ID launch gate and WidgetKit/Live Activities via app
+extensions, without porting the UI. Native SwiftUI comes last, and only
+if dictation (`SFSpeechRecognizer`), a real offline cache (service
+workers in WKWebView are flaky) or general polish justify it. Push comes
+from ntfy, not the app. One caveat: Safari's PWA storage and WKWebView's
+data store are separate, so a device credential paired in the PWA does
+not carry into the wrapper — re-scanning the QR once inside the app is
+expected, not a bug. Share only protocol DTOs with QuiverCore — decoding
+stays server-side and most of QuiverCore is AppKit-bound.
 
 Screens:
 
@@ -212,21 +238,30 @@ Screens:
 - **Machine** — per-device strip; the MacBook satellite can ride
   QuiverCore's Compute samplers (CPU/GPU/temps) along this view.
 
-Beyond remote control, nearly free on this architecture: ntfy.sh
-(self-hostable) push for needs-you/finished/error/limit; usage/limits
-dashboard (`swe list` data); transcript FTS across machines (the search
-index normalizes already); diff viewer + commit/push via `swe gh`;
-`$ swe report` cards; voice dictation; offline prompt queue.
+Beyond remote control, nearly free on this architecture: push for
+needs-you/finished/error/limit via the self-hosted ntfy (iOS background
+delivery needs `upstream-base-url: https://ntfy.sh` set, and ntfy `http`
+action buttons give approve/deny straight from the lock screen: a POST
+to `/v1/sessions/{id}/approval` over the tailnet, no app code); a
+usage/limits dashboard (`swe list` data); transcript FTS across machines
+(the search index normalizes already); diff viewer + commit/push via
+`swe gh`; `$ swe report` cards; voice dictation; offline prompt queue.
 
 ## Security
 
-- Tailnet membership is the transport boundary; no LAN/WAN ports.
+- Tailnet membership is the transport boundary: the hub binds its
+  Tailscale IP only, so no LAN/WAN port ever opens. Tailscale's OAuth
+  login is how a device joins the tailnet; this feature does not
+  re-implement it.
 - Pairing: `swe remote pair` prints a QR (`quiver://pair?host&token`,
   one-time, short-lived) → phone exchanges it for a stored device
   credential in `devices.json` (0600), revocable per device — Trusted
-  Devices minus biometrics.
+  Devices minus biometrics. The token guards the pairing window, not
+  the transport: only a tailnet device can even reach `/v1/pair`.
 - Threat model for the README: the hub executes on your machines by
-  design; the credential gates the app layer on top of the tailnet.
+  design; the credential gates the app layer on top of the tailnet —
+  per-device revocation is what "revoke my lost phone" means without
+  touching the tailnet.
 
 ## Milestones
 
@@ -235,7 +270,7 @@ index normalizes already); diff viewer + commit/push via `swe gh`;
 | R1 | hub + tail + catalog + SSE + PWA read-only chat, Linux only | streaming, rendering on real transcripts |
 | R2 | inject A-tier claude headless + tmux supervisor + attach | phone can prompt |
 | R3 | satellite + machine registry + offline queue | MacBook joins |
-| R4 | native iOS + Inbox + ntfy push + approval cards | notifications |
+| R4 | iOS shell (WKWebView wrapper) + Inbox + ntfy push + approval cards | notifications |
 | R5 | opencode serve adapter, codex app-server adapter, diff pane, Queue/Steer polish | tier-A depth |
 
 ## Risks
@@ -249,8 +284,9 @@ index normalizes already); diff viewer + commit/push via `swe gh`;
   Anthropic's relay, which we deliberately don't use.
 - **Not all harnesses persist thinking** — the card simply never
   appears there.
-- **Push needs one piece we don't own** — ntfy.sh free tier, a
-  self-hosted ntfy container, or "syncs on open" for v1.
+- **Push rides ntfy.sh's APNs relay** — a self-hosted ntfy still needs
+  `upstream-base-url: https://ntfy.sh` for iOS background delivery, so
+  notification metadata transits ntfy.sh unless bodies are encrypted.
 - **Reverses the "cloud sync: out of scope" roadmap line** — scoped to
-  session access, not app-state sync; decided here, recorded in
+  session access, not app-state sync; already recorded as M9 in
   `app/ROADMAP.md`.
