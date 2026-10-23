@@ -1,0 +1,412 @@
+"""The Compute page's data: /proc and /sys parsing over fake trees,
+attribution, the meters, the history rings and the route."""
+
+import json
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from quiver.webapp import compute
+from quiver.webapp.pages import compute as page
+
+from tests.test_remote_hub import HubBase
+
+HOME = "/home/u"
+TICK = 100
+
+
+def _stat_line(pid, comm, state, ppid, utime, stime, threads, start):
+    rest = [state, ppid, 0, 0, 0, 0, 0, 0, 0, 0, 0, utime, stime, 0, 0, 20, 0, threads, 0, start, 0, 0]
+    return f"{pid} ({comm}) " + " ".join(str(x) for x in rest) + "\n"
+
+
+class FakeMachine:
+    """A /proc and /sys under a temp folder, owned by this user."""
+
+    def __init__(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.proc = self.root / "proc"
+        self.sys = self.root / "sys"
+        self.proc.mkdir()
+        self.sys.mkdir()
+        self.cpu_line = "cpu  100 0 100 800 0 0 0 0 0 0"
+        self.write_stat()
+
+    def write_stat(self):
+        (self.proc / "stat").write_text(f"{self.cpu_line}\ncpu0 1 2 3 4\nbtime 1000\n")
+        (self.proc / "meminfo").write_text(
+            "MemTotal:       8000000 kB\nMemFree:  1 kB\nMemAvailable:   6000000 kB\n"
+            "SwapTotal:      1000 kB\nSwapFree:       400 kB\n")
+        (self.proc / "loadavg").write_text("0.50 0.25 0.10 1/100 999\n")
+
+    def process(self, pid, ppid, cmdline, exe=None, comm=None, state="S", cpu=(0, 0), threads=1,
+                start=500, anon_kb=1024, swap_kb=0, cwd=None, cgroup="0::/user.slice/session-1.scope"):
+        d = self.proc / str(pid)
+        d.mkdir(exist_ok=True)
+        comm = comm or (os.path.basename(cmdline[0]) if cmdline else "kworker")
+        (d / "stat").write_text(_stat_line(pid, comm, state, ppid, cpu[0], cpu[1], threads, start))
+        (d / "cmdline").write_bytes(b"".join(a.encode() + b"\0" for a in cmdline))
+        (d / "status").write_text(f"Name:\t{comm}\nVmRSS:\t9999 kB\nRssAnon:\t{anon_kb} kB\nVmSwap:\t{swap_kb} kB\n")
+        (d / "cgroup").write_text(cgroup + "\n")
+        for name, target in (("exe", exe), ("cwd", cwd)):
+            link = d / name
+            if link.is_symlink():
+                link.unlink()
+            if target:
+                os.symlink(target, link)
+
+    def hwmon(self, index, name, temps=(), fans=()):
+        d = self.sys / "class" / "hwmon" / f"hwmon{index}"
+        d.mkdir(parents=True)
+        (d / "name").write_text(name + "\n")
+        for i, milli in enumerate(temps, 1):
+            (d / f"temp{i}_input").write_text(f"{milli}\n")
+        for i, (rpm, lo) in enumerate(fans, 1):
+            (d / f"fan{i}_input").write_text(f"{rpm}\n")
+            (d / f"fan{i}_min").write_text(f"{lo}\n")
+
+    def zone(self, index, kind, milli):
+        d = self.sys / "class" / "thermal" / f"thermal_zone{index}"
+        d.mkdir(parents=True)
+        (d / "type").write_text(kind + "\n")
+        (d / "temp").write_text(f"{milli}\n")
+
+
+def _matchers():
+    return [compute.Matcher("claude", {"claude", "cc"}, f"{HOME}/.claude"),
+            compute.Matcher("codex", {"codex"}, f"{HOME}/.codex")]
+
+
+class TestReadProcesses(unittest.TestCase):
+    def setUp(self):
+        self.m = FakeMachine()
+
+    def test_fields_memory_and_skips(self):
+        self.m.process(10, 1, ["/usr/bin/node", "/x/bin/claude", "--resume"], exe="/usr/bin/node",
+                       comm="node (x) y", cpu=(150, 50), threads=7, start=200, anon_kb=2048, swap_kb=1024)
+        self.m.process(11, 1, ["zombie"], state="Z")
+        self.m.process(12, 2, [])  # a kernel thread
+        self.m.process(13, 10, ["/opt/app", "a"], exe="/opt/app (deleted)")
+        self.m.process(14, 10, ["/opt/gone"])  # unreadable exe falls back to argv[0]
+        procs = {p.pid: p for p in [compute.read_process(self.m.proc, pid, 1000, TICK)
+                                    for pid in (10, 11, 12, 13, 14)] if p}
+        self.assertEqual(sorted(procs), [10, 13, 14])
+        p = procs[10]
+        self.assertEqual((p.ppid, p.threads, p.name, p.runner_name), (1, 7, "node", "node"))
+        self.assertEqual(p.cpu_ns, 2 * 1_000_000_000)
+        self.assertEqual(p.started_at, 1002.0)
+        self.assertEqual(p.memory_bytes, 3072 * 1024)
+        self.assertEqual(p.command_line, "/usr/bin/node /x/bin/claude --resume")
+        self.assertEqual(procs[13].path, "/opt/app")
+        self.assertEqual(procs[14].path, "/opt/gone")
+
+    def test_only_own_uid_and_never_pid_1(self):
+        self.m.process(1, 0, ["/sbin/init"], exe="/sbin/init")
+        self.m.process(20, 1, ["bash"], exe="/bin/bash")
+        self.assertEqual([p.pid for p in compute.read_processes(self.m.proc)], [20])
+        self.assertEqual(compute.read_processes(self.m.proc, uid=os.getuid() + 1), [])
+
+    def test_python_versions_fold_to_one_runner(self):
+        p = compute.Proc(1, 0, path="/usr/bin/python3.12")
+        self.assertEqual(p.runner_name, "python")
+        self.assertEqual(compute.Proc(5, 0).name, "pid 5")
+
+
+class TestAttribution(unittest.TestCase):
+    def setUp(self):
+        self.m = FakeMachine()
+
+    def _procs(self):
+        return {p.pid: p for p in compute.read_processes(self.m.proc)}
+
+    def test_roots_descendants_and_rules(self):
+        m = self.m
+        m.process(100, 1, ["/usr/bin/zsh"], exe="/usr/bin/zsh")
+        m.process(101, 100, ["node", "/home/u/.npm/bin/claude"], exe="/usr/bin/node")     # script runner
+        m.process(102, 101, ["/bin/bash", "-c", "ls"], exe="/bin/bash")                  # descendant
+        m.process(103, 100, ["codex"], exe="/usr/local/bin/codex")                       # command name
+        m.process(104, 1, ["srv"], exe=f"{HOME}/.claude/remote/srv/server")              # home folder
+        m.process(105, 100, ["claude"], exe="/usr/bin/node")                             # process.title
+        m.process(106, 100, ["cc", "--x"], exe="/home/u/.local/share/claude/versions/2.1")  # alias as argv[0]
+        m.process(107, 100, ["vim"], exe="/usr/bin/vim")                                 # nobody's
+        found = compute.attribute(list(self._procs().values()), _matchers(), m.proc, self_pid=1)
+        by = {h: sorted(p.pid for p in ps) for h, ps in found.by_harness.items()}
+        self.assertEqual(by, {"claude": [101, 102, 104, 105, 106], "codex": [103]})
+        self.assertEqual(found.orphans, [])
+
+    def test_orphans_under_init_or_the_user_manager(self):
+        m = self.m
+        m.process(50, 1, ["/usr/lib/systemd/systemd", "--user"], exe="/usr/lib/systemd/systemd")
+        m.process(200, 1, ["node", "server.js"], exe="/usr/bin/node", cwd="/home/u/app")
+        m.process(201, 200, ["esbuild"], exe="/usr/bin/esbuild")
+        m.process(202, 201, ["esbuild-child"], exe="/usr/bin/esbuild")
+        m.process(210, 50, ["npx", "mcp"], exe="/usr/bin/npx", cwd="/home/u/proj")        # reparented
+        m.process(220, 50, ["python3", "svc.py"], exe="/usr/bin/python3", cwd="/home/u",
+                  cgroup="0::/user.slice/user-1000.slice/user@1000.service/app.slice/quiver-hub.service")
+        m.process(230, 1, ["node", "x"], exe="/usr/bin/node", cwd="/")                    # in /
+        m.process(240, 1, ["/usr/bin/tmux"], exe="/usr/bin/tmux", cwd="/home/u")          # not a runner
+        m.process(250, 1, ["python3", "-m", "quiver.cli"], exe="/usr/bin/python3", cwd="/home/u")  # the hub
+        m.process(260, 100, ["node", "dev"], exe="/usr/bin/node", cwd="/home/u")          # parent alive
+        found = compute.attribute(list(self._procs().values()), _matchers(), m.proc, self_pid=250)
+        roots = {root.pid: sorted(d.pid for d in ds) for root, ds in found.orphans}
+        self.assertEqual(roots, {200: [201, 202], 210: []})
+        self.assertEqual(found.orphans[0][0].cwd, "/home/u/app")
+
+    def test_load_matchers_reads_starred_unarchived_in_order(self):
+        registry = {"codex": {"command": "/opt/bin/codex", "aliases": ["cx"], "state": "starred", "pin": 2},
+                    "claude": {"command": "claude", "aliases": ["cc"], "state": "starred", "pin": 1},
+                    "gemini": {"command": "gemini"},
+                    "old": {"command": "old", "state": "archived", "archived": {"reason": "x"}}}
+        home = Path(tempfile.mkdtemp())
+        (home / "real").mkdir()
+        os.symlink(home / "real", home / ".claude")
+        with patch("quiver.harness.registry.load_registry_readonly", return_value=registry), \
+                patch("quiver.harness.registry.load_registry", side_effect=AssertionError("migrates")):
+            matchers = compute.load_matchers(home)
+        self.assertEqual([m.harness for m in matchers], ["codex", "claude"])
+        self.assertEqual(matchers[0].commands, {"codex", "cx"})
+        self.assertEqual(matchers[1].home_folder, str(home / ".claude"))
+        self.assertEqual(matchers[1].real_home_folder, str((home / "real").resolve()))
+        p = compute.Proc(9, 1, path=str((home / "real").resolve() / "bin" / "x"))
+        self.assertTrue(compute.is_root(p, matchers[1]))
+
+
+    def test_legacy_install_reads_stars_without_migrating(self):
+        folder = Path(tempfile.mkdtemp())
+        tools, stars, archive = folder / "tools.json", folder / "stars.json", folder / "archived.json"
+        tools.write_text(json.dumps({"claude": {"command": "claude"}, "codex": {"command": "codex"},
+                                     "old": {"command": "old"}}))
+        stars.write_text(json.dumps(["codex", "old"]))
+        archive.write_text(json.dumps({"old": {"reason": "x"}}))
+        harness = folder / "harness.json"
+        with patch("quiver.harness.registry.HARNESS_FILE", harness), \
+                patch("quiver.harness.registry.TOOLS_FILE", tools), \
+                patch("quiver.harness.registry.STARS_FILE", stars), \
+                patch("quiver.harness.registry.ARCHIVE_FILE", archive):
+            matchers = compute.load_matchers(Path(HOME))
+        self.assertEqual([m.harness for m in matchers], ["codex"])
+        self.assertFalse(harness.exists())
+        self.assertTrue(stars.exists() and tools.exists())
+
+
+class TestMeters(unittest.TestCase):
+    def test_cpu_percent_busy_streak_and_reuse(self):
+        meter = compute.CPUMeter()
+        p = compute.Proc(1, 0, started_at=10.0, cpu_ns=0)
+        self.assertEqual(meter.update([p], 0.0), {})
+        t = 0.0
+        for _ in range(13):  # 130 s at 90% of one core
+            t += 10
+            p.cpu_ns += 9 * 10**9
+            percent = meter.update([p], t)
+        self.assertAlmostEqual(percent[1], 90.0)
+        self.assertTrue(meter.is_busy(1))
+        p.cpu_ns += 10**8  # 1% breaks the streak
+        meter.update([p], t + 10)
+        self.assertFalse(meter.is_busy(1))
+        reused = compute.Proc(1, 0, started_at=99.0, cpu_ns=p.cpu_ns + 10**12)
+        self.assertEqual(meter.update([reused], t + 20), {})
+
+    def test_machine_readers(self):
+        m = FakeMachine()
+        self.assertEqual(compute.read_cpu_times(m.proc), (200, 1000))
+        mem = compute.read_memory(m.proc)
+        self.assertEqual(mem["total_bytes"], 8000000 * 1024)
+        self.assertEqual(mem["used_bytes"], 2000000 * 1024)
+        self.assertEqual(mem["swap_used_bytes"], 600 * 1024)
+        self.assertEqual(compute.read_load(m.proc), [0.5, 0.25, 0.1])
+        self.assertEqual(compute.boot_time(m.proc), 1000.0)
+        empty = Path(tempfile.mkdtemp())
+        self.assertIsNone(compute.read_cpu_times(empty))
+        self.assertIsNone(compute.read_memory(empty))
+        self.assertIsNone(compute.read_load(empty))
+
+
+class TestSensors(unittest.TestCase):
+    def test_components_fans_and_zone_fill(self):
+        m = FakeMachine()
+        m.hwmon(0, "k10temp", temps=(55000, 61000))
+        m.hwmon(1, "iwlwifi_1_0", temps=(38000,))
+        m.hwmon(2, "nvme", temps=(40000, -273000, 44000), fans=((2500, 2000), (900, 0)))
+        m.zone(0, "x86_pkg_temp", 90000)  # CPU already read from hwmon
+        m.zone(1, "battery", 30000)
+        values, fans = compute.read_temperatures(m.sys)
+        self.assertEqual(values, {"cpu": 58.0, "ssd": 42.0, "battery": 30.0})
+        self.assertEqual(fans, {"rpm": 2500.0, "up": True})
+
+    def test_no_sensors(self):
+        self.assertEqual(compute.read_temperatures(Path(tempfile.mkdtemp())), ({}, None))
+
+    def test_nvidia_rows(self):
+        text = ("0, NVIDIA GeForce GTX 1070, 12, 17, 8192, 45, 10.72\n"
+                "1, Tesla T4, [N/A], 0, 15360, [Not Supported], [N/A]\nbad line\n")
+        gpus = compute.parse_nvidia(text)
+        self.assertEqual(len(gpus), 2)
+        self.assertEqual(gpus[0]["utilization_percent"], 12.0)
+        self.assertEqual(gpus[0]["memory_total_bytes"], 8192 * 1024 * 1024)
+        self.assertEqual(gpus[1]["name"], "Tesla T4")
+        self.assertIsNone(gpus[1]["utilization_percent"])
+        self.assertIsNone(gpus[1]["temperature_c"])
+
+    def test_nvidia_absent_or_failing(self):
+        with patch("shutil.which", return_value=None):
+            self.assertIsNone(compute.read_nvidia())
+        with patch("shutil.which", return_value="/usr/bin/nvidia-smi"), \
+                patch("subprocess.run", side_effect=compute.subprocess.TimeoutExpired("x", 3)):
+            self.assertIsNone(compute.read_nvidia())
+
+
+class TestHistory(unittest.TestCase):
+    def _tick(self, at, memory=1):
+        return compute.Tick(at, {"claude": (memory, 1.0)}, {}, {"cpu": 50.0}, None)
+
+    def test_rings_window_and_peaks(self):
+        h = compute.History()
+        for i in range(100):
+            h.record(self._tick(i * 3.0, memory=i))
+        # Every 3 s point in the fine ring; every 10 s or so in the coarse.
+        self.assertEqual(len(h.fine), 100)
+        self.assertTrue(all(b.at - a.at >= 9.5 for a, b in zip(h.coarse, list(h.coarse)[1:])))
+        three = h.window(3)
+        self.assertEqual(three[-1].at, 297.0)
+        self.assertEqual(len(three), 100)
+        thirty = h.window(30)
+        self.assertEqual(thirty[-1].at, h.coarse[-1].at)
+        self.assertTrue(all(b.at - a.at >= 27 for a, b in zip(thirty, thirty[1:])))
+        self.assertEqual(h.peaks(), {"claude": 99})
+
+    def test_old_points_age_out(self):
+        h = compute.History()
+        h.record(self._tick(0.0))
+        h.record(self._tick(compute.COARSE_KEEP + 100.0))
+        self.assertEqual(len(h.coarse), 1)
+        self.assertEqual(len(h.fine), 1)
+        self.assertEqual(compute.History().window(10), [])
+
+
+class _Model(unittest.TestCase):
+    def setUp(self):
+        self.m = FakeMachine()
+        m = self.m
+        m.process(100, 1, ["/usr/bin/zsh"], exe="/usr/bin/zsh", start=100)
+        m.process(101, 100, ["claude"], exe="/usr/bin/node", start=200, anon_kb=3 * 1024 * 1024, threads=12)
+        m.process(102, 101, ["node", "mcp.js"], exe="/usr/bin/node", start=300, anon_kb=1024)
+        m.process(200, 1, ["node", "server.js", "--port", "3000"], exe="/usr/bin/node", cwd="/home/u/app",
+                  start=50, anon_kb=2048)
+        m.hwmon(0, "k10temp", temps=(55000,))
+        self.now = [5000.0]
+        self.model = compute.ComputeModel(
+            proc=m.proc, sys_root=m.sys,
+            nvidia=lambda: compute.parse_nvidia("0, GTX, 40, 1, 8, 60, 5\n"),
+            clock=lambda: self.now[0], self_pid=999)
+        self.model.home = Path(HOME)
+        self._patches = [
+            patch("quiver.harness.registry.load_registry_readonly",
+                  return_value={"claude": {"command": "claude", "state": "starred"},
+                                "codex": {"command": "codex", "state": "starred"}}),
+        ]
+        for p in self._patches:
+            p.start()
+        super().setUp()
+
+    def tearDown(self):
+        super().tearDown()
+        for p in reversed(self._patches):
+            p.stop()
+
+
+class TestModel(_Model):
+    def test_two_samples_make_the_payload(self):
+        self.model.sample()
+        self.m.process(101, 100, ["claude"], exe="/usr/bin/node", start=200, anon_kb=3 * 1024 * 1024,
+                       threads=12, cpu=(300, 100))
+        self.m.cpu_line = "cpu  200 0 200 1600 0 0 0 0 0 0"
+        self.m.write_stat()
+        self.now[0] += 1.0
+        self.model.sample()  # inside MIN_SAMPLE: reused
+        self.now[0] += 9.0
+        self.model.sample()
+        body = self.model.payload(10)
+        self.assertTrue(body["supported"])
+        self.assertEqual(body["starred"], ["claude", "codex"])
+        self.assertEqual(body["not_running"], ["codex"])
+        [claude] = body["harnesses"]
+        self.assertEqual(claude["process_count"], 2)
+        self.assertEqual([r["pid"] for r in claude["processes"]], [101, 102])
+        self.assertAlmostEqual(claude["processes"][0]["cpu_percent"], 40.0)
+        self.assertEqual(claude["running_since"], 1002.0)
+        self.assertEqual(claude["threads"], 13)
+        [orphan] = body["orphans"]
+        self.assertEqual((orphan["pid"], orphan["command"], orphan["cwd"]),
+                         (200, "node server.js --port", "/home/u/app"))
+        self.assertEqual(body["totals"]["process_count"], 3)
+        self.assertEqual(body["system"]["cpu_percent"], 20.0)
+        self.assertEqual(body["system"]["load"], [0.5, 0.25, 0.1])
+        self.assertEqual(body["temperatures"], {"cpu": 55.0, "gpu": 60.0})
+        trend = body["trend"]
+        self.assertEqual(len(trend["harnesses"]["claude"]), 2)
+        self.assertEqual(trend["gpus"][0]["points"][-1][1], 40.0)
+        self.assertTrue(trend["gpu_available"] and trend["temperature_available"])
+        self.assertEqual(trend["peaks"]["claude"], 3 * 1024**3 + 1024 * 1024)
+        json.dumps(body)
+
+    def test_a_bad_registry_is_an_error_not_a_crash(self):
+        with patch("quiver.harness.registry.load_registry_readonly", side_effect=ValueError("bad json")):
+            self.model.sample()
+        body = self.model.payload(10)
+        self.assertFalse(body["matchers_loaded"])
+        self.assertIn("bad json", body["error"])
+        self.assertEqual(body["harnesses"], [])
+
+
+class TestPage(_Model):
+    def _ctx(self):
+        class Ctx:
+            home = HOME
+            machine = {"name": "box"}
+        return Ctx()
+
+    def test_unsupported_os(self):
+        with patch.object(compute, "supported", return_value=False), \
+                patch("platform.system", return_value="Darwin"):
+            body = page.get(self._ctx(), {})
+        self.assertEqual((body["supported"], body["os"], body["machine"]), (False, "Darwin", "box"))
+        self.assertIn("Mac", body["message"])
+
+    def test_interval_is_checked_and_the_ticker_starts(self):
+        with patch.object(compute, "supported", return_value=True), \
+                patch.object(compute, "model", return_value=self.model), \
+                patch.object(compute, "start_ticker") as ticker:
+            body = page.get(self._ctx(), {"interval": "7"})
+            self.assertEqual(body["trend"]["interval"], 10)
+            self.assertEqual(page.get(self._ctx(), {"interval": "300"})["trend"]["interval"], 300)
+            self.assertEqual(page.get(self._ctx(), {"interval": "x"})["trend"]["interval"], 10)
+        self.assertTrue(ticker.called)
+        self.assertEqual(body["machine"], "box")
+        self.assertEqual(self.model.home, Path(HOME))
+
+
+class TestRoute(_Model, HubBase):
+    def test_needs_a_device_and_answers(self):
+        self.assertEqual(self.srv.request("GET", "/v1/app/compute")[0], 401)
+        with patch.object(compute, "supported", return_value=True), \
+                patch.object(compute, "model", return_value=self.model), \
+                patch.object(compute, "start_ticker"):
+            status, data = self.srv.request("GET", "/v1/app/compute?interval=3&refresh=1",
+                                            headers=self.auth())
+        self.assertEqual(status, 200, data)
+        body = json.loads(data)
+        self.assertEqual(body["machine"], self.srv.state.machine["name"])
+        self.assertEqual(body["trend"]["interval"], 3)
+        self.assertEqual(body["harnesses"][0]["harness"], "claude")
+
+    def test_page_script_is_bundled(self):
+        status, data = self.srv.request("GET", "/app/pages.js")
+        self.assertEqual(status, 200)
+        self.assertIn(b'registerPage("compute"', data)
+
+
+if __name__ == "__main__":
+    unittest.main()
