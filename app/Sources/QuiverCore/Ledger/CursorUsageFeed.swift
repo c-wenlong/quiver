@@ -243,8 +243,11 @@ public actor CursorUsageFeed {
     }
 
     /// Whether `session` is a `dayLabel` bucket rather than a conversation id.
+    /// The prefix test first: the Sessions page asks this of every Cursor
+    /// usage row on each join, and a conversation id never gets as far as
+    /// the regex.
     static func isDayBucket(_ session: String) -> Bool {
-        session.wholeMatch(of: /cursor-\d{4}-\d{2}-\d{2}/) != nil
+        session.hasPrefix("cursor-") && session.wholeMatch(of: /cursor-\d{4}-\d{2}-\d{2}/) != nil
     }
 
     /// `yyyy-mm-dd` in the local calendar, for the session label of events

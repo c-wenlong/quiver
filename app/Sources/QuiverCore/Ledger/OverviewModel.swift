@@ -190,8 +190,8 @@ public final class OverviewModel {
 
     /// Bumped when the ledger's content or pricing changes: a scan that read
     /// anything, or a new price list. Invalidates every cached summary.
-    /// Tests read it.
-    private(set) var revision = 0
+    /// Tests read it, and the Sessions page rereads usage when it moves.
+    public private(set) var revision = 0
     private var summaryCache: [OverviewPeriod: CachedSummary] = [:]
     /// The background pass that fills every period after a load.
     var warming: Task<Void, Never>?

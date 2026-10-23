@@ -263,6 +263,8 @@ public final class SessionsModel {
 
     public var filter = Filter() {
         didSet {
+            guard filter != oldValue else { return }
+            filterVersion &+= 1
             // The index hits hang off the needle and its agent scope; the
             // other gates don't touch them.
             if filter.search != oldValue.search || filter.harness != oldValue.harness {
@@ -270,7 +272,9 @@ public final class SessionsModel {
             }
         }
     }
-    public private(set) var rows: [Row] = []
+    public private(set) var rows: [Row] = [] {
+        didSet { rowsVersion &+= 1 }
+    }
     public private(set) var failures: [String] = []
     public private(set) var isLoading = false
     public private(set) var error: String?
@@ -289,7 +293,9 @@ public final class SessionsModel {
     private var cloud: [DevinCloudSession] = []
     /// A cloud session has no folder; its first pull request's repository
     /// stands in as the project.
-    private var cloudProjects: [String: String] = [:]
+    private var cloudProjects: [String: String] = [:] {
+        didSet { rowsVersion &+= 1 }
+    }
     private let snapshots: (any SnapshotStoring<SessionSnapshot>)?
     private let maxAge: TimeInterval
     private let listTimeout: Duration
@@ -332,7 +338,9 @@ public final class SessionsModel {
     /// the index's codex thread uuid still finds swe's rollout-stem id.
     /// Cleared the moment the needle changes — a stale hit must never keep
     /// a row the new needle doesn't name.
-    private var hitsByKey: [String: SearchHit] = [:]
+    private var hitsByKey: [String: SearchHit] = [:] {
+        didSet { filterVersion &+= 1 }
+    }
     /// Only the newest content search writes `hitsByKey`.
     private var searchGeneration = 0
     /// The in-flight search; tests await it, production only needs the commit.
@@ -555,6 +563,22 @@ public final class SessionsModel {
         CursorUsageFeed.isDayBucket(session) ? "\(harness)|\(account)|\(session)" : "\(harness)|\(session)"
     }
 
+    /// Re-reads usage once per ledger change: `scans` is the overview's
+    /// count of completed scans and `ledgerRevision` its revision, which
+    /// also moves on a feed import or a price change. The Sessions page
+    /// calls this each time it opens, and with neither moved since the
+    /// last call the usage on show is already the newest, so it skips
+    /// the read and the rejoin.
+    public func refreshUsage(afterScans scans: Int, ledgerRevision: Int) async {
+        let stamp = [scans, ledgerRevision]
+        guard stamp != refreshedFor else { return }
+        refreshedFor = stamp
+        await refreshUsage(ledgerScanned: scans > 0)
+    }
+
+    /// The scan count and revision the last `refreshUsage(afterScans:ledgerRevision:)` read for.
+    private var refreshedFor: [Int]?
+
     /// Two usage rows of one session added together. The account is the
     /// one that recorded the later event.
     static func merged(_ a: SessionUsage, _ b: SessionUsage) -> SessionUsage {
@@ -643,19 +667,14 @@ public final class SessionsModel {
         }
     }
 
-    public var summary: Summary {
-        var summary = Summary()
-        for row in visible {
-            summary.sessions += 1
-            if let usage = row.usage { summary.totals.add(usage.totals) }
-        }
-        return summary
-    }
+    public var summary: Summary { filtered().summary }
 
     /// The visible sessions by the local day they were last active, newest first.
     public func groupedByDay(calendar: Calendar = .current) -> [DayGroup] {
+        let key = filteredKey
+        if let cache = groupsCache, cache.key == key, cache.calendar == calendar { return cache.groups }
         var groups: [DayGroup] = []
-        for row in visible {
+        for row in filtered().visible {
             let day = calendar.startOfDay(for: row.session.lastActiveAt)
             if groups.last?.day == day {
                 groups[groups.count - 1].rows.append(row)
@@ -663,6 +682,7 @@ public final class SessionsModel {
                 groups.append(DayGroup(day: day, rows: [row]))
             }
         }
+        groupsCache = (key, calendar, groups)
         return groups
     }
 
@@ -705,27 +725,40 @@ public final class SessionsModel {
     }
 
     /// The key hash-like folder names fold into; "Other" sits last.
-    public static let otherProjectKey = "other"
+    public nonisolated static let otherProjectKey = "other"
     public static let otherProjectName = "Other"
 
     /// The filter key for a project name: generated names share one.
-    public static func projectKey(_ name: String?) -> String? {
+    public nonisolated static func projectKey(_ name: String?) -> String? {
         guard let name, !name.isEmpty else { return nil }
         return SessionProjects.isHashLike(name) ? otherProjectKey : name.lowercased()
     }
 
-    public var harnesses: [String] { Array(Set(rows.map(\.session.harness))).sorted() }
+    public var harnesses: [String] { choices().harnesses }
 
     /// One filter entry per project: case-folded duplicates merged,
     /// hash-like names folded into a single "Other" entry at the end,
     /// each with its session count, most sessions first.
-    public var projects: [ProjectChoice] {
+    public var projects: [ProjectChoice] { choices().projects }
+
+    /// The harness and project choices, worked out again only when the
+    /// rows or their project names change.
+    private func choices() -> (harnesses: [String], projects: [ProjectChoice]) {
+        if let cache = choicesCache, cache.rows == rowsVersion { return (cache.harnesses, cache.projects) }
+        let harnesses = Array(Set(rows.map(\.session.harness))).sorted()
+        let projects = projectChoices()
+        choicesCache = (rowsVersion, harnesses, projects)
+        return (harnesses, projects)
+    }
+
+    private func projectChoices() -> [ProjectChoice] {
         var names: [String: String] = [:]
         var counts: [String: Int] = [:]
         var order: [String] = []
+        var keys = ProjectKeys()
         for row in rows {
             guard let project = project(for: row.session),
-                  let key = Self.projectKey(project) else { continue }
+                  let key = keys.key(project) else { continue }
             if names[key] == nil {
                 names[key] = key == Self.otherProjectKey ? Self.otherProjectName : project
                 order.append(key)
@@ -751,14 +784,17 @@ public final class SessionsModel {
         // day boundary like the window's own day count intends.
         let since = filter.window == .all ? .distantPast
             : calendar.startOfDay(for: windowStart(filter.window))
+        if let cache = modelsCache, cache.rows == rowsVersion, cache.since == since { return cache.models }
         var tokens: [String: Int] = [:]
         for row in dailyRows where row.day >= since {
             tokens[row.model, default: 0] += row.totals.totalTokens
         }
         let listed = Set(rows.flatMap { $0.usage?.models ?? [] })
-        return listed
+        let models = listed
             .map { ModelChoice(model: $0, tokens: tokens[$0] ?? 0) }
             .sorted { $0.tokens != $1.tokens ? $0.tokens > $1.tokens : $0.model < $1.model }
+        modelsCache = (rowsVersion, since, models)
+        return models
     }
 
     /// The project `session` belongs to: the main repository once the
@@ -771,9 +807,13 @@ public final class SessionsModel {
     }
 
     /// Per day, harness and model over all history, for `models`' counts.
-    private var dailyRows: [DailyUsage] = []
+    private var dailyRows: [DailyUsage] = [] {
+        didSet { rowsVersion &+= 1 }
+    }
     /// cwd -> repository name, once resolved against the filesystem.
-    private var resolvedProjects: [String: String] = [:]
+    private var resolvedProjects: [String: String] = [:] {
+        didSet { rowsVersion &+= 1 }
+    }
     /// Only the newest resolution writes `resolvedProjects`.
     private var projectGeneration = 0
 
@@ -804,14 +844,20 @@ public final class SessionsModel {
 
     /// Settings' "Hide accidental sessions". Off disables the filter here
     /// and on the calendar alike.
-    public var hideTrivial = true
+    public var hideTrivial = true {
+        didSet { if hideTrivial != oldValue { filterVersion &+= 1 } }
+    }
     /// The page's "Show" for hidden rows; a view state, not persisted.
-    public var showTrivial = false
+    public var showTrivial = false {
+        didSet { if showTrivial != oldValue { filterVersion &+= 1 } }
+    }
 
     /// Set once a ledger scan has completed. Until then a listed
     /// session's missing usage proves nothing: the ledger may simply not
     /// have read the logs yet.
-    public var ledgerScanned = false
+    public var ledgerScanned = false {
+        didSet { if ledgerScanned != oldValue { filterVersion &+= 1 } }
+    }
 
     /// Whether the row is an accidental session: empty (zero responses —
     /// a listed session of a local-log harness with no ledger events at
@@ -828,10 +874,7 @@ public final class SessionsModel {
 
     /// Rows the current filters match that the trivial rule would hide.
     /// Counts them even while `showTrivial` keeps them visible.
-    public var hiddenTrivialCount: Int {
-        guard hideTrivial else { return 0 }
-        return rows.count { matches($0) && isTrivial($0) }
-    }
+    public var hiddenTrivialCount: Int { filtered().hiddenTrivialCount }
 
     // MARK: - Transcript search hits
 
@@ -895,15 +938,14 @@ public final class SessionsModel {
         SearchEngine.matchKeys(sessionID).lazy.compactMap { self.hitsByKey[$0] }.first
     }
 
-    /// The non-trivial filter terms: harness, window, project, model and
-    /// search.
-    private func matches(_ row: Row) -> Bool {
+    /// The non-trivial filter terms: harness, window (from `since`),
+    /// project, model and search (`needle`, trimmed and lower-cased).
+    private func matches(_ row: Row, since: Date, needle: String, keys: inout ProjectKeys) -> Bool {
         let s = row.session
         if let harness = filter.harness, s.harness != harness { return false }
-        if s.lastActiveAt < windowStart(filter.window) { return false }
-        if let key = filter.project, Self.projectKey(project(for: s)) != key { return false }
+        if s.lastActiveAt < since { return false }
+        if let key = filter.project, keys.key(project(for: s)) != key { return false }
         if let model = filter.model, !(row.usage?.models.contains(model) ?? false) { return false }
-        let needle = filter.search.trimmingCharacters(in: .whitespaces).lowercased()
         if !needle.isEmpty {
             let haystack = ([s.title, s.cwd, project(for: s), s.id, s.agent, row.location.title]
                 + (row.usage?.models ?? []).map(Optional.some))
@@ -915,11 +957,80 @@ public final class SessionsModel {
         return true
     }
 
-    public var visible: [Row] {
-        rows.filter { row in
-            guard matches(row) else { return false }
-            if hideTrivial, !showTrivial, isTrivial(row) { return false }
-            return true
+    public var visible: [Row] { filtered().visible }
+
+    // MARK: - Derived lists
+
+    /// Bumped when the rows or what the filter choices read from them
+    /// (project names, daily usage) change. Observed, so a view that got
+    /// a cached answer still redraws when it goes stale.
+    private var rowsVersion = 0
+    /// Bumped when anything else `visible` reads changes: the filter,
+    /// the transcript hits and the trivial-session switches.
+    private var filterVersion = 0
+
+    /// What the filters leave: the rows on show, their totals and how
+    /// many trivial rows they match, from one walk over `rows`.
+    private struct Filtered {
+        var visible: [Row] = []
+        var summary = Summary()
+        var hiddenTrivialCount = 0
+    }
+
+    private struct FilteredKey: Equatable {
+        var rows: Int
+        var filter: Int
+        /// The minute it was worked out in: every window but All time
+        /// slides with the clock, so an answer lasts a minute at most.
+        /// Zero for All time, whose start never moves.
+        var minute: Int
+    }
+
+    private var filteredKey: FilteredKey {
+        FilteredKey(rows: rowsVersion, filter: filterVersion,
+                    minute: filter.window == .all ? 0 : Int(now().timeIntervalSince1970 / 60))
+    }
+
+    // A page draws `summary`, `groupedByDay`, `hiddenTrivialCount` and
+    // the filter choices on every update, over thousands of rows; these
+    // keep each answer until its inputs change. Not observed: filling a
+    // cache while a view reads it must not count as a change.
+    @ObservationIgnored private var filteredCache: (key: FilteredKey, value: Filtered)?
+    @ObservationIgnored private var groupsCache: (key: FilteredKey, calendar: Calendar, groups: [DayGroup])?
+    @ObservationIgnored private var choicesCache: (rows: Int, harnesses: [String], projects: [ProjectChoice])?
+    @ObservationIgnored private var modelsCache: (rows: Int, since: Date, models: [ModelChoice])?
+
+    private func filtered() -> Filtered {
+        let key = filteredKey
+        if let cache = filteredCache, cache.key == key { return cache.value }
+        let since = windowStart(filter.window)
+        let needle = filter.search.trimmingCharacters(in: .whitespaces).lowercased()
+        var keys = ProjectKeys()
+        var value = Filtered()
+        for row in rows where matches(row, since: since, needle: needle, keys: &keys) {
+            if hideTrivial, isTrivial(row) {
+                value.hiddenTrivialCount += 1
+                if !showTrivial { continue }
+            }
+            value.visible.append(row)
+            value.summary.sessions += 1
+            if let usage = row.usage { value.summary.totals.add(usage.totals) }
+        }
+        filteredCache = (key, value)
+        return value
+    }
+
+    /// `projectKey` for each project name, worked out once per walk:
+    /// thousands of rows share a few hundred names.
+    struct ProjectKeys {
+        private var keys: [String: String] = [:]
+
+        mutating func key(_ name: String?) -> String? {
+            guard let name, !name.isEmpty else { return nil }
+            if let key = keys[name] { return key }
+            let key = SessionsModel.projectKey(name)
+            keys[name] = key
+            return key
         }
     }
 }

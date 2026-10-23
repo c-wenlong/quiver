@@ -596,6 +596,119 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         #expect(model.visible.map(\.id) == ["l"])
         #expect(model.hiddenTrivialCount == 0)
     }
+
+    // MARK: - Cached lists
+
+    @Test func cachedListsFollowEveryInput() async {
+        let ledger = FakeSessionLedger()
+        let model = await model([
+            session("a", "claude", cwd: "/c/quiver", at: 1_791_699_000),
+            session("b", "codex", cwd: "/c/site", at: 1_791_698_000),
+        ], [usage("a", "claude", models: ["opus"], cost: 1),
+            usage("b", "codex", models: ["gpt"], cost: 0, home: "/Users/k/.codex")], ledger: ledger)
+        await model.load()
+        // Read twice, so the second answer comes from the cache.
+        #expect(model.visible.map(\.id) == ["a", "b"])
+        #expect(model.summary.sessions == 2)
+        #expect(model.groupedByDay(calendar: calendar).flatMap { $0.rows.map(\.id) } == ["a", "b"])
+        #expect(model.projects.map(\.name) == ["quiver", "site"])
+
+        model.filter.harness = "codex"
+        #expect(model.visible.map(\.id) == ["b"])
+        #expect(model.summary.sessions == 1)
+        #expect(model.groupedByDay(calendar: calendar).flatMap { $0.rows.map(\.id) } == ["b"])
+
+        // b becomes trivial once its usage reads as empty after a scan.
+        var empty = usage("b", "codex", models: ["gpt"], cost: 0, home: "/Users/k/.codex")
+        empty.totals = UsageTotals()
+        await model.refreshUsage(afterScans: 1, ledgerRevision: 0)
+        #expect(model.visible.map(\.id) == ["b"])
+        await ledger.set([
+            usage("a", "claude", models: ["opus"], cost: 1), empty])
+        await model.refreshUsage(afterScans: 2, ledgerRevision: 0)
+        #expect(model.visible.isEmpty)
+        #expect(model.hiddenTrivialCount == 1)
+        model.showTrivial = true
+        #expect(model.visible.map(\.id) == ["b"])
+        model.hideTrivial = false
+        #expect(model.hiddenTrivialCount == 0)
+    }
+
+    @Test func aWindowSlidesWithTheClockDespiteTheCache() async {
+        // a is 7 days less 30 seconds old: inside the week, until the
+        // clock moves on two minutes.
+        final class Clock: @unchecked Sendable { var now = Date(timeIntervalSince1970: 1_791_700_000) }
+        let clock = Clock()
+        let model = SessionsModel(
+            source: FakeSessionSource(list: SessionList(sessions: [
+                session("a", "claude", cwd: nil, at: 1_791_700_000 - 7 * 86_400 + 30)], failures: [])),
+            ledger: FakeSessionLedger(), now: { clock.now }, calendar: calendar)
+        await model.load()
+        model.filter.window = .week
+        #expect(model.visible.map(\.id) == ["a"])
+        clock.now.addTimeInterval(120)
+        #expect(model.visible.isEmpty)
+        #expect(model.summary.sessions == 0)
+    }
+
+    @Test func aViewReadingACachedListHearsOfChanges() async {
+        let model = await model([session("a", "claude", cwd: "/c/q", at: 1_791_699_000)],
+                                [usage("a", "claude", models: ["opus"], cost: 1)])
+        await model.load()
+        _ = model.summary
+        // This read is a cache hit: it must still register what it reads.
+        final class Flag: @unchecked Sendable { var fired = false }
+        let flag = Flag()
+        withObservationTracking {
+            _ = model.summary
+            _ = model.projects
+        } onChange: { flag.fired = true }
+        model.filter.search = "nothing matches this"
+        #expect(flag.fired)
+
+        let rowsFlag = Flag()
+        withObservationTracking { _ = model.projects } onChange: { rowsFlag.fired = true }
+        await model.refreshUsage()
+        #expect(rowsFlag.fired)
+    }
+
+    @Test func aRepeatVisitWithNoNewScanReadsNoUsage() async {
+        let ledger = FakeSessionLedger()
+        let model = await model([session("a", "claude", cwd: nil, at: 1_791_699_000)], [], ledger: ledger)
+        await model.load()
+        let afterLoad = await ledger.ranges.count
+        await model.refreshUsage(afterScans: 3, ledgerRevision: 5)
+        await model.refreshUsage(afterScans: 3, ledgerRevision: 5)
+        #expect(await ledger.ranges.count == afterLoad + 1)
+        #expect(model.ledgerScanned)
+
+        await ledger.set([usage("a", "claude", models: ["opus"], cost: 2)])
+        await model.refreshUsage(afterScans: 4, ledgerRevision: 5)
+        #expect(await ledger.ranges.count == afterLoad + 2)
+        #expect(model.rows.first?.usage?.totals.costUSD == 2)
+
+        // A feed import or a price change moves the revision, not the
+        // scan count: that rereads too.
+        await ledger.set([usage("a", "claude", models: ["opus"], cost: 3)])
+        await model.refreshUsage(afterScans: 4, ledgerRevision: 6)
+        #expect(await ledger.ranges.count == afterLoad + 3)
+        #expect(model.rows.first?.usage?.totals.costUSD == 3)
+    }
+
+    @Test func allTimeStaysPutAsTheClockMoves() async {
+        final class Clock: @unchecked Sendable { var now = Date(timeIntervalSince1970: 1_791_700_000) }
+        let clock = Clock()
+        let model = SessionsModel(
+            source: FakeSessionSource(list: SessionList(sessions: [
+                session("a", "claude", cwd: nil, at: 1_000)], failures: [])),
+            ledger: FakeSessionLedger(), now: { clock.now }, calendar: calendar)
+        await model.load()
+        model.filter.window = .all
+        let first = model.visible
+        clock.now.addTimeInterval(3600)
+        #expect(model.visible.map(\.id) == first.map(\.id))
+        #expect(model.summary.sessions == 1)
+    }
 }
 
 /// The "Hide accidental sessions" rule itself: empty sessions are always
