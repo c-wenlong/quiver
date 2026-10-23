@@ -28,6 +28,9 @@ public final class SidebarVisibilityModel {
     /// order inside a group ever changes.
     private var order: [AppSection]
     private var hidden: Set<AppSection>
+    /// Runs with each page a toggle or Disable all just switched off, so
+    /// a feature tied to a page can stop with it.
+    @ObservationIgnored public var onHide: ((AppSection) -> Void)?
 
     public init(store: KeyValueStoring) {
         self.store = store
@@ -67,7 +70,11 @@ public final class SidebarVisibilityModel {
 
     public func setEnabled(_ section: AppSection, _ enabled: Bool) {
         guard !section.isCore else { return }
-        if enabled { hidden.remove(section) } else { hidden.insert(section) }
+        if enabled {
+            hidden.remove(section)
+        } else if hidden.insert(section).inserted {
+            onHide?(section)
+        }
         save()
     }
 
@@ -78,8 +85,10 @@ public final class SidebarVisibilityModel {
 
     /// Every optional page off; the core ones stay.
     public func disableAll() {
+        let wasShown = order.filter(isVisible)
         hidden = Set(AppSection.allCases.filter { !$0.isCore })
         save()
+        for section in wasShown where isHidden(section) { onHide?(section) }
     }
 
     /// Moves `id` to sit just before `target`. A nil target drops it last

@@ -61,6 +61,23 @@ import Testing
         #expect(model.enabledCount == model.totalCount)
     }
 
+    @Test func onHideFiresOnceForEachPageSwitchedOff() {
+        let model = SidebarVisibilityModel(store: MemoryStore())
+        var hid: [AppSection] = []
+        model.onHide = { hid.append($0) }
+        model.setEnabled(.inbox, false)
+        model.setEnabled(.inbox, false)
+        model.setEnabled(.inbox, true)
+        model.setEnabled(.overview, false)
+        #expect(hid == [.inbox])
+
+        hid = []
+        model.setEnabled(.sessions, false)
+        hid = []
+        model.disableAll()
+        #expect(Set(hid) == Set(AppSection.allCases.filter { !$0.isCore && $0 != .sessions }))
+    }
+
     @Test func dragsStayInsideTheirGroup() {
         let store = MemoryStore()
         let model = SidebarVisibilityModel(store: store)

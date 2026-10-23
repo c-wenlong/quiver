@@ -705,6 +705,11 @@ final class AppModel {
         // A page hidden in Settings › Sidebar never comes back as the
         // open one on launch.
         if let selection, sidebar.isHidden(selection) { self.selection = .overview }
+        // GitHub banners open the Inbox, so they stop when it is hidden.
+        if sidebar.isHidden(.inbox) { githubNotify.bannersEnabled = false }
+        sidebar.onHide = { [githubNotify] section in
+            if section == .inbox { githubNotify.bannersEnabled = false }
+        }
     }
 
     /// Pids launchd manages, from `launchctl list`: user agents look like
