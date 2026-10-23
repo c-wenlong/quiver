@@ -801,12 +801,14 @@
   });
   const localDate = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
   /* Each minute moves the now-line; past midnight the page reloads once
-   * so the today marks follow (same range, so the hour stays). */
+   * so the today marks follow (same range, so the hour stays). A reload
+   * repaints the sheets, so it waits while one is open. */
   let reloadedFor = null;
   setInterval(() => {
     if (!onCalendar() || !S.data) return;
     const today = localDate();
-    if (!S.loading && S.data.today !== today && reloadedFor !== today) {
+    if (!S.loading && S.data.today !== today && reloadedFor !== today
+        && !document.querySelector("dialog[open]")) {
       reloadedFor = today;
       render("calendar");
       return;
