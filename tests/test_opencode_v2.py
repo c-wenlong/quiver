@@ -1,0 +1,374 @@
+"""OpenCode 2.x's ``session_v2`` / ``session_message`` store next to 1.x's.
+
+OpenCode 2.x writes new sessions only to ``session_v2`` and every turn
+only to ``session_message``. Its migration copied old sessions into
+``session_v2`` and most of their turns into ``session_message`` under
+the same ids. The fixture holds both shapes the way a real migrated
+``opencode.db`` does: a legacy session in both tables (one turn copied),
+and 2.x sessions only in the v2 tables.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from quiver.sessions.models import Session
+
+T0 = 1_792_604_440_000  # epoch ms
+
+_SCHEMA = """
+CREATE TABLE session (
+  id TEXT PRIMARY KEY, project_id TEXT NOT NULL, parent_id TEXT,
+  directory TEXT NOT NULL, title TEXT NOT NULL, workspace_id TEXT,
+  time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL);
+CREATE TABLE workspace (id TEXT PRIMARY KEY, provider TEXT NOT NULL);
+CREATE TABLE message (
+  id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+  time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);
+CREATE TABLE part (
+  id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL,
+  time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);
+CREATE TABLE session_v2 (
+  id TEXT PRIMARY KEY, project_id TEXT NOT NULL, workspace_id TEXT, parent_id TEXT,
+  directory TEXT NOT NULL, title TEXT, version TEXT NOT NULL,
+  time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, time_archived INTEGER);
+CREATE TABLE session_message (
+  id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL, seq INTEGER NOT NULL,
+  time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);
+"""
+
+
+def _assistant(content, finish="stop", completed=True, model="MiniMax-M3", tokens=None):
+    data = {
+        "time": {"created": T0, **({"completed": T0 + 1} if completed else {})},
+        "model": {"id": model, "providerID": "minimax"},
+        "content": content,
+        "finish": finish,
+        "cost": 0.002,
+        "tokens": tokens or {"input": 100, "output": 10, "reasoning": 4, "cache": {"read": 50, "write": 0}},
+    }
+    if finish is None:
+        del data["finish"]
+    return data
+
+
+def _shell(command, output, status="completed"):
+    return {
+        "type": "tool", "id": f"call_{command}", "name": "shell",
+        "state": {"status": status, "input": {"command": command},
+                  "content": [{"type": "text", "text": output}]},
+    }
+
+
+class OpencodeV2Case(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.home = Path(self.temp.name)
+        patcher = patch.dict(os.environ, {"HOME": str(self.home)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(self.temp.cleanup)
+        self.db = self.home / ".local/share/opencode/opencode.db"
+        self.db.parent.mkdir(parents=True)
+        conn = self.conn()
+        conn.executescript(_SCHEMA)
+        # 1.x session, copied into session_v2 by the migration (title left
+        # NULL there) with its first turn copied under the same id.
+        conn.execute("INSERT INTO session VALUES ('ses_old', 'p', NULL, '/work/old', 'old work', NULL, ?, ?)",
+                     (T0 - 9000, T0 - 5000))
+        conn.execute("INSERT INTO session_v2 VALUES ('ses_old', 'p', NULL, NULL, '/work/old', NULL, '1.18.30', ?, ?, NULL)",
+                     (T0 - 9000, T0 - 5000))
+        conn.execute("INSERT INTO message VALUES ('msg_u', 'ses_old', ?, ?, ?)",
+                     (T0 - 9000, T0 - 9000, json.dumps({"role": "user"})))
+        conn.execute("INSERT INTO part VALUES ('prt_u', 'msg_u', 'ses_old', ?, ?, ?)",
+                     (T0 - 9000, T0 - 9000, json.dumps({"type": "text", "text": "fix the old bug"})))
+        conn.execute("INSERT INTO message VALUES ('msg_a', 'ses_old', ?, ?, ?)",
+                     (T0 - 8000, T0 - 8000, json.dumps({
+                         "role": "assistant", "finish": "stop", "modelID": "grok-4.7", "providerID": "xai",
+                         "tokens": {"total": 30, "input": 20, "output": 10, "reasoning": 0, "cache": {"read": 0, "write": 0}}})))
+        conn.execute("INSERT INTO part VALUES ('prt_a', 'msg_a', 'ses_old', ?, ?, ?)",
+                     (T0 - 8000, T0 - 8000, json.dumps({"type": "text", "text": "Fixed the old bug."})))
+        self.v2_row(conn, "msg_u", "ses_old", "user", 0, {"text": "fix the old bug"}, T0 - 9000)
+        # 2.x-only sessions.
+        self.v2_session(conn, "ses_new", "/work/new", "Greeting", T0, T0 + 4000)
+        self.v2_row(conn, "m1", "ses_new", "user", 4, {"text": "hello there", "files": []}, T0)
+        self.v2_row(conn, "m2", "ses_new", "system", 5, {"text": "Instructions updated"}, T0 + 10)
+        self.v2_row(conn, "m3", "ses_new", "assistant", 7, _assistant(
+            [{"type": "reasoning", "text": "the user greets me"},
+             _shell("ls", "README.md"),
+             {"type": "text", "text": "Hey. What are we working on?"}]), T0 + 1000)
+        self.v2_row(conn, "m4", "ses_new", "idle", 12, {"outcome": "succeeded"}, T0 + 4000)
+        conn.commit()
+        conn.close()
+
+    def conn(self):
+        return sqlite3.connect(self.db)
+
+    @staticmethod
+    def v2_session(conn, sid, directory, title, created, updated):
+        conn.execute("INSERT INTO session_v2 VALUES (?, 'p', NULL, NULL, ?, ?, '2.1.3', ?, ?, NULL)",
+                     (sid, directory, title, created, updated))
+
+    @staticmethod
+    def v2_row(conn, mid, sid, kind, seq, data, created):
+        conn.execute("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)",
+                     (mid, sid, kind, seq, created, created, json.dumps(data)))
+
+    def add_session(self, sid, rows):
+        conn = self.conn()
+        self.v2_session(conn, sid, "/work/" + sid, sid, T0, T0)
+        for seq, (kind, data) in enumerate(rows):
+            self.v2_row(conn, f"{sid}_{seq}", sid, kind, seq, data, T0 + seq)
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def session(sid, age_s=9999):
+        import time
+        return Session(timestamp=(time.time() - age_s) * 1000, agent="OpenCode", path="/work",
+                       title="t", session_id=sid, tool_name="opencode")
+
+
+class ParseTest(OpencodeV2Case):
+    def test_lists_each_session_once_from_both_tables(self):
+        from quiver.sessions.parsers import parse_opencode
+
+        sessions = {s.session_id: s for s in parse_opencode()}
+        self.assertEqual(set(sessions), {"ses_old", "ses_new"})
+        self.assertEqual(sessions["ses_new"].path, "/work/new")
+        self.assertEqual(sessions["ses_new"].title, "Greeting")
+        self.assertEqual(sessions["ses_new"].timestamp, T0 + 4000)
+        # The v2 copy has no title: the legacy row's fills in.
+        self.assertEqual(sessions["ses_old"].title, "old work")
+        self.assertEqual(sessions["ses_old"].path, "/work/old")
+
+    def test_a_session_resumed_in_2x_takes_the_newer_time(self):
+        from quiver.sessions.parsers import parse_opencode
+
+        conn = self.conn()
+        conn.execute("UPDATE session_v2 SET time_updated = ?, title = 'renamed' WHERE id = 'ses_old'", (T0 + 9000,))
+        conn.commit()
+        conn.close()
+        old = next(s for s in parse_opencode() if s.session_id == "ses_old")
+        self.assertEqual(old.timestamp, T0 + 9000)
+        self.assertEqual(old.title, "renamed")
+
+    def test_a_legacy_only_database_still_reads(self):
+        from quiver.sessions.parsers import parse_opencode
+
+        conn = self.conn()
+        conn.executescript("DROP TABLE session_v2; DROP TABLE session_message;")
+        conn.commit()
+        conn.close()
+        self.assertEqual([s.session_id for s in parse_opencode()], ["ses_old"])
+
+
+class StatusTest(OpencodeV2Case):
+    def probe(self, sid):
+        from quiver.sessions import status
+
+        conn = status._open_opencode_db()
+        try:
+            return status._probe_opencode(self.session(sid), {"opencode_conn": conn})
+        finally:
+            conn.close()
+
+    def test_idle_after_a_reply_is_finished_with_its_text(self):
+        self.assertEqual(self.probe("ses_new"), ("finished", "Hey. What are we working on?"))
+
+    def test_legacy_session_still_reads_its_message_rows(self):
+        self.assertEqual(self.probe("ses_old"), ("finished", "Fixed the old bug."))
+
+    def test_prompt_and_tool_calls_are_midturn(self):
+        self.add_session("s_prompt", [("user", {"text": "go"}), ("system", {"text": "x"})])
+        self.add_session("s_tools", [("user", {"text": "go"}),
+                                     ("assistant", _assistant([_shell("ls", "a")], finish="tool-calls"))])
+        self.add_session("s_synth", [("assistant", _assistant([{"type": "text", "text": "hi"}])),
+                                     ("synthetic", {"text": "Continue if you have next steps"})])
+        for sid in ("s_prompt", "s_tools", "s_synth"):
+            self.assertEqual(self.probe(sid), ("midturn", ""), sid)
+
+    def test_bookkeeping_alone_keeps_the_legacy_verdict(self):
+        conn = self.conn()
+        self.v2_row(conn, "m_switch", "ses_old", "model-switched", 9, {"model": {"id": "x"}}, T0 + 9000)
+        conn.commit()
+        conn.close()
+        self.assertEqual(self.probe("ses_old"), ("finished", "Fixed the old bug."))
+
+    def test_idle_outcomes_and_finish_error(self):
+        self.add_session("s_failed", [("user", {"text": "go"}), ("idle", {"outcome": "failed"})])
+        self.add_session("s_stopped", [("user", {"text": "go"}), ("idle", {"outcome": "interrupted"})])
+        self.add_session("s_error", [("assistant", _assistant([], finish="error"))])
+        self.assertEqual(self.probe("s_failed"), ("error", ""))
+        self.assertEqual(self.probe("s_stopped"), ("aborted", ""))
+        self.assertEqual(self.probe("s_error"), ("error", ""))
+
+    def test_status_column_labels(self):
+        from quiver.sessions.status import DONE, FOLLOWUP, INTERRUPTED, session_statuses
+
+        self.add_session("s_done", [("assistant", _assistant([{"type": "text", "text": "Merged. CI green."}])),
+                                    ("idle", {"outcome": "succeeded"})])
+        self.add_session("s_tools", [("assistant", _assistant([], finish=None))])
+        labels = session_statuses([self.session("s_done"), self.session("ses_new"), self.session("s_tools")])
+        # ses_new's reply ends by asking the user something.
+        self.assertEqual(labels, [DONE, FOLLOWUP, INTERRUPTED])
+
+
+class TranscriptTest(OpencodeV2Case):
+    def test_v2_session_reads_prompts_replies_and_tools(self):
+        from quiver.reports.transcripts import read_transcript
+
+        transcript = read_transcript(self.session("ses_new"))
+        self.assertTrue(transcript.readable)
+        self.assertEqual(
+            [(m.role, m.text) for m in transcript.messages],
+            [("human", "hello there"), ("tool", "shell: README.md"),
+             ("assistant", "Hey. What are we working on?")],
+        )
+
+    def test_copied_turns_are_not_read_twice(self):
+        from quiver.reports.transcripts import read_transcript
+
+        texts = [m.text for m in read_transcript(self.session("ses_old")).messages]
+        self.assertEqual(texts, ["fix the old bug", "Fixed the old bug."])
+
+    def test_a_turn_added_in_2x_follows_the_legacy_history(self):
+        from quiver.reports.transcripts import read_transcript
+
+        conn = self.conn()
+        self.v2_row(conn, "m_resume", "ses_old", "user", 9, {"text": "and the next one"}, T0 + 9000)
+        conn.commit()
+        conn.close()
+        texts = [m.text for m in read_transcript(self.session("ses_old")).messages]
+        self.assertEqual(texts[-1], "and the next one")
+
+
+class ModelCountTest(OpencodeV2Case):
+    def test_v2_replies_count_once(self):
+        from quiver.sessions.models_analytics import _drizzle_model_counts
+
+        conn = self.conn()
+        # A reply the migration copied: same id as its message row.
+        self.v2_row(conn, "msg_a", "ses_old", "assistant", 1, _assistant([], model="grok-4.7"), T0 - 8000)
+        conn.commit()
+        conn.close()
+        self.assertEqual(_drizzle_model_counts(str(self.db)), {("minimax", "MiniMax-M3"): 1})
+
+
+class LedgerTest(OpencodeV2Case):
+    def test_v2_replies_become_usage_events_once(self):
+        from quiver.ledger.parsers import opencode_records
+
+        conn = self.conn()
+        self.v2_row(conn, "msg_a", "ses_old", "assistant", 1, _assistant([], model="grok-4.7"), T0 - 8000)
+        conn.commit()
+        conn.close()
+        records = {r.key: r.event for r in opencode_records(self.db)}
+        self.assertEqual(set(records), {"opencode:msg_a", "opencode:m3"})
+        self.assertEqual(records["opencode:msg_a"].model, "grok-4.7")
+        self.assertEqual(records["opencode:msg_a"].total, 30)
+        new = records["opencode:m3"]
+        self.assertEqual((new.session, new.cwd, new.model), ("ses_new", "/work/new", "MiniMax-M3"))
+        self.assertEqual((new.input, new.output, new.reasoning, new.cache_read), (100, 10, 4, 50))
+        self.assertEqual(new.cost, 0.002)
+
+
+    def test_a_cursor_saved_before_v2_reads_the_database_again(self):
+        from quiver.ledger.scan import scan
+        from quiver.ledger.store import LedgerStore
+
+        store = LedgerStore(self.home / "ledger.sqlite")
+        self.addCleanup(store.db.close)
+        st = self.db.stat()
+        # What a legacy-only build left: a cursor under the plain path.
+        store.set_file_cursor(str(self.db), st.st_ino, st.st_size, st.st_mtime_ns, st.st_size)
+        store.db.commit()
+        result = scan(store, self.home)
+        self.assertEqual(result.records, 2)  # msg_a and the 2.x reply m3
+        self.assertIsNotNone(store.file_cursor(str(self.db) + "#v2"))
+
+
+class TailTest(OpencodeV2Case):
+    def source(self, sid):
+        from quiver.remote.tail import OpencodeSource
+
+        return OpencodeSource(self.db, sid)
+
+    def test_v2_rows_stream_in_order_and_once(self):
+        src = self.source("ses_new")
+        events = src.poll()
+        self.assertEqual(
+            [e["kind"] for e in events],
+            ["user", "thinking", "tool_use", "tool_result", "assistant"],
+        )
+        self.assertEqual(events[0]["text"], "hello there")
+        self.assertEqual(events[2]["tool"]["name"], "shell")
+        self.assertEqual(events[3]["text"], "README.md")
+        self.assertEqual(src.state()["seq"], 12)
+        self.assertEqual(src.poll(), [])
+
+    def test_a_streaming_reply_waits_until_it_completes(self):
+        conn = self.conn()
+        self.v2_row(conn, "m5", "ses_new", "user", 16, {"text": "next"}, T0 + 5000)
+        self.v2_row(conn, "m6", "ses_new", "assistant", 17,
+                    _assistant([{"type": "text", "text": "partial"}], finish=None, completed=False), T0 + 5100)
+        conn.commit()
+        conn.close()
+        src = self.source("ses_new")
+        src.seq = 12  # the first turn already sent
+        self.assertEqual([e["text"] for e in src.poll()], ["next"])
+        self.assertEqual(src.state()["seq"], 16)
+
+        conn = self.conn()
+        conn.execute("UPDATE session_message SET data = ? WHERE id = 'm6'",
+                     (json.dumps(_assistant([{"type": "text", "text": "complete reply"}])),))
+        conn.commit()
+        conn.close()
+        self.assertEqual([e["text"] for e in src.poll()], ["complete reply"])
+
+    def test_skip_to_end_stops_before_a_streaming_reply(self):
+        # A journal with no cursor file skips to the end; a reply still
+        # streaming there must arrive once it finishes.
+        conn = self.conn()
+        self.v2_row(conn, "m5", "ses_new", "user", 16, {"text": "next"}, T0 + 5000)
+        self.v2_row(conn, "m6", "ses_new", "assistant", 17,
+                    _assistant([{"type": "text", "text": "partial"}], finish=None, completed=False), T0 + 5100)
+        conn.commit()
+        conn.close()
+        src = self.source("ses_new")
+        src.skip_to_end()
+        self.assertEqual(src.state()["seq"], 16)
+        self.assertEqual(src.poll(), [])
+        conn = self.conn()
+        conn.execute("UPDATE session_message SET data = ? WHERE id = 'm6'",
+                     (json.dumps(_assistant([{"type": "text", "text": "complete reply"}])),))
+        conn.commit()
+        conn.close()
+        self.assertEqual([e["text"] for e in src.poll()], ["complete reply"])
+
+    def test_a_cursor_from_before_v2_does_not_replay_history(self):
+        # A cursor file written by a build that only knew ``part``: its
+        # time cursor covers the v2 rows up to that moment.
+        src = self.source("ses_new")
+        src.restore({"source": "opencode", "cursor": T0 + 1000})
+        self.assertEqual(src.poll(), [])
+        conn = self.conn()
+        self.v2_row(conn, "m5", "ses_new", "user", 16, {"text": "after the upgrade"}, T0 + 5000)
+        conn.commit()
+        conn.close()
+        self.assertEqual([e["text"] for e in src.poll()], ["after the upgrade"])
+
+    def test_legacy_session_tails_its_parts_only(self):
+        src = self.source("ses_old")
+        self.assertEqual([e["text"] for e in src.poll()], ["fix the old bug", "Fixed the old bug."])
+        self.assertEqual(src.poll(), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

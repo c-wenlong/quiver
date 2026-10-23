@@ -104,6 +104,36 @@ import Testing
                         data: #"{"type":"tool","tool":"read","state":{"status":"error","input":{"filePath":"/repo/deploy.yml"},"error":"Error: File not found"}}"#)
         }
 
+        /// OpenCode 2.x's tables: new sessions only in `session_v2`, every
+        /// turn one `session_message` row holding its whole content.
+        func addV2Tables() throws {
+            try source.execute("""
+                CREATE TABLE `session_v2` (`id` text PRIMARY KEY, `parent_id` text,
+                  `directory` text NOT NULL, `title` text,
+                  `time_created` integer NOT NULL, `time_updated` integer NOT NULL,
+                  `time_archived` integer);
+                CREATE TABLE `session_message` (`id` text PRIMARY KEY, `session_id` text NOT NULL,
+                  `type` text NOT NULL, `seq` integer NOT NULL, `time_created` integer NOT NULL,
+                  `time_updated` integer NOT NULL, `data` text NOT NULL);
+                """)
+        }
+
+        func addV2Session(_ id: String, title: String?, directory: String,
+                          created: Int64, updated: Int64) throws {
+            try source.prepare("INSERT INTO session_v2 VALUES (?, NULL, ?, ?, ?, ?, NULL)")
+                .bind([.text(id), .text(directory), title.map { .text($0) } ?? .null,
+                       .int(created), .int(updated)])
+                .run()
+        }
+
+        func addV2Row(_ id: String, session: String, type: String, seq: Int64,
+                      created: Int64, data: String) throws {
+            try source.prepare("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)")
+                .bind([.text(id), .text(session), .text(type), .int(seq),
+                       .int(created), .int(created), .text(data)])
+                .run()
+        }
+
         func fts(_ query: String) throws -> [Int64] {
             let statement = try store.db.prepare(
                 "SELECT rowid FROM messages_fts WHERE messages_fts MATCH ? ORDER BY rowid")
@@ -151,6 +181,55 @@ import Testing
         #expect(session.fields.updatedAt == SearchOpenCode.iso(ms: 1_791_100_003_000))
         // Two user turns, one folded assistant turn, one tool row.
         #expect(session.fields.messageCount == 4)
+    }
+
+    /// A session OpenCode 2.x made lives only in `session_v2` and
+    /// `session_message`; one the migration copied there stays a legacy
+    /// session, its copied turns read once.
+    @Test func openCode2SessionsIndexFromTheV2Tables() async throws {
+        let f = try Fixture()
+        try f.seedTwoSessions()
+        try f.addV2Tables()
+        // ses_1 as the 2.x migration left it: a v2 row with no title and a
+        // copied turn under its legacy id.
+        try f.addV2Session("ses_1", title: nil, directory: "/tmp/oc1",
+                           created: 1_791_100_000_000, updated: 1_791_100_003_000)
+        try f.addV2Row("m_u1", session: "ses_1", type: "user", seq: 0, created: 1_791_100_000_000,
+                       data: #"{"text":"fix the flaky zebrafish test"}"#)
+        try f.addV2Session("ses_v2", title: "Greeting", directory: "/tmp/v2",
+                           created: 1_791_300_000_000, updated: 1_791_300_002_000)
+        try f.addV2Row("v_u1", session: "ses_v2", type: "user", seq: 4, created: 1_791_300_000_000,
+                       data: #"{"text":"say hello to the pangolin","files":[]}"#)
+        try f.addV2Row("v_s1", session: "ses_v2", type: "system", seq: 5, created: 1_791_300_000_100,
+                       data: #"{"text":"Instructions updated: narwhal"}"#)
+        try f.addV2Row("v_a1", session: "ses_v2", type: "assistant", seq: 7, created: 1_791_300_001_000,
+                       data: #"{"finish":"stop","content":[{"type":"reasoning","text":"thinking about tapirs"},{"type":"text","text":"hello there"},{"type":"tool","id":"c1","name":"shell","state":{"status":"completed","input":{"command":"echo okapi"},"content":[{"type":"text","text":"okapi printed"}]}}]}"#)
+        try f.addV2Row("v_i1", session: "ses_v2", type: "idle", seq: 12, created: 1_791_300_002_000,
+                       data: #"{"outcome":"succeeded"}"#)
+        await f.attach()
+
+        let report = try await f.scan()
+
+        #expect(report.notes.isEmpty)
+        #expect(report.filesIndexed == 3)
+        #expect(try f.fts("pangolin").count == 1)
+        #expect(try f.fts("tapirs").count == 1)
+        #expect(try f.fts("okapi").count == 1)
+        #expect(try f.fts("narwhal").isEmpty)
+        // The copied turn is not indexed a second time.
+        #expect(try f.fts("zebrafish").count == 1)
+        let ses1 = try #require(try f.store.fileRow(for: f.dbPath + "#ses_1"))
+        #expect(ses1.sizeBytes == 3)
+        #expect(try f.store.sessionRow(ses1.sessionRowID ?? -1)?.fields.title == "Fix the flaky test")
+
+        let row = try #require(try f.store.fileRow(for: f.dbPath + "#ses_v2"))
+        #expect(row.sizeBytes == 4)
+        #expect(row.mtimeMs == 1_791_300_002_000)
+        let session = try #require(try f.store.sessionRow(row.sessionRowID ?? -1))
+        #expect(session.fields.title == "Greeting")
+        #expect(session.fields.cwd == "/tmp/v2")
+        // The prompt, the folded assistant turn and its tool call.
+        #expect(session.fields.messageCount == 3)
     }
 
     @Test func anUnchangedDatabaseDoesNotReindex() async throws {
