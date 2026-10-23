@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import OSLog
 import QuiverCore
 import UserNotifications
 import WidgetKit
@@ -138,9 +139,22 @@ final class LimitsMonitor {
     /// with no context. Asks only once; after a no, System Settings is the
     /// only way back.
     func requestNotifications() async {
-        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+        do {
+            _ = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+            notificationRequestError = nil
+        } catch {
+            Self.log.error("Notification request failed: \(error.localizedDescription, privacy: .public)")
+            notificationRequestError = error.localizedDescription
+        }
         await checkNotificationPermission()
     }
+
+    /// Why the last request to macOS failed, or nil if it ran. A no from the
+    /// user is not an error: that shows up as a `.denied` status instead.
+    private(set) var notificationRequestError: String?
+
+    @ObservationIgnored
+    private static let log = Logger(subsystem: "com.cwenlong.quiver", category: "notifications")
 
     /// A sample of what a limit notification looks like.
     func sendTestNotification() async {

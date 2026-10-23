@@ -222,7 +222,7 @@ private struct SettingsSectionView: View {
             SettingRow(title: "Notify about limits",
                        detail: "When a limit reaches 90%, and again when it resets after that. Once per window.",
                        warning: app.limits.notificationsBlocked && app.limits.notifyEnabled
-                           ? "Notifications for Quiver are off in System Settings > Notifications." : nil) {
+                           ? "Notifications for Quiver are off. In System Settings › Notifications, find Quiver in the list and turn on Allow notifications." : nil) {
                 SettingSwitch(title: "Notify about limits", isOn: $limits.notifyEnabled)
             }
             SettingsDivider()
