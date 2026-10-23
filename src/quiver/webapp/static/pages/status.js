@@ -67,15 +67,15 @@ async function renderStatus(_id, force = false) {
       <div class="card"><p class="empty">Reading the status pages…</p></div></div>`;
     const { status, data } = await api("/v1/app/status?cached=1");
     if (gen !== routeGen || mine !== p.gen) return;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
-    if (status === 200 && data) { p.data = data; }
+    if (status === 401) return statusGate();
+    if (status === 200 && data) statusKeep(data);
   }
   p.loading = true;
   if (p.data) paintStatus();
   const { status, data } = await api(`/v1/app/status${force ? "?force=1" : ""}`);
   if (gen !== routeGen || mine !== p.gen) return;
   p.loading = false;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return statusGate();
   if (status !== 200 || !data) {
     if (p.data) {
       // Keep the cards; say why they did not update.
@@ -84,9 +84,36 @@ async function renderStatus(_id, force = false) {
     }
     return pageError(statusHeader(), status, data, () => renderStatus("status", true));
   }
-  p.data = data;
+  statusKeep(data);
   p.loadedAt = Date.now();
   paintStatus();
+}
+
+/* A payload, and when it arrived by this browser's clock. */
+function statusKeep(data) {
+  statusPage.data = data;
+  statusPage.receivedAt = Date.now() / 1000;
+}
+
+/* A revoked credential drops the cards, so the clock's next repaint can't
+ * put them back over the pairing steps. */
+function statusGate() {
+  statusPage.data = null;
+  statusPage.loading = false;
+  renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+}
+
+/* A card's reading, or none once it is older than an hour, as the hub
+ * rules (STALE_AFTER). Cards kept while the hub can't be reached age on:
+ * the hub's clock at the answer plus the time this browser has waited
+ * since, so a clock difference between the two never matters. */
+const STATUS_STALE_S = 3600;
+function statusView(s) {
+  const d = statusPage.data;
+  if (!s.health || s.checked_at == null || d.server_time == null) return s;
+  const now = d.server_time + (Date.now() / 1000 - (statusPage.receivedAt || Date.now() / 1000));
+  if (now - s.checked_at <= STATUS_STALE_S) return s;
+  return { ...s, health: null, health_title: null, summary: null, components: [], incidents: [], stale: false };
 }
 
 function statusError(status, data) {
@@ -144,8 +171,9 @@ function statusDetailNote(s) {
 
 const COMPONENT_LIMIT = 5, INCIDENT_LIMIT = 3;
 
-function statusCard(s) {
+function statusCard(raw) {
   const p = statusPage;
+  const s = statusView(raw);
   const expanded = p.expanded.has(s.id);
   const note = statusDetailNote(s);
   const label = s.health_title || (p.loading && s.checked_at == null ? "Checking…" : "Unknown");

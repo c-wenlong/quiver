@@ -56,8 +56,8 @@ OS trust store, never unverified.
 | `cached=1` | The last readings, no request to any status page. The page paints this first. |
 | `force=1` | Refresh: the one-minute floor instead of five. |
 
-Each request to a status page times out after 8 s and a load waits at most
-10 s in all; a page still answering after that finishes in the background
+Each request to a status page times out after 8 s per socket wait and
+16 s for the whole download, and a load waits at most 10 s in all; a page still answering after that finishes in the background
 and shows on the next load.
 
 ```json
@@ -65,6 +65,7 @@ and shows on the next load.
   "machine": "kai-home-server",
   "checked_at": 1791720000.0,
   "cached": false,
+  "server_time": 1791720030.0,
   "groups": [{
     "id": "providers", "title": "AI providers",
     "services": [{
@@ -84,7 +85,10 @@ and shows on the next load.
 }
 ```
 
-`health` is null with no reading in the last hour. `problem_until` is set
+`health` is null with no reading in the last hour. `server_time` is the
+hub's clock: cards kept on screen while the hub can't be reached age by it
+plus the time the browser has waited since, and go to "Unknown" past the
+hour as well. `problem_until` is set
 with "asked us to wait until", so the browser writes the time in its own
 zone. Incident `url` is passed only when it is an `http(s)` address.
 

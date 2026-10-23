@@ -15,6 +15,8 @@ the rest come from ``~/.quiver/cache/web-service-status.json``.
 
 from __future__ import annotations
 
+import time
+
 from quiver.status.catalog import GROUPS, SERVICES
 from quiver.status.poller import ServiceStatus, poller_for
 
@@ -28,7 +30,8 @@ def get(ctx, args: dict) -> dict:
     return payload(statuses, machine=(ctx.machine or {}).get("name"), cached=args.get("cached") == "1")
 
 
-def payload(statuses: list[ServiceStatus], machine: str | None = None, cached: bool = False) -> dict:
+def payload(statuses: list[ServiceStatus], machine: str | None = None, cached: bool = False,
+            now: float | None = None) -> dict:
     checked = [s.checked_at for s in statuses if s.checked_at is not None]
     groups = []
     for group, title in GROUPS:
@@ -40,6 +43,9 @@ def payload(statuses: list[ServiceStatus], machine: str | None = None, cached: b
         # The most recent answer from any page, for "Checked … ago".
         "checked_at": max(checked) if checked else None,
         "cached": cached,
+        # The hub's clock now, so the page can age kept readings without
+        # trusting the browser's clock to agree.
+        "server_time": time.time() if now is None else now,
         "groups": groups,
     }
 

@@ -46,6 +46,7 @@ MANUAL_FLOOR = 60.0    # the same, for a manual refresh
 STALE_AFTER = 3600.0   # a reading older than this is not shown
 TIMEOUT = 8.0          # one request
 WAIT = 10.0            # all of a load's requests together
+DOWNLOAD_LIMIT_FACTOR = 2  # a whole download, in timeouts
 USER_AGENT = "Quiver (hub)"
 # Google Cloud's incidents.json holds a year of incidents; nothing real
 # comes near this, and a runaway body must not fill the hub's memory.
@@ -98,15 +99,35 @@ def http_get(url: str, headers: Mapping[str, str], timeout: float) -> Response:
 
 
 def _open(request: urllib.request.Request, timeout: float, context: ssl.SSLContext | None) -> Response:
+    # ``timeout`` bounds each socket wait; this bounds the whole download,
+    # so a feed that trickles bytes cannot hold a check (and every load
+    # that joins it) open for hours.
+    deadline = time.monotonic() + DOWNLOAD_LIMIT_FACTOR * timeout
     try:
         with urllib.request.urlopen(request, timeout=timeout, context=context) as resp:
-            return Response(resp.status, resp.read(MAX_BODY), dict(resp.headers.items()))
+            return Response(resp.status, read_body(resp, deadline), dict(resp.headers.items()))
     except urllib.error.HTTPError as exc:  # 304, 429, 5xx: an answer, not a failure
         try:
-            body = exc.read(MAX_BODY)
+            body = read_body(exc, deadline)
         except OSError:
             body = b""
         return Response(exc.code, body, dict(exc.headers.items()) if exc.headers else {})
+
+
+def read_body(resp: Any, deadline: float, chunk: int = 64 * 1024) -> bytes:
+    """The body, up to ``MAX_BODY``; TimeoutError once ``deadline``
+    (``time.monotonic()``) passes before it ends."""
+    parts: list[bytes] = []
+    size = 0
+    while size < MAX_BODY:
+        if time.monotonic() > deadline:
+            raise TimeoutError("the status page took too long to send its feed")
+        data = resp.read(min(chunk, MAX_BODY - size))
+        if not data:
+            break
+        parts.append(data)
+        size += len(data)
+    return b"".join(parts)
 
 
 def retry_after(value: str | None, now: float) -> float | None:

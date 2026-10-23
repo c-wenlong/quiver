@@ -503,7 +503,8 @@ class _Resp:
         self.body = body
 
     def read(self, limit=-1):
-        return self.body
+        body, self.body = self.body, b""
+        return body
 
     def __enter__(self):
         return self
@@ -541,6 +542,26 @@ class TestHttpGet(unittest.TestCase):
             response = poller.http_get("https://example.test/", {}, 1)
         self.assertEqual(response.status, 304)
 
+    def test_a_trickling_feed_gives_up(self):
+        class Trickle(_Resp):
+            def read(self, limit=-1):
+                time.sleep(0.02)
+                return b"x"
+        with patch("urllib.request.urlopen", return_value=Trickle(b"")):
+            started = time.monotonic()
+            with self.assertRaises(OSError):
+                poller.http_get("https://example.test/", {}, 0.1)
+        self.assertLess(time.monotonic() - started, 2)
+
+    def test_reads_a_body_in_chunks(self):
+        class Chunks(_Resp):
+            def __init__(self):
+                self.parts = [b"ab", b"cd", b""]
+
+            def read(self, limit=-1):
+                return self.parts.pop(0)
+        self.assertEqual(poller.read_body(Chunks(), time.monotonic() + 5), b"abcd")
+
     def test_network_errors_raise(self):
         with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("refused")):
             with self.assertRaises(OSError):
@@ -570,6 +591,10 @@ class TestPayload(PollerBase):
     def test_only_web_links_reach_an_href(self):
         self.assertIsNone(status_page._link("javascript:alert(1)"))
         self.assertEqual(status_page._link("https://x.test/i"), "https://x.test/i")
+
+    def test_carries_the_hub_clock(self):
+        self.assertEqual(status_page.payload([], now=EPOCH)["server_time"], EPOCH)
+        self.assertAlmostEqual(status_page.payload([])["server_time"], time.time(), delta=5)
 
     def test_nothing_known_yet(self):
         body = status_page.payload(self.make().cached())
