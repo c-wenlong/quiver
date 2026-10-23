@@ -651,6 +651,65 @@ final class OverviewClock {
         #expect(model.scanProgress == nil)
     }
 
+    @Test func partialFiguresWaitForTheThirdRead() async {
+        let ledger = FakeLedger()
+        await ledger.set(harnesses: ["claude": totals(tokens: 100, cost: 1)])
+        await ledger.set(progress: ScanProgress(filesDone: 1, filesTotal: 40))
+        await ledger.holdNextScan()
+        // Slow reads, so the check below lands well before the third.
+        let model = OverviewModel(ledger: ledger, roots: { LedgerRoots() }, accountLabel: { $0 },
+                                  scanWatchInterval: .milliseconds(500),
+                                  now: { [now] in now }, calendar: calendar)
+        let scan = Task { await model.load(scan: true) }
+        await until { model.scanProgress != nil }
+        #expect(model.summary == nil)
+        await until { model.summary != nil }
+        #expect(model.summary?.totals.totalTokens == 100)
+        #expect(model.completedScans == 0)
+
+        await ledger.set(progress: nil)
+        await ledger.releaseScan()
+        await scan.value
+    }
+
+    @Test func fullScansRunOneAtATime() async {
+        let ledger = FakeLedger()
+        await ledger.holdNextScan()
+        let model = model(ledger)
+        let first = Task { await model.load(scan: true) }
+        await until { await ledger.scanWaiting }
+        let second = Task { await model.load(scan: true) }
+        try? await Task.sleep(for: .milliseconds(100))
+        // The second waits instead of scanning beside the held first.
+        #expect(await ledger.scans == 1)
+
+        await ledger.releaseScan()
+        await first.value
+        await second.value
+        #expect(await ledger.scans == 2)
+        #expect(model.completedScans == 2)
+    }
+
+    @Test func aFullScanQueuedBehindAnotherIsCoveredByIt() async {
+        let ledger = FakeLedger()
+        await ledger.holdNextScan()
+        let model = model(ledger)
+        let first = Task { await model.load(scan: true) }
+        await until { await ledger.scanWaiting }
+        // Both ask while the first runs: the second's scan starts after
+        // the third asked, so the third has nothing left to read.
+        let second = Task { await model.load(scan: true) }
+        try? await Task.sleep(for: .milliseconds(50))
+        let third = Task { await model.load(scan: true) }
+        try? await Task.sleep(for: .milliseconds(50))
+
+        await ledger.releaseScan()
+        await first.value
+        await second.value
+        await third.value
+        #expect(await ledger.scans == 2)
+    }
+
     @Test func aCappedScanShowsNoProgress() async {
         let ledger = FakeLedger()
         await ledger.set(progress: ScanProgress(filesDone: 1, filesTotal: 2))
