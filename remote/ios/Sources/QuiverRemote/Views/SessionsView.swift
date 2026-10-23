@@ -78,12 +78,11 @@ struct SessionRowView: View {
                 Text(row.displayTitle)
                     .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                     .lineLimit(1).truncationMode(.tail)
-                HStack(spacing: 0) {
-                    Text(row.harnessName).foregroundStyle(Theme.harness(row.harness))
-                    Text(" · ")
+                HStack(spacing: 6) {
+                    HarnessIcon(harness: row.harness, name: row.harnessName, size: 13)
                     Text(status.label).foregroundStyle(waiting ? Theme.warningText : Theme.textSecondary)
                     let when = RelativeTime.short(row.lastActiveAt)
-                    if !when.isEmpty { Text(" · \(when)") }
+                    if !when.isEmpty { Text("· \(when)") }
                 }
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
             }

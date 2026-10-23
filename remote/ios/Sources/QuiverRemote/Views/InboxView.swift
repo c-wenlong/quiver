@@ -108,11 +108,11 @@ struct InboxView: View {
                 StatusDot(status: item.sessionStatus)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.displayTitle).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                    HStack(spacing: 0) {
-                        Text(item.harnessName).foregroundStyle(Theme.harness(item.harness))
-                        Text(" · \(detail ?? item.sessionStatus.label)")
+                    HStack(spacing: 6) {
+                        HarnessIcon(harness: item.harness, name: item.harnessName, size: 13)
+                        Text(detail ?? item.sessionStatus.label)
                         let when = RelativeTime.short(item.lastActiveAt)
-                        if !when.isEmpty { Text(" · \(when)") }
+                        if !when.isEmpty { Text("· \(when)") }
                     }
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }

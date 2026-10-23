@@ -22,6 +22,8 @@ dark and light from the same tokens, sentence case, green only for
 "active" and "on", amber for "needs you", red for errors. Type runs one
 point larger than the Mac's so captions stay readable on a phone. Every
 list scrolls vertically only and is pinned to the screen width.
+Harnesses show as their logos, not their names: `script/import-harness-icons.py`
+copies the Mac app's `harness-*.svg` into `Assets.xcassets/Harnesses`.
 
 ## Pairing
 

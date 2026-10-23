@@ -232,3 +232,40 @@ struct LoadingRow: View {
         .frame(maxWidth: .infinity)
     }
 }
+
+// MARK: - Harness logos
+
+/// A harness shown as its logo, the way the Mac app's `HarnessIcon` does:
+/// colour logos as they are, single-colour marks in the text colour. A
+/// harness with no bundled logo keeps its name. Logos come from
+/// script/import-harness-icons.py.
+struct HarnessIcon: View {
+    var harness: String?
+    var name: String
+    var size: CGFloat = 14
+
+    /// Other names the same harness goes by (as in QuiverCore's HarnessIcons).
+    static let aliases = ["claude-code": "claude", "claude-desktop": "claude", "github-copilot": "copilot",
+                          "factory": "droid", "qwen": "qwen-code", "mistral": "mistral-vibe",
+                          "codebuff": "freebuff", "command-code": "commandcode", "grok-bot": "grok"]
+
+    static func assetName(_ harness: String?) -> String? {
+        guard let h = harness?.lowercased(), !h.isEmpty else { return nil }
+        let id = aliases[h] ?? h
+        let name = "harness-\(id)"
+        return UIImage(named: name) == nil ? nil : name
+    }
+
+    var body: some View {
+        if let asset = Self.assetName(harness) {
+            Image(asset)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size, height: size)
+                .foregroundStyle(Theme.textPrimary)
+                .accessibilityLabel(name)
+        } else {
+            Text(name).foregroundStyle(Theme.harness(harness))
+        }
+    }
+}

@@ -20,8 +20,11 @@ struct ChatView: View {
                 let row = app.session(key)
                 VStack(spacing: 1) {
                     Text(row?.displayTitle ?? "Session").font(.system(size: 15, weight: .semibold)).lineLimit(1)
-                    Text([row?.harnessName, SessionGrouping.shortDir(row?.cwd)].compactMap { $0 }.joined(separator: " · "))
-                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                    HStack(spacing: 4) {
+                        HarnessIcon(harness: row?.harness, name: row?.harnessName ?? "", size: 11)
+                        Text(SessionGrouping.shortDir(row?.cwd))
+                    }
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }
                 .frame(maxWidth: 240)
             }

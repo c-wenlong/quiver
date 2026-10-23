@@ -167,3 +167,13 @@ final class ToolPresentationTests: XCTestCase {
         XCTAssertEqual(entries.map(\.id), ["1", "2", "t", "run-3"])
     }
 }
+
+final class HarnessIconTests: XCTestCase {
+    func testBundledLogosResolveWithAliases() {
+        XCTAssertEqual(HarnessIcon.assetName("claude"), "harness-claude")
+        XCTAssertEqual(HarnessIcon.assetName("claude-code"), "harness-claude")
+        XCTAssertNotNil(HarnessIcon.assetName("devin"))
+        XCTAssertNotNil(HarnessIcon.assetName("codex"))
+        XCTAssertNil(HarnessIcon.assetName("no-such-harness"))
+    }
+}
