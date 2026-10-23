@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: the Mac app's Overview in any browser.** The remote hub
+  serves a web version of the Mac app at `/app/`, with the same sidebar
+  and look, starting with Overview: total tokens and spend per period,
+  the harness split, a daily breakdown, quick figures, top models and
+  the activity heatmap, for the machine the hub runs on. It reads a new
+  Python port of the app's usage ledger (`quiver.ledger`: the same dedup
+  keys, Codex total handling and LiteLLM pricing) kept in
+  `~/.quiver/data/web-ledger/`, apart from the app's own ledger. A
+  browser paired with the hub's PWA is already signed in. The native app
+  is unchanged; docs/web-app.md has the plan for the remaining pages.
+
 - **Remote: the hub survives a restart.** `swe remote serve --install`
   runs the hub as a macOS LaunchAgent that starts at login and restarts
   it whenever it exits; `--uninstall` removes it. Under launchd the hub

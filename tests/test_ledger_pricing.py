@@ -1,0 +1,106 @@
+"""ledger/pricing.py: LiteLLM entries, name resolution and cost."""
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from quiver.ledger import pricing
+from quiver.ledger.pricing import PricingCatalog, forms, load_catalog, rates_from_entry
+
+REPO = Path(__file__).resolve().parents[1]
+
+OPUS = {"input_cost_per_token": 5e-06, "output_cost_per_token": 2.5e-05,
+        "cache_read_input_token_cost": 5e-07, "cache_creation_input_token_cost": 6.25e-06,
+        "litellm_provider": "anthropic"}
+LONG = {"input_cost_per_token": 1e-06, "output_cost_per_token": 2e-06,
+        "input_cost_per_token_above_200k_tokens": 3e-06,
+        "output_cost_per_token_above_200k_tokens": 4e-06, "litellm_provider": "openai"}
+
+
+def _catalog(entries, supplement=None):
+    return PricingCatalog({k: rates_from_entry(v) for k, v in entries.items()}, supplement or {})
+
+
+class TestEntries(unittest.TestCase):
+    def test_anthropic_hour_writes_default_to_double_input(self):
+        r = rates_from_entry(OPUS)
+        self.assertEqual(r.cache_write_1h, 1e-05)
+        self.assertEqual(r.reasoning, r.output)
+
+    def test_non_chat_and_unpriced_entries_are_dropped(self):
+        self.assertIsNone(rates_from_entry({**OPUS, "mode": "embedding"}))
+        self.assertIsNone(rates_from_entry({"output_cost_per_token": 1}))
+
+    def test_long_context(self):
+        r = rates_from_entry(LONG)
+        self.assertEqual(r.long_context.threshold, 200_000)
+        self.assertAlmostEqual(r.cost(1, 1, 0, 0, 0, 0, long=True), 7e-06)
+        self.assertAlmostEqual(r.cost(1, 1, 0, 0, 0, 0), 3e-06)
+
+    def test_cost_splits_hour_writes(self):
+        r = rates_from_entry(OPUS)
+        got = r.cost(input=1, output=1, cache_read=1, cache_write=3, cache_write_1h=1, reasoning=0)
+        self.assertAlmostEqual(got, 5e-06 + 2.5e-05 + 5e-07 + 2 * 6.25e-06 + 1e-05)
+
+
+class TestResolve(unittest.TestCase):
+    def setUp(self):
+        self.cat = _catalog(
+            {"claude-opus-5": OPUS, "bedrock/us.anthropic.claude-haiku-4-5-v1:0": OPUS,
+             "gpt-5.5": LONG},
+            {"aliases": {"opus-latest": "claude-opus-5"},
+             "tier_multipliers": {"claude-opus-5": {"fast": 2}},
+             "default_tier_multipliers": {"priority": 2}},
+        )
+
+    def test_forms(self):
+        self.assertEqual(forms("anthropic/claude-opus-4-6-20260205", True),
+                         ["claude-opus-4-6-20260205", "claude-opus-4-6"])
+        self.assertIn("gpt-5-5", forms("gpt-5.5", False))
+        self.assertEqual(forms("swe-2-high", True, strip_effort=True)[-1], "swe-2")
+
+    def test_dated_prefixed_dotted_and_aliased_names(self):
+        for name in ("claude-opus-5", "anthropic/claude-opus-5-20261001", "Claude-Opus-5",
+                     "claude-haiku-4-5", "gpt-5-5", "opus-latest", "claude-opus-5[1m]"):
+            self.assertEqual(self.cat.resolve(name, None)[0], "priced", name)
+
+    def test_fast_suffix_and_tier_multipliers(self):
+        status, rates, tier = self.cat.resolve("claude-opus-5-fast", None)
+        self.assertEqual((status, tier), ("priced", "fast"))
+        self.assertAlmostEqual(rates.cost(1, 0, 0, 0, 0, 0, tier="fast"), 1e-05)
+        _, gpt, _ = self.cat.resolve("gpt-5.5", "priority")
+        self.assertAlmostEqual(gpt.cost(1, 0, 0, 0, 0, 0, tier="priority"), 2e-06)
+
+    def test_free_and_unpriced(self):
+        self.assertEqual(self.cat.resolve("openrouter/some-model:free", None)[0], "free")
+        self.assertEqual(self.cat.resolve("swe-2-max", None)[0], "unpriced")
+
+
+class TestLoading(unittest.TestCase):
+    def test_bundled_copies_match_the_mac_app(self):
+        """The Python snapshot is a copy of the app's; refresh both together."""
+        app = REPO / "app" / "Sources" / "QuiverCore" / "Resources"
+        if not app.is_dir():
+            self.skipTest("no app/ in this checkout")
+        for name in ("pricing.json", "pricing-supplement.json"):
+            self.assertEqual((app / name).read_bytes(),
+                             (REPO / "src" / "quiver" / "ledger" / name).read_bytes(), name)
+
+    def test_offline_falls_back_to_the_snapshot_and_overrides_win(self):
+        home = Path(tempfile.mkdtemp())
+        cfg = home / ".quiver" / "config"
+        cfg.mkdir(parents=True)
+        (cfg / "pricing.json").write_text(json.dumps(
+            {"models": {"my-model": {"input": 1, "output": 2}}}))
+        with patch.object(pricing.urllib.request, "urlopen", side_effect=OSError("offline")):
+            cat = load_catalog(home)
+        self.assertEqual(cat.resolve("claude-opus-5", None)[0], "priced")
+        status, rates, _ = cat.resolve("my-model", None)
+        self.assertEqual(status, "priced")
+        self.assertAlmostEqual(rates.input, 1e-06)
+
+
+if __name__ == "__main__":
+    unittest.main()

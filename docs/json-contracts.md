@@ -75,6 +75,7 @@ replays the journal.
 | `GET /v1/inbox` | `{items: [{key, machine_id, harness, agent, title, cwd, status, last_active_at, request_id?}]}`: pending approvals (`status: approval`, any age), plus sessions in `followup`/`error`/`interrupted` active in the last 3 days, minus rows this device dismissed. `?done=1` adds sessions finished since the hub's local midnight as `status: done` |
 | `POST /v1/inbox/dismiss` | `{key, last_active_at}` → `200 {ok}`; hides the row for this device until its `last_active_at` moves past the given one. `422 bad_dismiss` without a key or a numeric `last_active_at` |
 | `GET /v1/machines` | `{machines}` |
+| `GET /v1/app/overview?period=&tz=&rescan=1` | the web app's Overview: `{period, time_zone, range: {start_day, end_day} \| null, first_day, totals: {tokens, input, output, cache_read, cache_write, reasoning, cost_usd, unpriced_tokens, unpriced_models}, harnesses: [{harness, tokens, cost_usd, share, models}], days: [{date, tokens, input, output, cached, cost_usd}], quick: {active_days, tokens_per_day, busiest_day}, top_models: [{model, tokens, share, harnesses}], heatmap: {weeks, days: [{date, tokens, cost_usd, level} \| {date, future}]}, scanned_at, notes, machine}`. `period` is `today` \| `7d` \| `month` (default) \| `30d` \| `90d` \| `365d` \| `all`; `tz` is the browser's IANA zone for day boundaries. Built by `ledger/overview.py`; see docs/web-app.md |
 
 `message.appended.data` is a RemoteMessage: `{kind: user|assistant|
 thinking|tool_use|tool_result|compaction|system|approval|error, text,
