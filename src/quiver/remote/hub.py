@@ -17,6 +17,8 @@ import email.message
 import json
 import os
 import queue
+import secrets
+import shutil
 import signal
 import socket
 import sqlite3
@@ -44,6 +46,7 @@ from quiver.remote import (
     usage as usage_mod,
 )
 from quiver.remote.journal import Journal
+from quiver.sessions.resume import launch_tool_name
 from quiver.webapp import api as webapp_api, static as webapp_static
 
 DEFAULT_PORT = 8477
@@ -72,6 +75,10 @@ MAX_SEND_BACKLOG = 20
 # than this — the journal trims at ~4k records and silently dropped
 # commands are worse than an honest 429.
 MAX_SAT_PENDING = 2000
+
+# A launch the phone started stays answerable at /v1/launches/<id> this
+# long; past it the tmux pane has long since been adopted or abandoned.
+LAUNCH_TTL_S = 86400
 
 
 class EventBus:
@@ -157,6 +164,45 @@ class HubState:
         # not yet been answered — local panes and satellites both flow
         # through emit(), so the inbox sees them uniformly.
         self.pending_approvals: dict[str, str] = {}
+        # launch_id -> {machine, harness, cwd, state, key, note,
+        # created_at} for every POST /v1/sessions. ``state`` goes pending
+        # -> started (a ``session.launched`` event names the key) or
+        # failed (the launch, or the satellite's command, said no).
+        self.launches: dict[str, dict] = {}
+        self._launch_lock = threading.Lock()
+
+    def new_launch(self, machine: str, harness: str, cwd: str) -> str:
+        now = time.time()
+        launch_id = "l" + secrets.token_hex(6)
+        with self._launch_lock:
+            for lid in [k for k, v in self.launches.items()
+                        if now - v["created_at"] > LAUNCH_TTL_S]:
+                del self.launches[lid]
+            self.launches[launch_id] = {
+                "launch_id": launch_id, "machine": machine,
+                "harness": harness, "cwd": cwd, "state": "pending",
+                "key": "", "note": "", "created_at": now,
+            }
+        return launch_id
+
+    def settle_launch(self, launch_id: str, **fields) -> None:
+        with self._launch_lock:
+            entry = self.launches.get(launch_id)
+            # A launch settles once: a late failure note for one that
+            # already started must not flip it back.
+            if entry is not None and entry["state"] == "pending":
+                entry.update(fields)
+
+    def launch_view(self, launch_id: str) -> dict | None:
+        """``GET /v1/launches/<id>``: started only once the catalog has
+        the row, so the phone can open the chat straight away."""
+        with self._launch_lock:
+            entry = self.launches.get(launch_id)
+            view = dict(entry) if entry else None
+        if view and view["state"] == "started" \
+                and self.catalog.row_for(view["key"]) is None:
+            view["state"] = "pending"
+        return view
 
     def _journal_has(self, key: str) -> bool:
         return self.journal.last_seq(key) > 0
@@ -170,6 +216,18 @@ class HubState:
                 self.pending_approvals[key] = rid
         elif etype == "approval.resolved":
             self.pending_approvals.pop(key, None)
+        elif etype in {"session.launched", "command.result"}:
+            data = event.get("data") or {}
+            lid = str(data.get("launch_id") or "")
+            if lid and etype == "session.launched":
+                self.settle_launch(
+                    lid, state="started",
+                    key=str(event.get("session") or key),
+                )
+            elif lid and data.get("op") == "launch" and not data.get("ok"):
+                self.settle_launch(
+                    lid, state="failed", note=str(data.get("note") or "")
+                )
         written = self.journal.append(key, event)
         self.bus.publish(key, written)
         if key != GLOBAL_KEY:
@@ -315,13 +373,7 @@ class HubState:
                     for row in self.catalog.rows()
                 }
                 self.catalog.refresh()
-                adopted = supervise.adopt_pending(
-                    self.home, self.catalog.tail_rows()
-                )
-                if adopted:
-                    # Newly adopted keys need a second refresh pass so the
-                    # rows carry ownership: attached.
-                    self.catalog.refresh()
+                self._adopt_launches()
                 # Ownership can change outside HTTP — `swe remote
                 # attach`, pending adoption, dead-tmux pruning — and the
                 # phone needs the event either way.
@@ -340,6 +392,25 @@ class HubState:
             except Exception:
                 pass
             self._stop.wait(catalog_mod.REFRESH_INTERVAL_S)
+
+    def _adopt_launches(self) -> None:
+        adopted = supervise.adopt_pending(
+            self.home, self.catalog.tail_rows()
+        )
+        if adopted:
+            # Newly adopted keys need a second refresh pass so the
+            # rows carry ownership: attached.
+            self.catalog.refresh()
+        for key in adopted:
+            lid = (supervise.meta_for(self.home, key) or {}).get("launch_id")
+            if lid:
+                # Global stream only: anything in the session's own
+                # journal before its tailer starts reads as history
+                # already sent, and the tailer would skip the first turn.
+                self.emit(GLOBAL_KEY, protocol.event(
+                    "session.launched", key, self.machine_id,
+                    {"launch_id": lid},
+                ))
 
     def _tail_loop(self) -> None:
         sweeps = 0
@@ -762,6 +833,15 @@ class _Handler(BaseHTTPRequestHandler):
             })
             return
 
+        if path.startswith("/v1/launches/"):
+            view = self._state.launch_view(
+                unquote(path[len("/v1/launches/"):]))
+            if view is None:
+                self._send_error(404, "unknown_launch", "no such launch")
+                return
+            self._send_json(200, view)
+            return
+
         if path == "/v1/machines":
             self._send_json(200, {
                 "machines": list(
@@ -1029,45 +1109,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/sessions":
-            body = self._read_body()
-            if body is None:
-                self._send_error(400, "bad_body", "unreadable JSON body")
-                return
-            machine = str(body.get("machine") or "")
-            harness = str(body.get("harness") or body.get("tool") or "")
-            cwd = str(body.get("cwd") or "")
-            prompt = str(body.get("prompt") or "")
-            if machine and machine != self._state.machine_id:
-                queued = self._state.queue_command(
-                    machine, "launch", "",
-                    {"harness": harness, "cwd": cwd, "prompt": prompt},
-                )
-                if queued is None:
-                    self._send_error(429, "backlog_full",
-                                     "machine is too far behind")
-                    return
-                self._send_json(
-                    202, {"ok": True, "queued": True,
-                          "note": "queued for satellite"}
-                )
-                return
-            # Snapshot the catalog before launch: adoption later refuses
-            # any of these ids, so a pre-existing same-cwd session can
-            # never be claimed as the one we just started.
-            real_cwd = os.path.realpath(cwd)
-            known = [
-                s.session_id
-                for _k, s, _st in self._state.catalog.tail_rows()
-                if s.tool_name == harness
-                and os.path.realpath(s.path or "") == real_cwd
-            ]
-            ok, note, _name = supervise.launch_new(
-                self._state.home, harness, cwd, prompt, known_ids=known
-            )
-            if not ok:
-                self._send_error(422, "launch_failed", note)
-                return
-            self._send_json(202, {"ok": True, "note": note})
+            self._launch()
             return
 
         if path.startswith("/v1/sessions/"):
@@ -1105,6 +1147,92 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         self._send_error(404, "not_found", "unknown route")
+
+    def _launch(self) -> None:
+        """``POST /v1/sessions``: start a harness on the hub or a satellite.
+
+        Answers 202 with a ``launch_id``; ``GET /v1/launches/<id>`` turns
+        it into the session key once the new transcript is adopted.
+        """
+        body = self._read_body()
+        if body is None:
+            self._send_error(400, "bad_body", "unreadable JSON body")
+            return
+        try:
+            cmd = protocol.parse_launch_command(body)
+        except ValueError as exc:
+            self._send_error(422, "bad_command", str(exc))
+            return
+        state = self._state
+        machine = cmd["machine"] or state.machine_id
+        harness, cwd = cmd["harness"], cmd["cwd"]
+        if machine != state.machine_id:
+            row = catalog_mod.load_machines(state.home).get(machine) or {}
+            # Satellites older than the launchable field report only
+            # harnesses; trust the protocol set for those.
+            offered = row.get("launchable")
+            if isinstance(offered, list) and harness not in offered:
+                self._send_error(422, "not_launchable",
+                                 f"{harness} can't be launched on {machine}")
+                return
+            launch_id = state.new_launch(machine, harness, cwd)
+            queued = state.queue_command(machine, "launch", "", {
+                "harness": harness, "cwd": cwd, "prompt": cmd["prompt"],
+                "launch_id": launch_id,
+            })
+            if queued is None:
+                state.settle_launch(launch_id, state="failed",
+                                    note="machine is too far behind")
+                self._send_error(429, "backlog_full",
+                                 "machine is too far behind")
+                return
+            self._send_json(202, {
+                "ok": True, "queued": True, "launch_id": launch_id,
+                "state": "pending", "note": "queued for satellite",
+            })
+            return
+        if not os.path.isdir(cwd):
+            self._send_error(422, "bad_cwd",
+                             f"no such folder on this machine: {cwd}")
+            return
+        # Snapshot the catalog before launch: adoption later refuses
+        # any of these ids, so a pre-existing same-cwd session can
+        # never be claimed as the one we just started.
+        real_cwd = os.path.realpath(cwd)
+        known = [
+            s.session_id
+            for _k, s, _st in state.catalog.tail_rows()
+            if s.tool_name == harness
+            and os.path.realpath(s.path or "") == real_cwd
+        ]
+        # Failures a phone can act on answer now; launch_new itself
+        # runs after the reply, since priming the pane can take 30 s and
+        # the phone needs the launch id to follow it.
+        binary = launch_tool_name(harness)
+        if not binary or not shutil.which(binary):
+            self._send_error(422, "launch_failed",
+                             f"{harness} is not installed on this machine")
+            return
+        if not supervise.tmux_bin():
+            self._send_error(422, "launch_failed", "tmux is not installed")
+            return
+        launch_id = state.new_launch(machine, harness, cwd)
+
+        def run() -> None:
+            ok, note, _name = supervise.launch_new(
+                state.home, harness, cwd, cmd["prompt"],
+                known_ids=known, launch_id=launch_id,
+            )
+            if not ok:
+                state.settle_launch(launch_id, state="failed", note=note)
+
+        threading.Thread(
+            target=run, name=f"remote-launch-{launch_id}", daemon=True
+        ).start()
+        self._send_json(202, {
+            "ok": True, "launch_id": launch_id, "state": "pending",
+            "note": "starting under tmux",
+        })
 
     def _injector(self, key: str):
         meta = supervise.meta_for(self._state.home, key)

@@ -273,6 +273,71 @@ final class ChatModelTests: XCTestCase {
         chat.apply(env(#"{"type":"approval.resolved","seq":4,"data":{"request_id":"r1","decision":"allow"}}"#))
         XCTAssertEqual(chat.items.first?.kind, .approval(requestId: "r1", prompt: "Run npm test?", state: .resolved("allow")))
     }
+
+    func testResultOnNewerPageWaitsForItsCallOnAnOlderPage() {
+        var orphans: [String: String] = [:]
+        // The newest page starts with a result whose call is a page back.
+        var newer: [ChatItem] = []
+        var newerCards: [String: String] = [:]
+        ChatModel.add(MessageData(kind: "tool_result", text: "a.txt", ts: nil, tool: nil, resultRef: "t1"),
+                      id: "m5", to: &newer, cards: &newerCards, orphans: &orphans)
+        XCTAssertTrue(newer.isEmpty)
+        XCTAssertEqual(orphans, ["t1": "a.txt"])
+
+        // The older page holds that call, plus a result for an even older one.
+        var older: [ChatItem] = []
+        var olderCards: [String: String] = [:]
+        ChatModel.add(MessageData(kind: "tool_result", text: "b", ts: nil, tool: nil, resultRef: "t0"),
+                      id: "m3", to: &older, cards: &olderCards, orphans: &orphans)
+        ChatModel.add(MessageData(kind: "tool_use", text: "", ts: nil,
+                                  tool: ToolCall(name: "Bash", callId: "t1", argsSummary: "ls", argsFull: nil), resultRef: nil),
+                      id: "m4", to: &older, cards: &olderCards, orphans: &orphans)
+        XCTAssertEqual(older.count, 1)
+        guard case .tool(_, let result) = older[0].kind else { return XCTFail("expected a tool item") }
+        XCTAssertEqual(result, "a.txt")
+        XCTAssertEqual(orphans, ["t0": "b"])
+    }
+
+    private func page(_ messages: String, nextBefore: Int?, hasMore: Bool) -> MessagesResponse {
+        let json = #"{"session":"claude:1","messages":["# + messages + #"],"next_before":"# + (nextBefore.map(String.init) ?? "null") + #","has_more":"# + (hasMore ? "true" : "false") + "}"
+        return try! Hub.decoder.decode(MessagesResponse.self, from: Data(json.utf8))
+    }
+
+    func testLiveResultFindsACallFromAnOlderPage() {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        chat.apply(env(#"{"type":"message.appended","seq":10,"data":{"kind":"assistant","text":"working"}}"#))
+        // The call is on an older page and still running.
+        XCTAssertTrue(chat.prepend(page(#"{"type":"message.appended","seq":5,"data":{"kind":"tool_use","text":"","tool":{"name":"Bash","call_id":"t1","args_summary":"Bash · sleep"}}}"#,
+                                        nextBefore: nil, hasMore: false)))
+        chat.apply(env(#"{"type":"message.appended","seq":11,"data":{"kind":"tool_result","text":"done","result_ref":"t1"}}"#))
+        guard case .tool(_, let result) = chat.items[0].kind else { return XCTFail("expected the call first") }
+        XCTAssertEqual(result, "done")
+    }
+
+    func testPageOfOnlyOrphanResultsShowsNothingButKeepsPaging() {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let added = chat.prepend(page(#"{"type":"message.appended","seq":7,"data":{"kind":"tool_result","text":"x","result_ref":"t9"}}"#,
+                                      nextBefore: 7, hasMore: true))
+        XCTAssertFalse(added)
+        XCTAssertTrue(chat.items.isEmpty)
+        XCTAssertTrue(chat.hasEarlier)
+    }
+
+    func testReopeningAChatReusesItsModel() {
+        let app = AppModel()
+        let first = app.chat("claude:1")
+        first.apply(env(#"{"type":"message.appended","seq":1,"data":{"kind":"assistant","text":"hi"}}"#))
+        XCTAssertTrue(app.chat("claude:1") === first)
+        XCTAssertEqual(app.chat("claude:1").items.count, 1)
+        XCTAssertFalse(app.chat("claude:2") === first)
+    }
+
+    func testChatCacheDropsTheLeastRecentlyOpened() {
+        let app = AppModel()
+        let oldest = app.chat("claude:0")
+        for i in 1...AppModel.chatCacheSize { _ = app.chat("claude:\(i)") }
+        XCTAssertFalse(app.chat("claude:0") === oldest)
+    }
 }
 
 final class ToolPresentationTests: XCTestCase {
@@ -356,5 +421,128 @@ final class SessionSearchTests: XCTestCase {
         let body = try Hub.decoder.decode(SearchResponse.self, from: Data(json.utf8))
         XCTAssertEqual(body.results.first?.session.displayTitle, "T")
         XCTAssertEqual(body.indexed, true)
+    }
+}
+
+final class NewSessionOptionsTests: XCTestCase {
+    private func row(_ key: String, _ harness: String, cwd: String, machine: String = "m1", at: Double) -> SessionRow {
+        SessionRow(key: key, harness: harness, agent: nil, cwd: cwd, title: nil, lastActiveAt: at,
+                   status: nil, machineId: machine, ownership: nil, attachable: nil)
+    }
+
+    private func machine(_ id: String, name: String, online: Bool = true, harnesses: [String]? = nil, launchable: [String]? = nil) -> Machine {
+        Machine(id: id, name: name, os: nil, online: online, lastSeenAt: nil, harnesses: harnesses, launchable: launchable)
+    }
+
+    func testFoldersAreDistinctNewestFirstPerMachine() {
+        let rows = [row("a", "claude", cwd: "/p/old", at: 1), row("b", "codex", cwd: "/p/new", at: 3),
+                    row("c", "claude", cwd: "/p/old", at: 2), row("d", "claude", cwd: "/other", machine: "m2", at: 9),
+                    row("e", "claude", cwd: "", at: 5)]
+        XCTAssertEqual(NewSessionOptions.folders(on: "m1", sessions: rows), ["/p/new", "/p/old"])
+    }
+
+    func testHarnessesPreferRecentUseAndFallBackToHarnesses() {
+        let rows = [row("a", "codex", cwd: "/p", at: 5), row("b", "claude", cwd: "/p", at: 1)]
+        let m = machine("m1", name: "mac", launchable: ["claude", "codex", "pi"])
+        XCTAssertEqual(NewSessionOptions.harnesses(on: m, sessions: rows), ["codex", "claude", "pi"])
+        // An older row with no launchable field offers its launchable harnesses.
+        let old = machine("m1", name: "mac", harnesses: ["claude", "gemini", "opencode"])
+        XCTAssertEqual(NewSessionOptions.harnesses(on: old, sessions: []), ["claude"])
+    }
+
+    func testMachinesDropThoseThatCanLaunchNothingOnlineFirst() {
+        let ms = [machine("z", name: "zeta", launchable: ["claude"]),
+                  machine("o", name: "alpha", online: false, launchable: ["claude"]),
+                  machine("n", name: "none", launchable: []),
+                  machine("b", name: "beta.local", launchable: ["codex"])]
+        XCTAssertEqual(NewSessionOptions.machines(ms, sessions: []).map(\.id), ["b", "z", "o"])
+    }
+
+    func testDefaultHarnessIsTheFoldersLastOneWhenOffered() {
+        let rows = [row("a", "codex", cwd: "/p", at: 5), row("b", "claude", cwd: "/q", at: 9)]
+        XCTAssertEqual(NewSessionOptions.defaultHarness(folder: "/p", machineId: "m1", offered: ["claude", "codex"], sessions: rows), "codex")
+        XCTAssertEqual(NewSessionOptions.defaultHarness(folder: "/p", machineId: "m1", offered: ["claude"], sessions: rows), "claude")
+        XCTAssertNil(NewSessionOptions.defaultHarness(folder: "/p", machineId: "m1", offered: [], sessions: rows))
+    }
+
+    func testDecodesHubLaunchAndMachineRows() throws {
+        let launch = try Hub.decoder.decode(LaunchStatus.self, from: Data(
+            #"{"ok":true,"launch_id":"l1a2","state":"pending","queued":true,"note":"queued for satellite"}"#.utf8))
+        XCTAssertEqual(launch.launchId, "l1a2")
+        XCTAssertEqual(launch.queued, true)
+        let m = try Hub.decoder.decode(Machine.self, from: Data(
+            #"{"id":"m","name":"mac","harnesses":["claude","gemini"],"launchable":["claude"]}"#.utf8))
+        XCTAssertEqual(m.launchable, ["claude"])
+    }
+}
+
+@MainActor
+final class LaunchFlowTests: XCTestCase {
+    private func status(_ state: String, key: String? = nil, note: String? = nil, queued: Bool? = nil) -> LaunchStatus {
+        LaunchStatus(launchId: "l1", state: state, key: key, note: note, queued: queued)
+    }
+
+    func testPollsUntilStarted() async {
+        let flow = LaunchFlow()
+        var answers = [status("pending"), status("started", key: "claude:new")]
+        var asked: [String] = []
+        let key = await flow.run(post: { self.status("pending") },
+                                 fetch: { asked.append($0); return answers.removeFirst() },
+                                 interval: .zero)
+        XCTAssertEqual(key, "claude:new")
+        XCTAssertEqual(asked, ["l1", "l1"])
+        XCTAssertEqual(flow.phase, .started("claude:new"))
+    }
+
+    func testTheLastPollIsStillRead() async {
+        let flow = LaunchFlow()
+        let key = await flow.run(post: { self.status("pending") },
+                                 fetch: { _ in self.status("started", key: "claude:late") },
+                                 attempts: 1, interval: .zero)
+        XCTAssertEqual(key, "claude:late")
+    }
+
+    func testCancelledLaunchStopsWithoutAKey() async {
+        let flow = LaunchFlow()
+        let task = Task { await flow.run(post: { self.status("pending") },
+                                         fetch: { _ in self.status("pending") },
+                                         interval: .seconds(30)) }
+        task.cancel()
+        let key = await task.value
+        XCTAssertNil(key)
+        XCTAssertEqual(flow.phase, .idle)
+    }
+
+    func testFailedLaunchShowsTheHubsNote() async {
+        let flow = LaunchFlow()
+        let key = await flow.run(post: { self.status("pending") },
+                                 fetch: { _ in self.status("failed", note: "no such folder on this machine: /x") },
+                                 interval: .zero)
+        XCTAssertNil(key)
+        XCTAssertEqual(flow.phase, .failed("The session didn't start: no such folder on this machine: /x"))
+    }
+
+    func testRejectedPostAndLostLaunch() async {
+        let flow = LaunchFlow()
+        var key = await flow.run(post: { throw HubError(status: 422, code: "bad_cwd", message: "That folder doesn't exist on this machine.") },
+                                 fetch: { _ in self.status("pending") }, interval: .zero)
+        XCTAssertNil(key)
+        XCTAssertEqual(flow.phase, .failed("That folder doesn't exist on this machine."))
+        key = await flow.run(post: { self.status("pending") },
+                             fetch: { _ in throw HubError(status: 404, code: "unknown_launch", message: "lost") },
+                             interval: .zero)
+        XCTAssertNil(key)
+        XCTAssertEqual(flow.phase, .failed("lost"))
+    }
+
+    func testTimeoutWordingSaysWhetherItWasQueued() async {
+        let flow = LaunchFlow()
+        var fetches = 0
+        _ = await flow.run(post: { self.status("pending", queued: true) },
+                           fetch: { _ in fetches += 1; throw HubError.network(URLError(.timedOut)) },
+                           attempts: 3, interval: .zero)
+        XCTAssertEqual(fetches, 3)
+        guard case .unconfirmed(let message) = flow.phase else { return XCTFail("expected unconfirmed") }
+        XCTAssertTrue(message.hasPrefix("Queued."))
     }
 }

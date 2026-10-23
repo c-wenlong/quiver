@@ -258,6 +258,7 @@ class TestServe(unittest.TestCase):
         with patch.object(commands.sys, "platform", "darwin"), \
              patch.object(commands.sys, "argv", ["/opt/swe/bin/swe"]), \
              patch("quiver.remote.commands.os.access", return_value=True), \
+             patch.object(commands.launchd, "bundled_swe", return_value=None), \
              patch.object(commands.launchd, "loaded_pid", return_value=(False, None)), \
              patch.object(commands.launchd, "install", fake_install), \
              patch.object(commands, "_probe", return_value={"ok": True}), \
@@ -283,8 +284,54 @@ class TestServe(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("could not stop the hub: busy", err)
 
+    def test_install_prefers_the_app_bundle_and_checks_the_hub_started(self):
+        seen = {}
+
+        def fake_install(program, log_path, path_env):
+            seen["program"] = program
+            return Path("/h/x.plist")
+
+        shim = Path("/Users/k/Applications/Quiver.app/Contents/Resources/swe/bin/swe")
+        with patch.object(commands.sys, "platform", "darwin"), \
+             patch.object(commands.sys, "argv", ["/Users/k/Desktop/quiver/.venv/bin/swe"]), \
+             patch.object(commands.launchd, "bundled_swe", return_value=shim), \
+             patch.object(commands.launchd, "loaded_pid", return_value=(False, None)), \
+             patch.object(commands.launchd, "install", fake_install), \
+             patch.object(commands, "_probe", side_effect=[None, None, {"ok": True}]), \
+             patch("quiver.remote.commands.time.sleep"), \
+             patch("quiver.remote.commands._tailscale_ip", return_value="100.1.2.3"):
+            rc, out, _ = _run(["serve", "--install"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen["program"][0], str(shim))
+        self.assertIn("hub answering on 100.1.2.3:8477", out)
+
+    def test_install_warns_when_the_hub_does_not_start(self):
+        with patch.object(commands.sys, "platform", "darwin"), \
+             patch.object(commands.launchd, "bundled_swe", return_value=Path("/A/swe")), \
+             patch.object(commands.launchd, "loaded_pid", return_value=(False, None)), \
+             patch.object(commands.launchd, "install", return_value=Path("/h/x.plist")), \
+             patch.object(commands, "_probe", return_value=None), \
+             patch("quiver.remote.commands.time.sleep"), \
+             patch("quiver.remote.commands._tailscale_ip", return_value="100.1.2.3"):
+            rc, _, err = _run(["serve", "--install"])
+        self.assertEqual(rc, 0)
+        self.assertIn("not answering on 100.1.2.3:8477 after 20 s", err)
+
+    def test_install_refuses_a_swe_in_a_protected_folder(self):
+        home = Path.home()
+        with patch.object(commands.sys, "platform", "darwin"), \
+             patch.object(commands.sys, "argv", [str(home / "Desktop/quiver/.venv/bin/swe")]), \
+             patch("quiver.remote.commands.os.access", return_value=True), \
+             patch.object(commands.launchd, "bundled_swe", return_value=None), \
+             patch.object(commands.launchd, "install") as install:
+            rc, _, err = _run(["serve", "--install"])
+        self.assertEqual(rc, 1)
+        self.assertIn("~/Desktop", err)
+        install.assert_not_called()
+
     def test_install_needs_the_swe_executable(self):
         with patch.object(commands.sys, "platform", "darwin"), \
+             patch.object(commands.launchd, "bundled_swe", return_value=None), \
              patch.object(commands.sys, "argv", ["-c"]), \
              patch("quiver.remote.commands.os.access", return_value=False):
             rc, _, err = _run(["serve", "--install"])
@@ -293,8 +340,7 @@ class TestServe(unittest.TestCase):
 
     def test_install_reports_a_failed_load(self):
         with patch.object(commands.sys, "platform", "darwin"), \
-             patch.object(commands.sys, "argv", ["/opt/swe/bin/swe"]), \
-             patch("quiver.remote.commands.os.access", return_value=True), \
+             patch.object(commands.launchd, "bundled_swe", return_value=Path("/A/swe")), \
              patch.object(commands.launchd, "loaded_pid", return_value=(True, 1)), \
              patch.object(commands.launchd, "install", side_effect=RuntimeError("denied")):
             rc, _, err = _run(["serve", "--install", "--host=100.1.2.3"])

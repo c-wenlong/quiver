@@ -20,12 +20,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   browser paired with the hub's PWA is already signed in. The native app
   is unchanged; docs/web-app.md has the plan for the remaining pages.
 
+- **Remote: start a session from the iPhone app.** Sessions gets a plus
+  button that opens a new-session sheet: pick a machine, one of its
+  recent folders, a harness by its logo, and a first prompt, and the
+  chat opens once the session shows up. `POST /v1/sessions` now accepts
+  only harnesses it can launch and adopt (Claude Code, Codex, Cursor,
+  Droid, Pi), checks the folder and requires a prompt, and answers a
+  `launch_id`; `GET /v1/launches/<id>` names the new session once the
+  hub or satellite adopts it. Machine rows list `launchable` harnesses.
+  A first prompt whose Enter Claude's TUI swallowed is now pressed
+  again instead of sitting unsent in the input box.
+
 - **Remote: the hub survives a restart.** `swe remote serve --install`
   runs the hub as a macOS LaunchAgent that starts at login and restarts
   it whenever it exits; `--uninstall` removes it. Under launchd the hub
   waits for Tailscale instead of binding localhost, and `serve.log` now
   has timestamped start and stop lines. A hub started with `nohup` used
-  to die on every reboot and stay down until someone noticed.
+  to die on every reboot and stay down until someone noticed. The agent
+  runs Quiver.app's bundled `swe`, since macOS blocks LaunchAgents from
+  reading a checkout in ~/Desktop; `--install` checks that the hub came
+  up, and `install-app.sh` restarts it on the new bundle.
 
 - **Remote: satellites report usage, so a MacBook's quota shows on the
   hub.** `swe remote agent` posts the machine's `swe list --usage` rows

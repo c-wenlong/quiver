@@ -27,8 +27,9 @@ enum ApprovalState: Equatable {
     case pending, submitting, queued, resolved(String?), failed(String)
 }
 
-/// The open chat: history from `/messages`, then live events from the
-/// session's SSE stream, plus optimistic sends.
+/// The open chat: the newest page of history from `/messages`, older
+/// pages as you scroll up, then live events from the session's SSE
+/// stream, plus optimistic sends.
 @MainActor @Observable
 final class ChatModel {
     let key: String
@@ -36,6 +37,12 @@ final class ChatModel {
     private(set) var live = false
     private(set) var loading = true
     private(set) var loadError: String?
+    /// The hub holds messages older than the oldest one shown.
+    private(set) var hasEarlier = false
+    private(set) var loadingEarlier = false
+    /// The view scrolled near the oldest loaded entry; it loads the next
+    /// page once scrolling comes to rest.
+    var wantsEarlier = false
     var draft = ""
     var mode: SendMode = .queue
 
@@ -45,12 +52,20 @@ final class ChatModel {
     /// Tool call id to the id of its card (ids, not positions: removing a
     /// send bubble would shift positions under a result still to come).
     private var toolCards: [String: String] = [:]
+    /// Tool results whose call is on a page not loaded yet, by call id.
+    private var orphanResults: [String: String] = [:]
+    /// The seq to page back from: the oldest message loaded.
+    private var nextBefore: Int?
     private var streamTask: Task<Void, Never>?
     /// Bumped by every start() and stop(), so a start() still fetching
     /// history doesn't open a stream after the chat was left.
     private var generation = 0
 
     enum SendMode: String, CaseIterable { case queue, steer }
+
+    /// Messages per `/messages` page. A long session's 500-message page
+    /// was ~850 KB and took seconds to lay out on the phone.
+    static let pageSize = 100
 
     init(key: String, app: AppModel) {
         self.key = key
@@ -94,7 +109,7 @@ final class ChatModel {
     /// aren't in `/messages`, so they carry over.
     private func backfill(_ client: HubClient) async {
         do {
-            let body = try await client.messages(key)
+            let body = try await client.messages(key, limit: Self.pageSize)
             let keep = items.filter { item in
                 switch item.kind {
                 case .approval(_, _, let state):
@@ -107,7 +122,10 @@ final class ChatModel {
             items = []
             seen = []
             toolCards = [:]
+            orphanResults = [:]
             for env in body.messages { apply(env) }
+            hasEarlier = body.hasMore ?? false
+            nextBefore = body.nextBefore ?? body.messages.first?.seq
             for item in keep where !items.contains(where: { $0.id == item.id }) { items.append(item) }
             // Opened from the inbox while an approval waits: the request
             // may predate the stream's replay window, so show it now.
@@ -118,7 +136,55 @@ final class ChatModel {
         } catch {
             loadError = (error as? HubError)?.message ?? error.localizedDescription
         }
+        // The newest page held nothing to show (only results of older
+        // calls): fetch back until something does, rather than "No
+        // messages yet" over a session that has them.
+        if items.isEmpty, hasEarlier { await loadEarlier() }
         loading = false
+    }
+
+    /// Prepends the page of history just older than what's loaded. One
+    /// page at a time; returns whether anything was added.
+    @discardableResult
+    func loadEarlier() async -> Bool {
+        guard hasEarlier, !loadingEarlier, nextBefore != nil, let client = app?.client else { return false }
+        loadingEarlier = true
+        defer { loadingEarlier = false }
+        // A page of only tool results whose calls are further back adds
+        // nothing to show, and nothing on screen would ask again: keep
+        // going until a page shows something or history runs out.
+        while hasEarlier, let before = nextBefore {
+            let body: MessagesResponse
+            do {
+                body = try await client.messages(key, limit: Self.pageSize, before: before)
+            } catch {
+                // Leave hasEarlier set: the next scroll to the top tries again.
+                return false
+            }
+            // A backfill (stream truncated) replaced the history meanwhile.
+            guard nextBefore == before else { return false }
+            if prepend(body) { return true }
+        }
+        return false
+    }
+
+    /// Puts an older page in front of what's loaded; returns whether it
+    /// added anything to show.
+    func prepend(_ body: MessagesResponse) -> Bool {
+        var older: [ChatItem] = []
+        var cards: [String: String] = [:]
+        for env in body.messages where env.type == "message.appended" {
+            guard let seq = env.seq, !seen.contains(seq), let msg = env.decode(MessageData.self) else { continue }
+            seen.insert(seq)
+            Self.add(msg, id: "m\(seq)", to: &older, cards: &cards, orphans: &orphanResults)
+        }
+        // A call on this page may still be running; its live result has
+        // to find the card.
+        toolCards.merge(cards) { newer, _ in newer }
+        items.insert(contentsOf: older, at: 0)
+        hasEarlier = body.hasMore ?? false
+        nextBefore = body.nextBefore ?? body.messages.first?.seq
+        return !older.isEmpty
     }
 
     // MARK: Events
@@ -160,37 +226,54 @@ final class ChatModel {
     }
 
     private func append(_ msg: MessageData, seq: Int) {
-        let id = "m\(seq)"
-        let text = msg.text ?? ""
-        switch msg.kind ?? "assistant" {
-        case "user":
+        if msg.kind == "user", let text = msg.text {
             // The hub echoes a queued send back as a user message: drop the
             // optimistic bubble it replaces (attachments prefix "@path ").
             if let i = items.firstIndex(where: {
                 if case .user(let t, let s) = $0.kind, s != nil, !Self.isFailed(s) { return text == t || text.hasSuffix(t) }
                 return false
             }) { items.remove(at: i) }
-            items.append(ChatItem(id: id, kind: .user(text: text, send: nil)))
+        }
+        Self.add(msg, id: "m\(seq)", to: &items, cards: &toolCards, orphans: &orphanResults)
+    }
+
+    /// Adds one message to the end of `list`. A tool result lands on its
+    /// call's card; one whose call is on an older page not loaded yet
+    /// waits in `orphans` until that page brings the call.
+    static func add(_ msg: MessageData, id: String, to list: inout [ChatItem],
+                    cards: inout [String: String], orphans: inout [String: String]) {
+        let text = msg.text ?? ""
+        switch msg.kind ?? "assistant" {
+        case "user":
+            list.append(ChatItem(id: id, kind: .user(text: text, send: nil)))
         case "thinking":
-            items.append(ChatItem(id: id, kind: .thinking(text)))
+            list.append(ChatItem(id: id, kind: .thinking(text)))
         case "tool_use":
             guard let tool = msg.tool else { return }
-            if let callId = tool.callId { toolCards[callId] = id }
-            items.append(ChatItem(id: id, kind: .tool(tool, result: nil)))
+            var result: String?
+            if let callId = tool.callId {
+                cards[callId] = id
+                result = orphans.removeValue(forKey: callId)
+            }
+            list.append(ChatItem(id: id, kind: .tool(tool, result: result)))
         case "tool_result":
-            if let ref = msg.resultRef, let cardId = toolCards[ref], let i = items.firstIndex(where: { $0.id == cardId }),
-               case .tool(let call, _) = items[i].kind {
-                items[i].kind = .tool(call, result: String(text.prefix(8000)))
+            guard let ref = msg.resultRef else { return }
+            let result = String(text.prefix(8000))
+            if let cardId = cards[ref], let i = list.firstIndex(where: { $0.id == cardId }),
+               case .tool(let call, _) = list[i].kind {
+                list[i].kind = .tool(call, result: result)
+            } else {
+                orphans[ref] = result
             }
         case "compaction":
-            items.append(ChatItem(id: id, kind: .compaction))
+            list.append(ChatItem(id: id, kind: .compaction))
         case "system":
-            items.append(ChatItem(id: id, kind: .system(text)))
+            list.append(ChatItem(id: id, kind: .system(text)))
         case "error":
-            items.append(ChatItem(id: id, kind: .error(text)))
+            list.append(ChatItem(id: id, kind: .error(text)))
         default:
             guard !text.isEmpty else { return }
-            items.append(ChatItem(id: id, kind: .assistant(text)))
+            list.append(ChatItem(id: id, kind: .assistant(text)))
         }
     }
 

@@ -74,13 +74,15 @@ are server changes in `src/quiver/remote/`.
 - [ ] Swipe to attach or open
 - [x] Empty state: "No sessions on this machine yet"
 - [ ] More than one machine: a machine switcher in the hub chip
-- [ ] New-session sheet: machine, folder, harness, first prompt
-- [ ] Hub: a route to start a session (machine, cwd, harness, prompt)
+- [x] New-session sheet: machine, folder, harness, first prompt
+- [x] Hub: a route to start a session (machine, cwd, harness, prompt): `POST /v1/sessions` answers a `launch_id`, and `GET /v1/launches/<id>` names the session once it is adopted
 
 ### P5. Chat, observed
 - [x] Header: title, harness and folder, and a menu (copy session id, interrupt)
 - [ ] "Open on Mac" in that menu
 - [x] Read-only transcript
+- [x] Opens on the newest 100 messages; the next older page loads once you stop scrolling within 15 entries of the oldest one loaded, and the entry at the top of the screen stays put (a button on iOS 17)
+- [x] The last 8 chats opened stay in memory, so going back into one shows it at once and replays only what changed
 - [x] Attach card above the keyboard area: "Watching only", plus Attach when the session can be attached
 - [x] Mid-turn and "this harness cannot be attached" wording on the card, as `updateOwnership()` has today
 
