@@ -231,8 +231,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Settings: a shorter sub-nav.** Preferences and Updates fold into
-  General as its Display and Updates cards, and GitHub and Remote move out
-  of App into a new Integrations group. The list goes from 12 items to 10.
+  General as its Display and Updates cards, and GitHub and Remote share one
+  Integrations page under Advanced. The list goes from 12 items to 9.
 
 ### Fixed
 
