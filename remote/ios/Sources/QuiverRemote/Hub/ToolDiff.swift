@@ -84,9 +84,18 @@ enum ToolArgs {
     /// The hub's `args_summary` is "Name · hint"; the card's icon already
     /// says the name, so only the hint stays.
     static func summary(_ call: ToolCall) -> String {
-        guard let s = call.argsSummary, !s.isEmpty else { return call.name }
+        guard let s = call.argsSummary, !s.isEmpty, s != call.name else { return displayName(call.name) }
         let prefix = "\(call.name) · "
         return s.hasPrefix(prefix) ? String(s.dropFirst(prefix.count)) : s
+    }
+
+    /// `mcp__computer-use__app_batch` reads as `computer-use · app_batch`,
+    /// the way Claude Code shows an MCP tool; other names pass through.
+    static func displayName(_ name: String) -> String {
+        guard name.hasPrefix("mcp__") else { return name }
+        let parts = name.dropFirst(5).components(separatedBy: "__").filter { !$0.isEmpty }
+        guard parts.count >= 2 else { return parts.first ?? name }
+        return parts[0] + " · " + parts[1...].joined(separator: "__")
     }
 
     /// A shell command as its own text; anything else as indented JSON

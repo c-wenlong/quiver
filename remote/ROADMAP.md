@@ -87,6 +87,7 @@ are server changes in `src/quiver/remote/`.
 ### P6. Chat, attached
 - [x] Message bubbles: yours on the right, the agent's as plain text
 - [x] Agent Markdown: headings, lists, quotes, rules, code blocks, and tables that scroll sideways inside their own box when wider than the screen
+- [x] Task checkboxes, image and rendered-view chips, local file links shown as file names, MCP tool names as "server · tool"
 - [x] Thinking card, collapsed to "Thought"
 - [ ] Thinking duration ("Thought for 12s"); the hub sends no duration yet
 - [x] Tool card: `Edit · app.js` with an added and removed line count, tap to expand

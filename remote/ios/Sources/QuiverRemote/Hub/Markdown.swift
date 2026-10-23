@@ -15,6 +15,22 @@ enum Markdown {
         case code(language: String?, text: String)
         case table(Table)
         case rule
+        /// An image on its own line. The phone can't open the agent's
+        /// local file, so it shows as a labelled chip.
+        case image(alt: String, source: String)
+        /// A view a harness drew (Droid's `<json-render>`): no way to draw
+        /// it here, so it folds into a note.
+        case rendered(String)
+    }
+
+    /// A task item's box, read off the start of a list item's text.
+    enum TaskBox: Hashable { case open, done }
+
+    static func taskBox(_ text: String) -> (TaskBox, String)? {
+        let lower = text.lowercased()
+        if lower.hasPrefix("[ ] ") { return (.open, String(text.dropFirst(4))) }
+        if lower.hasPrefix("[x] ") { return (.done, String(text.dropFirst(4))) }
+        return nil
     }
 
     struct Table: Hashable {
@@ -64,6 +80,25 @@ enum Markdown {
 
             if trimmed.isEmpty {
                 flushParagraph()
+                i += 1
+                continue
+            }
+
+            if trimmed.hasPrefix("<json-render>") {
+                flushParagraph()
+                var body = trimmed
+                while !body.contains("</json-render>"), i + 1 < lines.count {
+                    i += 1
+                    body += "\n" + lines[i]
+                }
+                i += 1
+                blocks.append(.rendered(body))
+                continue
+            }
+
+            if let (alt, source) = imageLine(trimmed) {
+                flushParagraph()
+                blocks.append(.image(alt: alt, source: source))
                 i += 1
                 continue
             }
@@ -140,6 +175,26 @@ enum Markdown {
     }
 
     // MARK: Pieces
+
+    /// `![alt](source)` alone on a line.
+    static func imageLine(_ line: String) -> (String, String)? {
+        guard line.hasPrefix("!["), line.hasSuffix(")"),
+              let close = line.range(of: "]("), line.firstIndex(of: "]") == close.lowerBound
+        else { return nil }
+        let alt = String(line[line.index(line.startIndex, offsetBy: 2)..<close.lowerBound])
+        let source = String(line[close.upperBound..<line.index(before: line.endIndex)])
+        guard !source.contains(" ") else { return nil }
+        return (alt, source)
+    }
+
+    /// Inline `![alt](source)` inside a sentence, as text the phone can show.
+    static func inlineImagesAsText(_ text: String) -> String {
+        guard text.contains("![") else { return text }
+        return text.replacingOccurrences(
+            of: #"!\[([^\]]*)\]\(([^)\s]+)\)"#,
+            with: "*Image: $1*",
+            options: .regularExpression)
+    }
 
     /// Whether `lines[i]` opens a block that isn't list-item text.
     static func startsBlock(_ lines: [String], at i: Int) -> Bool {
