@@ -1,0 +1,113 @@
+/* MCP servers page (pages/mcp.js). Every rule is scoped under .mcp or
+ * .mcp-sheet, since page stylesheets share one bundle. */
+
+/* A secondary button: 32 tall, hairline, 12px medium (SecondaryButtonStyle). */
+.mcp .mcp-button {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
+  border: 1px solid var(--border-strong); border-radius: 8px; background: var(--subtle);
+  color: var(--text-primary); font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap;
+}
+.mcp .mcp-button:hover:not(:disabled) { background: var(--hover); }
+.mcp .mcp-button:disabled { opacity: .45; cursor: default; }
+.mcp .mcp-button svg { width: 14px; height: 14px; flex: none; }
+
+.mcp .mcp-body-small { font-size: 13px; margin: 0; }
+.mcp .mcp-label { display: flex; align-items: center; gap: 8px; margin: 0; }
+.mcp .mcp-label svg { width: 15px; height: 15px; flex: none; }
+.mcp .mcp-notes { display: flex; flex-direction: column; gap: 4px; color: var(--text-muted); }
+.mcp .mcp-notes p { margin: 0; }
+
+/* Harness marks: a logo, and a word after it or alone. */
+.mcp-mark { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.mcp-mark .logo { width: 14px; height: 14px; }
+
+/* Compare chips: capsules, ticked when the harness is a column. */
+.mcp .mcp-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.mcp .mcp-chips > .caption { margin-right: 4px; }
+.mcp .mcp-chip {
+  display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 14px; background: transparent;
+  color: var(--text-muted); font-size: 12px; font-weight: 500; cursor: pointer;
+}
+.mcp .mcp-chip.on { background: var(--selected); border-color: var(--border-strong); color: var(--text-primary); }
+.mcp .mcp-chip:not(.on) .logo { opacity: .5; }
+.mcp .mcp-chip .tick { width: 10px; height: 10px; stroke-width: 3; }
+
+/* The server × harness grid. */
+.mcp .mcp-grid-card { padding: 16px 20px; }
+.mcp table.mcp-grid { width: 100%; border-collapse: collapse; font-size: 14px; }
+.mcp .mcp-grid th {
+  font-size: 12px; font-weight: 500; letter-spacing: .12px; color: var(--table-header);
+  padding: 0 8px 8px; border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.mcp .mcp-grid th.mcp-name-col { text-align: left; padding-left: 0; }
+.mcp .mcp-grid .mcp-col { min-width: 88px; width: 1%; text-align: center; }
+.mcp .mcp-grid td.mcp-name-col { min-width: 180px; max-width: 0; width: 100%; padding: 8px 8px 8px 0; }
+.mcp .mcp-section td { font-size: 14px; font-weight: 500; color: var(--text-secondary); padding: 14px 0 6px; }
+.mcp .mcp-row td, .mcp .mcp-folder-row td { border-top: 1px solid var(--border); vertical-align: middle; }
+.mcp .mcp-section + .mcp-row td, .mcp .mcp-section + .mcp-folder-row td { border-top: 0; }
+.mcp .mcp-row { cursor: pointer; }
+.mcp .mcp-row:hover td { background: var(--row-hover); }
+.mcp .mcp-cell { text-align: center; padding: 8px; }
+.mcp .mcp-tick { width: 13px; height: 13px; color: var(--text-primary); vertical-align: middle; stroke-width: 2.4; }
+.mcp .mcp-absent { color: var(--border-strong); }
+.mcp .mcp-letter {
+  display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 5px;
+  background: var(--subtle); border: 1px solid var(--border); font-size: 11px; font-weight: 600; color: var(--text-primary);
+}
+.mcp .mcp-letter.other { color: var(--warning-text); }
+
+.mcp .mcp-name-cell { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.mcp .mcp-name-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.mcp .mcp-open {
+  display: flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; padding: 0; border: 0;
+  background: transparent; text-align: left; cursor: pointer;
+}
+.mcp .mcp-title, .mcp-sheet .mcp-sheet-name {
+  font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.mcp .mcp-warn { display: inline-flex; color: var(--warning-text); flex: none; }
+.mcp .mcp-warn svg { width: 11px; height: 11px; }
+.mcp .mcp-secondary {
+  display: flex; align-items: baseline; gap: 4px; color: var(--text-muted); min-width: 0;
+  white-space: nowrap; overflow: hidden;
+}
+.mcp .mcp-secondary .mono, .mcp .mcp-folder-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.mcp .mcp-secondary > * { flex: none; }
+.mcp .mcp-secondary .mono { flex: 0 1 auto; font-size: 12px; overflow: hidden; text-overflow: ellipsis; min-width: 4ch; }
+.mcp .mcp-secondary-text { color: var(--text-secondary); }
+.mcp .mcp-secondary .badge { font-size: 11px; padding: 0 6px; }
+.mcp .mcp-folder-name {
+  font-size: 14px; font-weight: 500; color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mcp-dot { display: inline-block; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); }
+.mcp .mcp-name-cell > .mcp-dot { margin-top: 6px; }
+.mcp-dot.ok { background: var(--accent-fill); }
+.mcp-dot.error { background: var(--danger); }
+
+.mcp .mcp-expand {
+  display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 36px;
+  border: 0; border-radius: 8px; background: transparent; color: var(--text-secondary);
+  font-size: 12px; font-weight: 500; cursor: pointer;
+}
+.mcp .mcp-expand:hover { background: var(--row-hover); color: var(--text-primary); }
+.mcp .mcp-expand svg { width: 12px; height: 12px; stroke-width: 2.4; }
+.mcp .mcp-expand-row td { border-top: 1px solid var(--border); padding: 0; }
+
+/* The server sheet. */
+.mcp-sheet .sheet-title { flex-wrap: wrap; min-width: 0; }
+.mcp-sheet .mcp-summary { max-height: 5.4em; overflow: auto; color: var(--text-secondary); }
+.mcp-sheet .mcp-rule { border: 0; border-top: 1px solid var(--border); margin: 0; width: 100%; }
+.mcp-sheet .mcp-marks { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.mcp-sheet .mcp-secrets { display: flex; flex-wrap: wrap; gap: 6px; }
+.mcp-sheet .field-row { word-break: normal; overflow-wrap: anywhere; }
+.mcp-sheet .caption { margin: 0; }
+.mcp-sheet .warn { color: var(--warning-text); }
+
+@media (max-width: 720px) {
+  .mcp .page-header { flex-wrap: wrap; }
+  .mcp .page-header .titles { flex-basis: 100%; }
+  .mcp .mcp-grid-card { padding: 12px; }
+  .mcp .mcp-secondary { flex-wrap: wrap; row-gap: 2px; }
+}

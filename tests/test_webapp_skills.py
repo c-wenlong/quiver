@@ -162,17 +162,22 @@ class TestDetail(unittest.TestCase):
 class TestPageScripts(unittest.TestCase):
     def test_each_script_defines_the_helpers_it_calls(self):
         """The bundle runs every page script in its own scope, so a page
-        can't call a function another page defines."""
+        can't call a function only another page defines. Globals from the
+        shared scripts (app.js, manage.js...) are fine to call."""
         import re
-        scripts = {p.name: p.read_text() for p in page.Path(pages_dir()).glob("*.js")}
-        defined = {name: set(re.findall(r"^(?:async )?function (\w+)", text, re.M))
-                   for name, text in scripts.items()}
+        folder = page.Path(pages_dir())
+        defs = re.compile(r"^(?:async )?function (\w+)", re.M)
+        shared = set()
+        for path in folder.parent.glob("*.js"):
+            shared |= set(defs.findall(path.read_text()))
+        scripts = {p.name: p.read_text() for p in folder.glob("*.js")}
+        defined = {name: set(defs.findall(text)) for name, text in scripts.items()}
         for name, text in scripts.items():
             for other, functions in defined.items():
                 if other == name:
                     continue
-                for fn in functions - defined[name]:
-                    self.assertNotRegex(text, rf"\b{fn}\(", f"{name} calls {fn} from {other}")
+                for fn in functions - defined[name] - shared:
+                    self.assertNotRegex(text, rf"(?<![\w.$]){fn}\(", f"{name} calls {fn} from {other}")
 
 
 def pages_dir():
