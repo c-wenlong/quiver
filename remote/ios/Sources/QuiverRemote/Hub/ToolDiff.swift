@@ -79,38 +79,6 @@ struct ToolDiff: Hashable {
     }
 }
 
-/// Splits agent text into prose and fenced code, so code renders in a
-/// mono block and prose gets inline markdown.
-enum MessageBlocks {
-    enum Block: Hashable { case prose(String), code(String) }
-
-    static func split(_ text: String) -> [Block] {
-        var out: [Block] = []
-        var rest = Substring(text)
-        while let open = rest.range(of: "```") {
-            let before = rest[..<open.lowerBound].trimmingCharacters(in: .newlines)
-            if !before.isEmpty { out.append(.prose(before)) }
-            let afterOpen = rest[open.upperBound...]
-            guard let close = afterOpen.range(of: "```") else {
-                out.append(.code(dropLang(String(afterOpen))))
-                return out
-            }
-            out.append(.code(dropLang(String(afterOpen[..<close.lowerBound]))))
-            rest = afterOpen[close.upperBound...]
-        }
-        let tail = rest.trimmingCharacters(in: .newlines)
-        if !tail.isEmpty { out.append(.prose(tail)) }
-        return out
-    }
-
-    /// A fence's first line is a language tag when it has no spaces.
-    private static func dropLang(_ code: String) -> String {
-        var lines = code.components(separatedBy: "\n")
-        if let first = lines.first, !first.contains(" "), lines.count > 1 { lines.removeFirst() }
-        return lines.joined(separator: "\n").trimmingCharacters(in: .newlines)
-    }
-}
-
 /// Tool arguments worded for reading, not as escaped JSON.
 enum ToolArgs {
     /// The hub's `args_summary` is "Name · hint"; the card's icon already
