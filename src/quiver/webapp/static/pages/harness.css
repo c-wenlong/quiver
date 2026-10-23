@@ -1,0 +1,32 @@
+/* Harnesses page writes (manage.js): the star / archive / restore buttons
+ * on each row and the inline archive form. Every rule is scoped to the
+ * harness-* classes, since this file loads on every page. */
+.list-row.harness-row { grid-template-columns: 16px minmax(0, 1fr) auto auto; }
+.harness-row.busy > :not(.harness-archive) { opacity: .6; }
+.harness-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+.harness-icon { width: 32px; height: 32px; border-radius: 10px; color: var(--text-nav); }
+.harness-icon.starred { color: var(--warning); }
+.harness-icon.pressed { background: var(--selected); color: var(--text-primary); }
+.harness-icon:disabled, .harness-button:disabled { cursor: default; opacity: .45; }
+.harness-icon:focus-visible, .harness-button:focus-visible, .harness-archive .field:focus-visible {
+  outline: 2px solid var(--accent-fill); outline-offset: 2px;
+}
+.harness-button {
+  height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border-strong);
+  background: var(--panel); color: var(--text-primary); font-size: 13px; cursor: pointer; white-space: nowrap;
+}
+.harness-button:hover:not(:disabled) { background: var(--hover); }
+.harness-button.primary { background: var(--text-primary); color: var(--card); border-color: var(--text-primary); }
+.harness-button.primary:hover:not(:disabled) { background: var(--text-primary); opacity: .9; }
+.harness-archive {
+  grid-column: 2 / -1; display: flex; flex-direction: column; gap: 10px; margin-top: 4px;
+  padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--subtle);
+}
+.harness-archive .caption, .harness-error .error { margin: 0; }
+.harness-archive .field { width: 100%; }
+.harness-form-buttons { display: flex; justify-content: flex-end; gap: 8px; }
+@media (max-width: 720px) {
+  .list-row.harness-row { grid-template-columns: 16px minmax(0, 1fr); }
+  .harness-actions { grid-column: 2; flex-direction: row; justify-content: flex-start; }
+  .harness-archive { grid-column: 1 / -1; }
+}

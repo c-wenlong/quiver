@@ -40,8 +40,9 @@ reads the tailnet client from Serve's headers: "Pair with Tailscale" then
 works, and the Origin check accepts the `https://` origin Serve presents.
 A pair token (`swe remote pair`) works either way.
 
-The first pages only read. Writes (star a harness, link a skill, sync MCP)
-come later, as `POST`s under the same Origin check the PWA's writes use.
+Writes are `POST /v1/app/<page>/<action>` with the same bearer and the
+same Origin check the PWA's writes use. The first is the Harnesses page's
+star, archive and restore (docs/web-app/harness.md).
 
 ## Data on the hub machine
 
@@ -68,9 +69,10 @@ already do, through satellites; that is a later step.
    starred-first order and the fold for unstarred rows. Accounts is one
    card per starred harness from `/v1/usage`, per machine (hub and each
    satellite), with the app's limit bars, plan badge, on-demand and extra
-   usage rows and status lines. Star, archive, edit, Detect and Add stay in
-   `swe` and the Mac app; Quiver's own Claude and Codex account profiles,
-   history, and Open app / Terminal are Mac-only.
+   usage rows and status lines. Harnesses can star, unstar, archive (with
+   a reason) and restore (docs/web-app/harness.md); edit, Detect and Add
+   stay in `swe` and the Mac app. Quiver's own Claude and Codex account
+   profiles, history, and Open app / Terminal are Mac-only.
 4. Skills, AGENTS.md, MCP servers, Plugins, Doctor: read-only first, from the
    `swe … --json` builders.
 5. Writes for the Manage pages.

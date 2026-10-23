@@ -1,6 +1,7 @@
 """The Harnesses page's rows: ``swe list --scope=all --json``, built in
-process for the hub machine. Read only; star, archive and edit stay in
-``swe`` and the Mac app for now."""
+process for the hub machine. Star, unstar, archive and restore are the
+``harness`` page plugin's writes (``quiver.webapp.pages.harness``); edit
+stays in ``swe`` and the Mac app."""
 
 from __future__ import annotations
 

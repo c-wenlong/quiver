@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: star, archive and restore harnesses.** The Harnesses page
+  can now change a harness's state, the web app's first writes: a star
+  button on each row, Archive with an inline form that needs a reason,
+  and Restore on archived rows. They post to `/v1/app/harness/<action>`
+  (device bearer and Origin check), which writes through the same
+  registry functions as `swe harness star|archive`, one at a time. The
+  row changes when the hub answers; a refusal shows in an error card.
+
 - **Web app: pages as plugins.** A web app page is now one module in
   `quiver/webapp/pages/` (`GET /v1/app/<page>`, optional `POST
   /v1/app/<page>/<action>`) and one script in `static/pages/`, served
