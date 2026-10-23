@@ -113,9 +113,10 @@ final class FakeRunningInstances: RunningInstances {
     private var bin: URL!
 
     func model(terminal: TerminalApp = .terminal,
+               terminalInstalled: @escaping (TerminalApp) -> Bool = { _ in true },
                installedApp: @escaping (String) -> String? = { _ in nil }) -> AccountsModel {
         AccountsModel(store: store, usage: usage, launcher: launcher, terminal: { terminal },
-                      loginPath: { [bin] in bin.path }, running: running, installedApp: installedApp)
+                      terminalInstalled: terminalInstalled, loginPath: { [bin] in bin.path }, running: running, installedApp: installedApp)
     }
 
     let reading = AccountUsage(
@@ -341,6 +342,16 @@ final class FakeRunningInstances: RunningInstances {
     /// The Add harness sheet builds a shell line (several words, each
     /// quoted); it must reach the terminal untouched, not quoted again into
     /// one command name.
+    /// A chosen terminal that's gone says so, instead of passing
+    /// LaunchServices' "Unable to find application" through.
+    @Test func aMissingTerminalFailsWithAClearMessage() async throws {
+        let model = model(terminal: .ghostty, terminalInstalled: { $0 != .ghostty })
+        await #expect(throws: LaunchError.failed(TerminalApp.ghostty.notInstalledMessage)) {
+            try await model.runInTerminal(line: "claude")
+        }
+        #expect(launcher.launched.isEmpty)
+    }
+
     @Test func runInTerminalTypesTheLineAsIs() async throws {
         let model = model()
         let line = "'swe' 'install' 'gemini' '--via=npm'"

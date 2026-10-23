@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the words apart, and a title match no longer sits behind fifty passing
   mentions. The iPhone app's offline fallback ranks the same way.
 
+- **Overview: the harness logos load as a pill while the marbles pour.**
+  On the first pour after launch the logo row is a pill that fills in each
+  harness's colour as its marbles land, left to right in the logos' order.
+  Once every marble is down each colour springs into its logo's circle and
+  the logos fade in; hovering works from then on. A wrapped logo row fades
+  across instead, and Reduce motion shows the logos straight away.
+
 - **Web app: Harnesses and Accounts.** Harnesses lists every harness swe
   knows on the hub machine, with the Mac app's In use / Archived scopes,
   search, starred-first order, a fold for the unstarred ones, version,

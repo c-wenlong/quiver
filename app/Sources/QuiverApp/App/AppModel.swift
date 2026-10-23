@@ -401,7 +401,6 @@ final class AppModel {
     /// Quiver's display names for marketplaces and plugins, from
     /// ~/.quiver/config/plugin-display-names.json.
     var primitiveNames: PluginDisplayNames
-    private let launcher = ProcessLauncher()
     private let userHome = FileManager.default.homeDirectoryForCurrentUser
 
     init() {
@@ -470,6 +469,7 @@ final class AppModel {
         var terminalChoice: () -> TerminalApp = { .terminal }
         accounts = AccountsModel(store: store, usage: usage, launcher: ProcessLauncher(),
                                  terminal: { terminalChoice() },
+                                 terminalInstalled: { $0.isInstalled },
                                  installedApp: { [apps] in apps.installedApp(for: $0) })
 
         // Built once per profiles.json mtime, not per call: the calendar
@@ -960,7 +960,7 @@ final class AppModel {
         let defaults = [".claude", ".codex"].map { userHome.appending(path: $0).path }
         let line = SessionResume.shellLine(resume, harness: row.session.harness, accountHome: home,
                                            isDefaultHome: home.map(defaults.contains) ?? true)
-        try await launcher.launch(LaunchPlanner.terminal(terminal, running: line))
+        try await accounts.runInTerminal(line: line)
     }
 
     /// Open a new agent session on a PR's head: `swe gh pr worktree`
@@ -969,7 +969,7 @@ final class AppModel {
     func openPrSession(repo: String, number: Int, harness: Harness) async {
         guard let path = await github.prWorktree(repo: repo, pr: number, swe: swe) else { return }
         let line = "cd \(LaunchPlanner.shellQuote(path)) && \(harness.command)"
-        try? await launcher.launch(LaunchPlanner.terminal(terminal, running: line))
+        try? await accounts.runInTerminal(line: line)
     }
 
     static func keysFile(path: String) -> URL {
