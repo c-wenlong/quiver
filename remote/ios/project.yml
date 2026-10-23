@@ -15,7 +15,9 @@ targets:
         CFBundleDisplayName: Quiver Remote
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "1"
-        UILaunchScreen_Generation: true
+        # Without a UILaunchScreen dict iOS letterboxes the app to a legacy
+        # screen size (black bars top and bottom).
+        UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         CFBundleURLTypes:
           - CFBundleURLName: com.quiver.remote.pair
