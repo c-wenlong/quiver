@@ -504,10 +504,6 @@ class McpSearchTest(TempHomeTest):
             self.assertIn("refactor the retry loop", out)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class SearchPassesTest(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -531,6 +527,12 @@ class SearchPassesTest(unittest.TestCase):
         self.assertTrue(all("\ue000" in h.marked_snippet for h in filled))
 
     def test_missing_index(self):
-        empty = Path(tempfile.mkdtemp())
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        empty = Path(tmp.name)
         self.assertEqual(search_index.search_passes(empty, "ledger"), [])
         self.assertEqual(search_index.fill_snippets(empty, []), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

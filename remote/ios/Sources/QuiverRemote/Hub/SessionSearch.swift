@@ -61,7 +61,7 @@ final class SessionSearch {
     static func localMatches(_ rows: [SessionRow], query: String, limit: Int = 50,
                              now: Double = Date().timeIntervalSince1970) -> [SearchResult] {
         let needle = query.lowercased()
-        let words = needle.split(separator: " ").map(String.init)
+        let words = needle.split(whereSeparator: \.isWhitespace).map(String.init)
         func match(_ text: String) -> Double {
             if text.contains(needle) { return 1 }
             if words.count > 1, words.allSatisfy(text.contains) { return 0.7 }
