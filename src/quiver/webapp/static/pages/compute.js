@@ -99,7 +99,7 @@ function renderCompute(_id, refresh = false) {
 /* One request, then the next in three seconds while the page stays open,
  * as the Mac page samples every three seconds. A hidden tab skips its
  * turn rather than sampling for nobody. */
-async function pollCompute(gen, refresh = false, user = false) {
+async function pollCompute(gen, refresh = false) {
   const p = computePage;
   clearTimeout(p.timer);
   // Only the newest call paints and schedules the next: a reply still in
@@ -126,8 +126,7 @@ async function pollCompute(gen, refresh = false, user = false) {
     p.failed = null;
     p.data = data;
   }
-  // A timed poll leaves an open picker alone; a reply the user asked for paints.
-  paintCompute(false, !refresh && !user);
+  paintCompute(false);
   again();
 }
 
@@ -157,12 +156,14 @@ function computeFocusKey(body) {
   return null;
 }
 
-/* The header is painted once per visit and the body on every sample, so
- * the open settings sheet and the chart's hover survive a refresh. A
- * poll leaves the body alone while a picker in it has focus (replacing
- * it would close the open menu), and any other focused control gets its
+/* The header and the body's skeleton are painted once per visit; each
+ * sample repaints the readings around the trend card's tabs and picker,
+ * which are rebuilt only when their choice changes. So a poll never
+ * closes an open picker or takes its focus, the open settings sheet and
+ * the chart's hover survive, and any other focused control gets its
  * focus back after the repaint. */
-function paintCompute(busy, fromPoll = false) {
+function paintCompute(busy) {
+  const p = computePage, d = p.data;
   const panel = document.getElementById("panel");
   if (!document.getElementById("compute-body")) {
     panel.innerHTML = `<div class="page compute-page"><div id="compute-header"></div><div class="stack" id="compute-body"></div></div>`;
@@ -170,28 +171,46 @@ function paintCompute(busy, fromPoll = false) {
   document.getElementById("compute-header").innerHTML = computeHeader(busy);
   bindComputeHeader();
   const body = document.getElementById("compute-body");
-  if (fromPoll && document.activeElement && document.activeElement.tagName === "SELECT"
-      && body.contains(document.activeElement)) return;
+  if (!d.supported) {
+    body.innerHTML = `<div class="card"><p class="empty">${esc(d.message)}</p></div>`;
+    return;
+  }
+  if (!document.getElementById("compute-trend-head")) {
+    body.innerHTML = `<div class="compute-part" id="compute-top"></div>
+      <div class="card compute-trend"><div class="compute-trend-head" id="compute-trend-head"></div>
+        <div class="compute-part" id="compute-trend-body"></div></div>
+      <div class="compute-part" id="compute-rest"></div>`;
+    p.headKey = null;
+  }
   const focus = computeFocusKey(body);
-  body.innerHTML = computeBody();
+  const key = `${p.tab}|${p.interval}`;
+  if (p.headKey !== key) {
+    document.getElementById("compute-trend-head").innerHTML = trendHead();
+    p.headKey = key;
+  }
+  document.getElementById("compute-top").innerHTML = computeTop(d);
+  document.getElementById("compute-trend-body").innerHTML = trendBody(d);
+  document.getElementById("compute-rest").innerHTML = computeRest(d);
   bindComputeBody(body);
   drawComputeChart();
-  if (focus) {
+  if (focus && !body.contains(document.activeElement)) {
     const again = body.querySelector(focus);
     if (again) again.focus({ preventScroll: true });
   }
 }
 
-function computeBody() {
-  const p = computePage, d = p.data;
-  if (!d.supported) {
-    return `<div class="card"><p class="empty">${esc(d.message)}</p></div>`;
-  }
+/* The totals line and the machine line, above the trend card. */
+function computeTop(d) {
   const t = d.totals;
-  const parts = [`<p class="caption num compute-totals">${CFmt.bytes(t.memory_bytes)} across ${t.process_count} processes · CPU ${CFmt.percent(t.cpu_percent)}% · ${t.threads} threads</p>`];
   const machine = machineLine(d);
-  if (machine) parts.push(`<p class="caption num compute-machine">${machine}</p>`);
-  parts.push(trendCard(d));
+  return `<p class="caption num compute-totals">${CFmt.bytes(t.memory_bytes)} across ${t.process_count} processes · CPU ${CFmt.percent(t.cpu_percent)}% · ${t.threads} threads</p>${
+    machine ? `<p class="caption num compute-machine">${machine}</p>` : ""}`;
+}
+
+/* Errors, the empty state and the cards, below the trend card. */
+function computeRest(d) {
+  const p = computePage;
+  const parts = [];
   if (p.failed) parts.push(`<div class="card"><p class="error">${esc(p.failed)}</p></div>`);
   if (d.error) parts.push(`<div class="card"><p class="error">${esc(d.error)}</p></div>`);
   if (!d.harnesses.length && !d.orphans.length) {
@@ -333,7 +352,7 @@ function bindComputeBody(body) {
     interval.onchange = () => {
       p.interval = Number(interval.value);
       computeStore("interval", String(p.interval));
-      pollCompute(routeGen, false, true);
+      pollCompute(routeGen);
     };
   }
   for (const chip of body.querySelectorAll("[data-line]")) {
@@ -352,31 +371,34 @@ function intervalSpan() {
   return (COMPUTE_INTERVALS.find(([s]) => s === computePage.interval) || COMPUTE_INTERVALS[1])[2];
 }
 
-function trendCard(d) {
+function trendHead() {
   const p = computePage;
-  const tr = d.trend;
   const tabs = `<div class="tabs" role="tablist">${COMPUTE_TABS.map(([id, label]) =>
     `<button class="tab${id === p.tab ? " selected" : ""}" data-trend-tab="${id}" role="tab" aria-selected="${id === p.tab}">${label}</button>`).join("")}</div>`;
   const picker = `<select class="field" id="compute-interval" aria-label="Interval">${options(
     COMPUTE_INTERVALS.map(([s, title]) => [String(s), title]), String(p.interval))}</select>`;
+  return tabs + picker;
+}
+
+function trendBody(d) {
+  const p = computePage;
+  const tr = d.trend;
   const collecting = `Collecting, the first points arrive within ${intervalSpan()}.`;
-  let body;
   if (p.tab === "temperature") {
-    if (tr.temperatures.length) body = temperatureLegend(tr) + chartBox();
-    else if (tr.last_tick == null) body = placeholder(collecting);
-    else body = placeholder("Temperature sensors aren't available on this machine.");
-  } else if (p.tab === "gpu") {
-    if (!tr.gpu_available) body = placeholder("GPU readings aren't available on this machine. They need an NVIDIA GPU and nvidia-smi.");
-    else if (!tr.gpus.some((g) => g.points.length)) body = placeholder(collecting);
-    else body = chartBox();
-  } else if (!Object.keys(tr.harnesses).length && !Object.keys(tr.peaks).length) {
-    body = placeholder(collecting);
-  } else if (!shownHarnesses(tr).length) {
-    body = placeholder(`No harness has gone above ${CFmt.bytes(p.limits.memoryGB * GB)} yet.`);
-  } else {
-    body = chartBox();
+    if (tr.temperatures.length) return temperatureLegend(tr) + chartBox();
+    if (tr.last_tick == null) return placeholder(collecting);
+    return placeholder("Temperature sensors aren't available on this machine.");
   }
-  return `<div class="card compute-trend"><div class="compute-trend-head">${tabs}${picker}</div>${body}</div>`;
+  if (p.tab === "gpu") {
+    if (!tr.gpu_available) return placeholder("GPU readings aren't available on this machine. They need an NVIDIA GPU and nvidia-smi.");
+    if (!tr.gpus.some((g) => g.points.length)) return placeholder(collecting);
+    return chartBox();
+  }
+  if (!Object.keys(tr.harnesses).length && !Object.keys(tr.peaks).length) return placeholder(collecting);
+  if (!shownHarnesses(tr).length) {
+    return placeholder(`No harness has gone above ${CFmt.bytes(p.limits.memoryGB * GB)} yet.`);
+  }
+  return chartBox();
 }
 
 function placeholder(text) { return `<p class="caption compute-placeholder">${esc(text)}</p>`; }

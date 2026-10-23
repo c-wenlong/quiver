@@ -251,7 +251,13 @@ def load_matchers(home: Path) -> list[Matcher]:
     from quiver.harness import registry
 
     entries = registry.load_registry_readonly()
-    starred = set(registry.starred_names(entries))
+    if registry.HARNESS_FILE.exists() or not registry.TOOLS_FILE.exists():
+        starred = set(registry.starred_names(entries))
+    else:
+        # A legacy install not migrated yet: its stars and archive still
+        # live in stars.json and archived.json. Read them as the migration
+        # would, without running it.
+        starred = set(registry._read_legacy_stars()) - set(registry._read_legacy_archive())
     out = []
     for name, info in entries.items():
         if name not in starred:

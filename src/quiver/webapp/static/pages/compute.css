@@ -17,6 +17,8 @@
 }
 
 .compute-page .logo.big { width: 20px; height: 20px; }
+/* Wrappers that keep their children in the parent's flex gap. */
+.compute-part { display: contents; }
 .compute-totals, .compute-machine { margin: 0; }
 .compute-machine { color: var(--text-muted); }
 

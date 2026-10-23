@@ -173,6 +173,24 @@ class TestAttribution(unittest.TestCase):
         self.assertTrue(compute.is_root(p, matchers[1]))
 
 
+    def test_legacy_install_reads_stars_without_migrating(self):
+        folder = Path(tempfile.mkdtemp())
+        tools, stars, archive = folder / "tools.json", folder / "stars.json", folder / "archived.json"
+        tools.write_text(json.dumps({"claude": {"command": "claude"}, "codex": {"command": "codex"},
+                                     "old": {"command": "old"}}))
+        stars.write_text(json.dumps(["codex", "old"]))
+        archive.write_text(json.dumps({"old": {"reason": "x"}}))
+        harness = folder / "harness.json"
+        with patch("quiver.harness.registry.HARNESS_FILE", harness), \
+                patch("quiver.harness.registry.TOOLS_FILE", tools), \
+                patch("quiver.harness.registry.STARS_FILE", stars), \
+                patch("quiver.harness.registry.ARCHIVE_FILE", archive):
+            matchers = compute.load_matchers(Path(HOME))
+        self.assertEqual([m.harness for m in matchers], ["codex"])
+        self.assertFalse(harness.exists())
+        self.assertTrue(stars.exists() and tools.exists())
+
+
 class TestMeters(unittest.TestCase):
     def test_cpu_percent_busy_streak_and_reuse(self):
         meter = compute.CPUMeter()
