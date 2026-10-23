@@ -84,6 +84,7 @@ remote/
   protocol.py    # wire schema: events, messages, commands (versioned)
   pairing.py     # QR payload, one-time token → device credential
   catalog.py     # session registry: local + satellite rows, machine-scoped
+  dismissals.py  # per-device inbox dismissals (inbox_dismissals.json, 0600)
   tail.py        # byte-offset transcript readers → events (read path)
   inject.py      # per-harness send/approval/interrupt registry (write path)
   supervise.py   # tmux lifecycle for attached sessions
@@ -96,7 +97,8 @@ remote/
 
 Layering: `remote` may import `sessions`, `reports`, `paths`, `console`,
 `flags`; nothing imports `remote` back. State under
-`~/.quiver/data/remote/` (`devices.json` 0600, `cursors/`, `journal/`) —
+`~/.quiver/data/remote/` (`devices.json` 0600, `inbox_dismissals.json`
+0600, `cursors/`, `journal/`) —
 gitignored like the rest of `data/`. New commands run the usual
 checklist: `completion.py`, `help_text.py`, `docs/json-contracts.md`.
 
@@ -163,7 +165,9 @@ POST /v1/sessions/{id}/attachments   multipart upload → staged file, returns r
 POST /v1/sessions/{id}/approval      {request_id, decision}
 POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill
 POST /v1/sessions                    new session {machine, harness, cwd, prompt}
-GET  /v1/machines · /v1/usage · /v1/inbox · /v1/search?q=
+GET  /v1/machines · /v1/usage · /v1/search?q=
+GET  /v1/inbox                       pending decisions; ?done=1 adds finished-today
+POST /v1/inbox/dismiss               {key, last_active_at} → cleared for this device
 POST /v1/pair                        QR payload → device credential
 ```
 
@@ -236,7 +240,16 @@ Screens:
   attach landing as `@`-refs on the machine.
 - **Inbox** — the control-plane screen: every pending decision across
   both machines (approvals, `needs_followup` hits, errors, finished).
-  The phone's job is unblocking agents, not being a terminal.
+  The phone's job is unblocking agents, not being a terminal. The hub
+  keeps it bounded: follow-ups, errors and interrupts drop out three
+  days after the session's last activity (`catalog.INBOX_MAX_AGE_S`),
+  while pending approvals stay until answered. `POST /v1/inbox/dismiss`
+  clears a row for the calling device only; the hub stores
+  `key → last_active_at` per device id in `inbox_dismissals.json` and
+  hides the row until its `last_active_at` moves past that, so new
+  activity brings it back. Dismissals prune 30 days after they were
+  made and never hide an approval. `?done=1` adds sessions that
+  finished since the hub's local midnight as `done` items.
 - **Machine** — per-device strip; the MacBook satellite can ride
   QuiverCore's Compute samplers (CPU/GPU/temps) along this view.
 

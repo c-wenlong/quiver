@@ -29,6 +29,7 @@ from quiver import __version__
 from quiver.remote import (
     attachments,
     catalog as catalog_mod,
+    dismissals,
     inject,
     notify,
     pairing,
@@ -758,9 +759,14 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/inbox":
+            done = str((args.get("done") or [""])[0])
             self._send_json(200, {
                 "items": self._state.catalog.inbox(
-                    pending=self._state.pending_approvals
+                    pending=self._state.pending_approvals,
+                    dismissed=dismissals.for_device(
+                        self._state.home, device_id
+                    ),
+                    include_done=done in {"1", "true"},
                 )
             })
             return
@@ -857,6 +863,28 @@ class _Handler(BaseHTTPRequestHandler):
         device_id = self._device()
         if device_id is None:
             self._send_error(401, "unauthorized", "pair this device first")
+            return
+
+        if path == "/v1/inbox/dismiss":
+            body = self._read_body()
+            if body is None:
+                self._send_error(400, "bad_body", "unreadable JSON body")
+                return
+            key = body.get("key")
+            last = body.get("last_active_at")
+            if not dismissals.valid(key, last):
+                self._send_error(
+                    422, "bad_dismiss",
+                    "key and a numeric last_active_at are required",
+                )
+                return
+            try:
+                dismissals.dismiss(self._state.home, device_id, key, last)
+            except OSError:
+                self._send_error(500, "store_failed",
+                                 "could not save the dismissal")
+                return
+            self._send_json(200, {"ok": True})
             return
 
         if path == "/v1/agent/register":

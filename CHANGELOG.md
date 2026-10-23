@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The remote hub's inbox stops growing forever.** `GET /v1/inbox` drops
+  follow-ups, errors and interrupts whose last activity is over 3 days old
+  (pending approvals never age out), so a phone's badge no longer counts
+  every session that ever asked a question. A new `POST /v1/inbox/dismiss`
+  (`{key, last_active_at}`) clears a row for the calling device only,
+  stored per device in `~/.quiver/data/remote/inbox_dismissals.json`
+  (0600); the row comes back once the session has new activity.
+  `?done=1` adds sessions that finished today as `done` items.
+
 - **`swe session` stops re-reading unchanged transcripts.** A per-file parse
   cache (`~/.quiver/cache/session_parse_cache.json`) keeps what each
   transcript said, keyed by path and stat signature, so a listing re-reads

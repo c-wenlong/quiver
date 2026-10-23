@@ -72,7 +72,8 @@ replays the journal.
 | `GET /v1/sessions/{key}/events` | SSE of `message.appended`, `session.status`, `notify`, `compaction`; `?last=seq` replays |
 | `GET /v1/sessions/{key}/messages` | `{messages: [events], next_before, has_more}` journal backfill |
 | `GET /v1/events` | global SSE (all sessions + `machine.*`) |
-| `GET /v1/inbox` | `{items}`: sessions in `followup`/`error`/`interrupted` |
+| `GET /v1/inbox` | `{items: [{key, machine_id, harness, agent, title, cwd, status, last_active_at, request_id?}]}`: pending approvals (`status: approval`, any age), plus sessions in `followup`/`error`/`interrupted` active in the last 3 days, minus rows this device dismissed. `?done=1` adds sessions finished since the hub's local midnight as `status: done` |
+| `POST /v1/inbox/dismiss` | `{key, last_active_at}` → `200 {ok}`; hides the row for this device until its `last_active_at` moves past the given one. `422 bad_dismiss` without a key or a numeric `last_active_at` |
 | `GET /v1/machines` | `{machines}` |
 
 `message.appended.data` is a RemoteMessage: `{kind: user|assistant|
