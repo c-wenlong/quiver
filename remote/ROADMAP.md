@@ -63,7 +63,7 @@ are server changes in `src/quiver/remote/`.
 - [ ] Waiting card with a spinner and an expiry countdown
 - [ ] Expired, denied and "too many wrong codes" states, each with "Try again"
 - [ ] Cancel
-- [ ] Hub: return `expires_in_s` from `POST /v1/pair/request` (the CLI already computes it)
+- [ ] Drive the countdown from `expires_in_s`, which `POST /v1/pair/request` already returns
 
 ### P4. Sessions
 - [ ] Large title, and a hub chip with a connection dot (green connected, grey reconnecting, red offline)
@@ -111,7 +111,7 @@ are server changes in `src/quiver/remote/`.
 - [ ] Paired devices list: name, "This device", last seen, Remove
 - [ ] Reached from the hub chip menu, and opened straight from a "new pair request" push
 - [ ] Hub: `GET /v1/devices` and a revoke route (today `swe remote devices` and `--revoke` are CLI only)
-- [ ] Hub: track `last_seen_at` per device
+- [ ] Show `last_seen_at`, which the hub already updates on each authenticated request; the devices route above only needs to return it
 
 ### P9. Machine
 - [ ] Per-machine strip: name, online state, satellite version
