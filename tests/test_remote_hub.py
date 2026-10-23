@@ -799,7 +799,8 @@ class TestInboxDismiss(unittest.TestCase):
                      {"key": "", "last_active_at": 1.0},
                      {"key": "claude:f1", "last_active_at": "1"},
                      {"key": "claude:f1", "last_active_at": True},
-                     {"key": 5, "last_active_at": 1.0}):
+                     {"key": 5, "last_active_at": 1.0},
+                     {"key": "claude:f1", "last_active_at": 10 ** 400}):
             status, data = self.dismiss(cred, body)
             self.assertEqual(status, 422, body)
             self.assertEqual(json.loads(data)["error"]["code"], "bad_dismiss")
@@ -843,6 +844,17 @@ class TestInboxDismiss(unittest.TestCase):
                          {"claude:new": 5.0})
         raw = json.loads(dismissals.dismissals_file(home).read_text())
         self.assertEqual(list(raw["devices"]["d1"]), ["claude:new"])
+
+    def test_write_prunes_every_device(self):
+        # An idle (or revoked) device's expired rows go on any write.
+        from quiver.remote import dismissals
+        home = self.srv.home
+        now = time.time()
+        dismissals.dismiss(home, "idle", "k", 5.0,
+                           now=now - dismissals.KEEP_S - 1)
+        dismissals.dismiss(home, "busy", "k", 5.0, now=now)
+        raw = json.loads(dismissals.dismissals_file(home).read_text())
+        self.assertEqual(list(raw["devices"]), ["busy"])
 
     def test_stale_retry_keeps_newer_dismissal(self):
         from quiver.remote import dismissals

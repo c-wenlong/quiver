@@ -76,12 +76,17 @@ def _prune(rows: dict[str, dict], now: float) -> dict[str, dict]:
 
 def valid(key: object, last_active_at: object) -> bool:
     """Whether a dismiss body's fields are usable."""
-    return (
-        isinstance(key, str) and 0 < len(key) <= MAX_KEY_LEN
-        and isinstance(last_active_at, (int, float))
-        and not isinstance(last_active_at, bool)
-        and math.isfinite(last_active_at)
-    )
+    if not (isinstance(key, str) and 0 < len(key) <= MAX_KEY_LEN):
+        return False
+    if isinstance(last_active_at, bool) or not isinstance(
+        last_active_at, (int, float)
+    ):
+        return False
+    try:
+        # JSON integers are unbounded; past a float's range they overflow.
+        return math.isfinite(float(last_active_at))
+    except OverflowError:
+        return False
 
 
 def dismiss(
@@ -102,7 +107,10 @@ def dismiss(
         # A stale retry never un-hides activity a newer dismiss covered.
         seen = max(float(last_active_at), _num(prev.get("last_active_at")))
         rows[key] = {"last_active_at": seen, "dismissed_at": now}
-        devices[device_id] = _prune(rows, now)
+        devices[device_id] = rows
+        # Every device prunes on each write, so an idle or revoked one's
+        # rows don't outlive KEEP_S just because nobody touched them.
+        devices = {d: _prune(r, now) for d, r in devices.items()}
         devices = {d: r for d, r in devices.items() if r}
         atomic_write_text(
             dismissals_file(home),
