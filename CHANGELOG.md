@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote: the hub runs behind `tailscale serve`.** `swe remote serve
+  --public-url=https://box.tailnet.ts.net:8477` binds `127.0.0.1` and
+  reads the tailnet client from the headers serve sets, so "Pair with
+  Tailscale", owner approval from a browser and the pair-request rate
+  limit work over https. `swe remote pair` prints the https URL (the
+  iOS deep link carries `scheme=https`), `swe remote status` probes the
+  loopback bind, ntfy buttons point at the public URL, and the
+  satellite agent verifies an https hub against the OS CA bundle when
+  its Python ships none.
+
 - **Remote: satellites report usage, so a MacBook's quota shows on the
   hub.** `swe remote agent` posts the machine's `swe list --usage` rows
   every 5 minutes, and the hub keeps each machine's last report. The

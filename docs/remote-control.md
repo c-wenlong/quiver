@@ -44,6 +44,34 @@ servers; we don't need to). v1 is tailnet-only: the hub binds its
 Tailscale IP, never `0.0.0.0`. A TLS fallback with a cert pinned at
 pairing is deferred until a non-tailnet device actually needs in.
 
+### Behind `tailscale serve`
+
+`swe remote serve --public-url=https://box.tailnet.ts.net:8477` runs the
+hub on `127.0.0.1` with `tailscale serve` in front: serve terminates TLS
+with the node's Let's Encrypt cert and dials the hub on loopback. Every
+request then arrives from `127.0.0.1`, so with `--public-url` on a
+loopback bind the hub reads the client from the headers serve sets:
+
+| Header | Used for |
+|---|---|
+| `X-Forwarded-For` | the tailnet client: `tailscale whois` for pairing and approval, the pair-request rate limit |
+| `X-Forwarded-Proto` | the scheme the `Origin` check expects (`https://<Host>`) |
+| `Host` | kept as the public `host:port`; the approval path's DNS-rebinding check allows exactly it |
+
+Serve replaces any `X-Forwarded-For` / `Tailscale-User-*` the client sent
+(checked on a live node, 2026-10-23), and the hub reads the headers only
+from loopback peers while `--public-url` is set; on a tailnet-IP bind
+they are ignored. A local process can still forge them, which is no
+worse than today: it can already read `devices.json`. Owner identity
+comes from `whois` of the node's own tailnet IP. The public URL also
+becomes the ntfy action-button base, and `serve` saves
+`{host, port, public_url}` to `data/remote/hub.json` so `swe remote
+pair` prints `https://` links (the `quiver://` deep link gains
+`scheme=https`) and `swe remote status` probes the loopback bind.
+Satellites dial the `https://` URL; when Python's default store has no
+CA certificates (python.org builds on macOS), the agent retries once
+against the OS bundle and keeps it, never skipping verification.
+
 ## Precedents
 
 | System | Transport | Write path | What we take |
@@ -310,7 +338,8 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
 ## Security
 
 - Tailnet membership is the transport boundary: the hub binds its
-  Tailscale IP only, so no LAN/WAN port ever opens. Tailscale's OAuth
+  Tailscale IP only (or loopback behind `tailscale serve`), so no
+  LAN/WAN port ever opens. Tailscale's OAuth
   login is how a device joins the tailnet; this feature does not
   re-implement it.
 - Pairing: the phone posts `POST /v1/pair/request`; the hub resolves

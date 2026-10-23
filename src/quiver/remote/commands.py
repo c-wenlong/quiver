@@ -17,6 +17,7 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from quiver.console import c
 from quiver.flags import expand_value_flags
@@ -25,7 +26,13 @@ from quiver.paths import remote_dir_for
 from quiver.remote import agent as agent_mod
 from quiver.remote import catalog as catalog_mod
 from quiver.remote import notify, pairing, protocol, supervise, tail
-from quiver.remote.hub import DEFAULT_PORT, HubState, serve
+from quiver.remote.hub import (
+    DEFAULT_PORT,
+    HubState,
+    check_public_url,
+    load_hub_config,
+    serve,
+)
 
 _SUBCOMMANDS = {"serve", "pair", "status", "devices", "attach", "agent",
                 "notify"}
@@ -33,12 +40,14 @@ _SUBCOMMANDS = {"serve", "pair", "status", "devices", "attach", "agent",
 _VALUE_FLAGS = {
     "--host", "--port", "--name", "--tail-days", "--revoke", "--mode",
     "--hub", "--token", "--ntfy", "--topic", "--ntfy-token",
-    "--approve", "--deny",
+    "--approve", "--deny", "--public-url",
 }
 _BOOL_FLAGS = {"--on", "--off", "--app", "--requests"}
 
 _USAGE = f"""\
-  {c('cyan', 'swe remote serve [--host=H] [--port=N]')}   Run the hub (REST + SSE)
+  {c('cyan', 'swe remote serve [--host=H] [--port=N] [--public-url=URL]')}
+                                  Run the hub (REST + SSE); --public-url
+                                  when tailscale serve fronts it
   {c('cyan', 'swe remote agent --hub=URL [--token=T]')}   Satellite: dial out to the hub
   {c('cyan', 'swe remote pair [--name=N] [--host=H] [--port=N] [--app] [--json]')}
                                   Print a pairing URL + token for a phone
@@ -102,12 +111,38 @@ def _probe(host: str, port: int, timeout: float = 3.0) -> dict | None:
         return None
 
 
+def _saved_hub(flags: dict) -> dict:
+    """The last ``serve``'s address, when no --host/--port overrides it."""
+    if flags.get("--host") or flags.get("--port"):
+        return {}
+    return load_hub_config()
+
+
+def _phone_address(flags: dict) -> tuple[str, int, str]:
+    """``(host, port, scheme)`` a phone should dial: the hub's public URL
+    when it runs behind ``tailscale serve``, else the flags or the
+    tailnet IP."""
+    public = str(_saved_hub(flags).get("public_url") or "")
+    if public:
+        parts = urlsplit(public)
+        default = 443 if parts.scheme == "https" else 80
+        return parts.hostname or "", parts.port or default, parts.scheme
+    host, port = _host_port(flags)
+    return host or _tailscale_ip() or "127.0.0.1", port, "http"
+
+
 def _cmd_serve(flags: dict) -> int:
     try:
         host, port = _host_port(flags)
+        public_url = (check_public_url(flags["--public-url"])
+                      if flags.get("--public-url") else "")
     except ValueError as exc:
         print(c("red", str(exc)), file=sys.stderr)
         return 1
+    # Behind tailscale serve the hub listens on loopback only; serve is
+    # the one door in.
+    if public_url and not host:
+        host = "127.0.0.1"
     if not host:
         host = _tailscale_ip() or "127.0.0.1"
         if host == "127.0.0.1":
@@ -121,9 +156,11 @@ def _cmd_serve(flags: dict) -> int:
         f"remote hub on {c('cyan', f'http://{host}:{port}')} "
         f"as {c('bold', state.machine['name'])} ({state.machine_id})"
     )
+    if public_url:
+        print(f"phones reach it at {c('cyan', public_url)}")
     print(c("dim", f"state: {remote_dir_for()}"))
     try:
-        return serve(state, host, port)
+        return serve(state, host, port, public_url)
     except OSError as exc:
         print(c("red", f"cannot bind {host}:{port} — {exc}"),
               file=sys.stderr)
@@ -132,16 +169,14 @@ def _cmd_serve(flags: dict) -> int:
 
 def _cmd_pair(flags: dict, json_view: bool) -> int:
     try:
-        host, port = _host_port(flags)
+        host, port, scheme = _phone_address(flags)
     except ValueError as exc:
         print(c("red", str(exc)), file=error_stream(json_view))
         return 1
-    if not host:
-        host = _tailscale_ip() or "127.0.0.1"
     name = flags.get("--name") or ""
     token = pairing.mint_pair_token()
-    url = pairing.pair_url(host, port, token, name)
-    payload = pairing.pair_payload(host, port, token, name)
+    url = pairing.pair_url(host, port, token, name, scheme)
+    payload = pairing.pair_payload(host, port, token, name, scheme)
     if json_view:
         return emit({
             "host": host,
@@ -181,6 +216,15 @@ def _cmd_status(flags: dict, json_view: bool) -> int:
     except ValueError as exc:
         print(c("red", str(exc)), file=error_stream(json_view))
         return 1
+    saved = _saved_hub(flags)
+    public_url = str(saved.get("public_url") or "")
+    if saved.get("host") and isinstance(saved.get("port"), int):
+        # Probe where the hub listens: behind serve that is loopback,
+        # which the tailnet IP default would miss.
+        host = saved["host"]
+        port = saved["port"]
+        if host in {"0.0.0.0", "::"}:
+            host = "127.0.0.1"
     if not host:
         host = _tailscale_ip() or "127.0.0.1"
     info = _probe(host, port)
@@ -190,6 +234,7 @@ def _cmd_status(flags: dict, json_view: bool) -> int:
         return emit({
             "hub": info or {"ok": False},
             "hub_addr": f"{host}:{port}",
+            "public_url": public_url or None,
             "machines": list(machines.values()),
             "devices": [
                 {
@@ -212,6 +257,8 @@ def _cmd_status(flags: dict, json_view: bool) -> int:
             f"· up {info.get('uptime_s', '?')}s · swe {info.get('version')}"
         )
         print(f"  machine: {machine.get('name', '?')} ({machine.get('id', '?')})")
+        if public_url:
+            print(f"  phones: {c('cyan', public_url)}")
     print(f"  devices paired: {len(devices)}")
     if machines:
         print("  machines:")

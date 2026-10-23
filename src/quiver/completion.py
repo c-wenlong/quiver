@@ -70,6 +70,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     "remote serve": [
         ("--host=", "Bind address (default: this machine's Tailscale IP)"),
         ("--port=", "Port (default 8477)"),
+        ("--public-url=", "URL phones use when tailscale serve fronts the hub"),
     ],
     "remote pair": [
         ("--host=", "Hub address to put in the pairing URL"),
