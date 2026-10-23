@@ -391,18 +391,29 @@ private func openGeminiIncident() throws -> Data {
             == "OpenAI / Codex: major outage, and 2 more")
     }
 
-    /// Infrastructure, maintenance and unknown states stay off the menu bar.
+    /// Minor infrastructure incidents, maintenance and unknown states stay
+    /// off the menu bar.
     @Test func menuLineIgnoresTheRest() throws {
-        #expect(ServiceStatusSummary.menuLine([try status("cloudflare", .major), try status("github", .maintenance),
+        #expect(ServiceStatusSummary.menuLine([try status("vercel", .minor), try status("github", .maintenance),
                                                try status("cursor", nil)]) == nil)
-        #expect(ServiceStatusSummary.worst([try status("cloudflare", .major), try status("claude", .minor)]) == .minor)
+        #expect(ServiceStatusSummary.worst([try status("vercel", .minor), try status("claude", .operational)])
+            == .operational)
+    }
+
+    /// A major infrastructure outage reaches the line on its own.
+    @Test func menuLineNamesAMajorInfrastructureOutage() throws {
+        #expect(ServiceStatusSummary.menuLine([try status("cloudflare", .major), try status("vercel", .minor)])
+            == "Cloudflare: major outage")
+        #expect(ServiceStatusSummary.menuLine([try status("npm", .critical)]) == "npm: critical outage")
+        #expect(ServiceStatusSummary.worst([try status("cloudflare", .major), try status("claude", .minor)]) == .major)
     }
 
     /// The services the line names, in its order, for their logos.
-    @Test func affectedListsTheProvidersTheLineNames() throws {
+    @Test func affectedListsTheServicesTheLineNames() throws {
         let statuses = [try status("claude", .minor), try status("cloudflare", .major), try status("openai", .major),
-                        try status("cursor", .minor), try status("github", .maintenance)]
-        #expect(ServiceStatusSummary.affected(statuses).map(\.service.id) == ["openai", "claude", "cursor"])
+                        try status("cursor", .minor), try status("github", .maintenance), try status("vercel", .minor)]
+        #expect(ServiceStatusSummary.affected(statuses).map(\.service.id)
+            == ["cloudflare", "openai", "claude", "cursor"])
         #expect(ServiceStatusSummary.affected([try status("claude", .operational)]).isEmpty)
     }
 
