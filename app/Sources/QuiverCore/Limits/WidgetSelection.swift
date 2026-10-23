@@ -64,16 +64,13 @@ public struct SourceSelection: Equatable, Sendable {
         hiddenWindows[source] = hidden
     }
 
-    /// The sources with a shown reading, in first-appearance order. Both
-    /// the widget snapshot and the settings list rank by this, so a
-    /// never-dragged widget shows pressure order in both places and a
-    /// source whose heaviest window is hidden ranks where its heaviest
-    /// shown one lands.
+    /// The sources in first-appearance order over every reading, hidden
+    /// ones included. Both the widget snapshot and the settings list rank
+    /// by this, so a never-dragged widget shows pressure order in both
+    /// places, and hiding a source or a window never moves its row.
     public func defaultRank(_ readings: [LimitReading]) -> [String] {
         var seen: [String] = []
-        for reading in readings {
-            guard shows(window: reading.window, source: reading.source),
-                  !seen.contains(reading.source) else { continue }
+        for reading in readings where !seen.contains(reading.source) {
             seen.append(reading.source)
         }
         return seen

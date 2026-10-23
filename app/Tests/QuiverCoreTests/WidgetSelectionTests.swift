@@ -80,13 +80,16 @@ import Testing
         #expect(selection.sourceOrder.isEmpty)
     }
 
-    @Test func theDefaultRankFollowsOnlyShownWindows() {
+    @Test func hidingAWindowOrSourceNeverMovesItsRank() {
         var selection = SourceSelection(hiddenSourcesKey: keys.sources, hiddenWindowsKey: keys.windows)
-        selection.setShown(false, window: "5h", source: "a")
-        // a's heaviest reading is hidden; it ranks where the shown one sits.
         let readings = [reading("a", "5h", used: 90), reading("b", "5h", used: 80),
-                        reading("a", "7d", used: 5)]
-        #expect(selection.defaultRank(readings) == ["b", "a"])
+                        reading("c", "7d", used: 5)]
+        #expect(selection.defaultRank(readings) == ["a", "b", "c"])
+        // a's heaviest window, and b's only one, hidden: rows stay put.
+        selection.setShown(false, window: "5h", source: "a")
+        selection.setShown(false, window: "5h", source: "b")
+        selection.setShown(false, source: "c")
+        #expect(selection.defaultRank(readings) == ["a", "b", "c"])
     }
 
     @Test func theOrderSurvivesAReloadThroughTheWidgetKey() {
