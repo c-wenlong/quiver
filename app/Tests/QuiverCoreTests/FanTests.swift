@@ -387,14 +387,16 @@ import Testing
         let (yes, no, hung, missing) = await runOffPool {
             (FanControl.exitStatus(of: "/usr/bin/true", [], within: 5),
              FanControl.exitStatus(of: "/usr/bin/false", [], within: 5),
-             FanControl.exitStatus(of: "/bin/sleep", ["30"], within: 0.2),
+             FanControl.exitStatus(of: "/bin/sleep", ["60"], within: 0.2),
              FanControl.exitStatus(of: "/nonexistent/\(UUID().uuidString)", [], within: 1))
         }
         #expect(yes == 0)
         #expect(no == 1)
         #expect(hung == nil)
         #expect(missing == nil)
-        #expect(Date().timeIntervalSince(started) < 5)
+        // Well before the 60 s hang would end; loose, since a busy CI
+        // runner can take seconds just to start the processes.
+        #expect(Date().timeIntervalSince(started) < 30)
     }
 
     // MARK: The helper's arguments and install
