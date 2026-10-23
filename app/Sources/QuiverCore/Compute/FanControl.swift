@@ -147,7 +147,7 @@ public final class FanControl {
     /// the threshold holds.
     public func setThresholdLevel(_ value: Double) {
         level = value
-        if heldByThreshold { try? request().write(to: control) }
+        if heldByThreshold { try? writeRequest() }
     }
 
     public static let levelKey = "fanManualLevel"
@@ -186,33 +186,54 @@ public final class FanControl {
     /// How long `starting` may last before the request counts as failed.
     /// Taking the fans on an M4 takes up to about ten seconds.
     static let startTimeout: TimeInterval = 20
-    static let notTaken = "The fan helper didn't take the fans."
+    /// The timeout's message when the helper never said what happened:
+    /// not running, or a copy from before it wrote a status. Reinstalling
+    /// puts the current one in place.
+    static let notTaken = "The fan helper didn't answer. Remove it and set the speed again to reinstall it."
+    /// The helper took manual mode, yet the fans never read manual.
+    static let didNotStick = "The fan helper set manual mode, but the fans didn't stay manual."
+    /// How long `launchctl print` may take before the helper counts as
+    /// not loaded.
+    nonisolated static let launchctlTimeout: TimeInterval = 2
 
     private let reader: @Sendable () -> [FanReading]
+    private let status: @Sendable () -> FanHelperStatus?
     private let installer: any FanHelperInstalling
     private let isInstalled: @Sendable (URL) -> Bool
     private let control: URL
     private let executable: String
     private let owner: Int32
     private let clock: @Sendable () -> Date
+    private let sleep: @Sendable (TimeInterval) async -> Void
     private let defaults: UserDefaults
     private var startedAt: Date?
+    /// The request last written, to match the helper's status against.
+    private var current: FanControlFile?
+    /// The helper's status as of the last refresh.
+    private var helperStatus: FanHelperStatus?
+    /// Ends `starting` after `startTimeout` on its own clock, so a refresh
+    /// that never comes back (a hung read) can't hold the phase there.
+    private(set) var deadline: Task<Void, Never>?
 
     public init(control: URL,
                 reader: @escaping @Sendable () -> [FanReading] = { AppleSMC().map(FanKeys.read) ?? [] },
+                status: @escaping @Sendable () -> FanHelperStatus? = { FanHelperStatus.read() },
                 installer: any FanHelperInstalling = AdministratorInstaller(),
                 isInstalled: @escaping @Sendable (URL) -> Bool = FanControl.helperReady,
                 executable: String = Bundle.main.executablePath ?? CommandLine.arguments[0],
                 owner: Int32 = getpid(),
                 clock: @escaping @Sendable () -> Date = { .now },
+                sleep: @escaping @Sendable (TimeInterval) async -> Void = { try? await Task.sleep(for: .seconds($0)) },
                 defaults: UserDefaults = .standard) {
         self.control = control
         self.reader = reader
+        self.status = status
         self.installer = installer
         self.isInstalled = isInstalled
         self.executable = executable
         self.owner = owner
         self.clock = clock
+        self.sleep = sleep
         self.defaults = defaults
         helperInstalled = false
         level = defaults.object(forKey: Self.levelKey) as? Double ?? 0.5
@@ -231,14 +252,34 @@ public final class FanControl {
               let arguments = job["ProgramArguments"] as? [String],
               arguments == [FanHelper.installedExecutable, FanHelper.flag, "--control", control.path]
         else { return false }
+        return exitStatus(of: "/bin/launchctl", ["print", "system/\(FanHelper.label)"],
+                          within: launchctlTimeout) == 0
+    }
+
+    /// Runs a tool and answers its exit status, or nil when it couldn't
+    /// start or didn't finish `within` seconds (it is killed then). It
+    /// blocks, so it never runs on the main thread.
+    nonisolated static func exitStatus(of path: String, _ arguments: [String],
+                                       within timeout: TimeInterval) -> Int32? {
+        assert(!Thread.isMainThread, "exitStatus blocks; call it off the main thread")
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = ["print", "system/\(FanHelper.label)"]
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = arguments
+        process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return false }
-        process.waitUntilExit()
-        return process.terminationStatus == 0
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
+        guard (try? process.run()) != nil else { return nil }
+        guard exited.wait(timeout: .now() + timeout) == .success else {
+            process.terminate()
+            if exited.wait(timeout: .now() + 0.5) != .success {
+                kill(process.processIdentifier, SIGKILL)
+                _ = exited.wait(timeout: .now() + 0.5)
+            }
+            return nil
+        }
+        return process.terminationStatus
     }
 
     /// Whether a manual speed is being held or about to be.
@@ -250,14 +291,17 @@ public final class FanControl {
     /// Read the fans, then settle the phase from what the SMC says:
     /// every fan manual means the helper holds them.
     public func refresh() async {
-        let reader = self.reader
-        fans = await runOffPool { reader() }
+        let reader = self.reader, status = self.status
+        (fans, helperStatus) = await runOffPool { (reader(), status()) }
         // The install check spawns launchctl, so it runs on the first read
         // and after a request the helper never took, not every tick.
+        // Cleared before the wait, so overlapping refreshes don't each
+        // spawn one, and a reason to look again that arrives during it
+        // (a timeout, a removal) isn't wiped by the answer.
         if installUnchecked {
+            installUnchecked = false
             let isInstalled = self.isInstalled, control = self.control
             helperInstalled = await runOffPool { isInstalled(control) }
-            installUnchecked = false
         }
         loaded = true
         settle()
@@ -272,20 +316,73 @@ public final class FanControl {
         case .starting:
             if fansManual {
                 phase = .manual
+                stopDeadline()
+            } else if let reason = refusal {
+                give(up: reason)
             } else if let startedAt, clock().timeIntervalSince(startedAt) > Self.startTimeout {
-                phase = clearRequest() ?? .failed(Self.notTaken)
-                installUnchecked = true
+                give(up: timeoutReason)
             }
         case .manual:
             // macOS took them back (after sleep, say): the helper takes
             // them again on its next pass, so wait rather than give up.
-            if !fansManual {
-                phase = .starting
-                startedAt = clock()
-            }
+            if !fansManual { beginStarting() }
         case .automatic, .failed:
             break
         }
+    }
+
+    /// Why the helper gave up on the current request, once it says so:
+    /// no need to wait out the timeout for an answer already in.
+    private var refusal: String? {
+        guard let helperStatus else { return nil }
+        switch helperStatus.state {
+        // Not tied to a request, so only one written after this request
+        // was made counts: an error left by an earlier run (install and
+        // removal leave the file) says nothing about the helper now.
+        case .error where current?.requested.map { helperStatus.at >= $0 } ?? false:
+            return helperStatus.reason ?? Self.notTaken
+        case .refused where helperStatus.answers(current):
+            return helperStatus.reason ?? Self.notTaken
+        case .ready, .held, .refused, .error:
+            return nil
+        }
+    }
+
+    private var timeoutReason: String {
+        if let helperStatus, helperStatus.state == .held, helperStatus.answers(current) {
+            return Self.didNotStick
+        }
+        return refusal ?? Self.notTaken
+    }
+
+    private func beginStarting() {
+        phase = .starting
+        let began = clock()
+        startedAt = began
+        deadline?.cancel()
+        let sleep = self.sleep
+        deadline = Task { [weak self] in
+            await sleep(Self.startTimeout)
+            guard !Task.isCancelled else { return }
+            self?.expire(began)
+        }
+    }
+
+    private func stopDeadline() {
+        deadline?.cancel()
+        deadline = nil
+    }
+
+    /// The deadline for the `starting` that began at `began`; a later
+    /// one, or a phase that has moved on, is left alone.
+    private func expire(_ began: Date) {
+        guard phase == .starting, startedAt == began else { return }
+        give(up: timeoutReason)
+    }
+
+    private func give(up reason: String) {
+        phase = clearRequest() ?? .failed(reason)
+        installUnchecked = true
     }
 
     /// The user's Set speed: hold the fans at `level`, and from then on
@@ -302,9 +399,15 @@ public final class FanControl {
         FanControlFile(level: level, owner: owner, requested: clock())
     }
 
+    private func writeRequest() throws {
+        let request = request()
+        try request.write(to: control)
+        current = request
+    }
+
     private func hold() async {
         do {
-            try request().write(to: control)
+            try writeRequest()
         } catch {
             phase = .failed("Couldn't write \(control.path): \(error.localizedDescription)")
             return
@@ -320,10 +423,7 @@ public final class FanControl {
                 return
             }
         }
-        if phase != .manual {
-            phase = .starting
-            startedAt = clock()
-        }
+        if phase != .manual { beginStarting() }
         await refresh()
     }
 
@@ -430,8 +530,10 @@ public final class FanControl {
     /// the popover would claim Automatic.
     private func clearRequest() -> Phase? {
         startedAt = nil
+        stopDeadline()
         do {
             try FanControlFile(level: nil).write(to: control)
+            current = nil
             return nil
         } catch {
             if (try? FileManager.default.removeItem(at: control)) != nil
