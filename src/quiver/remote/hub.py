@@ -24,9 +24,10 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 
 from quiver import __version__
+from quiver.paths import atomic_write_text, remote_dir_for
 from quiver.remote import (
     attachments,
     catalog as catalog_mod,
@@ -55,6 +56,15 @@ _REQ_TIMEOUT_S = 30.0
 _MAX_WORKERS = 64
 # How often an open SSE stream re-checks that its device wasn't revoked.
 _REVOCATION_CHECK_S = 5.0
+
+# Peers that count as "this machine". Behind ``tailscale serve`` every
+# request arrives from one of these, with the real client in headers.
+_LOOPBACK = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
+
+# Behind serve the owner lookup needs this node's tailnet IP, which a hub
+# started at login can ask for before Tailscale is up; it retries on use
+# this often until it settles.
+_OWNER_RETRY_S = 30.0
 
 # Journal bucket for non-session events (machine.online, hub-level notify).
 GLOBAL_KEY = "_global"
@@ -147,6 +157,10 @@ class HubState:
         # The hub owner's tailnet login — set by serve() from whois of
         # the bind address; "" means owner-identity approval is off.
         self.owner_login = ""
+        # Set by configure() when that lookup could not run yet; owner()
+        # calls it again, at most every _OWNER_RETRY_S.
+        self.owner_retry = None
+        self._owner_tried_at = 0.0
         # Unauthenticated /v1/pair/request rate limit: ip → timestamps.
         self._pair_req_times: dict[str, list[float]] = {}
         self._pair_req_lock = threading.Lock()
@@ -156,6 +170,11 @@ class HubState:
         # The hub's reachable base — set by serve() before start() so
         # ntfy action buttons can point back at this host.
         self.base_url = ""
+        # Set when the hub runs behind ``tailscale serve`` (``--public-url``
+        # on a loopback bind): serve overwrites X-Forwarded-For/-Proto
+        # with the real tailnet client, so loopback requests carrying
+        # them are read as that client. Off, the headers are ignored.
+        self.trust_proxy = False
         # session key -> request_id for every approval.requested that has
         # not yet been answered — local panes and satellites both flow
         # through emit(), so the inbox sees them uniformly.
@@ -199,6 +218,17 @@ class HubState:
                 and self.catalog.row_for(view["key"]) is None:
             view["state"] = "pending"
         return view
+
+    def owner(self) -> str:
+        """The hub owner's tailnet login, retrying a lookup that failed
+        at start-up (behind serve, before Tailscale was up)."""
+        if not self.owner_login and self.owner_retry is not None:
+            now = time.time()
+            if now - self._owner_tried_at >= _OWNER_RETRY_S:
+                self._owner_tried_at = now
+                if self.owner_retry():
+                    self.owner_retry = None
+        return self.owner_login
 
     def _journal_has(self, key: str) -> bool:
         return self.journal.last_seq(key) > 0
@@ -522,20 +552,46 @@ class _Handler(BaseHTTPRequestHandler):
     def _approver_node(self, peer: dict | None) -> str | None:
         """The peer's node id when it shares the hub owner's login —
         else None. Tagged nodes never qualify."""
+        owner = self._state.owner()
         if (
             peer is None or peer.get("tagged")
-            or not self._state.owner_login
-            or peer.get("login") != self._state.owner_login
+            or not owner
+            or peer.get("login") != owner
         ):
             return None
         return str(peer.get("node_id") or "") or None
+
+    def _proxied(self) -> bool:
+        """True when ``tailscale serve`` relayed this request: the hub
+        trusts its proxy and the TCP peer is this machine."""
+        return (self._state.trust_proxy
+                and self.client_address[0] in _LOOPBACK)
+
+    def _client_ip(self) -> str:
+        """The requester's address: the tailnet client serve forwarded
+        for, else the TCP peer. Serve replaces any X-Forwarded-For the
+        client sent, so the last hop is the one it added."""
+        if self._proxied():
+            forwarded = self.headers.get("X-Forwarded-For") or ""
+            hop = forwarded.split(",")[-1].strip()
+            if hop:
+                return hop
+        return self.client_address[0]
+
+    def _scheme(self) -> str:
+        """``https`` when serve terminated TLS in front of us."""
+        if self._proxied():
+            proto = (self.headers.get("X-Forwarded-Proto") or "").lower()
+            if proto in {"http", "https"}:
+                return proto
+        return "http"
 
     def _bad_origin(self) -> bool:
         """Origin must name this hub when present — a cross-site page
         can't satisfy either form."""
         origin = self.headers.get("Origin")
         if origin is not None and (
-            origin != f"http://{self.headers.get('Host')}"
+            origin != f"{self._scheme()}://{self.headers.get('Host')}"
         ):
             return True
         return False
@@ -552,7 +608,7 @@ class _Handler(BaseHTTPRequestHandler):
         return True
 
     def _pair_request(self) -> None:
-        ip = self.client_address[0]
+        ip = self._client_ip()
         now = time.time()
         # Rate limit BEFORE the whois fork — a flood must not spawn a
         # subprocess per request. Locked: read-check-append must be
@@ -596,7 +652,7 @@ class _Handler(BaseHTTPRequestHandler):
         device_id = self._device()
         # The peer's node decides self-approval no matter how the
         # caller proved itself — bearer or owner identity alike.
-        peer = self._state.whois(self.client_address[0])
+        peer = self._state.whois(self._client_ip())
         node_id = (
             str(peer.get("node_id") or "") or None
         ) if peer else None
@@ -809,7 +865,7 @@ class _Handler(BaseHTTPRequestHandler):
         # Approving devices get in two ways: a paired bearer, or the
         # tailnet login that owns this hub node.
         if path == "/v1/pair/requests":
-            peer = self._state.whois(self.client_address[0])
+            peer = self._state.whois(self._client_ip())
             device_id = self._device()
             if device_id is None and self._approver_node(peer) is None:
                 self._send_error(401, "unauthorized",
@@ -1914,25 +1970,123 @@ def _advertise_url(host: str, port: int) -> str:
     return f"http://{advertised}:{port}"
 
 
-def serve(state: HubState, host: str, port: int) -> int:
-    """Blocking entry point for ``swe remote serve``."""
+def check_public_url(url: str) -> str:
+    """``url`` reduced to scheme and host[:port], no trailing slash.
+
+    Raises ``ValueError`` unless it is an absolute http(s) URL.
+    """
+    parts = urlsplit((url or "").strip())
+    try:
+        # Reading .port validates it: non-numeric or out of range raises.
+        bad = (parts.scheme not in {"http", "https"} or not parts.hostname
+               or parts.port == 0)
+    except ValueError:
+        bad = True
+    if bad:
+        raise ValueError(
+            "--public-url must be an http(s) URL, e.g. "
+            "https://box.tailnet.ts.net:8477"
+        )
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+def _public_hosts(public_url: str) -> set[str]:
+    """Host header values that name ``public_url``. A browser drops the
+    scheme's default port, so 443/80 are allowed with and without it."""
+    parts = urlsplit(public_url)
+    default = 443 if parts.scheme == "https" else 80
+    port = parts.port or default
+    hosts = {f"{parts.hostname}:{port}"}
+    if port == default:
+        hosts.add(parts.hostname or "")
+    return hosts
+
+
+def _hub_file(home: Path | None) -> Path:
+    return remote_dir_for(home) / "hub.json"
+
+
+def save_hub_config(home: Path | None, host: str, port: int,
+                    public_url: str) -> None:
+    """Record where the running hub listens and how phones reach it, so
+    ``swe remote pair`` and ``status`` find it without flags."""
+    path = _hub_file(home)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(path, json.dumps({
+            "host": host, "port": port, "public_url": public_url,
+        }, indent=1))
+    except OSError:
+        pass
+
+
+def load_hub_config(home: Path | None = None) -> dict:
+    """``{"host", "port", "public_url"}`` from the last ``serve``, or {}."""
+    try:
+        data = json.loads(_hub_file(home).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def configure(state: HubState, host: str, port: int,
+              public_url: str = "") -> None:
+    """Set the advertised URL, proxy trust and owner identity on
+    ``state`` for a hub listening on ``host:port``.
+
+    ``public_url`` is the address phones use when something fronts the
+    hub; ``tailscale serve`` on a loopback bind is the supported case
+    (``https://box.tailnet.ts.net:8477``), and only then are its
+    forwarded-client headers trusted.
+    """
     # The listen address and the advertised URL are different things:
     # `0.0.0.0` is fine to bind but unreachable as a link target, so
-    # ntfy action buttons must point at a real address — the tailnet IP
-    # first, then the machine hostname.
-    state.base_url = _advertise_url(host, port)
+    # ntfy action buttons must point at a real address — the public
+    # URL, else the tailnet IP, then the machine hostname.
+    state.base_url = public_url or _advertise_url(host, port)
     # Owner identity for pair-request approval: the tailnet login that
-    # owns this node. Loopback binds and tagged nodes get none.
+    # owns this node. A plain loopback bind and tagged nodes get none;
+    # behind serve the node is looked up by its own tailnet IP.
+    if public_url:
+        state.allowed_hosts = _public_hosts(public_url)
+        if host in {"127.0.0.1", "::1", "localhost"}:
+            state.trust_proxy = True
+
+            def lookup() -> bool:
+                """True once settled: an owner found, or a tagged node
+                that never has one. False means ask again later."""
+                ip = catalog_mod.tailscale_ip()
+                peer = state.whois(ip) if ip else None
+                if peer is None:
+                    return False
+                if not peer.get("tagged"):
+                    state.owner_login = str(peer.get("login") or "")
+                return True
+
+            if not lookup():
+                state.owner_retry = lookup
+            return
     if host not in {"127.0.0.1", "::1", "localhost", "0.0.0.0"}:
         peer = state.whois(host)
-        state.allowed_hosts = {f"{host}:{port}"}
+        if not public_url:
+            state.allowed_hosts = {f"{host}:{port}"}
         if peer and not peer.get("tagged"):
             state.owner_login = str(peer.get("login") or "")
-            for name in (peer.get("node_name"), peer.get("node_short")):
-                if name:
-                    state.allowed_hosts.add(f"{name}:{port}")
+            if not public_url:
+                for name in (peer.get("node_name"), peer.get("node_short")):
+                    if name:
+                        state.allowed_hosts.add(f"{name}:{port}")
+
+
+def serve(state: HubState, host: str, port: int,
+          public_url: str = "") -> int:
+    """Blocking entry point for ``swe remote serve``."""
+    configure(state, host, port, public_url)
     state.start()
     server = make_server(state, host, port)
+    # Only a hub that owns the port may say where it is: a second copy
+    # that fails to bind must not overwrite the running one's address.
+    save_hub_config(state.home, host, port, public_url)
     # SIGTERM (launchd/systemd stop) must take the same shutdown path as
     # ^C — without it the process dies mid-write and queued sends drop
     # silently. shutdown() can't run on the serve_forever thread.

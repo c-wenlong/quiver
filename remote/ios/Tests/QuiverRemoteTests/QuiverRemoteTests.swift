@@ -28,6 +28,13 @@ final class PairLinkTests: XCTestCase {
     func testDefaultPortAndMissingToken() {
         XCTAssertEqual(PairLink(URL(string: "quiver://pair?host=mac&token=t")!)?.baseURL.absoluteString, "http://mac:8477")
         XCTAssertNil(PairLink(URL(string: "quiver://pair?host=mac")!))
+        XCTAssertEqual(
+            PairLink(URL(string: "quiver://pair?host=box.tailnet.ts.net&port=8477&token=t&scheme=https")!)?.baseURL.absoluteString,
+            "https://box.tailnet.ts.net:8477")
+        // Only https upgrades; anything else stays plain http.
+        XCTAssertEqual(
+            PairLink(URL(string: "quiver://pair?host=mac&token=t&scheme=ftp")!)?.baseURL.absoluteString,
+            "http://mac:8477")
         XCTAssertNil(PairLink(URL(string: "https://example.com/")!))
     }
 
