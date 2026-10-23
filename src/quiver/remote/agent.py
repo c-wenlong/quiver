@@ -20,6 +20,7 @@ from pathlib import Path
 from quiver.paths import remote_dir_for
 from quiver.remote import attachments, catalog as catalog_mod
 from quiver.remote import inject, journal, protocol, supervise, tail
+from quiver.remote import usage as usage_mod
 
 AGENT_FILE = "agent.json"          # satellite's stored hub credential
 PUSH_BATCH = 50                    # events per /v1/agent/events POST
@@ -249,6 +250,14 @@ class RemoteAgent:
         )
         return status == 200
 
+    def _push_usage(self) -> bool:
+        body = usage_mod.snapshot()
+        status, _ = _post(
+            self.hub, "/v1/agent/usage", self.cred,
+            {"machine_id": self.machine_id, **body},
+        )
+        return status == 200
+
     def _register(self) -> bool:
         status, _ = _post(
             self.hub, "/v1/agent/register", self.cred,
@@ -464,6 +473,18 @@ class RemoteAgent:
                 pass
             self._stop.wait(CATALOG_PUSH_S)
 
+    def _usage_loop(self) -> None:
+        # A failed push (hub down, registry unreadable) retries on the
+        # reconnect cadence rather than waiting out the whole interval.
+        while not self._stop.is_set():
+            try:
+                ok = self._push_usage()
+            except Exception:
+                ok = False
+            self._stop.wait(
+                usage_mod.SATELLITE_PUSH_S if ok else RECONNECT_S * 12
+            )
+
     def _tail_loop(self) -> None:
         while not self._stop.is_set():
             try:
@@ -494,6 +515,8 @@ class RemoteAgent:
                              name="agent-uplink"),
             threading.Thread(target=self._catalog_loop, daemon=True,
                              name="agent-catalog"),
+            threading.Thread(target=self._usage_loop, daemon=True,
+                             name="agent-usage"),
             threading.Thread(target=self._tail_loop, daemon=True,
                              name="agent-tail"),
             threading.Thread(target=self._downlink_loop, daemon=True,
