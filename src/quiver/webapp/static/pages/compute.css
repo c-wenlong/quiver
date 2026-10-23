@@ -80,8 +80,8 @@
 .compute-chart .end-icon .logo { display: block; }
 .compute-bubble[hidden] { display: none; }
 .compute-bubble { display: flex; flex-direction: column; gap: 4px; min-width: 120px; background: var(--panel); }
-.bubble-row { display: grid; grid-template-columns: 12px auto minmax(0, 1fr); gap: 6px; align-items: center; }
-.bubble-row .num { text-align: right; padding-left: 12px; }
+.compute-bubble .bubble-row { display: grid; grid-template-columns: 12px auto minmax(0, 1fr); gap: 6px; align-items: center; }
+.compute-bubble .bubble-row .num { text-align: right; padding-left: 12px; }
 .compute-page .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
 .compute-page .shade, .compute-bubble .shade {
   width: 12px; height: 10px; border-radius: 2px; display: inline-block; background: var(--fan-shade);
