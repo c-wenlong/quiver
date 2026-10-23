@@ -47,32 +47,47 @@ class TtlCache:
         self._lock = threading.Lock()
         self._entries: dict[Any, tuple[float, float, float, Any]] = {}
         self._key_locks: dict[Any, threading.Lock] = {}
+        # Callers holding or waiting on each key's lock: a lock is only
+        # dropped when nobody uses it, so two callers never end up on
+        # different locks for one key.
+        self._users: dict[Any, int] = {}
 
     def get(self, key, fetch: Callable[[], Any], *, refresh: bool = False,
             ok: Callable[[Any], bool] = lambda _v: True) -> tuple[Any, float]:
         """``(value, fetched_at)``; ``fetched_at`` is wall-clock epoch."""
         with self._lock:
             key_lock = self._key_locks.setdefault(key, threading.Lock())
-        with key_lock:
-            now = self._clock()
-            entry = self._entries.get(key)
-            if entry is not None:
-                at, ttl, wall, value = entry
-                age = now - at
-                if age < ttl and not (refresh and age >= REFRESH_FLOOR):
-                    return value, wall
-            value = fetch()
-            wall = time.time()
-            ttl = TTL if ok(value) else FAIL_TTL
+            self._users[key] = self._users.get(key, 0) + 1
+        try:
+            with key_lock:
+                return self._get_locked(key, fetch, refresh, ok)
+        finally:
             with self._lock:
-                self._entries[key] = (self._clock(), ttl, wall, value)
-                self._prune()
-            return value, wall
+                left = self._users.get(key, 1) - 1
+                if left:
+                    self._users[key] = left
+                else:
+                    self._users.pop(key, None)
+
+    def _get_locked(self, key, fetch, refresh, ok) -> tuple[Any, float]:
+        now = self._clock()
+        entry = self._entries.get(key)
+        if entry is not None:
+            at, ttl, wall, value = entry
+            age = now - at
+            if age < ttl and not (refresh and age >= REFRESH_FLOOR):
+                return value, wall
+        value = fetch()
+        wall = time.time()
+        ttl = TTL if ok(value) else FAIL_TTL
+        with self._lock:
+            self._entries[key] = (self._clock(), ttl, wall, value)
+            self._prune()
+        return value, wall
 
     def clear(self) -> None:
         with self._lock:
             self._entries.clear()
-            self._key_locks.clear()
 
     def _prune(self) -> None:
         now = self._clock()
@@ -80,8 +95,7 @@ class TtlCache:
                  if now - at > _PRUNE_AFTER]
         for key in stale:
             self._entries.pop(key, None)
-            lock = self._key_locks.get(key)
-            if lock is not None and not lock.locked():
+            if not self._users.get(key):
                 self._key_locks.pop(key, None)
 
 

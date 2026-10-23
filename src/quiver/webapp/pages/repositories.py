@@ -103,6 +103,7 @@ def focus(home, repo: str, refresh: bool = False) -> dict:
         "repo": repo,
         "surfaces": surfaces,
         "limits": {k: FOCUS[k][0] for k in keys},
+        "max_limit": MAX_LIMIT,
         "fetched_at": min(at for _e, at in replies),
     }
 
@@ -119,7 +120,8 @@ def surface(home, repo: str, key: str, limit, refresh: bool = False) -> dict:
     entry, at = _focus_entry(home, repo, key, n, refresh)
     env = G.env_after(home, [entry], refresh=refresh)
     return {"github": G.env_payload(env), "repo": repo, "surface": key,
-            "entry": entry, "limit": n, "fetched_at": at}
+            "entry": entry, "limit": n, "max_limit": MAX_LIMIT,
+            "fetched_at": at}
 
 
 def pull_request(home, repo: str, ref: str, refresh: bool = False) -> dict:

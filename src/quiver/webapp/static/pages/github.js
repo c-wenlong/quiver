@@ -1,7 +1,7 @@
 /* Shared by the Repositories and Inbox pages (repositories.js, inbox.js):
  * line icons for GitHub states, the gh setup card, a minute poll, and the
- * PR body's markdown. Everything hangs off one global, GhUI, since every
- * page plugin shares the bundle's scope. Not a page itself. */
+ * PR body's markdown. The bundle runs each script in its own scope, so this
+ * one hands the others a single global, GhUI. Not a page itself. */
 "use strict";
 
 const GhUI = (() => {
@@ -163,25 +163,38 @@ const GhUI = (() => {
     return m ? (m[2] ?? m[3] ?? m[4] ?? "") : "";
   }
 
-  /* Top-level <details> blocks become folds; unclosed ones stay text. */
+  /* A fence runs to its closing marker, or to the end of the body. */
+  const FENCE = /(^ {0,3}(?:`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n {0,3}(?:`{3,}|~{3,})[ \t]*(?=\n|$)|(?![\s\S])))/m;
+
+  /* The body with fenced and inline code blanked out, same length, so a
+   * tag search on it never matches an example inside code. */
+  function maskCode(text) {
+    const blank = (c) => c.replace(/[^\n]/g, " ");
+    return text.replace(new RegExp(FENCE.source, "gm"), blank).replace(/`[^`\n]+`/g, blank);
+  }
+
+  /* Top-level <details> blocks become folds; unclosed ones stay text, and
+   * so does one inside fenced or inline code. */
   function segments(body) {
     const out = [];
     let rest = body;
     for (;;) {
-      const open = /<details\b[^>]*>/i.exec(rest);
+      const masked = maskCode(rest);
+      const open = /<details\b[^>]*>/i.exec(masked);
       if (!open) break;
       const tagRe = /<(\/?)details\b[^>]*>/gi;
       tagRe.lastIndex = open.index + open[0].length;
       let depth = 1, m, close = null;
-      while ((m = tagRe.exec(rest))) {
+      while ((m = tagRe.exec(masked))) {
         depth += m[1] ? -1 : 1;
         if (!depth) { close = m; break; }
       }
       if (!close) break;
       if (open.index) out.push({ md: rest.slice(0, open.index) });
       const inside = rest.slice(open.index + open[0].length, close.index);
-      const sum = /<summary\b[^>]*>([\s\S]*?)<\/summary>/i.exec(inside);
-      const title = sum ? htmlToMd(sum[1]).replace(/\s+/g, " ").trim() : "Details";
+      const sum = /<summary\b[^>]*>[\s\S]*?<\/summary>/i.exec(maskCode(inside));
+      const summary = sum ? inside.slice(sum.index, sum.index + sum[0].length) : "";
+      const title = sum ? htmlToMd(summary.replace(/^<summary\b[^>]*>|<\/summary>$/gi, "")).replace(/\s+/g, " ").trim() : "Details";
       const inner = sum ? inside.slice(0, sum.index) + inside.slice(sum.index + sum[0].length) : inside;
       out.push({ title: title || "Details", body: segments(inner) });
       rest = rest.slice(close.index + close[0].length);
@@ -192,8 +205,7 @@ const GhUI = (() => {
 
   /* HTML in a body as markdown, leaving fenced code alone. */
   function htmlToMd(text) {
-    // A fence runs to its closing marker, or to the end of the body.
-    const parts = text.split(/(^ {0,3}(?:`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n {0,3}(?:`{3,}|~{3,})[ \t]*(?=\n|$)|(?![\s\S])))/m);
+    const parts = text.split(FENCE);
     return parts.map((part, i) => (i % 2 ? part : convertHtml(part))).join("").replace(/\n{3,}/g, "\n\n");
   }
 
@@ -364,3 +376,4 @@ const GhUI = (() => {
 
   return { ico, ago, envSetup, setupCard, bindSetup, copyText, poll, hashParams, failMessage, keepFocus, markdown };
 })();
+globalThis.GhUI = GhUI;

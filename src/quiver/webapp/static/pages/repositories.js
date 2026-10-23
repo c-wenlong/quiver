@@ -477,7 +477,7 @@
 
   function newFocus(repo) {
     return { repo, data: null, error: null, loading: false, tab: "pulls", filter: "",
-      shown: {}, limits: {}, defaults: {}, exhausted: new Set(), fetching: new Set() };
+      shown: {}, limits: {}, defaults: {}, exhausted: new Set(), fetching: new Set(), maxLimit: 200 };
   }
 
   const focusHeader = (f) => pageHeader(f.repo, "Pull requests, issues, CI and refs — every state, most recent first.",
@@ -485,10 +485,12 @@
      <button class="icon-button${f.loading ? " spinning" : ""}" id="page-refresh" aria-label="Refresh" title="Fetch again">${icon("rescan")}</button>
      <a class="icon-button" href="https://github.com/${esc(f.repo)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ico("external")}</a>`);
 
+  /* A short page means the listing ended; a full one at the hub's cap
+   * means no wider window exists to ask for. */
   function noteLimits(f, key, entry, limit) {
     f.limits[key] = limit;
     const rows = entry && entry.status === "ok" ? entry[key] : null;
-    if (rows && rows.length < limit) f.exhausted.add(key); else f.exhausted.delete(key);
+    if (rows && (rows.length < limit || limit >= f.maxLimit)) f.exhausted.add(key); else f.exhausted.delete(key);
   }
 
   async function renderFocus(repo, refresh = false) {
@@ -510,6 +512,7 @@
     // A surface the user scrolled wider keeps its window across a refetch.
     const wider = Object.keys(f.limits).filter((k) => f.limits[k] > (data.limits || {})[k]);
     f.defaults = data.limits || {};
+    f.maxLimit = data.max_limit || f.maxLimit;
     for (const key of Object.keys(data.surfaces || {})) {
       if (!wider.includes(key)) noteLimits(f, key, data.surfaces[key], f.defaults[key] || 0);
     }
@@ -552,7 +555,7 @@
       f.shown[key] = shown + BATCH;
       GhUI.keepFocus("gh-search", paintFocus);
     } else if (!f.exhausted.has(key)) {
-      loadMore(key, (f.limits[key] || 0) + STEP);
+      loadMore(key, Math.min((f.limits[key] || 0) + STEP, f.maxLimit));
     }
   }
 
@@ -773,6 +776,14 @@
       const search = document.getElementById("gh-search");
       if (search) { e.preventDefault(); search.focus(); search.select(); }
     }
+  });
+
+  /* The PR sheet lives on <body>, outside the panel a route repaints, so
+   * leaving the page (Back, a sidebar link) has to close it here. */
+  window.addEventListener("hashchange", () => {
+    const here = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+    const dlg = document.getElementById("gh-pr-sheet");
+    if (here !== "repositories" && dlg && dlg.open) dlg.close();
   });
 
   registerPage("repositories", render);

@@ -2,7 +2,10 @@
 detail, the gh cache, and the route with auth. No real ``gh`` runs."""
 
 import json
+import shutil
+import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -81,6 +84,33 @@ class TestCache(_Base):
         self.clock.t += G.FAIL_TTL + 1
         G.CACHE.get("f", lambda: failed.append(1) or {"status": "x"}, ok=ok)
         self.assertEqual(len(failed), 2)
+
+
+    def test_old_entries_never_split_a_key_across_two_locks(self):
+        """A pruned key keeps its lock while a caller waits on it, so the
+        waiter and a newcomer share one fetch."""
+        started, release = threading.Event(), threading.Event()
+        calls = []
+
+        def slow():
+            calls.append(1)
+            started.set()
+            release.wait(5)
+            return {"status": "ok"}
+        first = threading.Thread(target=lambda: G.CACHE.get("k", slow))
+        first.start()
+        started.wait(5)
+        waiter = threading.Thread(target=lambda: G.CACHE.get("k", slow))
+        waiter.start()
+        # Another key's write prunes "k"'s (absent) entry meanwhile.
+        self.clock.t += 10_000
+        G.CACHE.get("other", lambda: {"status": "ok"})
+        self.assertIn("k", G.CACHE._key_locks)
+        release.set()
+        first.join(5)
+        waiter.join(5)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(G.CACHE._users, {})
 
 
 class TestDashboard(_Base):
@@ -173,7 +203,8 @@ class TestFocus(_Base):
                    side_effect=lambda n, lim: {"repo": n, "status": "ok", "tags": [{}] * 3}) as tags:
             body = R.get(self.ctx, {"repo": "o/a", "surface": "tags", "limit": "999"})
         tags.assert_called_once_with("o/a", R.MAX_LIMIT)
-        self.assertEqual((body["surface"], body["limit"]), ("tags", R.MAX_LIMIT))
+        self.assertEqual((body["surface"], body["limit"], body["max_limit"]),
+                         ("tags", R.MAX_LIMIT, R.MAX_LIMIT))
         for bad in ({"surface": "pages"}, {"surface": "nope"}, {"surface": "tags", "limit": "x"}):
             with self.assertRaises(PageError):
                 R.get(self.ctx, {"repo": "o/a", **bad})
@@ -218,6 +249,67 @@ class TestPullRequest(_Base):
             body = R.get(self.ctx, {"repo": "o/a", "pr": "9"})
         run.assert_not_called()
         self.assertEqual((body["status"], body["github"]["status"]), ("unavailable", "unavailable"))
+
+
+STATIC = Path(R.__file__).resolve().parent.parent / "static" / "pages"
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestMarkdown(unittest.TestCase):
+    """GhUI.markdown, run under node with the two globals it borrows."""
+
+    def render(self, body: str) -> str:
+        script = (
+            "global.esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;')"
+            ".replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;')"
+            ".replace(/'/g, '&#39;');\n"
+            "global.Fmt = { ago: () => '' };\n"
+            + (STATIC / "github.js").read_text()
+            + "\nprocess.stdout.write(GhUI.markdown(require('fs').readFileSync(0, 'utf8')));"
+        )
+        done = subprocess.run(["node", "-e", script], input=body, capture_output=True,
+                              text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout
+
+    def test_a_details_fold_becomes_one(self):
+        html = self.render("<details><summary>More</summary>\n\nhidden **text**\n</details>")
+        self.assertIn('<details class="gh-md-fold">', html)
+        self.assertIn("<span>More</span>", html)
+        self.assertIn("<strong>text</strong>", html)
+
+    def test_details_inside_code_stays_an_example(self):
+        body = "```html\n<details><summary>Example</summary>hidden</details>\n```\n\nand `<details>` inline"
+        html = self.render(body)
+        self.assertNotIn("gh-md-fold", html)
+        self.assertIn("&lt;details&gt;&lt;summary&gt;Example", html)
+        self.assertIn("<code>&lt;details&gt;</code>", html)
+
+    def test_scripts_and_unsafe_links_never_render(self):
+        html = self.render("<script>alert(1)</script>[x](javascript:alert(1)) <b onclick=x>hi</b>")
+        self.assertNotIn("<script", html)
+        self.assertNotIn("javascript:", html.replace("&quot;", ""))
+        self.assertNotIn("onclick", html)
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestBundle(unittest.TestCase):
+    def test_both_pages_register_from_the_served_bundle(self):
+        """Each script runs in its own scope in /app/pages.js: GhUI has to
+        reach inbox.js and repositories.js as a global."""
+        from quiver.webapp import pages
+        stubs = (
+            "const registered = [];\n"
+            "global.registerPage = (id) => registered.push(id);\n"
+            "global.window = { addEventListener() {} };\n"
+            "global.document = { addEventListener() {} };\n"
+            "global.location = { hash: '' };\n"
+        )
+        script = (stubs + pages.bundle(".js").decode()
+                  + "\nprocess.stdout.write(JSON.stringify(registered));")
+        done = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertTrue({"repositories", "inbox"} <= set(json.loads(done.stdout)))
 
 
 class TestRoute(HubBase):
