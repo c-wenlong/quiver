@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the words apart, and a title match no longer sits behind fifty passing
   mentions. The iPhone app's offline fallback ranks the same way.
 
+- **Web app: Harnesses and Accounts.** Harnesses lists every harness swe
+  knows on the hub machine, with the Mac app's In use / Archived scopes,
+  search, starred-first order, a fold for the unstarred ones, version,
+  command, aliases, tags, the archive reason, PATH state and 100-day
+  session counts. Accounts shows a card per starred harness for the hub
+  and each paired machine: plan badge, a bar per limit window (green,
+  amber from 70%, red from 90%) with its reset time, on-demand spend,
+  extra usage balance, and when the reading was taken. Both are read
+  only; starring and archiving stay in `swe` and the Mac app.
+
 - **Web app: Sessions.** The web app's second page lists every session the
   hub knows (this machine and its satellites) with tokens and spend from
   the web ledger, the Mac app's search and its tool, time (90 days by
@@ -323,6 +333,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Integrations page under Advanced. The list goes from 12 items to 9.
 
 ### Fixed
+
+- **OpenCode 2.x sessions show up again.** OpenCode 2.x writes new
+  sessions only to `session_v2` and their turns only to
+  `session_message`, so every session made since the upgrade was missing
+  from `swe session`, search, status, transcripts, the phone app and
+  usage. swe and the Mac app now read both stores, each session and
+  reply once.
 
 - **Quiver switches pages at once.** Clicking a sidebar row or pressing
   ⌘1 to ⌘9 used to keep the old page up for 70 to 460 ms while the new

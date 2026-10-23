@@ -237,9 +237,9 @@ private struct WidgetCard: View {
 
     /// The limits sources in display order: the dragged order over
     /// `defaultRank` of the live (byPressure) readings, matching what
-    /// WidgetSnapshot.make draws; a source with no shown reading goes
-    /// last, in row order. `shown` is the ids the ReorderableRows
-    /// callbacks reorder within.
+    /// WidgetSnapshot.make draws; a source with no reading yet goes last,
+    /// in row order. Hiding a window or source never moves its row.
+    /// `shown` is the ids the ReorderableRows callbacks reorder within.
     private var limitRows: (rows: [MenuBarPopup.Row], shown: [String]) {
         let rows = MenuBarPopup.rows(in: app.limits.readings, sources: sources)
         let withReadings = app.widgetSelection.limits.defaultRank(app.limits.readings)

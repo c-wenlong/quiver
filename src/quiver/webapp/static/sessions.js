@@ -21,6 +21,8 @@ async function renderSessions(_id, rescan = false) {
   if (!sessionsPage.data || rescan) {
     panel.innerHTML = `<div class="page">${sessionsHeader(true)}<div class="card"><p class="empty">${
       sessionsPage.data ? "Refreshing…" : "Listing sessions…"}</p></div></div>`;
+  } else {
+    paintSessions();
   }
   const { status, data } = await api(`/v1/app/sessions${rescan ? "?rescan=1" : ""}`);
   if (gen !== sessionsPage.gen) return;

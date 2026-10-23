@@ -368,7 +368,8 @@ def _open_ro(path: Path) -> sqlite3.Connection:
 
 
 def opencode_records(db: Path) -> list[LedgerRecord]:
-    """``opencode.db`` assistant messages. Older rows folded reasoning
+    """``opencode.db`` assistant messages, legacy ``message`` rows and
+    2.x ``session_message`` ones. Older rows folded reasoning
     into output; a recorded cost of 0 means OpenCode did not know the
     price, so it is no recorded cost."""
     conn = _open_ro(db)
@@ -383,6 +384,7 @@ def opencode_records(db: Path) -> list[LedgerRecord]:
             WHERE json_extract(m.data, '$.role') = 'assistant'
             ORDER BY m.time_updated
         """).fetchall()
+        rows += _opencode_v2_rows(conn)
     finally:
         conn.close()
     account = str(db.parent)
@@ -402,6 +404,36 @@ def opencode_records(db: Path) -> list[LedgerRecord]:
         if ev.total > 0:
             out.append(LedgerRecord(key=f"opencode:{mid or ''}", event=ev))
     return out
+
+
+def _opencode_v2_rows(conn: sqlite3.Connection) -> list[tuple]:
+    """OpenCode 2.x replies, in ``opencode_records``' row shape.
+
+    2.x writes new replies only to ``session_message`` (and new sessions
+    only to ``session_v2``), naming the model ``model.id``. The 2.x
+    migration copied old replies there under their ``message`` ids, so
+    those are left to the ``message`` read. No ``tokens.total`` is kept:
+    the counts are disjoint, as on current ``message`` rows.
+    """
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if "session_message" not in tables:
+        return []
+    directory = "s.directory"
+    join = "LEFT JOIN session s ON s.id = sm.session_id"
+    if "session_v2" in tables:
+        directory = "COALESCE(v.directory, s.directory)"
+        join += " LEFT JOIN session_v2 v ON v.id = sm.session_id"
+    return conn.execute(f"""
+        SELECT sm.id, sm.session_id, sm.time_created, {directory},
+            json_extract(sm.data, '$.model.id'), json_extract(sm.data, '$.cost'),
+            json_extract(sm.data, '$.tokens.input'), json_extract(sm.data, '$.tokens.output'),
+            json_extract(sm.data, '$.tokens.reasoning'), json_extract(sm.data, '$.tokens.cache.read'),
+            json_extract(sm.data, '$.tokens.cache.write'), NULL
+        FROM session_message sm {join}
+        WHERE sm.type = 'assistant'
+          AND NOT EXISTS (SELECT 1 FROM message m WHERE m.id = sm.id)
+        ORDER BY sm.time_updated
+    """).fetchall()
 
 
 def devin_records(db: Path) -> list[LedgerRecord]:
