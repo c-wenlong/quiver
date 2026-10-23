@@ -17,7 +17,10 @@ final class CommandKeyHold {
 
     private init() {
         NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
-            let commandOnly = event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command
+            // Caps Lock is a latched state, not a held key: it must not
+            // hide the caps.
+            let commandOnly = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                .subtracting(.capsLock) == .command
             MainActor.assumeIsolated { CommandKeyHold.shared.update(commandOnly) }
             return event
         }
