@@ -237,24 +237,34 @@ private struct TotalCard: View {
         .animation(.snappy(duration: 0.35), value: focus)
     }
 
-    /// One logo per harness; the pointer on one focuses it.
+    /// One logo per harness: the pointer on one focuses it, and so does a
+    /// click or Space for the keyboard. One centred row while they fit,
+    /// wrapping once there are too many for the card.
     private var logos: some View {
-        HStack(spacing: 6) {
-            ForEach(shares) { share in
-                let on = focus == share.harness
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) { logoButtons }
+            FlowLayout(spacing: 6, lineSpacing: 6) { logoButtons }
+        }
+    }
+
+    private var logoButtons: some View {
+        ForEach(shares) { share in
+            let on = focus == share.harness
+            Button { focus = on ? nil : share.harness } label: {
                 HarnessIcon(harness: share.harness, size: 16)
                     .padding(7)
                     .background(Theme.card.opacity(0.85), in: .circle)
                     .overlay(Circle().strokeBorder(on ? Theme.harness(share.harness) : Theme.borderStrong, lineWidth: 1))
-                    .opacity(focus == nil || on ? 1 : 0.45)
                     .contentShape(.circle)
-                    .onHover { inside in
-                        if inside { focus = share.harness } else if on { focus = nil }
-                    }
-                    .accessibilityElement()
-                    .accessibilityLabel(UsageFormat.harness(share.harness))
-                    .accessibilityValue("\(UsageFormat.tokens(share.totals.totalTokens)) tokens, \(UsageFormat.dollars(share.totals.costUSD))")
             }
+            .buttonStyle(.plain)
+            .opacity(focus == nil || on ? 1 : 0.45)
+            .onHover { inside in
+                if inside { focus = share.harness } else if on { focus = nil }
+            }
+            .accessibilityLabel(UsageFormat.harness(share.harness))
+            .accessibilityValue("\(UsageFormat.tokens(share.totals.totalTokens)) tokens, \(UsageFormat.dollars(share.totals.costUSD)), \(detail(share))")
+            .accessibilityAddTraits(on ? .isSelected : [])
         }
     }
 
