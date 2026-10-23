@@ -143,11 +143,14 @@ private struct SettingsSectionView: View {
                 Rectangle().fill(Theme.border).frame(height: Theme.hairline)
             }
             switch section {
-            case .general: generalCard
-            case .preferences: preferencesCard
+            case .general:
+                VStack(alignment: .leading, spacing: 20) {
+                    generalCard
+                    SettingsCardGroup(title: "Display") { preferencesCard }
+                    SettingsCardGroup(title: "Updates") { updatesCard }
+                }
             case .sidebar: SidebarSection()
             case .notifications: notificationsCard
-            case .updates: updatesCard
             case .github: githubCard
             case .remote: RemoteSection()
             case .providers: ProvidersSection()
@@ -657,6 +660,19 @@ private struct ServiceFieldRow: View {
         draft = ""
         editing = false
         Task { await model.set(field, value: value) }
+    }
+}
+
+/// A card under a small heading, for a section that holds more than one.
+struct SettingsCardGroup<Content: View>: View {
+    var title: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+            content
+        }
     }
 }
 

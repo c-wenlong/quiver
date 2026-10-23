@@ -387,7 +387,7 @@ final class AppModel {
     let githubNotify: GitHubNotifier
     /// The MCP servers page's "Server folders" section.
     let mcpRepo = McpServerRepoModel()
-    /// The Settings > Updates section's build and release state.
+    /// The Settings > General Updates card's build and release state.
     let updates: UpdatesModel
     let plugins: PluginsModel
     /// Every plugin in every marketplace: the Plugins page's Explore tab,
