@@ -54,7 +54,7 @@ private struct OverviewContent: View {
                     }
                 }
             }
-            if let progress = model.scanProgress, model.summary == nil || model.completedScans == 0 {
+            if let progress = model.scanProgress, model.summary == nil || !model.fullScanFinished {
                 ScanProgressCard(progress: progress, partial: model.summary != nil)
             }
             if let summary = model.summary {

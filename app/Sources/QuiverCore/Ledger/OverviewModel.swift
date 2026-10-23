@@ -154,6 +154,11 @@ public final class OverviewModel {
     public private(set) var scanNotes: [String] = []
     /// Successful scans so far; other views reload their ledger figures when it changes.
     public private(set) var completedScans = 0
+    /// Whether a full scan (no `recentLimit`) has finished. The search
+    /// index's capped reconcile scans also count in `completedScans` and can
+    /// finish while the first full scan is still running, so the launch
+    /// scan's progress card and partial figures key on this instead.
+    public private(set) var fullScanFinished = false
     /// Ledger writes outside the scan path (the Cursor feed's ingest);
     /// views that refresh on `completedScans` watch this too.
     public private(set) var ledgerWrites = 0
@@ -287,6 +292,7 @@ public final class OverviewModel {
                 error = nil
                 scanNotes = report.notes
                 completedScans += 1
+                if recentLimit == nil { fullScanFinished = true }
                 if report.filesRead + report.filesRescanned + report.databasesRead > 0 {
                     revision += 1
                 }
@@ -359,7 +365,7 @@ public final class OverviewModel {
                 guard !Task.isCancelled else { return }
                 self.scanProgress = progress
                 reads += 1
-                guard progress != nil, self.completedScans == 0, reads % 3 == 1 else { continue }
+                guard progress != nil, !self.fullScanFinished, reads % 3 == 1 else { continue }
                 let generation = self.summaryGeneration
                 let partial = await self.summarize(self.period, now: self.now())
                 guard !Task.isCancelled, generation == self.summaryGeneration else { continue }

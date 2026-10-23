@@ -66,7 +66,10 @@ actor FakeLedger: LedgerQuerying {
 
     func scan(roots: LedgerRoots?, recentLimit: Int?) async throws -> ScanReport {
         scans += 1
+        // Holds only the next scan: a second one (a capped reconcile tick)
+        // runs straight through while the first is parked.
         if holdScans {
+            holdScans = false
             scanWaiting = true
             await withCheckedContinuation { scanGate = $0 }
             scanWaiting = false
@@ -620,6 +623,32 @@ final class OverviewClock {
         await scan.value
         #expect(model.scanProgress == nil)
         #expect(model.completedScans == 1)
+    }
+
+    @Test func aCappedScanFinishingMidwayKeepsThePartialFiguresComing() async {
+        let ledger = FakeLedger()
+        await ledger.set(harnesses: ["claude": totals(tokens: 100, cost: 1)])
+        await ledger.set(progress: ScanProgress(filesDone: 5, filesTotal: 40))
+        await ledger.holdNextScan()
+        let model = model(ledger)
+        let full = Task { await model.load(scan: true) }
+        await until { await ledger.scanWaiting }
+        // The search index's reconcile tick: a capped scan that finishes
+        // while the full one is still held.
+        await model.load(scan: true, recentLimit: 12)
+        #expect(model.completedScans == 1)
+        #expect(!model.fullScanFinished)
+
+        await ledger.set(harnesses: ["claude": totals(tokens: 250, cost: 2)])
+        await until { model.summary?.totals.totalTokens == 250 }
+        #expect(model.summary?.totals.totalTokens == 250)
+        #expect(model.scanProgress != nil)
+
+        await ledger.set(progress: nil)
+        await ledger.releaseScan()
+        await full.value
+        #expect(model.fullScanFinished)
+        #expect(model.scanProgress == nil)
     }
 
     @Test func aCappedScanShowsNoProgress() async {
