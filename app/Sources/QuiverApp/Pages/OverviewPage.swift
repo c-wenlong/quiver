@@ -220,8 +220,6 @@ private struct TotalCard: View {
         let up = focused == nil
         let cost = UsageFormat.dollars(totals.costUSD)
         return VStack(spacing: 6) {
-            RollingText(text: focused.map { "\(UsageFormat.harness($0.harness)) tokens" } ?? "Total tokens",
-                        font: Self.captionFont, color: NSColor(Theme.textSecondary), perCharacter: false, up: up)
             RollingText(text: UsageFormat.tokens(totals.totalTokens), font: Self.displayFont,
                         color: NSColor(Theme.textPrimary), kern: -1.8, up: up)
             RollingText(text: cost, font: Self.figureFont, color: NSColor(Theme.accent), up: up)
@@ -253,7 +251,6 @@ private struct TotalCard: View {
     }
 
     // The AppKit fonts behind `Theme.caption`, `.display` and `.figure`.
-    static let captionFont = NSFont.systemFont(ofSize: 12)
     static let captionDigitsFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
     static let displayFont = NSFont.monospacedDigitSystemFont(ofSize: 72, weight: .bold)
     static let figureFont = NSFont.monospacedDigitSystemFont(ofSize: 20, weight: .bold)
@@ -302,14 +299,16 @@ private struct TotalCard: View {
         focus = harness
     }
 
-    /// A focused harness's share and models.
+    /// A focused harness's name, share and models.
     private func detail(_ share: HarnessShare) -> String {
         let total = summary.totals.costUSD
         let part = total > 0 ? share.totals.costUSD / total : share.share
         let percent = part > 0 && part < 0.001 ? "<0.1%"
             : part.formatted(.percent.precision(.fractionLength(part < 0.1 ? 1 : 0)))
         let models = share.modelCount == 1 ? "1 model" : "\(share.modelCount) models"
-        return "\(percent) of \(total > 0 ? "spend" : "tokens") · \(models)"
+        // The harness's name leads: with no label over the total, this is
+        // the only place a hover names it.
+        return "\(UsageFormat.harness(share.harness)) · \(percent) of \(total > 0 ? "spend" : "tokens") · \(models)"
     }
 
     private var summaryLine: String {
