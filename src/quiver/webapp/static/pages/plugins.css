@@ -1,0 +1,127 @@
+/* Plugins page. Every class is pl- prefixed: all page stylesheets share one bundle. */
+
+/* Tabs, the app's underline style */
+.pl-tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
+.pl-tab {
+  border: 0; background: transparent; padding: 0 0 10px; margin-bottom: -1px; cursor: pointer;
+  font-size: 13px; font-weight: 500; color: var(--text-secondary); border-bottom: 2px solid transparent;
+}
+.pl-tab:hover { color: var(--text-primary); }
+.pl-tab.selected { color: var(--text-primary); border-bottom-color: var(--text-primary); }
+
+.pl-label { display: flex; align-items: flex-start; gap: 8px; margin: 0; font-size: 14px; }
+.pl-label svg { width: 16px; height: 16px; flex: none; margin-top: 1px; }
+.pl-label.muted-label { color: var(--text-secondary); }
+.pl-label.warn { color: var(--warning-text); font-size: 12px; }
+.pl-label.warn svg { width: 13px; height: 13px; }
+.pl-problems { gap: 4px; }
+
+.pl-name { font-size: 14px; font-weight: 500; color: var(--text-primary); }
+.pl-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.pl-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 100%; }
+.pl-mono { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-secondary); background: none; padding: 0; }
+.pl-mono.muted { color: var(--text-muted); }
+.pl-right { margin-left: auto; white-space: nowrap; }
+.pl-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.pl-dot.small { width: 6px; height: 6px; }
+.pl-dot.danger { background: var(--danger); }
+.pl-dot.warning { background: var(--warning); }
+
+/* Health */
+.pl-harness-title { display: flex; align-items: center; gap: 8px; }
+.pl-drift-rows { display: flex; flex-direction: column; }
+.pl-drift { display: grid; grid-template-columns: 8px minmax(0, 1fr); gap: 12px; padding: 12px 0; border-top: 1px solid var(--border); }
+.pl-drift:first-child { border-top: 0; padding-top: 0; }
+.pl-drift:last-child { padding-bottom: 0; }
+.pl-drift .pl-dot { margin-top: 6px; }
+.pl-drift-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pl-clamp { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-all; }
+.pl-fix { display: flex; align-items: flex-start; gap: 6px; }
+.pl-code {
+  margin: 0; flex: 0 1 auto; min-width: 0; padding: 6px 8px; border-radius: 4px; background: var(--subtle);
+  border: 1px solid var(--border); font: 12px/16px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-secondary); white-space: pre-wrap; word-break: break-all;
+}
+.pl-copy {
+  width: 24px; height: 28px; flex: none; display: grid; place-items: center; border: 0; border-radius: 4px;
+  background: transparent; color: var(--text-secondary); cursor: pointer;
+}
+.pl-copy:hover { background: var(--tab-hover); color: var(--text-primary); }
+.pl-copy svg { width: 14px; height: 14px; }
+.pl-copy.copied { color: var(--accent); }
+.pl-copy.failed { color: var(--danger-text); }
+
+/* Fold and expand rows (ExpandRow) */
+.pl-fold {
+  display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 36px;
+  border: 0; background: transparent; color: var(--text-secondary); font-size: 13px; cursor: pointer;
+}
+.pl-fold:hover { background: var(--row-hover); color: var(--text-primary); }
+.pl-fold svg { width: 12px; height: 12px; }
+.pl-fold .muted { color: var(--text-muted); }
+.pl-fold.inset { border-top: 1px solid var(--border); border-radius: 0 0 8px 8px; }
+
+/* Explore */
+.pl-sources { display: flex; flex-direction: column; gap: 32px; }
+.pl-source { display: flex; flex-direction: column; gap: 16px; }
+.pl-source-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.pl-source-head .logo, .pl-source-icon { align-self: center; flex: none; }
+.pl-source-icon { width: 16px; height: 16px; color: var(--text-secondary); }
+.pl-source-title { font-size: 16px; font-weight: 600; white-space: nowrap; }
+.pl-source-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.pl-markets { display: flex; flex-direction: column; gap: 12px; }
+.pl-market {
+  background: var(--card); border: 1px solid var(--border); border-radius: 16px; overflow: hidden;
+  transition: border-color .15s;
+}
+.pl-market:hover { border-color: var(--border-strong); }
+.pl-market-head { display: flex; align-items: baseline; gap: 8px; padding: 14px 20px; min-width: 0; }
+.pl-market .pl-fold { border-top: 1px solid var(--border); }
+.pl-tag {
+  flex: none; font-size: 11px; font-weight: 500; color: var(--text-secondary); padding: 0 6px;
+  border: 1px solid var(--border); border-radius: 999px;
+}
+.pl-lock { color: var(--text-muted); align-self: center; display: inline-flex; }
+.pl-lock svg { width: 11px; height: 11px; }
+.pl-rows { padding: 0 20px 8px; border-top: 1px solid var(--border); }
+.pl-row { display: flex; align-items: flex-start; gap: 16px; padding: 12px 0; border-top: 1px solid var(--border); }
+.pl-row:first-child { border-top: 0; }
+.pl-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.pl-open { border: 0; background: transparent; padding: 0; cursor: pointer; text-align: left; font: inherit; font-weight: 500; }
+.pl-open:hover { text-decoration: underline; }
+.pl-desc { font-size: 13px; color: var(--text-secondary); }
+.pl-skills { display: flex; flex-wrap: wrap; gap: 4px; padding-top: 2px; }
+.pl-skills .badge { font-size: 11px; }
+.pl-drift-badge {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; color: var(--text-label);
+  background: var(--subtle); border: 1px solid var(--border-strong); border-radius: 999px; padding: 1px 8px; cursor: pointer;
+}
+.pl-drift-badge:hover { border-color: var(--text-muted); }
+.pl-chips { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; flex: none; max-width: 50%; }
+.pl-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; white-space: nowrap;
+  border: 1px solid var(--border); border-radius: 999px; font-size: 11px; font-weight: 500; color: var(--text-secondary);
+}
+.pl-chip.on { color: var(--text-primary); }
+.pl-status { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.pl-status.enabled { background: var(--accent-fill); }
+.pl-status.installed { background: var(--text-secondary); }
+.pl-status.disabled, .pl-status.cached { background: var(--border-strong); }
+.pl-status.available, .pl-status.absent { border: 1.2px solid var(--text-muted); }
+
+/* Detail sheet */
+.pl-pill { display: inline-flex; align-items: center; gap: 5px; }
+.pl-desc-full { margin: 0; font-size: 13px; color: var(--text-secondary); }
+.pl-path { word-break: break-all; }
+.pl-skill-list { display: flex; flex-direction: column; gap: 8px; max-height: 40vh; overflow-y: auto; }
+.pl-skill { display: flex; flex-direction: column; gap: 2px; }
+#plugin-sheet a { color: var(--accent); }
+
+@media (max-width: 720px) {
+  .pl-row { flex-direction: column; gap: 8px; }
+  .pl-chips { justify-content: flex-start; max-width: none; }
+  .pl-source-head { flex-wrap: wrap; }
+  .pl-source-note { order: 3; flex-basis: 100%; white-space: normal; }
+  .pl-market-head { flex-wrap: wrap; padding: 12px 16px; }
+  .pl-rows { padding: 0 16px 8px; }
+}
