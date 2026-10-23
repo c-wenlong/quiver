@@ -47,10 +47,14 @@ enum Markdown {
                 flushParagraph()
                 let fence = String(trimmed.prefix(3))
                 let lang = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+                // A fence indented under a list item: its lines lose that indent.
+                let indent = line.prefix { $0 == " " }.count
                 var body: [String] = []
                 i += 1
                 while i < lines.count, !lines[i].trimmingCharacters(in: .whitespaces).hasPrefix(fence) {
-                    body.append(lines[i])
+                    let raw = lines[i]
+                    let lead = min(indent, raw.prefix { $0 == " " }.count)
+                    body.append(String(raw.dropFirst(lead)))
                     i += 1
                 }
                 i += 1 // the closing fence (or past the end)
@@ -113,11 +117,14 @@ enum Markdown {
                 flushParagraph()
                 var text = item.text
                 i += 1
-                // Indented lines that aren't a new item continue this one.
+                // Indented lines that aren't a new item continue this one,
+                // unless they open a block of their own (a fence, a table,
+                // a quote, a heading), which then parses on its own.
                 while i < lines.count {
                     let next = lines[i]
                     let nt = next.trimmingCharacters(in: .whitespaces)
                     guard !nt.isEmpty, listItem(next) == nil, next.hasPrefix("  ") || next.hasPrefix("\t") else { break }
+                    if startsBlock(lines, at: i) { break }
                     text += "\n" + nt
                     i += 1
                 }
@@ -134,13 +141,27 @@ enum Markdown {
 
     // MARK: Pieces
 
+    /// Whether `lines[i]` opens a block that isn't list-item text.
+    static func startsBlock(_ lines: [String], at i: Int) -> Bool {
+        let t = lines[i].trimmingCharacters(in: .whitespaces)
+        if t.hasPrefix("```") || t.hasPrefix("~~~") || t.hasPrefix(">") || heading(t) != nil { return true }
+        if t.contains("|"), i + 1 < lines.count, separatorAlignments(lines[i + 1]) != nil { return true }
+        return false
+    }
+
     static func heading(_ line: String) -> (Int, String)? {
         let hashes = line.prefix { $0 == "#" }
         guard (1...6).contains(hashes.count) else { return nil }
         let rest = line.dropFirst(hashes.count)
         guard rest.first == " " else { return nil }
-        let text = rest.trimmingCharacters(in: .whitespaces)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "#")).trimmingCharacters(in: .whitespaces)
+        var text = rest.trimmingCharacters(in: .whitespaces)
+        // An optional closing run ("## Title ##") goes only when a space
+        // sets it apart, so "C#" and "#123" keep their hashes.
+        if let spaceRun = text.range(of: #"\s+#+$"#, options: .regularExpression) {
+            text.removeSubrange(spaceRun)
+        } else if text.allSatisfy({ $0 == "#" }) {
+            text = ""
+        }
         return (hashes.count, text)
     }
 
@@ -165,19 +186,26 @@ enum Markdown {
         return (width / 2, "\(digits)\(punct)", String(after.dropFirst(2)))
     }
 
-    /// Cells of a `| a | b |` row. A `\|` stays in its cell as `|`.
+    /// Cells of a `| a | b |` row. Only `\|` is an escape here: it stays
+    /// in its cell as `|`. Every other backslash (`C:\Users`, `\d+`) is
+    /// left for the inline parser.
     static func cells(_ row: String) -> [String] {
         var s = row.trimmingCharacters(in: .whitespaces)
         if s.hasPrefix("|") { s.removeFirst() }
         if s.hasSuffix("|") && !s.hasSuffix("\\|") { s.removeLast() }
         var out: [String] = []
         var current = ""
-        var escaped = false
-        for ch in s {
-            if escaped { current.append(ch); escaped = false; continue }
-            if ch == "\\" { escaped = true; continue }
-            if ch == "|" { out.append(current.trimmingCharacters(in: .whitespaces)); current = ""; continue }
-            current.append(ch)
+        var chars = Array(s)[...]
+        while let ch = chars.popFirst() {
+            if ch == "\\", chars.first == "|" {
+                current.append("|")
+                chars.removeFirst()
+            } else if ch == "|" {
+                out.append(current.trimmingCharacters(in: .whitespaces))
+                current = ""
+            } else {
+                current.append(ch)
+            }
         }
         out.append(current.trimmingCharacters(in: .whitespaces))
         return out

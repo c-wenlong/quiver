@@ -307,9 +307,28 @@ private struct BlockView: View {
 struct TableBlock: View {
     let table: Markdown.Table
     static let maxColumnWidth: CGFloat = 240
+    /// The grid is built eagerly, so a malformed or huge table is cut to
+    /// this many columns and rows, with a note saying what was left out.
+    static let maxColumns = 24
+    static let maxRows = 200
 
     var body: some View {
-        let columns = table.columnCount
+        let columns = min(table.columnCount, Self.maxColumns)
+        let rows = table.rows.prefix(Self.maxRows)
+        let hiddenRows = table.rows.count - rows.count
+        let hiddenColumns = table.columnCount - columns
+        VStack(alignment: .leading, spacing: 4) {
+            grid(columns: columns, rows: Array(rows))
+            if hiddenRows > 0 || hiddenColumns > 0 {
+                Text([hiddenRows > 0 ? "\(hiddenRows) more rows" : nil,
+                      hiddenColumns > 0 ? "\(hiddenColumns) more columns" : nil]
+                    .compactMap { $0 }.joined(separator: " and ") + " not shown")
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+            }
+        }
+    }
+
+    private func grid(columns: Int, rows: [[String]]) -> some View {
         ScrollView(.horizontal, showsIndicators: true) {
             Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
                 GridRow {
@@ -317,7 +336,7 @@ struct TableBlock: View {
                         cell(c < table.header.count ? table.header[c] : "", column: c, header: true)
                     }
                 }
-                ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                     Rectangle().fill(Theme.border).frame(height: 1).gridCellUnsizedAxes(.horizontal)
                     GridRow {
                         ForEach(0..<columns, id: \.self) { c in

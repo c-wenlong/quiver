@@ -131,6 +131,22 @@ final class MarkdownTests: XCTestCase {
         ])
     }
 
+    func testReviewFixes() {
+        // Only \| is an escape; other backslashes reach the inline parser.
+        XCTAssertEqual(Markdown.cells(#"| `C:\Users\alice` | \d+ \| x |"#), [#"`C:\Users\alice`"#, #"\d+ | x"#])
+        // Hashes in a heading's text survive; a spaced closing run doesn't.
+        XCTAssertEqual(Markdown.heading("## C#")?.1, "C#")
+        XCTAssertEqual(Markdown.heading("## #123")?.1, "#123")
+        XCTAssertEqual(Markdown.heading("## Title ##")?.1, "Title")
+        // A fence or table indented under a list item stays its own block.
+        let blocks = Markdown.parse("1. Run\n   ```\n   make test\n   ```\n2. Then\n   | a | b |\n   |---|---|\n   | 1 | 2 |")
+        XCTAssertEqual(blocks.count, 4)
+        XCTAssertEqual(blocks[0], .listItem(indent: 0, marker: "1.", text: "Run"))
+        XCTAssertEqual(blocks[1], .code(language: nil, text: "make test"))
+        guard case .table(let t) = blocks[3] else { return XCTFail("expected a table") }
+        XCTAssertEqual(t.rows, [["1", "2"]])
+    }
+
     func testUnclosedFenceIsCode() {
         XCTAssertEqual(Markdown.parse("```\nhalf"), [.code(language: nil, text: "half")])
     }
