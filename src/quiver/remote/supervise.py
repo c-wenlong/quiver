@@ -560,6 +560,7 @@ def launch_new(
     prompt: str,
     *,
     known_ids: list[str] | None = None,
+    launch_id: str = "",
 ) -> tuple[bool, str, str | None]:
     """``POST /v1/sessions``: start a fresh harness run under tmux.
 
@@ -568,11 +569,15 @@ def launch_new(
     adopt the new transcript on its next refresh. ``known_ids`` is the
     catalog's session ids at launch time: adoption refuses any of them,
     so a pre-existing same-cwd session can never be claimed as ours.
+    ``launch_id`` rides the marker into the supervised entry, so the hub
+    can tell the phone which session its launch became.
     Returns ``(ok, note, tmux_name)``.
     """
     binary = launch_tool_name(tool_name)
     if not binary or not shutil.which(binary):
-        return False, f"unknown harness {tool_name}", None
+        return False, f"{tool_name} is not installed on this machine", None
+    if not cwd or not os.path.isdir(cwd):
+        return False, f"no such folder on this machine: {cwd}", None
     # The nonce matters: pid+second collide for two same-harness launches
     # inside one second, and the tmux name derives from the key.
     key = f"new:{tool_name}:{int(time.time())}-{os.getpid()}-{secrets.token_hex(3)}"
@@ -589,6 +594,7 @@ def launch_new(
             "cwd": cwd or "",
             "exclude": list(known_ids or []),
             "launched_at": time.time(),
+            "launch_id": launch_id,
         }))
     except OSError:
         pass
@@ -628,8 +634,33 @@ def prime_pane(name: str, prompt: str, *, timeout: float = 30.0) -> bool:
             confirmed = True
             time.sleep(0.5)
             continue
-        return send_text(name, prompt)
+        if not send_text(name, prompt):
+            return False
+        # Claude's TUI can take fast-typed text as a paste and swallow
+        # the Enter right behind it, leaving the prompt in the input box
+        # and no transcript for adoption to find. Press Enter again
+        # while the prompt still sits there.
+        for _ in range(3):
+            time.sleep(1.0)
+            if not _prompt_unsent(capture_pane(name), prompt):
+                return True
+            send_key(name, "Enter")
+        return not _prompt_unsent(capture_pane(name), prompt)
     return False
+
+
+def _prompt_unsent(pane: str, prompt: str) -> bool:
+    """True when ``prompt`` still sits in the TUI's input box: the lines
+    between the last two horizontal rules, the way Claude draws it. A
+    pane with no such box (other harnesses) reads as sent."""
+    lines = pane.splitlines()
+    rules = [i for i, line in enumerate(lines)
+             if line.strip() and set(line.strip()) <= {"─"}]
+    if len(rules) < 2:
+        return False
+    head = (prompt.strip().splitlines() or [""])[0][:40]
+    box = "\n".join(lines[rules[-2] + 1:rules[-1]])
+    return bool(head) and head in box
 
 
 def adopt_pending(
@@ -673,6 +704,7 @@ def adopt_pending(
             "session_id": "",
             "cwd": str(pending.get("cwd") or ""),
             "attached_at": now,
+            "launch_id": str(pending.get("launch_id") or ""),
         })
         marker.unlink(missing_ok=True)
         adopted.append(key)

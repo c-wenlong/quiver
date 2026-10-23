@@ -202,6 +202,31 @@ class TestPrimePane(unittest.TestCase):
             self.assertFalse(supervise.prime_pane("qv-x", "hello"))
         st.assert_not_called()
 
+    def test_swallowed_enter_is_pressed_again(self):
+        rule = "─" * 20
+        unsent = f"Claude Code\n{rule}\n❯ hello there\n{rule}\n  auto mode"
+        sent = f"❯ hello there\n⏺ hi\n{rule}\n❯ \n{rule}\n  auto mode"
+        panes = iter(["❯", unsent, sent])
+        with patch.object(supervise, "capture_pane",
+                          side_effect=lambda *_a: next(panes)), \
+             patch.object(supervise, "send_key") as sk, \
+             patch.object(supervise, "send_text", return_value=True), \
+             patch.object(time, "sleep"):
+            self.assertTrue(supervise.prime_pane("qv-x", "hello there"))
+        sk.assert_called_once_with("qv-x", "Enter")
+
+    def test_prompt_stuck_in_box_reports_false(self):
+        rule = "─" * 20
+        unsent = f"{rule}\n❯ hello there\n{rule}"
+        panes = iter(["❯"] + [unsent] * 4)
+        with patch.object(supervise, "capture_pane",
+                          side_effect=lambda *_a: next(panes)), \
+             patch.object(supervise, "send_key") as sk, \
+             patch.object(supervise, "send_text", return_value=True), \
+             patch.object(time, "sleep"):
+            self.assertFalse(supervise.prime_pane("qv-x", "hello there"))
+        self.assertEqual(sk.call_count, 3)
+
     def test_prompt_send_failure_propagates_false(self):
         with patch.object(supervise, "capture_pane", return_value="❯"), \
              patch.object(supervise, "send_text", return_value=False):
@@ -397,6 +422,32 @@ class TestLaunchNew(unittest.TestCase):
             supervise.launch_new(home, "claude", "/tmp", "one")
             supervise.launch_new(home, "claude", "/tmp", "two")
         self.assertEqual(len(set(seen)), 2)
+
+    def test_missing_folder_fails_before_tmux(self):
+        with patch.object(supervise, "launch_tmux") as tmux, \
+             patch.object(supervise.shutil, "which",
+                          return_value="/usr/bin/claude"):
+            ok, note, name = supervise.launch_new(
+                Path(tempfile.mkdtemp()), "claude", "/no/such/dir", "hi")
+        self.assertFalse(ok)
+        self.assertIn("no such folder", note)
+        tmux.assert_not_called()
+
+    def test_launch_id_rides_marker_into_adoption(self):
+        home = Path(tempfile.mkdtemp())
+        with patch.object(supervise, "launch_tmux", return_value="qv-n"), \
+             patch.object(supervise.shutil, "which",
+                          return_value="/usr/bin/claude"), \
+             patch.object(supervise, "prime_pane", return_value=True):
+            supervise.launch_new(home, "claude", "/tmp", "hi", launch_id="l9")
+        marker = supervise._pending_dir(home) / "qv-n.json"
+        self.assertEqual(json.loads(marker.read_text())["launch_id"], "l9")
+        with patch.object(supervise, "_pending_match",
+                          return_value="claude:new"):
+            adopted = supervise.adopt_pending(home, [])
+        self.assertEqual(adopted, ["claude:new"])
+        self.assertEqual(
+            supervise.meta_for(home, "claude:new")["launch_id"], "l9")
 
     def test_unknown_harness(self):
         ok, note, name = supervise.launch_new(

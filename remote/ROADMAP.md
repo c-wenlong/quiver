@@ -74,8 +74,8 @@ are server changes in `src/quiver/remote/`.
 - [ ] Swipe to attach or open
 - [x] Empty state: "No sessions on this machine yet"
 - [ ] More than one machine: a machine switcher in the hub chip
-- [ ] New-session sheet: machine, folder, harness, first prompt
-- [ ] Hub: a route to start a session (machine, cwd, harness, prompt)
+- [x] New-session sheet: machine, folder, harness, first prompt
+- [x] Hub: a route to start a session (machine, cwd, harness, prompt): `POST /v1/sessions` answers a `launch_id`, and `GET /v1/launches/<id>` names the session once it is adopted
 
 ### P5. Chat, observed
 - [x] Header: title, harness and folder, and a menu (copy session id, interrupt)
