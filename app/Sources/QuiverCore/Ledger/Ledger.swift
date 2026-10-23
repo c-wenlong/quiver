@@ -212,6 +212,11 @@ public actor Ledger {
     /// Another read-only connection, for the Pricing and Models pages'
     /// per-model usage: their first open must not wait out a scan either.
     let usageConnection = OSAllocatedUnfairLock<SQLiteDatabase?>(initialState: nil)
+    /// Read-only connections for the Overview's queries, one taken per
+    /// query and put back after, so several run side by side. Those
+    /// queries take seconds on a large ledger, and on this actor every one
+    /// of them stalled the launch scan behind it.
+    let overviewReaders = OSAllocatedUnfairLock<[SQLiteDatabase]>(initialState: [])
     /// Settings' "Hide accidental sessions": whether the calendar drops
     /// trivial sessions. Outside the actor because the block query runs
     /// on its own read connection.
@@ -1572,11 +1577,13 @@ public actor Ledger {
     /// One query in 15-minute buckets, each then placed in its local day:
     /// every timezone offset in use is a whole number of quarter hours, so a
     /// bucket never straddles midnight.
-    public func daily(in range: DateInterval, calendar: Calendar) -> [DailyUsage] {
+    ///
+    /// Off the actor, like the other Overview queries (`readGroups`).
+    @concurrent
+    public nonisolated func daily(in range: DateInterval, calendar: Calendar) async -> [DailyUsage] {
         let pricing = self.pricing
-        guard let groups = try? store.groups(
-            in: range, by: [.harness, .model], thresholds: pricing.thresholds, bucketSeconds: 900,
-            priceChanges: priceChanges(in: range, pricing: pricing))
+        guard let groups = try? readGroups(in: range, by: [.harness, .model], bucketSeconds: 900,
+                                           pricing: pricing)
         else { return [] }
         struct Key: Hashable { var day: Date, harness: String, model: String }
         var days: [Key: UsageTotals] = [:]
@@ -1593,20 +1600,23 @@ public actor Ledger {
     /// One account home's token totals per calendar day for one harness —
     /// every token kind summed, the same `totalTokens` Overview reports.
     /// Days with no usage are left out.
-    public func dailyTokens(harness: String, accountHome: String,
-                            in range: DateInterval, calendar: Calendar) -> [Date: Int] {
+    @concurrent
+    public nonisolated func dailyTokens(harness: String, accountHome: String,
+                                        in range: DateInterval, calendar: Calendar) async -> [Date: Int] {
         let key = AccountHistory.Key(harness: harness, homes: [accountHome])
-        return dailyTokens(for: [key], in: range, calendar: calendar)[key] ?? [:]
+        return await dailyTokens(for: [key], in: range, calendar: calendar)[key] ?? [:]
     }
 
     /// The same for several Accounts cards at once, from one grouped read:
-    /// each key sums the rows it `matches`.
-    public func dailyTokens(for keys: [AccountHistory.Key], in range: DateInterval,
-                            calendar: Calendar) -> [AccountHistory.Key: [Date: Int]] {
+    /// each key sums the rows it `matches`. Off the actor (`readGroups`):
+    /// the Accounts history asks at launch, beside the first scan.
+    @concurrent
+    public nonisolated func dailyTokens(for keys: [AccountHistory.Key], in range: DateInterval,
+                                        calendar: Calendar) async -> [AccountHistory.Key: [Date: Int]] {
         var result = Dictionary(keys.map { ($0, [Date: Int]()) }, uniquingKeysWith: { a, _ in a })
-        guard !keys.isEmpty, let groups = try? store.groups(
-            in: range, by: [.harness, .account], thresholds: pricing.thresholds,
-            bucketSeconds: 900)
+        guard !keys.isEmpty, let groups = try? readGroups(
+            in: range, by: [.harness, .account], bucketSeconds: 900, pricing: pricing,
+            splitsAtPriceChanges: false)
         else { return result }
         for group in groups {
             let harness = group.dimensions[.harness] ?? ""
@@ -1696,15 +1706,17 @@ public actor Ledger {
     }
 
     /// Usage per account home.
-    public func byAccount(in range: DateInterval) -> [String: UsageTotals] {
-        Dictionary(uniqueKeysWithValues: aggregate(in: range, by: [.account]).map { ($0.key[0], $0.value) })
+    @concurrent
+    public nonisolated func byAccount(in range: DateInterval) async -> [String: UsageTotals] {
+        Dictionary(uniqueKeysWithValues: readAggregate(in: range, by: [.account]).map { ($0.key[0], $0.value) })
     }
 
     /// The harness each account home's usage came from: the one with the
     /// most tokens, should a home ever hold more than one.
-    public func harnessByAccount(in range: DateInterval) -> [String: String] {
+    @concurrent
+    public nonisolated func harnessByAccount(in range: DateInterval) async -> [String: String] {
         var best: [String: (harness: String, tokens: Int)] = [:]
-        for (key, totals) in aggregate(in: range, by: [.account, .harness]) {
+        for (key, totals) in readAggregate(in: range, by: [.account, .harness]) {
             let (account, harness) = (key[0], key[1])
             guard !harness.isEmpty else { continue }
             if let current = best[account],
@@ -1715,8 +1727,50 @@ public actor Ledger {
     }
 
     /// Usage per harness.
-    public func byHarness(in range: DateInterval) -> [String: UsageTotals] {
-        Dictionary(uniqueKeysWithValues: aggregate(in: range, by: [.harness]).map { ($0.key[0], $0.value) })
+    @concurrent
+    public nonisolated func byHarness(in range: DateInterval) async -> [String: UsageTotals] {
+        Dictionary(uniqueKeysWithValues: readAggregate(in: range, by: [.harness]).map { ($0.key[0], $0.value) })
+    }
+
+    /// `aggregate` on a read-only connection, off the actor.
+    private nonisolated func readAggregate(in range: DateInterval,
+                                           by columns: [LedgerStore.Column]) -> [[String]: UsageTotals] {
+        let pricing = self.pricing
+        guard let groups = try? readGroups(in: range, by: columns, pricing: pricing) else { return [:] }
+        var result: [[String]: UsageTotals] = [:]
+        for group in groups {
+            let key = columns.map { group.dimensions[$0] ?? "" }
+            result[key, default: UsageTotals()].add(Self.price(group, pricing: pricing))
+        }
+        return result
+    }
+
+    /// Grouped usage read on one of `overviewReaders`. A WAL reader never
+    /// waits on the scan's write connection, and off the actor it never
+    /// waits on the scan's turn either.
+    /// `splitsAtPriceChanges: false` is for token-only reads, which no
+    /// price touches.
+    private nonisolated func readGroups(in range: DateInterval, by columns: [LedgerStore.Column],
+                                        bucketSeconds: Int? = nil, pricing: PricingCatalog,
+                                        splitsAtPriceChanges: Bool = true) throws -> [LedgerStore.PricedGroup] {
+        let reader = try overviewReaders.withLock { $0.popLast() } ?? openReadOnly()
+        defer { overviewReaders.withLock { $0.append(reader) } }
+        // One read transaction: both queries see the same commit, so a scan
+        // landing between them can't add a model whose price changes the
+        // grouping never split on.
+        try reader.execute("BEGIN")
+        // A transaction left open would fail every later BEGIN.
+        defer { if (try? reader.execute("COMMIT")) == nil { try? reader.execute("ROLLBACK") } }
+        let used = splitsAtPriceChanges && pricing.hasHistory ? try reader.modelsAndTiers() : []
+        return try reader.pricedGroups(
+            in: range, by: columns, thresholds: pricing.thresholds, bucketSeconds: bucketSeconds,
+            priceChanges: Self.priceChanges(in: range, used: used, pricing: pricing))
+    }
+
+    private nonisolated func openReadOnly() throws -> SQLiteDatabase {
+        let path = activityURL.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+            ?? activityURL.path
+        return try SQLiteDatabase(readOnlyURI: "file:\(path)?mode=ro")
     }
 
     private func aggregate(in range: DateInterval, by columns: [LedgerStore.Column]) -> [[String]: UsageTotals] {
@@ -1854,3 +1908,4 @@ struct ClaudeFileParser: FileLogParser {
     }
     func savedState() -> Data? { nil }
 }
+
