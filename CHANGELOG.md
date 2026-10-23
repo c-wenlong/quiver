@@ -19,6 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A non-Linux hub says the page needs Linux. docs/web-app/compute.md
   has the sources and the differences.
 
+- **Web app: MCP servers.** The Mac app's MCP servers page in the
+  browser, read only: every server the hub machine's harnesses configure
+  as a server × harness grid, split into Local (run from a folder in
+  `~/.quiver/mcp/servers`, with its git branch and changes) and Remote,
+  with the All / Out of sync / Conflicts tabs, Compare chips, lettered
+  definitions where harnesses disagree, and a sheet per server with its
+  transport, a redacted command line or URL, env and header key names,
+  which harnesses hold which definition and the `swe mcp sync` command
+  that would even them out. "Check health" runs `swe mcp status`'s probe
+  on request only, in parallel under a 30-second cap. Add, Sync, Remove
+  and secret values stay in `swe` and the Mac app.
+
 - **Web app: pages as plugins.** A web app page is now one module in
   `quiver/webapp/pages/` (`GET /v1/app/<page>`, optional `POST
   /v1/app/<page>/<action>`) and one script in `static/pages/`, served
