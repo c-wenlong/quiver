@@ -118,8 +118,6 @@ public final class GitHubModel {
             if !Self.tabs(oneRepo: shownRepo != nil).contains(tab) { tab = .pulls }
         }
     }
-    /// The list's quick filters (failing CI, drafts, bots).
-    public var rowFilter = RepoRowFilter()
 
     public private(set) var boards: [String: RepoBoard] = [:]
     /// Which (repo, tab) is mid-fetch, so rows keep their last data

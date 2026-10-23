@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Repositories: state as icons, search instead of chips.** A PR row's
+  conflicts, review and CI show as icons only, centred in the row, with
+  the meaning on hover ("Ready to merge", "Merge conflicts"); running CI
+  spins. The Failing CI, Drafts and Hide bots chips are gone: the search
+  field on the tab row (⌘K) matches state words such as "failing",
+  "draft", "conflict", "approved" or "bot". It replaces the jump dialog,
+  since Add repository already searches your repos and orgs. Repo headers
+  are flat strips, with only the first taking the box's rounded top.
+
 - **Repositories: the rail runs the full height and holds the controls.**
   The header buttons move into the page: the manage gear and Refresh (⌘R)
   sit beside the rail's filter, "Add repository" is the rail's last row,

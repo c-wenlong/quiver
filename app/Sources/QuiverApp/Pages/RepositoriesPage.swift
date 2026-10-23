@@ -8,13 +8,12 @@ import SwiftUI
 /// releases, tags and branches), folds repos with nothing to show, and
 /// is where a drag reorders the pins; the list follows its order. The
 /// filter narrows by repo name (a name-matched repo shows its whole
-/// board) and by row text; the chips by CI, drafts and bots. Rows link
+/// board) and by row text, state words included. Rows link
 /// straight to GitHub. Every visible repo's tab refetches on a minute
 /// timer while the page is open.
 struct RepositoriesPage: View {
     @Environment(AppModel.self) private var app
     @State private var adding = false
-    @State private var jumping = false
     /// The PR whose detail sheet is open, if any.
     @State private var detail: PrSelection?
 
@@ -31,7 +30,7 @@ struct RepositoriesPage: View {
 
     /// The page's own frame rather than `Page`: the rail runs the full
     /// height beside the title, and the header buttons live in the
-    /// rail (gear, Refresh, Add repository) and on the tab row (jump).
+    /// rail (gear, Refresh, Add repository) and on the tab row (search).
     /// Same padding and width cap as `Page`.
     private var dashboard: some View {
         HStack(alignment: .top, spacing: 24) {
@@ -94,9 +93,6 @@ struct RepositoriesPage: View {
         .sheet(isPresented: $adding) {
             AddRepoSheet()
         }
-        .sheet(isPresented: $jumping) {
-            RepoJumper()
-        }
         .sheet(item: $detail) { selection in
             PrDetailSheet(selection: selection)
         }
@@ -151,33 +147,18 @@ struct RepositoriesPage: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .bottom, spacing: 12) {
                     // Tabs expands for the full-width underline; the
-                    // jump rides the right end of the same row.
+                    // search rides the right end of the same row. It
+                    // matches repo names, row text and state words
+                    // ("failing", "draft", "conflict", "bot").
                     Tabs(options: GitHubModel.tabs(oneRepo: model.shownRepo != nil)
                             .map { ($0, $0.title) },
                          selection: $model.tab, style: .underline)
                         .layoutPriority(1)
-                    Button { jumping = true } label: {
-                        Image(systemName: "magnifyingglass")
-                    }
-                    .iconButton()
-                    .keyboardShortcut("k", modifiers: .command)
-                    .help("Jump to a repository (⌘K)")
-                    .padding(.bottom, 4)
-                }
-                let options = RepoRowFilter.options(for: model.tab)
-                if !options.isEmpty {
-                    HStack(spacing: 6) {
-                        ForEach(options) { option in
-                            FilterChip(title: option.title,
-                                       isOn: model.rowFilter.on.contains(option)) {
-                                if model.rowFilter.on.contains(option) {
-                                    model.rowFilter.on.remove(option)
-                                } else {
-                                    model.rowFilter.on.insert(option)
-                                }
-                            }
-                        }
-                    }
+                    SearchField(prompt: "Search", text: $model.filter,
+                                focusShortcut: KeyboardShortcut("k", modifiers: .command))
+                        .frame(minWidth: 120, maxWidth: 260)
+                        .help("Search titles, branches, authors and states like failing or draft (⌘K)")
+                        .padding(.bottom, 4)
                 }
                 if let error = model.pinError ?? model.actionError {
                     ErrorCard(message: error)
@@ -233,14 +214,13 @@ struct RepositoriesPage: View {
             VStack(spacing: 0) {
                 ForEach(Array(repos.enumerated()), id: \.element.id) { index, pin in
                     if index > 0 { Divider().overlay(Theme.border) }
-                    RepoGroupHeader(repo: pin.name,
+                    RepoGroupHeader(repo: pin.name, isFirst: index == 0,
                                     loading: model.loading.contains(.init(repo: pin.name, tab: model.tab)))
                         .id(pin.name)
                     Divider().overlay(Theme.rowDivider)
                     RepoSurfaces(repo: pin.name, board: model.board(for: pin.name),
                                  tab: model.tab, query: model.query,
                                  unfiltered: model.showsAllRows(pin.name),
-                                 rowFilter: model.rowFilter,
                                  preview: 5,
                                  expandEdge: index == repos.count - 1 ? .cardBottom : .inset) {
                         detail = PrSelection(repo: pin.name, number: $0)
@@ -255,8 +235,8 @@ struct RepositoriesPage: View {
     }
 
     private var emptyText: String {
-        if model.rowFilter.isActive || !model.query.isEmpty {
-            return "Nothing matches these filters."
+        if !model.query.isEmpty {
+            return "Nothing matches \"\(model.query)\"."
         }
         let place = model.shownRepo ?? "your pinned repos"
         return switch model.tab {
@@ -277,6 +257,9 @@ private struct RepoGroupHeader: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openURL) private var openURL
     var repo: String
+    /// The top header takes the box's rounded top corners; the rest are
+    /// plain strips across it.
+    var isFirst: Bool
     var loading: Bool
     @State private var hovering = false
 
@@ -311,31 +294,11 @@ private struct RepoGroupHeader: View {
         .font(Theme.control)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(Theme.subtle)
+        .background(Theme.subtle, in: isFirst
+            ? AnyShape(UnevenRoundedRectangle(topLeadingRadius: Theme.cardRadius,
+                                              topTrailingRadius: Theme.cardRadius))
+            : AnyShape(Rectangle()))
         .onHover { hovering = $0 }
-    }
-}
-
-/// A list chip: on, it narrows the rows (and the rail's counts).
-private struct FilterChip: View {
-    var title: String
-    var isOn: Bool
-    var toggle: () -> Void
-
-    var body: some View {
-        Button(action: toggle) {
-            Text(title)
-                .font(Theme.control)
-                .foregroundStyle(isOn ? Theme.textPrimary : Theme.textSecondary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(isOn ? Theme.navActive : .clear, in: Capsule())
-                .overlay(Capsule().strokeBorder(isOn ? Theme.borderStrong : Theme.border,
-                                                lineWidth: Theme.hairline))
-                .contentShape(Capsule())
-        }
-        .plainButton(cornerRadius: 999)
-        .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 }
 
@@ -389,7 +352,10 @@ private struct RepoRail: View {
         @Bindable var model = model
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 4) {
-                SearchField(prompt: "Filter", text: $model.filter)
+                Text("Pinned repos")
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    .padding(.leading, 8)
+                Spacer(minLength: 0)
                 RailIconButton(symbol: "gearshape", help: "Manage pinned repositories") {
                     managing = true
                 }
@@ -572,8 +538,6 @@ struct RepoSurfaces: View {
     /// time and the end sentinel grows the fetch window. Off here, the
     /// dashboard's 3-row collapse preview stays.
     var scrollFetch = false
-    /// The list's chips; the focus page leaves them off.
-    var rowFilter = RepoRowFilter()
     /// Rows a list shows before its "Show N more" row.
     var preview = 3
     /// Where that row sits: the bottom of a card, or mid-list.
@@ -673,15 +637,9 @@ struct RepoSurfaces: View {
     static let tagParts: (GhTag) -> [String?] = \.searchText
     static let branchParts: (GhBranch) -> [String?] = \.searchText
 
-    /// The rows the chips keep.
-    private func kept<Row>(_ state: Loadable<[Row]>, _ keep: (Row) -> Bool) -> Loadable<[Row]> {
-        guard case .loaded(let rows) = state, rowFilter.isActive else { return state }
-        return .loaded(rows.filter(keep))
-    }
-
-    /// The tab's rows after the search filter and the chips.
+    /// The tab's rows after the search filter.
     private func pullsState() -> Loadable<[GhPr]> {
-        kept(filtered(board.pulls, Self.prParts), rowFilter.keeps)
+        filtered(board.pulls, Self.prParts)
     }
 
     @ViewBuilder
@@ -692,30 +650,25 @@ struct RepoSurfaces: View {
                     expandKey: "\(repo):pulls", expanded: $expanded,
                     preview: preview, edge: expandEdge,
                     window: window(for: .pulls, rows: count(state))) { pr in
-            OpenRow(act: { openPr(pr.number) }) {
-                PrIcon(state: pr.state, draft: pr.draft)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 8) {
-                        Text(pr.title).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
-                            .lineLimit(1).truncationMode(.tail)
-                        ForEach(pr.labels.prefix(3), id: \.self) { Badge($0) }
+            // Centred: the state icons sit mid-row; the PR icon stays
+            // on the title line.
+            OpenRow(alignment: .center, act: { openPr(pr.number) }) {
+                HStack(alignment: .top, spacing: 12) {
+                    PrIcon(state: pr.state, draft: pr.draft)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 8) {
+                            Text(pr.title).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                                .lineLimit(1).truncationMode(.tail)
+                            ForEach(pr.labels.prefix(3), id: \.self) { Badge($0) }
+                        }
+                        Text("#\(pr.number) · \(pr.author) · \(pr.branch) → \(pr.base)"
+                             + (pr.updatedAt.date.map { " · \(UsageFormat.ago($0, now: .now))" } ?? ""))
+                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1).truncationMode(.middle)
                     }
-                    Text("#\(pr.number) · \(pr.author) · \(pr.branch) → \(pr.base)"
-                         + (pr.updatedAt.date.map { " · \(UsageFormat.ago($0, now: .now))" } ?? ""))
-                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1).truncationMode(.middle)
                 }
                 Spacer(minLength: 12)
-                if pr.mergeable == .conflicting {
-                    Label {
-                        Text("Conflicts")
-                    } icon: {
-                        OcticonView(icon: .alert, size: 12)
-                    }
-                    .font(Theme.caption).foregroundStyle(Theme.warningText)
-                }
-                ReviewMark(decision: pr.reviewDecision)
-                ChecksMark(checks: pr.checks)
+                PrStateIcons(pr: pr)
                 if model.worktreeBusy.contains("\(repo)#\(pr.number)") {
                     ProgressView().controlSize(.small)
                 }
@@ -745,7 +698,7 @@ struct RepoSurfaces: View {
     }
 
     private func issuesState() -> Loadable<[GhIssue]> {
-        kept(filtered(board.issues, Self.issueParts), rowFilter.keeps)
+        filtered(board.issues, Self.issueParts)
     }
 
     @ViewBuilder
@@ -781,7 +734,7 @@ struct RepoSurfaces: View {
     }
 
     private func actionsState() -> Loadable<[GhRun]> {
-        kept(filtered(board.runs, Self.runParts), rowFilter.keeps)
+        filtered(board.runs, Self.runParts)
     }
 
     @ViewBuilder
@@ -1150,6 +1103,7 @@ private struct ScrollSentinel: View {
 /// workbench instead. Rows bleed to the callout's edges, so the hover
 /// fill runs wall to wall and the content carries the inset.
 private struct OpenRow<Content: View>: View {
+    var alignment: VerticalAlignment = .top
     var act: () -> Void
     @ViewBuilder var content: Content
     @State private var hovering = false
@@ -1160,14 +1114,16 @@ private struct OpenRow<Content: View>: View {
         self.content = content()
     }
 
-    init(act: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+    init(alignment: VerticalAlignment = .top, act: @escaping () -> Void,
+         @ViewBuilder content: () -> Content) {
+        self.alignment = alignment
         self.act = act
         self.content = content()
     }
 
     var body: some View {
         Button(action: act) {
-            HStack(alignment: .top, spacing: 12) { content }
+            HStack(alignment: alignment, spacing: 12) { content }
                 .padding(.vertical, 10)
                 .padding(.horizontal, 14)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1334,16 +1290,81 @@ struct ReviewMark: View {
     }
 }
 
+/// The list row's PR state as icons only, a little larger than the
+/// labelled marks: conflicts, review, then CI. Running CI spins. The
+/// words come back on hover.
+struct PrStateIcons: View {
+    var pr: GhPr
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if pr.mergeable == .conflicting {
+                OcticonView(icon: .alert, size: 16)
+                    .foregroundStyle(Theme.warningText)
+                    .hoverTip("This branch has merge conflicts to resolve.", title: "Merge conflicts")
+            }
+            switch pr.reviewDecision {
+            case .approved:
+                icon("checkmark.seal.fill", Theme.success)
+                    .hoverTip("A reviewer approved this pull request.", title: "Approved")
+            case .changesRequested:
+                icon("pencil.circle.fill", Theme.danger)
+                    .hoverTip("A reviewer asked for changes.", title: "Changes requested")
+            case .reviewRequired:
+                icon("eye.circle.fill", Theme.warning)
+                    .hoverTip("Needs an approving review before it can merge.", title: "Review needed")
+            case .none?, nil:
+                EmptyView()
+            }
+            switch pr.checks {
+            case .passing:
+                icon("checkmark.circle.fill", Theme.success)
+                    .hoverTip(readyToMerge ? "Checks passed and nothing blocks the merge."
+                                           : "Checks passed.",
+                              title: readyToMerge ? "Ready to merge" : "Checks passed")
+            case .failing:
+                icon("xmark.circle.fill", Theme.danger)
+                    .hoverTip("At least one check failed.", title: "Checks failing")
+            case .running:
+                icon("arrow.triangle.2.circlepath", Theme.warning)
+                    .symbolEffect(.rotate, options: .repeating)
+                    .hoverTip("Checks are still running.", title: "Running")
+            case .unknown:
+                icon("questionmark.circle", Theme.textMuted)
+                    .hoverTip("GitHub hasn't reported a CI state.", title: "CI unknown")
+            case .none?, nil:
+                EmptyView()
+            }
+        }
+    }
+
+    /// Passing checks with nothing else in the way: GitHub confirmed
+    /// no conflicts (unknown doesn't count), no outstanding review,
+    /// not a draft.
+    private var readyToMerge: Bool {
+        !pr.draft && pr.mergeable == .mergeable
+            && pr.reviewDecision != .changesRequested && pr.reviewDecision != .reviewRequired
+    }
+
+    private func icon(_ symbol: String, _ color: Color) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 17))
+            .foregroundStyle(color)
+    }
+}
+
 /// A workflow run's status: running marks spin yellow, finished runs
 /// take their conclusion's colour.
 private struct RunIcon: View {
     var status: String?
     var conclusion: String?
+    private var running: Bool { status == "in_progress" || status == "queued" }
     var body: some View {
         Image(systemName: symbol).font(.system(size: 15)).foregroundStyle(color)
+            .symbolEffect(.rotate, options: .repeating, isActive: running)
     }
     private var symbol: String {
-        if status == "in_progress" || status == "queued" { return "arrow.triangle.2.circlepath" }
+        if running { return "arrow.triangle.2.circlepath" }
         switch conclusion {
         case "success": return "checkmark.circle.fill"
         case "failure": return "xmark.circle.fill"
