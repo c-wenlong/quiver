@@ -285,7 +285,7 @@ struct UsageTabSettings: View {
                 SectionHeading(title: "Usage tab", detail: "Limits, incidents and spend.")
                 SettingsCard {
                     SettingRow(title: "Show incidents",
-                               detail: "A line at the top when a service your harnesses use has a problem.") {
+                               detail: "A line at the top when a service your harnesses use has a problem, or Cloudflare, Vercel or npm has a major outage.") {
                         SettingSwitch(title: "Show incidents", isOn: $app.popup.showIncidents)
                     }
                     SettingsDivider()
@@ -412,7 +412,7 @@ struct SourceSettingsRow: View {
                 Text(row.title).font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
                 Spacer(minLength: 16)
                 SettingSwitch(title: "Show \(row.title)",
-                              isOn: Binding(get: { shown }, set: setShown))
+                              isOn: Binding(get: { shown }, set: { setShown($0) }))
             }
             .padding(.vertical, 12)
             if !row.windows.isEmpty {

@@ -16,7 +16,7 @@ public enum AccountSignIn {
     /// unknown and Sign in stays.
     public static func action(cli: String?, harness: String,
                               installed: Bool?) -> Action {
-        guard let cli else { return .signIn }
+        guard cli != nil else { return .signIn }
         return installed == false ? .install(harness: harness) : .signIn
     }
 

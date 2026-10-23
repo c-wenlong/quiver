@@ -7,7 +7,7 @@ import SwiftUI
 /// the catalog knows act on plugins; on a fresh Mac that is both.
 struct AddMarketplaceSheet: View {
     @Environment(AppModel.self) private var app
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSheet) private var dismiss
 
     @State private var source = ""
     @State private var harnesses: [String] = ["claude", "codex"]

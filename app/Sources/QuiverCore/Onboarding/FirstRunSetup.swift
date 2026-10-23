@@ -185,10 +185,12 @@ public final class FirstRunSetupModel {
     /// each later run (sent without --adopt) replaces with adopted: null.
     private var adopted = false
 
-    private let swe: @Sendable () -> SweClient
+    /// Asked on the main actor at each call, so the app's current swe
+    /// (whose path can change while the sheet is open) answers.
+    private let swe: @MainActor () -> SweClient
     private var generation = 0
 
-    public init(swe: @escaping @Sendable () -> SweClient, starred: Set<String> = []) {
+    public init(swe: @escaping @MainActor () -> SweClient, starred: Set<String> = []) {
         self.swe = swe
         selected = starred
     }

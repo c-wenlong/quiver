@@ -23,7 +23,7 @@ from quiver.sessions.engines import (
     strip_file_uri,
 )
 from quiver.sessions.engines.jsonl_engine import event_cwd
-from quiver.sessions import failures, parse_cache
+from quiver.sessions import failures, opencode_store, parse_cache
 from quiver.sessions.models import Session
 
 
@@ -32,26 +32,13 @@ from quiver.sessions.models import Session
 # ---------------------------------------------------------------------------
 
 def _opencode_family_query(conn) -> str:
-    """Session rows, with ``workspace.directory`` as the path fallback when present.
+    """Session rows from ``session`` and opencode 2.x's ``session_v2``, once each.
 
-    Older opencode (and Kilo today) keeps a ``directory`` on ``workspace``.
-    opencode 2.x reshaped that table into provider bindings with no
-    ``directory`` column, so joining it unconditionally fails the whole
-    query and every session vanishes. ``session.directory`` is NOT NULL in
-    both shapes, so the join is only ever a fallback.
+    See ``opencode_store.sessions_query``: 2.x writes new sessions only to
+    ``session_v2``, so reading ``session`` alone loses every session made
+    since the upgrade.
     """
-    try:
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(workspace)")}
-    except Exception:
-        cols = set()
-    if {"id", "directory"} <= cols:
-        return """
-            SELECT s.time_updated, s.title,
-                   COALESCE(NULLIF(s.directory, ''), w.directory), s.id
-            FROM session s
-            LEFT JOIN workspace w ON s.workspace_id = w.id
-        """
-    return "SELECT s.time_updated, s.title, s.directory, s.id FROM session s"
+    return opencode_store.sessions_query(conn)
 
 
 def parse_opencode():

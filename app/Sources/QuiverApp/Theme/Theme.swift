@@ -47,6 +47,11 @@ enum Theme {
     static let secondaryBackground = Color(light: "#fafafa", dark: "#171717")
     static let code = Color(light: "#f5f5f5", dark: "#17171799")
     static let dialog = Color(light: "#ffffff", dark: "#0a0a0a")
+    /// The dimmed layer over the window behind a sheet (`bg.scrim`).
+    static let scrim = Color(light: "#00000066", dark: "#00000099")
+    /// A sheet's drop shadow, the soft part of `shadow.dialog`: 0 20 60
+    /// at 25% in light, 65% in dark. The 1pt ring is the card's hairline.
+    static let dialogShadow = Color(light: "#00000040", dark: "#000000a6")
     /// A footer link under the pointer.
     static let footerLinkHover = Color(light: "#404040", dark: "#d4d4d4")
     /// A period or table tab under the pointer, on a card.
@@ -147,6 +152,14 @@ enum Theme {
     /// A small form sheet's padding and width.
     static let formSheetPadding: CGFloat = 20
     static let formSheetWidth: CGFloat = 420
+    /// A sheet card's corners (`radius.2xl`, as TokenTracker's dialogs)
+    /// and the room it keeps from the window's edges.
+    static let dialogRadius: CGFloat = 16
+    static let sheetMargin: CGFloat = 24
+    /// A sheet fades in over `motion.duration.fade` and settles from 98%
+    /// over `motion.duration.dialog`, both on `motion.easing.emphasized`.
+    static let sheetFade: Animation = .timingCurve(0.16, 1, 0.3, 1, duration: 0.22)
+    static let sheetSettle: Animation = .timingCurve(0.16, 1, 0.3, 1, duration: 0.26)
     /// The quick fade behind every hover highlight and expand toggle.
     static let fadeDuration: TimeInterval = 0.15
 

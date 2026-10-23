@@ -27,7 +27,7 @@ struct RemoteSection: View {
             model = remote
             await remote.load()
         }
-        .sheet(isPresented: showTicket, onDismiss: { model?.dismissTicket() }) {
+        .quiverSheet(isPresented: showTicket, onDismiss: { model?.dismissTicket() }) {
             if let model { PairSheet(model: model, target: $target) }
         }
     }
