@@ -68,14 +68,16 @@ public struct HarnessShare: Sendable, Equatable, Identifiable {
 }
 
 extension Array where Element == HarnessShare {
-    /// Most spend first, then most tokens (for harnesses with no priced
-    /// spend), keeping the current order between equals.
+    /// Most spend first; harnesses with no priced spend after, most tokens
+    /// first; otherwise the current order (Settings') between equals.
     public func sortedBySpend() -> [HarnessShare] {
         enumerated().sorted { a, b in
             if a.element.totals.costUSD != b.element.totals.costUSD {
                 return a.element.totals.costUSD > b.element.totals.costUSD
             }
-            if a.element.totals.totalTokens != b.element.totals.totalTokens {
+            // Tokens only order harnesses with no priced spend at all; an
+            // equal positive spend keeps Settings' order.
+            if a.element.totals.costUSD == 0, a.element.totals.totalTokens != b.element.totals.totalTokens {
                 return a.element.totals.totalTokens > b.element.totals.totalTokens
             }
             return a.offset < b.offset

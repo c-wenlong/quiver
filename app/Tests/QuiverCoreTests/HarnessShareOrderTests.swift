@@ -26,4 +26,9 @@ struct HarnessShareOrderTests {
         let shares = [share("x", cost: 5), share("y", cost: 5), share("z", cost: 5)]
         #expect(shares.sortedBySpend().map(\.harness) == ["x", "y", "z"])
     }
+
+    @Test func equalPositiveSpendKeepsSettingsOrderWhateverTheTokens() {
+        let shares = [share("x", cost: 5, tokens: 10), share("y", cost: 5, tokens: 9_000)]
+        #expect(shares.sortedBySpend().map(\.harness) == ["x", "y"])
+    }
 }
