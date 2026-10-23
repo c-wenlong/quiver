@@ -258,6 +258,133 @@ import Testing
         #expect(FanKeys.read(smc).isEmpty)
     }
 
+    @Test func aRefusalSaysWhyOnceAndIsLogged() {
+        let smc = FakeSMC.twoFans(gate: false)
+        smc.refuseModeWrites = .max
+        var reports: [FanHelperStatus] = []
+        var lines: [String] = []
+        var hold = hold(smc, [ask(0.5), ask(0.5), ask(0.5)])
+        hold.report = { reports.append($0) }
+        hold.log = { lines.append($0) }
+        hold.run()
+        #expect(reports.map(\.state) == [.refused])
+        #expect(reports.first?.answers(ask(0.5)) == true)
+        #expect(reports.first?.reason
+            == "The SMC refused manual mode for Fan 1 (F0Md: refused), and this Mac has no Ftst gate to open.")
+        #expect(lines.contains("Fan 1: F0Md type 'ui8 ' size 1 bytes 00 = 0.0; write 1 -> refused"))
+        #expect(lines.contains("Fan 1: Ftst absent, no gate to open"))
+    }
+
+    @Test func aGateThatDoesNotHelpSaysSo() {
+        let smc = FakeSMC.twoFans()
+        smc.refuseModeWrites = .max
+        var reports: [FanHelperStatus] = []
+        var hold = hold(smc, [ask(0.5)])
+        hold.report = { reports.append($0) }
+        hold.run()
+        #expect(reports.first?.reason == "The SMC refused manual mode for Fan 1 (F0Md: refused), even with Ftst open.")
+    }
+
+    @Test func aHeldRequestIsReportedOnce() {
+        var reports: [FanHelperStatus] = []
+        var hold = hold(FakeSMC.twoFans(gate: false), [ask(0.5), ask(0.5), ask(0.7, at: 2)])
+        hold.report = { reports.append($0) }
+        hold.run()
+        #expect(reports.map(\.state) == [.held, .held])
+        #expect(reports.last?.answers(ask(0.7, at: 2)) == true)
+    }
+
+    @Test func aRequestFromNoRunningQuiverIsReported() {
+        var reports: [FanHelperStatus] = []
+        var hold = hold(FakeSMC.twoFans(gate: false), [ask(1), ask(1)], ownerAlive: { _ in false })
+        hold.report = { reports.append($0) }
+        hold.run()
+        #expect(reports.map(\.state) == [.refused])
+        #expect(reports.first?.reason?.contains("pid 77") == true)
+    }
+
+    @Test func aWiderModeKeyIsWrittenAtItsOwnSize() {
+        let smc = FakeSMC.twoFans(gate: false)
+        smc.replace("F0Md", SMCValue(type: "ui16", bytes: [0, 0]))
+        var modeWrites: [[UInt8]] = []
+        smc.onWrite = { key, bytes in if key == "F0Md" { modeWrites.append(bytes) } }
+        hold(smc, [ask(0.5)]).run()
+        // Manual as a big-endian 1, then back to 0, never a lone byte.
+        #expect(modeWrites == [[0, 1], [0, 0]])
+    }
+
+    @Test func aModeKeyOfAnUnknownTypeIsRefusedByName() {
+        let smc = FakeSMC.twoFans(gate: false)
+        smc.replace("F0Md", SMCValue(type: "{xyz", bytes: [0, 0, 0]))
+        var reports: [FanHelperStatus] = []
+        var hold = hold(smc, [ask(0.5)])
+        hold.report = { reports.append($0) }
+        hold.run()
+        #expect(reports.first?.reason
+            == "Fan 1's mode key F0Md is '{xyz' with 3 bytes, which the fan helper doesn't know how to write.")
+    }
+
+    @Test func valuesEncodeInTheKeysOwnTypeAndSize() {
+        #expect(SMCValue(type: "ui8 ", bytes: [0]).encoding(1) == [1])
+        #expect(SMCValue(type: "flag", bytes: [0]).encoding(1) == [1])
+        #expect(SMCValue(type: "ui16", bytes: [0, 0]).encoding(1) == [0, 1])
+        #expect(SMCValue(type: "ui32", bytes: [0, 0, 0, 0]).encoding(1) == [0, 0, 0, 1])
+        #expect(SMCValue(type: "si16", bytes: [0, 0]).encoding(1) == nil)
+        #expect(SMCValue(type: "ui8 ", bytes: [0]).encoding(256) == nil)
+        // Whatever is written reads back as the same number.
+        for type in ["ui8 ", "ui16", "ui32", "flt "] {
+            let key = SMCValue(type: type, bytes: Array(repeating: 0, count: type == "ui8 " ? 1 : type == "ui16" ? 2 : 4))
+            for value: UInt32 in [0, 1, 3] {
+                #expect(key.encoding(value).flatMap { SMCValue(type: type, bytes: $0).number } == Double(value))
+            }
+        }
+    }
+
+    @Test func theSurveyListsEveryFanKeyAndTheGate() {
+        let smc = FakeSMC.twoFans()
+        smc.rename("F0Md", to: "F0md")
+        let lines = FanKeys.survey(smc)
+        #expect(lines.count == 1 + 2 * 6 + 1)
+        #expect(lines.first == "FNum: type 'ui8 ' size 1 bytes 02 = 2.0")
+        #expect(lines.contains("F0Md: absent"))
+        #expect(lines.contains("F0md: type 'ui8 ' size 1 bytes 00 = 0.0"))
+        #expect(lines.last == "Ftst: type 'ui8 ' size 1 bytes 00 = 0.0")
+        #expect(FanKeys.survey(FakeSMC()) == ["FNum: absent", "Ftst: absent"])
+    }
+
+    @Test func theHelperStatusRoundTripsAndAnswersOnlyItsRequest() throws {
+        let url = FileManager.default.temporaryDirectory.appending(path: "fan-status-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(FanHelperStatus.read(at: url) == nil)
+        let request = ask(0.5, at: 1_800_000_000.123)
+        let status = FanHelperStatus(state: .refused, reason: "no", request: request,
+                                     at: Date(timeIntervalSince1970: 5))
+        try status.write(to: url)
+        #expect(FanHelperStatus.read(at: url) == status)
+        let mode = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+        #expect(mode == 0o644)
+        #expect(status.answers(request))
+        #expect(!status.answers(ask(0.5, at: 2)))
+        #expect(!status.answers(ask(0.5, owner: 78, at: 1_800_000_000.123)))
+        #expect(!status.answers(nil))
+        #expect(!FanHelperStatus(state: .ready).answers(request))
+    }
+
+    @Test func aToolThatHangsIsKilledAndCountsAsNoAnswer() async {
+        let started = Date()
+        let (yes, no, hung, missing) = await runOffPool {
+            (FanControl.exitStatus(of: "/usr/bin/true", [], within: 5),
+             FanControl.exitStatus(of: "/usr/bin/false", [], within: 5),
+             FanControl.exitStatus(of: "/bin/sleep", ["30"], within: 0.2),
+             FanControl.exitStatus(of: "/nonexistent/\(UUID().uuidString)", [], within: 1))
+        }
+        #expect(yes == 0)
+        #expect(no == 1)
+        #expect(hung == nil)
+        #expect(missing == nil)
+        #expect(Date().timeIntervalSince(started) < 5)
+    }
+
     // MARK: The helper's arguments and install
 
     @Test func helperArgumentsParse() {
@@ -371,12 +498,16 @@ import Testing
 
     @MainActor
     private func control(_ smc: FakeSMC, installer: FakeInstaller,
-                         clock: Box<Date> = Box(Date(timeIntervalSince1970: 1_800_000_000))) -> (FanControl, URL) {
+                         clock: Box<Date> = Box(Date(timeIntervalSince1970: 1_800_000_000)),
+                         status: Box<FanHelperStatus?> = Box(nil),
+                         sleeper: Sleeper = Sleeper()) -> (FanControl, URL) {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "fan-\(UUID().uuidString)/control.json")
-        let control = FanControl(control: url, reader: { FanKeys.read(smc) }, installer: installer,
+        let control = FanControl(control: url, reader: { FanKeys.read(smc) }, status: { status.value },
+                                 installer: installer,
                                  isInstalled: { _ in installer.checks += 1; return installer.installed.value },
                                  executable: "/Apps/Quiver", owner: 77, clock: { clock.value },
+                                 sleep: { await sleeper.sleep($0) },
                                  defaults: UserDefaults(suiteName: "fan-\(UUID().uuidString)")!)
         return (control, url)
     }
@@ -598,7 +729,7 @@ import Testing
         let url = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)/control.json")
         let fans = FanControl(control: url,
                               reader: { if gate.armed { gate.parked.signal(); gate.release.wait() }; return FanKeys.read(smc) },
-                              installer: installer, isInstalled: { _ in true }, executable: "/Apps/Quiver", owner: 77,
+                              status: { nil }, installer: installer, isInstalled: { _ in true }, executable: "/Apps/Quiver", owner: 77,
                               defaults: UserDefaults(suiteName: "fan-\(UUID().uuidString)")!)
         await fans.refresh()
         fans.thresholdEnabled = true
@@ -665,17 +796,116 @@ import Testing
         #expect(FanControlFile.request(at: url) == nil)
     }
 
+    @MainActor @Test func startingGivesUpOnItsOwnClockWhileAReadHangs() async {
+        let smc = FakeSMC.twoFans()
+        let gate = ReadGate()
+        let sleeper = Sleeper()
+        let installer = FakeInstaller()
+        installer.installed.value = true
+        let url = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)/control.json")
+        let fans = FanControl(control: url,
+                              reader: { if gate.armed { gate.parked.signal(); gate.release.wait() }; return FanKeys.read(smc) },
+                              status: { nil }, installer: installer, isInstalled: { _ in true },
+                              executable: "/Apps/Quiver", owner: 77, sleep: { await sleeper.sleep($0) },
+                              defaults: UserDefaults(suiteName: "fan-\(UUID().uuidString)")!)
+        await fans.refresh()
+        gate.armed = true
+        let takeover = Task { await fans.applyManual() }
+        await runOffPool { gate.parked.wait() }
+        #expect(fans.phase == .starting)
+        // The read never comes back, and no refresh settles anything: the
+        // deadline set when Starting began ends it anyway.
+        let deadline = fans.deadline
+        sleeper.fire()
+        await deadline?.value
+        #expect(fans.phase == .failed(FanControl.notTaken))
+        #expect(FanControlFile.request(at: url) == nil)
+        gate.armed = false
+        gate.release.signal()
+        await takeover.value
+        #expect(fans.phase == .failed(FanControl.notTaken))
+    }
+
+    @MainActor @Test func aDeadlineFromAnEarlierStartChangesNothing() async {
+        let smc = FakeSMC.twoFans()
+        let sleeper = Sleeper()
+        let installer = FakeInstaller()
+        installer.installed.value = true
+        let (fans, url) = control(smc, installer: installer, sleeper: sleeper)
+        await fans.refresh()
+        await fans.applyManual()
+        let first = fans.deadline
+        #expect(first != nil)
+        smc.set("F0Md", 1); smc.set("F1Md", 1)
+        await fans.refresh()
+        #expect(fans.phase == .manual)
+        #expect(fans.deadline == nil)
+        sleeper.fire()
+        await first?.value
+        #expect(fans.phase == .manual)
+        #expect(FanControlFile.request(at: url) != nil)
+    }
+
+    @MainActor @Test func aRefusalShowsTheHelpersReasonAtOnce() async throws {
+        let status = Box<FanHelperStatus?>(nil)
+        let installer = FakeInstaller()
+        installer.installed.value = true
+        let (fans, url) = control(FakeSMC.twoFans(), installer: installer, status: status)
+        await fans.refresh()
+        await fans.applyManual()
+        #expect(fans.phase == .starting)
+        // An answer to an earlier request is not this one's.
+        status.value = FanHelperStatus(state: .refused, reason: "old", request: ask(0.5, at: 5))
+        await fans.refresh()
+        #expect(fans.phase == .starting)
+        let request = try #require(FanControlFile.request(at: url))
+        let reason = "The SMC refused manual mode for Fan 1 (F0md: refused), and this Mac has no Ftst gate to open."
+        status.value = FanHelperStatus(state: .refused, reason: reason, request: request)
+        await fans.refresh()
+        #expect(fans.phase == .failed(reason))
+        #expect(FanControlFile.request(at: url) == nil)
+    }
+
+    @MainActor @Test func aHelperThatCannotRunSaysWhy() async {
+        let status = Box<FanHelperStatus?>(nil)
+        let installer = FakeInstaller()
+        installer.installed.value = true
+        let (fans, _) = control(FakeSMC.twoFans(), installer: installer, status: status)
+        await fans.refresh()
+        await fans.applyManual()
+        status.value = FanHelperStatus(state: .error, reason: "The fan helper couldn't open the SMC.")
+        await fans.refresh()
+        #expect(fans.phase == .failed("The fan helper couldn't open the SMC."))
+    }
+
+    @MainActor @Test func manualModeThatNeverReadsBackTimesOutSayingSo() async throws {
+        let clock = Box(Date(timeIntervalSince1970: 1_800_000_000))
+        let status = Box<FanHelperStatus?>(nil)
+        let installer = FakeInstaller()
+        installer.installed.value = true
+        let (fans, url) = control(FakeSMC.twoFans(), installer: installer, clock: clock, status: status)
+        await fans.refresh()
+        await fans.applyManual()
+        // The helper says it holds them; the fans still read automatic.
+        status.value = FanHelperStatus(state: .held, request: try #require(FanControlFile.request(at: url)))
+        await fans.refresh()
+        #expect(fans.phase == .starting)
+        clock.value = clock.value.addingTimeInterval(FanControl.startTimeout + 1)
+        await fans.refresh()
+        #expect(fans.phase == .failed(FanControl.didNotStick))
+    }
+
     @MainActor @Test func theThresholdIsClampedAndRemembered() async {
         let defaults = UserDefaults(suiteName: "fan-\(UUID().uuidString)")!
         let url = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)/control.json")
-        let fans = FanControl(control: url, reader: { [] }, installer: FakeInstaller(),
+        let fans = FanControl(control: url, reader: { [] }, status: { nil }, installer: FakeInstaller(),
                               isInstalled: { _ in false }, defaults: defaults)
         #expect(fans.threshold == 80 && !fans.thresholdEnabled)
         fans.threshold = 140
         #expect(fans.threshold == 100)
         fans.threshold = 72
         fans.thresholdEnabled = true
-        let again = FanControl(control: url, reader: { [] }, installer: FakeInstaller(),
+        let again = FanControl(control: url, reader: { [] }, status: { nil }, installer: FakeInstaller(),
                                isInstalled: { _ in false }, defaults: defaults)
         #expect(again.threshold == 72 && again.thresholdEnabled)
         #expect(again.releaseBelow == 67)
@@ -723,6 +953,8 @@ import Testing
         func number(_ key: String) -> Double? { values[key]?.number }
         func put(_ key: String, _ celsius: Double) { values[key] = SMCValue(type: "flt ", bytes: SMCValue.float(celsius)) }
         func set(_ key: String, _ value: UInt8) { values[key]?.bytes = [value] }
+
+        func replace(_ key: String, _ value: SMCValue) { values[key] = value }
 
         func rename(_ key: String, to other: String) {
             values[other] = values.removeValue(forKey: key)
@@ -780,6 +1012,33 @@ import Testing
 
     final class Counter: @unchecked Sendable {
         var passes = 0
+    }
+
+    /// Stands in for the Starting deadline's sleep: every sleep waits
+    /// until `fire`, and any sleep after it returns at once.
+    final class Sleeper: @unchecked Sendable {
+        private let lock = NSLock()
+        private var waiting: [CheckedContinuation<Void, Never>] = []
+        private var fired = false
+
+        func sleep(_ seconds: TimeInterval) async {
+            await withCheckedContinuation { continuation in
+                let now = lock.withLock {
+                    if !fired { waiting.append(continuation) }
+                    return fired
+                }
+                if now { continuation.resume() }
+            }
+        }
+
+        func fire() {
+            let all = lock.withLock {
+                fired = true
+                defer { waiting = [] }
+                return waiting
+            }
+            all.forEach { $0.resume() }
+        }
     }
 
     final class Flag: @unchecked Sendable {

@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import os
 
 /// One fan as the SMC reports it, speeds in rpm.
 public struct FanReading: Sendable, Equatable, Identifiable {
@@ -63,6 +64,67 @@ public enum FanKeys {
             return FanReading(index: fan, actual: actual, minimum: minimum, maximum: maximum,
                               target: smc.read(Self.target(fan))?.number, mode: mode)
         }
+    }
+
+    /// Every fan key, both mode spellings and the Ftst gate as the SMC
+    /// reports them (type, size, bytes) or "absent", one line each: what
+    /// a new Mac's fans look like, for `--fan-survey` and the helper's log.
+    public static func survey(_ smc: any SMCAccess) -> [String] {
+        func line(_ key: String) -> String { "\(key): " + (smc.read(key)?.summary ?? "absent") }
+        let count = smc.read(Self.count)?.number.map { min(max(Int($0), 0), 8) } ?? 0
+        let fans = (0..<count).flatMap { fan in
+            [actual(fan), minimum(fan), maximum(fan), target(fan), "F\(fan)Md", "F\(fan)md"].map(line)
+        }
+        return [line(Self.count)] + fans + [line(Self.unlock)]
+    }
+}
+
+/// What the root helper last made of a request, as JSON in
+/// `FanHelper.statusFile`. It lives in a root-owned folder rather than
+/// beside the control file: root must never write into a folder the user
+/// owns, where a link could point the write at any file on the Mac.
+public struct FanHelperStatus: Codable, Equatable, Sendable {
+    public enum State: String, Codable, Sendable {
+        /// The helper started and opened the SMC.
+        case ready
+        /// It holds the fans for `requested`.
+        case held
+        /// It gave up on `requested`, for `reason`.
+        case refused
+        /// It can't run at all, for `reason`; not tied to one request.
+        case error
+    }
+
+    public var state: State
+    public var reason: String?
+    /// The `requested` stamp and owner of the request this answers.
+    public var requested: Double?
+    public var owner: Int32?
+    public var at: Double
+
+    public init(state: State, reason: String? = nil, request: FanControlFile? = nil, at: Date = .now) {
+        self.state = state
+        self.reason = reason
+        requested = request?.requested
+        owner = request?.owner
+        self.at = at.timeIntervalSince1970
+    }
+
+    /// Whether this answers `request`.
+    public func answers(_ request: FanControlFile?) -> Bool {
+        guard let request, let requested else { return false }
+        return requested == request.requested && owner == request.owner
+    }
+
+    public static func read(at url: URL = URL(fileURLWithPath: FanHelper.statusFile)) -> FanHelperStatus? {
+        guard let data = FanControlFile.boundedRead(url, limit: 4096) else { return nil }
+        return try? JSONDecoder().decode(FanHelperStatus.self, from: data)
+    }
+
+    /// Written by root, readable by everyone.
+    public func write(to url: URL = URL(fileURLWithPath: FanHelper.statusFile)) throws {
+        try JSONEncoder().encode(self).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
     }
 }
 
@@ -140,6 +202,11 @@ public struct FanHold {
     /// How long to keep retrying the mode write after setting Ftst.
     /// thermalmonitord lets go after about 3 to 6 seconds on an M4.
     public var unlockTimeout: TimeInterval = 10
+    /// One line for the helper's log: keys tried, write results, the gate.
+    public var log: (String) -> Void = { _ in }
+    /// What became of a request, for the app to show. Called once per
+    /// change, not every pass.
+    public var report: (FanHelperStatus) -> Void = { _ in }
 
     public init(smc: any SMCAccess, request: @escaping () -> FanControlFile?,
                 ownerAlive: @escaping (Int32) -> Bool, underPressure: @escaping () -> Bool,
@@ -155,8 +222,9 @@ public struct FanHold {
     /// What one pass came to.
     enum Pass: Equatable {
         case held
-        /// The fans would not go manual: release, and leave this request.
-        case refused
+        /// The fans would not go manual, for the reason given: release,
+        /// and leave this request.
+        case refused(String)
         /// The request went away or its Quiver quit mid-pass: release.
         case withdrawn
     }
@@ -167,18 +235,36 @@ public struct FanHold {
     public func run() {
         var holding = false
         var failed: FanControlFile?
+        // The last request and state reported, so the status file and the
+        // log change once per outcome rather than every pass.
+        var reported: (FanControlFile, FanHelperStatus.State)?
+        func note(_ request: FanControlFile, _ state: FanHelperStatus.State, _ reason: String? = nil) {
+            guard reported?.0 != request || reported?.1 != state else { return }
+            reported = (request, state)
+            log("request \(request.requested ?? 0) from pid \(request.owner ?? 0): \(state.rawValue)"
+                + (reason.map { ": \($0)" } ?? ""))
+            report(FanHelperStatus(state: state, reason: reason, request: request))
+        }
         while !shouldStop() {
-            if let request = request(), request != failed, let level = request.level,
-               let owner = request.owner, ownerAlive(owner) {
-                let wanted = { self.request() == request && self.ownerAlive(owner) }
-                switch hold(level: underPressure() ? 1 : level, wanted: wanted) {
-                case .held:
-                    holding = true
-                case .refused:
-                    failed = request
-                    holding = !release()
-                case .withdrawn:
-                    holding = !release()
+            if let request = request(), request != failed, let level = request.level, let owner = request.owner {
+                if ownerAlive(owner) {
+                    let wanted = { self.request() == request && self.ownerAlive(owner) }
+                    switch hold(level: underPressure() ? 1 : level, wanted: wanted) {
+                    case .held:
+                        holding = true
+                        note(request, .held)
+                    case .refused(let reason):
+                        failed = request
+                        holding = !release()
+                        note(request, .refused, reason)
+                    case .withdrawn:
+                        holding = !release()
+                    }
+                } else {
+                    if holding { holding = !release() }
+                    // Not marked failed, as before: the request is left
+                    // for its owner to withdraw, and the app hears why once.
+                    note(request, .refused, "The fan helper doesn't see a running Quiver with pid \(owner).")
                 }
             } else if holding {
                 holding = !release()
@@ -197,7 +283,7 @@ public struct FanHold {
     /// long as `wanted` still holds.
     func hold(level: Double, wanted: () -> Bool = { true }) -> Pass {
         let fans = FanKeys.read(smc)
-        guard !fans.isEmpty else { return .refused }
+        guard !fans.isEmpty else { return .refused("The fan helper can't read any fan from the SMC.") }
         for fan in fans {
             if !fan.isManual {
                 switch takeManual(fan.index, wanted: wanted) {
@@ -217,20 +303,50 @@ public struct FanHold {
     }
 
     /// The mode write, behind Ftst where the Mac has one. The retries
-    /// stop as soon as the request is withdrawn.
+    /// stop as soon as the request is withdrawn. The value 1 goes in the
+    /// mode key's own type and size: a "ui8 " key (every Mac so far) gets
+    /// the single byte it always got; a wider key, which the old one-byte
+    /// write could never fit, gets 1 the way `SMCValue.number` reads it.
     func takeManual(_ fan: Int, wanted: () -> Bool = { true }) -> Pass {
+        let name = "Fan \(fan + 1)"
         let mode = FanKeys.mode(fan, in: smc)
-        if smc.write(mode, [1]) { return .held }
-        guard let gate = smc.read(FanKeys.unlock) else { return .refused }
-        if gate.number != 1 { smc.write(FanKeys.unlock, [1]) }
+        guard let current = smc.read(mode) else {
+            log("\(name): neither F\(fan)Md nor F\(fan)md answers")
+            return .refused("\(name) has no mode key the fan helper can read (F\(fan)Md or F\(fan)md).")
+        }
+        guard let manual = current.encoding(1) else {
+            log("\(name): \(mode) is \(current.summary), which the helper can't encode")
+            return .refused("\(name)'s mode key \(mode) is '\(current.type)' with \(current.bytes.count) bytes, "
+                            + "which the fan helper doesn't know how to write.")
+        }
+        let first = smc.writeResult(mode, manual)
+        log("\(name): \(mode) \(current.summary); write 1 -> \(first)")
+        if first == .ok { return .held }
+        guard let gate = smc.read(FanKeys.unlock) else {
+            log("\(name): Ftst absent, no gate to open")
+            return .refused("The SMC refused manual mode for \(name) (\(mode): \(first)), "
+                            + "and this Mac has no Ftst gate to open.")
+        }
+        if gate.number != 1 {
+            let opened = smc.writeResult(FanKeys.unlock, gate.encoding(1) ?? [1])
+            log("Ftst: \(gate.summary); write 1 -> \(opened)")
+        } else {
+            log("Ftst: \(gate.summary), already open")
+        }
         var waited: TimeInterval = 0
+        var last = first
         while waited < unlockTimeout {
             if shouldStop() || !wanted() { return .withdrawn }
             sleep(0.1)
             waited += 0.1
-            if smc.write(mode, [1]) { return .held }
+            last = smc.writeResult(mode, manual)
+            if last == .ok {
+                log("\(name): \(mode) took manual after \(String(format: "%.1f", waited)) s behind Ftst")
+                return .held
+            }
         }
-        return .refused
+        log("\(name): \(mode) still refused after \(Int(unlockTimeout)) s behind Ftst: \(last)")
+        return .refused("The SMC refused manual mode for \(name) (\(mode): \(last)), even with Ftst open.")
     }
 
     /// Every fan back to automatic, then the gate closed so thermalmonitord
@@ -244,11 +360,11 @@ public struct FanHold {
             let mode = FanKeys.mode(fan, in: smc)
             // Mode 3 is thermalmonitord's own; only a manual (or unread)
             // fan needs the write.
-            let current = smc.read(mode)?.number
-            if current == nil || current == 1 { smc.write(mode, [0]) }
+            let current = smc.read(mode)
+            if current?.number == nil || current?.number == 1 { smc.write(mode, current?.encoding(0) ?? [0]) }
         }
         if let gate = smc.read(FanKeys.unlock), gate.number != 0 {
-            smc.write(FanKeys.unlock, [0])
+            smc.write(FanKeys.unlock, gate.encoding(0) ?? [0])
         }
         let fansBack = fans.allSatisfy { smc.read(FanKeys.mode($0, in: smc))?.number != 1 }
         let gateClosed = smc.read(FanKeys.unlock).map { $0.number != 1 } ?? true
@@ -267,6 +383,23 @@ public enum FanHelper {
     /// launchd starts as root.
     public static let installedExecutable = "/Library/PrivilegedHelperTools/\(label)"
     public static let installedPlist = "/Library/LaunchDaemons/\(label).plist"
+    /// Where the helper says what it made of the last request. /var/run is
+    /// root's and cleared at boot; the app only reads it.
+    public static let statusFile = "/var/run/\(label).json"
+    /// Prints the SMC's fan keys and exits. Reads only, so it needs no
+    /// root: `Quiver --fan-survey` on a new Mac shows what the helper
+    /// will find there.
+    public static let surveyFlag = "--fan-survey"
+
+    /// The helper's log: the unified log (`log show --predicate
+    /// 'subsystem == "com.cwenlong.quiver.fan"'`) and stderr, which shows
+    /// when the helper is run by hand.
+    static func log(_ line: String) {
+        logger.notice("\(line, privacy: .public)")
+        FileHandle.standardError.write(Data("fan helper: \(line)\n".utf8))
+    }
+
+    private static let logger = Logger(subsystem: label, category: "helper")
 
     /// The control file's path; nil unless `arguments` asks for the helper.
     public static func parse(_ arguments: [String]) -> URL? {
@@ -318,13 +451,31 @@ public enum FanHelper {
     /// Runs the helper when the arguments ask for it and answers its exit
     /// status; nil means "not the helper, start the app".
     public static func runIfRequested(_ arguments: [String] = CommandLine.arguments) -> Int32? {
+        if arguments.dropFirst().first == surveyFlag {
+            guard let smc = AppleSMC() else {
+                FileHandle.standardError.write(Data("Couldn't open the AppleSMC.\n".utf8))
+                return 1
+            }
+            print(FanKeys.survey(smc).joined(separator: "\n"))
+            return 0
+        }
         guard arguments.dropFirst().first == flag else { return nil }
         guard let control = parse(arguments) else { return 2 }
         guard getuid() == 0 else {
             FileHandle.standardError.write(Data("fan helper: needs root\n".utf8))
             return 2
         }
-        guard let smc = AppleSMC() else { return 1 }
+        func report(_ status: FanHelperStatus) {
+            do { try status.write() } catch { log("couldn't write \(statusFile): \(error.localizedDescription)") }
+        }
+        log("started (pid \(getpid())), control \(control.path)")
+        guard let smc = AppleSMC() else {
+            log("couldn't open the AppleSMC")
+            report(FanHelperStatus(state: .error, reason: "The fan helper couldn't open the SMC."))
+            return 1
+        }
+        FanKeys.survey(smc).forEach { log($0) }
+        report(FanHelperStatus(state: .ready))
         let stop = StopFlag()
         let sources = [SIGTERM, SIGINT, SIGHUP].map { sig in
             signal(sig, SIG_IGN)
@@ -334,7 +485,7 @@ public enum FanHelper {
             return source
         }
         defer { sources.forEach { $0.cancel() } }
-        FanHold(
+        var hold = FanHold(
             smc: smc,
             request: { FanControlFile.request(at: control) },
             ownerAlive: isQuiver,
@@ -344,7 +495,11 @@ public enum FanHelper {
             },
             shouldStop: { stop.isSet },
             sleep: { Thread.sleep(forTimeInterval: $0) }
-        ).run()
+        )
+        hold.log = log
+        hold.report = report
+        hold.run()
+        log("stopped")
         return 0
     }
 }
