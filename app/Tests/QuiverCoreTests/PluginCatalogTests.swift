@@ -539,6 +539,7 @@ func decodedInventory() throws -> [Skill] {
         let model = PluginCatalogModel()
         await model.load(swe: SweClient(runner: catalogRunner()))
         model.skills = try decodedInventory()
+        await model.indexed()
         let index = try #require(model.index)
         func refs(_ harness: String? = nil, _ query: String = "") -> [String] {
             index.sources(harness: harness, query: query).flatMap(\.marketplaces).flatMap(\.plugins).map(\.id)
@@ -623,6 +624,7 @@ func decodedInventory() throws -> [Skill] {
         let model = PluginCatalogModel()
         await model.load(swe: SweClient(runner: catalogRunner()))
         model.skills = try decodedInventory()
+        await model.indexed()
         let index = try #require(model.index)
         let vercel = try #require(index.rows.first { $0.id == "vercel@official" })
         #expect(vercel.skills.map(\.name) == ["ai-sdk", "eve", "release"])
@@ -670,8 +672,23 @@ func decodedInventory() throws -> [Skill] {
         // is the same, so the skills model is not told of a new one.
         let revision = model.revision
         model.skills = try decodedInventory()
+        // Built off the main actor: the last rows stay on show meanwhile.
+        #expect(model.index?.rows.first { $0.id == "vercel@official" }?.skills.map(\.name) == ["ai-sdk", "eve"])
+        await model.indexed()
         #expect(model.index?.rows.first { $0.id == "vercel@official" }?.skills.map(\.name) == ["ai-sdk", "eve", "release"])
         #expect(model.revision == revision)
+    }
+
+    @Test func anIndexOvertakenByNewerSkillsIsDropped() async throws {
+        let model = PluginCatalogModel()
+        await model.load(swe: SweClient(runner: catalogRunner()))
+        let inventory = try decodedInventory()
+        // Two inventories in a row, before either index lands: only the
+        // second is shown, however the two builds finish.
+        model.skills = inventory
+        model.skills = Array(inventory.prefix(1))
+        await model.indexed()
+        #expect(model.index?.skills == Array(inventory.prefix(1)))
     }
 
     // MARK: Every skill shown exactly once
@@ -832,6 +849,8 @@ func decodedInventory() throws -> [Skill] {
         // As the app hands them over: one inventory, one catalog.
         skillsPage.plugins = explore.lookup
         explore.skills = skillsPage.allSkills
+        await skillsPage.placed()
+        await explore.indexed()
 
         let inventory = try decodedInventory()
         let counts = shownCounts(inventory: inventory, skillsPage: skillsPage, explore: try #require(explore.index))
@@ -854,6 +873,8 @@ func decodedInventory() throws -> [Skill] {
         await skillsPage.load()
         skillsPage.plugins = explore.lookup
         explore.skills = skillsPage.allSkills
+        await skillsPage.placed()
+        await explore.indexed()
         let index = try #require(explore.index, "\(explore.state)")
         let inventory = skillsPage.allSkills
         let counts = shownCounts(inventory: inventory, skillsPage: skillsPage, explore: index)

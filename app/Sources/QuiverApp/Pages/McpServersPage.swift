@@ -106,7 +106,7 @@ struct McpServersPage: View {
             app.mcpRepo.root = repoRoot
             await app.mcpRepo.load()
         }
-        .sheet(item: $selected) { server in
+        .quiverSheet(item: $selected) { server in
             if case .loaded(let inventory) = model.state {
                 ServerSheet(initial: server, harnesses: inventory.harnesses,
                             active: inventory.activeHarnesses.filter { !hidden.contains($0) }, model: model) {
@@ -114,7 +114,7 @@ struct McpServersPage: View {
                 }
             }
         }
-        .sheet(isPresented: $adding) {
+        .quiverSheet(isPresented: $adding) {
             let (harnesses, active, servers): ([String], [String], [McpServer]) = {
                 if case .loaded(let inventory) = model.state {
                     return (inventory.harnesses,
@@ -402,7 +402,7 @@ private struct ServerSheet: View {
     var reload: () async -> Void
 
     @Environment(AppModel.self) private var app
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSheet) private var dismiss
     /// The harness whose definition is copied. A name, not a group index, so
     /// a reload that regroups definitions can't switch it to another one.
     @State private var sourceHarness: String?

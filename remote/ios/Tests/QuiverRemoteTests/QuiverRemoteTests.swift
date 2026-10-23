@@ -409,12 +409,23 @@ final class SessionSearchTests: XCTestCase {
                    ownership: nil, attachable: nil)
     }
 
-    func testLocalMatchIsPlainTextNewestFirst() {
+    func testLocalMatchIsPlainTextTitlesFirst() {
         let rows = [row("a", "Fix ledger cursor", ago: 100), row("b", "ledger notes", ago: 5), row("c", "Dark mode", cwd: "/w/ledger(", ago: 1)]
-        XCTAssertEqual(SessionSearch.localMatches(rows, query: "LEDGER c").map(\.key), ["a"])
-        XCTAssertEqual(SessionSearch.localMatches(rows, query: "ledger").map(\.key), ["c", "b", "a"])
+        // Titles first (newest leading), then the folder match.
+        XCTAssertEqual(SessionSearch.localMatches(rows, query: "ledger").map(\.key), ["b", "a", "c"])
         XCTAssertEqual(SessionSearch.localMatches(rows, query: "ledger(").map(\.key), ["c"], "regex syntax is just text")
         XCTAssertEqual(SessionSearch.localMatches([row("x", String(repeating: "a", count: 40), ago: 1)], query: "(a|aa)+$"), [])
+    }
+
+    func testLocalMatchWordsApartAndRecency() {
+        let day = 86400.0
+        let rows = [row("old", "ledger cursor", ago: 60 * day), row("new", "ledger cursor", ago: day),
+                    row("apart", "cursor fix", cwd: "/w/ledger", ago: 0)]
+        // Equal title matches: the newer leads. Words split across title
+        // and folder rank after every title match, however recent.
+        XCTAssertEqual(SessionSearch.localMatches(rows, query: "ledger cursor").map(\.key), ["new", "old", "apart"])
+        XCTAssertEqual(SessionSearch.recencyWeight(1000, now: 1000), 1, accuracy: 1e-9)
+        XCTAssertEqual(SessionSearch.recencyWeight(1000 - 14 * day, now: 1000), 0.65, accuracy: 1e-9)
     }
 
     func testSnippetRunsSplitMarkers() {

@@ -44,7 +44,7 @@ struct ServiceStatusPage: View {
                 .foregroundStyle(Theme.textMuted)
         }
         .task { await model.load(force: false) }
-        .sheet(isPresented: $adding) {
+        .quiverSheet(isPresented: $adding) {
             AddServiceSheet(
                 check: { await model.probe($0) },
                 add: { name, pageURL, group in
@@ -59,7 +59,7 @@ struct ServiceStatusPage: View {
 private struct AddServiceSheet: View {
     var check: (String) async -> ServiceStatusService.ProbeResult
     var add: (String, URL, StatusService.Group) -> Void
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSheet) private var dismiss
     @State private var name = ""
     @State private var address = ""
     @State private var group = StatusService.Group.providers

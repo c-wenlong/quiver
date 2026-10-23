@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 import Testing
 @testable import QuiverCore
@@ -80,8 +81,9 @@ extension SecItemKeychainTests {
             SecItemCalls(
                 copyMatching: { [self] query, result in
                     calls.append("read")
-                    if (query as? [String: Any])?[kSecUseAuthenticationUI as String] as? String
-                        != kSecUseAuthenticationUIFail as String {
+                    let context = (query as? [String: Any])?[kSecUseAuthenticationContext as String]
+                        as? LAContext
+                    if context?.interactionNotAllowed != true {
                         promptsForbidden = false
                     }
                     guard let q = query as? [String: Any],
@@ -94,7 +96,7 @@ extension SecItemKeychainTests {
                 },
                 update: { [self] query, attributes in
                     calls.append("update")
-                    if (query as? [String: Any])?[kSecUseAuthenticationUI as String] != nil {
+                    if (query as? [String: Any])?[kSecUseAuthenticationContext as String] != nil {
                         writesMayPrompt = false
                     }
                     guard let q = query as? [String: Any],

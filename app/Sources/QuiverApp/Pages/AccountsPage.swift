@@ -75,7 +75,7 @@ struct AccountsPage: View {
                           actionTitle: "Open Harnesses") { app.selection = .harnesses }
             }
         }
-        .sheet(isPresented: $adding) {
+        .quiverSheet(isPresented: $adding) {
             AddAccountSheet { vendor, name, color in
                 Task {
                     do {
@@ -166,7 +166,9 @@ private struct AccountCard: View {
         }
     }
     var installSheet: some View {
-        EmptyView().sheet(item: $installing, onDismiss: {
+        // Drawn behind the card, not inside its stack, so it adds no row
+        // spacing; the sheet itself is drawn over the window.
+        Color.clear.quiverSheet(item: $installing, onDismiss: {
             // A CLI installed from the sheet turns Install back into Sign in.
             Task {
                 await app.others.load(force: true)
@@ -181,7 +183,6 @@ private struct AccountCard: View {
         let profile = card.profile
         let model = app.accounts
         Card {
-            installSheet
             HStack(spacing: 8) {
                 HarnessIcon(harness: profile.vendor.rawValue, size: 16)
                     .help(profile.vendor.title)
@@ -237,6 +238,7 @@ private struct AccountCard: View {
                     signIn: { perform { try await model.signIn(profile) } })
             }
         }
+        .background { installSheet }
         .alert("Rename account", isPresented: $renaming) {
             TextField("Name", text: $newName)
             Button("Rename") { perform { try await model.rename(profile, to: newName) } }
@@ -389,7 +391,7 @@ struct UsageTrack: View {
 
 private struct AddAccountSheet: View {
     var onAdd: (Vendor, String, String?) -> Void
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSheet) private var dismiss
     @State private var vendor: Vendor = .claude
     @State private var name = ""
 
@@ -515,7 +517,9 @@ private struct HarnessAccountCard: View {
         }
     }
     var installSheet: some View {
-        EmptyView().sheet(item: $installing, onDismiss: {
+        // Drawn behind the card, not inside its stack, so it adds no row
+        // spacing; the sheet itself is drawn over the window.
+        Color.clear.quiverSheet(item: $installing, onDismiss: {
             // A CLI installed from the sheet turns Install back into Sign in.
             Task {
                 await app.others.load(force: true)
@@ -533,7 +537,6 @@ private struct HarnessAccountCard: View {
         let name = row.title
         let model = app.accounts
         Card {
-            installSheet
             HStack(spacing: 8) {
                 HarnessIcon(harness: row.name, size: 16)
                     .help(ownName)
@@ -636,6 +639,7 @@ private struct HarnessAccountCard: View {
                     signIn: nil)
             }
         }
+        .background { installSheet }
         .alert("Rename \(row.profile?.name ?? ownName)", isPresented: $renaming) {
             TextField("Name", text: $newName)
             if let profile = row.profile {
