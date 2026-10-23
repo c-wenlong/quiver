@@ -16,6 +16,7 @@ from typing import Any, Callable, Iterable
 
 from quiver.console import sanitize, sanitize_document
 from quiver.paths import expand_user
+from quiver.sessions import opencode_store
 from quiver.sessions.models import Session
 
 
@@ -621,11 +622,53 @@ def _sqlite_json_parts(session: Session, db_path: str) -> NormalizedTranscript:
                 msg = _message(roles.get(str(message_id), "assistant"), part.get("text") or part.get("content"))
             if msg:
                 transcript.messages.append(msg)
+        # OpenCode 2.x writes new turns only to ``session_message``, each
+        # row carrying its whole content. Rows the 2.x migration copied
+        # from ``message`` keep their ids and were read above.
+        for _id, kind, _seq, _ts, data in opencode_store.v2_rows(conn, session.session_id):
+            transcript.messages.extend(_opencode_v2_messages(kind, data))
     except sqlite3.Error as exc:
         return _unreadable(session, f"SQLite schema error: {exc}", [path])
     finally:
         conn.close()
     return transcript
+
+
+def _opencode_v2_messages(kind: str, data: dict) -> list[NormalizedMessage]:
+    """One ``session_message`` row as transcript messages.
+
+    A prompt is the human's ``text``. An assistant row's ``content`` holds
+    its blocks in order: ``text`` runs join into one message, each ``tool``
+    block is a tool message with its ``state.input`` and ``state.content``
+    (the output), and ``reasoning`` is dropped like every other reader's
+    thinking. System, compaction and selection rows are bookkeeping.
+    """
+    if kind in opencode_store.PROMPT_TYPES:
+        msg = _message("human", data.get("text"))
+        return [msg] if msg else []
+    if kind != "assistant":
+        return []
+    out: list[NormalizedMessage] = []
+    words: list[str] = []
+
+    def flush() -> None:
+        msg = _message("assistant", words)
+        if msg:
+            out.append(msg)
+        words.clear()
+
+    for block in opencode_store.content_blocks(data):
+        block_type = str(block.get("type") or "").lower()
+        if block_type == "text" and isinstance(block.get("text"), str):
+            words.append(block["text"])
+        elif block_type == "tool":
+            flush()
+            state = block.get("state") if isinstance(block.get("state"), dict) else {}
+            msg = _tool_message(block.get("name"), state.get("input"), state.get("content") or state.get("error"))
+            if msg:
+                out.append(msg)
+    flush()
+    return out
 
 
 @register_reader("opencode")

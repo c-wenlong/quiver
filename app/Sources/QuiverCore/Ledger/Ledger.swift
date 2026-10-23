@@ -1103,7 +1103,7 @@ public actor Ledger {
         _ url: URL, indexer: SearchIndexer, recentLimit: Int?, report: inout ScanReport
     ) throws {
         let dbPath = url.resolvingSymlinksInPath().path
-        let metaKey = "opencode:\(url.path)"
+        let metaKey = DatabaseSources.openCodeMetaKey(url)
         let indexed = (try? indexer.store.files(withPrefix: dbPath + "#")) ?? []
         let unchanged = (try? DatabaseSources.sourceFingerprintUnchanged(
             at: url, metaKey: metaKey, store: store)) ?? false
