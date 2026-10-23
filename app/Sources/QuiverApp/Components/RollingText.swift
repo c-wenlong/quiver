@@ -140,6 +140,16 @@ final class RollingTextView: NSView {
         for cell in cells { cell.glyph.contentsScale = scale }
     }
 
+    // MARK: For tests
+
+    /// The text the boxes hold now (a roll in flight shows its target).
+    var shownText: String { cells.map(\.text).joined() }
+    /// One per character box, or one for a whole-line label.
+    var boxCount: Int { layer?.sublayers?.count ?? 0 }
+    /// Every glyph layer in every box, rolling out ones included.
+    var glyphCount: Int { (layer?.sublayers ?? []).reduce(0) { $0 + ($1.sublayers?.count ?? 0) } }
+    var glyphOpacities: [Float] { (layer?.sublayers ?? []).flatMap { $0.sublayers ?? [] }.map(\.opacity) }
+
     // MARK: Building
 
     private func pieces(_ text: String, perCharacter: Bool) -> [String] {
@@ -227,10 +237,6 @@ final class RollingTextView: NSView {
         CATransaction.begin()
         CATransaction.setAnimationDuration(Self.duration)
         CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1))
-        CATransaction.setCompletionBlock { [weak self] in
-            guard let self, self.generation == current else { return }
-            self.tidy(leaving)
-        }
         for index in 0..<count where before[index] != after[index] {
             let cell = oldCells[index]
             let delay = Double(count - 1 - index) * Self.stagger
@@ -249,6 +255,19 @@ final class RollingTextView: NSView {
         place(oldCells)
         CATransaction.commit()
         cells = oldCells
+        // Tidy once the last character has landed. On a timer of the roll's
+        // own length rather than the transaction's completion block, which
+        // never comes for a window that isn't drawing. A newer roll bumps
+        // `generation`, so this one's tidy can't touch its glyphs.
+        let end = Self.duration + Double(count) * Self.stagger + 0.05
+        let timer = Timer(timeInterval: end, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.generation == current else { return }
+                self.tidy(leaving)
+            }
+        }
+        // Common modes, so it fires during a mouse drag or scroll too.
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     /// Moves a glyph vertically and fades it, starting at `time`.
