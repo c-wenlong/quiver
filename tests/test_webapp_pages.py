@@ -38,6 +38,41 @@ class TestLoad(unittest.TestCase):
             self.assertIn("/* a.js */", body)
             self.assertEqual(pages.bundle(".none"), b"")
 
+    def test_a_broken_page_does_not_stop_the_others(self):
+        """One page that won't parse and one that throws are logged and
+        skipped; the pages around them still register."""
+        import shutil
+        import subprocess
+        folder = Path(tempfile.mkdtemp())
+        (folder / "a.js").write_text('registerPage("a", () => "a");\n')
+        (folder / "b.js").write_text('registerPage("b", () => {;\n')        # syntax error
+        (folder / "c.js").write_text('throw new Error("boom");\n')         # throws on load
+        (folder / "d.js").write_text('const label = "d";\nregisterPage("d", () => label);\n')
+        with patch.object(pages, "STATIC", folder):
+            body = pages.bundle(".js").decode()
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node not installed")
+        script = ("const PAGES = {}; function registerPage(id, r) { PAGES[id] = r; }\n"
+                  "const logged = []; console.error = (...a) => logged.push(String(a[0]));\n"
+                  + body + "\nprocess.stdout.write(Object.keys(PAGES).join(',') + '|' + logged.length);")
+        out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30)
+        self.assertEqual(out.stdout, "a,d|2", out.stderr)
+
+    def test_js_string_round_trips(self):
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node not installed")
+        for text in ('say "hi"', "it's", "back\\slash", "two\nlines\r\n", "tab\t",
+                     "sep\u2028x\u2029", "`${template}`", "</script>"):
+            # Bytes, not text mode: text mode would fold the \r\n we test.
+            out = subprocess.run([node, "-e", "process.stdout.write(" + pages._js_string(text) + ")"],
+                                 capture_output=True, timeout=30)
+            self.assertEqual(out.stdout.decode("utf-8"), text)
+        self.assertIn('registerPage("x"', pages._js_string('registerPage("x", r)'))
+
     def test_each_script_gets_its_own_scope(self):
         """Two pages reusing private names both register their own render."""
         import shutil
