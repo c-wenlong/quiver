@@ -92,6 +92,20 @@ class TestPieces(_Store):
         self.assertEqual(pieces[0]["tokens"], 3 * 1200)
         self.assertAlmostEqual(pieces[0]["cost_usd"], 3 * (1000e-06 + 200 * 2e-06))
 
+    def test_counts_per_local_day(self):
+        midnight = datetime(2026, 10, 21, tzinfo=timezone.utc).timestamp()
+        for t in (-600, -300, 300):
+            self.add(_ev("s1", midnight + t))
+        rows = self.store.activity_events(0, 1e12)
+        piece, = cal.session_pieces(rows, Priced(self.store, CATALOG, timezone.utc))
+        self.assertEqual({d: c["responses"] for d, c in piece["days"].items()},
+                         {"2026-10-20": 2, "2026-10-21": 1})
+        self.assertEqual(piece["days"]["2026-10-21"]["tokens"], 1200)
+        # Merged refs keep their per-day split.
+        ref, = cal._union_refs([cal._ref(piece)], [cal._ref(piece)])
+        self.assertEqual(ref["days"]["2026-10-20"]["responses"], 4)
+        self.assertEqual(ref["responses"], 6)
+
     def test_the_folder_most_responses_used(self):
         self.add(_ev("s1", T0, cwd="/a"))
         self.add(_ev("s1", T0 + 1, cwd="/b"))

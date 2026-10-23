@@ -97,7 +97,9 @@ Ported from `Activity.swift`, `ActivityBlocks.swift` and
     "tokens": 101928159, "cost_usd": 33.59, "unpriced_tokens": 0,
     "sessions": [{"id": "8bccd4fc-…", "row": "<catalog key>", "title": "Deploy the hub",
                   "cwd": "/home/me/dev/quiver", "start": 1792755710.7, "end": 1792765400.1,
-                  "responses": 167, "tokens": 41800000, "cost_usd": 13.69, "unpriced_tokens": 0}]
+                  "responses": 167, "tokens": 41800000, "cost_usd": 13.69, "unpriced_tokens": 0,
+                  "days": {"2026-10-23": {"responses": 167, "tokens": 41800000,
+                                          "cost_usd": 13.69, "unpriced_tokens": 0}}}]
   }],
   "legend": [{"harness": "claude", "total_s": 29460.0,
               "accounts": [{"home": "/home/me/.claude", "label": "Claude: Default", "total_s": 29460.0}]}],
@@ -107,7 +109,9 @@ Ported from `Activity.swift`, `ActivityBlocks.swift` and
 ```
 
 `days` holds each column's local midnights, so the page never does
-time-zone arithmetic. `sessions` is a Sessions page row for every
+time-zone arithmetic. A session's `days` splits its counts by local day,
+so a month cell counts only its own share of a block that runs past
+midnight. `sessions` is a Sessions page row for every
 session a block holds, keyed by its catalog key (a session gone from the
 listing gets a stand-in row from the ledger, as the app's
 `CalendarSessionIndex` does).

@@ -250,8 +250,10 @@
     const pieces = [];
     for (const block of blocks) {
       if (!(block.start < day.end && block.end >= day.start)) continue;
+      // The stretch runs from the clipped start, so a block running past
+      // midnight takes as much lane on the next day as it is drawn with.
       const start = Math.max(block.start, day.start);
-      const end = Math.min(Math.max(block.end, block.start + minimum), day.end);
+      const end = Math.min(Math.max(block.end, start + minimum), day.end);
       if (end > start) pieces.push({ block, start, end });
     }
     pieces.sort((a, b) => a.start - b.start || b.end - a.end);
@@ -418,6 +420,12 @@
     return `<div class="cal-month"><div class="cal-mhead"><span class="cal-mweek"></span>${heads}</div>${rows.join("")}</div>`;
   }
 
+  function dayCounts(ref, date) {
+    const c = (ref.days || {})[date] || {};
+    return { responses: c.responses || 0, tokens: c.tokens || 0, cost_usd: c.cost_usd || 0,
+      unpriced_tokens: c.unpriced_tokens || 0 };
+  }
+
   function unionRefs(a, b) {
     const out = new Map(a.map((r) => [r.id, { ...r }]));
     for (const r of b) {
@@ -440,8 +448,11 @@
       const key = `${b.harness}|${b.account}|${b.project_key || b.project}`;
       const clippedStart = Math.max(b.start, day.start);
       const clipped = Math.min(b.end, day.end) - clippedStart;
+      // Each session's counts for this day only, so an overnight block
+      // never counts its responses, tokens or spend on both days.
       const refs = b.sessions.filter((r) => r.start < day.end && r.end >= day.start)
-        .map((r) => ({ ...r, start: Math.max(r.start, day.start), end: Math.min(r.end, day.end) }));
+        .map((r) => ({ ...r, ...dayCounts(r, day.date),
+          start: Math.max(r.start, day.start), end: Math.min(r.end, day.end) }));
       const g = groups.get(key);
       if (g) {
         g.active += clipped;
@@ -788,7 +799,20 @@
       if (S.data.mode === "month") layoutMonth(); else layoutColumns();
     }, 100);
   });
-  setInterval(() => { if (onCalendar()) updateNow(); }, 60 * 1000);
+  const localDate = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+  /* Each minute moves the now-line; past midnight the page reloads once
+   * so the today marks follow (same range, so the hour stays). */
+  let reloadedFor = null;
+  setInterval(() => {
+    if (!onCalendar() || !S.data) return;
+    const today = localDate();
+    if (!S.loading && S.data.today !== today && reloadedFor !== today) {
+      reloadedFor = today;
+      render("calendar");
+      return;
+    }
+    updateNow();
+  }, 60 * 1000);
 
   registerPage("calendar", render);
 })();

@@ -199,12 +199,23 @@ def _pick_folder(votes: dict[str, int]) -> str | None:
 
 # ---------------------------------------------------------------- blocks
 
+_COUNTS = ("responses", "tokens", "cost_usd", "unpriced_tokens")
+
+
+def _add_counts(into: dict, counts: dict) -> None:
+    for k in _COUNTS:
+        into[k] = into.get(k, 0) + counts[k]
+
+
 def session_pieces(rows: list[tuple], priced: Priced, gap: float = GAP_S) -> list[dict]:
     """One block per stretch of a session's responses with no silence
     longer than ``gap``, with its tokens, cost and the folder most of its
-    responses used. ``rows`` come from ``LedgerStore.activity_events``."""
+    responses used, and the same counts per local day (``priced.tz``) so
+    a month cell counts only its own day's share of an overnight block.
+    ``rows`` come from ``LedgerStore.activity_events``."""
     pieces: list[dict] = []
     current = None
+    day_of: dict[int, str] = {}  # 15-minute bucket to local date: zones shift by 15 minutes
     for (harness, account, session, cwd, model, tier, ts, inp, out, cr, cw, cw1h,
          reas, logged) in rows:
         same = (current is not None and current["harness"] == harness
@@ -212,17 +223,20 @@ def session_pieces(rows: list[tuple], priced: Priced, gap: float = GAP_S) -> lis
         if not same or ts - current["end"] > gap:
             current = {"harness": harness, "account": account, "session": session,
                        "start": ts, "end": ts, "responses": 0, "tokens": 0,
-                       "cost_usd": 0.0, "unpriced_tokens": 0, "votes": {}}
+                       "cost_usd": 0.0, "unpriced_tokens": 0, "votes": {}, "days": {}}
             pieces.append(current)
         threshold = priced.thresholds.get(model)
         long = threshold is not None and inp + cr + cw > threshold
         cost, unpriced = priced.price(model, tier, long, logged is not None, inp, out, cr,
                                       cw, cw1h, reas, logged or 0.0)
+        counts = {"responses": 1, "tokens": inp + out + cr + cw + reas,
+                  "cost_usd": cost, "unpriced_tokens": unpriced}
+        bucket = int(ts // 900)
+        if bucket not in day_of:
+            day_of[bucket] = datetime.fromtimestamp(bucket * 900, priced.tz).date().isoformat()
         current["end"] = ts
-        current["responses"] += 1
-        current["tokens"] += inp + out + cr + cw + reas
-        current["cost_usd"] += cost
-        current["unpriced_tokens"] += unpriced
+        _add_counts(current, counts)
+        _add_counts(current["days"].setdefault(day_of[bucket], {}), counts)
         if cwd:
             current["votes"][cwd] = current["votes"].get(cwd, 0) + 1
     for piece in pieces:
@@ -233,7 +247,8 @@ def session_pieces(rows: list[tuple], priced: Priced, gap: float = GAP_S) -> lis
 def _ref(piece: dict) -> dict:
     return {"id": piece["session"], "cwd": piece["cwd"], "start": piece["start"],
             "end": piece["end"], "responses": piece["responses"], "tokens": piece["tokens"],
-            "cost_usd": piece["cost_usd"], "unpriced_tokens": piece["unpriced_tokens"]}
+            "cost_usd": piece["cost_usd"], "unpriced_tokens": piece["unpriced_tokens"],
+            "days": {d: dict(c) for d, c in piece["days"].items()}}
 
 
 def _union_refs(refs: list[dict], more: list[dict]) -> list[dict]:
@@ -247,8 +262,11 @@ def _union_refs(refs: list[dict], more: list[dict]) -> list[dict]:
             continue
         have["start"] = min(have["start"], ref["start"])
         have["end"] = max(have["end"], ref["end"])
-        for k in ("responses", "tokens", "cost_usd", "unpriced_tokens"):
-            have[k] += ref[k]
+        _add_counts(have, ref)
+        days = {d: dict(c) for d, c in have["days"].items()}
+        for d, c in ref["days"].items():
+            _add_counts(days.setdefault(d, {}), c)
+        have["days"] = days
         have["cwd"] = have["cwd"] or ref["cwd"]
     return sorted(out.values(), key=lambda r: (r["start"], r["id"]))
 
@@ -272,8 +290,7 @@ def group_by_project(pieces: list[dict], projects: Projects, gap: float = GAP_S)
             last = merged[-1] if merged else None
             if last is not None and piece["start"] - last["end"] <= gap:
                 last["end"] = max(last["end"], piece["end"])
-                for k in ("responses", "tokens", "cost_usd", "unpriced_tokens"):
-                    last[k] += piece[k]
+                _add_counts(last, piece)
                 last["sessions"] = _union_refs(last["sessions"], [_ref(piece)])
             else:
                 merged.append({
