@@ -235,3 +235,20 @@ enum JSONValue: Codable, Hashable {
         }
     }
 }
+
+/// One `/v1/search` result: the catalog row, plus the best transcript
+/// snippet when the hit came from the app's search index.
+struct SearchResult: Decodable, Identifiable, Hashable {
+    let key: String
+    let source: String?
+    let snippet: String?
+    let markedSnippet: String?
+    let role: String?
+    let session: SessionRow
+    var id: String { key }
+}
+
+struct SearchResponse: Decodable {
+    let results: [SearchResult]
+    let indexed: Bool?
+}
