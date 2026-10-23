@@ -251,11 +251,16 @@ public struct ArtificialAnalysisStore: Sendable {
         return result
     }
 
+    /// The models feed's last good fetch: its time is the page's
+    /// "Updated" stamp, and a new id means the models table changed.
+    public func llmsFetch() -> CatalogDatabase.Fetch? {
+        database.lastSuccess(source: CatalogDatabase.aaSource(.llms))
+    }
+
     /// Whether the models feed is missing or past `staleAfter`, which is
     /// when a launch may refresh without being asked.
     public func llmsIsStale() -> Bool {
-        guard let fetchedAt = database.lastSuccess(source: CatalogDatabase.aaSource(.llms))?.fetchedAt
-        else { return true }
+        guard let fetchedAt = llmsFetch()?.fetchedAt else { return true }
         return now().timeIntervalSince(fetchedAt) > Self.staleAfter
     }
 
