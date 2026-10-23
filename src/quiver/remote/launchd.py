@@ -8,6 +8,12 @@ it whenever it exits. The agent runs ``serve --tailnet``, which exits
 instead of falling back to localhost while Tailscale is still coming up,
 so launchd retries until the tailnet address exists.
 
+The agent runs Quiver.app's bundled ``swe`` when the app is installed.
+macOS privacy protection blocks a launchd agent from reading ~/Desktop,
+~/Documents and ~/Downloads, so a repo checkout's ``.venv/bin/swe`` there
+dies at startup ("Operation not permitted" on ``pyvenv.cfg``). The
+bundle lives in Applications, and the app's own folder access covers it.
+
 Logic only: callers print. ``run`` is injectable so tests never touch
 the real launchctl.
 """
@@ -26,11 +32,36 @@ LABEL = "com.cwenlong.quiver.remote-hub"
 # waiting on Tailscale retries a few times a minute, not in a hot loop.
 THROTTLE_S = 15
 
+# Home folders a launchd agent can't read without a privacy grant.
+PROTECTED_DIRS = ("Desktop", "Documents", "Downloads", "Library/Mobile Documents")
+
 Runner = Callable[..., subprocess.CompletedProcess]
 
 
 def plist_path(home: Path | None = None) -> Path:
     return (home or Path.home()) / "Library" / "LaunchAgents" / f"{LABEL}.plist"
+
+
+def bundled_swe(home: Path | None = None) -> Path | None:
+    """Quiver.app's ``swe`` shim, from ~/Applications or /Applications."""
+    for apps in ((home or Path.home()) / "Applications", Path("/Applications")):
+        shim = apps / "Quiver.app" / "Contents" / "Resources" / "swe" / "bin" / "swe"
+        if os.access(shim, os.X_OK):
+            return shim
+    return None
+
+
+def protected_dir(path: str | Path, home: Path | None = None) -> str | None:
+    """The protected home folder ``path`` sits in ("Desktop"), or None."""
+    p = Path(path)
+    base = home or Path.home()
+    for name in PROTECTED_DIRS:
+        try:
+            p.relative_to(base / name)
+        except ValueError:
+            continue
+        return name
+    return None
 
 
 def _domain() -> str:

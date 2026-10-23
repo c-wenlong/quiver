@@ -14,7 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it whenever it exits; `--uninstall` removes it. Under launchd the hub
   waits for Tailscale instead of binding localhost, and `serve.log` now
   has timestamped start and stop lines. A hub started with `nohup` used
-  to die on every reboot and stay down until someone noticed.
+  to die on every reboot and stay down until someone noticed. The agent
+  runs Quiver.app's bundled `swe`, since macOS blocks LaunchAgents from
+  reading a checkout in ~/Desktop; `--install` checks that the hub came
+  up, and `install-app.sh` restarts it on the new bundle.
 
 - **Remote: satellites report usage, so a MacBook's quota shows on the
   hub.** `swe remote agent` posts the machine's `swe list --usage` rows

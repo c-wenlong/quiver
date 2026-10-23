@@ -57,6 +57,20 @@ class LaunchdTest(unittest.TestCase):
             launchd.uninstall(home=self.home, run=FakeLaunchctl(fail={"bootout"}))
         self.assertTrue(launchd.plist_path(self.home).exists())
 
+    def test_bundled_swe_is_found_in_applications(self):
+        shim = self.home / "Applications/Quiver.app/Contents/Resources/swe/bin/swe"
+        shim.parent.mkdir(parents=True)
+        shim.write_text("#!/bin/sh\n")
+        shim.chmod(0o755)
+        self.assertEqual(launchd.bundled_swe(self.home), shim)
+
+    def test_protected_dir(self):
+        self.assertEqual(launchd.protected_dir(self.home / "Desktop/p/.venv/bin/swe", self.home), "Desktop")
+        self.assertEqual(launchd.protected_dir(self.home / "Library/Mobile Documents/x", self.home),
+                         "Library/Mobile Documents")
+        self.assertIsNone(launchd.protected_dir(self.home / "code/quiver/.venv/bin/swe", self.home))
+        self.assertIsNone(launchd.protected_dir("/opt/homebrew/bin/swe", self.home))
+
     def test_loaded_pid_reads_launchctl_print(self):
         out = f"gui/501/{launchd.LABEL} = {{\n\tstate = running\n\tpid = 4807\n}}"
         self.assertEqual(launchd.loaded_pid(run=FakeLaunchctl(stdout=out)), (True, 4807))

@@ -125,6 +125,13 @@ if [ -e "$dest" ]; then
   mv "$dest" "$dest.old"
 fi
 mv "$staged" "$dest"
+# A remote hub LaunchAgent (swe remote serve --install) runs this bundle's
+# swe: restart it so it serves the new code rather than a mix of both.
+hub_plist="$HOME/Library/LaunchAgents/com.cwenlong.quiver.remote-hub.plist"
+if [ -f "$hub_plist" ] && grep -q "$dest/Contents/Resources/swe" "$hub_plist"; then
+  launchctl kickstart -k "gui/$(id -u)/com.cwenlong.quiver.remote-hub" >/dev/null 2>&1 \
+    && echo "install-app: restarted the remote hub on the new bundle" || true
+fi
 rm -rf "$dest.old"
 open "$dest"
 echo "install-app: installed $commit at $dest"

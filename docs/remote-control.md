@@ -246,8 +246,13 @@ A hub started from a shell dies with the login session, and nothing
 restarts it. `swe remote serve --install` writes
 `~/Library/LaunchAgents/com.cwenlong.quiver.remote-hub.plist` with
 `RunAtLoad` and `KeepAlive`, so the hub starts at login and launchd
-restarts it 15 s after it exits. The agent runs the same `swe` that
-installed it, with that shell's `PATH`, and logs to
+restarts it 15 s after it exits. The agent runs Quiver.app's bundled
+`swe` when the app is installed, and otherwise the `swe` that installed
+it. macOS privacy protection blocks a launchd agent from reading
+`~/Desktop`, `~/Documents` and `~/Downloads`, so a checkout's
+`.venv/bin/swe` there would fail at every start: `--install` refuses it
+and says to install the app. `install-app.sh` restarts the agent on the
+new bundle. The agent gets the installing shell's `PATH` and logs to
 `~/.quiver/data/remote/serve.log` with timestamped start and stop lines.
 It runs `serve --tailnet`: with no Tailscale address yet (early in a
 login) the hub exits instead of binding localhost, and launchd retries.
