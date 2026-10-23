@@ -207,6 +207,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside the popover no longer read as outside clicks that close the
   panel.
 
+### Changed
+
+- **Settings: a shorter sub-nav.** Preferences and Updates fold into
+  General as its Display and Updates cards, and GitHub and Remote move out
+  of App into a new Integrations group. The list goes from 12 items to 10.
+
 ### Fixed
 
 - **Quiver switches pages at once.** Clicking a sidebar row or pressing

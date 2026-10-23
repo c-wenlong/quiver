@@ -113,7 +113,7 @@ private struct Content: View {
         case .links:
             "Quiver keeps one AGENTS.md, one skills folder and one list of MCP servers, and links them into each agent."
         case .look:
-            "Change it later in Settings › Preferences."
+            "Change it later in Settings › General."
         case .notifications:
             "Quiver tells you when a limit nears its end and when it resets."
         }
