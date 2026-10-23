@@ -150,8 +150,11 @@ async function renderAccounts(_id, refresh = false) {
   const { status, data } = await api(`/v1/usage${refresh ? "?refresh=1" : ""}`);
   if (gen !== accountsPage.gen) return;
   accountsPage.loading = false;
+  // A failed request pauses the clock's repaints, which would otherwise
+  // put the old readings back over the error or the pairing steps.
+  accountsPage.failed = status !== 200 || !data;
   if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
-  if (status !== 200 || !data) return pageError(accountsHeader(false), status, data, () => renderAccounts("accounts", true));
+  if (accountsPage.failed) return pageError(accountsHeader(false), status, data, () => renderAccounts("accounts", true));
   accountsPage.data = data;
   paintAccounts();
 }
@@ -195,7 +198,7 @@ function startAccountsClock() {
   accountsPage.timer = setInterval(() => {
     const onPage = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "accounts";
     if (!onPage) { clearInterval(accountsPage.timer); accountsPage.timer = null; return; }
-    if (accountsPage.data && !accountsPage.loading && !document.hidden) paintAccounts();
+    if (accountsPage.data && !accountsPage.loading && !accountsPage.failed && !document.hidden) paintAccounts();
   }, 30000);
 }
 
