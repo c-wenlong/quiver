@@ -82,7 +82,7 @@ struct PluginsPage: View {
                 app.pluginsTab = .explore
             }
         }
-        .sheet(isPresented: $addingMarketplace) {
+        .quiverSheet(isPresented: $addingMarketplace) {
             AddMarketplaceSheet()
         }
         .task(id: ExploreLoad(swePath: app.swePath, open: app.pluginsTab == .explore)) {

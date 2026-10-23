@@ -115,7 +115,7 @@ public struct SearchDecoder {
     /// One already-parsed transcript line → the messages and hints it
     /// carries — the shared-parse counterpart of `decode(line:)`.
     public mutating func decode(object: [String: Any]) -> (messages: [SearchMessage], hints: SearchHints) {
-        var output = switch harness {
+        let output = switch harness {
         case .claude: SearchClaudeDecoder.decode(object: object)
         case .qoder: qoder.decode(object: object)
         case .codebuddy: codebuddy.decode(object: object)

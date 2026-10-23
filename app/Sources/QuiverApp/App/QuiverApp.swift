@@ -43,6 +43,10 @@ struct QuiverApp: App {
                         model.select(section)
                     }
                     .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+                    // A card over the window belongs to the page under it:
+                    // switching page would drop it, unsaved edits and all,
+                    // without its close check. Close the card first.
+                    .disabled(SheetOverlayRegistry.shared.anyCovered)
                 }
             }
         }

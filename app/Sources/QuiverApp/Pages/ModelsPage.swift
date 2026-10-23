@@ -48,7 +48,7 @@ private struct ModelsContent: View {
         .task(id: app.overview?.completedScans) {
             await model.loadIfNeeded(usageStamp: app.overview?.completedScans)
         }
-        .sheet(isPresented: Binding(get: { linking != nil },
+        .quiverSheet(isPresented: Binding(get: { linking != nil },
                                     set: { if !$0 { linking = nil; linkError = nil } })) {
             if let linking {
                 LinkSheet(model: model, logged: linking, error: $linkError) {
@@ -343,7 +343,7 @@ struct ChartCard: View {
     static let inset: CGFloat = 6
     static let spacing: CGFloat = 8
     /// The space the hover card is laid out in.
-    private static let space = "modelChart"
+    private nonisolated static let space = "modelChart"
 
     @State private var width: CGFloat = 0
     /// Which bar's card shows, and the waits around it.

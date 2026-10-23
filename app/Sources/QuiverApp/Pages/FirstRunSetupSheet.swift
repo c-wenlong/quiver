@@ -202,7 +202,7 @@ private struct AgentsStep: View {
                 }
             }
         }
-        .sheet(item: $installing) { provider in
+        .quiverSheet(item: $installing) { provider in
             ProviderSetupSheet(provider: provider, isInstalled: false).environment(app)
         }
     }
@@ -219,8 +219,7 @@ private struct AgentsStep: View {
 
     private func missingBanner(_ provider: Provider) -> some View {
         HStack(spacing: 12) {
-            (Text(provider.name).foregroundStyle(Theme.textPrimary)
-                + Text(" isn't installed yet. Quiver will list it anyway, and you can install it any time."))
+            Text("\(Text(provider.name).foregroundStyle(Theme.textPrimary)) isn't installed yet. Quiver will list it anyway, and you can install it any time.")
                 .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 12)

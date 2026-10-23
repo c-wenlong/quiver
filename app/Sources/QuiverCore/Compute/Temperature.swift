@@ -132,7 +132,7 @@ public struct HIDTemperatureSampler: TemperatureSampling {
         var floatValue: FloatValue
     }
 
-    private nonisolated(unsafe) static let calls: Calls? = {
+    private static let calls: Calls? = {
         guard let handle = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY) else { return nil }
         func symbol<T>(_ name: String, as: T.Type) -> T? {
             dlsym(handle, name).map { unsafeBitCast($0, to: T.self) }

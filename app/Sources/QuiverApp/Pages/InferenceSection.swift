@@ -102,7 +102,7 @@ struct InferenceSection: View {
         }
         .task(id: model.path) { await model.load() }
         .onDisappear { revealed.removeAll() }
-        .sheet(item: $editing) { draft in
+        .quiverSheet(item: $editing) { draft in
             KeyEditor(draft: draft, providers: model.providers, rows: model.rows,
                       save: { provider, name, value, tested in
                 if draft.isNew {
@@ -126,7 +126,7 @@ struct InferenceSection: View {
                 revealed.remove(name)
             })
         }
-        .sheet(item: $editingPlan) { item in
+        .quiverSheet(item: $editingPlan) { item in
             if let plan = item.plan {
                 PlanKeyEditor(plan: plan, current: item.key?.value ?? "", exists: item.key != nil, save: { value in
                     try await model.set(name: plan.keyName, value: value,
@@ -159,9 +159,6 @@ struct InferenceSection: View {
             "Add a line to \(confirmingSource?.lastPathComponent ?? "the startup file")?",
             isPresented: Binding(get: { confirmingSource != nil }, set: { if !$0 { confirmingSource = nil } })) {
             Button("Add line") {
-                // confirmSource may be cleared by dismissal before the
-                // task finishes, so capture the file name now.
-                let rc = confirmingSource
                 let model = app.apiKeys
                 sourceError = nil
                 Task {
@@ -439,7 +436,7 @@ private struct InferenceRow: View {
 /// vendor documents for Claude Code; saving writes the key to the keys
 /// file under the plan's variable and checks it.
 private struct PlanKeyEditor: View {
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSheet) private var dismiss
     var plan: InferencePlan
     var current: String
     /// Whether the keys file has the variable at all, empty or not, so an
@@ -681,7 +678,7 @@ private struct DropdownRowHover: ViewModifier {
 /// value tests it first; a rejection shows instead of saving until
 /// "Save anyway".
 private struct KeyEditor: View {
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSheet) private var dismiss
     @State var draft: KeyDraft
     /// The name the row had when the sheet opened; the draft's changes.
     private let originalName: String
