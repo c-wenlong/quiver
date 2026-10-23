@@ -117,6 +117,19 @@ import Testing
                      branches: [branch("main", isDefault: true)]),
             b: board("o/b", pulls: [],
                      runs: [run(5, branch: "dev", status: "in_progress", conclusion: nil)]))
+        let other = await self.model(
+            a: board("o/a", pulls: [],
+                     runs: [run(7, branch: "feature", conclusion: "failure")],
+                     branches: [branch("main", isDefault: true)]),
+            b: board("o/b", pulls: [],
+                     runs: [run(8, branch: "main", conclusion: "timed_out")]))
+        // Default branch known but absent from the page: unknown, not
+        // the feature branch's red.
+        #expect(other.ciState("o/a") == .unknown)
+        // A timeout is a failure for the dot and the chip alike.
+        #expect(other.ciState("o/b") == .failing)
+        other.rowFilter.on = [.failing]
+        #expect(other.rowCount("o/b", tab: .actions) == 1)
         // A failing feature branch doesn't paint the repo red.
         #expect(model.ciState("o/a") == .passing)
         // No default branch known: the newest run at all.

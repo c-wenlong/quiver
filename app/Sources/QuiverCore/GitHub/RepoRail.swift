@@ -43,7 +43,15 @@ public struct RepoRowFilter: Equatable, Sendable {
     }
 
     public func keeps(_ run: GhRun) -> Bool {
-        !on.contains(.failing) || run.conclusion == "failure"
+        !on.contains(.failing) || Self.failed(run)
+    }
+
+    /// The conclusions that count as a failed run, for the chip and the
+    /// rail's CI dot alike.
+    public static let failingConclusions: Set<String> = ["failure", "timed_out", "startup_failure"]
+
+    public static func failed(_ run: GhRun) -> Bool {
+        run.conclusion.map(failingConclusions.contains) ?? false
     }
 
     /// Dependency-update bots only. Coding agents (Devin, Copilot) also
@@ -152,8 +160,10 @@ extension GitHubModel {
     }
 
     /// The rail's CI dot: the newest run on the default branch, or the
-    /// newest run at all when the default branch is unknown. nil when
-    /// the repo has no runs loaded.
+    /// newest run at all when the default branch is unknown. A known
+    /// default branch with no run in the loaded page reads unknown, so
+    /// a feature branch's failure never paints the repo. nil when the
+    /// repo has no runs loaded.
     public func ciState(_ repo: String) -> GhPr.Checks? {
         let board = board(for: repo)
         guard case .loaded(let runs) = board.runs, !runs.isEmpty else { return nil }
@@ -161,12 +171,15 @@ extension GitHubModel {
         if case .loaded(let branches) = board.branches {
             main = branches.first(where: \.default)?.name
         }
-        let run = main.flatMap { name in runs.first { $0.branch == name } } ?? runs[0]
-        if run.status == "in_progress" || run.status == "queued" { return .running }
-        switch run.conclusion {
-        case "success": return .passing
-        case "failure", "timed_out", "startup_failure": return .failing
-        default: return .unknown
+        let run: GhRun
+        if let main {
+            guard let latest = runs.first(where: { $0.branch == main }) else { return .unknown }
+            run = latest
+        } else {
+            run = runs[0]
         }
+        if run.status == "in_progress" || run.status == "queued" { return .running }
+        if run.conclusion == "success" { return .passing }
+        return RepoRowFilter.failed(run) ? .failing : .unknown
     }
 }

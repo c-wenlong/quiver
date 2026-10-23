@@ -70,6 +70,13 @@ struct RepositoriesPage: View {
                                     await model.refresh(repo: repo.name,
                                                         swe: swe)
                                 }
+                                // The rail's CI dot reads the runs.
+                                if model.tab != .actions {
+                                    group.addTask {
+                                        await model.loadTab(.actions, repo: repo.name,
+                                                            swe: swe)
+                                    }
+                                }
                             }
                         }
                     }
@@ -162,14 +169,17 @@ struct RepositoriesPage: View {
                 }
             }
             // Poll while the page is open so merged PRs and finished CI
-            // land without a manual refresh.
+            // land without a manual refresh. The runs ride along on
+            // every tab: the rail's CI dots read them.
+            let tabs: [RepoTab] = model.tab == .actions ? [.actions] : [model.tab, .actions]
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
                 await withTaskGroup(of: Void.self) { group in
                     for repo in visibleRepos {
-                        group.addTask {
-                            await model.loadTab(model.tab, repo: repo.name,
-                                                swe: swe)
+                        for tab in tabs {
+                            group.addTask {
+                                await model.loadTab(tab, repo: repo.name, swe: swe)
+                            }
                         }
                     }
                 }
