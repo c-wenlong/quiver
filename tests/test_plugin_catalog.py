@@ -263,6 +263,22 @@ class MalformedTest(_CatalogHome, unittest.TestCase):
         self.assertTrue(any(e["marketplace"] == "official" and e["harness"] == "claude"
                             for e in catalog["errors"]))
 
+    def test_registered_marketplace_missing_on_disk(self):
+        # A settings.json synced from another Mac names a folder this one
+        # never had. The app groups these by this exact wording
+        # (CatalogProblems.missingManifest), so it is pinned here.
+        self.settings["extraKnownMarketplaces"] = {
+            "elsewhere": {"source": {"source": "directory",
+                                     "path": str(self.home / ".quiver" / "plugins" / "elsewhere")}}}
+        self._write_claude()
+        catalog = self.catalog()
+        self.assertIn({"harness": "claude", "marketplace": "elsewhere",
+                       "detail": "no marketplace manifest on disk"}, catalog["errors"])
+        # A hub path, so it would be the app's Local section, with nothing in it.
+        elsewhere = self.mkt("elsewhere", catalog)
+        self.assertTrue(elsewhere["hub"])
+        self.assertEqual(elsewhere["plugins"], [])
+
     def test_unreadable_install_record_leaves_that_harness_out(self):
         (self.home / ".claude" / "plugins" / "installed_plugins.json").write_text("[]")
         catalog = self.catalog()

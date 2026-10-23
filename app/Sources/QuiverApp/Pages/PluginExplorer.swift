@@ -62,7 +62,14 @@ struct PluginExplorer: View {
         let searching = model.isSearching
         let sources = index.sources(harness: model.harness, query: model.query)
         filters(index, shown: PluginExploreIndex.distinctPlugins(in: sources))
-        if !catalog.errors.isEmpty { Card { Problems(problems: catalog.errors) } }
+        if !index.problems.other.isEmpty { Card { Problems(problems: index.problems.other) } }
+        if let line = index.problems.missingLine {
+            // One quiet line, not a warning each: a registration synced
+            // from another Mac is nothing to fix from here.
+            Label(line, systemImage: "info.circle")
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                .hoverTip(index.problems.missing.joined(separator: ", "), title: "Registered, not on this Mac")
+        }
         if index.total == 0 {
             EmptyCard(text: "No plugin marketplaces registered in Claude Code, Codex or Cursor.",
                       icon: "puzzlepiece.extension",
@@ -80,9 +87,8 @@ struct PluginExplorer: View {
                         ForEach(source.marketplaces) { market in
                             MarketplaceCard(market: market,
                                             name: app.primitiveNames.name(forMarketplace: market.name) ?? market.name,
-                                            canRename: catalog.marketplaces
-                                                .first { $0.name == market.name }
-                                                .map { PrimitiveOwnership.isEditable($0, home: home) } ?? false,
+                                            // Worked out with the index, off the main actor.
+                                            canRename: index.isEditable(marketplace: market.name),
                                             catalog: catalog, running: model.running, busy: model.work.isBusy,
                                             open: model.isOpen(market.id), searching: searching,
                                             openHealth: openHealth, confirm: confirm,

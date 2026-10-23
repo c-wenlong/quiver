@@ -79,6 +79,9 @@ public struct ExploreMarketplace: Sendable, Equatable, Identifiable {
         self.id = id
         self.name = name
         self.tag = tag
+        // The rows are a ForEach keyed by id, and SwiftUI misbehaves on a
+        // repeated one: the first of each id stays.
+        let plugins = plugins.uniqued(by: \.id)
         self.plugins = plugins
         installed = plugins.filter { entry in
             entry.harnesses.contains { entry.row.plugin.harnesses[$0]?.status.isInstalled ?? false }
@@ -125,15 +128,34 @@ public struct PluginExploreIndex: Sendable, Equatable {
     public let rows: [ExploreRow]
     /// Every source, marketplace and plugin row, unfiltered.
     public let sources: [ExploreSource]
+    /// The marketplaces the user may rename: those whose folder is in
+    /// `~/.quiver/plugins` (`PrimitiveOwnership.isEditable`). Worked out
+    /// here, off the main actor, since it resolves symlinks on disk.
+    public let editableMarketplaces: Set<String>
+    /// What swe could not read, with the marketplaces missing on this Mac
+    /// set apart.
+    public let problems: CatalogProblems
 
-    public init(catalog: PluginCatalog, skills: [Skill]) {
+    /// Resolves plugin and skill folders on disk, so build it off the main
+    /// actor (`PluginCatalogModel` does).
+    /// - Parameter home: the home whose `~/.quiver/plugins` makes a
+    ///   marketplace editable; nil leaves every marketplace read only.
+    public init(catalog: PluginCatalog, skills: [Skill], home: URL? = nil,
+                resolve: @escaping (String) -> String = FolderOwners.realPath) {
         self.catalog = catalog
         self.skills = skills
-        let placement = SkillPlacement(skills: skills, catalog: catalog)
+        let placement = SkillPlacement(skills: skills, catalog: catalog, resolve: resolve)
         self.placement = placement
+        let problems = CatalogProblems(catalog)
+        self.problems = problems
+        editableMarketplaces = home.map { home in
+            Set(catalog.marketplaces.filter { PrimitiveOwnership.isEditable($0, home: home, resolve: resolve) }.map(\.name))
+        } ?? []
         var rows: [ExploreRow] = []
+        var seen: Set<String> = []
         for market in catalog.marketplaces {
-            for plugin in market.plugins {
+            // One row per ref: rows are looked up by it.
+            for plugin in market.plugins where seen.insert(plugin.ref).inserted {
                 let skills = placement.skills(of: plugin)
                 let haystack = ([plugin.name, plugin.ref, plugin.marketplace,
                                  plugin.displayName ?? "", plugin.description ?? ""]
@@ -142,8 +164,12 @@ public struct PluginExploreIndex: Sendable, Equatable {
             }
         }
         self.rows = rows
-        sources = Self.sources(catalog, rows: Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }))
+        sources = Self.sources(catalog, rows: Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }),
+                               missing: Set(problems.missing))
     }
+
+    /// Whether the marketplace named `name` can be renamed.
+    public func isEditable(marketplace name: String) -> Bool { editableMarketplaces.contains(name) }
 
     public var total: Int { rows.count }
 
@@ -162,7 +188,10 @@ public struct PluginExploreIndex: Sendable, Equatable {
 
     /// Local first, then each harness in swe's order, then the
     /// unregistered; marketplaces and plugins in the catalog's order.
-    private static func sources(_ catalog: PluginCatalog, rows: [String: ExploreRow]) -> [ExploreSource] {
+    /// - Parameter missing: marketplaces registered but not on this Mac;
+    ///   one with no plugins at all is left out rather than shown empty.
+    private static func sources(_ catalog: PluginCatalog, rows: [String: ExploreRow],
+                                missing: Set<String>) -> [ExploreSource] {
         var local: [ExploreMarketplace] = []
         var byHarness: [String: [ExploreMarketplace]] = [:]
         var unregistered: [ExploreMarketplace] = []
@@ -177,7 +206,12 @@ public struct PluginExploreIndex: Sendable, Equatable {
         }
 
         for market in catalog.marketplaces {
-            if market.hub {
+            if market.plugins.isEmpty, missing.contains(market.name) {
+                // A registration whose folder is not on this Mac, like a
+                // settings.json synced from another one: nothing to show,
+                // and the page says so in one line instead.
+                continue
+            } else if market.hub {
                 // Both harnesses' chips: the hub is meant for every harness
                 // swe acts in, so a missing one is worth seeing.
                 let tag = order.lazy.compactMap { market.harnesses[$0]?.sourceType }.first ?? "directory"
@@ -227,22 +261,24 @@ public struct PluginExploreIndex: Sendable, Equatable {
             }
         }
 
+        // Marketplace cards are a ForEach keyed by id too; a name the
+        // catalog repeats keeps its first.
         var sources: [ExploreSource] = []
         if !local.isEmpty {
             sources.append(ExploreSource(kind: .local, title: "Local", note: "Your Quiver hub, ~/.quiver/plugins",
-                                         marketplaces: local))
+                                         marketplaces: local.uniqued(by: \.id)))
         }
         for harness in order {
             guard let markets = byHarness[harness] else { continue }
             let name = HarnessMark(harness).name
             sources.append(ExploreSource(kind: .harness(harness), title: name,
                                          note: catalog.actions.contains(harness) ? "Marketplaces \(name) registers" : "Read only",
-                                         marketplaces: markets))
+                                         marketplaces: markets.uniqued(by: \.id)))
         }
         if !unregistered.isEmpty {
             sources.append(ExploreSource(kind: .unregistered, title: "Not registered",
                                          note: "Installed from a marketplace its harness no longer lists",
-                                         marketplaces: unregistered))
+                                         marketplaces: unregistered.uniqued(by: \.id)))
         }
         return sources
     }
@@ -287,6 +323,53 @@ public struct PluginExploreIndex: Sendable, Equatable {
     /// The search as matched: trimmed and lowercased.
     public static func needle(_ query: String) -> String {
         query.trimmingCharacters(in: .whitespaces).lowercased()
+    }
+}
+
+/// What swe could not read, with one kind set apart: a marketplace a
+/// harness registers whose folder is not on this Mac. A `~/.claude` synced
+/// from another machine names several of those at once, and a warning for
+/// each is noise nobody can act on from here, so the page says it in one
+/// quiet line. Quiver never edits a harness's settings to drop them.
+public struct CatalogProblems: Sendable, Equatable {
+    /// swe's words for it (`_read_manifest` in src/quiver/plugins/catalog.py,
+    /// pinned by `test_registered_marketplace_missing_on_disk`).
+    static let missingManifest = "no marketplace manifest on disk"
+
+    /// The missing marketplaces' names, once each, sorted.
+    public let missing: [String]
+    /// Everything else, in swe's order.
+    public let other: [PluginCatalog.Problem]
+
+    public init(_ catalog: PluginCatalog) {
+        var missing: Set<String> = []
+        var other: [PluginCatalog.Problem] = []
+        for problem in catalog.errors {
+            if problem.detail == Self.missingManifest, let name = problem.marketplace {
+                missing.insert(name)
+            } else {
+                other.append(problem)
+            }
+        }
+        self.missing = missing.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        self.other = other
+    }
+
+    /// "7 marketplaces are registered but missing on this Mac"; nil when none are.
+    public var missingLine: String? {
+        switch missing.count {
+        case 0: nil
+        case 1: "1 marketplace is registered but missing on this Mac"
+        case let n: "\(n) marketplaces are registered but missing on this Mac"
+        }
+    }
+}
+
+extension Array {
+    /// The first element of each key, in order.
+    func uniqued<Key: Hashable>(by key: (Element) -> Key) -> [Element] {
+        var seen: Set<Key> = []
+        return filter { seen.insert(key($0)).inserted }
     }
 }
 
