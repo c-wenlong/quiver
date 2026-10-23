@@ -561,6 +561,7 @@ def launch_new(
     *,
     known_ids: list[str] | None = None,
     launch_id: str = "",
+    binary: str | None = None,
 ) -> tuple[bool, str, str | None]:
     """``POST /v1/sessions``: start a fresh harness run under tmux.
 
@@ -570,10 +571,12 @@ def launch_new(
     catalog's session ids at launch time: adoption refuses any of them,
     so a pre-existing same-cwd session can never be claimed as ours.
     ``launch_id`` rides the marker into the supervised entry, so the hub
-    can tell the phone which session its launch became.
+    can tell the phone which session its launch became. ``binary`` is the
+    harness's registry command (``cursor`` runs as ``cursor-agent``);
+    without it the session tool name is the binary.
     Returns ``(ok, note, tmux_name)``.
     """
-    binary = launch_tool_name(tool_name)
+    binary = binary or launch_tool_name(tool_name)
     if not binary or not shutil.which(binary):
         return False, f"{tool_name} is not installed on this machine", None
     if not cwd or not os.path.isdir(cwd):
@@ -616,8 +619,12 @@ def prime_pane(name: str, prompt: str, *, timeout: float = 30.0) -> bool:
     """
     deadline = time.time() + timeout
     confirmed = False
+    # The last frame seen: a TUI still drawing its splash (opencode)
+    # drops whatever is typed, so typing waits for one unchanged frame.
+    last = None
     while time.time() < deadline:
-        pane = capture_pane(name).lower()
+        raw = capture_pane(name)
+        pane = raw.lower()
         if not pane.strip():
             time.sleep(0.5)
             continue
@@ -627,26 +634,49 @@ def prime_pane(name: str, prompt: str, *, timeout: float = 30.0) -> bool:
             send_key(name, "Down")
             send_key(name, "Enter")
             confirmed = True
+            last = None
             time.sleep(0.5)
             continue
         if "enter to confirm" in pane and not confirmed:
             send_key(name, "Enter")
             confirmed = True
+            last = None
             time.sleep(0.5)
             continue
-        if not send_text(name, prompt):
-            return False
-        # Claude's TUI can take fast-typed text as a paste and swallow
-        # the Enter right behind it, leaving the prompt in the input box
-        # and no transcript for adoption to find. Press Enter again
-        # while the prompt still sits there.
-        for _ in range(3):
+        if raw != last:
+            last = raw
             time.sleep(1.0)
-            if not _prompt_unsent(capture_pane(name), prompt):
-                return True
-            send_key(name, "Enter")
-        return not _prompt_unsent(capture_pane(name), prompt)
+            continue
+        return _deliver(name, prompt, before=raw)
     return False
+
+
+def _deliver(name: str, prompt: str, *, before: str) -> bool:
+    """Type ``prompt`` into a settled pane and make sure it was sent."""
+    if not send_text(name, prompt):
+        return False
+    retyped = False
+    # Claude's TUI can take fast-typed text as a paste and swallow the
+    # Enter right behind it, leaving the prompt in the input box and no
+    # transcript for adoption to find: press Enter again while it sits
+    # there. A pane exactly as it was before typing took nothing at all:
+    # the prompt is typed once more, and a pane still unchanged after
+    # that is a failed delivery, never a sent one.
+    pane = before
+    for _ in range(3):
+        time.sleep(1.0)
+        pane = capture_pane(name)
+        if pane == before:
+            if not retyped:
+                retyped = True
+                if not send_text(name, prompt):
+                    return False
+            continue
+        if not _prompt_unsent(pane, prompt):
+            return True
+        send_key(name, "Enter")
+    pane = capture_pane(name)
+    return pane != before and not _prompt_unsent(pane, prompt)
 
 
 def _prompt_unsent(pane: str, prompt: str) -> bool:
@@ -738,16 +768,24 @@ def _pending_match(
             st = transcript.stat() if transcript else None
         except OSError:
             st = None
-        if st is None:
+        if st is not None:
+            # Creation time, not mtime: a pre-existing session that was
+            # written to after launch has a new mtime but an old birth
+            # time — adopting it would bind someone else's session to our
+            # pane. st_birthtime exists on macOS and statx-capable Linux;
+            # ctime is the fallback (still older than mtime for a
+            # recycled file).
+            created = getattr(st, "st_birthtime", None)
+            if created is None:
+                created = min(st.st_mtime, st.st_ctime)
+        elif session.tool_name in tail._JSONL_ROOTS:
             continue
-        # Creation time, not mtime: a pre-existing session that was
-        # written to after launch has a new mtime but an old birth time
-        # — adopting it would bind someone else's session to our pane.
-        # st_birthtime exists on macOS and statx-capable Linux; ctime is
-        # the fallback (still older than mtime for a recycled file).
-        created = getattr(st, "st_birthtime", None)
-        if created is None:
-            created = min(st.st_mtime, st.st_ctime)
+        else:
+            # No JSONL transcript (opencode, kilo, devin, cline keep
+            # sessions in databases): the session's own activity time
+            # stands in. Every session the catalog knew at launch is
+            # already excluded, so only a new one can qualify.
+            created = (session.timestamp or 0) / 1000
         # 30s slack for clock/timestamp skew on the same machine.
         if created >= launched - 30:
             candidates.append((key, created))

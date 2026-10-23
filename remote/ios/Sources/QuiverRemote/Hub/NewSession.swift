@@ -5,28 +5,18 @@ import Observation
 /// recent folders, and the harnesses each accepts. Pure, so tests can
 /// feed it hub rows.
 enum NewSessionOptions {
-    /// Mirrors `protocol.LAUNCHABLE_HARNESSES`, for machines whose row
-    /// predates the `launchable` field.
-    static let launchable = ["claude", "codex", "cursor", "droid", "pi"]
-
-    static let names = ["claude": "Claude Code", "codex": "Codex", "cursor": "Cursor", "droid": "Droid", "pi": "Pi"]
-
-    static func harnesses(on machine: Machine, sessions: [SessionRow]) -> [String] {
-        let offered = machine.launchable ?? (machine.harnesses ?? []).filter(launchable.contains)
-        // The ones used most recently on this machine come first.
-        var order: [String] = []
-        for row in newestFirst(sessions) where row.machineId == machine.id {
-            if let h = row.harness, offered.contains(h), !order.contains(h) { order.append(h) }
-        }
-        return order + launchable.filter { offered.contains($0) && !order.contains($0) }
-            + offered.filter { !launchable.contains($0) && !order.contains($0) }
+    /// What the machine says it can start, in Provider visibility order.
+    /// A machine row older than `launchable` falls back to every harness
+    /// it detected; the hub still refuses any it can't start.
+    static func harnesses(on machine: Machine) -> [String] {
+        machine.launchable ?? machine.harnesses ?? []
     }
 
     /// Online machines first, then by name; a machine that can launch
     /// nothing is left out.
-    static func machines(_ machines: [Machine], sessions: [SessionRow]) -> [Machine] {
+    static func machines(_ machines: [Machine]) -> [Machine] {
         machines
-            .filter { !harnesses(on: $0, sessions: sessions).isEmpty }
+            .filter { !harnesses(on: $0).isEmpty }
             .sorted { a, b in
                 if (a.online ?? false) != (b.online ?? false) { return a.online ?? false }
                 return a.displayName.localizedCaseInsensitiveCompare(b.displayName) == .orderedAscending
@@ -43,6 +33,16 @@ enum NewSessionOptions {
         }
     }
 
+    /// Folders whose path holds every word of `query`, any case.
+    static func matching(_ folders: [String], query: String) -> [String] {
+        let words = query.lowercased().split(whereSeparator: \.isWhitespace)
+        guard !words.isEmpty else { return folders }
+        return folders.filter { path in
+            let p = path.lowercased()
+            return words.allSatisfy { p.contains($0) }
+        }
+    }
+
     /// The harness last used in `folder`, when it is on offer.
     static func defaultHarness(folder: String?, machineId: String, offered: [String], sessions: [SessionRow]) -> String? {
         let last = newestFirst(sessions).first { $0.machineId == machineId && $0.cwd == folder }?.harness
@@ -50,8 +50,11 @@ enum NewSessionOptions {
         return offered.first
     }
 
-    static func name(_ harness: String, sessions: [SessionRow]) -> String {
-        names[harness] ?? sessions.first { $0.harness == harness }?.agent ?? harness
+    /// The machine's name for it, else what its sessions call it, with a
+    /// capital first letter.
+    static func name(_ harness: String, on machine: Machine?, sessions: [SessionRow]) -> String {
+        let raw = machine?.harnessNames?[harness] ?? sessions.first { $0.harness == harness }?.agent ?? harness
+        return raw.prefix(1).uppercased() + raw.dropFirst()
     }
 
     private static func newestFirst(_ rows: [SessionRow]) -> [SessionRow] {
@@ -99,6 +102,10 @@ final class LaunchFlow {
             if let key = status.key, status.state == "started" {
                 phase = .started(key)
                 return key
+            }
+            if status.state == "untracked" {
+                phase = .unconfirmed("Started. Quiver can't read this harness's sessions yet, so there's no chat to open. It keeps running under tmux on the machine.")
+                return nil
             }
             if status.state == "failed" {
                 phase = .failed(status.note.map { "The session didn't start: \($0)" } ?? "The session didn't start.")

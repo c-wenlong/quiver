@@ -117,6 +117,8 @@ struct HubClient: Sendable {
         case "bad_cwd": "That folder doesn't exist on this machine."
         case "not_launchable": "That harness can't start on this machine."
         case "unknown_launch": "The hub lost track of this launch. Check Sessions in a moment."
+        case "browse_unavailable": "Browsing works on the hub machine only for now. Pick a recent folder instead."
+        case "not_readable": "The hub can't read that folder."
         default: fallback ?? "The hub answered with an error (\(status))."
         }
     }
@@ -172,6 +174,13 @@ struct HubClient: Sendable {
 
     func launch(_ id: String) async throws -> LaunchStatus {
         try await send(request("GET", "/v1/launches/\(Self.encodeKey(id))"))
+    }
+
+    /// Subfolders of `path` (the hub user's home when nil) on `machine`.
+    func folders(machine: String, path: String?) async throws -> FolderListing {
+        var query = ["machine": machine]
+        if let path { query["path"] = path }
+        return try await send(request("GET", "/v1/folders", query: query))
     }
 
     func pair(token: String, name: String) async throws -> Credential {

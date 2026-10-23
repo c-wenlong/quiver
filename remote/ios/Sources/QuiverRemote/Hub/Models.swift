@@ -14,6 +14,11 @@ struct Machine: Codable, Identifiable, Hashable {
     /// What `POST /v1/sessions` accepts on this machine; nil from a hub
     /// or satellite older than the new-session route.
     var launchable: [String]? = nil
+    /// Each launchable harness's registry name, e.g. "Qwen Code".
+    var harnessNames: [String: String]? = nil
+    /// Launchable harnesses swe can't read sessions of: they start, but
+    /// no chat ever opens.
+    var untrackedHarnesses: [String]? = nil
 
     /// "dev-macbook-pro.local" reads as "dev-macbook-pro".
     var displayName: String {
@@ -206,6 +211,19 @@ struct PendingPairRequest: Decodable, Identifiable, Hashable {
 struct PairRequestsResponse: Decodable { let requests: [PendingPairRequest] }
 
 struct SendAccepted: Decodable { let ok: Bool?; let waiting: Bool? }
+
+/// `GET /v1/folders`: one folder's subfolders on the hub machine.
+struct FolderListing: Decodable, Equatable {
+    struct Entry: Decodable, Equatable, Identifiable, Hashable {
+        let name: String
+        let path: String
+        var id: String { path }
+    }
+    let path: String
+    let parent: String?
+    let folders: [Entry]
+    let truncated: Bool?
+}
 
 /// `POST /v1/sessions` and `GET /v1/launches/<id>` both answer with this.
 /// `key` is set once `state` is "started".

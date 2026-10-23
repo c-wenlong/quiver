@@ -206,6 +206,7 @@ POST /v1/sessions/{id}/attachments   multipart upload → staged file, returns r
 POST /v1/sessions/{id}/approval      {request_id, decision}
 POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill
 POST /v1/sessions                    new session {machine, harness, cwd, prompt} → launch_id
+GET  /v1/folders?path=                subfolders of one folder on the hub machine (new-session browser)
 GET  /v1/launches/{launch_id}        pending|started|failed; started carries the session key
 GET  /v1/machines · /v1/usage · /v1/search?q=
 GET  /v1/inbox                       pending decisions; ?done=1 adds finished-today
@@ -227,18 +228,31 @@ is reused verbatim so phone and macOS app share semantics —
 
 `POST /v1/sessions` starts a harness under tmux (`supervise.launch_new`)
 on the hub, or queues a `launch` command for the satellite named in
-`machine` (empty means the hub). Only `protocol.LAUNCHABLE_HARNESSES`
-are accepted (claude, codex, cursor, droid, pi): each starts as a bare
-binary and writes a JSONL transcript, which is how the catalog finds the
-new session. `cwd` must be absolute and, on the hub, an existing folder
+`machine` (empty means the hub). The harnesses a machine can start come
+from `catalog.launchable_harnesses`, never a hardcoded list: every
+harness `swe list` shows there (not archived) whose registry `command`
+is on PATH, minus the ones switched off in the Mac app's Settings ›
+Provider visibility, in that setting's order (read from the app's
+preferences, `providerOrder` and `providerDisabled`; a machine without
+the app keeps registry order). The launch runs the registry command, so
+`cursor` starts `cursor-agent`. Providers with no CLI, like Antigravity,
+can't start. A harness swe has no session parser for (qwen-code) still
+starts, but nothing can ever name its session: the machine row lists it
+in `untracked_harnesses`, and its launch settles `untracked` with a note
+instead of staying pending. Adoption knows a new session by its JSONL transcript's birth
+time; harnesses that keep sessions in a database (opencode, kilo, devin,
+cline) are matched by the session's own activity time instead, with every
+session that existed at launch excluded (the catalog's rows plus a fresh
+run of that harness's parser, since the catalog can be a minute old). `cwd` must be absolute and,
+on the hub, an existing folder
 (a satellite checks its own disk and fails the command otherwise);
 `prompt` is required, since a harness writes no transcript until its
 first message, and is typed into the pane once the TUI is up. Each
-machine row in `/v1/machines` carries `launchable`, the detected
-harnesses this route accepts there, and the hub refuses a satellite
-launch outside it (`422 not_launchable`). Errors: `422 bad_command`
+machine row in `/v1/machines` carries `launchable` (in order) and
+`harness_names`, and the hub refuses a launch outside it
+(`422 not_launchable`). Errors: `422 bad_command`
 (body), `422 bad_cwd` (no such folder on the hub), `422 launch_failed`
-(binary or tmux missing), `429 backlog_full` (satellite too far behind).
+(tmux missing), `429 backlog_full` (satellite too far behind).
 
 The answer is `202 {launch_id, state: "pending", note}` (plus
 `queued: true` for a satellite). On the hub it comes before the pane is
@@ -254,6 +268,14 @@ skip the transcript as history already sent). `GET /v1/launches/{launch_id}` the
 phone can open the chat straight away; a satellite's failed `launch`
 command (`command.result` echoing `launch_id`) turns it `failed` with the
 note. The hub keeps launches in memory for a day.
+
+`GET /v1/folders?path=` lists one folder's subfolders on the hub machine
+for the phone's folder browser: `{path, parent, folders: [{name, path}],
+truncated}`, names only, dot-folders hidden, at most 500. No `path` means
+the hub user's home; a relative or missing folder is `422 bad_cwd`, an
+unreadable one `403 not_readable`, and another `machine` is `422
+browse_unavailable`, since a satellite's disk isn't readable from the
+hub.
 
 `GET /v1/search?q=&limit=` (`search.py`) answers from two sources. When
 the Quiver app's FTS5 index (`~/.quiver/data/search/search.sqlite`)

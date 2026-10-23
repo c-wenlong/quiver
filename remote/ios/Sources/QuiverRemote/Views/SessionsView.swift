@@ -75,7 +75,7 @@ struct SessionsView: View {
             if let key = startedKey { path.append(.chat(key)) }
             startedKey = nil
         }) {
-            NavigationStack { NewSessionView { startedKey = $0 } }
+            NewSessionView { startedKey = $0 }
         }
         .confirmationDialog("Unpair this device?", isPresented: $confirmUnpair, titleVisibility: .visible) {
             Button("Unpair", role: .destructive) { app.unpair() }
