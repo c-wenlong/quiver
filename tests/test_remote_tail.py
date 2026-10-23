@@ -299,6 +299,8 @@ class TestSlidingWindowDiff(unittest.TestCase):
         self.assertEqual(tail._new_from(["a", "b", "c"], ["b", "c", "d", "e"]), 2)  # slid
         self.assertEqual(tail._new_from(["a", "b"], ["x", "y"]), 0)  # nothing shared
         self.assertEqual(tail._new_from(["a", "b", "c"], ["a", "x"]), 1)  # rewrite at the fork
+        # A repeated message makes [a] a chance prefix; the slide overlap [a, c] wins.
+        self.assertEqual(tail._new_from(["a", "b", "a", "c"], ["a", "c", "d", "e"]), 2)
 
     def test_windowed_snapshot_emits_only_the_slid_in_messages(self):
         src = tail.SnapshotSource(Session(timestamp=0, agent="X", path="/tmp", session_id="s", tool_name="nope"))
@@ -327,6 +329,36 @@ class TestDevinChainTail(unittest.TestCase):
         self.assertEqual(tr._devin_chain_tail(conn, "s", None, 99), ["n1", "n2", "n3", "n5"], "no head: newest node")
 
 
+class TestDevinBoundedRead(unittest.TestCase):
+    def test_result_keeps_its_tool_name_after_its_call_leaves_the_window(self):
+        import sqlite3
+        from quiver.reports import transcripts as tr
+        tmp = Path(tempfile.mkdtemp())
+        db = tmp / "sessions.db"
+        conn = sqlite3.connect(db)
+        conn.executescript(
+            "CREATE TABLE sessions(id TEXT PRIMARY KEY, main_chain_id INTEGER);"
+            "CREATE TABLE message_nodes(row_id INTEGER PRIMARY KEY, session_id TEXT, node_id INTEGER,"
+            " parent_node_id INTEGER, chat_message TEXT, created_at INTEGER, UNIQUE(session_id, node_id));"
+        )
+        rows = [
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "name": "read", "arguments": "{}"}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "file body"},
+            {"role": "assistant", "content": "done"},
+        ]
+        for i, rec in enumerate(rows, start=1):
+            conn.execute("INSERT INTO message_nodes(session_id, node_id, parent_node_id, chat_message, created_at)"
+                         " VALUES ('s', ?, ?, ?, 0)", (i, i - 1 if i > 1 else None, json.dumps(rec)))
+        conn.execute("INSERT INTO sessions VALUES ('s', 3)")
+        conn.commit(); conn.close()
+        session = Session(timestamp=0, agent="Devin", path="/tmp", session_id="s", tool_name="devin")
+        with patch("os.path.expanduser", side_effect=lambda p: str(db) if "devin" in p else p):
+            full = tr.read_transcript(session).messages
+            window = tr.read_transcript_tail(session, 2).messages
+        self.assertEqual([m.text for m in window], [m.text for m in full][-len(window):])
+        self.assertTrue(any("read" in m.text for m in window), "the result still names its call")
+
+
 class TestBackfillCap(unittest.TestCase):
     """A session seen for the first time backfills recent history only."""
 
@@ -347,6 +379,29 @@ class TestBackfillCap(unittest.TestCase):
         with open(path, "a") as fh:
             fh.write(json.dumps(_claude_user("new")) + "\n")
         self.assertEqual([m["text"] for m in src.poll()], ["new"])
+
+    def test_alignment_walks_past_a_record_bigger_than_a_chunk(self):
+        path = self.tmp / "t.jsonl"
+        big = json.dumps({"type": "user", "message": {"role": "user", "content": "x" * (tail._MAX_CHUNK * 2)}})
+        with open(path, "w") as fh:
+            fh.write(big + "\n")
+            fh.write(json.dumps(_claude_user("after")) + "\n")
+        src = tail.JsonlTailSource(path, "claude")
+        src.start_near_end(max_bytes=tail._MAX_CHUNK * 2)  # starts inside the big record
+        texts = []
+        for _ in range(6):
+            texts += [m["text"] for m in src.poll()]
+        self.assertEqual(texts, ["after"])
+
+    def test_truncation_before_the_aligned_read_keeps_the_first_record(self):
+        path = self.tmp / "t.jsonl"
+        with open(path, "w") as fh:
+            for i in range(100):
+                fh.write(json.dumps(_claude_user(f"m{i:03d}")) + "\n")
+        src = tail.JsonlTailSource(path, "claude")
+        src.start_near_end(max_bytes=600)
+        path.write_text(json.dumps(_claude_user("fresh")) + "\n")  # replaced before any poll
+        self.assertEqual([m["text"] for m in src.poll()], ["fresh"])
 
     def test_small_jsonl_reads_whole(self):
         path = self.tmp / "t.jsonl"

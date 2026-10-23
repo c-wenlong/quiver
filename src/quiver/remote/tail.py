@@ -434,6 +434,8 @@ class JsonlTailSource:
         if size <= self.offset:
             if size < self.offset:  # truncated/rotated: restart
                 self.offset = 0
+                # A new file starts on a whole line; nothing to align.
+                self._align = False
             else:
                 return []
         try:
@@ -446,6 +448,10 @@ class JsonlTailSource:
             # Mid-line start: drop through the first newline.
             first_nl = chunk.find(b"\n")
             if first_nl < 0:
+                if len(chunk) >= _MAX_CHUNK:
+                    # Still inside one huge record: step past this chunk
+                    # and keep looking, rather than re-reading it forever.
+                    self.offset += len(chunk)
                 return []
             self.offset += first_nl + 1
             chunk = chunk[first_nl + 1:]
@@ -739,15 +745,20 @@ def _new_from(old: list[str], new: list[str]) -> int:
         if a != b:
             break
         common += 1
-    if common or not old or not new:
+    if common == len(old) or not old or not new:
         return common
-    # Only positions where the new window's first message sits in the old
-    # one can start an overlap; the earliest such match is the longest.
+    # Fingerprints are content, so a repeated message can make a short
+    # prefix match by chance after the window slid ([a,b,a,c] then
+    # [a,c,d,e]). The longest slide overlap is checked too, and the
+    # larger answer wins. Only positions holding the new window's first
+    # message can start an overlap; the earliest is the longest.
+    overlap = 0
     first = new[0]
     for i, fp in enumerate(old):
         if fp == first and old[i:] == new[: len(old) - i]:
-            return len(old) - i
-    return 0
+            overlap = len(old) - i
+            break
+    return max(common, overlap)
 
 
 def _devin_token(session_id: str) -> tuple | None:

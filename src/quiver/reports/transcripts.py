@@ -693,12 +693,18 @@ def _read_devin(session: Session, max_nodes: int | None = None) -> NormalizedTra
             "SELECT main_chain_id FROM sessions WHERE id = ?", (session.session_id,),
         ).fetchone()
         head = head_row[0] if head_row else None
-        ordered = (
-            _devin_chain_tail(conn, session.session_id, head, max_nodes)
-            if max_nodes is not None
-            else _devin_chain(conn, session.session_id, head)
-        )
-        for raw in ordered:
+        if max_nodes is not None:
+            # A margin of older nodes resolves tool-call names for results
+            # near the window's start; their own messages are not kept.
+            # Without it a result's label would change as its call slid
+            # out, and the live tailer would see the window as rewritten.
+            ordered = _devin_chain_tail(conn, session.session_id, head, max_nodes + _DEVIN_NAME_MARGIN)
+            context = max(0, len(ordered) - max_nodes)
+        else:
+            ordered = _devin_chain(conn, session.session_id, head)
+            context = 0
+        for index, raw in enumerate(ordered):
+            keep = index >= context
             try:
                 record = json.loads(raw)
             except (TypeError, json.JSONDecodeError, RecursionError):
@@ -708,13 +714,13 @@ def _read_devin(session: Session, max_nodes: int | None = None) -> NormalizedTra
             role = _role(record.get("role"))
             if role == "tool":
                 label = call_names.get(str(record.get("tool_call_id") or ""), "tool result")
-                msg = _tool_message(label, output=record.get("content"))
+                msg = _tool_message(label, output=record.get("content")) if keep else None
                 if msg:
                     transcript.messages.append(msg)
                 continue
             if role not in {"human", "assistant"}:
                 continue
-            msg = _message(role, record.get("content"))
+            msg = _message(role, record.get("content")) if keep else None
             if msg:
                 transcript.messages.append(msg)
             for call in record.get("tool_calls") or []:
@@ -723,7 +729,7 @@ def _read_devin(session: Session, max_nodes: int | None = None) -> NormalizedTra
                 name = call.get("name")
                 if call.get("id") and name:
                     call_names[str(call["id"])] = str(name)
-                msg = _tool_message(name, call.get("arguments"))
+                msg = _tool_message(name, call.get("arguments")) if keep else None
                 if msg:
                     transcript.messages.append(msg)
     except sqlite3.Error as exc:
@@ -731,6 +737,11 @@ def _read_devin(session: Session, max_nodes: int | None = None) -> NormalizedTra
     finally:
         conn.close()
     return transcript
+
+
+# Extra chain nodes a bounded Devin read walks only to learn tool-call
+# names (a result names the call it answers, which sits just before it).
+_DEVIN_NAME_MARGIN = 64
 
 
 def _devin_chain(conn: sqlite3.Connection, session_id: str, head: int | None) -> list[str]:
