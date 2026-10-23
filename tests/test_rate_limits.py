@@ -3510,6 +3510,55 @@ class BundledLibcryptoLoadTest(unittest.TestCase):
             self.assertEqual(calls, [])
 
 
+class DarwinSystemLibcryptoTest(unittest.TestCase):
+    """Apple's unversioned /usr/lib/libcrypto.dylib never reaches CDLL.
+
+    dlopen of that stub aborts the interpreter instead of raising, which
+    killed the nixpkgs build's test phase.
+    """
+
+    def setUp(self):
+        import quiver.harness.rate_limits as rl
+        self.rl = rl
+        self._saved = (rl._LIBCRYPTO, rl._LIBCRYPTO_TRIED)
+        rl._LIBCRYPTO_TRIED = False
+        rl._LIBCRYPTO = None
+        self.addCleanup(setattr, rl, "_LIBCRYPTO", self._saved[0])
+        self.addCleanup(setattr, rl, "_LIBCRYPTO_TRIED", self._saved[1])
+
+    def _load(self, platform):
+        calls = []
+
+        def fake_cdll(name):
+            calls.append(name)
+            raise OSError(name)
+
+        import ctypes
+        import ctypes.util
+        with patch.dict(os.environ, {}, clear=False), \
+                patch.object(sys, "platform", platform), \
+                patch.object(ctypes, "CDLL", fake_cdll), \
+                patch.object(ctypes.util, "find_library",
+                             lambda name: "/usr/lib/libcrypto.dylib"), \
+                patch("glob.glob", return_value=[]):
+            os.environ.pop("QUIVER_BUNDLED_PYTHON", None)
+            self.assertIsNone(self.rl._load_libcrypto())
+        return calls
+
+    def test_darwin_skips_the_system_stub(self):
+        calls = self._load("darwin")
+        self.assertNotIn("/usr/lib/libcrypto.dylib", calls)
+        self.assertNotIn("libcrypto.dylib", calls)
+        # Real OpenSSL candidates are still tried.
+        self.assertIn("libcrypto.3.dylib", calls)
+        self.assertIn("/opt/homebrew/lib/libcrypto.dylib", calls)
+
+    def test_other_platforms_keep_every_candidate(self):
+        calls = self._load("linux")
+        self.assertIn("/usr/lib/libcrypto.dylib", calls)
+        self.assertIn("libcrypto.dylib", calls)
+
+
 class DroidAuthFileDecryptTest(unittest.TestCase):
     """Unit tests for the auth.v2.file decryptor's defensive paths.
 
