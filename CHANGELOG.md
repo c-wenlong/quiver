@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without editing a shared file. The sidebar marks Menu bar and Widgets
   as Mac only. docs/web-app.md, "Adding a page", has the layout.
 
+- **Overview: the harness logos load as a pill while the marbles pour.**
+  On the first pour after launch the logo row is a pill that fills in each
+  harness's colour as its marbles land, left to right in the logos' order.
+  Once every marble is down each colour springs into its logo's circle and
+  the logos fade in; hovering works from then on. A wrapped logo row fades
+  across instead, and Reduce motion shows the logos straight away.
+
 - **Web app: Harnesses and Accounts.** Harnesses lists every harness swe
   knows on the hub machine, with the Mac app's In use / Archived scopes,
   search, starred-first order, a fold for the unstarred ones, version,
@@ -331,6 +338,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Integrations page under Advanced. The list goes from 12 items to 9.
 
 ### Fixed
+
+- **OpenCode 2.x sessions show up again.** OpenCode 2.x writes new
+  sessions only to `session_v2` and their turns only to
+  `session_message`, so every session made since the upgrade was missing
+  from `swe session`, search, status, transcripts, the phone app and
+  usage. swe and the Mac app now read both stores, each session and
+  reply once.
 
 - **Quiver switches pages at once.** Clicking a sidebar row or pressing
   ⌘1 to ⌘9 used to keep the old page up for 70 to 460 ms while the new

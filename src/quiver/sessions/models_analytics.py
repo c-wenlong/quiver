@@ -6,6 +6,8 @@ import os
 import re
 import sqlite3
 
+from quiver.sessions import opencode_store
+
 
 def classify_provider(model: str) -> str:
     """Classify provider from model name using regex patterns."""
@@ -64,7 +66,8 @@ def _scan_jsonl_models(path: str, max_lines: int) -> dict[tuple[str, str], int]:
 
 
 def _drizzle_model_counts(db_path: str) -> dict[tuple[str, str], int]:
-    """Model counts from an opencode-schema ``message`` table.
+    """Model counts from an opencode-schema ``message`` table, plus the
+    ``session_message`` replies OpenCode 2.x writes instead.
 
     Kilo is an opencode fork: kilo.db has the same ``message.data`` JSON
     with ``model.providerID``/``model.modelID``.
@@ -87,6 +90,26 @@ def _drizzle_model_counts(db_path: str) -> dict[tuple[str, str], int]:
         for provider, model, cnt in cur.fetchall():
             if model:
                 seen[(provider or "", model)] = cnt
+        # OpenCode 2.x keeps new replies only in ``session_message``, with
+        # the model as ``model.id``; rows copied from ``message`` keep their
+        # id and were counted above.
+        if opencode_store.has_v2_messages(conn):
+            cur.execute(
+                """
+                SELECT json_extract(sm.data, '$.model.providerID'),
+                       json_extract(sm.data, '$.model.id'),
+                       COUNT(*)
+                FROM session_message sm
+                WHERE sm.type = 'assistant'
+                  AND json_extract(sm.data, '$.model.id') IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM message m WHERE m.id = sm.id)
+                GROUP BY 1, 2
+                """
+            )
+            for provider, model, cnt in cur.fetchall():
+                if model:
+                    key = (provider or "", model)
+                    seen[key] = seen.get(key, 0) + cnt
     except Exception:
         pass
     finally:

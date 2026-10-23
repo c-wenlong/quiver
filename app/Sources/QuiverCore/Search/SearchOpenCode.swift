@@ -9,7 +9,7 @@ import SQLite3
 /// that owes it one, because a row in a container has no byte offset to
 /// resume from.
 enum SearchOpenCode {
-    /// One `session` row: what the index needs to stat the synthetic file
+    /// One `session` (or `session_v2`) row: what the index needs to stat the synthetic file
     /// and to fill its `sessions` row.
     struct Session {
         var id: String
@@ -18,7 +18,7 @@ enum SearchOpenCode {
         var timeCreatedMs: Int64
         var timeUpdatedMs: Int64
         /// The synthetic `sizeBytes`: how many `message` rows the session
-        /// holds. Together with the activity time it is the whole change
+        /// holds, plus its 2.x `session_message` rows not copied from them. Together with the activity time it is the whole change
         /// detector — a session re-reads only when one of the two moved.
         var messageCount: Int64
 
@@ -85,13 +85,40 @@ enum SearchOpenCode {
         // row is the enumeration's to retire.
         let filters = (sessionColumns.contains("parent_id") ? " AND s.parent_id IS NULL" : "")
             + (sessionColumns.contains("time_archived") ? " AND s.time_archived IS NULL" : "")
-        let statement = try db.prepare("""
-            SELECT s.id, s.time_created, s.time_updated,
-                   \(column("title")), \(column("directory")),
-                   (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id)
+        // OpenCode 2.x writes new sessions only to `session_v2` and their
+        // messages only to `session_message` (see `v2Messages`). A session
+        // in both tables reads its v2 row, the one 2.x keeps current, with
+        // the legacy title and directory as fallbacks.
+        let v2Columns = try columns(of: "session_v2", in: db)
+        let hasV2 = v2Columns.isSuperset(of: ["id", "time_created", "time_updated"])
+        let v2Count = try columns(of: "session_message", in: db).isSuperset(of: ["id", "session_id"])
+            ? { (id: String) in "(SELECT COUNT(*) FROM session_message sm WHERE sm.session_id = \(id)"
+                + " AND NOT EXISTS (SELECT 1 FROM message m WHERE m.id = sm.id))" }
+            : { (_: String) in "0" }
+        let legacy = """
+            SELECT s.id AS id, s.time_created AS time_created, s.time_updated AS time_updated,
+                   \(column("title")) AS title, \(column("directory")) AS directory,
+                   (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id) + \(v2Count("s.id")) AS n
             FROM session s
             WHERE 1=1\(filters)
-            ORDER BY CASE WHEN s.time_updated > 0 THEN s.time_updated ELSE s.time_created END DESC
+            """
+        let v2Column = { (name: String) in v2Columns.contains(name) ? "v.\(name)" : "NULL" }
+        let v2Filters = (v2Columns.contains("parent_id") ? " AND v.parent_id IS NULL" : "")
+            + (v2Columns.contains("time_archived") ? " AND v.time_archived IS NULL" : "")
+        let rows = hasV2 ? """
+            SELECT v.id AS id, v.time_created AS time_created,
+                   MAX(v.time_updated, COALESCE(s.time_updated, 0)) AS time_updated,
+                   COALESCE(NULLIF(\(v2Column("title")), ''), \(column("title"))) AS title,
+                   COALESCE(NULLIF(\(v2Column("directory")), ''), \(column("directory"))) AS directory,
+                   (SELECT COUNT(*) FROM message m WHERE m.session_id = v.id) + \(v2Count("v.id")) AS n
+            FROM session_v2 v LEFT JOIN session s ON s.id = v.id
+            WHERE 1=1\(v2Filters)
+            UNION ALL
+            \(legacy) AND NOT EXISTS (SELECT 1 FROM session_v2 v WHERE v.id = s.id)
+            """ : legacy
+        let statement = try db.prepare("""
+            SELECT id, time_created, time_updated, title, directory, n FROM (\(rows))
+            ORDER BY CASE WHEN time_updated > 0 THEN time_updated ELSE time_created END DESC
             \(limit.map { "LIMIT \($0)" } ?? "")
             """)
         var sessions: [Session] = []
@@ -155,6 +182,63 @@ enum SearchOpenCode {
             }
         }
         flush()
+        return messages + (try v2Messages(in: db, sessionID: sessionID))
+    }
+
+    /// The session's OpenCode 2.x turns, after its legacy ones: one
+    /// `session_message` row per turn, its JSON `data` holding the whole
+    /// turn. A prompt (`user`, `synthetic`) is its `text`; an assistant
+    /// row's `text` and `reasoning` blocks join into one message and each
+    /// `tool` block follows as its own, like a legacy turn's parts. Rows
+    /// the 2.x migration copied from `message` keep their ids and were
+    /// read as legacy rows; system and compaction rows are bookkeeping.
+    private static func v2Messages(in db: SQLiteDatabase, sessionID: String) throws -> [SearchMessage] {
+        guard try columns(of: "session_message", in: db)
+                .isSuperset(of: ["id", "session_id", "type", "seq", "time_created", "data"])
+        else { return [] }
+        let statement = try db.prepare("""
+            SELECT sm.type, sm.data, sm.time_created FROM session_message sm
+            WHERE sm.session_id = ? AND sm.type IN ('user','synthetic','assistant')
+              AND NOT EXISTS (SELECT 1 FROM message m WHERE m.id = sm.id)
+            ORDER BY sm.seq
+            """)
+        statement.bind([.text(sessionID)])
+        var messages: [SearchMessage] = []
+        while try statement.step() {
+            guard let raw = statement.text(1),
+                  let data = (try? JSONSerialization.jsonObject(with: Data(raw.utf8))) as? [String: Any]
+            else { continue }
+            let ts = iso(ms: statement.int(2))
+            if statement.text(0) != "assistant" {
+                if let text = (data["text"] as? String).flatMap({ SearchText.bounded($0) }) {
+                    messages.append(SearchMessage(role: .user, text: text, ts: ts))
+                }
+                continue
+            }
+            var words: [String] = []
+            var tools: [SearchMessage] = []
+            for block in data["content"] as? [[String: Any]] ?? [] {
+                switch block["type"] as? String {
+                case "text", "reasoning":
+                    if let text = block["text"] as? String { words.append(text) }
+                case "tool":
+                    // The legacy part's shape: `tool` names it, and the
+                    // output is the text of `state.content`'s blocks.
+                    var state = block["state"] as? [String: Any] ?? [:]
+                    if state["output"] == nil, let content = state["content"] as? [[String: Any]] {
+                        state["output"] = content.compactMap { $0["text"] as? String }.joined(separator: "\n")
+                    }
+                    if let text = toolText(["tool": block["name"] as Any, "state": state]) {
+                        tools.append(SearchMessage(role: .tool, text: text, ts: ts))
+                    }
+                default: break
+                }
+            }
+            if let text = SearchText.bounded(words.joined(separator: "\n")) {
+                messages.append(SearchMessage(role: .assistant, text: text, ts: ts))
+            }
+            messages.append(contentsOf: tools)
+        }
         return messages
     }
 
@@ -175,6 +259,10 @@ enum SearchOpenCode {
         guard let part = (try? JSONSerialization.jsonObject(with: Data(data.utf8)))
                 as? [String: Any]
         else { return nil }
+        return toolText(part)
+    }
+
+    private static func toolText(_ part: [String: Any]) -> String? {
         let state = part["state"] as? [String: Any]
         // OpenCode spells the file argument `filePath`; the shared key list
         // spells it `file_path` (Orca's `sharedToolInputSpelling`).
