@@ -415,6 +415,9 @@ def _title_from_tail(fp: str, config: JsonlParserConfig) -> tuple[str, str]:
             start = max(0, size - config.tail_bytes)
             f.seek(start)
             chunk = f.read().decode("utf-8", errors="ignore")
+    except OSError:
+        parse_cache.note_read_error()
+        return "", ""
     except Exception:
         return "", ""
     lines = chunk.split("\n")
@@ -565,6 +568,8 @@ def _scan_jsonl(fp: str, config: JsonlParserConfig) -> list:
                         break
                     if path and not config.title_from_event and i >= config.path_scan_lines:
                         break
+        except OSError:
+            parse_cache.note_read_error()
         except Exception:
             pass
 

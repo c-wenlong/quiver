@@ -442,6 +442,9 @@ def _claude_handed_off(path: str) -> str:
             start = max(0, size - _CLAUDE_HANDOFF_TAIL_BYTES)
             fh.seek(start)
             chunk = fh.read().decode("utf-8", errors="ignore")
+    except OSError:
+        parse_cache.note_read_error()
+        return ""
     except Exception:
         return ""
     lines = chunk.split("\n")
@@ -1101,6 +1104,8 @@ def _cursor_scan(jsonl_path: str, home: str) -> list:
                                 all_paths.append(p)
                 if first_user_text and len(all_paths) >= 5:
                     break
+    except OSError:
+        parse_cache.note_read_error()
     except Exception:
         pass
     return [_cursor_session_title(first_user_text, {}), all_paths]
@@ -1196,6 +1201,8 @@ def _freebuff_run_state(state_path: str) -> list:
             if text:
                 title = clean_title(text, 50)
                 break
+    except OSError:
+        parse_cache.note_read_error()
     except Exception:
         pass
     return [cwd, title]
@@ -1216,7 +1223,11 @@ def parse_freebuff():
             "freebuff:run-state",
             state_path,
             lambda: _freebuff_run_state(state_path),
-            valid=lambda v: isinstance(v, list) and len(v) == 2,
+            valid=lambda v: (
+                isinstance(v, list)
+                and len(v) == 2
+                and (v[1] is None or isinstance(v[1], str))
+            ),
         )
         if cwd:
             fields["path"] = cwd

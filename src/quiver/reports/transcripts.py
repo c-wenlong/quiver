@@ -9,6 +9,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -370,28 +371,36 @@ def _deduplicate(messages: list[NormalizedMessage]) -> list[NormalizedMessage]:
     return result
 
 
-# (root, patterns) -> {stem or path part: first candidate carrying it}. One
-# walk of a root answers every later lookup under it; see _find_session_file.
-_SESSION_FILE_INDEX: dict[tuple[str, tuple[str, ...]], dict[str, Path]] = {}
+# (root, patterns) -> (built at, {stem or path part: first candidate carrying
+# it}). One walk of a root answers every lookup under it for a few seconds;
+# see _find_session_file.
+_SESSION_FILE_INDEX: dict[tuple[str, tuple[str, ...]], tuple[float, dict[str, Path]]] = {}
 _SESSION_FILE_INDEX_LOCK = threading.Lock()
+# How long a walk is trusted for a hit. A batch of lookups lands well inside
+# it; a long-lived process (the remote tailer, a picker left open) re-walks
+# after it, so a copy that appears beside the one it found is picked up the
+# way the per-lookup glob would have.
+_SESSION_FILE_INDEX_TTL_S = 10.0
 
 
 def _session_file_index(
     root: Path, patterns: tuple[str, ...], rebuild: bool = False
 ) -> dict[str, Path]:
     key = (str(root), tuple(patterns))
+    now = time.monotonic()
     with _SESSION_FILE_INDEX_LOCK:
-        index = None if rebuild else _SESSION_FILE_INDEX.get(key)
-        if index is None:
-            index = {}
-            # Candidates in the order the per-lookup glob produced them, and
-            # the first one to carry a key keeps it, so a lookup returns the
-            # same file the old scan stopped at.
-            for pattern in patterns:
-                for path in root.glob(f"**/{pattern}"):
-                    for part in (path.stem, *path.parts):
-                        index.setdefault(part, path)
-            _SESSION_FILE_INDEX[key] = index
+        cached = None if rebuild else _SESSION_FILE_INDEX.get(key)
+        if cached is not None and now - cached[0] <= _SESSION_FILE_INDEX_TTL_S:
+            return cached[1]
+        index: dict[str, Path] = {}
+        # Candidates in the order the per-lookup glob produced them, and the
+        # first one to carry a key keeps it, so a lookup returns the same
+        # file the old scan stopped at.
+        for pattern in patterns:
+            for path in root.glob(f"**/{pattern}"):
+                for part in (path.stem, *path.parts):
+                    index.setdefault(part, path)
+        _SESSION_FILE_INDEX[key] = (now, index)
         return index
 
 
@@ -399,11 +408,12 @@ def _find_session_file(root: Path, session_id: str, patterns: tuple[str, ...] = 
     """The transcript under ``root`` whose stem is ``session_id``, or that sits
     in a directory named for it.
 
-    The tree is walked once per root and pattern set per process, so a
-    report or picker resolving N sessions pays for one walk, not N. A miss,
-    or a hit whose file has since gone, walks again before answering, so a
-    transcript created after the last walk is still found and "not found"
-    always reflects the disk as it is now.
+    The tree is walked once per root and pattern set and the walk is reused
+    for ``_SESSION_FILE_INDEX_TTL_S``, so a report or picker resolving N
+    sessions pays for one walk, not N. A miss, or a hit whose file has
+    since gone, walks again before answering, so a transcript created after
+    the last walk is still found and "not found" always reflects the disk
+    as it is now.
     """
     if session_id:
         direct = expand_user(session_id)

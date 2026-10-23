@@ -226,6 +226,22 @@ class CliColdWarmTest(unittest.TestCase):
         self.cache.write_text(json.dumps(doc))
         self.assertEqual(self.listing(), cold)
 
+    def test_wrong_typed_fields_under_a_matching_signature_are_a_miss(self):
+        add_everything(self.home)
+        cold = self.listing()
+        doc = json.loads(self.cache.read_text())
+        broken = {
+            "claude:jsonl": lambda v: [v[0], 123, v[2]],
+            "claude:handoff": lambda v: 7,
+            "cursor:scan": lambda v: [v[0], [1, 2]],
+            "freebuff:run-state": lambda v: [v[0], 5],
+        }
+        for namespace, damage in broken.items():
+            for key, (sig, value) in list(doc["entries"][namespace].items()):
+                doc["entries"][namespace][key] = [sig, damage(value)]
+        self.cache.write_text(json.dumps(doc))
+        self.assertEqual(self.listing(), cold)
+
     def test_poisoned_entry_with_a_stale_signature_is_ignored(self):
         path = add_claude(self.home)
         self.listing()
@@ -373,6 +389,48 @@ class InProcessCacheTest(unittest.TestCase):
         (self.home / ".quiver" / "cache").write_text("a file, not a dir")
         self.assertEqual(len(self.listing()), 1)
         self.assertEqual(len(self.listing()), 1)
+
+    def test_a_failed_read_is_not_cached(self):
+        path = add_claude(self.home)
+        real_open = open
+
+        def failing_open(file, *args, **kwargs):
+            if str(file) == str(path):
+                raise PermissionError(13, "transient", str(file))
+            return real_open(file, *args, **kwargs)
+
+        with patch("builtins.open", side_effect=failing_open):
+            rows = self.listing()
+        self.assertEqual([r[3] for r in rows], [""])  # nothing could be read
+        # Nothing was storable, so nothing was written.
+        self.assertFalse(session_parse_cache_file_for(self.home).exists())
+        # Reads recover; the file itself never changed.
+        self.assertEqual([r[3] for r in self.listing()], ["fix the login bug"])
+
+    def test_a_failed_sidecar_read_is_not_cached(self):
+        state = add_freebuff(self.home)
+        real_open = open
+
+        def failing_open(file, *args, **kwargs):
+            if str(file) == str(state):
+                raise OSError(5, "I/O error", str(file))
+            return real_open(file, *args, **kwargs)
+
+        with patch("builtins.open", side_effect=failing_open):
+            self.assertEqual([r[3] for r in self.listing()], [""])
+        self.assertEqual([r[3] for r in self.listing()], ["freebuff prompt"])
+
+    def test_malformed_file_content_is_cached(self):
+        # Bad JSON is a property of the bytes, not of the attempt.
+        path = claude_path(self.home)
+        path.parent.mkdir(parents=True)
+        path.write_text("not json\n" + json.dumps(
+            {"type": "user", "cwd": "/work/proj",
+             "message": {"role": "user", "content": "after junk"}}) + "\n")
+        calls = self.scans()
+        self.listing()
+        self.listing()
+        self.assertEqual(len(calls), 1)
 
     def test_code_change_discards_entries(self):
         add_claude(self.home)

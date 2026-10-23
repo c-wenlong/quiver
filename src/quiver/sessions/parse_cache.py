@@ -107,6 +107,7 @@ class _Store:
         # that crashed, leaves everyone else's entries alone.
         self.ran: set[str] = set()
         self.dirty = False
+        self.read_failed = False
 
     def load(self) -> None:
         try:
@@ -137,14 +138,24 @@ class _Store:
             and (valid is None or _is_valid(valid, entry[1]))
         ):
             return entry[1]
-        value = compute()
+        self.read_failed = False
+        try:
+            value = compute()
+        finally:
+            failed, self.read_failed = self.read_failed, False
         # Hand back exactly what a later hit will load, so a cold and a
         # warm run can never differ by type (a tuple read back as a list).
         try:
             stored = json.loads(json.dumps(value))
         except (TypeError, ValueError):
-            files.pop(path, None)
-            return value
+            failed, stored = True, value
+        if failed:
+            # A read that failed (the file vanished, a transient EIO or
+            # EMFILE) would otherwise pin its empty result to a signature
+            # that never changes; leave it to be read again next time.
+            if files.pop(path, None) is not None:
+                self.dirty = True
+            return stored
         files[path] = [sig, stored]
         self.dirty = True
         return stored
@@ -211,6 +222,20 @@ def activate(home: Path | None = None):
     finally:
         _local.store = None
         store.save()
+
+
+def note_read_error() -> None:
+    """Keep the lookup in progress from storing its result.
+
+    A ``compute`` calls this when opening or reading its file raised
+    ``OSError``: what it returns then says nothing about the file, only
+    about this attempt. Errors that come from the bytes themselves
+    (malformed JSON, bad UTF-8) are a property of the file and stay
+    cacheable. Outside a lookup this does nothing.
+    """
+    store = _active()
+    if store is not None:
+        store.read_failed = True
 
 
 def mark_ran(harness: str) -> None:

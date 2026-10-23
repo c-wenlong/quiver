@@ -101,6 +101,32 @@ class FindSessionFileTest(unittest.TestCase):
         path.rename(moved)
         self.assertEqual(_find_session_file(self.root, "mover"), moved)
 
+    def test_a_copy_appearing_beside_the_hit_is_seen_after_the_ttl(self):
+        # Whatever the per-lookup glob would pick once both copies exist,
+        # the index picks too once its walk is older than the TTL.
+        first = _touch(self.root / "b" / "dup.jsonl")
+        self.assertEqual(_find_session_file(self.root, "dup"), first)
+        _touch(self.root / "a" / "dup.jsonl")
+        now = transcripts.time.monotonic()
+        later = now + transcripts._SESSION_FILE_INDEX_TTL_S + 1
+        with patch.object(transcripts.time, "monotonic", return_value=later):
+            self.assertEqual(
+                _find_session_file(self.root, "dup"),
+                _old_find_session_file(self.root, "dup"),
+            )
+
+    def test_lookups_within_the_ttl_share_one_walk(self):
+        _touch(self.root / "p" / "s1.jsonl")
+        _touch(self.root / "p" / "s2.jsonl")
+        real_glob = Path.glob
+        with patch.object(Path, "glob", autospec=True, side_effect=real_glob) as walk:
+            _find_session_file(self.root, "s1")
+            start = transcripts.time.monotonic()
+            with patch.object(transcripts.time, "monotonic",
+                              return_value=start + transcripts._SESSION_FILE_INDEX_TTL_S / 2):
+                _find_session_file(self.root, "s2")
+        self.assertEqual(walk.call_count, 1)
+
     def test_direct_path_empty_id_and_missing_root(self):
         path = _touch(self.root / "p" / "direct.jsonl")
         self.assertEqual(_find_session_file(self.root, str(path)), path)
