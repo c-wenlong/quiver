@@ -442,7 +442,9 @@ private struct AttachCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                if row?.canAttach == true {
+                if model.attachQueued {
+                    ProgressView().controlSize(.small)
+                } else if row?.canAttach == true {
                     Button {
                         Task { await model.attach() }
                     } label: {
@@ -461,6 +463,7 @@ private struct AttachCard: View {
     }
 
     private var subtitle: String {
+        if model.attachQueued { return "Attach sent. Waiting for the machine to confirm." }
         guard let row else { return "Read-only." }
         if row.canAttach { return "Attach to send messages." }
         if row.sessionStatus == .active && row.attachable == true { return "Mid-turn. Attach once it's idle." }

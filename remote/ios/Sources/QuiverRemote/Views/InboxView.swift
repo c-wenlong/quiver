@@ -4,23 +4,26 @@ import SwiftUI
 /// session moves again (a newer `last_active_at` than the one cleared).
 @MainActor @Observable
 final class InboxDismissals {
-    private static let key = "quiver.inbox.dismissed"
-    private(set) var dismissed: [String: Double]
+    private static let key = "quiver.inbox.dismissed.v2"
+    /// Session key to [last activity cleared at, when it was cleared].
+    private(set) var dismissed: [String: [Double]]
 
     init() {
-        dismissed = UserDefaults.standard.dictionary(forKey: Self.key) as? [String: Double] ?? [:]
+        dismissed = UserDefaults.standard.dictionary(forKey: Self.key) as? [String: [Double]] ?? [:]
     }
 
     func isDismissed(_ key: String, at ts: Double?) -> Bool {
-        guard let at = dismissed[key] else { return false }
+        guard let entry = dismissed[key], let at = entry.first else { return false }
         return (ts ?? 0) <= at
     }
 
     func dismiss(_ key: String, at ts: Double?) {
-        dismissed[key] = ts ?? Date().timeIntervalSince1970
-        // Keep the store small: entries older than two weeks can't match.
-        let cutoff = Date().timeIntervalSince1970 - 14 * 86_400
-        dismissed = dismissed.filter { $0.value >= cutoff }
+        let now = Date().timeIntervalSince1970
+        dismissed[key] = [ts ?? now, now]
+        // Pruned by when it was cleared, not by the session's age, so an
+        // old session stays cleared. 90 days bounds the store.
+        let cutoff = now - 90 * 86_400
+        dismissed = dismissed.filter { ($0.value.last ?? 0) >= cutoff }
         UserDefaults.standard.set(dismissed, forKey: Self.key)
     }
 }
@@ -28,10 +31,10 @@ final class InboxDismissals {
 /// P7: what needs you, what broke, and what finished today.
 struct InboxView: View {
     @Environment(AppModel.self) private var app
-    @State private var dismissals = InboxDismissals()
     @State private var showOlder = false
 
     var body: some View {
+        let dismissals = app.dismissals
         let now = Date().timeIntervalSince1970
         let recent = now - 3 * 86_400
         let visible = app.inbox.filter { !dismissals.isDismissed($0.key, at: $0.lastActiveAt) }
@@ -88,13 +91,13 @@ struct InboxView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         if !finished.isEmpty {
-                            Button("Clear finished") { finished.forEach { dismissals.dismiss($0.key, at: $0.lastActiveAt) } }
+                            Button("Clear finished") { finished.forEach { app.dismissals.dismiss($0.key, at: $0.lastActiveAt) } }
                         }
                         if !errors.isEmpty {
-                            Button("Clear errors") { errors.forEach { dismissals.dismiss($0.key, at: $0.lastActiveAt) } }
+                            Button("Clear errors") { errors.forEach { app.dismissals.dismiss($0.key, at: $0.lastActiveAt) } }
                         }
                         if !older.isEmpty {
-                            Button("Clear older") { older.forEach { dismissals.dismiss($0.key, at: $0.lastActiveAt) } }
+                            Button("Clear older") { older.forEach { app.dismissals.dismiss($0.key, at: $0.lastActiveAt) } }
                         }
                     } label: { Text("Clear").font(Theme.control) }
                 }
@@ -132,7 +135,7 @@ struct InboxView: View {
         .buttonStyle(RowButtonStyle())
         .contextMenu {
             if item.sessionStatus != .approval {
-                Button("Clear") { dismissals.dismiss(item.key, at: item.lastActiveAt) }
+                Button("Clear") { app.dismissals.dismiss(item.key, at: item.lastActiveAt) }
             }
         }
     }

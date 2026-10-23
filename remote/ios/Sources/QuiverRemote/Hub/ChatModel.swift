@@ -42,8 +42,13 @@ final class ChatModel {
     private weak var app: AppModel?
     private var seen = Set<Int>()
     private var cursor = 0
-    private var toolIndex: [String: Int] = [:]
+    /// Tool call id to the id of its card (ids, not positions: removing a
+    /// send bubble would shift positions under a result still to come).
+    private var toolCards: [String: String] = [:]
     private var streamTask: Task<Void, Never>?
+    /// Bumped by every start() and stop(), so a start() still fetching
+    /// history doesn't open a stream after the chat was left.
+    private var generation = 0
 
     enum SendMode: String, CaseIterable { case queue, steer }
 
@@ -54,10 +59,16 @@ final class ChatModel {
 
     var row: SessionRow? { app?.session(key) }
 
+    /// First open loads history; a resume (back from the background) keeps
+    /// what's on screen and replays events after `cursor`.
     func start() async {
         guard let client = app?.client else { return }
-        await backfill(client)
+        generation += 1
+        let gen = generation
         streamTask?.cancel()
+        streamTask = nil
+        if items.isEmpty || loadError != nil { await backfill(client) }
+        guard gen == generation else { return }
         streamTask = Task { [weak self, cursor] in
             for await event in EventStream.events(client: client, key: self?.key ?? "", last: cursor) {
                 guard let self else { return }
@@ -73,18 +84,36 @@ final class ChatModel {
     }
 
     func stop() {
+        generation += 1
         streamTask?.cancel()
         streamTask = nil
         live = false
     }
 
+    /// Reloads history. Approvals still open and sends not yet echoed
+    /// aren't in `/messages`, so they carry over.
     private func backfill(_ client: HubClient) async {
         do {
             let body = try await client.messages(key)
+            let keep = items.filter { item in
+                switch item.kind {
+                case .approval(_, _, let state):
+                    if case .resolved = state { return false }
+                    return true
+                case .user(_, let send): return send != nil
+                default: return false
+                }
+            }
             items = []
             seen = []
-            toolIndex = [:]
+            toolCards = [:]
             for env in body.messages { apply(env) }
+            for item in keep where !items.contains(where: { $0.id == item.id }) { items.append(item) }
+            // Opened from the inbox while an approval waits: the request
+            // may predate the stream's replay window, so show it now.
+            if let rid = app?.inbox.first(where: { $0.key == key })?.requestId, !rid.isEmpty, !hasApproval(rid) {
+                items.append(ChatItem(id: "approval-\(rid)", kind: .approval(requestId: rid, prompt: "Approval requested", state: .pending)))
+            }
             loadError = nil
         } catch {
             loadError = (error as? HubError)?.message ?? error.localizedDescription
@@ -109,9 +138,16 @@ final class ChatModel {
             app?.patch(key, status: env.decode(StatusData.self)?.status ?? "")
         case "session.ownership":
             app?.patch(key, ownership: env.decode(OwnershipData.self)?.ownership)
+            attachQueued = false
         case "approval.requested":
             guard let req = env.decode(ApprovalRequested.self), let rid = req.requestId else { return }
-            guard !items.contains(where: { if case .approval(rid, _, _) = $0.kind { true } else { false } }) else { return }
+            if let i = items.firstIndex(where: { $0.id == "approval-\(rid)" }) {
+                // The inbox placeholder learns its real prompt.
+                if case .approval(_, _, let state) = items[i].kind {
+                    items[i].kind = .approval(requestId: rid, prompt: req.prompt ?? "Approval requested", state: state)
+                }
+                return
+            }
             items.append(ChatItem(id: "approval-\(rid)", kind: .approval(requestId: rid, prompt: req.prompt ?? "Approval requested", state: .pending)))
         case "approval.resolved":
             let res = env.decode(ApprovalResolved.self)
@@ -139,10 +175,11 @@ final class ChatModel {
             items.append(ChatItem(id: id, kind: .thinking(text)))
         case "tool_use":
             guard let tool = msg.tool else { return }
-            if let callId = tool.callId { toolIndex[callId] = items.count }
+            if let callId = tool.callId { toolCards[callId] = id }
             items.append(ChatItem(id: id, kind: .tool(tool, result: nil)))
         case "tool_result":
-            if let ref = msg.resultRef, let i = toolIndex[ref], i < items.count, case .tool(let call, _) = items[i].kind {
+            if let ref = msg.resultRef, let cardId = toolCards[ref], let i = items.firstIndex(where: { $0.id == cardId }),
+               case .tool(let call, _) = items[i].kind {
                 items[i].kind = .tool(call, result: String(text.prefix(8000)))
             }
         case "compaction":
@@ -157,6 +194,10 @@ final class ChatModel {
         }
     }
 
+    private func hasApproval(_ rid: String) -> Bool {
+        items.contains { if case .approval(rid, _, _) = $0.kind { true } else { false } }
+    }
+
     private static func isFailed(_ s: SendState?) -> Bool {
         if case .failed = s { return true }
         return false
@@ -169,6 +210,13 @@ final class ChatModel {
                 items[i].kind = .user(text: text, send: .failed(r.note ?? "Send failed"))
             } else if r.degraded == true {
                 items[i].kind = .user(text: text, send: .queued(r.note ?? "Queued: mid-turn input isn't supported here"))
+            }
+            return
+        }
+        if r.op == "attach" || (r.op == "control" && attachQueued) {
+            if r.ok == false {
+                attachQueued = false
+                attachError = r.note ?? "Attach failed"
             }
             return
         }
@@ -201,8 +249,13 @@ final class ChatModel {
 
     func send() async {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let client = app?.client else { return }
+        guard !text.isEmpty else { return }
         draft = ""
+        await send(text)
+    }
+
+    private func send(_ text: String) async {
+        guard let client = app?.client else { return }
         let cid = UUID().uuidString
         let id = "send-\(cid)"
         items.append(ChatItem(id: id, kind: .user(text: text, send: .sending)))
@@ -221,8 +274,7 @@ final class ChatModel {
     func retry(_ item: ChatItem) async {
         guard case .user(let text, .failed) = item.kind else { return }
         items.removeAll { $0.id == item.id }
-        draft = text
-        await send()
+        await send(text)
     }
 
     func decide(_ requestId: String, decision: String) async {
@@ -244,6 +296,9 @@ final class ChatModel {
     }
 
     private(set) var attaching = false
+    /// A satellite took the attach (202) but hasn't confirmed it; the
+    /// composer waits for its `session.ownership` event.
+    private(set) var attachQueued = false
     private(set) var attachError: String?
 
     func attach() async {
@@ -252,8 +307,11 @@ final class ChatModel {
         attachError = nil
         defer { attaching = false }
         do {
-            try await client.control(key, op: "attach")
-            app?.patch(key, ownership: "attached")
+            if try await client.control(key, op: "attach") {
+                attachQueued = true
+            } else {
+                app?.patch(key, ownership: "attached")
+            }
         } catch {
             attachError = (error as? HubError)?.message ?? "Attach failed"
         }

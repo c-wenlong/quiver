@@ -25,18 +25,21 @@ enum PairingStore {
         if let legacy = defaults.string(forKey: legacyCredentialKey),
            let cred = try? Hub.decoder.decode(Credential.self, from: Data(legacy.utf8)) {
             let hub = PairedHub(baseURL: url, credential: cred)
-            save(hub)
-            defaults.removeObject(forKey: legacyCredentialKey)
+            // Drop the old copy only once the Keychain holds the new one.
+            if save(hub) { defaults.removeObject(forKey: legacyCredentialKey) }
             return hub
         }
         return nil
     }
 
-    static func save(_ hub: PairedHub) {
+    /// True once the credential is in the Keychain.
+    @discardableResult
+    static func save(_ hub: PairedHub) -> Bool {
         UserDefaults.standard.set(hub.baseURL.absoluteString, forKey: hubKey)
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
-        if let data = try? encoder.encode(hub.credential) { keychainWrite(data) }
+        guard let data = try? encoder.encode(hub.credential) else { return false }
+        return keychainWrite(data)
     }
 
     static func clear() {
@@ -62,12 +65,12 @@ enum PairingStore {
         return out as? Data
     }
 
-    private static func keychainWrite(_ data: Data) {
+    private static func keychainWrite(_ data: Data) -> Bool {
         SecItemDelete(query() as CFDictionary)
         var q = query()
         q[kSecValueData as String] = data
         q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(q as CFDictionary, nil)
+        return SecItemAdd(q as CFDictionary, nil) == errSecSuccess
     }
 }
 

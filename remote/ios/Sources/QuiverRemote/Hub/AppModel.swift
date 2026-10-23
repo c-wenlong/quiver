@@ -51,23 +51,43 @@ final class AppModel {
 
     func refresh() async {
         guard let client else { return }
+        // A re-pair can land while this is in flight; answers from the old
+        // hub must not overwrite (or unpair) the new one.
+        let pairedAtStart = hub
         do {
             async let s = client.sessions()
             async let i = client.inbox()
             let (sessionsBody, inboxBody) = try await (s, i)
+            guard hub == pairedAtStart else { return }
             sessions = sessionsBody.sessions
             machines = sessionsBody.machines ?? machines
             inbox = inboxBody.items
             connection = .online
             loadError = nil
         } catch let error as HubError {
+            guard hub == pairedAtStart else { return }
             if error.isUnauthorized { unpair(); return }
             connection = .offline
             loadError = error.message
         } catch {
+            guard hub == pairedAtStart else { return }
             connection = .offline
         }
         loadedOnce = true
+    }
+
+    /// Sessions as the list shows them: a session with an approval open is
+    /// "approval" even while its transcript status still says active (the
+    /// hub marks that only on inbox items).
+    var displaySessions: [SessionRow] {
+        let waiting = Set(inbox.filter { $0.sessionStatus == .approval }.map(\.key))
+        guard !waiting.isEmpty else { return sessions }
+        return sessions.map { r in
+            guard waiting.contains(r.key) else { return r }
+            return SessionRow(key: r.key, harness: r.harness, agent: r.agent, cwd: r.cwd, title: r.title,
+                              lastActiveAt: r.lastActiveAt, status: "approval", machineId: r.machineId,
+                              ownership: r.ownership, attachable: r.attachable)
+        }
     }
 
     func session(_ key: String) -> SessionRow? { sessions.first { $0.key == key } }
@@ -87,8 +107,15 @@ final class AppModel {
     /// Items still waiting on you. The hub's inbox has no age cutoff, so
     /// follow-ups past `Staleness.window` don't count here.
     var waitingOnYou: [InboxItem] {
-        inbox.filter { $0.sessionStatus == .approval || ($0.sessionStatus == .followup && Staleness.isFresh($0.lastActiveAt)) }
+        inbox.filter {
+            ($0.sessionStatus == .approval || ($0.sessionStatus == .followup && Staleness.isFresh($0.lastActiveAt)))
+                && !dismissals.isDismissed($0.key, at: $0.lastActiveAt)
+        }
     }
+
+    /// Inbox rows cleared on this phone; shared by the Inbox page and the
+    /// tab badge so both agree.
+    let dismissals = InboxDismissals()
 
     var inboxBadge: Int { waitingOnYou.count }
 
@@ -179,6 +206,9 @@ final class AppModel {
             guard pairing.pending?.started.requestId == started.requestId else { return }
             do {
                 let poll = try await client.pollPairRequest(id: started.requestId, secret: started.pollSecret)
+                // Cancelled, or replaced by a new request, while that poll
+                // was out: its answer belongs to nothing on screen now.
+                guard pairing.pending?.started.requestId == started.requestId else { return }
                 switch poll.status {
                 case "approved":
                     guard let deviceId = poll.deviceId, let credential = poll.credential else { continue }
@@ -192,6 +222,7 @@ final class AppModel {
                     if let s = poll.expiresInS { pairing.pending?.expiresAt = Date().addingTimeInterval(TimeInterval(s)) }
                 }
             } catch let error as HubError where error.status == 404 {
+                guard pairing.pending?.started.requestId == started.requestId else { return }
                 pairing.pending?.outcome = .expired
                 return
             } catch {
@@ -265,23 +296,41 @@ enum SessionGrouping {
         let recentCutoff = now - 86_400
         let sorted = rows.sorted { ($0.lastActiveAt ?? 0) > ($1.lastActiveAt ?? 0) }
         let multiMachine = Set(rows.map { $0.machineId ?? "local" }).count > 1
+        // Keyed by machine and full folder; only the heading is shortened.
         var order: [String] = []
         var buckets: [String: [SessionRow]] = [:]
         var earlier: [SessionRow] = []
         for row in sorted {
             let isLive = row.sessionStatus == .active || row.needsYouNow
             guard isLive || (row.lastActiveAt ?? 0) >= recentCutoff else { earlier.append(row); continue }
+            let key = "\(row.machineId ?? "local")|\(row.cwd ?? "")"
+            if buckets[key] == nil { order.append(key) }
+            buckets[key, default: []].append(row)
+        }
+        // Two folders that shorten alike ("a/projects/api", "b/projects/api")
+        // keep their full paths so the headings differ.
+        let short = Dictionary(grouping: order) { shortDir(buckets[$0]![0].cwd) }
+        var out = order.map { key -> SessionGroup in
+            let row = buckets[key]![0]
             var title = shortDir(row.cwd)
+            if (short[title]?.count ?? 0) > 1 { title = abbreviateHome(row.cwd ?? title) }
             if multiMachine {
                 let m = machines.first { $0.id == row.machineId }?.displayName ?? row.machineId ?? "local"
                 title = "\(m) · \(title)"
             }
-            if buckets[title] == nil { order.append(title) }
-            buckets[title, default: []].append(row)
+            return SessionGroup(id: key, title: title, rows: buckets[key]!)
         }
-        var out = order.map { SessionGroup(id: $0, title: $0, rows: buckets[$0]!) }
         if !earlier.isEmpty { out.append(SessionGroup(id: "earlier", title: "Earlier", rows: earlier)) }
         return out
+    }
+
+    static func abbreviateHome(_ path: String) -> String {
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+        // /Users/<name>/... and /home/<name>/... read as ~/...
+        if parts.count > 3, parts[1] == "Users" || parts[1] == "home" {
+            return "~/" + parts[3...].joined(separator: "/")
+        }
+        return path
     }
 
     /// The last two path components, as the PWA shows them.

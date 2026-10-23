@@ -177,3 +177,28 @@ final class HarnessIconTests: XCTestCase {
         XCTAssertNil(HarnessIcon.assetName("no-such-harness"))
     }
 }
+
+final class ReviewFixTests: XCTestCase {
+    func testFoldersThatShortenAlikeStaySeparate() {
+        let now = Date().timeIntervalSince1970
+        let mk = { (key: String, cwd: String) in
+            SessionRow(key: key, harness: "claude", agent: nil, cwd: cwd, title: key, lastActiveAt: now - 60,
+                       status: "active", machineId: "m1", ownership: nil, attachable: nil)
+        }
+        let groups = SessionGrouping.groups([mk("a", "/Users/k/work/a/projects/api"), mk("b", "/Users/k/work/b/projects/api")],
+                                            machines: [], now: now)
+        XCTAssertEqual(groups.count, 2)
+        XCTAssertEqual(groups.map(\.title), ["~/work/a/projects/api", "~/work/b/projects/api"])
+    }
+
+    @MainActor
+    func testClearingAnOldSessionSticks() {
+        UserDefaults.standard.removeObject(forKey: "quiver.inbox.dismissed.v2")
+        let d = InboxDismissals()
+        let monthAgo = Date().timeIntervalSince1970 - 30 * 86_400
+        d.dismiss("claude:old", at: monthAgo)
+        XCTAssertTrue(d.isDismissed("claude:old", at: monthAgo))
+        XCTAssertTrue(InboxDismissals().isDismissed("claude:old", at: monthAgo), "survives a relaunch")
+        XCTAssertFalse(d.isDismissed("claude:old", at: monthAgo + 1), "new activity brings it back")
+    }
+}

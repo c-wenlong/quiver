@@ -135,8 +135,12 @@ struct HubClient: Sendable {
                                body: ["text": text, "mode": mode, "client_id": clientId]))
     }
 
-    func control(_ key: String, op: String) async throws {
-        _ = try await raw(request("POST", "/v1/sessions/\(Self.encodeKey(key))/control", body: ["op": op]))
+    /// Returns true when the hub queued it for a satellite (202), so the
+    /// outcome arrives later as `command.result` or `session.ownership`.
+    @discardableResult
+    func control(_ key: String, op: String) async throws -> Bool {
+        let (_, status) = try await raw(request("POST", "/v1/sessions/\(Self.encodeKey(key))/control", body: ["op": op]))
+        return status == 202
     }
 
     /// Returns true when the hub queued it for a satellite (202): the

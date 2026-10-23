@@ -8,7 +8,7 @@ struct SessionsView: View {
     @State private var confirmUnpair = false
 
     var body: some View {
-        let rows = app.sessions.filter(filter.includes)
+        let rows = app.displaySessions.filter(filter.includes)
         let groups = SessionGrouping.groups(rows, machines: app.machines)
         PageScroll {
             filterBar
@@ -56,7 +56,7 @@ struct SessionsView: View {
     private var filterBar: some View {
         HStack(spacing: 6) {
             ForEach(SessionFilter.allCases) { f in
-                FilterChip(title: f.title, count: app.sessions.filter(f.includes).count, selected: filter == f) {
+                FilterChip(title: f.title, count: app.displaySessions.filter(f.includes).count, selected: filter == f) {
                     filter = f
                 }
             }
