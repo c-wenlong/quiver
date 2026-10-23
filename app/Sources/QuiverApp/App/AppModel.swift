@@ -20,6 +20,16 @@ final class AppModel {
     /// this; a detail page open there goes back through its own ask.
     var navReselects = 0
 
+    /// A sidebar click or its ⌘-number shortcut: opens the page, or asks
+    /// the page already open to go back.
+    func select(_ section: AppSection) {
+        if selection == section {
+            navReselects += 1
+        } else {
+            selection = section
+        }
+    }
+
     /// The sidebar pinned to an icon rail; hovering it floats it open.
     var sidebarCollapsed = UserDefaults.standard.bool(forKey: "sidebarCollapsed") {
         didSet { UserDefaults.standard.set(sidebarCollapsed, forKey: "sidebarCollapsed") }

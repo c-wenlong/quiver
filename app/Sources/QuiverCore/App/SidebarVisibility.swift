@@ -59,6 +59,19 @@ public final class SidebarVisibilityModel {
         SidebarGroup.allCases.filter { !sections(in: $0).isEmpty }
     }
 
+    /// ⌘1 to ⌘9 open the first nine shown pages, top to bottom; the
+    /// sidebar badges the same rows while ⌘ is held.
+    public static let shortcutCount = 9
+
+    public var shortcutSections: [AppSection] {
+        Array(order.filter(isVisible).prefix(Self.shortcutCount))
+    }
+
+    /// The digit `section` answers to, or nil past the ninth shown page.
+    public func shortcutNumber(of section: AppSection) -> Int? {
+        shortcutSections.firstIndex(of: section).map { $0 + 1 }
+    }
+
     public var enabledCount: Int { order.count { isVisible($0) } }
     public var totalCount: Int { order.count }
 
