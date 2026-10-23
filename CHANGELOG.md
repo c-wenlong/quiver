@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   built by `init.commands.check_document`, which the page calls in process.
 
 
+- **Web app: Pricing and Models.** Pricing lists every model the hub's
+  ledger saw in the period, grouped by provider, with the price its name
+  resolves to per 1M tokens (input, output, cache read and write), where
+  that price came from (LiteLLM, Quiver, your own, free, billed by the
+  harness, or none), the charged tiers and the tokens, plus a list of
+  unpriced models; filter by harness and period. Models lists the models
+  you used with their lab, harnesses, list price and tokens, and searches
+  LiteLLM's price list. Read only: setting a price, and every Artificial
+  Analysis benchmark (which needs the app's API key), stay in the Mac app.
+  docs/web-app/pricing.md and models.md have the details.
+
 - **Web app: Plugins.** The Mac app's Plugins page in the browser, read
   only. Health lists, per harness, where Claude Code and Codex no longer
   match `~/.quiver/plugins`, each finding with the fix swe would run and a

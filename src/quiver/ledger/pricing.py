@@ -189,8 +189,10 @@ def is_free(model: str) -> bool:
 
 class PricingCatalog:
     def __init__(self, entries: dict[str, ModelRates], supplement: dict | None = None,
-                 overrides: set[str] | None = None):
+                 overrides: set[str] | None = None, quiver: set[str] | None = None):
         supplement = supplement or {}
+        # The keys Quiver's supplement priced, for ``source``.
+        self.quiver = set(quiver or ())
         self.aliases = {k.lower(): v for k, v in (supplement.get("aliases") or {}).items()
                         if isinstance(v, str)}
         tier_mult = {k.lower(): {t: float(x) for t, x in v.items() if isinstance(x, (int, float))}
@@ -239,16 +241,31 @@ class PricingCatalog:
         """``("priced", rates, tier)``, ``("free", None, None)`` or
         ``("unpriced", None, None)``. A ``-fast`` name with no tier is
         tried again without the suffix, at the fast tier."""
+        status, key, tier = self.resolve_entry(model, tier)
+        return status, (self.entries[key] if key is not None else None), tier
+
+    def resolve_entry(self, model: str, tier: str | None) -> tuple[str, str | None, str | None]:
+        """``resolve`` with the entry key that answered in place of its
+        rates (``lookup`` plus ``resolve`` in the Swift catalog), so the
+        Pricing page shows the same resolution the ledger prices with."""
         key = self._key(model)
         if key is not None:
-            return "priced", self.entries[key], tier
+            return "priced", key, tier
         if not tier and model.lower().endswith("-fast"):
             key = self._key(model[:-5])
             if key is not None:
-                return "priced", self.entries[key], "fast"
+                return "priced", key, "fast"
         if is_free(model):
             return "free", None, None
         return "unpriced", None, None
+
+    def source(self, key: str) -> str:
+        """Where an entry's price came from: ``"yours"`` (the user's
+        ``config/pricing.json``), ``"quiver"`` (the bundled supplement)
+        or ``"litellm"``."""
+        if key in self.overrides:
+            return "yours"
+        return "quiver" if key in self.quiver else "litellm"
 
 
 # ---------------------------------------------------------------- loading
@@ -334,9 +351,11 @@ def load_catalog(home: Path | None = None, download: bool = True) -> PricingCata
         listed = _read_json(_litellm_cache(home)) or _read_json(BUNDLED)
     supplement = _read_json(SUPPLEMENT)
     raw = dict(listed)
+    quiver = set()
     for key, entry in (supplement.get("prices") or {}).items():
         if isinstance(entry, dict):
             raw[key] = entry
+            quiver.add(key)
     entries = {}
     for key, entry in raw.items():
         if isinstance(entry, dict):
@@ -345,4 +364,4 @@ def load_catalog(home: Path | None = None, download: bool = True) -> PricingCata
                 entries[key] = rates
     overrides = _overrides(home)
     entries.update(overrides)
-    return PricingCatalog(entries, supplement, set(overrides))
+    return PricingCatalog(entries, supplement, set(overrides), quiver & set(entries))
