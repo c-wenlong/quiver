@@ -66,6 +66,20 @@ TAIL_MAX_SESSIONS = 100
 # once; the remainder waits for the next poll.
 _MAX_CHUNK = 4 << 20
 
+# A session the hub starts tailing with no cursor and no journal gets its
+# recent history, not all of it: the phone shows the last 500 messages,
+# and reading a hundred whole transcripts at startup held >1 GB.
+BACKFILL_BYTES = 2 << 20
+BACKFILL_MESSAGES = 500
+
+# Snapshot stores (no byte cursor) re-read only when something changed;
+# this is how long a "nothing changed" answer is trusted before a full
+# re-read anyway, in case a store writes somewhere the check can't see.
+SNAPSHOT_RECHECK_S = 60.0
+# A bounded read (Devin) returns this many newest chain nodes, so a poll
+# sees a sliding window; more than a poll interval ever adds.
+SNAPSHOT_WINDOW = 1000
+
 
 def _rec_ts(rec: dict) -> float | None:
     """Epoch seconds from a record's timestamp field, whatever its shape."""
@@ -381,6 +395,9 @@ class JsonlTailSource:
         self.path = path
         self.tool_name = tool_name
         self.offset = 0
+        # Set by start_near_end: the first read begins mid-line, so the
+        # partial line up to the first newline is dropped.
+        self._align = False
 
     def state(self) -> dict:
         return {"source": "jsonl", "path": str(self.path), "offset": self.offset}
@@ -398,6 +415,17 @@ class JsonlTailSource:
         except OSError:
             pass
 
+    def start_near_end(self, max_bytes: int | None = None) -> None:
+        """Backfill only the last ``max_bytes`` (default BACKFILL_BYTES)."""
+        max_bytes = BACKFILL_BYTES if max_bytes is None else max_bytes
+        try:
+            size = self.path.stat().st_size
+        except OSError:
+            return
+        if size > max_bytes:
+            self.offset = size - max_bytes
+            self._align = True
+
     def poll(self) -> list[dict]:
         try:
             size = self.path.stat().st_size
@@ -406,6 +434,8 @@ class JsonlTailSource:
         if size <= self.offset:
             if size < self.offset:  # truncated/rotated: restart
                 self.offset = 0
+                # A new file starts on a whole line; nothing to align.
+                self._align = False
             else:
                 return []
         try:
@@ -414,6 +444,18 @@ class JsonlTailSource:
                 chunk = fh.read(min(size - self.offset, _MAX_CHUNK))
         except OSError:
             return []
+        if self._align:
+            # Mid-line start: drop through the first newline.
+            first_nl = chunk.find(b"\n")
+            if first_nl < 0:
+                if len(chunk) >= _MAX_CHUNK:
+                    # Still inside one huge record: step past this chunk
+                    # and keep looking, rather than re-reading it forever.
+                    self.offset += len(chunk)
+                return []
+            self.offset += first_nl + 1
+            chunk = chunk[first_nl + 1:]
+            self._align = False
         # offset only advances past complete lines; an incomplete tail line
         # is re-read from the same offset on the next poll.
         last_nl = chunk.rfind(b"\n")
@@ -605,6 +647,12 @@ class SnapshotSource:
     def __init__(self, session: Session) -> None:
         self.session = session
         self._fps: list[str] = []
+        self._sources: list[str] = []
+        self._token: tuple | None = None
+        self._token_at = 0.0
+        # Set by start_near_end: the first poll emits only the newest
+        # BACKFILL_MESSAGES instead of the whole history.
+        self._backfill_cap: int | None = None
 
     def state(self) -> dict:
         return {"source": "snapshot", "fps": self._fps}
@@ -617,10 +665,37 @@ class SnapshotSource:
 
     def skip_to_end(self) -> None:
         try:
-            tr = _tr.read_transcript(self.session)
+            tr = _tr.read_transcript_tail(self.session, SNAPSHOT_WINDOW)
         except Exception:
             return
         self._fps = [self._fp(m) for m in tr.messages]
+
+    def start_near_end(self, max_messages: int | None = None) -> None:
+        self._backfill_cap = BACKFILL_MESSAGES if max_messages is None else max_messages
+
+    def change_token(self) -> tuple | None:
+        """A cheap stand-in for "did this session change", or None when
+        there is nothing to check yet (the first read).
+
+        Devin keeps every session in one shared SQLite file, so its token
+        is that session's newest message row and chain head (an indexed
+        query). Other stores use the stat of the files the last read
+        listed, their ``-wal`` files and their folders, so a write, a
+        checkpoint or a new file each change it.
+        """
+        if self.session.tool_name == "devin":
+            return _devin_token(self.session.session_id)
+        if not self._sources:
+            return None
+        parts: list[tuple] = []
+        for src in self._sources:
+            for path in (src, src + "-wal", os.path.dirname(src)):
+                try:
+                    st = os.stat(path)
+                    parts.append((path, st.st_mtime_ns, st.st_size))
+                except OSError:
+                    parts.append((path, None, None))
+        return tuple(parts)
 
     @staticmethod
     def _fp(msg) -> str:
@@ -629,22 +704,83 @@ class SnapshotSource:
         ).hexdigest()[:16]
 
     def poll(self) -> list[dict]:
+        now = time.monotonic()
+        token = self.change_token()
+        if (token is not None and token == self._token
+                and now - self._token_at < SNAPSHOT_RECHECK_S):
+            return []
         try:
-            tr = _tr.read_transcript(self.session)
+            tr = _tr.read_transcript_tail(self.session, SNAPSHOT_WINDOW)
         except Exception:
             return []
+        self._sources = list(getattr(tr, "source_paths", None) or [])
+        # The token from before the read is the one kept: a write that
+        # lands mid-read changes the next token, so it is picked up then.
+        self._token = token if token is not None else self.change_token()
+        self._token_at = now
         fps = [self._fp(m) for m in tr.messages]
-        # Longest shared prefix: a rewrite (rare) re-emits from the fork.
-        common = 0
-        for old, new in zip(self._fps, fps):
-            if old != new:
-                break
-            common += 1
-        out: list[dict] = []
-        for msg in tr.messages[common:]:
-            out.append(_normalized_to_payload(msg))
+        new = tr.messages[_new_from(self._fps, fps):]
+        if self._backfill_cap is not None:
+            new = new[-self._backfill_cap:]
+            self._backfill_cap = None
+        out = [_normalized_to_payload(msg) for msg in new]
         self._fps = fps
         return out
+
+
+# Where the Devin CLI keeps every session (read by reports.transcripts too).
+DEVIN_DB = "~/.local/share/devin/cli/sessions.db"
+
+
+def _new_from(old: list[str], new: list[str]) -> int:
+    """Index in ``new`` where messages not seen before start.
+
+    A full read grows at the end, so the shared prefix is the answer (a
+    rewrite re-emits from the fork). A bounded read slides: the old
+    window's tail reappears at the head of the new one, so the longest
+    such overlap is the answer. No overlap at all means everything is new.
+    """
+    common = 0
+    for a, b in zip(old, new):
+        if a != b:
+            break
+        common += 1
+    if common == len(old) or not old or not new:
+        return common
+    # Fingerprints are content, so a repeated message can make a short
+    # prefix match by chance after the window slid ([a,b,a,c] then
+    # [a,c,d,e]). The longest slide overlap is checked too, and the
+    # larger answer wins. Only positions holding the new window's first
+    # message can start an overlap; the earliest is the longest.
+    overlap = 0
+    first = new[0]
+    for i, fp in enumerate(old):
+        if fp == first and old[i:] == new[: len(old) - i]:
+            overlap = len(old) - i
+            break
+    return max(common, overlap)
+
+
+def _devin_token(session_id: str) -> tuple | None:
+    """Devin's newest message row and chain head for one session."""
+    path = Path(os.path.expanduser(DEVIN_DB))
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1.0)
+    except sqlite3.Error:
+        return None
+    try:
+        rows = conn.execute(
+            "SELECT MAX(row_id), COUNT(*) FROM message_nodes WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        head = conn.execute(
+            "SELECT main_chain_id FROM sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+        return (tuple(rows or ()), tuple(head or ()))
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
 
 
 def make_source(session: Session) -> "JsonlTailSource | OpencodeSource | SnapshotSource | None":
@@ -691,6 +827,9 @@ class Tailer:
             # Journal exists but the cursor is gone: skip backfill so
             # history is not duplicated; live appends still land.
             source.skip_to_end()
+        elif hasattr(source, "start_near_end"):
+            # First sight of this session: recent history only.
+            source.start_near_end()
         self.next_poll_at = 0.0
         self._pending_save = False
 

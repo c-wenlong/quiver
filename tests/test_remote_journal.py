@@ -53,6 +53,43 @@ class TestJournal(unittest.TestCase):
         self.assertEqual(seqs[-1], 5001)  # newest survived
         self.assertLess(len(events), 5001)  # ring was trimmed
 
+    def test_big_journal_under_ring_max_is_not_reread_per_append(self):
+        # Large tool events: >1 MB on disk but far fewer than RING_MAX
+        # lines. Each append used to readlines() the whole file.
+        key = "a:fat"
+        path = self.journal.dir / f"{protocol.key_slug(key)}.jsonl"
+        with open(path, "w") as fh:
+            for i in range(300):
+                fh.write(json.dumps({"seq": i + 1, "type": "t", "data": "x" * 5000}) + "\n")
+        from unittest.mock import patch
+        from quiver.remote import journal as journal_mod
+        real_open = open
+        reads = []
+
+        def counting_open(file, mode="r", *a, **kw):
+            if str(file) == str(path) and "r" in mode:
+                reads.append(mode)
+            return real_open(file, mode, *a, **kw)
+
+        with patch("builtins.open", counting_open):
+            for n in range(50):
+                self._append(key, n)
+        self.assertLessEqual(len(reads), 2, f"journal re-read {len(reads)} times for 50 appends")
+        self.assertEqual(self.journal.last_seq(key), 350)
+
+    def test_counted_journal_still_trims_past_ring_max(self):
+        from quiver.remote import journal as journal_mod
+        key = "a:grow"
+        path = self.journal.dir / f"{protocol.key_slug(key)}.jsonl"
+        with open(path, "w") as fh:
+            for i in range(journal_mod.RING_MAX - 5):
+                fh.write(json.dumps({"seq": i + 1, "type": "t", "data": "x" * 300}) + "\n")
+        for n in range(10):
+            self._append(key, n)
+        events, _ = self.journal.read_since(key, 0)
+        self.assertLessEqual(len(events), journal_mod.RING_KEEP + 10)
+        self.assertEqual(events[-1]["seq"], journal_mod.RING_MAX + 5)
+
     def test_missing_file_reads_empty(self):
         events, truncated = self.journal.read_since("ghost", 5)
         self.assertEqual(events, [])
