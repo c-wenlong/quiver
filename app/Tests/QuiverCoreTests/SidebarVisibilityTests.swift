@@ -153,4 +153,36 @@ import Testing
         #expect(model.step(.serviceStatus, by: 1) == .settings)
         #expect(model.step(.serviceStatus, by: -1) == .widgets)
     }
+    @Test func commandNumbersCoverTheFirstNineShownPages() {
+        let model = SidebarVisibilityModel(store: MemoryStore())
+        #expect(model.shortcutSections == [.overview, .sessions, .calendar, .pricing,
+                                           .repositories, .inbox, .accounts, .harnesses, .compute])
+        #expect(model.shortcutNumber(of: .overview) == 1)
+        #expect(model.shortcutNumber(of: .compute) == 9)
+        #expect(model.shortcutNumber(of: .plugins) == nil)
+    }
+
+    @Test func hiddenPagesGiveTheirNumberToTheNextShownPage() {
+        let model = SidebarVisibilityModel(store: MemoryStore())
+        model.setEnabled(.sessions, false)
+        model.setEnabled(.inbox, false)
+        #expect(model.shortcutNumber(of: .sessions) == nil)
+        #expect(model.shortcutNumber(of: .calendar) == 2)
+        #expect(model.shortcutNumber(of: .compute) == 7)
+        #expect(model.shortcutNumber(of: model.rows(in: .primitives)[0].section) == 8)
+    }
+
+    @Test func fewerThanNineShownPagesLeaveTheHighDigitsUnused() {
+        let model = SidebarVisibilityModel(store: MemoryStore())
+        model.disableAll()
+        #expect(model.shortcutSections == [.overview, .accounts, .settings])
+        #expect(model.shortcutNumber(of: .settings) == 3)
+    }
+
+    @Test func reorderingMovesTheNumbers() {
+        let model = SidebarVisibilityModel(store: MemoryStore())
+        model.move(AppSection.calendar.rawValue, before: AppSection.overview.rawValue)
+        #expect(model.shortcutNumber(of: .calendar) == 1)
+        #expect(model.shortcutNumber(of: .overview) == 2)
+    }
 }
