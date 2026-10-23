@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Repositories and Inbox.** Repositories shows the hub's pinned
+  repos as the Mac app does: pull requests, issues and Actions across
+  every pin, all seven surfaces (Pages, releases, tags, branches too) for
+  one repo picked in the rail, the rail's CI dots, counts and quiet fold,
+  and the search over titles, branches and state words. A repo opens in
+  full at `#/repositories?repo=owner/name` (every state, scroll to load
+  more) and a PR row opens its sheet: checks, reviews and the body as
+  markdown. Inbox lists the GitHub notifications with the Unread only
+  switch. Both read through the hub machine's own `gh` login, cache
+  replies for a minute, and are read only; merging, re-running, marking
+  read and pinning stay in `swe gh` and the Mac app.
+
 - **Web app: pages as plugins.** A web app page is now one module in
   `quiver/webapp/pages/` (`GET /v1/app/<page>`, optional `POST
   /v1/app/<page>/<action>`) and one script in `static/pages/`, served
