@@ -46,7 +46,12 @@ from quiver.remote import (
     usage as usage_mod,
 )
 from quiver.remote.journal import Journal
-from quiver.webapp import api as webapp_api, harnesses as webapp_harnesses, static as webapp_static
+from quiver.webapp import (
+    api as webapp_api,
+    harnesses as webapp_harnesses,
+    pages as webapp_pages,
+    static as webapp_static,
+)
 
 DEFAULT_PORT = 8477
 _MAX_BODY = 4 << 20  # 4 MB JSON cap; attachments go through their own route
@@ -1005,6 +1010,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(200, body)
             return
 
+        if path.startswith("/v1/app/"):
+            self._page_get(path[len("/v1/app/"):], args, device_id)
+            return
+
         if path == "/v1/inbox":
             done =str((args.get("done") or [""])[0])
             self._send_json(200, {
@@ -1110,6 +1119,10 @@ class _Handler(BaseHTTPRequestHandler):
         device_id = self._device()
         if device_id is None:
             self._send_error(401, "unauthorized", "pair this device first")
+            return
+
+        if path.startswith("/v1/app/"):
+            self._page_post(path[len("/v1/app/"):], device_id)
             return
 
         if path == "/v1/inbox/dismiss":
@@ -1926,10 +1939,69 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         name = path[len("/app/"):] or "index.html"
+        if name in {"pages.js", "pages.css"}:
+            self._send_body(
+                webapp_pages.bundle(name[len("pages"):]),
+                "text/javascript; charset=utf-8" if name.endswith(".js")
+                else "text/css; charset=utf-8",
+            )
+            return
         if not webapp_static.is_asset_name(name):
             self._send_error(404, "not_found", "unknown route")
             return
         self._send_asset(webapp_static.STATIC_DIR / name)
+
+    # -- web app page plugins (quiver/webapp/pages) ------------------------
+
+    def _page_context(self, device_id: str | None):
+        return webapp_pages.PageContext(
+            home=self._state.home, state=self._state, device_id=device_id
+        )
+
+    def _page_call(self, fn, *call_args) -> None:
+        try:
+            body = fn(*call_args)
+        except webapp_pages.PageError as exc:
+            self._send_error(exc.status, exc.code, exc.message)
+            return
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            self._send_error(503, "page_unavailable", str(exc))
+            return
+        self._send_json(200, body)
+
+    def _page_get(self, name: str, args, device_id: str | None) -> None:
+        page = webapp_pages.load(name)
+        if page is None or not hasattr(page, "get"):
+            self._send_error(404, "not_found", "unknown page")
+            return
+        flat = {k: str(v[0]) for k, v in args.items() if v}
+        self._page_call(page.get, self._page_context(device_id), flat)
+
+    def _page_post(self, rest: str, device_id: str | None) -> None:
+        name, _sep, action = rest.partition("/")
+        page = webapp_pages.load(name)
+        if page is None or not hasattr(page, "post") or not action:
+            self._send_error(404, "not_found", "unknown page action")
+            return
+        if self._bad_origin():
+            self._send_error(403, "bad_origin", "request blocked by origin policy")
+            return
+        body = self._read_body()
+        if body is None:
+            self._send_error(400, "bad_body", "unreadable JSON body")
+            return
+        self._page_call(page.post, self._page_context(device_id), action, body)
+
+    def _send_body(self, body: bytes, ctype: str) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _send_asset(self, target: Path) -> None:
         try:
