@@ -3,9 +3,9 @@ import Observation
 
 /// Sessions search. The hub's `/v1/search` matches transcripts through
 /// the Quiver app's FTS index when that index exists, and always matches
-/// titles, harness and folder as a case-insensitive regex. A hub too old
-/// to have the route gets the same metadata match here, over the list
-/// already loaded.
+/// titles, harness and folder as case-insensitive text (as the Mac app
+/// does). A hub too old to have the route gets the same metadata match
+/// here, over the list already loaded.
 @MainActor @Observable
 final class SessionSearch {
     var query = ""
@@ -52,16 +52,14 @@ final class SessionSearch {
         answered = q
     }
 
-    /// Metadata match over loaded rows: a case-insensitive regex, or the
-    /// literal text when the query isn't a valid pattern. Newest first.
+    /// Metadata match over loaded rows: case-insensitive text, newest
+    /// first. Plain text, never a regex, so no typed pattern can stall it.
     static func localMatches(_ rows: [SessionRow], query: String, limit: Int = 50) -> [SearchResult] {
-        let regex = (try? NSRegularExpression(pattern: query, options: [.caseInsensitive]))
-            ?? (try? NSRegularExpression(pattern: NSRegularExpression.escapedPattern(for: query), options: [.caseInsensitive]))
-        guard let regex else { return [] }
+        let needle = query.lowercased()
         return rows
             .filter { row in
-                let text = [row.title, row.agent, row.harness, row.cwd, row.key].compactMap { $0 }.joined(separator: " ")
-                return regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+                [row.title, row.agent, row.harness, row.cwd, row.key].compactMap { $0 }
+                    .joined(separator: " ").lowercased().contains(needle)
             }
             .sorted { ($0.lastActiveAt ?? 0) > ($1.lastActiveAt ?? 0) }
             .prefix(limit)

@@ -182,8 +182,8 @@ the Quiver app's FTS5 index (`~/.quiver/data/search/search.sqlite`)
 exists on the hub machine, transcript hits come first, ranked the way
 `swe session --search` ranks them (phrase, then AND, then OR, BM25),
 each with its best snippet. Titles, harness and folder always match too,
-as a case-insensitive regex (an invalid or nested-quantifier pattern
-matches as literal text), newest first. Results are catalog rows, so each
+as case-insensitive text (the Mac app's Sessions match; never a regex,
+which could backtrack without bound), newest first. Results are catalog rows, so each
 opens through the usual session routes; satellite sessions match on
 metadata only, since the index is per machine.
 

@@ -6,7 +6,10 @@ import time
 import unittest
 from pathlib import Path
 
+from unittest.mock import patch
+
 from quiver.remote import search
+from quiver.sessions import search_index
 from tests.test_remote_hub import _Server, _session
 from tests.test_search_index import write_index
 
@@ -19,19 +22,13 @@ def _row(key, sid, title, cwd="/work/x", harness="claude", ago=0.0, remote=False
     return row
 
 
-class CompileQueryTest(unittest.TestCase):
-    def test_regex_is_case_insensitive(self):
-        self.assertTrue(search.compile_query("LEDGER.*cursor").search("fix the ledger cursor"))
-
-    def test_invalid_regex_matches_literally(self):
-        pattern = search.compile_query("foo(")
-        self.assertTrue(pattern.search("call foo( here"))
-
-    def test_nested_quantifier_is_literal(self):
-        # (a+)+b would backtrack 2^n on a run of a's; it must be plain text.
-        pattern = search.compile_query("(a+)+b")
-        self.assertIsNone(pattern.search("a" * 40))
-        self.assertTrue(pattern.search("x (a+)+b y"))
+class MetadataMatchTest(unittest.TestCase):
+    def test_plain_case_insensitive_text(self):
+        rows = [_row("k1", "s1", "Fix the LEDGER cursor"), _row("k2", "s2", "call foo( here")]
+        self.assertEqual([r["key"] for r in search.search(rows, "ledger c")["results"]], ["k1"])
+        # Regex syntax is just text: no pattern compiles, nothing can stall.
+        self.assertEqual([r["key"] for r in search.search(rows, "foo(")["results"]], ["k2"])
+        self.assertEqual(search.search(rows, "(a|aa)+$")["results"], [])
 
 
 class SearchTest(unittest.TestCase):
@@ -78,6 +75,21 @@ class SearchTest(unittest.TestCase):
         # sess-gamma is in the index but not in the rows.
         keys = [r["key"] for r in search.search(self.rows, "parser chokes", home=self.home)["results"]]
         self.assertEqual(keys, [])
+
+    def test_catalog_match_ranked_past_fifty_hidden_hits_still_shows(self):
+        write_index(self.home)
+        rows = [_row("codex:sess-beta", "sess-beta", "Untitled")]
+        hidden = [search_index.SearchHit(session_id=f"gone-{i}", agent="claude", title="", cwd="",
+                                         updated_at="", score=100.0 - i, role="user", ts="", snippet="x")
+                  for i in range(150)]
+        real = search_index.search(self.home, "settings page")
+        everything = hidden + real
+        with patch.object(search_index, "search",
+                          side_effect=lambda home, q, limit: everything[:limit]) as fake:
+            keys = [r["key"] for r in search.search(rows, "settings page", home=self.home)["results"]]
+        self.assertEqual(keys, ["codex:sess-beta"])
+        # First batch (100) was all hidden hits; it went deeper to find it.
+        self.assertGreater(fake.call_args.kwargs["limit"], 100)
 
     def test_empty_query_and_limit(self):
         self.assertEqual(search.search(self.rows, "  ", home=self.home)["results"], [])

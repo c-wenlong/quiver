@@ -211,11 +211,12 @@ final class SessionSearchTests: XCTestCase {
                    ownership: nil, attachable: nil)
     }
 
-    func testLocalMatchIsRegexThenLiteralNewestFirst() {
+    func testLocalMatchIsPlainTextNewestFirst() {
         let rows = [row("a", "Fix ledger cursor", ago: 100), row("b", "ledger notes", ago: 5), row("c", "Dark mode", cwd: "/w/ledger(", ago: 1)]
-        XCTAssertEqual(SessionSearch.localMatches(rows, query: "LEDGER\\s+c").map(\.key), ["a"])
+        XCTAssertEqual(SessionSearch.localMatches(rows, query: "LEDGER c").map(\.key), ["a"])
         XCTAssertEqual(SessionSearch.localMatches(rows, query: "ledger").map(\.key), ["c", "b", "a"])
-        XCTAssertEqual(SessionSearch.localMatches(rows, query: "ledger(").map(\.key), ["c"], "an invalid pattern matches literally")
+        XCTAssertEqual(SessionSearch.localMatches(rows, query: "ledger(").map(\.key), ["c"], "regex syntax is just text")
+        XCTAssertEqual(SessionSearch.localMatches([row("x", String(repeating: "a", count: 40), ago: 1)], query: "(a|aa)+$"), [])
     }
 
     func testSnippetRunsSplitMarkers() {
