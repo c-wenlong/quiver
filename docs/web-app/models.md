@@ -74,6 +74,7 @@ The page says this in a card above the table.
 price list instead: `{"query", "matches": [rows as above, with no tokens],
 "total": <all hits>}`. `exclude` carries the used models the page already
 lists for the query, so they neither repeat nor count toward "+N more".
-Search reads its own copy of the price list (the same files, never
-downloading, kept an hour) rather than the ledger, so typing never waits
-behind a usage scan.
+Search reads its own copy of the price list rather than the ledger, so
+typing never waits behind a usage scan: built from the same files (never
+downloading) and rebuilt whenever one of them changes, so it prices a key
+as the ledger does.

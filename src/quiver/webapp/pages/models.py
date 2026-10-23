@@ -19,9 +19,9 @@ import re
 import time
 
 from quiver.ledger import overview
-from quiver.ledger.pricing import PricingCatalog, load_catalog
-from quiver.webapp.api import CATALOG_TTL_S
+from quiver.ledger.pricing import BUNDLED, SUPPLEMENT, PricingCatalog, load_catalog
 from quiver.ledger.store import LedgerStore
+from quiver.paths import cache_dir_for, quiver_dir_for
 from quiver.webapp.pages import pricing as pricing_page
 from quiver.webapp.pages._brands import brand_for
 
@@ -177,18 +177,30 @@ def build(store: LedgerStore, catalog: PricingCatalog, period: str, tz_name: str
     }
 
 
-_CATALOGS: dict[str, tuple[float, PricingCatalog]] = {}
+_CATALOGS: dict[str, tuple[tuple, PricingCatalog]] = {}
+
+
+def _stamp(path) -> tuple | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
 
 
 def search_catalog(home) -> PricingCatalog:
-    """The price list search reads: loaded from the same files as the
-    ledger's (never downloading) and kept an hour, outside the ledger's
-    lock, so typing never waits behind a usage scan."""
-    key, now = str(home), time.time()
-    hit = _CATALOGS.get(key)
-    if hit is None or now - hit[0] > CATALOG_TTL_S:
-        hit = (now, load_catalog(home, download=False))
-        _CATALOGS[key] = hit
+    """The price list search reads: built from the files the ledger's is
+    (the LiteLLM download or snapshot, the supplement, your prices),
+    never downloading, and rebuilt whenever one of them changes, so a
+    search prices a key as the ledger does. Outside the ledger's lock,
+    so typing never waits behind a usage scan."""
+    files = (cache_dir_for(home) / "web-ledger" / "litellm.json", BUNDLED, SUPPLEMENT,
+             quiver_dir_for(home) / "config" / "pricing.json")
+    stamp = tuple(_stamp(f) for f in files)
+    hit = _CATALOGS.get(str(home))
+    if hit is None or hit[0] != stamp:
+        hit = (stamp, load_catalog(home, download=False))
+        _CATALOGS[str(home)] = hit
     return hit[1]
 
 

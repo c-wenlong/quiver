@@ -71,6 +71,21 @@ class TestSearch(unittest.TestCase):
         self.assertEqual(body["total"], 3)
 
 
+class TestSearchCatalog(unittest.TestCase):
+    def test_rebuilt_when_a_price_file_changes(self):
+        import tempfile
+        from pathlib import Path
+        home = Path(tempfile.mkdtemp())
+        first = models.search_catalog(home)
+        self.assertIs(models.search_catalog(home), first)
+        (home / ".quiver" / "config").mkdir(parents=True)
+        (home / ".quiver" / "config" / "pricing.json").write_text(
+            json.dumps({"models": {"my-model": {"input": 1, "output": 2}}}))
+        second = models.search_catalog(home)
+        self.assertIsNot(second, first)
+        self.assertEqual(second.source("my-model"), "yours")
+
+
 class TestRoute(HubBase):
     def setUp(self):
         super().setUp()
