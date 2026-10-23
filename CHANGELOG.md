@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Web app: one broken page no longer takes the others down.** Each page
+  script in `/app/pages.js` is compiled and run on its own, so a page
+  that fails to parse or throws while loading is logged in the console
+  and skipped; the pages around it still load.
+
 ### Added
 
 - **Web app: Repositories and Inbox.** Repositories shows the hub's pinned
