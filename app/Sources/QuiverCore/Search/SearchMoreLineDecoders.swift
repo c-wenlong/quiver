@@ -57,7 +57,7 @@ enum SearchCursorDecoder {
     ].map { Data($0.utf8) }
 
     static func decode(object: [String: Any]) -> (messages: [SearchMessage], hints: SearchHints) {
-        var hints = SearchHints()
+        let hints = SearchHints()
         let role = JSONValue.string(object["role"])
         if role == "user" || role == "assistant" {
             let message = object["message"] as? [String: Any]

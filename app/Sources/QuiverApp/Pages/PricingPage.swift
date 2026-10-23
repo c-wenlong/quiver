@@ -63,7 +63,7 @@ private struct PricingContent: View {
         // whole read on first open, one after another.
         .task(id: LoadKey(period: model.period, harness: model.harnessFilter,
                           scans: app.overview?.completedScans)) { await model.load() }
-        .sheet(item: $editing) { row in
+        .quiverSheet(item: $editing) { row in
             PriceSheet(model: model, row: row)
         }
     }
@@ -460,7 +460,7 @@ private struct PriceSheet: View {
     var model: PricingModel
     var row: PricingModel.PricedModel
 
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSheet) private var dismiss
     @State private var key: String
     @State private var input = ""
     @State private var output = ""

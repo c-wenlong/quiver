@@ -646,6 +646,13 @@ public func mcpSecretName(server: String, key: String) -> String {
     return name
 }
 
+/// The face of an add sheet's "Add to" dropdown: "4 of 10 harnesses".
+/// Counts only picks that are still in the list.
+public func mcpTargetsSummary(_ targets: Set<String>, of harnesses: [String]) -> String {
+    let picked = harnesses.filter(targets.contains).count
+    return "\(picked) of \(harnesses.count) \(harnesses.count == 1 ? "harness" : "harnesses")"
+}
+
 @MainActor
 @Observable
 public final class McpModel {

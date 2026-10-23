@@ -18,7 +18,7 @@ struct PrDetailSheet: View {
     var selection: PrSelection
 
     @Environment(AppModel.self) private var app
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSheet) private var dismiss
     @Environment(\.openURL) private var openURL
 
     @State private var method = "squash"

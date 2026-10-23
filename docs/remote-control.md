@@ -279,15 +279,21 @@ unreadable one `403 not_readable`, and another `machine` is `422
 browse_unavailable`, since a satellite's disk isn't readable from the
 hub.
 
-`GET /v1/search?q=&limit=` (`search.py`) answers from two sources. When
-the Quiver app's FTS5 index (`~/.quiver/data/search/search.sqlite`)
-exists on the hub machine, transcript hits come first, ranked the way
-`swe session --search` ranks them (phrase, then AND, then OR, BM25),
-each with its best snippet. Titles, harness and folder always match too,
-as case-insensitive text (the Mac app's Sessions match; never a regex,
-which could backtrack without bound), newest first. Results are catalog rows, so each
-opens through the usual session routes; satellite sessions match on
-metadata only, since the index is per machine.
+`GET /v1/search?q=&limit=` (`search.py`) puts each matching session in
+the first tier it qualifies for: its title holds the query (whole, or
+every word of it); then its details (title, harness, folder, id
+together) do; then its transcript holds the exact phrase, all the words,
+or any word. The transcript tiers come from the Quiver app's FTS5 index
+(`~/.quiver/data/search/search.sqlite`) when it exists on the hub machine.
+Details match as case-insensitive text (the Mac app's Sessions match;
+never a regex, which could backtrack without bound). Within a tier,
+relevance (BM25 as a share of the tier's best, or 1 for the whole query
+and 0.7 for the words apart) is multiplied by a recency weight that
+starts at 1, halves its decaying part every 14 days, and never drops
+below 0.3. Every result carries the snippet of its best transcript match
+when it has one. Results are catalog rows, so each opens through the
+usual session routes; satellite sessions match on details only, since
+the index is per machine.
 
 `GET /v1/usage[?refresh=1]` (`usage.py`) returns the hub machine's
 `swe list --usage --json` rows as `harnesses`, plus `window_days` (100),
