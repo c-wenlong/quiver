@@ -31,12 +31,27 @@ from quiver.sessions.models import Session
 # SQLite family
 # ---------------------------------------------------------------------------
 
-_OPENCODE_FAMILY_QUERY = """
-    SELECT s.time_updated, s.title,
-           COALESCE(NULLIF(s.directory, ''), w.directory), s.id
-    FROM session s
-    LEFT JOIN workspace w ON s.workspace_id = w.id
-"""
+def _opencode_family_query(conn) -> str:
+    """Session rows, with ``workspace.directory`` as the path fallback when present.
+
+    Older opencode (and Kilo today) keeps a ``directory`` on ``workspace``.
+    opencode 2.x reshaped that table into provider bindings with no
+    ``directory`` column, so joining it unconditionally fails the whole
+    query and every session vanishes. ``session.directory`` is NOT NULL in
+    both shapes, so the join is only ever a fallback.
+    """
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(workspace)")}
+    except Exception:
+        cols = set()
+    if {"id", "directory"} <= cols:
+        return """
+            SELECT s.time_updated, s.title,
+                   COALESCE(NULLIF(s.directory, ''), w.directory), s.id
+            FROM session s
+            LEFT JOIN workspace w ON s.workspace_id = w.id
+        """
+    return "SELECT s.time_updated, s.title, s.directory, s.id FROM session s"
 
 
 def parse_opencode():
@@ -45,7 +60,7 @@ def parse_opencode():
             tool_name="opencode",
             agent="OpenCode",
             db_path=os.path.expanduser("~/.local/share/opencode/opencode.db"),
-            query=_OPENCODE_FAMILY_QUERY,
+            query=_opencode_family_query,
             updated=0,
             title=1,
             path=2,
@@ -63,7 +78,7 @@ def parse_kilo():
             tool_name="kilo",
             agent="Kilo",
             db_path=os.path.expanduser("~/.local/share/kilo/kilo.db"),
-            query=_OPENCODE_FAMILY_QUERY,
+            query=_opencode_family_query,
             updated=0,
             title=1,
             path=2,
