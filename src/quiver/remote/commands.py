@@ -107,6 +107,11 @@ def _probe(host: str, port: int, timeout: float = 3.0) -> dict | None:
         return None
 
 
+# How long --install waits for the new hub to answer: start-up plus a
+# slow `tailscale ip` lookup and one launchd retry.
+_INSTALL_WAIT_S = 20
+
+
 def _stamp() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -174,12 +179,22 @@ def _cmd_serve_launchd(flags: dict) -> int:
     except ValueError as exc:
         print(c("red", str(exc)), file=sys.stderr)
         return 1
-    swe = os.path.abspath(sys.argv[0])
-    if not os.access(swe, os.X_OK):
-        print(c("red", f"cannot find the swe executable ({sys.argv[0]}); "
-                       "run this as `swe remote serve --install`"),
-              file=sys.stderr)
-        return 1
+    bundled = launchd.bundled_swe()
+    swe = str(bundled) if bundled else os.path.abspath(sys.argv[0])
+    if not bundled:
+        if not os.access(swe, os.X_OK):
+            print(c("red", f"cannot find the swe executable ({sys.argv[0]}); "
+                           "run this as `swe remote serve --install`"),
+                  file=sys.stderr)
+            return 1
+        folder = launchd.protected_dir(swe)
+        if folder:
+            print(c("red", f"{swe} is in ~/{folder}, which macOS blocks a LaunchAgent "
+                           "from reading, so the hub would fail at every start. Install "
+                           "Quiver.app (app/script/install-app.sh) and run --install "
+                           "again: the agent then runs the app's bundled swe."),
+                  file=sys.stderr)
+            return 1
     program = [swe, "remote", "serve"]
     program += [f"--host={host}"] if host else ["--tailnet"]
     if flags.get("--port"):
@@ -200,6 +215,17 @@ def _cmd_serve_launchd(flags: dict) -> int:
     print(f"  log   {log_path}")
     print(c("dim", "  starts at login and restarts if it exits; "
                    "run --install again to restart it, --uninstall to stop it"))
+    if not stray:
+        # A hub that can't start exits and launchd only retries, so wait
+        # for it to answer rather than leave the phone offline unsaid.
+        for _ in range(_INSTALL_WAIT_S):
+            if _probe(probe_host, port, timeout=1.0) is not None:
+                print(c("green", f"  hub answering on {probe_host}:{port}"))
+                break
+            time.sleep(1)
+        else:
+            print(c("yellow", f"the hub is not answering on {probe_host}:{port} after "
+                              f"{_INSTALL_WAIT_S} s; see {log_path}"), file=sys.stderr)
     if stray:
         print(c("yellow",
                 f"a hub started outside launchd already answers on {probe_host}:{port}. "
