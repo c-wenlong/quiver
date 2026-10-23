@@ -38,7 +38,7 @@ struct ChatView: View {
             }
         }
         .task(id: key) {
-            let m = ChatModel(key: key, app: app)
+            let m = app.chat(key)
             model = m
             await m.start()
         }
@@ -54,7 +54,12 @@ private struct ChatBody: View {
     @Environment(AppModel.self) private var app
     @Bindable var model: ChatModel
 
+    /// Scrolling within this many entries of the oldest one loaded asks
+    /// for the next page, so it's usually in before you reach the top.
+    static let earlierThreshold = 15
+
     var body: some View {
+        let entries = ChatEntry.fold(model.items)
         ScrollView(.vertical) {
             LazyVStack(alignment: .leading, spacing: 10) {
                 if model.loading {
@@ -63,19 +68,26 @@ private struct ChatBody: View {
                     StateCard(icon: "exclamationmark.triangle", title: "Couldn't load this session", message: error, tone: .error)
                 } else if model.items.isEmpty {
                     StateCard(icon: "text.bubble", title: "No messages yet", message: "New messages appear here as the agent works.")
+                } else if model.hasEarlier {
+                    EarlierRow(model: model).onAppear { model.wantsEarlier = true }
                 }
-                ForEach(ChatEntry.fold(model.items)) { entry in
-                    switch entry {
-                    case .item(let item): ChatItemView(item: item, model: model)
-                    case .toolRun(_, let items): ToolRunCard(items: items, model: model)
+                ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                    Group {
+                        switch entry {
+                        case .item(let item): ChatItemView(item: item, model: model)
+                        case .toolRun(_, let items): ToolRunCard(items: items, model: model)
+                        }
                     }
+                    .onAppear { if index < Self.earlierThreshold, model.hasEarlier { model.wantsEarlier = true } }
                 }
             }
+            .scrollTargetLayout()
             .padding(.horizontal, Theme.gutter)
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .defaultScrollAnchor(.bottom)
+        .modifier(LoadsEarlierAtRest(model: model, oldest: entries.first?.id))
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom) { bottomBar }
     }
@@ -91,6 +103,85 @@ private struct ChatBody: View {
             }
         }
         .background(Theme.wash)
+    }
+}
+
+/// Top of the transcript while older pages remain: a spinner where they
+/// load on their own (iOS 18), a button on iOS 17.
+private struct EarlierRow: View {
+    let model: ChatModel
+
+    var body: some View {
+        if #available(iOS 18, *) {
+            LoadingRow(text: "Loading earlier messages")
+        } else if model.loadingEarlier {
+            LoadingRow(text: "Loading earlier messages")
+        } else {
+            Button("Load earlier messages") { Task { await model.loadEarlier() } }
+                .secondaryButton(compact: true)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+        }
+    }
+}
+
+/// Loads the page `model.wantsEarlier` asked for once scrolling is at
+/// rest, then puts the entry that was at the top of the screen back
+/// there, so what you were reading stays put (iOS 18; iOS 17 gets the
+/// button in `EarlierRow`).
+///
+/// Loading while a flick still moves, or keeping your place by offset,
+/// both failed in the simulator: a page landing above keeps the offset
+/// from the top, the new first rows show and ask for the next page, and
+/// a decelerating scroll overrides any move made to compensate, so it
+/// raced to the start of the session. At rest, restoring by entry holds,
+/// and the new rows land off screen so nothing asks again until you
+/// scroll up to them.
+private struct LoadsEarlierAtRest: ViewModifier {
+    let model: ChatModel
+    /// The oldest entry's id. Never the one to restore: when it's a run
+    /// of tool calls and the older page ends in more of them, they join
+    /// the run and its id (taken from its first call) changes.
+    let oldest: String?
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18, *) {
+            content.modifier(Tracking(model: model, oldest: oldest))
+        } else {
+            content
+        }
+    }
+
+    @available(iOS 18, *)
+    private struct Tracking: ViewModifier {
+        let model: ChatModel
+        let oldest: String?
+        @State private var position = ScrollPosition(idType: String.self)
+        @State private var idle = true
+        /// The entries on screen, top first.
+        @State private var visible: [String] = []
+
+        func body(content: Content) -> some View {
+            content
+                .scrollPosition($position, anchor: .top)
+                .onScrollTargetVisibilityChange(idType: String.self) { visible = $0 }
+                .onScrollPhaseChange { _, phase in
+                    idle = phase == .idle
+                    load()
+                }
+                .onChange(of: model.wantsEarlier) { load() }
+        }
+
+        private func load() {
+            guard idle, model.wantsEarlier, model.hasEarlier, !model.loadingEarlier else { return }
+            model.wantsEarlier = false
+            let keep = visible.first { $0 != oldest }
+            Task {
+                if await model.loadEarlier(), let keep {
+                    position.scrollTo(id: keep, anchor: .top)
+                }
+            }
+        }
     }
 }
 

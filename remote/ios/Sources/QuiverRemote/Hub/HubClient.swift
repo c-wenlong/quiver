@@ -130,8 +130,12 @@ struct HubClient: Sendable {
         try await send(request("GET", "/v1/search", query: ["q": query, "limit": "\(limit)"]))
     }
 
-    func messages(_ key: String, limit: Int = 500) async throws -> MessagesResponse {
-        try await send(request("GET", "/v1/sessions/\(Self.encodeKey(key))/messages", query: ["limit": "\(limit)"]))
+    /// The newest `limit` messages, or with `before` the `limit` just
+    /// older than that seq: how the chat pages back through history.
+    func messages(_ key: String, limit: Int, before: Int? = nil) async throws -> MessagesResponse {
+        var query = ["limit": "\(limit)"]
+        if let before { query["before"] = "\(before)" }
+        return try await send(request("GET", "/v1/sessions/\(Self.encodeKey(key))/messages", query: query))
     }
 
     func sendMessage(_ key: String, text: String, mode: String, clientId: String) async throws -> SendAccepted {
