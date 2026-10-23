@@ -212,8 +212,14 @@ function paintMcp() {
     </div>`);
   }
   parts.push(mcpRepoSection(folders));
+  // A repaint (a check or refresh landing) rebuilds the sheet too, so an
+  // open one is opened again on the same server with its new state.
+  const sheet = document.getElementById("mcp-sheet");
+  const openName = sheet && sheet.open ? sheet.dataset.server : null;
   mcpShell(parts.join(""));
   mcpBind();
+  const again = openName != null && d.servers.find((s) => s.name === openName);
+  if (again) mcpOpenSheet(again);
 }
 
 /* The Local folder rows alone, when there is no server grid to put them
@@ -409,6 +415,7 @@ function mcpOpenSheet(s) {
     <p class="caption">Sync, Remove and Add server write config files, so they stay in swe and the Mac app for now.</p>
     <div class="sheet-actions"><button class="tab selected" value="close">Close</button></div>
   </form>`;
+  sheet.dataset.server = s.name;
   sheet.showModal();
 }
 
