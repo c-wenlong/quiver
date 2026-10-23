@@ -99,7 +99,7 @@ function renderCompute(_id, refresh = false) {
 /* One request, then the next in three seconds while the page stays open,
  * as the Mac page samples every three seconds. A hidden tab skips its
  * turn rather than sampling for nobody. */
-async function pollCompute(gen, refresh = false) {
+async function pollCompute(gen, refresh = false, user = false) {
   const p = computePage;
   clearTimeout(p.timer);
   // Only the newest call paints and schedules the next: a reply still in
@@ -126,7 +126,8 @@ async function pollCompute(gen, refresh = false) {
     p.failed = null;
     p.data = data;
   }
-  paintCompute(false);
+  // A timed poll leaves an open picker alone; a reply the user asked for paints.
+  paintCompute(false, !refresh && !user);
   again();
 }
 
@@ -144,9 +145,24 @@ function bindComputeHeader() {
   if (gear) gear.onclick = openComputeLimits;
 }
 
+/* A selector for the control that has focus inside the body, so a
+ * repaint can give focus back to its replacement. */
+function computeFocusKey(body) {
+  const el = document.activeElement;
+  if (!el || !body.contains(el)) return null;
+  if (el.id) return `#${CSS.escape(el.id)}`;
+  for (const attr of ["data-trend-tab", "data-collapse", "data-show-all", "data-line"]) {
+    if (el.hasAttribute(attr)) return `[${attr}="${CSS.escape(el.getAttribute(attr))}"]`;
+  }
+  return null;
+}
+
 /* The header is painted once per visit and the body on every sample, so
- * the open settings sheet and the chart's hover survive a refresh. */
-function paintCompute(busy) {
+ * the open settings sheet and the chart's hover survive a refresh. A
+ * poll leaves the body alone while a picker in it has focus (replacing
+ * it would close the open menu), and any other focused control gets its
+ * focus back after the repaint. */
+function paintCompute(busy, fromPoll = false) {
   const panel = document.getElementById("panel");
   if (!document.getElementById("compute-body")) {
     panel.innerHTML = `<div class="page compute-page"><div id="compute-header"></div><div class="stack" id="compute-body"></div></div>`;
@@ -154,9 +170,16 @@ function paintCompute(busy) {
   document.getElementById("compute-header").innerHTML = computeHeader(busy);
   bindComputeHeader();
   const body = document.getElementById("compute-body");
+  if (fromPoll && document.activeElement && document.activeElement.tagName === "SELECT"
+      && body.contains(document.activeElement)) return;
+  const focus = computeFocusKey(body);
   body.innerHTML = computeBody();
   bindComputeBody(body);
   drawComputeChart();
+  if (focus) {
+    const again = body.querySelector(focus);
+    if (again) again.focus({ preventScroll: true });
+  }
 }
 
 function computeBody() {
@@ -310,7 +333,7 @@ function bindComputeBody(body) {
     interval.onchange = () => {
       p.interval = Number(interval.value);
       computeStore("interval", String(p.interval));
-      pollCompute(routeGen);
+      pollCompute(routeGen, false, true);
     };
   }
   for (const chip of body.querySelectorAll("[data-line]")) {
@@ -433,7 +456,9 @@ function chartSpec() {
       endLabel: tr.gpus.length > 1 ? `GPU ${g.index}` : "", points: g.points,
     }));
     const values = series.flatMap((s) => s.points.map((pt) => pt[1]));
-    const end = Math.max(...series.flatMap((s) => s.points.map((pt) => pt[0])));
+    // Whole-machine readings: the window ends at the newest tick, so
+    // readings that stopped coming slide off the left.
+    const end = tr.last_tick;
     return { series, x: [end - span, end], y: [0, scaleTop(values, 25, 100)],
       format: (v) => `${CFmt.percent(v)}%`, axis: (v) => `${Math.round(v)}%` };
   }
@@ -443,9 +468,10 @@ function chartSpec() {
     key: h, label: Fmt.harnessName(h), color: Fmt.harnessColor(h), logo: h,
     points: tr.harnesses[h].map(([at, mem, cpu]) => [at, ram ? mem / GB : cpu]),
   }));
-  // The window ends at the newest harness point, so a stopped harness's
-  // line slides off the left instead of holding the axis open.
-  const ends = series.flatMap((s) => s.points.map((pt) => pt[0]));
+  // ComputeHistory.latest: the window ends at the newest point of any
+  // harness, drawn or not, so a stopped harness's line slides off the
+  // left while anything else still runs.
+  const ends = Object.values(tr.harnesses).flatMap((pts) => pts.map((pt) => pt[0]));
   const end = ends.length ? Math.max(...ends) : tr.last_tick;
   const values = series.flatMap((s) => s.points.map((pt) => pt[1]));
   const limitGB = p.limits.memoryGB;
@@ -609,6 +635,10 @@ function openComputeLimits() {
   let dialog = document.getElementById("compute-limits");
   if (dialog) dialog.remove();
   const p = computePage;
+  // Back can change the route while the sheet is open; a change saved
+  // after that must not paint Compute over the page now showing.
+  const gen = routeGen;
+  const repaint = () => { if (p.data && gen === routeGen) paintCompute(false); };
   const [value, unit] = splitAge(p.limits.orphanAge);
   document.body.insertAdjacentHTML("beforeend", `<dialog class="sheet compute-limits" id="compute-limits">
     <form method="dialog" class="sheet-body">
@@ -649,14 +679,14 @@ function openComputeLimits() {
     if (seconds !== n * secs) { const [v, u] = splitAge(seconds); age.value = v; ageUnit.value = u; }
     p.limits.orphanAge = seconds;
     computeStore("limits", p.limits);
-    if (p.data) paintCompute(false);
+    repaint();
   };
   age.onchange = commitAge;
   ageUnit.onchange = commitAge;
   memory.onchange = () => {
     p.limits.memoryGB = Number(memory.value);
     computeStore("limits", p.limits);
-    if (p.data) paintCompute(false);
+    repaint();
   };
   dialog.addEventListener("close", () => { commitAge(); dialog.remove(); });
   dialog.showModal();

@@ -245,17 +245,16 @@ class Matcher:
 
 
 def load_matchers(home: Path) -> list[Matcher]:
-    """The starred, unarchived harnesses in registry order (swe list's),
-    with their command, aliases and ``~/.<name>`` home folder."""
-    from quiver.harness.archive import load_archive
-    from quiver.harness.registry import load_registry_readonly
-    from quiver.harness.stars import load_stars
+    """The starred harnesses in registry order (swe list's), with their
+    command, aliases and ``~/.<name>`` home folder. Read once and without
+    migration, so viewing the page never rewrites a legacy registry."""
+    from quiver.harness import registry
 
-    archived = load_archive()
-    starred = set(load_stars())
+    entries = registry.load_registry_readonly()
+    starred = set(registry.starred_names(entries))
     out = []
-    for name, info in load_registry_readonly().items():
-        if name in archived or name not in starred:
+    for name, info in entries.items():
+        if name not in starred:
             continue
         commands = {a for a in (info.get("aliases") or []) if a}
         command = os.path.basename(str(info.get("command") or ""))

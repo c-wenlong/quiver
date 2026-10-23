@@ -155,15 +155,15 @@ class TestAttribution(unittest.TestCase):
         self.assertEqual(found.orphans[0][0].cwd, "/home/u/app")
 
     def test_load_matchers_reads_starred_unarchived_in_order(self):
-        registry = {"codex": {"command": "/opt/bin/codex", "aliases": ["cx"]},
-                    "claude": {"command": "claude", "aliases": ["cc"]},
-                    "gemini": {"command": "gemini"}, "old": {"command": "old"}}
+        registry = {"codex": {"command": "/opt/bin/codex", "aliases": ["cx"], "state": "starred", "pin": 2},
+                    "claude": {"command": "claude", "aliases": ["cc"], "state": "starred", "pin": 1},
+                    "gemini": {"command": "gemini"},
+                    "old": {"command": "old", "state": "archived", "archived": {"reason": "x"}}}
         home = Path(tempfile.mkdtemp())
         (home / "real").mkdir()
         os.symlink(home / "real", home / ".claude")
         with patch("quiver.harness.registry.load_registry_readonly", return_value=registry), \
-                patch("quiver.harness.stars.load_stars", return_value=["claude", "codex", "old"]), \
-                patch("quiver.harness.archive.load_archive", return_value={"old": {}}):
+                patch("quiver.harness.registry.load_registry", side_effect=AssertionError("migrates")):
             matchers = compute.load_matchers(home)
         self.assertEqual([m.harness for m in matchers], ["codex", "claude"])
         self.assertEqual(matchers[0].commands, {"codex", "cx"})
@@ -286,9 +286,8 @@ class _Model(unittest.TestCase):
         self.model.home = Path(HOME)
         self._patches = [
             patch("quiver.harness.registry.load_registry_readonly",
-                  return_value={"claude": {"command": "claude"}, "codex": {"command": "codex"}}),
-            patch("quiver.harness.stars.load_stars", return_value=["claude", "codex"]),
-            patch("quiver.harness.archive.load_archive", return_value={}),
+                  return_value={"claude": {"command": "claude", "state": "starred"},
+                                "codex": {"command": "codex", "state": "starred"}}),
         ]
         for p in self._patches:
             p.start()
