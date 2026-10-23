@@ -304,6 +304,14 @@ class TestMarkdown(unittest.TestCase):
         html = self.render("<p>x</p>\n\n```\na\n\n\n\nb\n```")
         self.assertIn("a\n\n\n\nb", html)
 
+    def test_links_keep_balanced_parentheses(self):
+        html = self.render("[wiki](https://en.wikipedia.org/wiki/Foo_(bar)) after")
+        self.assertIn('<a href="https://en.wikipedia.org/wiki/Foo_(bar)" target="_blank" rel="noopener">wiki</a> after', html)
+
+    def test_double_backtick_spans_hold_a_backtick(self):
+        html = self.render("run ``a `b` c`` now")
+        self.assertIn("<code>a `b` c</code> now", html)
+
     def test_scripts_and_unsafe_links_never_render(self):
         html = self.render("<script>alert(1)</script>[x](javascript:alert(1)) <b onclick=x>hi</b>")
         self.assertNotIn("<script", html)

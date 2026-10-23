@@ -166,11 +166,17 @@ const GhUI = (() => {
   /* A fence runs to its closing marker, or to the end of the body. */
   const FENCE = /(^ {0,3}(?:`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n {0,3}(?:`{3,}|~{3,})[ \t]*(?=\n|$)|(?![\s\S])))/m;
 
+  /* An inline code span: a run of backticks, then the same run closing
+   * it, so ``a `tick` inside`` stays one span. */
+  const CODE_SPAN = /(`+)(?!`)([^\n]*?[^`\n])\1(?!`)/g;
+  /* A link target: no spaces, parentheses only in balanced pairs. */
+  const URL_PART = "((?:[^()\\s]|\\([^()\\s]*\\))+)";
+
   /* The body with fenced and inline code blanked out, same length, so a
    * tag search on it never matches an example inside code. */
   function maskCode(text) {
     const blank = (c) => c.replace(/[^\n]/g, " ");
-    return text.replace(new RegExp(FENCE.source, "gm"), blank).replace(/`[^`\n]+`/g, blank);
+    return text.replace(new RegExp(FENCE.source, "gm"), blank).replace(CODE_SPAN, blank);
   }
 
   /* Top-level <details> blocks become folds; unclosed ones stay text, and
@@ -214,7 +220,7 @@ const GhUI = (() => {
     if (!/[<&]/.test(s)) return s;
     // Inline code spans pass through as they are.
     const codes = [];
-    s = s.replace(/`[^`\n]+`/g, (c) => { codes.push(c); return `\u0001${codes.length - 1}\u0001`; });
+    s = s.replace(CODE_SPAN, (c) => { codes.push(c); return `\u0001${codes.length - 1}\u0001`; });
     s = s.replace(/<!--[\s\S]*?-->/g, "")
       .replace(/<(script|style|textarea|template)\b[\s\S]*?<\/\1\s*>/gi, "")
       .replace(/<pre\b[^>]*>([\s\S]*?)<\/pre\s*>/gi, (_m, inner) =>
@@ -320,17 +326,21 @@ const GhUI = (() => {
   /* [![alt](badge)](href) and [[alt](badge)](href) keep the outer link;
    * a bare image becomes a link to its source. */
   function flatLinks(s) {
-    return s.replace(/\[!?\[([^\]]*)\]\([^)]*\)\]\(([^)\s]+)\)/g, "[$1]($2)")
-      .replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, (_m, alt, src) => `[${alt || "image"}](${src})`);
+    return s.replace(new RegExp(`\\[!?\\[([^\\]]*)\\]\\([^)]*\\)\\]\\(${URL_PART}\\)`, "g"), "[$1]($2)")
+      .replace(new RegExp(`!\\[([^\\]]*)\\]\\(${URL_PART}[^)]*\\)`, "g"), (_m, alt, src) => `[${alt || "image"}](${src})`);
   }
 
   const safeUrl = (url) => /^(https?:\/\/|mailto:)/i.test(url);
 
   function inline(text) {
     const codes = [];
-    let s = flatLinks(text.replace(/`([^`\n]+)`/g, (_m, c) => { codes.push(c); return `\u0001${codes.length - 1}\u0001`; }));
+    let s = flatLinks(text.replace(CODE_SPAN, (_m, _ticks, c) => {
+      // One space padding both ends is the delimiter's, not the code's.
+      codes.push(/^ .* $/.test(c) && c.trim() ? c.slice(1, -1) : c);
+      return `\u0001${codes.length - 1}\u0001`;
+    }));
     s = esc(s);
-    s = s.replace(/\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;.*?&quot;)?\)/g, (_m, label, url) =>
+    s = s.replace(new RegExp(`\\[([^\\]]*)\\]\\(${URL_PART}(?:\\s+&quot;.*?&quot;)?\\)`, "g"), (_m, label, url) =>
       (safeUrl(url) ? `<a href="${url}" target="_blank" rel="noopener">${label || url}</a>` : label));
     // Emphasis and bare links only in text, never inside a tag.
     s = s.split(/(<a [^>]*>[\s\S]*?<\/a>|<[^>]+>)/).map((part, i) => {

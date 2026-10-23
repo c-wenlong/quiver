@@ -284,18 +284,25 @@
     const state = filtered(raw, key, opts.query, opts.unfiltered);
     if (state.kind === "loading") return loadingCard("Fetching…", false);
     if (state.kind === "failed") return errorCard(state.message, false);
-    if (!state.rows.length) {
-      const text = opts.unfiltered || !opts.query ? EMPTY[key] : `Nothing matches "${opts.query}".`;
-      return emptyCard(text, "issueClosed", false);
-    }
     const rows = state.rows;
     if (opts.window) {
       const w = opts.window;
       const visible = rows.slice(0, w.shown);
       const pending = w.fetching || rows.length > w.shown || w.canGrow;
-      return visible.map((r) => ROW[key](repo, r)).join("") + (pending ? `<button type="button" class="gh-sentinel${w.fetching ? " fetching" : ""}" data-sentinel="${key}">
+      const sentinel = pending ? `<button type="button" class="gh-sentinel${w.fetching ? " fetching" : ""}" data-sentinel="${key}">
         ${w.fetching ? ico("running", "gh-muted gh-spin") : '<span class="gh-ring"></span>'}
-        <span class="caption gh-muted">${w.fetching ? "Fetching more…" : "Keep scrolling for more"}</span></button>` : "");
+        <span class="caption gh-muted">${w.fetching ? "Fetching more…" : "Keep scrolling for more"}</span></button>` : "";
+      // A filter with no match in the rows fetched so far keeps the loader,
+      // so older rows can still be searched.
+      if (!rows.length) {
+        const text = !opts.query ? EMPTY[key] : `Nothing matches "${opts.query}".`;
+        return emptyCard(text, "issueClosed", false) + sentinel;
+      }
+      return visible.map((r) => ROW[key](repo, r)).join("") + sentinel;
+    }
+    if (!rows.length) {
+      const text = opts.unfiltered || !opts.query ? EMPTY[key] : `Nothing matches "${opts.query}".`;
+      return emptyCard(text, "issueClosed", false);
     }
     const open = page.expanded.has(opts.expandKey);
     const visible = open ? rows : rows.slice(0, opts.preview);
