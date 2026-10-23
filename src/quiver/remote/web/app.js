@@ -786,11 +786,17 @@ async function loadInbox() {
 
 /* ── usage ───────────────────────────────────────────────── */
 
-const LIMIT_STATUS = {
-  "no-sub": "No subscription on this account.",
-  "auth-required": "Signed out. Log in to it again on the hub.",
-  timeout: "The provider didn't answer in time.",
-};
+/* ``where`` names the machine the reading came from: a satellite's
+ * credentials live on the satellite, so logging in on the hub fixes
+ * nothing there. */
+function limitStatus(status, where) {
+  switch (status) {
+    case "no-sub": return "No subscription on this account.";
+    case "auth-required": return `Signed out. Log in to it again on ${where}.`;
+    case "timeout": return "The provider didn't answer in time.";
+    default: return status;
+  }
+}
 
 function resetIn(ts) {
   if (!ts) return "";
@@ -851,12 +857,12 @@ function limitBar(label, w, now) {
  * reading is today, and how old it already was when the machine took the
  * snapshot. Only the second says the provider stopped answering; a
  * satellite's report just sits on the hub for up to five minutes. */
-function limitCard(h, now, snapAt) {
+function limitCard(h, now, snapAt, where) {
   const rl = h.rate_limit;
   const plan = rl.plan_type ? `<span class="own">${esc(rl.plan_type)}</span>` : "";
   let body;
   if (rl.status !== "ok") {
-    body = `<p class="dim">${esc(LIMIT_STATUS[rl.status] || rl.status)}</p>`;
+    body = `<p class="dim">${esc(limitStatus(rl.status, where))}</p>`;
   } else {
     const windows = rl.windows && rl.windows.length ? rl.windows : [rl];
     body = windows.map((w) => limitBar(windowLabel(w), w, now)).join("");
@@ -928,7 +934,7 @@ function renderMachineUsage(m, serverTime) {
   }
   html += `<div class="usage-group"><h2>Limits</h2>`;
   html += limited.length
-    ? limited.map((h) => limitCard(h, now, snapAt)).join("")
+    ? limited.map((h) => limitCard(h, now, snapAt, machineName(m))).join("")
     : `<p class="dim">No limits to show. Star a harness on this machine with
        <code>swe hs star &lt;name&gt;</code> to track its quota.</p>`;
   html += `</div><div class="usage-group"><h2>Sessions in the last ${esc(days)} days</h2>`;

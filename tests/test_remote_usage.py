@@ -1,5 +1,6 @@
 """usage.py and GET /v1/usage: swe list --usage rows for the hub machine."""
 
+import http.client
 import json
 import tempfile
 import unittest
@@ -174,6 +175,13 @@ class TestSatelliteStore(unittest.TestCase):
         self.assertEqual(store.parent.name, "satellite-usage")
         self.assertEqual(len(usage.load_satellites(self.home)), 1)
 
+    def test_no_store_yet_is_empty(self):
+        self.assertEqual(usage.load_satellites(self.home), [])
+
+    def test_unreadable_store_is_empty(self):
+        with patch.object(Path, "glob", side_effect=OSError("denied")):
+            self.assertEqual(usage.load_satellites(self.home), [])
+
     def test_corrupt_file_skipped(self):
         usage.save_satellite(self.home, "mbp", {"harnesses": []})
         usage._satellite_file(self.home, "bad").write_text("{nope")
@@ -237,6 +245,28 @@ class TestAgentUsageRoute(HubBase):
         self.assertEqual(sat["harnesses"], [{"name": "claude"}])
         self.assertEqual(sat["reported_at"], 990.0)
         self.assertIsInstance(sat["received_at"], float)
+
+    def test_unreadable_body_is_400(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.srv.port,
+                                          timeout=5)
+        try:
+            conn.request("POST", "/v1/agent/usage", body="{nope",
+                         headers={**self.auth(),
+                                  "Content-Type": "application/json"})
+            self.assertEqual(conn.getresponse().status, 400)
+        finally:
+            conn.close()
+
+    def test_store_write_failure_is_503(self):
+        with patch.object(usage, "save_satellite",
+                          side_effect=OSError("disk full")):
+            status, data = self.srv.request(
+                "POST", "/v1/agent/usage",
+                {"machine_id": "mbp", "harnesses": []}, headers=self.auth(),
+            )
+        self.assertEqual(status, 503)
+        self.assertEqual(json.loads(data)["error"]["code"],
+                         "usage_unavailable")
 
     def test_unregistered_satellite_named_by_id(self):
         auth = self.auth()
