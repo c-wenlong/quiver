@@ -69,15 +69,15 @@ class TestPlacement(unittest.TestCase):
         loose = _skill("stray", base / "elsewhere", source="plugin", harnesses=["claude"])
         mine = _skill("tdd", base / "mine")
         with patch("quiver.plugins.catalog.build_catalog", return_value=_catalog(plugin)):
-            listed, moved, error = page.placement([own, loose, mine], base)
-        self.assertEqual([s["name"] for s in listed], ["stray", "tdd"])
+            placed, moved, error = page.placement([own, loose, mine], base)
+        self.assertEqual([s["plugin"] for s in placed], ["tools@market", None, None])
         self.assertEqual((moved, error), (1, None))
 
     def test_unreadable_catalog_keeps_every_skill(self):
         skills = [_skill("lint", "/x/lint", source="plugin")]
         with patch("quiver.plugins.catalog.build_catalog", side_effect=ValueError("bad json")):
-            listed, moved, error = page.placement(skills, Path("/x"))
-        self.assertEqual((listed, moved, error), (skills, 0, "bad json"))
+            placed, moved, error = page.placement(skills, Path("/x"))
+        self.assertEqual((placed, moved, error), ([{**skills[0], "plugin": None}], 0, "bad json"))
 
 
 class TestDetail(unittest.TestCase):
@@ -200,7 +200,8 @@ class TestRoute(HubBase):
             status, data = self.srv.request("GET", "/v1/app/skills", headers=self.auth())
         self.assertEqual(status, 200, data)
         body = json.loads(data)
-        self.assertEqual([s["name"] for s in body["skills"]], ["tdd"])
+        self.assertEqual([(s["name"], s["plugin"]) for s in body["skills"]],
+                         [("lint", "tools@market"), ("tdd", None)])
         self.assertEqual(body["plugin_skill_count"], 1)
         self.assertEqual(body["harnesses"][0]["state"], "linked")
         self.assertEqual(body["machine"], self.srv.state.machine["name"])

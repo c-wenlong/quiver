@@ -35,13 +35,13 @@ def get(ctx, args: dict) -> dict:
             return file_view(skill, args["file"])
         return {**detail(skill, home), "machine": ctx.machine.get("name"),
                 "shared_dir": inventory["shared_dir"], "harnesses": inventory["harnesses"]}
-    standalone, in_plugins, catalog_error = placement(inventory["skills"], home)
+    skills, in_plugins, catalog_error = placement(inventory["skills"], home)
     return {
         "machine": ctx.machine.get("name"),
         "home": str(home),
         "shared_dir": inventory["shared_dir"],
         "harnesses": inventory["harnesses"],
-        "skills": standalone,
+        "skills": skills,
         "plugin_skill_count": in_plugins,
         "catalog_error": catalog_error,
     }
@@ -63,9 +63,11 @@ def _find(inventory: dict, path: str) -> dict:
 
 
 def placement(skills: list[dict], home: Path) -> tuple[list[dict], int, str | None]:
-    """SkillPlacement: the skills the page lists, how many moved to the
-    Plugins page, and why the catalog was unreadable (every skill then
-    stays here, so none is lost).
+    """SkillPlacement: every skill, each with ``plugin`` set to the ref of
+    the plugin it moves to on the Plugins page (else None), how many moved,
+    and why the catalog was unreadable (every skill then stays here, so
+    none is lost). The page hides the moved ones only while the web app
+    has a Plugins page to show them on.
 
     A skill moves only when its source is ``plugin`` and exactly one
     catalog plugin owns the deepest folder holding it, as
@@ -76,12 +78,12 @@ def placement(skills: list[dict], home: Path) -> tuple[list[dict], int, str | No
 
         dirs = plugin_dirs(build_catalog(home))
     except Exception as exc:  # the Mac app's CatalogLookup.unavailable
-        return list(skills), 0, str(exc) or exc.__class__.__name__
-    standalone = [
-        s for s in skills
-        if not (s["source"] == "plugin" and len(owners(dirs, s["path"])) == 1)
-    ]
-    return standalone, len(skills) - len(standalone), None
+        return [{**s, "plugin": None} for s in skills], 0, str(exc) or exc.__class__.__name__
+    placed = []
+    for s in skills:
+        refs = owners(dirs, s["path"]) if s["source"] == "plugin" else []
+        placed.append({**s, "plugin": refs[0] if len(refs) == 1 else None})
+    return placed, sum(1 for s in placed if s["plugin"]), None
 
 
 # -- one skill ---------------------------------------------------------------

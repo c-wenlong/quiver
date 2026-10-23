@@ -216,11 +216,26 @@ function bindSkillsHeader() {
   }
 }
 
+/* Skills that ship inside a plugin move to the Plugins page, but only
+ * once the web app has one (app.js's PAGES); until then they stay here,
+ * as the Mac app keeps them when its catalog is unknown. */
+function skillsPluginsLive() {
+  return typeof PAGES !== "undefined" && Object.prototype.hasOwnProperty.call(PAGES, "plugins");
+}
+
+function listedSkills(d) {
+  return skillsPluginsLive() ? d.skills.filter((s) => !s.plugin) : d.skills;
+}
+
+function movedSkillCount(d) {
+  return skillsPluginsLive() ? d.plugin_skill_count : 0;
+}
+
 /* SkillsModel.visibleSkills: harness, source and search, then your own
  * library first, then what harnesses and catalogs bring. */
 function visibleSkills() {
   const p = skillsPage, needle = p.query.trim().toLowerCase();
-  return p.data.skills
+  return listedSkills(p.data)
     .map((s, i) => [s, i])
     .filter(([s]) => (!p.harness || s.harnesses.includes(p.harness))
       && (!p.source || s.source === p.source)
@@ -231,16 +246,16 @@ function visibleSkills() {
 }
 
 function paintSkills() {
-  const p = skillsPage, d = p.data, listed = d.skills;
+  const p = skillsPage, d = p.data, listed = listedSkills(d), moved = movedSkillCount(d);
   // dropMissingFilters: a filter the list no longer offers would hide every row.
   if (p.harness && !listed.some((s) => s.harnesses.includes(p.harness))) p.harness = "";
   if (p.source && !listed.some((s) => s.source === p.source)) p.source = "";
   const harnesses = [...new Set(listed.flatMap((s) => s.harnesses))].sort();
   const sources = SKILL_SOURCES.filter(([id]) => listed.some((s) => s.source === id));
-  const note = d.plugin_skill_count > 0 ? `<a class="sk-plugin-note" href="#/plugins"
+  const note = moved > 0 ? `<a class="sk-plugin-note" href="#/plugins"
       title="Open Plugins, where each plugin lists the skills it ships">${icon("plugins")}
-      <span class="num">${d.plugin_skill_count === 1 ? "1 skill ships inside a plugin;" : `${d.plugin_skill_count} skills ship inside plugins;`}</span>
-      <span class="go">${d.plugin_skill_count === 1 ? "see it under Plugins" : "see them under Plugins"}</span><span aria-hidden="true">→</span></a>` : "";
+      <span class="num">${moved === 1 ? "1 skill ships inside a plugin;" : `${moved} skills ship inside plugins;`}</span>
+      <span class="go">${moved === 1 ? "see it under Plugins" : "see them under Plugins"}</span><span aria-hidden="true">→</span></a>` : "";
   document.getElementById("panel").innerHTML = `<div class="page">${skillsHeader(false)}
     <div class="stack">
       <div class="filters">
@@ -264,12 +279,13 @@ function paintSkills() {
 
 function paintSkillRows() {
   const p = skillsPage, d = p.data, skills = visibleSkills(), where = d.machine || "the hub";
-  document.getElementById("sk-count").textContent = `${skills.length} of ${d.skills.length} skills`;
+  const listed = listedSkills(d);
+  document.getElementById("sk-count").textContent = `${skills.length} of ${listed.length} skills`;
   const list = document.getElementById("sk-list");
   if (!skills.length) {
-    const empty = !d.skills.length && !d.plugin_skill_count;
+    const empty = !d.skills.length;
     const text = empty ? `No skills on ${where} yet.`
-      : !d.skills.length ? `Every skill on ${where} ships inside a plugin.` : "No skills match.";
+      : !listed.length ? `Every skill on ${where} ships inside a plugin.` : "No skills match.";
     list.innerHTML = `<div class="card"><p class="empty">${esc(text)}</p>${empty
       ? '<p class="caption">Create one with <code>swe skills new &lt;name&gt;</code> on the hub.</p>' : ""}</div>`;
     return;

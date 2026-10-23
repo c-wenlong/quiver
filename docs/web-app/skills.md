@@ -12,8 +12,9 @@ as a web page, read only. Module `quiver/webapp/pages/skills.py`, script
   A skill moves to the Plugins page when its source is `plugin` and exactly
   one catalog plugin owns the deepest folder holding it
   (`plugins/catalog.py::plugin_dirs` and `owners`, the rule the app's
-  `SkillPlacement` follows). If the catalog can't be read, every skill stays
-  and a caption says why. Harness and Source selects (only values the list
+  `SkillPlacement` follows), but only once the web app has a Plugins page
+  to show them on; until then every skill is listed here. If the catalog
+  can't be read, every skill stays and a caption says why. Harness and Source selects (only values the list
   has), "Filter skills" search over name, description and root, the
   "N of M skills" count, the "N skills ship inside plugins" link to
   `#/plugins`, the app's order (Shared, Harness, Catalog, Project, Plugin,
@@ -40,9 +41,13 @@ as a web page, read only. Module `quiver/webapp/pages/skills.py`, script
  "harnesses": [{"name": "codex", "label": "codex", "path": "…/.codex/skills",
                 "state": "keep", "detail": "6 of 6 skills exist nowhere else", "archived": false}],
  "skills": [{"name": "tdd", "description": "…", "path": "…", "root": "shared",
-             "source": "shared", "harnesses": ["claude", "codex"]}],
+             "source": "shared", "harnesses": ["claude", "codex"], "plugin": null}],
  "plugin_skill_count": 84, "catalog_error": null}
 ```
+
+`skills` holds every skill; `plugin` is the ref of the plugin a skill
+moves to, else null, and `plugin_skill_count` counts those. The page
+hides them while `PAGES` has a `plugins` page.
 
 `GET /v1/app/skills?skill=<folder>` adds `skill`, `editable` (the app's
 `PrimitiveOwnership.isEditable`, which only picks the lock note's words),
