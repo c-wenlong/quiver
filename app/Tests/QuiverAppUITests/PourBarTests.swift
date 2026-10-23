@@ -76,3 +76,30 @@ struct PourBarTests {
         _ = window
     }
 }
+
+extension PourBarTests {
+    @Test func aRestartMidFoldIgnoresTheOldFold() {
+        let (window, view) = hosted()
+        view.begin(order: ["claude", "codex", "devin"])
+        view.fill(order: ["claude", "codex", "devin"], landed: ["claude": 4, "codex": 2, "devin": 2], total: 8)
+        var handedOver = 0
+        view.split { handedOver += 1 }
+        view.begin(order: ["claude", "codex", "devin"])
+        view.fill(order: ["claude", "codex", "devin"], landed: ["claude": 2], total: 8)
+        spin(PourBarView.splitDuration + 3 * PourBarView.splitStagger + 0.3)
+        #expect(handedOver == 0)
+        #expect(view.layer?.opacity == 1)
+        #expect(view.segmentFrames.first?.frame.height == PourBarView.barHeight)
+        _ = window
+    }
+
+    @Test func aHarnessDroppedFromTheOrderLosesItsColour() {
+        let (window, view) = hosted()
+        view.begin(order: ["claude", "codex", "devin"])
+        view.fill(order: ["claude", "codex", "devin"], landed: ["claude": 1, "codex": 1, "devin": 1], total: 3)
+        view.fill(order: ["claude", "devin"], landed: ["claude": 1, "devin": 1], total: 2)
+        #expect(view.segmentFrames.map(\.harness) == ["claude", "devin"])
+        #expect(view.segmentLayerCount == 2)
+        _ = window
+    }
+}

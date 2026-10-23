@@ -107,13 +107,18 @@ final class MarbleScene: SKScene {
         if animated, fromEmpty ? !queue.isEmpty : pour.pouring {
             // A pour from empty, or the scale changing during one (the card
             // settling its size): the pill fills to the new counts.
-            if !pour.pouring || pourEnding { pourLanded = [:] }
+            // Recounted from the pile, so marbles a smaller scale just took
+            // out stop counting.
+            pourLanded = Dictionary(grouping: marbles.filter(\.landed), by: \.harness).mapValues(\.count)
+            let restarting = fromEmpty || pourEnding
             pourEnding = false
             pourOrder = scale.counts.map(\.harness)
             pourTarget = want
             if !queue.isEmpty { pourDropped = nil }
             pour.pouring = true
-            if fromEmpty { pourBar?.begin(order: pourOrder) }
+            // A fresh pour, or one restarted mid-fold: the pill starts over
+            // and ignores the fold that was running.
+            if restarting { pourBar?.begin(order: pourOrder) }
             fillBar()
         } else if !animated || fromEmpty {
             pour.pouring = false

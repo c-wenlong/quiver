@@ -51,6 +51,9 @@ final class PourBarView: NSView {
     private var landed: [String: Int] = [:]
     private var total = 0
     private var splitting = false
+    /// Bumped by `begin`, so a fold's timer from an earlier pour neither
+    /// calls its `done` nor fades the new pill.
+    private var generation = 0
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -94,6 +97,7 @@ final class PourBarView: NSView {
 
     /// An empty pill for a pour of `order`, left to right.
     func begin(order: [String]) {
+        generation += 1
         splitting = false
         landed = [:]
         total = 0
@@ -114,6 +118,11 @@ final class PourBarView: NSView {
         self.order = order
         self.landed = landed
         self.total = total
+        // A harness the new scale dropped takes its colour with it.
+        for (harness, segment) in segments where !order.contains(harness) {
+            segment.removeFromSuperlayer()
+            segments[harness] = nil
+        }
         CATransaction.begin()
         CATransaction.setAnimationDuration(0.12)
         CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .linear))
@@ -208,10 +217,12 @@ final class PourBarView: NSView {
         CATransaction.commit()
 
         let end = Self.splitDuration + Double(count) * Self.splitStagger
+        let current = generation
         let timer = Timer(timeInterval: end, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
+                guard let self, self.generation == current else { return }
                 done()
-                self?.fadeOut()
+                self.fadeOut()
             }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -228,6 +239,9 @@ final class PourBarView: NSView {
             }
         }
     }
+
+    /// Coloured segment layers present, wherever they sit.
+    var segmentLayerCount: Int { segments.count }
 
     // MARK: Drawing
 
