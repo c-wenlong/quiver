@@ -1032,6 +1032,11 @@ _LIBCRYPTO = None
 _LIBCRYPTO_TRIED = False
 _EVP_CTRL_GCM_SET_IVLEN = 0x9
 _EVP_CTRL_GCM_SET_TAG = 0x11
+# Apple's unversioned libcrypto stub. Any dlopen of it aborts the process
+# with SIGABRT ("loading libcrypto in an unsafe way") rather than raising
+# OSError, so it can never be probed. ``find_library('crypto')`` returns it
+# on nixpkgs and system Python, and the bare soname resolves to it.
+_DARWIN_SYSTEM_LIBCRYPTO = frozenset({"/usr/lib/libcrypto.dylib", "libcrypto.dylib"})
 
 
 def _load_libcrypto():
@@ -1128,6 +1133,8 @@ def _load_libcrypto():
 
     lib = None
     for cand in candidates:
+        if sys.platform == "darwin" and cand in _DARWIN_SYSTEM_LIBCRYPTO:
+            continue
         try:
             cand_lib = ctypes.CDLL(cand)
         except OSError:
