@@ -133,12 +133,10 @@ public enum SessionProjects {
 
     /// A folder name that is a generated id rather than a project: hex of
     /// 7 or more characters, a UUID, or a name that is mostly hex and
-    /// digits, like a worktree hash.
+    /// digits, like a worktree hash. A UUID needs no rule of its own: its
+    /// 32 letters and digits are all hex. No regex, since the Sessions
+    /// page asks this for every row.
     public static func isHashLike(_ name: String) -> Bool {
-        if name.range(of: #"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"#,
-                      options: .regularExpression) != nil {
-            return true
-        }
         let word = name.filter { $0.isLetter || $0.isNumber }
         guard word.count >= 7 else { return false }
         let hex = word.count(where: \.isHexDigit)
