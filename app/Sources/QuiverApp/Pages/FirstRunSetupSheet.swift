@@ -202,7 +202,7 @@ private struct AgentsStep: View {
                 }
             }
         }
-        .sheet(item: $installing) { provider in
+        .quiverSheet(item: $installing) { provider in
             ProviderSetupSheet(provider: provider, isInstalled: false).environment(app)
         }
     }

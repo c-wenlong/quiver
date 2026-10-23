@@ -127,7 +127,7 @@ private struct SessionsContent: View {
             await model.refreshUsage(afterScans: app.overview?.completedScans ?? 0,
                                      ledgerRevision: app.overview?.revision ?? 0)
         }
-        .sheet(item: $detail) { row in
+        .quiverSheet(item: $detail) { row in
             SessionDetail(row: row, resume: { resume(row) }, close: { detail = nil })
         }
     }
