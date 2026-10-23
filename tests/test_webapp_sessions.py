@@ -125,6 +125,41 @@ class TestBuild(unittest.TestCase):
         self.assertEqual((here["duration_s"], here["project"], here["project_key"]), (300, "one", "one"))
 
 
+class TestCodexResume(unittest.TestCase):
+    def test_a_resumed_thread_carries_every_rollout(self):
+        store = LedgerStore(Path(tempfile.mkdtemp()) / "l.sqlite")
+        self.addCleanup(store.close)
+        thread = "01a03a60-389b-73d0-a8a3-8cde9d36da15"
+        first = f"rollout-2026-10-01T10-00-00-{thread}"
+        resumed = f"{first}_01a10f10-4631-7193-b444-1fb7ed99dc4f"
+        # Response 1 in the original rollout, repeated by the resume under
+        # the same response id; response 2 only in the resumed rollout.
+        store.upsert(LedgerRecord(key="codex:resp:1", event=_ev(first, 100, 1000, harness="codex")))
+        store.upsert(LedgerRecord(key="codex:resp:1", event=_ev(resumed, 900, 1000, harness="codex")))
+        store.upsert(LedgerRecord(key="codex:resp:2", event=_ev(resumed, 1000, 300, harness="codex")))
+        usage = by_session(store, CATALOG)
+        rows = [{"key": "codex:x", "id": resumed, "harness": "codex", "machine_id": "hub",
+                 "cwd": "/w", "last_active_at": 1000, "title": "t"}]
+        [row] = sessions.build(rows, usage, "hub", {}, scanned=True)
+        self.assertEqual(row["usage"]["tokens"], 1300)
+        self.assertEqual((row["usage"]["first_ts"], row["duration_s"]), (100, 900))
+
+
+class TestCarefulJudgement(unittest.TestCase):
+    def test_satellite_projects_ignore_this_disk(self):
+        repo = Path(tempfile.mkdtemp()) / "hubrepo"
+        (repo / ".git").mkdir(parents=True)
+        (repo / "wt").mkdir()
+        self.assertEqual(sessions.project_of(str(repo / "wt")), "hubrepo")
+        self.assertEqual(sessions.project_of(str(repo / "wt"), local=False), "wt")
+
+    def test_unscanned_sessions_stay_visible(self):
+        rows = [{"key": "claude:s9", "id": "s9", "harness": "claude", "machine_id": "hub",
+                 "cwd": "/w", "last_active_at": 1, "title": "t"}]
+        [row] = sessions.build(rows, {}, "hub", {}, scanned=False)
+        self.assertFalse(row["trivial"])
+
+
 class TestSessionsRoute(HubBase):
     def setUp(self):
         super().setUp()
@@ -148,6 +183,16 @@ class TestSessionsRoute(HubBase):
         self.assertEqual(row["usage"]["models"], [{"model": "claude-opus-5", "tokens": 1010}])
         self.assertEqual(row["project"], "proj")
         self.assertIn("claude", body["ledger_harnesses"])
+
+    @unittest.skipIf(__import__("os").geteuid() == 0, "root reads anything")
+    def test_an_unreadable_source_keeps_its_sessions_visible(self):
+        f = self.srv.home / ".claude" / "projects" / "p" / "s1.jsonl"
+        f.chmod(0)
+        self.addCleanup(f.chmod, 0o644)
+        _, data = self.srv.request("GET", "/v1/app/sessions", headers=self.auth())
+        body = json.loads(data)
+        self.assertFalse(body["sessions"][0]["trivial"])
+        self.assertEqual(len(body["notes"]), 1)
 
     def test_page_script_is_served(self):
         self.assertEqual(self.srv.request("GET", "/app/sessions.js")[0], 200)

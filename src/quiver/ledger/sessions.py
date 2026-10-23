@@ -57,3 +57,26 @@ def by_session(store: LedgerStore, catalog: PricingCatalog) -> dict[tuple[str, s
     for key, (_rank, cwd) in best.items():
         out[key]["cwd"] = cwd
     return out
+
+
+_SUMS = ("tokens", "input", "output", "cache_read", "cache_write", "reasoning",
+         "cost_usd", "unpriced_tokens", "events")
+
+
+def merge(parts: list[dict]) -> dict:
+    """Several sessions' usage as one: sums, every model, the widest span,
+    and the folder of the part with the most events."""
+    out = {k: 0 for k in _SUMS}
+    out["cost_usd"] = 0.0
+    models: dict[str, int] = {}
+    for u in parts:
+        for k in _SUMS:
+            out[k] += u[k]
+        for m in u.get("models") or []:
+            models[m["model"]] = models.get(m["model"], 0) + m["tokens"]
+    out["first_ts"] = min(u["first_ts"] for u in parts)
+    out["last_ts"] = max(u["last_ts"] for u in parts)
+    out["cwd"] = max(parts, key=lambda u: u["events"]).get("cwd")
+    out["models"] = [{"model": m, "tokens": t}
+                     for m, t in sorted(models.items(), key=lambda kv: (-kv[1], kv[0]))]
+    return out

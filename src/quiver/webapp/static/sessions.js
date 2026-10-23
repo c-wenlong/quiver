@@ -130,6 +130,9 @@ function filterBar() {
   }
   const modelList = [...models.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([m, t]) => [m, `${m} (${Fmt.tokens(t)})`]);
+  // A chosen model stays listed when the window has none of it, so the
+  // menu always shows the filter that is on.
+  if (s.model && !models.has(s.model)) modelList.unshift([s.model, `${s.model} (none in this window)`]);
   return `<div class="filters">
     <input class="field search" id="session-search" type="search" placeholder="Search sessions"
       value="${esc(s.query)}" autocomplete="off" spellcheck="false">
@@ -254,9 +257,31 @@ function openSheet(r) {
       <button class="tab selected" value="close">Close</button>
     </div>
   </form>`;
+  // navigator.clipboard exists only on https or localhost; a hub reached
+  // over plain http gets the older copy command, then a manual hint.
   const copy = (text, btn) => {
     const done = () => { btn.textContent = "Copied"; };
-    if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, () => {});
+    const fallback = () => {
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "absolute";
+      area.style.left = "-9999px";
+      sheet.appendChild(area);
+      area.select();
+      let ok = false;
+      try { ok = document.execCommand("copy"); } catch { ok = false; }
+      area.remove();
+      if (ok) return done();
+      btn.textContent = "Select and copy it by hand";
+      const pre = sheet.querySelector("#resume-line");
+      if (pre && text === line) window.getSelection().selectAllChildren(pre);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(done, fallback);
+    } else {
+      fallback();
+    }
   };
   sheet.querySelector("#copy-id").onclick = (e) => copy(r.id || "", e.target);
   const cr = sheet.querySelector("#copy-resume");

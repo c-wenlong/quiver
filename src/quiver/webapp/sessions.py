@@ -12,6 +12,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from quiver.ledger.sessions import merge
+from quiver.sessions.parsers import codex_thread_id
+
 # Harnesses whose sessions leave usage in a log some ledger reads. Only
 # those can be judged accidental (SessionFilter.usageLogHarnesses).
 _USAGE_LOG = {"claude", "codex", "opencode", "devin", "pi", "droid", "cline", "cursor", "grok-bot"}
@@ -108,12 +111,14 @@ def _pattern(cwd: str) -> str | None:
     return None
 
 
-def project_of(cwd: str | None) -> str | None:
+def project_of(cwd: str | None, local: bool = True) -> str | None:
     """The repository a folder belongs to (two worktrees of one repo
-    share it), else a worktree-shape guess, else the folder's name."""
+    share it), else a worktree-shape guess, else the folder's name.
+    ``local=False`` is a path on another machine: this disk says nothing
+    about it, so only the path's shape counts."""
     if not cwd:
         return None
-    root = _root(cwd)
+    root = _root(cwd) if local else None
     if root:
         return os.path.basename(root.rstrip("/")) or None
     return _pattern(cwd) or (os.path.basename(cwd.rstrip("/")) or None)
@@ -121,9 +126,36 @@ def project_of(cwd: str | None) -> str | None:
 
 # ---------------------------------------------------------------- rows
 
+def _codex_threads(usage: dict[tuple[str, str], dict]) -> dict[str, dict]:
+    """Codex usage per thread. A resumed thread writes a new rollout
+    (``…-<thread>_<rollout>``) and swe lists only the newest, so the
+    row's usage is every rollout of its thread. A response the resume
+    repeats is one ledger row (``token_usage_record`` keys on the response
+    id), so merging counts it once; what older ``token_count`` logs replay
+    is whatever the ledger itself counted, as in the app's ledger."""
+    parts: dict[str, list[dict]] = {}
+    for (harness, session), u in usage.items():
+        thread = codex_thread_id(session) if harness == "codex" else ""
+        if thread:
+            parts.setdefault(thread, []).append(u)
+    return {t: (p[0] if len(p) == 1 else merge(p)) for t, p in parts.items()}
+
+
+def _usage_for(harness: str, sid: str, usage: dict, threads: dict) -> dict | None:
+    if harness == "codex":
+        thread = codex_thread_id(sid)
+        if thread in threads:
+            return threads[thread]
+    return usage.get((harness, sid))
+
+
 def build(rows: list[dict], usage: dict[tuple[str, str], dict], hub_machine_id: str,
           machines: dict[str, dict], scanned: bool) -> list[dict]:
-    projects: dict[str, str | None] = {}
+    """``scanned`` is a clean ledger scan: a session with no usage after
+    one is accidental; after a scan that couldn't read every source it
+    may only be unread, so it stays visible."""
+    projects: dict[tuple[bool, str | None], str | None] = {}
+    threads = _codex_threads(usage)
     out = []
     for row in rows:
         harness = str(row.get("harness") or "")
@@ -131,11 +163,11 @@ def build(rows: list[dict], usage: dict[tuple[str, str], dict], hub_machine_id: 
         here = row.get("machine_id") == hub_machine_id and not row.get("remote")
         # The ledger reads this machine's logs only; a satellite's rows
         # have no usage here, so they are never judged accidental either.
-        u = usage.get((harness, sid)) if here and sid else None
+        u = _usage_for(harness, sid, usage, threads) if here and sid else None
         cwd = row.get("cwd") or (u or {}).get("cwd")
-        if cwd not in projects:
-            projects[cwd] = project_of(cwd)
-        project = projects[cwd]
+        if (here, cwd) not in projects:
+            projects[(here, cwd)] = project_of(cwd, local=here)
+        project = projects[(here, cwd)]
         machine = machines.get(str(row.get("machine_id") or "")) or {}
         out.append({
             "key": row.get("key"),

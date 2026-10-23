@@ -64,7 +64,8 @@ class WebApp:
             usage = by_session(self._store, self._catalog)
             return {
                 "sessions": sessions_mod.build(rows, usage, hub_machine_id, machines,
-                                               scanned=self._last_scan is not None),
+                                               scanned=(self._last_scan is not None
+                                                        and not self._last_scan.errors)),
                 "ledger_harnesses": sorted(sessions_mod.LEDGER_HARNESSES),
                 "scanned_at": self._scanned_at,
                 "notes": self._notes(),
