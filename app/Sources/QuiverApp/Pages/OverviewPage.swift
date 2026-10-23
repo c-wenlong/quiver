@@ -158,11 +158,13 @@ private struct TotalCard: View {
     /// Tall enough that the pile has room under the figures.
     static let minHeight: CGFloat = 440
 
-    /// In the order and with the providers chosen in Settings.
+    /// The providers shown in Settings, biggest spender first, so the logo
+    /// row (and the pill that folds into it) reads as a ranking. Settings'
+    /// order breaks ties.
     var shares: [HarnessShare] {
         let shown = summary.harnesses.filter { $0.totals.totalTokens > 0 && !app.providers.isHidden($0.harness) }
         let order = app.providers.ordered(shown.map(\.harness))
-        return order.compactMap { id in shown.first { $0.harness == id } }
+        return order.compactMap { id in shown.first { $0.harness == id } }.sortedBySpend()
     }
 
     /// Marbles for about half the card. Rounded to tens so a window
