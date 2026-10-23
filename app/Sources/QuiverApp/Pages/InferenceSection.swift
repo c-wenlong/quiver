@@ -159,9 +159,6 @@ struct InferenceSection: View {
             "Add a line to \(confirmingSource?.lastPathComponent ?? "the startup file")?",
             isPresented: Binding(get: { confirmingSource != nil }, set: { if !$0 { confirmingSource = nil } })) {
             Button("Add line") {
-                // confirmSource may be cleared by dismissal before the
-                // task finishes, so capture the file name now.
-                let rc = confirmingSource
                 let model = app.apiKeys
                 sourceError = nil
                 Task {

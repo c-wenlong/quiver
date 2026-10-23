@@ -33,7 +33,7 @@ import json
 import os
 import re
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from quiver.paths import expand_user, search_index_for
@@ -123,6 +123,10 @@ class SearchHit:
     snippet: str
     file_path: str = ""
     marked_snippet: str = ""
+    # Set by ``search_passes``, which leaves the snippet for
+    # ``fill_snippets`` to fetch once the caller knows which hits it keeps.
+    rowid: int = 0
+    fts: str = ""
 
 
 def index_path(home: Path | str | None = None) -> Path:
@@ -199,6 +203,41 @@ def _snippet(conn: sqlite3.Connection, fts: str, rowid: int) -> tuple[str, str]:
     return (plain or "")[:SNIPPET_MAX], (marked or "")[:SNIPPET_MAX]
 
 
+def _hits(conn: sqlite3.Connection, fts: str, rows: list[tuple], snippets: bool) -> list[SearchHit]:
+    hits: list[SearchHit] = []
+    seen: set[str] = set()
+    for row in rows:
+        (rowid, score, _row, role, ts, session_id,
+         agent, title, cwd, file_path, updated_at) = row
+        if session_id in seen:
+            continue  # duplicate sessions rows for one id
+        seen.add(session_id)
+        plain, marked = _snippet(conn, fts, rowid) if snippets else ("", "")
+        hits.append(SearchHit(
+            session_id=session_id or "",
+            agent=agent or "",
+            title=title or "",
+            cwd=cwd or "",
+            updated_at=updated_at or "",
+            score=score or 0.0,
+            role=role or "",
+            ts=ts or "",
+            snippet=plain,
+            file_path=file_path or "",
+            marked_snippet=marked,
+            rowid=rowid or 0,
+            fts=fts,
+        ))
+    return hits
+
+
+def _limit(limit) -> int:
+    try:
+        return max(1, int(limit))
+    except (TypeError, ValueError):
+        return DEFAULT_LIMIT
+
+
 def search(
     home: Path | str | None,
     query: str,
@@ -220,44 +259,67 @@ def search(
         terms = _terms(query)
         if not terms:
             return []
-        try:
-            limit = max(1, int(limit))
-        except (TypeError, ValueError):
-            limit = DEFAULT_LIMIT
+        limit = _limit(limit)
         agent_names = list(agents) if agents else None
         for fts in _ladder(terms):
             try:
                 rows = _run_match(conn, fts, limit, agent_names)
             except sqlite3.Error:
                 return []
-            if not rows:
-                continue
-            hits: list[SearchHit] = []
-            seen: set[str] = set()
-            for row in rows:
-                (rowid, score, _row, role, ts, session_id,
-                 agent, title, cwd, file_path, updated_at) = row
-                if session_id in seen:
-                    continue  # duplicate sessions rows for one id
-                seen.add(session_id)
-                plain, marked = _snippet(conn, fts, rowid)
-                hits.append(SearchHit(
-                    session_id=session_id or "",
-                    agent=agent or "",
-                    title=title or "",
-                    cwd=cwd or "",
-                    updated_at=updated_at or "",
-                    score=score or 0.0,
-                    role=role or "",
-                    ts=ts or "",
-                    snippet=plain,
-                    file_path=file_path or "",
-                    marked_snippet=marked,
-                ))
-            return hits
+            if rows:
+                return _hits(conn, fts, rows, snippets=True)
         return []
     except sqlite3.Error:
         return []
+    finally:
+        conn.close()
+
+
+def search_passes(
+    home: Path | str | None,
+    query: str,
+    limit: int = DEFAULT_LIMIT,
+) -> list[list[SearchHit]]:
+    """Every rung of the ladder's hits, strictest first, without snippets.
+
+    ``search`` stops at the first rung with hits, so one old session that
+    holds the exact phrase hides every session that has the words apart.
+    A caller ranking across rungs gets them all here (a one-word query has
+    one rung), then asks ``fill_snippets`` for just the hits it keeps.
+    """
+    conn = open_sqlite_ro(str(index_path(home)))
+    if conn is None:
+        return []
+    try:
+        terms = _terms(query)
+        if not terms:
+            return []
+        limit = _limit(limit)
+        return [_hits(conn, fts, _run_match(conn, fts, limit, None), snippets=False)
+                for fts in _ladder(terms)]
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+
+
+def fill_snippets(home: Path | str | None, hits: list[SearchHit]) -> list[SearchHit]:
+    """``hits`` from ``search_passes``, each with its snippet fetched."""
+    if not hits:
+        return []
+    conn = open_sqlite_ro(str(index_path(home)))
+    if conn is None:
+        return list(hits)
+    try:
+        out = []
+        for hit in hits:
+            if hit.fts and not hit.snippet:
+                plain, marked = _snippet(conn, hit.fts, hit.rowid)
+                hit = replace(hit, snippet=plain, marked_snippet=marked)
+            out.append(hit)
+        return out
+    except sqlite3.Error:
+        return list(hits)
     finally:
         conn.close()
 
