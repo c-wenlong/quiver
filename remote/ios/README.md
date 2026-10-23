@@ -53,6 +53,10 @@ development profiles are trusted automatically.
 
 ## Explicit non-goals (for now)
 
+The redesign in [../ROADMAP.md](../ROADMAP.md) proposes a SwiftUI
+client, which would lift the first one.
+
+
 - No `SwiftUI` port of the UI — the webview renders `remote/web/`.
 - No push entitlements — ntfy owns notifications, including the
   lock-screen approve/deny action buttons.
