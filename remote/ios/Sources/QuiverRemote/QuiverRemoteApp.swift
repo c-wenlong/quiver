@@ -1,31 +1,73 @@
 import SwiftUI
 
-/// QuiverRemote — a thin WKWebView shell over the hub's PWA.
+/// Quiver Remote: the native iPhone client for `swe remote serve`.
 ///
-/// The whole remote-control UI lives in `remote/web/` and is served by
-/// `swe remote serve`. This wrapper adds what a home-screen PWA can't:
-/// a real icon, `quiver://pair` deep links for pairing, and later a
-/// Face ID gate / share-sheet target. Push notifications come from
-/// ntfy, never from this app — the wrapper holds no push code.
-///
-/// Pairing: scanning the `swe remote pair --app` QR opens
-/// `quiver://pair?host=…&port=…&token=…`. The wrapper exchanges the
-/// one-time token for a device credential, stores it, and seeds the
-/// webview's localStorage (`quiver.remote`) so the PWA sees itself as
-/// already paired. WKWebView storage is separate from Safari's, so a
-/// credential paired in the PWA does not carry over — re-scan inside
-/// the app, which this deep link makes one tap.
+/// Talks to the hub's `/v1` REST routes and per-session SSE streams over
+/// the tailnet (see docs/remote-control.md and remote/ROADMAP.md). Push
+/// still comes from ntfy; the app holds no push code yet.
 @main
 struct QuiverRemoteApp: App {
-    @StateObject private var pairing = PairingState()
+    @State private var app = AppModel()
+    @Environment(\.scenePhase) private var phase
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environmentObject(pairing)
-                .onOpenURL { url in
-                    Task { await pairing.handle(url) }
+            RootView()
+                .environment(app)
+                .onOpenURL { url in Task { await app.handle(url) } }
+                .onChange(of: phase) { _, new in
+                    if new == .active, app.hub != nil { app.startRefreshing() }
+                    if new == .background { app.stopRefreshing() }
                 }
+        }
+    }
+}
+
+struct RootView: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        Group {
+            if app.hub == nil {
+                WelcomeView()
+            } else {
+                MainTabs()
+            }
+        }
+        .tint(Theme.textPrimary)
+        .background(Theme.wash.ignoresSafeArea())
+    }
+}
+
+struct MainTabs: View {
+    @Environment(AppModel.self) private var app
+    @State private var tab: Tab = .sessions
+    @State private var sessionsPath: [Route] = []
+    @State private var inboxPath: [Route] = []
+
+    enum Tab { case sessions, inbox }
+
+    var body: some View {
+        TabView(selection: $tab) {
+            NavigationStack(path: $sessionsPath) {
+                SessionsView().navigationDestination(for: Route.self, destination: destination)
+            }
+            .tabItem { Label("Sessions", systemImage: "square.stack.3d.up") }
+            .tag(Tab.sessions)
+
+            NavigationStack(path: $inboxPath) {
+                InboxView().navigationDestination(for: Route.self, destination: destination)
+            }
+            .tabItem { Label("Inbox", systemImage: "tray") }
+            .badge(app.inboxBadge)
+            .tag(Tab.inbox)
+        }
+        .onAppear { app.startRefreshing() }
+    }
+
+    @ViewBuilder private func destination(_ route: Route) -> some View {
+        switch route {
+        case .chat(let key): ChatView(key: key)
         }
     }
 }

@@ -1,0 +1,256 @@
+import SwiftUI
+
+/// P1 to P3: welcome, pair this device, and the approve-code wait.
+struct WelcomeView: View {
+    @Environment(AppModel.self) private var app
+    @State private var path: [PairStep] = []
+    @State private var scanning = false
+
+    enum PairStep: Hashable { case pair, token }
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            VStack(spacing: 0) {
+                Spacer()
+                VStack(spacing: 16) {
+                    Image("AppMark")
+                        .resizable()
+                        .frame(width: 84, height: 84)
+                        .clipShape(.rect(cornerRadius: 20))
+                        .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(Theme.border, lineWidth: 1))
+                    Text("Quiver Remote").font(Theme.pageTitle).tracking(-0.6).foregroundStyle(Theme.textPrimary)
+                    Text("Watch and steer your agent sessions from your phone, over Tailscale.")
+                        .font(Theme.body).foregroundStyle(Theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 32)
+                Spacer()
+                VStack(spacing: 10) {
+                    Button("Pair with Tailscale") { path.append(.pair) }.primaryButton()
+                    Button { scanning = true } label: { Label("Scan pair QR", systemImage: "qrcode.viewfinder") }
+                        .secondaryButton()
+                    if let error = app.pairing.error {
+                        Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText).multilineTextAlignment(.center)
+                    }
+                    (Text("On the hub, run ") + Text("swe remote pair --app").font(Theme.mono))
+                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                        .padding(.top, 6)
+                }
+                .padding(.horizontal, Theme.gutter)
+                .padding(.bottom, 24)
+            }
+            .frame(maxWidth: .infinity)
+            .background(Theme.wash)
+            .navigationDestination(for: PairStep.self) { step in
+                switch step {
+                case .pair: PairView(path: $path)
+                case .token: TokenPairView()
+                }
+            }
+            .sheet(isPresented: $scanning) {
+                QRScannerSheet { url in
+                    scanning = false
+                    Task { await app.handle(url) }
+                }
+            }
+            .overlay { if app.pairing.busy && app.pairing.pending == nil { BusyOverlay() } }
+        }
+        .tint(Theme.textPrimary)
+    }
+}
+
+struct PairView: View {
+    @Environment(AppModel.self) private var app
+    @Binding var path: [WelcomeView.PairStep]
+    @FocusState private var focus: Field?
+
+    enum Field { case host, name }
+
+    var body: some View {
+        @Bindable var app = app
+        Group {
+            if let pending = app.pairing.pending {
+                PairCodeView(pending: pending)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("The hub knows you by your Tailscale device, so there's no password.")
+                            .font(Theme.body).foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.bottom, 12)
+                        fieldLabel("Hub")
+                        TextField("my-mac or 100.64.0.1", text: $app.pairing.host)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                            .focused($focus, equals: .host).submitLabel(.next)
+                            .onSubmit { focus = .name }
+                            .quiverField()
+                        Text("Its Tailscale name or address. Port 8477 unless you changed it.")
+                            .font(Theme.caption).foregroundStyle(Theme.textMuted).padding(.bottom, 8)
+                        fieldLabel("Device name")
+                        TextField("iPhone", text: $app.pairing.deviceName)
+                            .focused($focus, equals: .name).submitLabel(.go)
+                            .onSubmit { Task { await app.startTailscalePairing() } }
+                            .quiverField()
+                        if let error = app.pairing.error {
+                            Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText).padding(.top, 4)
+                        }
+                    }
+                    .padding(Theme.gutter)
+                }
+                .safeAreaInset(edge: .bottom) {
+                    VStack(spacing: 4) {
+                        Button {
+                            Task { await app.startTailscalePairing() }
+                        } label: {
+                            if app.pairing.busy { ProgressView().tint(Theme.primaryForeground) } else { Text("Pair with Tailscale") }
+                        }
+                        .primaryButton()
+                        .disabled(app.pairing.busy)
+                        Button("Use a pair token instead") { path.append(.token) }
+                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                            .frame(height: 36)
+                    }
+                    .padding(.horizontal, Theme.gutter)
+                    .padding(.bottom, 8)
+                    .background(Theme.wash)
+                }
+            }
+        }
+        .background(Theme.wash)
+        .navigationTitle(app.pairing.pending == nil ? "Pair this device" : "")
+        .navigationBarTitleDisplayMode(.large)
+        .onAppear { if app.pairing.host.isEmpty { focus = .host } }
+    }
+
+    private func fieldLabel(_ text: String) -> some View {
+        Text(text).font(Theme.groupLabel).foregroundStyle(Theme.textSecondary).padding(.horizontal, 2)
+    }
+}
+
+/// P3: the code another device types to approve this one.
+struct PairCodeView: View {
+    @Environment(AppModel.self) private var app
+    var pending: PendingPairing
+    @State private var copied = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            VStack(spacing: 14) {
+                Text("Your pair code").font(Theme.groupLabel).foregroundStyle(Theme.textSecondary)
+                Text(pending.spacedCode)
+                    .font(Theme.code6).tracking(4).monospacedDigit()
+                    .foregroundStyle(pending.outcome == nil ? Theme.textPrimary : Theme.textMuted)
+                Text("Approve it from a paired device, or on the hub run")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                Button {
+                    UIPasteboard.general.string = "swe remote devices --approve=\(pending.started.code)"
+                    copied = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("swe remote devices --approve=\(pending.started.code)").font(Theme.mono).lineLimit(1).minimumScaleFactor(0.8)
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.system(size: 12))
+                    }
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.horizontal, 10).frame(height: 32)
+                    .background(Theme.code, in: .rect(cornerRadius: Theme.controlRadius))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, Theme.gutter)
+            Spacer()
+            Card {
+                switch pending.outcome {
+                case nil:
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        let left = max(0, Int(pending.expiresAt.timeIntervalSince(context.date)))
+                        HStack(spacing: 12) {
+                            ProgressView().controlSize(.small)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Waiting for approval").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                                Text("Expires in \(left / 60):\(String(format: "%02d", left % 60))")
+                                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
+                            }
+                            Spacer()
+                        }
+                    }
+                case .denied?:
+                    outcome("This request was denied", "Try again, or ask whoever approved it.")
+                case .expired?:
+                    outcome("This request expired", "Codes last five minutes. Start a new one.")
+                }
+            }
+            .padding(.horizontal, Theme.gutter)
+            VStack(spacing: 4) {
+                if pending.outcome != nil {
+                    Button("Try again") { Task { app.cancelPairing(); await app.startTailscalePairing() } }.primaryButton()
+                }
+                Button("Cancel") { app.cancelPairing() }
+                    .font(Theme.body).foregroundStyle(Theme.textSecondary).frame(height: 44)
+            }
+            .padding(.horizontal, Theme.gutter)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+        }
+        .frame(maxWidth: .infinity)
+        .background(Theme.wash)
+    }
+
+    private func outcome(_ title: String, _ message: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "xmark.circle").foregroundStyle(Theme.dangerText)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                Text(message).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            }
+            Spacer()
+        }
+    }
+}
+
+/// Token fallback for devices the hub can't identify on the tailnet.
+struct TokenPairView: View {
+    @Environment(AppModel.self) private var app
+    @State private var token = ""
+
+    var body: some View {
+        @Bindable var app = app
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                (Text("On the hub, run ") + Text("swe remote pair").font(Theme.mono) + Text(" and paste the token it prints."))
+                    .font(Theme.body).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 12)
+                Text("Hub").font(Theme.groupLabel).foregroundStyle(Theme.textSecondary)
+                TextField("my-mac or 100.64.0.1", text: $app.pairing.host)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                    .quiverField()
+                Text("Pair token").font(Theme.groupLabel).foregroundStyle(Theme.textSecondary).padding(.top, 8)
+                TextField("Token", text: $token)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .quiverField(monospaced: true)
+                if let error = app.pairing.error {
+                    Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText).padding(.top, 4)
+                }
+                Button("Pair with token") { Task { await app.pair(token: token) } }
+                    .primaryButton()
+                    .disabled(token.trimmingCharacters(in: .whitespaces).isEmpty || app.pairing.busy)
+                    .padding(.top, 16)
+            }
+            .padding(Theme.gutter)
+        }
+        .background(Theme.wash)
+        .navigationTitle("Pair token")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+struct BusyOverlay: View {
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.25).ignoresSafeArea()
+            ProgressView().padding(24).background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+        }
+    }
+}
