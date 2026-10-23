@@ -206,9 +206,15 @@ private struct SettingsSectionView: View {
                     .secondaryButton()
             }
         }
-        .onAppear {
-            missingTerminals = Set(TerminalApp.allCases.filter { !$0.isInstalled })
+        .onAppear(perform: checkTerminals)
+        // A terminal installed while General stays open counts on return.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            checkTerminals()
         }
+    }
+
+    private func checkTerminals() {
+        missingTerminals = Set(TerminalApp.allCases.filter { !$0.isInstalled })
     }
 
     private var preferencesCard: some View {
