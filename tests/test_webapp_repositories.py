@@ -285,6 +285,16 @@ class TestMarkdown(unittest.TestCase):
         self.assertIn("&lt;details&gt;&lt;summary&gt;Example", html)
         self.assertIn("<code>&lt;details&gt;</code>", html)
 
+    def test_bare_urls_keep_their_underscores_and_stars(self):
+        url = "https://github.com/o/r/blob/main/__init__.py"
+        html = self.render(f"see {url} and **bold**")
+        self.assertIn(f'<a href="{url}" target="_blank" rel="noopener">{url}</a>', html)
+        self.assertIn("<strong>bold</strong>", html)
+
+    def test_fenced_code_keeps_its_blank_lines(self):
+        html = self.render("<p>x</p>\n\n```\na\n\n\n\nb\n```")
+        self.assertIn("a\n\n\n\nb", html)
+
     def test_scripts_and_unsafe_links_never_render(self):
         html = self.render("<script>alert(1)</script>[x](javascript:alert(1)) <b onclick=x>hi</b>")
         self.assertNotIn("<script", html)

@@ -206,7 +206,8 @@ const GhUI = (() => {
   /* HTML in a body as markdown, leaving fenced code alone. */
   function htmlToMd(text) {
     const parts = text.split(FENCE);
-    return parts.map((part, i) => (i % 2 ? part : convertHtml(part))).join("").replace(/\n{3,}/g, "\n\n");
+    // Blank-line cleanup only outside fences: code keeps its own lines.
+    return parts.map((part, i) => (i % 2 ? part : convertHtml(part).replace(/\n{3,}/g, "\n\n"))).join("");
   }
 
   function convertHtml(s) {
@@ -334,13 +335,16 @@ const GhUI = (() => {
     // Emphasis and bare links only in text, never inside a tag.
     s = s.split(/(<a [^>]*>[\s\S]*?<\/a>|<[^>]+>)/).map((part, i) => {
       if (i % 2) return part;
+      // Bare URLs are set aside first, so emphasis never reaches inside one.
+      const urls = [];
       return part
-        .replace(/\bhttps?:\/\/[^\s<]+[^\s<.,;:!?)\]'"]/g, (url) => `<a href="${url}" target="_blank" rel="noopener">${url}</a>`)
+        .replace(/\bhttps?:\/\/[^\s<]+[^\s<.,;:!?)\]'"]/g, (url) => { urls.push(url); return `\u0002${urls.length - 1}\u0002`; })
         .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
         .replace(/(^|[^\w])__([^_]+)__(?!\w)/g, "$1<strong>$2</strong>")
         .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, "$1<em>$2</em>")
         .replace(/(^|[^\w])_([^_\s][^_]*?)_(?!\w)/g, "$1<em>$2</em>")
-        .replace(/~~([^~]+)~~/g, "<del>$1</del>");
+        .replace(/~~([^~]+)~~/g, "<del>$1</del>")
+        .replace(/\u0002(\d+)\u0002/g, (_m, n) => `<a href="${urls[+n]}" target="_blank" rel="noopener">${urls[+n]}</a>`);
     }).join("");
     return s.replace(/\u0001(\d+)\u0001/g, (_m, i) => `<code>${esc(codes[+i])}</code>`);
   }
