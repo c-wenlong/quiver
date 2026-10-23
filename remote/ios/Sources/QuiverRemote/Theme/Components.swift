@@ -1,0 +1,234 @@
+import SwiftUI
+
+// MARK: - Surfaces
+
+/// A hairline card on `Theme.card`, 16pt radius: the Mac app's `Card`.
+struct Card<Content: View>: View {
+    var padding: CGFloat = 16
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        content
+            .padding(padding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
+    }
+}
+
+/// Rows stacked in one card with hairlines between them, so a list
+/// reads as one surface (the Mac Sessions list on a phone).
+struct CardList<Data: RandomAccessCollection, Row: View>: View where Data.Element: Identifiable {
+    let data: Data
+    @ViewBuilder var row: (Data.Element) -> Row
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(data.enumerated()), id: \.element.id) { index, element in
+                if index > 0 { Rectangle().fill(Theme.border).frame(height: 1).padding(.leading, Theme.rowHorizontal) }
+                row(element)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
+        .clipShape(.rect(cornerRadius: Theme.cardRadius))
+    }
+}
+
+/// Sentence-case group heading above a card list.
+struct GroupLabel: View {
+    var text: String
+    var color: Color = Theme.textSecondary
+    var trailing: String?
+
+    var body: some View {
+        HStack {
+            Text(text).font(Theme.groupLabel).foregroundStyle(color).lineLimit(1)
+            Spacer(minLength: 8)
+            if let trailing { Text(trailing).font(Theme.caption).foregroundStyle(Theme.textMuted) }
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 10)
+    }
+}
+
+/// The scroll container every list page uses: vertical only, content
+/// pinned to the screen width so nothing can push it sideways.
+struct PageScroll<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        ScrollView(.vertical) {
+            LazyVStack(alignment: .leading, spacing: 8) { content }
+                .padding(.horizontal, Theme.gutter)
+                .padding(.bottom, 24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        .background(Theme.wash)
+    }
+}
+
+// MARK: - Status and tags
+
+struct StatusDot: View {
+    var status: SessionStatus
+    /// A follow-up nobody answered for days: grey, not amber.
+    var stale = false
+    var body: some View {
+        Circle().fill(stale ? Theme.borderStrong : Theme.status(status)).frame(width: Theme.statusDot, height: Theme.statusDot)
+    }
+}
+
+/// The Mac app's `Badge`: a small pill, hairline on `subtle`.
+struct Badge: View {
+    var text: String
+    var tint: Color = Theme.textLabel
+    init(_ text: String, tint: Color = Theme.textLabel) {
+        self.text = text
+        self.tint = tint
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .background(Theme.subtle, in: .capsule)
+            .overlay(Capsule().strokeBorder(Theme.borderStrong, lineWidth: 1))
+    }
+}
+
+/// A filter chip with a count; selected chips take the raised fill.
+struct FilterChip: View {
+    var title: String
+    var count: Int
+    var selected: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Text(title)
+                Text("\(count)").foregroundStyle(selected ? Theme.textSecondary : Theme.textMuted).monospacedDigit()
+            }
+            .font(Theme.control)
+            .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
+            .padding(.horizontal, 12)
+            .frame(height: Theme.controlHeight)
+            .background(selected ? Theme.selected : Theme.card, in: .rect(cornerRadius: Theme.controlRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(selected ? Theme.borderStrong : Theme.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// A small coloured mark for the harness, in its Mac-app colour.
+struct HarnessMark: View {
+    var harness: String?
+    var body: some View {
+        RoundedRectangle(cornerRadius: 3).fill(Theme.harness(harness)).frame(width: 3, height: 30)
+    }
+}
+
+// MARK: - Buttons
+
+/// Ink on light, white on dark; never green. Full width at 44pt.
+struct PrimaryButtonStyle: ButtonStyle {
+    var compact = false
+    @Environment(\.isEnabled) private var enabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(compact ? Theme.control : .system(size: 15, weight: .medium))
+            .foregroundStyle(Theme.primaryForeground)
+            .padding(.horizontal, compact ? 12 : 16)
+            .frame(maxWidth: compact ? nil : .infinity)
+            .frame(height: compact ? Theme.controlHeight : Theme.buttonHeight)
+            .background(Theme.primaryBackground, in: .rect(cornerRadius: compact ? Theme.controlRadius : Theme.blockRadius))
+            .opacity(configuration.isPressed ? 0.85 : enabled ? 1 : 0.45)
+    }
+}
+
+struct SecondaryButtonStyle: ButtonStyle {
+    var compact = false
+    var destructive = false
+    @Environment(\.isEnabled) private var enabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(compact ? Theme.control : .system(size: 15, weight: .medium))
+            .foregroundStyle(destructive ? Theme.dangerText : Theme.textPrimary)
+            .padding(.horizontal, compact ? 12 : 16)
+            .frame(maxWidth: compact ? nil : .infinity)
+            .frame(height: compact ? Theme.controlHeight : Theme.buttonHeight)
+            .background(configuration.isPressed ? Theme.selected : Theme.card,
+                        in: .rect(cornerRadius: compact ? Theme.controlRadius : Theme.blockRadius))
+            .overlay(RoundedRectangle(cornerRadius: compact ? Theme.controlRadius : Theme.blockRadius)
+                .strokeBorder(Theme.borderStrong, lineWidth: 1))
+            .opacity(enabled ? 1 : 0.45)
+    }
+}
+
+extension View {
+    func primaryButton(compact: Bool = false) -> some View { buttonStyle(PrimaryButtonStyle(compact: compact)) }
+    func secondaryButton(compact: Bool = false, destructive: Bool = false) -> some View {
+        buttonStyle(SecondaryButtonStyle(compact: compact, destructive: destructive))
+    }
+
+    /// The Mac app's `quiverField`: 44pt, hairline, field fill.
+    func quiverField(monospaced: Bool = false) -> some View {
+        self
+            .font(monospaced ? Theme.monoBody : Theme.body)
+            .foregroundStyle(Theme.textPrimary)
+            .padding(.horizontal, 12)
+            .frame(height: Theme.fieldHeight)
+            .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
+    }
+}
+
+// MARK: - States
+
+/// Empty, error and loading states share one quiet card.
+struct StateCard: View {
+    enum Tone { case plain, error }
+    var icon: String
+    var title: String
+    var message: String?
+    var tone: Tone = .plain
+    var actionTitle: String?
+    var action: (() -> Void)?
+
+    var body: some View {
+        Card(padding: 20) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(title, systemImage: icon)
+                    .font(Theme.rowTitle)
+                    .foregroundStyle(tone == .error ? Theme.dangerText : Theme.textPrimary)
+                if let message {
+                    Text(message).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let actionTitle, let action {
+                    Button(actionTitle, action: action).secondaryButton(compact: true).padding(.top, 4)
+                }
+            }
+        }
+    }
+}
+
+struct LoadingRow: View {
+    var text: String
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(text).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+        }
+        .padding(.vertical, 24)
+        .frame(maxWidth: .infinity)
+    }
+}

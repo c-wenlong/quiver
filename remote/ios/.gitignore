@@ -1,3 +1,4 @@
 # xcodegen output — regenerate with `xcodegen generate`
 QuiverRemote.xcodeproj/
 QuiverRemote-Info.plist
+build-sim/
