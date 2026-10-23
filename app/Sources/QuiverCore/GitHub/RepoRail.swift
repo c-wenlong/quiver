@@ -1,62 +1,9 @@
 import Foundation
 
-/// The Repositories list's quick filters. The rows and the rail's
-/// per-repo counts both read it, so a count never disagrees with the
-/// rows it stands for.
-public struct RepoRowFilter: Equatable, Sendable {
-    public enum Option: String, CaseIterable, Identifiable, Sendable {
-        case failing, drafts, hideBots
-        public var id: String { rawValue }
-        public var title: String {
-            switch self {
-            case .failing: "Failing CI"
-            case .drafts: "Drafts"
-            case .hideBots: "Hide bots"
-            }
-        }
-    }
-
-    public var on: Set<Option> = []
-
-    public init(_ on: Set<Option> = []) { self.on = on }
-
-    public var isActive: Bool { !on.isEmpty }
-
-    /// The chips a tab offers. Every other option leaves its rows alone.
-    public static func options(for tab: RepoTab) -> [Option] {
-        switch tab {
-        case .pulls: [.failing, .drafts, .hideBots]
-        case .issues: [.hideBots]
-        case .actions: [.failing]
-        case .pages, .releases, .tags, .branches: []
-        }
-    }
-
-    public func keeps(_ pr: GhPr) -> Bool {
-        (!on.contains(.failing) || pr.checks == .failing)
-            && (!on.contains(.drafts) || pr.draft)
-            && (!on.contains(.hideBots) || !Self.isBot(pr.author))
-    }
-
-    public func keeps(_ issue: GhIssue) -> Bool {
-        !on.contains(.hideBots) || !Self.isBot(issue.author)
-    }
-
-    public func keeps(_ run: GhRun) -> Bool {
-        !on.contains(.failing) || Self.failed(run)
-    }
-
-    /// The conclusions that count as a failed run, for the chip and the
-    /// rail's CI dot alike.
-    public static let failingConclusions: Set<String> = ["failure", "timed_out", "startup_failure"]
-
-    public static func failed(_ run: GhRun) -> Bool {
-        run.conclusion.map(failingConclusions.contains) ?? false
-    }
-
-    /// Dependency-update bots only. Coding agents (Devin, Copilot) also
-    /// open PRs from app accounts, but theirs are real work to review.
-    static let bots: Set<String> = ["dependabot", "dependabot-preview", "renovate",
+/// Bot accounts. Dependency-update bots only: coding agents (Devin,
+/// Copilot) also open PRs from app accounts, but theirs are real work.
+public enum GitHubBots {
+    static let names: Set<String> = ["dependabot", "dependabot-preview", "renovate",
                                      "github-actions", "pre-commit-ci", "snyk-bot"]
 
     /// `gh` reports an app author as `app/dependabot`; the REST API as
@@ -65,8 +12,18 @@ public struct RepoRowFilter: Equatable, Sendable {
         var name = login.lowercased()
         if name.hasPrefix("app/") { name.removeFirst(4) }
         if name.hasSuffix("[bot]") { name.removeLast(5) }
-        return bots.contains(name)
+        return names.contains(name)
     }
+}
+
+extension GhRun {
+    /// The conclusions that count as a failed run, for the search words
+    /// and the rail's CI dot alike.
+    public static let failingConclusions: Set<String> = ["failure", "timed_out", "startup_failure"]
+
+    public var failed: Bool { conclusion.map(Self.failingConclusions.contains) ?? false }
+
+    public var running: Bool { status == "in_progress" || status == "queued" }
 }
 
 /// Reordering inside one rail group. The rail splits the pins by owner
@@ -92,16 +49,42 @@ public enum PinOrder {
 }
 
 extension GhPr {
-    /// The text the page's filter searches.
-    public var searchText: [String?] { [title, "\(number)", branch, base, author] + labels }
+    /// The text the page's search matches: the row's own fields plus
+    /// words for its state, so "failing", "draft", "conflict",
+    /// "approved" or "bot" find the PRs the row's icons mark.
+    public var searchText: [String?] {
+        var words = [title, "\(number)", "#\(number)", branch, base, author] + labels
+        words.append(draft ? "draft" : state.rawValue)
+        switch checks {
+        case .passing: words.append("passing")
+        case .failing: words.append("failing failed")
+        case .running: words.append("running pending")
+        case .unknown, .none?, nil: break
+        }
+        if mergeable == .conflicting { words.append("conflicts merge conflict") }
+        switch reviewDecision {
+        case .approved: words.append("approved")
+        case .changesRequested: words.append("changes requested")
+        case .reviewRequired: words.append("review needed required")
+        case .none?, nil: break
+        }
+        if GitHubBots.isBot(author) { words.append("bot") }
+        return words
+    }
 }
 
 extension GhIssue {
-    public var searchText: [String?] { [title, "\(number)", author] + labels + assignees }
+    public var searchText: [String?] {
+        [title, "\(number)", "#\(number)", author, state.rawValue]
+            + labels + assignees + (GitHubBots.isBot(author) ? ["bot"] : [])
+    }
 }
 
 extension GhRun {
-    public var searchText: [String?] { [title, workflow, branch, event] }
+    public var searchText: [String?] {
+        [title, workflow, branch, event, conclusion, status,
+         failed ? "failing failed" : nil, running ? "running" : nil]
+    }
 }
 
 extension GhRelease {
@@ -132,19 +115,18 @@ extension GitHubModel {
         return visibleRepos
     }
 
-    /// How many rows the list shows for `repo` on `tab`, after the text
-    /// filter and the chips. nil while the surface has not loaded or
-    /// failed, so the rail never calls an unknown repo quiet.
+    /// How many rows the list shows for `repo` on `tab` after the
+    /// search. nil while the surface has not loaded or failed, so the
+    /// rail never calls an unknown repo quiet.
     public func rowCount(_ repo: String, tab: RepoTab) -> Int? {
         let board = board(for: repo)
-        let filter = rowFilter
         switch tab {
-        case .pulls: return count(board.pulls, repo: repo, \.searchText, filter.keeps)
-        case .issues: return count(board.issues, repo: repo, \.searchText, filter.keeps)
-        case .actions: return count(board.runs, repo: repo, \.searchText, filter.keeps)
-        case .releases: return count(board.releases, repo: repo, \.searchText) { _ in true }
-        case .tags: return count(board.tags, repo: repo, \.searchText) { _ in true }
-        case .branches: return count(board.branches, repo: repo, \.searchText) { _ in true }
+        case .pulls: return count(board.pulls, repo: repo, \.searchText)
+        case .issues: return count(board.issues, repo: repo, \.searchText)
+        case .actions: return count(board.runs, repo: repo, \.searchText)
+        case .releases: return count(board.releases, repo: repo, \.searchText)
+        case .tags: return count(board.tags, repo: repo, \.searchText)
+        case .branches: return count(board.branches, repo: repo, \.searchText)
         case .pages:
             guard case .loaded(let site) = board.pages else { return nil }
             return site == nil ? 0 : 1
@@ -152,11 +134,10 @@ extension GitHubModel {
     }
 
     private func count<Row>(_ state: Loadable<[Row]>, repo: String,
-                            _ parts: (Row) -> [String?],
-                            _ keep: (Row) -> Bool) -> Int? {
+                            _ parts: (Row) -> [String?]) -> Int? {
         guard case .loaded(let rows) = state else { return nil }
-        let all = showsAllRows(repo)
-        return rows.reduce(0) { $0 + (keep($1) && (all || matches(parts($1))) ? 1 : 0) }
+        guard !showsAllRows(repo) else { return rows.count }
+        return rows.reduce(0) { $0 + (matches(parts($1)) ? 1 : 0) }
     }
 
     /// The rail's CI dot: the newest run on the default branch, or the
@@ -178,8 +159,8 @@ extension GitHubModel {
         } else {
             run = runs[0]
         }
-        if run.status == "in_progress" || run.status == "queued" { return .running }
+        if run.running { return .running }
         if run.conclusion == "success" { return .passing }
-        return RepoRowFilter.failed(run) ? .failing : .unknown
+        return run.failed ? .failing : .unknown
     }
 }
