@@ -65,19 +65,54 @@ def _inner(tag: str, text: str) -> str | None:
     return m.group(1).strip() if m else None
 
 
+# Marks a message this module rewrote. The hub cleans twice (when it
+# decodes, then again when it serves, for journals written before this
+# module), and a rewrite is not always idempotent: an unwrapped Cursor
+# query can itself start with an injected prefix.
+CLEANED = "cleaned"
+
+# Codex developer turns that older journals stored as agent text, before
+# the decoder learned to drop them. A real reply never opens this way.
+_CODEX_DEVELOPER_PREFIXES = (
+    "<codex_apps_",
+    "<skills_instructions>",
+    "<multi_agent_mode>",
+    "<multi_agent_role>",
+    "<collaboration_mode>",
+    "<tools>",
+    "<turn_aborted>",
+    "<model_switch>",
+    "<image_resize_notice>",
+    "This is a terminal/Codex session.",
+    "Composio is available in this session",
+    "## Memory\n\nYou have access to a memory",
+    "You are Codex, an agent based on",
+    "This is an incremental tools update",
+    "You are `/root`, the primary agent",
+    "You mentioned a service Composio can",
+    "You mentioned an app Composio can",
+)
+
+
+def _rewrite(msg: dict, **changes) -> dict:
+    return dict(msg, **changes, **{CLEANED: True})
+
+
 def _system(msg: dict, text: str) -> dict:
-    return dict(msg, kind="system", text=text)
+    return _rewrite(msg, kind="system", text=text)
 
 
 def clean(msg: dict) -> dict | None:
     """The message as a person should see it, or None to drop it."""
+    if msg.get(CLEANED):
+        return msg
     kind = msg.get("kind")
     text = msg.get("text") or ""
     if kind == "assistant":
         if "<oai-mem-citation" not in text:
             return msg
         cleaned = _AGENT_STRIP_RE.sub("", text).strip()
-        return dict(msg, text=cleaned) if cleaned else None
+        return _rewrite(msg, text=cleaned) if cleaned else None
     if kind not in ("user", "system"):
         return msg
     stripped = text.lstrip()
@@ -114,7 +149,7 @@ def clean(msg: dict) -> dict | None:
     name = _inner("command-name", text) if stripped.startswith(("<command-", "<command-name")) else None
     if name is not None:
         args = _inner("command-args", text) or ""
-        return dict(msg, text=f"{name} {args}".strip())
+        return _rewrite(msg, text=f"{name} {args}".strip())
     out = _inner("local-command-stdout", text) if stripped.startswith("<local-command-stdout") else None
     if out is not None:
         return _system(msg, out) if out else None
@@ -127,7 +162,7 @@ def clean(msg: dict) -> dict | None:
         return None
     if text == (msg.get("text") or ""):
         return msg
-    return dict(msg, text=text)
+    return _rewrite(msg, text=text)
 
 
 def clean_all(messages: list[dict]) -> list[dict]:
@@ -139,7 +174,11 @@ def clean_event(ev: dict) -> dict | None:
     written before this module still hold the raw text), others pass."""
     if ev.get("type") != "message.appended" or not isinstance(ev.get("data"), dict):
         return ev
-    data = clean(ev["data"])
+    raw = ev["data"]
+    if (str(ev.get("session") or "").startswith("codex:") and raw.get("kind") == "assistant"
+            and (raw.get("text") or "").lstrip().startswith(_CODEX_DEVELOPER_PREFIXES)):
+        return None
+    data = clean(raw)
     if data is None:
         return None
     return ev if data is ev["data"] else dict(ev, data=data)

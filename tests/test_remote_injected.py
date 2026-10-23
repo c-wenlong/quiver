@@ -81,6 +81,29 @@ class CleanTest(unittest.TestCase):
         status = protocol.event("session.status", "claude:s", "m", {"status": "done"})
         self.assertIs(injected.clean_event(status), status)
 
+    def test_a_second_pass_keeps_what_the_first_pass_rewrote(self):
+        # The hub cleans on decode and again on serve; an unwrapped query
+        # that starts like an injection must survive the second pass.
+        text = "<user_query>\n# AGENTS.md instructions for my repo: draft them\n</user_query>"
+        once = injected.clean(_m("user", text))
+        self.assertEqual(once["text"], "# AGENTS.md instructions for my repo: draft them")
+        self.assertEqual(injected.clean(once), once)
+        ev = protocol.event("message.appended", "cursor:s", "m", once)
+        self.assertIs(injected.clean_event(ev), ev)
+
+    def test_old_codex_developer_turns_stored_as_agent_text_are_dropped(self):
+        for text in ("<skills_instructions>\n## Skills\n</skills_instructions>",
+                     "This is a terminal/Codex session. Prefer the shell.",
+                     "## Memory\n\nYou have access to a memory folder"):
+            ev = protocol.event("message.appended", "codex:s", "m", _m("assistant", text))
+            self.assertIsNone(injected.clean_event(ev), text)
+        reply = "Composio’s connection failed, so I used the CLI."
+        ev = protocol.event("message.appended", "codex:s", "m", _m("assistant", reply))
+        self.assertIs(injected.clean_event(ev), ev)
+        # Only Codex journals held these; another harness's agent text stays.
+        ev = protocol.event("message.appended", "claude:s", "m", _m("assistant", "<tools>listed</tools>"))
+        self.assertIs(injected.clean_event(ev), ev)
+
 
 class DecodeTest(unittest.TestCase):
     def test_codex_developer_turns_are_not_the_agent(self):
