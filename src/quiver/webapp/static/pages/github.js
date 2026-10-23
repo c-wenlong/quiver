@@ -216,17 +216,19 @@ const GhUI = (() => {
     return parts.map((part, i) => (i % 2 ? part : convertHtml(part).replace(/\n{3,}/g, "\n\n"))).join("");
   }
 
-  function convertHtml(s) {
+  /* ``nested`` is a blockquote's inside: the outer call already set its
+   * code spans aside and puts them back itself. */
+  function convertHtml(s, nested = false) {
     if (!/[<&]/.test(s)) return s;
     // Inline code spans pass through as they are.
     const codes = [];
-    s = s.replace(CODE_SPAN, (c) => { codes.push(c); return `\u0001${codes.length - 1}\u0001`; });
+    if (!nested) s = s.replace(CODE_SPAN, (c) => { codes.push(c); return `\u0001${codes.length - 1}\u0001`; });
     s = s.replace(/<!--[\s\S]*?-->/g, "")
       .replace(/<(script|style|textarea|template)\b[\s\S]*?<\/\1\s*>/gi, "")
       .replace(/<pre\b[^>]*>([\s\S]*?)<\/pre\s*>/gi, (_m, inner) =>
         `\n\n\`\`\`\n${decode(inner.replace(/<[^>]+>/g, "")).replace(/\n+$/, "")}\n\`\`\`\n\n`)
       .replace(/<blockquote\b[^>]*>([\s\S]*?)<\/blockquote\s*>/gi, (_m, inner) =>
-        `\n\n${convertHtml(inner).trim().split("\n").map((l) => `> ${l}`).join("\n")}\n\n`)
+        `\n\n${convertHtml(inner, true).trim().split("\n").map((l) => `> ${l}`).join("\n")}\n\n`)
       .replace(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi, (_m, attrs, inner) => {
         const href = attr(attrs, "href");
         return href ? `[${inner}](${href})` : inner;
@@ -261,7 +263,7 @@ const GhUI = (() => {
       }
     });
     s = decode(s);
-    return s.replace(/\u0001(\d+)\u0001/g, (_m, i) => codes[+i]);
+    return nested ? s : s.replace(/\u0001(\d+)\u0001/g, (_m, i) => codes[+i]);
   }
 
   function blocks(md) {

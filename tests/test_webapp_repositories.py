@@ -312,6 +312,11 @@ class TestMarkdown(unittest.TestCase):
         html = self.render("run ``a `b` c`` now")
         self.assertIn("<code>a `b` c</code> now", html)
 
+    def test_code_inside_an_html_quote_survives(self):
+        html = self.render("<blockquote>Use `foo` &amp; retry</blockquote>")
+        self.assertIn("<code>foo</code> &amp; retry", html)
+        self.assertNotIn("undefined", html)
+
     def test_scripts_and_unsafe_links_never_render(self):
         html = self.render("<script>alert(1)</script>[x](javascript:alert(1)) <b onclick=x>hi</b>")
         self.assertNotIn("<script", html)

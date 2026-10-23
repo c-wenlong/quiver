@@ -289,9 +289,10 @@
       const w = opts.window;
       const visible = rows.slice(0, w.shown);
       const pending = w.fetching || rows.length > w.shown || w.canGrow;
-      const sentinel = pending ? `<button type="button" class="gh-sentinel${w.fetching ? " fetching" : ""}" data-sentinel="${key}">
-        ${w.fetching ? ico("running", "gh-muted gh-spin") : '<span class="gh-ring"></span>'}
-        <span class="caption gh-muted">${w.fetching ? "Fetching more…" : "Keep scrolling for more"}</span></button>` : "";
+      const label = w.fetching ? "Fetching more…" : w.stalled ? "Couldn't fetch more. Click to try again" : "Keep scrolling for more";
+      const sentinel = pending ? `<button type="button" class="gh-sentinel${w.fetching ? " fetching" : w.stalled ? " stalled" : ""}" data-sentinel="${key}">
+        ${w.fetching ? ico("running", "gh-muted gh-spin") : w.stalled ? ico("refresh", "gh-muted") : '<span class="gh-ring"></span>'}
+        <span class="caption gh-muted">${label}</span></button>` : "";
       // A filter with no match in the rows fetched so far keeps the loader,
       // so older rows can still be searched.
       if (!rows.length) {
@@ -484,7 +485,7 @@
 
   function newFocus(repo) {
     return { repo, data: null, error: null, loading: false, tab: "pulls", filter: "",
-      shown: {}, limits: {}, defaults: {}, exhausted: new Set(), fetching: new Set(), maxLimit: 200 };
+      shown: {}, limits: {}, defaults: {}, exhausted: new Set(), fetching: new Set(), stalled: new Set(), maxLimit: 200 };
   }
 
   const focusHeader = (f) => pageHeader(f.repo, "Pull requests, issues, CI and refs — every state, most recent first.",
@@ -542,11 +543,17 @@
     const { status, data } = await api(`/v1/app/repositories?${q}`);
     f.fetching.delete(key);
     if (gen !== routeGen || page.focus !== f) return;
-    if (status === 200 && data && data.entry) {
+    if (status === 200 && data && data.entry && data.entry.status === "ok") {
       f.data.surfaces[key] = data.entry;
+      f.stalled.delete(key);
+      f.error = null;
       noteLimits(f, key, data.entry, data.limit);
     } else {
-      f.error = GhUI.failMessage(status, data);
+      // Keep the rows already here and stop the automatic loading: the
+      // loader waits for a click instead of retrying every 650 ms.
+      f.stalled.add(key);
+      f.error = status === 200 && data && data.entry
+        ? (data.entry.error || data.entry.status) : GhUI.failMessage(status, data);
     }
     GhUI.keepFocus("gh-search", paintFocus);
   }
@@ -588,7 +595,7 @@
         <div class="gh-box"><div class="gh-surface last">${surfaceHtml(f.repo, f.tab, f.data.surfaces, {
           query: f.filter.trim(), unfiltered: false,
           window: { shown: f.shown[key] || BATCH, fetching: f.fetching.has(key),
-            canGrow: key !== "pages" && !f.exhausted.has(key) },
+            canGrow: key !== "pages" && !f.exhausted.has(key), stalled: f.stalled.has(key) },
         })}</div></div>`;
     }
     document.getElementById("panel").innerHTML = `<div class="page gh-page">${focusHeader(f)}<div class="stack">${content}</div></div>`;
@@ -608,8 +615,9 @@
     if (search) search.oninput = () => { f.filter = search.value; GhUI.keepFocus("gh-search", paintFocus); };
     const sentinel = panel.querySelector("[data-sentinel]");
     if (!sentinel) return;
-    sentinel.onclick = () => advance(sentinel.dataset.sentinel);
-    if (sentinel.classList.contains("fetching") || !("IntersectionObserver" in window)) return;
+    sentinel.onclick = () => { f.stalled.delete(sentinel.dataset.sentinel); advance(sentinel.dataset.sentinel); };
+    if (sentinel.classList.contains("fetching") || sentinel.classList.contains("stalled")
+        || !("IntersectionObserver" in window)) return;
     // The ring fills while half the row stays in view, then advances once;
     // scrolling away first resets it.
     let timer = null;
