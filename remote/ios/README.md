@@ -43,8 +43,8 @@ xcrun devicectl device install app --device <device-id> \
 `com.quiver.remote`, the `quiver` URL scheme (`CFBundleURLTypes`) so
 `--app` pair QRs open the app, `NSAllowsArbitraryLoads` (the hub is
 plain HTTP on the tailnet), iOS 17+ deployment, and `DEVELOPMENT_TEAM`
-set to the account's team id. The icon in `Assets.xcassets` is the PWA
-icon upscaled to 1024.
+set to the account's team id. The icon in `Assets.xcassets` is the Mac
+app's dark icon (`app/Icons/AppIcon-dark.png`) scaled to 1024.
 
 On-device launch needs Developer Mode (Settings → Privacy & Security →
 Developer Mode) and, on a personal (free) team, a one-time trust of the
