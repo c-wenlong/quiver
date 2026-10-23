@@ -1,0 +1,162 @@
+"""The Sessions page's rows (ports ``Sessions.swift``, ``SessionFilter.swift``
+and ``SessionProjects.swift``).
+
+Rows are the hub's catalog (``/v1/sessions``: this machine plus every
+satellite), each joined with its ledger usage by ``(harness, id)``, a
+project name and whether it looks accidental. Filtering, grouping and
+the summary happen in the page, as in the app.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+# Harnesses whose sessions leave usage in a log some ledger reads. Only
+# those can be judged accidental (SessionFilter.usageLogHarnesses).
+_USAGE_LOG = {"claude", "codex", "opencode", "devin", "pi", "droid", "cline", "cursor", "grok-bot"}
+# Harnesses with no per-turn timing, judged on tokens alone.
+_NO_TIMING = {"cursor", "droid", "cline"}
+# Harnesses this ledger reads. A row of one of these with no usage at all,
+# once the ledger has scanned, is an accidental session; the app's list
+# also has pi, droid and cline, which this port does not read yet.
+LEDGER_HARNESSES = {"claude", "codex", "opencode", "devin"}
+
+_CLOUD = {"grok-bot", "devin-cloud"}
+
+
+def is_trivial(harness: str, usage: dict | None, scanned: bool) -> bool:
+    """A short or empty session the page hides by default: no tokens, or
+    at most two responses inside a minute with under 100 output tokens."""
+    if harness not in _USAGE_LOG:
+        return False
+    if usage is not None:
+        if usage["tokens"] == 0 or usage["events"] == 0:
+            return True
+        if harness in _NO_TIMING:
+            return False
+        return (usage["events"] <= 2
+                and usage["last_ts"] - usage["first_ts"] < 60
+                and usage["output"] + usage["reasoning"] < 100)
+    return scanned and harness in LEDGER_HARNESSES
+
+
+def location(harness: str, session_id: str | None) -> str:
+    sid = session_id or ""
+    if harness in _CLOUD or (harness == "cursor" and sid.startswith(("bc-", "sand-"))):
+        return "Cloud"
+    return "Local"
+
+
+# ---------------------------------------------------------------- projects
+
+def is_hash_like(name: str) -> bool:
+    """A generated id rather than a project: 7+ letters and digits, at
+    least 80% hex (a commit, a UUID, a worktree hash)."""
+    word = [c for c in name if c.isalnum()]
+    if len(word) < 7:
+        return False
+    hexes = sum(c in "0123456789abcdefABCDEF" for c in word)
+    return hexes >= 0.8 * len(word)
+
+
+def _main_repo_root(contents: str, folder: str) -> str | None:
+    line = next((ln for ln in contents.splitlines() if ln.startswith("gitdir:")), None)
+    if line is None:
+        return None
+    path = line[len("gitdir:"):].strip()
+    if not path.startswith("/"):
+        path = os.path.join(folder, path)
+    path = os.path.normpath(path)
+    if "/.git/" in path:
+        return path[:path.index("/.git/")]
+    if path.endswith("/.git"):
+        return path[:-len("/.git")]
+    return None
+
+
+def _root(cwd: str) -> str | None:
+    folder = cwd.rstrip("/") or cwd
+    while folder and folder != "/":
+        git = Path(folder) / ".git"
+        if git.is_dir():
+            return folder
+        if git.is_file():
+            try:
+                contents = git.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                return folder
+            return _main_repo_root(contents, folder) or folder
+        folder = os.path.dirname(folder)
+    return None
+
+
+def _pattern(cwd: str) -> str | None:
+    """The repository a gone worktree path belonged to, by the shapes
+    harnesses keep worktrees under."""
+    parts = [p for p in cwd.split("/") if p]
+    for i, part in enumerate(parts):
+        if i == 0:
+            continue
+        nxt = parts[i + 1] if i + 1 < len(parts) else None
+        if part == ".claude" and nxt == "worktrees":
+            return parts[i - 1]
+        if part == ".codex" and nxt == "worktrees":
+            return parts[i + 3] if i + 3 < len(parts) else None
+        if part in {".worktrees", "worktrees"}:
+            return parts[i - 1]
+    return None
+
+
+def project_of(cwd: str | None) -> str | None:
+    """The repository a folder belongs to (two worktrees of one repo
+    share it), else a worktree-shape guess, else the folder's name."""
+    if not cwd:
+        return None
+    root = _root(cwd)
+    if root:
+        return os.path.basename(root.rstrip("/")) or None
+    return _pattern(cwd) or (os.path.basename(cwd.rstrip("/")) or None)
+
+
+# ---------------------------------------------------------------- rows
+
+def build(rows: list[dict], usage: dict[tuple[str, str], dict], hub_machine_id: str,
+          machines: dict[str, dict], scanned: bool) -> list[dict]:
+    projects: dict[str, str | None] = {}
+    out = []
+    for row in rows:
+        harness = str(row.get("harness") or "")
+        sid = row.get("id")
+        here = row.get("machine_id") == hub_machine_id and not row.get("remote")
+        # The ledger reads this machine's logs only; a satellite's rows
+        # have no usage here, so they are never judged accidental either.
+        u = usage.get((harness, sid)) if here and sid else None
+        cwd = row.get("cwd") or (u or {}).get("cwd")
+        if cwd not in projects:
+            projects[cwd] = project_of(cwd)
+        project = projects[cwd]
+        machine = machines.get(str(row.get("machine_id") or "")) or {}
+        out.append({
+            "key": row.get("key"),
+            "id": sid,
+            "harness": harness,
+            "agent": row.get("agent") or harness,
+            "title": row.get("title") or "",
+            "cwd": cwd,
+            "project": project,
+            "project_key": ("other" if project and is_hash_like(project)
+                            else (project or "").lower() or None),
+            "last_active_at": row.get("last_active_at") or 0,
+            "status": row.get("status"),
+            "location": location(harness, sid),
+            "machine_id": row.get("machine_id"),
+            "machine": machine.get("name") or row.get("machine_id"),
+            "remote": not here,
+            "resume": row.get("resume"),
+            "usage": u and {k: v for k, v in u.items() if k != "cwd"},
+            "duration_s": (u["last_ts"] - u["first_ts"]) if u else None,
+            "trivial": is_trivial(harness, u, scanned) if here else False,
+        })
+    out.sort(key=lambda r: (r["last_active_at"], r["key"] or ""), reverse=True)
+    return out

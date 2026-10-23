@@ -14,9 +14,11 @@ import time
 from pathlib import Path
 
 from quiver.ledger import overview as overview_mod
+from quiver.ledger.sessions import by_session
 from quiver.ledger.pricing import load_catalog
 from quiver.ledger.scan import scan
 from quiver.ledger.store import LedgerStore, ledger_path_for
+from quiver.webapp import sessions as sessions_mod
 
 SCAN_TTL_S = 60.0
 CATALOG_TTL_S = 3600.0
@@ -51,12 +53,28 @@ class WebApp:
             self._ensure(rescan)
             body = overview_mod.build(self._store, self._catalog, period, tz_name)
             body["scanned_at"] = self._scanned_at
-            notes = []
-            if self._last_scan is not None and self._last_scan.errors:
-                notes.append(f"{len(self._last_scan.errors)} log files couldn't be read: "
-                             + "; ".join(self._last_scan.errors[:3]))
-            body["notes"] = notes
+            body["notes"] = self._notes()
             return body
+
+    def sessions(self, rows: list[dict], hub_machine_id: str, machines: dict,
+                 rescan: bool = False) -> dict:
+        """The Sessions page: the hub's catalog rows with usage joined."""
+        with self._lock:
+            self._ensure(rescan)
+            usage = by_session(self._store, self._catalog)
+            return {
+                "sessions": sessions_mod.build(rows, usage, hub_machine_id, machines,
+                                               scanned=self._last_scan is not None),
+                "ledger_harnesses": sorted(sessions_mod.LEDGER_HARNESSES),
+                "scanned_at": self._scanned_at,
+                "notes": self._notes(),
+            }
+
+    def _notes(self) -> list[str]:
+        if self._last_scan is None or not self._last_scan.errors:
+            return []
+        errors = self._last_scan.errors
+        return [f"{len(errors)} log files couldn't be read: " + "; ".join(errors[:3])]
 
     def close(self) -> None:
         with self._lock:

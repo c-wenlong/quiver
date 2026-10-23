@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Sessions.** The web app's second page lists every session the
+  hub knows (this machine and its satellites) with tokens and spend from
+  the web ledger, the Mac app's search and its tool, time (90 days by
+  default), project and model filters, a matching sessions / tokens / spend
+  strip, rows grouped by day (10 a day, then "Show every session"), and
+  short or empty sessions hidden behind a footer toggle. A row opens a
+  sheet with its folder, models, token split and a copyable resume
+  command.
+
 - **Remote: the new-session sheet finds folders and offers every active
   harness.** Machine, harness, prompt and Start now sit above the folder
   list, which starts folded to four, with Show all and a search field at
