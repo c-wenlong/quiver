@@ -339,7 +339,12 @@ public final class ModelsModel {
         guard generation == loadGeneration else { return }
         hasKey = key != nil
         let store = store
-        if allowRefresh && hasKey, await Task.detached(operation: { store.llmsIsStale() }).value {
+        let stale = allowRefresh && hasKey
+            ? await Task.detached(operation: { store.llmsIsStale() }).value : false
+        // A newer load may have started meanwhile: only it reads on, or
+        // this one's later `readStored` would supersede the newer read.
+        guard generation == loadGeneration else { return }
+        if stale {
             // Unstructured, so leaving the page (which cancels the page's
             // task) can't cancel the fetches mid-way and record every
             // endpoint left as a "cancelled" failure.
