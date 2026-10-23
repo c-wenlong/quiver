@@ -2,23 +2,20 @@ import AppKit
 import QuiverCore
 import SwiftUI
 
-/// The GitHub dashboard: a section per pinned repo under a filter bar,
-/// then pull requests, issues, workflow runs, Pages site, releases,
-/// tags and branches in shared tabs. The filter narrows by repo name
-/// (a name-matched repo shows its whole board) and by row text — PR
-/// title, branch, author, labels, tag, sha. Rows carry their state
-/// (draft, conflicts, review, CI rollup) as icons and colour, and link
-/// straight to the GitHub page. Every visible repo's tab refetches on
-/// a minute timer while the page is open.
+/// The GitHub dashboard: one list of every pinned repo's rows, grouped
+/// under a plain header per repo, beside a rail of the repos by owner.
+/// The rail narrows the list to one repo (which unlocks Pages,
+/// releases, tags and branches), folds repos with nothing to show, and
+/// is where a drag reorders the pins; the list follows its order. The
+/// filter narrows by repo name (a name-matched repo shows its whole
+/// board) and by row text; the chips by CI, drafts and bots. Rows link
+/// straight to GitHub. Every visible repo's tab refetches on a minute
+/// timer while the page is open.
 struct RepositoriesPage: View {
     @Environment(AppModel.self) private var app
-    @Environment(\.openURL) private var openURL
     @State private var adding = false
     @State private var managing = false
     @State private var jumping = false
-    /// Repo names whose section is folded to just the header — keyed by
-    /// repo alone, so a collapse follows the repo across every tab.
-    @State private var collapsed: Set<String> = []
     /// The PR whose detail sheet is open, if any.
     @State private var detail: PrSelection?
 
@@ -36,7 +33,8 @@ struct RepositoriesPage: View {
     private var dashboard: some View {
         @Bindable var model = model
         return Page(title: "Repositories",
-             subtitle: "Your pinned repos' pull requests, issues and CI, from swe gh.") {
+             subtitle: "Your pinned repos' pull requests, issues and CI, from swe gh.",
+             scrolls: false) {
             if model.envBlocked == nil {
                 Button("Add repository", systemImage: "plus") { adding = true }
                     .primaryButton()
@@ -72,6 +70,13 @@ struct RepositoriesPage: View {
                                     await model.refresh(repo: repo.name,
                                                         swe: swe)
                                 }
+                                // The rail's CI dot reads the runs.
+                                if model.tab != .actions {
+                                    group.addTask {
+                                        await model.loadTab(.actions, repo: repo.name,
+                                                            swe: swe)
+                                    }
+                                }
                             }
                         }
                     }
@@ -96,47 +101,51 @@ struct RepositoriesPage: View {
                 EmptyCard(text: "Pin a repository to see its pull requests, issues and CI here.",
                           icon: "shippingbox", actionTitle: "Add repository") { adding = true }
             } else {
-                HStack(alignment: .bottom, spacing: 16) {
-                    // Tabs expands for the full-width underline; the
-                    // search rides the right end of the same row.
-                    Tabs(options: RepoTab.allCases.map { ($0, $0.title) },
-                         selection: $model.tab, style: .underline)
-                        .layoutPriority(1)
-                    SearchField(prompt: "Filter by repo, title, branch…",
-                                text: $model.filter)
-                        .frame(minWidth: 100, maxWidth: 280)
-                        .padding(.bottom, 4)
-                }
-                if let error = model.pinError ?? model.actionError {
-                    ErrorCard(message: error)
-                }
-                if let error = model.sessionError {
-                    ErrorCard(message: error)
-                }
-                ScrollViewReader { proxy in
-                    ReorderableRows(visibleRepos) { id, before in
-                        var order = model.pins.map(\.name)
-                        order.removeAll { $0 == id }
-                        if let before, let idx = order.firstIndex(of: before) {
-                            order.insert(id, at: idx)
-                        } else {
-                            order.append(id)
+                HStack(alignment: .top, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Tabs(options: GitHubModel.tabs(oneRepo: model.shownRepo != nil)
+                                .map { ($0, $0.title) },
+                             selection: $model.tab, style: .underline)
+                        let options = RepoRowFilter.options(for: model.tab)
+                        if !options.isEmpty {
+                            HStack(spacing: 6) {
+                                ForEach(options) { option in
+                                    FilterChip(title: option.title,
+                                               isOn: model.rowFilter.on.contains(option)) {
+                                        if model.rowFilter.on.contains(option) {
+                                            model.rowFilter.on.remove(option)
+                                        } else {
+                                            model.rowFilter.on.insert(option)
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        Task { await model.reorderPins(order, swe: app.swe) }
-                    } row: { pin in
-                        repoSection(pin.name)
-                            .id(pin.name)
-                            .padding(.bottom, 10)
+                        if let error = model.pinError ?? model.actionError {
+                            ErrorCard(message: error)
+                        }
+                        if let error = model.sessionError {
+                            ErrorCard(message: error)
+                        }
+                        ScrollViewReader { proxy in
+                            ScrollView {
+                                list.padding(.bottom, 24)
+                            }
+                            .scrollContentBackground(.hidden)
+                            .onChange(of: model.scrollTarget) { _, target in
+                                // Banner click-through: the rail already
+                                // narrowed to the repo; bring it up.
+                                guard let target else { return }
+                                model.scrollTarget = nil
+                                withAnimation { proxy.scrollTo(target, anchor: .top) }
+                            }
+                        }
                     }
-                    .onChange(of: model.scrollTarget) { _, target in
-                        // Banner click-through: the filter is already
-                        // cleared so the section exists — scroll to it.
-                        guard let target else { return }
-                        model.scrollTarget = nil
-                        collapsed.remove(target)
-                        withAnimation { proxy.scrollTo(target, anchor: .top) }
-                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    RepoRail()
+                        .frame(width: 240)
                 }
+                .frame(maxHeight: .infinity, alignment: .top)
             }
         }
         .task(id: Visible(tab: model.tab, swe: app.swePath,
@@ -160,14 +169,17 @@ struct RepositoriesPage: View {
                 }
             }
             // Poll while the page is open so merged PRs and finished CI
-            // land without a manual refresh.
+            // land without a manual refresh. The runs ride along on
+            // every tab: the rail's CI dots read them.
+            let tabs: [RepoTab] = model.tab == .actions ? [.actions] : [model.tab, .actions]
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
                 await withTaskGroup(of: Void.self) { group in
                     for repo in visibleRepos {
-                        group.addTask {
-                            await model.loadTab(model.tab, repo: repo.name,
-                                                swe: swe)
+                        for tab in tabs {
+                            group.addTask {
+                                await model.loadTab(tab, repo: repo.name, swe: swe)
+                            }
                         }
                     }
                 }
@@ -189,6 +201,8 @@ struct RepositoriesPage: View {
     /// its poll loop. The pins are a set: a drag reorder changes only
     /// their order, and re-running on it refetched every repo once the
     /// boards were a minute old, spinning beside each name mid-drop.
+    /// The rail's pick is left out too: every visible repo stays loaded
+    /// so the rail's counts hold while the list shows one.
     private struct Visible: Hashable {
         var tab: RepoTab
         var swe: String
@@ -196,110 +210,283 @@ struct RepositoriesPage: View {
         var repos: Set<String>
     }
 
-    /// The repos whose sections show — the model's filter logic.
+    /// The repos the page loads: every one the filter leaves, so the
+    /// rail can count them.
     private var visibleRepos: [PinnedRepo] { model.visibleRepos }
 
-    /// One pinned repo's section: a callout holding its header (grip +
-    /// chevron + name, a link out) and, unless folded or empty, the
-    /// active tab's surface. The section is one ReorderableRows item —
-    /// a vertical drag on it reorders the pin list.
-    @ViewBuilder private func repoSection(_ repo: String) -> some View {
-        let board = model.board(for: repo)
-        let empty = surfaceEmpty(repo, board: board)
-        Card {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 8) {
-                    GripDots()
-                    if empty {
-                        // Nothing inside to fold — no chevron, no body.
-                        Text(repo).font(Theme.cardTitle)
-                            .foregroundStyle(Theme.textPrimary)
-                    } else {
-                        Button {
-                            if collapsed.contains(repo) {
-                                collapsed.remove(repo)
-                            } else {
-                                collapsed.insert(repo)
-                            }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(Theme.textMuted)
-                                    .rotationEffect(collapsed.contains(repo)
-                                                    ? .zero : .degrees(90))
-                                Text(repo).font(Theme.cardTitle)
-                                    .foregroundStyle(Theme.textPrimary)
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .plainButton()
-                        .help(collapsed.contains(repo) ? "Expand" : "Collapse")
+    /// One box of rows: a plain header per repo, its rows under it.
+    /// Repos with nothing on this tab are left out (the rail folds them
+    /// as quiet); one still loading or failed keeps its header so the
+    /// state shows.
+    @ViewBuilder private var list: some View {
+        let repos = model.listedRepos.filter { model.rowCount($0.name, tab: model.tab) != 0 }
+        if repos.isEmpty {
+            EmptyCard(text: emptyText, icon: "checkmark.circle")
+        } else {
+            VStack(spacing: 0) {
+                ForEach(Array(repos.enumerated()), id: \.element.id) { index, pin in
+                    if index > 0 { Divider().overlay(Theme.border) }
+                    RepoGroupHeader(repo: pin.name,
+                                    loading: model.loading.contains(.init(repo: pin.name, tab: model.tab)))
+                        .id(pin.name)
+                    Divider().overlay(Theme.rowDivider)
+                    RepoSurfaces(repo: pin.name, board: model.board(for: pin.name),
+                                 tab: model.tab, query: model.query,
+                                 unfiltered: model.showsAllRows(pin.name),
+                                 rowFilter: model.rowFilter,
+                                 preview: 5,
+                                 expandEdge: index == repos.count - 1 ? .cardBottom : .inset) {
+                        detail = PrSelection(repo: pin.name, number: $0)
                     }
-                    // A fetch for the shown tab spins beside the name —
-                    // the old bottom-of-list indicator looked stranded
-                    // once the rows bled to the callout's edges.
-                    if model.loading.contains(.init(repo: repo, tab: model.tab)) {
-                        ProgressView().controlSize(.small)
-                    }
-                    Spacer()
-                    Button {
-                        if let url = URL(string: "https://github.com/\(repo)") { openURL(url) }
-                    } label: {
-                        Image(systemName: "arrow.up.right.square")
-                            .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
-                    }
-                    .plainButton()
-                    .help("Open on GitHub")
-                    Button { model.focused = repo } label: {
-                        Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
-                    }
-                    .plainButton()
-                    .help("Open \(repo) in full")
-                }
-                .padding(.bottom, empty || collapsed.contains(repo) ? 0 : 10)
-                if !empty, !collapsed.contains(repo) {
-                    // Rows bleed to the callout's edges, GitHub-style:
-                    // the negative pads undo the card's, and the clip
-                    // keeps hover fills inside the rounded corners.
-                    VStack(spacing: 0) {
-                        Divider().overlay(Theme.rowDivider)
-                            .padding(.bottom, 4)
-                        RepoSurfaces(repo: repo, board: board, tab: model.tab,
-                                     query: model.query,
-                                     unfiltered: model.showsAllRows(repo)) {
-                            detail = PrSelection(repo: repo, number: $0)
-                        }
-                    }
-                    .padding(.horizontal, -Theme.cardPadding)
-                    .padding(.bottom, -Theme.cardPadding)
                 }
             }
-        }
-        .clipShape(.rect(cornerRadius: Theme.cardRadius))
-    }
-
-    /// Whether the active tab's surface came back empty — the callout
-    /// then shows just the repo title, without a fold control or an
-    /// empty-state row. `hasRows` only checks presence (first match
-    /// exits) so the list's own filter pass isn't duplicated. Loading,
-    /// errors and unfetched surfaces keep the card so state stays
-    /// visible.
-    private func surfaceEmpty(_ repo: String, board: RepoBoard) -> Bool {
-        switch model.tab {
-        case .pulls: return !model.hasRows(board.pulls, repo: repo, RepoSurfaces.prParts)
-        case .issues: return !model.hasRows(board.issues, repo: repo, RepoSurfaces.issueParts)
-        case .actions: return !model.hasRows(board.runs, repo: repo, RepoSurfaces.runParts)
-        case .releases: return !model.hasRows(board.releases, repo: repo, RepoSurfaces.releaseParts)
-        case .tags: return !model.hasRows(board.tags, repo: repo, RepoSurfaces.tagParts)
-        case .branches: return !model.hasRows(board.branches, repo: repo, RepoSurfaces.branchParts)
-        case .pages:
-            if case .loaded(let site) = board.pages { return site == nil }
-            return false
+            .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+            .clipShape(.rect(cornerRadius: Theme.cardRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius)
+                .strokeBorder(Theme.border, lineWidth: Theme.hairline))
         }
     }
 
+    private var emptyText: String {
+        if model.rowFilter.isActive || !model.query.isEmpty {
+            return "Nothing matches these filters."
+        }
+        let place = model.shownRepo ?? "your pinned repos"
+        return switch model.tab {
+        case .pulls: "No open pull requests in \(place)."
+        case .issues: "No open issues in \(place)."
+        case .actions: "No workflow runs in \(place)."
+        case .pages: "\(place) has no GitHub Pages site."
+        case .releases: "No releases in \(place)."
+        case .tags: "No tags in \(place)."
+        case .branches: "No branches in \(place)."
+        }
+    }
+}
+
+/// A repo's header row inside the list: `owner /` muted, the name, a
+/// spinner while its tab fetches, and on hover the links out.
+private struct RepoGroupHeader: View {
+    @Environment(AppModel.self) private var app
+    @Environment(\.openURL) private var openURL
+    var repo: String
+    var loading: Bool
+    @State private var hovering = false
+
+    var body: some View {
+        let parts = repo.split(separator: "/", maxSplits: 1).map(String.init)
+        HStack(spacing: 6) {
+            if parts.count == 2 {
+                Text("\(parts[0]) /").foregroundStyle(Theme.textMuted)
+                Text(parts[1]).foregroundStyle(Theme.textPrimary)
+            } else {
+                Text(repo).foregroundStyle(Theme.textPrimary)
+            }
+            if loading { ProgressView().controlSize(.mini) }
+            Spacer()
+            Group {
+                Button {
+                    if let url = URL(string: "https://github.com/\(repo)") { openURL(url) }
+                } label: {
+                    Image(systemName: "arrow.up.right.square")
+                }
+                .plainButton()
+                .help("Open on GitHub")
+                Button { app.github.focused = repo } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                }
+                .plainButton()
+                .help("Open \(repo) in full")
+            }
+            .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+            .opacity(hovering ? 1 : 0)
+        }
+        .font(Theme.control)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Theme.subtle)
+        .onHover { hovering = $0 }
+    }
+}
+
+/// A list chip: on, it narrows the rows (and the rail's counts).
+private struct FilterChip: View {
+    var title: String
+    var isOn: Bool
+    var toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            Text(title)
+                .font(Theme.control)
+                .foregroundStyle(isOn ? Theme.textPrimary : Theme.textSecondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(isOn ? Theme.navActive : .clear, in: Capsule())
+                .overlay(Capsule().strokeBorder(isOn ? Theme.borderStrong : Theme.border,
+                                                lineWidth: Theme.hairline))
+                .contentShape(Capsule())
+        }
+        .plainButton(cornerRadius: 999)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+    }
+}
+
+// MARK: - Repo rail
+
+/// The page's right-hand rail: the filter, "All repos", then the pins
+/// by owner. Each row carries a CI dot (the default branch's newest
+/// run) and the tab's row count; repos with nothing on the tab fold
+/// under "N quiet". A tap narrows the list to that repo; a drag
+/// reorders the pins within the row's group.
+private struct RepoRail: View {
+    @Environment(AppModel.self) private var app
+    /// Owners whose quiet repos are unfolded.
+    @State private var openQuiet: Set<String> = []
+
+    private var model: GitHubModel { app.github }
+
+    private struct Group: Identifiable {
+        var owner: String
+        var active: [PinnedRepo]
+        var quiet: [PinnedRepo]
+        var id: String { owner }
+    }
+
+    /// Owners in order of their first pin; repos in pin order.
+    private var groups: [Group] {
+        var order: [String] = []
+        var byOwner: [String: [PinnedRepo]] = [:]
+        for pin in model.visibleRepos {
+            let owner = String(pin.name.split(separator: "/", maxSplits: 1).first ?? "")
+            if byOwner[owner] == nil { order.append(owner) }
+            byOwner[owner, default: []].append(pin)
+        }
+        return order.map { owner in
+            let pins = byOwner[owner] ?? []
+            return Group(owner: owner,
+                         active: pins.filter { model.rowCount($0.name, tab: model.tab) != 0 },
+                         quiet: pins.filter { model.rowCount($0.name, tab: model.tab) == 0 })
+        }
+    }
+
+    private var total: Int {
+        model.visibleRepos.reduce(0) { $0 + (model.rowCount($1.name, tab: model.tab) ?? 0) }
+    }
+
+    var body: some View {
+        @Bindable var model = model
+        VStack(alignment: .leading, spacing: 8) {
+            SearchField(prompt: "Filter", text: $model.filter)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    RailRow(selected: model.shownRepo == nil,
+                            select: { model.shownRepo = nil }) {
+                        Image(systemName: "square.stack.3d.up")
+                            .font(.system(size: 12))
+                        Text("All repos").font(Theme.nav)
+                        Spacer(minLength: 6)
+                        Text("\(total)").font(Theme.caption.monospacedDigit())
+                            .foregroundStyle(Theme.textMuted)
+                    }
+                    ForEach(groups) { group in
+                        Text(group.owner)
+                            .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                            .lineLimit(1).truncationMode(.tail)
+                            .padding(.horizontal, 8)
+                            .padding(.top, 14).padding(.bottom, 4)
+                        rows(group.active)
+                        if !group.quiet.isEmpty {
+                            let open = openQuiet.contains(group.owner)
+                            Button {
+                                if open { openQuiet.remove(group.owner) } else { openQuiet.insert(group.owner) }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .rotationEffect(open ? .degrees(90) : .zero)
+                                    Text("\(group.quiet.count) quiet").font(Theme.nav)
+                                    Spacer()
+                                }
+                                .foregroundStyle(Theme.textMuted)
+                                .padding(.horizontal, 8).padding(.vertical, 5)
+                                .contentShape(Rectangle())
+                            }
+                            .plainButton()
+                            .help(open ? "Hide repos with nothing on this tab"
+                                       : "Show repos with nothing on this tab")
+                            if open { rows(group.quiet) }
+                        }
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+        }
+        .padding(8)
+        .background(Theme.panel, in: .rect(cornerRadius: Theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius)
+            .strokeBorder(Theme.border, lineWidth: Theme.hairline))
+    }
+
+    /// One reorderable run of repo rows. A drop moves the repo within
+    /// this run only; every other pin keeps its slot.
+    private func rows(_ pins: [PinnedRepo]) -> some View {
+        ReorderableRows(pins) { id, before in
+            let order = PinOrder.move(id, before: before, in: pins.map(\.name),
+                                      pins: model.pins.map(\.name))
+            Task { await model.reorderPins(order, swe: app.swe) }
+        } row: { pin in
+            RailRow(selected: model.shownRepo == pin.name,
+                    select: { model.shownRepo = pin.name }) {
+                Circle().fill(dotColor(model.ciState(pin.name)))
+                    .frame(width: Theme.statusDot, height: Theme.statusDot)
+                Text(pin.name.split(separator: "/").last.map(String.init) ?? pin.name)
+                    .font(Theme.nav)
+                    .lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 6)
+                if model.loading.contains(.init(repo: pin.name, tab: model.tab)) {
+                    ProgressView().controlSize(.mini)
+                } else if let count = model.rowCount(pin.name, tab: model.tab), count > 0 {
+                    Text("\(count)").font(Theme.caption.monospacedDigit())
+                        .foregroundStyle(Theme.textMuted)
+                }
+            }
+            .accessibilityHint("Drag to reorder")
+        }
+    }
+
+    private func dotColor(_ state: GhPr.Checks?) -> Color {
+        switch state {
+        case .failing: Theme.danger
+        case .passing: Theme.success
+        case .running: Theme.warning
+        default: Theme.borderStrong
+        }
+    }
+}
+
+/// A rail row: a tap target that leaves the drag to ReorderableRows (a
+/// Button would swallow the mouse-down the drag starts from).
+private struct RailRow<Content: View>: View {
+    var selected: Bool
+    var select: () -> Void
+    @ViewBuilder var content: Content
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 8) { content }
+            .foregroundStyle(selected ? Theme.textPrimary : Theme.textNav)
+            .padding(.horizontal, 8)
+            .frame(height: Theme.navRowHeight)
+            .background(selected ? Theme.navActive : hovering ? Theme.hover : .clear,
+                        in: .rect(cornerRadius: Theme.controlRadius))
+            .contentShape(.rect)
+            .onHover { hovering = $0 }
+            .onTapGesture(perform: select)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+            .accessibilityAction(.default, select)
+    }
 }
 
 // MARK: - Repo surfaces
@@ -324,6 +511,12 @@ struct RepoSurfaces: View {
     /// time and the end sentinel grows the fetch window. Off here, the
     /// dashboard's 3-row collapse preview stays.
     var scrollFetch = false
+    /// The list's chips; the focus page leaves them off.
+    var rowFilter = RepoRowFilter()
+    /// Rows a list shows before its "Show N more" row.
+    var preview = 3
+    /// Where that row sits: the bottom of a card, or mid-list.
+    var expandEdge: ExpandRow.Edge = .cardBottom
     /// A PR row tap opens the page's detail sheet.
     var openPr: (Int) -> Void
     /// "repo:surface" keys opened past their 3-row preview — this
@@ -412,19 +605,22 @@ struct RepoSurfaces: View {
     /// What the row filter searches per surface — shared by the list's
     /// filtered state and the callout's `surfaceEmpty`, so they can
     /// never disagree.
-    static let prParts: (GhPr) -> [String?] = {
-        [$0.title, "\($0.number)", $0.branch, $0.base, $0.author] + $0.labels }
-    static let issueParts: (GhIssue) -> [String?] = {
-        [$0.title, "\($0.number)", $0.author] + $0.labels + $0.assignees }
-    static let runParts: (GhRun) -> [String?] = {
-        [$0.title, $0.workflow, $0.branch, $0.event] }
-    static let releaseParts: (GhRelease) -> [String?] = { [$0.name, $0.tag] }
-    static let tagParts: (GhTag) -> [String?] = { [$0.name, $0.sha] }
-    static let branchParts: (GhBranch) -> [String?] = { [$0.name, $0.sha] }
+    static let prParts: (GhPr) -> [String?] = \.searchText
+    static let issueParts: (GhIssue) -> [String?] = \.searchText
+    static let runParts: (GhRun) -> [String?] = \.searchText
+    static let releaseParts: (GhRelease) -> [String?] = \.searchText
+    static let tagParts: (GhTag) -> [String?] = \.searchText
+    static let branchParts: (GhBranch) -> [String?] = \.searchText
 
-    /// The tab's rows after the search filter.
+    /// The rows the chips keep.
+    private func kept<Row>(_ state: Loadable<[Row]>, _ keep: (Row) -> Bool) -> Loadable<[Row]> {
+        guard case .loaded(let rows) = state, rowFilter.isActive else { return state }
+        return .loaded(rows.filter(keep))
+    }
+
+    /// The tab's rows after the search filter and the chips.
     private func pullsState() -> Loadable<[GhPr]> {
-        filtered(board.pulls, Self.prParts)
+        kept(filtered(board.pulls, Self.prParts), rowFilter.keeps)
     }
 
     @ViewBuilder
@@ -433,6 +629,7 @@ struct RepoSurfaces: View {
         SurfaceList(state,
                     empty: emptyText("No pull requests."),
                     expandKey: "\(repo):pulls", expanded: $expanded,
+                    preview: preview, edge: expandEdge,
                     window: window(for: .pulls, rows: count(state))) { pr in
             OpenRow(act: { openPr(pr.number) }) {
                 PrIcon(state: pr.state, draft: pr.draft)
@@ -487,7 +684,7 @@ struct RepoSurfaces: View {
     }
 
     private func issuesState() -> Loadable<[GhIssue]> {
-        filtered(board.issues, Self.issueParts)
+        kept(filtered(board.issues, Self.issueParts), rowFilter.keeps)
     }
 
     @ViewBuilder
@@ -496,6 +693,7 @@ struct RepoSurfaces: View {
         SurfaceList(state,
                     empty: emptyText("No issues."),
                     expandKey: "\(repo):issues", expanded: $expanded,
+                    preview: preview, edge: expandEdge,
                     window: window(for: .issues, rows: count(state))) { issue in
             OpenRow(url: issue.url, open: openURL.callAsFunction) {
                 Image(systemName: issue.state == .open ? "exclamationmark.circle" : "checkmark.circle")
@@ -522,7 +720,7 @@ struct RepoSurfaces: View {
     }
 
     private func actionsState() -> Loadable<[GhRun]> {
-        filtered(board.runs, Self.runParts)
+        kept(filtered(board.runs, Self.runParts), rowFilter.keeps)
     }
 
     @ViewBuilder
@@ -531,6 +729,7 @@ struct RepoSurfaces: View {
         SurfaceList(state,
                     empty: emptyText("No workflow runs."),
                     expandKey: "\(repo):actions", expanded: $expanded,
+                    preview: preview, edge: expandEdge,
                     window: window(for: .actions, rows: count(state))) { run in
             OpenRow(url: run.url, open: openURL.callAsFunction) {
                 RunIcon(status: run.status, conclusion: run.conclusion)
@@ -637,6 +836,7 @@ struct RepoSurfaces: View {
         SurfaceList(state,
                     empty: emptyText("No releases."),
                     expandKey: "\(repo):releases", expanded: $expanded,
+                    preview: preview, edge: expandEdge,
                     window: window(for: .releases, rows: count(state))) { release in
             OpenRow(url: release.url, open: openURL.callAsFunction) {
                 Image(systemName: "tag").font(.system(size: 14))
@@ -668,6 +868,7 @@ struct RepoSurfaces: View {
         SurfaceList(state,
                     empty: emptyText("No tags."),
                     expandKey: "\(repo):tags", expanded: $expanded,
+                    preview: preview, edge: expandEdge,
                     window: window(for: .tags, rows: count(state))) { tag in
             OpenRow(url: tag.url, open: openURL.callAsFunction) {
                 Image(systemName: "tag").font(.system(size: 14))
@@ -690,6 +891,7 @@ struct RepoSurfaces: View {
         SurfaceList(state,
                     empty: emptyText("No branches."),
                     expandKey: "\(repo):branches", expanded: $expanded,
+                    preview: preview, edge: expandEdge,
                     window: window(for: .branches, rows: count(state))) { branch in
             OpenRow(url: branch.url, open: openURL.callAsFunction) {
                 Image(systemName: "arrow.triangle.branch").font(.system(size: 14))
@@ -732,6 +934,7 @@ private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: Vi
     var expandKey: String?
     @Binding var expanded: Set<String>
     var preview = 3
+    var edge: ExpandRow.Edge = .cardBottom
     /// Scroll loading (the focus page): replaces the collapse preview
     /// with reveal-while-scrolling. nil keeps the 3-row preview.
     var window: ListWindow?
@@ -739,12 +942,15 @@ private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: Vi
 
     init(_ state: Loadable<[Row]>, empty: String,
          expandKey: String? = nil, expanded: Binding<Set<String>>? = nil,
+         preview: Int = 3, edge: ExpandRow.Edge = .cardBottom,
          window: ListWindow? = nil,
          @ViewBuilder row: @escaping (Row) -> Content) {
         self.state = state
         self.empty = empty
         self.expandKey = expandKey
         self._expanded = expanded ?? .constant([])
+        self.preview = preview
+        self.edge = edge
         self.window = window
         self.row = row
     }
@@ -799,7 +1005,7 @@ private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: Vi
                 ExpandRow(isExpanded: isOpen, hidden: rows.count - preview,
                           help: (expand: "Show every row",
                                  collapse: "Show only the first \(preview)"),
-                          edge: .cardBottom) {
+                          edge: edge) {
                     if isOpen { expanded.remove(expandKey) }
                     else { expanded.insert(expandKey) }
                 }

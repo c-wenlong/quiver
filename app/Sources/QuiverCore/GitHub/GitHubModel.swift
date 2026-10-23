@@ -111,6 +111,15 @@ public final class GitHubModel {
     /// A repo the page should scroll into view — set by banner
     /// click-through; the page scrolls and clears it.
     public var scrollTarget: String?
+    /// The repo the page's rail narrowed the list to; nil lists every
+    /// pin. Going back to all repos drops a one-repo-only tab.
+    public var shownRepo: String? {
+        didSet {
+            if !Self.tabs(oneRepo: shownRepo != nil).contains(tab) { tab = .pulls }
+        }
+    }
+    /// The list's quick filters (failing CI, drafts, bots).
+    public var rowFilter = RepoRowFilter()
 
     public private(set) var boards: [String: RepoBoard] = [:]
     /// Which (repo, tab) is mid-fetch, so rows keep their last data
@@ -916,6 +925,7 @@ public final class GitHubModel {
                 historyStore?.remove(repo: name)
             }
             if selected == name { selected = pins.first?.name }
+            if shownRepo == name { shownRepo = nil }
             // The focus page dies with its pin — the dashboard takes over.
             if focused == name { focused = nil }
             pinError = nil
