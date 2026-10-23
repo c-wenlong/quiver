@@ -92,6 +92,7 @@ remote/
   hub.py         # http.server ThreadingHTTPServer: REST + SSE, device auth
   agent.py       # satellite daemon: dial hub, run local tail/inject
   notify.py      # needs-you/finished/error fan-out via self-hosted ntfy
+  launchd.py     # serve --install: the hub as a per-user LaunchAgent
   commands.py    # swe remote serve|agent|pair|attach|status — argv + print
 ```
 
@@ -107,6 +108,14 @@ checklist: `completion.py`, `help_text.py`, `docs/json-contracts.md`.
 Copy the `search_index.py` `files`-row pattern: byte-offset cursor per
 transcript, stat → read appended bytes → decode new records → emit
 events. ~1s poll while `sessions/status.py` says active, back off idle.
+
+Before a message leaves the hub, `injected.py` removes what a harness
+wrote into the transcript for itself rather than for you: Claude Code's
+`<system-reminder>` and `<task-notification>` envelopes (a finished task
+becomes one system line), Cursor's `<timestamp>`/`<user_query>` wrapper,
+Codex's developer turns, `AGENTS.md` and environment injections and its
+`<oai-mem-citation>` footer. It runs at decode and again when journal
+events are served, so history journaled before it existed is cleaned too.
 
 One upgrade over `reports/transcripts.py`: that layer *strips* thinking
 and collapses tool calls — right for reports, wrong for a chat UI that
@@ -230,6 +239,20 @@ remote), and the prompt references the path: `@`-ref syntax where the
 harness supports it, an inlined path otherwise. Caps: 20 MB per file,
 image/pdf/text only, swept after 7 days or at session end, whichever
 comes first.
+
+## Keeping the hub up — `launchd.py`
+
+A hub started from a shell dies with the login session, and nothing
+restarts it. `swe remote serve --install` writes
+`~/Library/LaunchAgents/com.cwenlong.quiver.remote-hub.plist` with
+`RunAtLoad` and `KeepAlive`, so the hub starts at login and launchd
+restarts it 15 s after it exits. The agent runs the same `swe` that
+installed it, with that shell's `PATH`, and logs to
+`~/.quiver/data/remote/serve.log` with timestamped start and stop lines.
+It runs `serve --tailnet`: with no Tailscale address yet (early in a
+login) the hub exits instead of binding localhost, and launchd retries.
+`--install` again restarts it; `--uninstall` stops and removes it. On
+Linux, run `swe remote serve` under a systemd unit instead.
 
 ## Satellite — `agent.py`
 

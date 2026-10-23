@@ -253,8 +253,9 @@ private struct ToolRunCard: View {
         var order: [String] = []
         for item in items {
             guard case .tool(let call, _) = item.kind else { continue }
-            if counts[call.name] == nil { order.append(call.name) }
-            counts[call.name, default: 0] += 1
+            let name = ToolArgs.displayName(call.name)
+            if counts[name] == nil { order.append(name) }
+            counts[name, default: 0] += 1
         }
         return order.sorted { counts[$0]! > counts[$1]! }
             .map { counts[$0]! > 1 ? "\($0) ×\(counts[$0]!)" : $0 }
@@ -339,7 +340,21 @@ struct RichText: View {
     }
 
     static func inline(_ s: String) -> AttributedString {
-        (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)
+        let source = Markdown.inlineImagesAsText(s)
+        var out = (try? AttributedString(markdown: source, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(source)
+        // A link to the agent's own files (`/Users/…`, `src/x.py`) opens
+        // nothing on the phone: show its text as a file name instead.
+        for run in out.runs {
+            guard let url = run.link, !Self.opensOnPhone(url) else { continue }
+            out[run.range].link = nil
+            out[run.range].inlinePresentationIntent = .code
+        }
+        return out
+    }
+
+    static func opensOnPhone(_ url: URL) -> Bool {
+        ["http", "https", "mailto", "tel"].contains(url.scheme?.lowercased() ?? "")
     }
 }
 
@@ -358,11 +373,20 @@ private struct BlockView: View {
             prose(text)
         case .listItem(let indent, let marker, let text):
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(marker)
-                    .font(marker == "•" ? Theme.body : Theme.body.monospacedDigit())
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(minWidth: 14, alignment: .trailing)
-                prose(text)
+                if let (box, rest) = Markdown.taskBox(text) {
+                    Image(systemName: box == .done ? "checkmark.square.fill" : "square")
+                        .font(.system(size: 14))
+                        .foregroundStyle(box == .done ? Theme.accent : Theme.textSecondary)
+                        .frame(minWidth: 14, alignment: .trailing)
+                        .accessibilityLabel(box == .done ? "Done" : "To do")
+                    prose(rest)
+                } else {
+                    Text(marker)
+                        .font(marker == "•" ? Theme.body : Theme.body.monospacedDigit())
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(minWidth: 14, alignment: .trailing)
+                    prose(text)
+                }
             }
             .padding(.leading, CGFloat(min(indent, 4)) * 18)
         case .quote(let text):
@@ -381,6 +405,12 @@ private struct BlockView: View {
             TableBlock(table: table)
         case .rule:
             Rectangle().fill(Theme.border).frame(height: 1).padding(.vertical, 4)
+        case .image(let alt, let source):
+            NoteChip(icon: "photo", title: alt.isEmpty ? "Image" : alt,
+                     detail: (source as NSString).lastPathComponent + " · on the machine")
+        case .rendered:
+            NoteChip(icon: "rectangle.3.group", title: "Rendered view",
+                     detail: "Open the session on the machine to see it")
         }
     }
 
@@ -438,6 +468,10 @@ struct TableBlock: View {
             }
         }
         .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        // The chat sets .defaultScrollAnchor(.bottom) so it opens at the
+        // newest message; scroll views inside inherit it, and for a sideways
+        // one "bottom" is the horizontal middle. Tables start at their left.
+        .defaultScrollAnchor(.leading)
         .background(Theme.card, in: .rect(cornerRadius: Theme.controlRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.border, lineWidth: 1))
         .clipShape(.rect(cornerRadius: Theme.controlRadius))
@@ -457,6 +491,27 @@ struct TableBlock: View {
             .frame(maxWidth: .infinity, alignment: align == .trailing ? .trailing : align == .center ? .center : .leading)
             .background(header ? Theme.subtle : .clear)
             .gridColumnAlignment(align == .trailing ? .trailing : align == .center ? .center : .leading)
+    }
+}
+
+/// A quiet one-line card for content the phone can't show itself.
+private struct NoteChip: View {
+    let icon: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon).font(.system(size: 14)).foregroundStyle(Theme.textSecondary).frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(Theme.control).foregroundStyle(Theme.textPrimary).lineLimit(2)
+                Text(detail).font(Theme.caption).foregroundStyle(Theme.textMuted).lineLimit(1).truncationMode(.middle)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .background(Theme.card, in: .rect(cornerRadius: Theme.blockRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
     }
 }
 
