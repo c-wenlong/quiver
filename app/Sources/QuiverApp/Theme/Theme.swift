@@ -259,6 +259,12 @@ struct Page<Content: View, Actions: View>: View {
     var scrolls = true
     @ViewBuilder var actions: Actions
     @ViewBuilder var content: Content
+    /// False for the page's first frame. Laying out a long page's rows
+    /// can take a few hundred ms on the main thread, and until it ends
+    /// the old page stays up, so a click or ⌘-number felt slow. The
+    /// header goes up at once; the content joins on the next run-loop
+    /// turn, after that frame is committed.
+    @State private var showsContent = false
 
     var body: some View {
         if scrolls {
@@ -272,8 +278,14 @@ struct Page<Content: View, Actions: View>: View {
     private var stack: some View {
         VStack(alignment: .leading, spacing: 24) {
             PageHeader(title: title, subtitle: subtitle, link: subtitleLink) { actions }
-            content
-                .textSelection(.enabled)
+            if showsContent {
+                content
+                    .textSelection(.enabled)
+            }
+        }
+        .onAppear {
+            // The next run-loop turn: the header's frame commits first.
+            DispatchQueue.main.async { showsContent = true }
         }
         .frame(maxHeight: scrolls ? nil : .infinity, alignment: .top)
         .padding(.horizontal, 40)

@@ -209,6 +209,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Quiver switches pages at once.** Clicking a sidebar row or pressing
+  ⌘1 to ⌘9 used to keep the old page up for 70 to 460 ms while the new
+  page's rows were laid out. The new page's header now draws in the first
+  frame (17 to 49 ms) and its content joins on the next run-loop turn.
+
 - **`swe session` lists OpenCode sessions again.** opencode 2.x turned its
   `workspace` table into provider bindings with no `directory` column, so
   the session query's `workspace` join failed with "no such column:
