@@ -62,6 +62,17 @@ const SIDEBAR = [
 ];
 
 const PAGES = { overview: renderOverview, sessions: renderSessions, harnesses: renderHarnesses, accounts: renderAccounts };
+// Parts of the Mac app that only make sense on a Mac.
+const MAC_ONLY = new Set(["menubar", "widgets"]);
+
+/* Page plugins (static/pages/*.js, served as /app/pages.js) register here:
+ * registerPage("skills", render). render(id) paints #panel; a page that
+ * awaits a request compares routeGen before and after, so a reply that
+ * lands after the user moved on is dropped. */
+let routeGen = 0;
+function registerPage(id, render) {
+  PAGES[id] = render;
+}
 
 function renderSidebar(current) {
   const nav = document.getElementById("sidebar");
@@ -72,7 +83,7 @@ function renderSidebar(current) {
       ${items.map(([id, label]) => {
         const live = id in PAGES;
         const cls = ["nav-item", id === current ? "active" : "", live ? "" : "soon"].join(" ");
-        const title = live ? "" : ' title="Not in the web app yet"';
+        const title = live ? "" : MAC_ONLY.has(id) ? ' title="Mac app only"' : ' title="Not in the web app yet"';
         return `<a class="${cls}" href="#/${id}"${title}${id === current ? ' aria-current="page"' : ""}>${icon(id)}<span>${label}</span></a>`;
       }).join("")}
     </div>`).join("");
@@ -96,14 +107,19 @@ function renderGate(message) {
 
 function renderSoon(id) {
   const label = SIDEBAR.flatMap(([, items]) => items).find(([key]) => key === id)?.[1] || id;
+  const ready = SIDEBAR.flatMap(([, items]) => items).filter(([key]) => key in PAGES).map(([, l]) => l);
+  const why = MAC_ONLY.has(id)
+    ? ["This is part of the Mac app itself.", "It configures the Mac's menu bar and desktop, so it stays in the Mac app."]
+    : ["This page is in the Mac app and not in the web app yet.", `Coming to the web app. Ready now: ${ready.join(", ")}.`];
   document.getElementById("panel").innerHTML = `<div class="page">
-    ${pageHeader(label, "This page is in the Mac app and not in the web app yet.")}
-    <div class="card"><p class="empty">Coming to the web app. Overview, Sessions, Accounts and Harnesses are ready now.</p></div></div>`;
+    ${pageHeader(label, why[0])}
+    <div class="card"><p class="empty">${esc(why[1])}</p></div></div>`;
 }
 
 function route() {
   const id = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
   // A response still in flight belongs to the page left behind.
+  routeGen++;
   overview.gen++;
   sessionsPage.gen++;
   harnessesPage.gen++;
@@ -425,4 +441,5 @@ window.addEventListener("resize", () => {
   drawMarbles();
   drawHeatmap();
 });
-route();
+// After every script, page plugins included, has run.
+document.addEventListener("DOMContentLoaded", route);

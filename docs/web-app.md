@@ -79,8 +79,36 @@ already do, through satellites; that is a later step.
 Mac-only parts stay native whatever happens here: the menu bar, widgets,
 notifications, and opening a terminal.
 
+## Adding a page
+
+Every page after the first four is a plugin, so pages are built in
+parallel without touching a shared file. A page with the sidebar id
+`skills` is:
+
+| File | What |
+|---|---|
+| `src/quiver/webapp/pages/skills.py` | `get(ctx, args) -> dict` answers `GET /v1/app/skills` (`args`: each query parameter's first value). An optional `post(ctx, action, body) -> dict` answers `POST /v1/app/skills/<action>`. Raise `PageError(status, code, message)` to refuse. `ctx.state` is the hub's `HubState`, `ctx.home` its home. |
+| `src/quiver/webapp/static/pages/skills.js` | `registerPage("skills", render)`. The bundle runs each script in its own function scope, so private names never collide with another page's. `render(id)` paints `#panel` with the shared helpers in `app.js` (`api`, `esc`, `icon`, `pageHeader`, `renderGate`) and `manage.js` (`pageError`, `bindRefresh`); take `const gen = routeGen` before awaiting and drop the reply when it changed. |
+| `src/quiver/webapp/static/pages/skills.css` | Optional styles, using the tokens in `styles.css`. |
+| `tests/test_webapp_skills.py` | The page's data, and the route with auth. |
+| `docs/web-app/skills.md` | What the page shows, its payload, and what differs from the Mac app. |
+
+The hub dispatches `/v1/app/<page>` to the module (device bearer as for
+every `/v1` route; POSTs also pass the Origin check) and serves every
+page script as one `/app/pages.js`, every stylesheet as `/app/pages.css`.
+The page goes live in the sidebar as soon as its script registers. The
+sidebar's order and icons are fixed in `app.js` and already list every
+Mac app page; Menu bar and Widgets are marked Mac only.
+
+A page that needs usage reads the shared ledger with `with ctx.state.webapp.ledger() as (store, catalog, scan_ok):`, never a store of its own.
+
+Read data the way the Mac app does: from the same `swe … --json`
+builders in process, not by shelling out, and never from the Mac app's
+own stores.
+
 ## Going back
 
 Nothing in `app/` changes. To drop the web app, delete `src/quiver/webapp/`,
+`docs/web-app/`,
 `src/quiver/ledger/`, the `/app/` and `/v1/app/` branches in `hub.py`, and
 `~/.quiver/data/web-ledger/`.

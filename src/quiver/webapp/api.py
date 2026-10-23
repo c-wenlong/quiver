@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from quiver.ledger import overview as overview_mod
@@ -70,6 +71,17 @@ class WebApp:
                 "scanned_at": self._scanned_at,
                 "notes": self._notes(),
             }
+
+    @contextmanager
+    def ledger(self, rescan: bool = False):
+        """``(store, catalog, scan_ok)`` for a page plugin, fresh as the
+        Overview's and held under the same lock: pages read the shared
+        store, never open their own. ``scan_ok`` is false when the last
+        scan couldn't read every source."""
+        with self._lock:
+            self._ensure(rescan)
+            yield (self._store, self._catalog,
+                   self._last_scan is not None and not self._last_scan.errors)
 
     def _notes(self) -> list[str]:
         if self._last_scan is None or not self._last_scan.errors:
