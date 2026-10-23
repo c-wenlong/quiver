@@ -99,6 +99,90 @@ final class PrimitiveHome {
     }
 }
 
+/// The detail pages' folder facts, worked out off the main actor.
+@Suite struct DetailFoldersTests {
+    @Test func anEditablePluginListsItsOwnFolderAndManifest() throws {
+        let t = try PrimitiveHome()
+        try t.write(".quiver/plugins/development/eng/.claude-plugin/plugin.json", "{}")
+        let m = PluginMarketplace(name: "development", hub: true,
+                                  path: t.home.appending(path: ".quiver/plugins/development").path,
+                                  harnesses: [:], plugins: [])
+        let plugin = CatalogPlugin(name: "eng", marketplace: "development",
+                                   sourcePath: t.home.appending(path: ".quiver/plugins/development/eng").path,
+                                   harnesses: [:])
+        let folders = PluginFolders(plugin: plugin, market: m, home: t.home)
+        #expect(folders.editable)
+        #expect(folders.dir == folders.editableDir)
+        #expect(folders.manifest?.path == FolderOwners.realPath(
+            t.home.appending(path: ".quiver/plugins/development/eng/.claude-plugin/plugin.json").path))
+    }
+
+    @Test func aReadOnlyPluginFallsBackToTheFirstCopyThatExists() throws {
+        let t = try PrimitiveHome()
+        let cached = try t.dir(".claude/plugins/cache/p")
+        let m = PluginMarketplace(name: "official", path: "/nowhere",
+                                  harnesses: ["claude": .init(sourceType: "github", location: "o/r")],
+                                  plugins: [])
+        let plugin = CatalogPlugin(name: "p", marketplace: "official", sourcePath: "/nowhere/p",
+                                   harnesses: ["claude": .init(available: true, installed: true,
+                                                               path: t.home.appending(path: "gone").path,
+                                                               copies: [cached.path])])
+        let folders = PluginFolders(plugin: plugin, market: m, home: t.home)
+        #expect(!folders.editable)
+        #expect(folders.dir?.path == cached.path)
+        #expect(folders.manifest == nil)
+        let missing = PluginFolders(plugin: plugin, market: m, home: t.home, exists: { _ in false })
+        #expect(missing.dir == nil)
+    }
+
+    @Test func aSkillFileThatLinksOutsideItsFolderIsReadOnly() throws {
+        let t = try PrimitiveHome()
+        try t.write(".quiver/skills/mine/SKILL.md", "---\nname: mine\n---\n")
+        let outside = try t.write("elsewhere/SKILL.md", "---\nname: x\n---\n")
+        try t.dir(".quiver/skills/linked")
+        try FileManager.default.createSymbolicLink(
+            atPath: t.home.appending(path: ".quiver/skills/linked/SKILL.md").path,
+            withDestinationPath: outside.path)
+        let mine = SkillFolders(skillPath: t.home.appending(path: ".quiver/skills/mine").path, home: t.home)
+        #expect(mine.editable && mine.skillFileEditable)
+        #expect(mine.skillFile?.lastPathComponent == "SKILL.md")
+        let linked = SkillFolders(skillPath: t.home.appending(path: ".quiver/skills/linked").path, home: t.home)
+        #expect(linked.editable && !linked.skillFileEditable)
+        let empty = try t.dir(".quiver/skills/empty")
+        let none = SkillFolders(skillPath: empty.path, home: t.home)
+        #expect(none.skillFile == nil && !none.skillFileEditable)
+    }
+
+    @Test func aFileSwappedForAnOutwardLinkChecksAsOutside() throws {
+        let t = try PrimitiveHome()
+        let root = try t.dir(".quiver/plugins/development/eng")
+        let file = try t.write(".quiver/plugins/development/eng/commands/go.md", "go")
+        let before = PrimitiveFileCheck(path: file.path, root: root)
+        #expect(before.canPreview && before.isInside)
+        // The tree saw a plain file; it becomes a link out before opening.
+        let outside = try t.write("elsewhere/go.md", "away")
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.createSymbolicLink(atPath: file.path, withDestinationPath: outside.path)
+        let after = PrimitiveFileCheck(path: file.path, root: root)
+        #expect(after.canPreview && !after.isInside)
+    }
+
+    @Test func pathsInsideLeavesOutALinkThatPointsOutside() throws {
+        let t = try PrimitiveHome()
+        let root = try t.dir(".quiver/plugins/development/eng")
+        try t.write(".quiver/plugins/development/eng/commands/go.md", "go")
+        try t.write(".quiver/plugins/development/eng/skills/tdd/SKILL.md", "tdd")
+        let outside = try t.write("elsewhere/away.md", "away")
+        try FileManager.default.createSymbolicLink(
+            atPath: root.appending(path: "commands/away.md").path, withDestinationPath: outside.path)
+        let inside = PrimitiveTree(root: root).pathsInside(root)
+        #expect(inside.contains(root.appending(path: "commands/go.md").path))
+        #expect(inside.contains(root.appending(path: "skills/tdd").path))
+        #expect(inside.contains(root.appending(path: "skills/tdd/SKILL.md").path))
+        #expect(!inside.contains(root.appending(path: "commands/away.md").path))
+    }
+}
+
 @Suite struct DisplayNamesTests {
     @Test func roundTripAndClear() throws {
         let t = try PrimitiveHome()
