@@ -24,6 +24,8 @@ const state = {
   pairGen: 0,
   approveTimer: null,
   usageGen: 0,
+  usageData: null,
+  usageMachine: null,
   inboxCount: 0,
   openGen: 0,
 };
@@ -784,11 +786,17 @@ async function loadInbox() {
 
 /* ── usage ───────────────────────────────────────────────── */
 
-const LIMIT_STATUS = {
-  "no-sub": "No subscription on this account.",
-  "auth-required": "Signed out. Log in to it again on the hub.",
-  timeout: "The provider didn't answer in time.",
-};
+/* ``where`` names the machine the reading came from: a satellite's
+ * credentials live on the satellite, so logging in on the hub fixes
+ * nothing there. */
+function limitStatus(status, where) {
+  switch (status) {
+    case "no-sub": return "No subscription on this account.";
+    case "auth-required": return `Signed out. Log in to it again on ${where}.`;
+    case "timeout": return "The provider didn't answer in time.";
+    default: return status;
+  }
+}
 
 function resetIn(ts) {
   if (!ts) return "";
@@ -845,12 +853,16 @@ function limitBar(label, w, now) {
   </div>`;
 }
 
-function limitCard(h, now) {
+/* ``now`` and ``snapAt`` are on the reporting machine's clock: how old a
+ * reading is today, and how old it already was when the machine took the
+ * snapshot. Only the second says the provider stopped answering; a
+ * satellite's report just sits on the hub for up to five minutes. */
+function limitCard(h, now, snapAt, where) {
   const rl = h.rate_limit;
   const plan = rl.plan_type ? `<span class="own">${esc(rl.plan_type)}</span>` : "";
   let body;
   if (rl.status !== "ok") {
-    body = `<p class="dim">${esc(LIMIT_STATUS[rl.status] || rl.status)}</p>`;
+    body = `<p class="dim">${esc(limitStatus(rl.status, where))}</p>`;
   } else {
     const windows = rl.windows && rl.windows.length ? rl.windows : [rl];
     body = windows.map((w) => limitBar(windowLabel(w), w, now)).join("");
@@ -870,7 +882,7 @@ function limitCard(h, now) {
     }
     if (rl.fetched_at) {
       const age = now - rl.fetched_at;
-      body += age > STALE_READING_S
+      body += snapAt - rl.fetched_at > STALE_READING_S
         ? `<p class="stale">Stale: last read ${esc(ago(age))}, newer reads failed.</p>`
         : `<p class="dim">Read ${esc(ago(age))}</p>`;
     }
@@ -881,19 +893,49 @@ function limitCard(h, now) {
   </div>`;
 }
 
-function renderUsage(data) {
-  const rows = data.harnesses || [];
+/* A satellite reports every 300 s; two missed reports means it is
+ * asleep or cut off, and its figures are that old. */
+const STALE_REPORT_S = 660;
+
+function machineName(m) {
+  return (m.machine && (m.machine.name || m.machine.id)) || "unknown";
+}
+
+function usageMachines(data) {
+  if (Array.isArray(data.machines) && data.machines.length) return data.machines;
+  const now = data.server_time || Date.now() / 1000;
+  return [{ machine: data.machine, harnesses: data.harnesses || [],
+            window_days: data.window_days, reported_at: now,
+            received_at: now, hub: true }];
+}
+
+function renderMachineUsage(m, serverTime) {
+  const rows = m.harnesses || [];
   const limited = rows.filter((h) => h.rate_limit);
-  const days = data.window_days || 100;
+  const days = m.window_days || 100;
   const used = rows.filter((h) => h.sessions_100d > 0)
     .sort((a, b) => b.sessions_100d - a.sessions_100d);
   const most = used.length ? used[0].sessions_100d : 1;
-  // Ages are measured on the hub's clock, which also stamped fetched_at.
-  const now = data.server_time || Date.now() / 1000;
-  let html = `<div class="usage-group"><h2>Limits</h2>`;
+  // Ages are measured on the reporting machine's own clock, which also
+  // stamped fetched_at: the hub's clock moved back by however far the
+  // two disagreed when the report arrived.
+  const received = m.received_at || serverTime;
+  const skew = m.reported_at != null ? received - m.reported_at : 0;
+  const now = serverTime - skew;
+  const snapAt = received - skew;
+  let html = "";
+  if (!m.hub) {
+    const age = serverTime - received;
+    const offline = m.machine && m.machine.online === false;
+    const late = age > STALE_REPORT_S;
+    html += `<p class="${late || offline ? "stale" : "dim"} usage-report">${esc(
+      (offline ? "Offline. " : "") + `Last report ${ago(age)}` +
+      (late ? ", so these figures may be out of date." : "."))}</p>`;
+  }
+  html += `<div class="usage-group"><h2>Limits</h2>`;
   html += limited.length
-    ? limited.map((h) => limitCard(h, now)).join("")
-    : `<p class="dim">No limits to show. Star a harness on the hub with
+    ? limited.map((h) => limitCard(h, now, snapAt, machineName(m))).join("")
+    : `<p class="dim">No limits to show. Star a harness on this machine with
        <code>swe hs star &lt;name&gt;</code> to track its quota.</p>`;
   html += `</div><div class="usage-group"><h2>Sessions in the last ${esc(days)} days</h2>`;
   html += used.length
@@ -904,10 +946,38 @@ function renderUsage(data) {
           <span class="n">${esc(h.sessions_100d)}</span>
         </div>`).join("")}</div>`
     : `<p class="dim">No sessions on this machine in that window.</p>`;
-  html += "</div>";
+  return html + "</div>";
+}
+
+function renderUsage(data) {
+  state.usageData = data;
+  const machines = usageMachines(data);
+  const ids = machines.map((m) => (m.machine && m.machine.id) || "");
+  let pick = state.usageMachine;
+  if (pick == null) {
+    try { pick = localStorage.getItem("quiver.usageMachine"); } catch { pick = null; }
+  }
+  if (!ids.includes(pick)) pick = ids[0];
+  state.usageMachine = pick;
+  const current = machines[ids.indexOf(pick)];
+  let html = "";
+  if (machines.length > 1) {
+    html += `<div class="chips" role="tablist">${machines.map((m, i) => `
+      <button type="button" class="chip${ids[i] === pick ? " on" : ""}" role="tab"
+        aria-selected="${ids[i] === pick}" data-mid="${esc(ids[i])}">${esc(machineName(m))}${
+        m.hub ? ` <span class="dim">hub</span>` : ""}</button>`).join("")}</div>`;
+  }
+  html += renderMachineUsage(current, data.server_time || Date.now() / 1000);
   el("usage-body").innerHTML = html;
-  const machine = data.machine && (data.machine.name || data.machine.id);
-  el("usage-meta").textContent = machine ? `On ${machine}` : "";
+  el("usage-body").querySelectorAll(".chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      state.usageMachine = chip.dataset.mid;
+      try { localStorage.setItem("quiver.usageMachine", chip.dataset.mid); } catch { /* private mode */ }
+      renderUsage(state.usageData);
+    });
+  });
+  el("usage-meta").textContent = machines.length > 1
+    ? `${machines.length} machines` : `On ${machineName(current)}`;
 }
 
 /* The timer, tab clicks and Refresh can overlap; only the newest

@@ -168,7 +168,7 @@ are server changes in `src/quiver/remote/`.
 - [x] Search sessions from Sessions: transcripts through the hub's FTS index when present, titles and folders as text always (`GET /v1/search`)
 - [ ] Search satellite transcripts (the index covers the hub machine only)
 - [ ] Usage and limits view from `swe list --usage --json`. Hub: `GET /v1/usage` serves those rows for the hub machine, and the PWA's Usage tab shows them
-- [ ] Hub: satellites report their own usage, so a MacBook's quota shows too
+- [x] Hub: satellites report their own usage, so a MacBook's quota shows too (`POST /v1/agent/usage`, `machines` in `GET /v1/usage`)
 - [ ] Diff viewer with commit and push through `swe gh`
 - [ ] iPad layout: sessions list and chat side by side
 - [ ] Protocol version check, with a "hub is newer, update the app" message

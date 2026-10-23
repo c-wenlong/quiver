@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote: satellites report usage, so a MacBook's quota shows on the
+  hub.** `swe remote agent` posts the machine's `swe list --usage` rows
+  every 5 minutes, and the hub keeps each machine's last report. The
+  PWA's Usage tab gets a machine switcher, and a satellite that missed
+  two reports says how old its figures are. The hub and agent also pin
+  the 300 s rate-limit TTL, so a `SWE_RATE_LIMITS_TTL=inf` in the shell
+  that started them no longer freezes the page.
+
 - **Remote: a Usage tab in the PWA.** The hub serves `GET /v1/usage`,
   the same rows as `swe list --usage --json` for the hub machine: quota
   bars per window for every starred harness (with reset times, credits,
