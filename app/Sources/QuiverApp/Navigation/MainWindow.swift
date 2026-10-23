@@ -95,9 +95,8 @@ struct MainWindow: View {
             Color.clear
                 .frame(width: model.sidebarCollapsed
                     ? Theme.sidebarCollapsedWidth : sidebarWidth)
-            PageView(section: model.selection ?? .overview)
-                // A page never widens the window: it gets the panel's width.
-                .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
+            // A page never sizes the window: it gets the panel's space.
+            PanelFrame { PageView(section: model.selection ?? .overview) }
                 .background(Theme.panel)
                 .clipShape(.rect(cornerRadius: Theme.panelRadius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.panelRadius).strokeBorder(Theme.border, lineWidth: 1))
@@ -376,6 +375,31 @@ private struct NavItem: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityValue(badge > 0 ? "\(badge) unread" : "")
     }
+}
+
+/// Gives the page exactly the space the window offers and never asks the
+/// page how big it wants to be. The root stack and the window's size
+/// constraints otherwise measure the page at several widths on every pass
+/// (zero and infinity to rank flexibility, then the real width), and a
+/// scrolling page answers by laying out all of its content. On Overview
+/// that was about 90% of the main thread during any geometry animation.
+struct PanelFrame: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        proposal.replacingUnspecifiedDimensions(by: .zero)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for subview in subviews {
+            subview.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+        }
+    }
+
+    // The stack's centre alignment would otherwise ask the page too.
+    func explicitAlignment(of guide: HorizontalAlignment, in bounds: CGRect, proposal: ProposedViewSize,
+                           subviews: Subviews, cache: inout ()) -> CGFloat? { nil }
+
+    func explicitAlignment(of guide: VerticalAlignment, in bounds: CGRect, proposal: ProposedViewSize,
+                           subviews: Subviews, cache: inout ()) -> CGFloat? { nil }
 }
 
 /// The key cap a held ⌘ shows on a sidebar row: "⌘3" in the expanded
