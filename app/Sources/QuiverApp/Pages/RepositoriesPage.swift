@@ -141,7 +141,7 @@ struct RepositoriesPage: View {
         }
         .task(id: Visible(tab: model.tab, swe: app.swePath,
                          filter: model.filter,
-                         repos: model.pins.map(\.name))) {
+                         repos: Set(model.pins.map(\.name)))) {
             // Pins first, then one board call hydrates every visible
             // repo's surfaces at once — the CLI fans the list out itself.
             await model.loadPinsIfNeeded(swe: app.swe)
@@ -186,12 +186,14 @@ struct RepositoriesPage: View {
 
     /// Identity for the visible surface: switching tab, swe, the
     /// filter or the pin list (add/remove) re-runs the load task and
-    /// its poll loop.
+    /// its poll loop. The pins are a set: a drag reorder changes only
+    /// their order, and re-running on it refetched every repo once the
+    /// boards were a minute old, spinning beside each name mid-drop.
     private struct Visible: Hashable {
         var tab: RepoTab
         var swe: String
         var filter: String
-        var repos: [String]
+        var repos: Set<String>
     }
 
     /// The repos whose sections show — the model's filter logic.
