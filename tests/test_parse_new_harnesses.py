@@ -392,6 +392,102 @@ class ParseClineTest(unittest.TestCase):
             self.assertGreater(sessions[0].timestamp, 0)
 
 
+class ParseOpenCodeTest(unittest.TestCase):
+    def _parse(self, db: Path):
+        def expand(p: str) -> str:
+            if p.endswith("opencode.db"):
+                return str(db)
+            return p
+
+        with mock.patch(
+            "quiver.sessions.parsers.os.path.expanduser", side_effect=expand
+        ):
+            from quiver.sessions.parsers import parse_opencode
+
+            return parse_opencode()
+
+    def test_reads_current_schema_without_workspace_directory(self):
+        # opencode 2.x turned `workspace` into provider bindings
+        # (id, provider, binding, created_at, last_used_at): no `directory`.
+        # Joining on w.directory raised "no such column" and every session
+        # vanished; session.directory alone must carry the path.
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "opencode.db"
+            conn = sqlite3.connect(db)
+            conn.execute(
+                "CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, "
+                "directory TEXT NOT NULL, title TEXT NOT NULL, "
+                "time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, "
+                "workspace_id TEXT)"
+            )
+            conn.execute(
+                "CREATE TABLE workspace (id TEXT PRIMARY KEY, provider TEXT NOT NULL, "
+                "binding TEXT, created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL)"
+            )
+            conn.execute(
+                "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("ses_a", "p1", "/work/app", "wire up auth", 1783582327217, 1783582330279, "w1"),
+            )
+            conn.execute(
+                "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("ses_b", "p1", "/work/lib", "bump deps", 1783582328000, 1783582331000, None),
+            )
+            conn.execute(
+                "INSERT INTO workspace VALUES (?, ?, ?, ?, ?)",
+                ("w1", "local", None, 1783582327000, 1783582330000),
+            )
+            conn.commit()
+            conn.close()
+
+            sessions = self._parse(db)
+        by_id = {s.session_id: s for s in sessions}
+        self.assertEqual(set(by_id), {"ses_a", "ses_b"})
+        self.assertEqual(by_id["ses_a"].path, "/work/app")
+        self.assertEqual(by_id["ses_a"].title, "wire up auth")
+        self.assertEqual(by_id["ses_a"].tool_name, "opencode")
+        self.assertEqual(by_id["ses_a"].timestamp, 1783582330279)
+        self.assertEqual(by_id["ses_b"].path, "/work/lib")
+
+    def test_reads_schema_with_no_workspace_table(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "opencode.db"
+            conn = sqlite3.connect(db)
+            conn.execute(
+                "CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, "
+                "title TEXT, time_updated INTEGER)"
+            )
+            conn.execute(
+                "INSERT INTO session VALUES (?, ?, ?, ?)",
+                ("ses_c", "/work/x", "hello", 1783582330279),
+            )
+            conn.commit()
+            conn.close()
+
+            sessions = self._parse(db)
+        self.assertEqual([s.session_id for s in sessions], ["ses_c"])
+        self.assertEqual(sessions[0].path, "/work/x")
+
+    def test_older_schema_falls_back_to_workspace_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "opencode.db"
+            conn = sqlite3.connect(db)
+            conn.execute(
+                "CREATE TABLE session (id TEXT PRIMARY KEY, workspace_id TEXT, "
+                "directory TEXT, title TEXT, time_updated INTEGER)"
+            )
+            conn.execute("CREATE TABLE workspace (id TEXT PRIMARY KEY, directory TEXT)")
+            conn.execute(
+                "INSERT INTO session VALUES (?, ?, ?, ?, ?)",
+                ("ses_d", "w1", "", "old shape", 1783582330279),
+            )
+            conn.execute("INSERT INTO workspace VALUES (?, ?)", ("w1", "/work/mono"))
+            conn.commit()
+            conn.close()
+
+            sessions = self._parse(db)
+        self.assertEqual([s.path for s in sessions], ["/work/mono"])
+
+
 class ParseKiloTest(unittest.TestCase):
     def test_reads_opencode_schema_db(self):
         # Kilo is an opencode fork: kilo.db keeps session/workspace with
