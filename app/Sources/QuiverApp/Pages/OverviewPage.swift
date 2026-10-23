@@ -134,11 +134,24 @@ private struct ScanProgressCard: View {
 
 // MARK: - Total
 
+/// The period's totals over a pile of marbles, one per round amount of
+/// spend (`MarbleScale`), in each harness's colour and logo. Hovering a
+/// logo in the row under the figures shows only that harness's marbles and
+/// rolls the figures over to its own.
 private struct TotalCard: View {
     var summary: OverviewSummary
     @Binding var period: OverviewPeriod
 
     @Environment(AppModel.self) private var app
+    /// The harness whose logo is under the pointer.
+    @State private var focus: String?
+    @State private var size: CGSize = .zero
+    /// The figures' frame in the card, for the marbles to fade behind.
+    @State private var figuresFrame: CGRect = .zero
+
+    static let space = "total-card"
+    /// Tall enough that the pile has room under the figures.
+    static let minHeight: CGFloat = 440
 
     /// In the order and with the providers chosen in Settings.
     var shares: [HarnessShare] {
@@ -147,41 +160,124 @@ private struct TotalCard: View {
         return order.compactMap { id in shown.first { $0.harness == id } }
     }
 
+    /// Marbles for about half the card. Rounded to tens so a window
+    /// resize doesn't add and drop a marble at every step, and capped so a
+    /// very large window doesn't mean hundreds of physics bodies.
+    var scale: MarbleScale {
+        let r = MarbleScene.radius
+        let fit = 0.5 * size.width * size.height / (.pi * r * r / 0.82)
+        let capacity = min(max(Int(fit / 10) * 10, 20), 220)
+        return MarbleScale(shares: shares, capacity: capacity)
+    }
+
     var body: some View {
-        Card {
+        VStack(spacing: 14) {
             // Seven periods no longer fit a narrow card: the row scrolls.
             ScrollView(.horizontal, showsIndicators: false) {
                 Tabs(options: OverviewPeriod.allCases.map { ($0, $0.title) }, selection: $period, style: .period)
             }
-            VStack(spacing: 6) {
-                Text("Total tokens").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                Text(UsageFormat.tokens(summary.totals.totalTokens))
-                    .font(Theme.display).tracking(-1.8).monospacedDigit()
-                    .foregroundStyle(Theme.textPrimary)
-                    .contentTransition(.numericText())
-                HStack(spacing: 6) {
-                    Text(UsageFormat.dollars(summary.totals.costUSD))
-                        .font(Theme.figure).monospacedDigit()
-                        .foregroundStyle(Theme.accent)
-                    if summary.totals.unpricedTokens > 0 {
+            figures
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.space)) } action: { figuresFrame = $0 }
+        }
+        .padding(Theme.cardPadding)
+        .frame(maxWidth: .infinity, minHeight: Self.minHeight, alignment: .top)
+        .coordinateSpace(.named(Self.space))
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
+        .background {
+            if !shares.isEmpty, size != .zero {
+                MarblePile(scale: scale, focus: focus, clearRect: figuresFrame)
+            }
+        }
+        .clipShape(.rect(cornerRadius: Theme.cardRadius))
+        .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
+        .onChange(of: summary.period) { focus = nil }
+    }
+
+    private var figures: some View {
+        let focused = shares.first { $0.harness == focus }
+        let totals = focused?.totals ?? summary.totals
+        return VStack(spacing: 6) {
+            Text(focused.map { "\(UsageFormat.harness($0.harness)) tokens" } ?? "Total tokens")
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                .contentTransition(.numericText())
+            Text(UsageFormat.tokens(totals.totalTokens))
+                .font(Theme.display).tracking(-1.8).monospacedDigit()
+                .foregroundStyle(Theme.textPrimary)
+                .contentTransition(.numericText(countsDown: focused != nil))
+            HStack(spacing: 6) {
+                Text(UsageFormat.dollars(totals.costUSD))
+                    .font(Theme.figure).monospacedDigit()
+                    .foregroundStyle(Theme.accent)
+                    .contentTransition(.numericText(countsDown: focused != nil))
+                if totals.unpricedTokens > 0 {
+                    Button { app.selection = .pricing } label: {
                         Image(systemName: "info.circle")
                             .foregroundStyle(Theme.textSecondary)
-                            .hoverTip("\(UsageFormat.tokens(summary.totals.unpricedTokens)) tokens from models with no list price aren't in this total: \(summary.totals.unpricedModels.sorted().joined(separator: ", "))")
+                            .hoverTip("\(UsageFormat.tokens(totals.unpricedTokens)) tokens from models with no list price aren't in this total: \(totals.unpricedModels.sorted().joined(separator: ", "))")
                     }
+                    .buttonStyle(.plain)
+                    .help("See unpriced models on the Pricing page")
                 }
-                Text(rangeText).font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
+            Text(focused.map(detail) ?? summaryLine)
+                .font(Theme.caption).foregroundStyle(Theme.textMuted).monospacedDigit()
+                .contentTransition(.numericText())
             if shares.isEmpty {
                 Text(summary.totals.totalTokens > 0
                      ? "Every provider with usage this period is hidden in Settings."
                      : "No usage in this period.")
                     .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                    .padding(.top, 6)
             } else {
-                ShareBar(shares: shares)
-                HarnessTiles(shares: shares)
+                logos.padding(.top, 6)
             }
+        }
+        .padding(.vertical, 12)
+        .animation(.snappy(duration: 0.35), value: focus)
+    }
+
+    /// One logo per harness; the pointer on one focuses it.
+    private var logos: some View {
+        HStack(spacing: 6) {
+            ForEach(shares) { share in
+                let on = focus == share.harness
+                HarnessIcon(harness: share.harness, size: 16)
+                    .padding(7)
+                    .background(Theme.card.opacity(0.85), in: .circle)
+                    .overlay(Circle().strokeBorder(on ? Theme.harness(share.harness) : Theme.borderStrong, lineWidth: 1))
+                    .opacity(focus == nil || on ? 1 : 0.45)
+                    .contentShape(.circle)
+                    .onHover { inside in
+                        if inside { focus = share.harness } else if on { focus = nil }
+                    }
+                    .accessibilityElement()
+                    .accessibilityLabel(UsageFormat.harness(share.harness))
+                    .accessibilityValue("\(UsageFormat.tokens(share.totals.totalTokens)) tokens, \(UsageFormat.dollars(share.totals.costUSD))")
+            }
+        }
+    }
+
+    /// A focused harness's share and models.
+    private func detail(_ share: HarnessShare) -> String {
+        let total = summary.totals.costUSD
+        let part = total > 0 ? share.totals.costUSD / total : share.share
+        let percent = part > 0 && part < 0.001 ? "<0.1%"
+            : part.formatted(.percent.precision(.fractionLength(part < 0.1 ? 1 : 0)))
+        let models = share.modelCount == 1 ? "1 model" : "\(share.modelCount) models"
+        return "\(percent) of \(total > 0 ? "spend" : "tokens") · \(models)"
+    }
+
+    private var summaryLine: String {
+        shares.isEmpty ? rangeText : "\(rangeText) · 1 marble = \(Self.unitText(scale.unit))"
+    }
+
+    static func unitText(_ unit: MarbleScale.Unit) -> String {
+        switch unit {
+        case .dollars(let amount):
+            amount >= 1 ? "$" + Int(amount.rounded()).formatted() : String(format: "$%.2f", amount)
+        case .tokens(let count):
+            "\(UsageFormat.tokens(count)) tokens"
         }
     }
 
@@ -202,101 +298,6 @@ private struct TotalCard: View {
             ? .dateTime.month(.abbreviated).day().year()
             : .dateTime.month(.abbreviated).day())
         return start == end ? start : "\(start) to \(end)"
-    }
-}
-
-/// One thin bar split by harness, 2pt surface gaps between segments.
-private struct ShareBar: View {
-    var shares: [HarnessShare]
-
-    var body: some View {
-        GeometryReader { geo in
-            let gaps = CGFloat(shares.count - 1) * 2
-            HStack(spacing: 2) {
-                ForEach(shares) { share in
-                    Capsule()
-                        .fill(Theme.harness(share.harness))
-                        .frame(width: max(3, (geo.size.width - gaps) * share.share))
-                        .hoverTip("\(UsageFormat.harness(share.harness)): \(UsageFormat.tokens(share.totals.totalTokens)) tokens, \(UsageFormat.dollars(share.totals.costUSD))")
-                }
-            }
-        }
-        .frame(height: Theme.usageTrackHeight)
-    }
-}
-
-/// Up to four equal columns, one per harness, every tile the same height.
-/// Four that would each get under 140pt (the two-column layout at the
-/// default window) go two by two, so no name or figure truncates.
-private struct HarnessTiles: View {
-    var shares: [HarnessShare]
-    @State private var width: CGFloat = 0
-
-    static let minTileWidth: CGFloat = 140
-
-    var columns: Int {
-        var count = min(shares.count, 4)
-        while count > 1, width > 0, (width - CGFloat(count - 1) * 12) / CGFloat(count) < Self.minTileWidth {
-            count = count == 4 ? 2 : count - 1
-        }
-        return max(count, 1)
-    }
-
-    var body: some View {
-        let columns = columns
-        let rows = stride(from: 0, to: shares.count, by: columns).map { Array(shares[$0..<min($0 + columns, shares.count)]) }
-        Grid(horizontalSpacing: 12, verticalSpacing: 12) {
-            ForEach(rows, id: \.first?.id) { row in
-                GridRow {
-                    ForEach(row) { HarnessTile(share: $0) }
-                    // Keeps a short last row on the same column widths.
-                    ForEach(row.count..<columns, id: \.self) { _ in Color.clear.gridCellUnsizedAxes([.horizontal, .vertical]) }
-                }
-            }
-        }
-        // Rows as tall as their tallest tile, and no taller.
-        .fixedSize(horizontal: false, vertical: true)
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-    }
-}
-
-/// A harness's share: the legend for the bar, with its numbers.
-private struct HarnessTile: View {
-    var share: HarnessShare
-    @Environment(AppModel.self) private var app
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                HarnessIcon(harness: share.harness, size: 16)
-                Text(UsageFormat.harness(share.harness)).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1).truncationMode(.tail)
-            }
-            .hoverTip(UsageFormat.harness(share.harness))
-            Text(share.share > 0 && share.share < 0.001 ? "<0.1%"
-                 : share.share.formatted(.percent.precision(.fractionLength(share.share < 0.1 ? 1 : 0))))
-                .font(Theme.figure).monospacedDigit().foregroundStyle(Theme.textPrimary)
-                .lineLimit(1)
-            HStack(spacing: 4) {
-                Text(share.modelCount == 1 ? "1 model" : "\(share.modelCount) models")
-                Text("·")
-                Text(UsageFormat.dollars(share.totals.costUSD)).foregroundStyle(Theme.accent)
-                if share.totals.unpricedTokens > 0 {
-                    Button { app.selection = .pricing } label: {
-                        Image(systemName: "questionmark.circle")
-                            .foregroundStyle(Theme.textSecondary)
-                            .hoverTip("\(UsageFormat.tokens(share.totals.unpricedTokens)) of these tokens have no list price, so they aren't costed: \(share.totals.unpricedModels.sorted().joined(separator: ", "))")
-                    }
-                    .buttonStyle(.plain)
-                    .help("See unpriced models on the Pricing page")
-                }
-            }
-            .font(Theme.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
-            .lineLimit(1)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.borderStrong, lineWidth: 1))
     }
 }
 
