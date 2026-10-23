@@ -21,6 +21,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replies for a minute, and are read only; merging, re-running, marking
   read and pinning stay in `swe gh` and the Mac app.
 
+- **Web app: Skills and AGENTS.md.** Skills lists every skill on the hub
+  machine outside a plugin, with the Mac app's Harness and Source filters,
+  search, order and fold, the Harness links summary with a chip per skills
+  folder, and a detail page per skill: source, link chips, frontmatter,
+  SKILL.md and its files. AGENTS.md shows the shared file with each
+  harness's link state from `swe init --check`, and a project folder's
+  AGENTS.md and CLAUDE.md. Both are read only; linking, New skill and
+  editing stay in `swe` and the Mac app. `swe init --check --json` is now
+  built by `init.commands.check_document`, which the page calls in process.
+
+
+- **Web app: star, archive and restore harnesses.** The Harnesses page
+  can now change a harness's state, the web app's first writes: a star
+  button on each row, Archive with an inline form that needs a reason,
+  and Restore on archived rows. They post to `/v1/app/harness/<action>`
+  (device bearer and Origin check), which writes through the same
+  registry functions as `swe harness star|archive`, one at a time. The
+  row changes when the hub answers; a refusal shows in an error card.
+
 - **Web app: Compute.** What the starred harnesses run on the hub
   machine and what it costs it, read from Linux's `/proc` and `/sys`
   (and `nvidia-smi` when present): the totals line, the hub's CPU,

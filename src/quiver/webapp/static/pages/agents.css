@@ -1,0 +1,27 @@
+/* AGENTS.md page. Shares .sk-mark, .sk-text and .sk-button with skills.css. */
+.ag-tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--border); }
+.ag-tab { border: 0; background: transparent; padding: 0 0 8px; margin-bottom: -1px; font-size: 13px; font-weight: 500;
+  color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent; }
+.ag-tab:hover { color: var(--text-primary); }
+.ag-tab.selected { color: var(--text-primary); border-bottom-color: var(--text-primary); }
+.ag-strip { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px;
+  display: flex; flex-direction: column; gap: 8px; }
+.ag-strip p { margin: 0; }
+.ag-strip-row { display: flex; align-items: baseline; gap: 12px; }
+.ag-links { display: flex; flex-wrap: wrap; gap: 6px 14px; flex: 1; min-width: 0; }
+.ag-link { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.ag-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--text-muted); }
+.ag-dot.linked { background: var(--accent-fill); }
+.ag-dot.danger { background: var(--danger); }
+.ag-dot.fixes { background: var(--warning); }
+.ag-folder { flex-direction: row; align-items: center; gap: 12px; }
+.ag-folder .field { flex: 1 1 auto; height: 32px; }
+.ag-folder-icon { color: var(--text-secondary); display: grid; place-items: center; }
+.ag-folder-icon svg { width: 16px; height: 16px; }
+.sk-mono-title { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; overflow-wrap: anywhere; }
+.ag-text { max-height: calc(100vh - 340px); min-height: 160px; }
+@media (max-width: 720px) {
+  .ag-strip-row { flex-direction: column; gap: 6px; }
+  .ag-folder { flex-wrap: wrap; }
+  .ag-text { max-height: 70vh; }
+}
