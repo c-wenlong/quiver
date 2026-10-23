@@ -1,5 +1,4 @@
 import Foundation
-import LocalAuthentication
 import Security
 
 /// The network, through an ephemeral session that keeps nothing: no cookies,
@@ -89,30 +88,88 @@ public struct KeychainCLI: SecretReading {
     }
 }
 
-/// Quiver's own keychain items, written and read in-process through the
-/// Security framework.
-///
-/// `security add-generic-password` can take the value only through `-w`
-/// on its argv, where `ps` can see it — so writes happen here, never
-/// through `KeychainCLI`. For Quiver-owned items the in-process API is
-/// also the quiet one: an item this process wrote reads back without a
-/// prompt, while asking `security` for it may prompt. Claude Code's
-/// credentials stay on `KeychainCLI` for the inverse reason — `security`
-/// wrote them, so SecItem would prompt on every read.
-/// The three Security calls behind `SecItemKeychain`, as a seam tests
-/// fake. C functions are not `Sendable`-friendly to store directly, so
-/// each is a closure over the real call.
+/// The Security calls behind `SecItemKeychain`, as a seam tests fake. C
+/// functions are not `Sendable`-friendly to store directly, so each is a
+/// closure over the real call.
 struct SecItemCalls: Sendable {
     var copyMatching: @Sendable (CFDictionary, UnsafeMutablePointer<CFTypeRef?>) -> OSStatus
     var update: @Sendable (CFDictionary, CFDictionary) -> OSStatus
     var add: @Sendable (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus
     var delete: @Sendable (CFDictionary) -> OSStatus
+    /// Runs one call with the keychain's consent prompts allowed or not.
+    var interaction: @Sendable (_ allowed: Bool, _ call: () -> OSStatus) -> OSStatus
 
     static let live = SecItemCalls(
         copyMatching: { SecItemCopyMatching($0, $1) },
         update: { SecItemUpdate($0, $1) },
         add: { SecItemAdd($0, $1) },
-        delete: { SecItemDelete($0) })
+        delete: { SecItemDelete($0) },
+        interaction: { LegacyKeychainPrompts.run(allowed: $0, $1) })
+}
+
+/// The legacy login keychain's switch for consent prompts.
+///
+/// Quiver's items live in the legacy (file-based) keychain: the Data
+/// Protection keychain needs a `keychain-access-groups` entitlement that
+/// Quiver's builds do not carry, and `SecItemAdd` there answers
+/// errSecMissingEntitlement. On a legacy item neither
+/// `kSecUseAuthenticationUIFail` nor an `LAContext` with
+/// `interactionNotAllowed` stops the "wants to use your confidential
+/// information" dialog; Apple's SecItem shim applies both to Data
+/// Protection items only. Checked on macOS 26.5: both reads hung on the
+/// dialog. With this switch off, the same read fails at once with
+/// errSecAuthFailed.
+///
+/// `SecKeychainSetUserInteractionAllowed` is deprecated with the rest of
+/// SecKeychain but is still the only switch for that keychain, so it is
+/// looked up at run time instead of called, which keeps the build free of
+/// deprecation warnings. It is process-wide, so every call runs under one
+/// lock: a Save the person just clicked must not land while a read has
+/// prompts off, and must not turn them back on under a read.
+enum LegacyKeychainPrompts {
+    private typealias Get = @convention(c) (UnsafeMutablePointer<DarwinBoolean>) -> OSStatus
+    private typealias Set = @convention(c) (DarwinBoolean) -> OSStatus
+
+    private struct Calls {
+        var get: Get
+        var set: Set
+    }
+
+    /// Resolved once; nil when this macOS no longer has the pair. Security
+    /// is already loaded, so the dlopen only takes a handle.
+    private static let calls: Calls? = {
+        guard let handle = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY),
+              let get = dlsym(handle, "SecKeychainGetUserInteractionAllowed"),
+              let set = dlsym(handle, "SecKeychainSetUserInteractionAllowed")
+        else { return nil }
+        return Calls(get: unsafeBitCast(get, to: Get.self), set: unsafeBitCast(set, to: Set.self))
+    }()
+
+    /// Held across a call that may prompt, so a lock that sleeps rather
+    /// than spins.
+    private static let lock = NSLock()
+
+    /// Runs `call` with prompts allowed or not, then puts the switch back.
+    /// Without the switch (a future macOS) the call runs as it is.
+    static func run(allowed: Bool, _ call: () -> OSStatus) -> OSStatus {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !allowed, let calls else { return call() }
+        var before = DarwinBoolean(true)
+        guard calls.get(&before) == errSecSuccess else { return call() }
+        _ = calls.set(false)
+        defer { _ = calls.set(before) }
+        return call()
+    }
+
+    /// The switch's current state; nil without it. For tests.
+    static func isAllowed() -> Bool? {
+        lock.lock()
+        defer { lock.unlock() }
+        var state = DarwinBoolean(true)
+        guard let calls, calls.get(&state) == errSecSuccess else { return nil }
+        return state.boolValue
+    }
 }
 
 /// Quiver's own service keys, through Security.framework.
@@ -120,12 +177,14 @@ struct SecItemCalls: Sendable {
 /// Writing through `security` (`add-generic-password -w`) would put the
 /// value on argv, where `ps` can see it; SecItem calls carry it in
 /// memory. The reverse of KeychainCLI's read caveat applies too: items
-/// the app writes here read back in-process without a prompt.
+/// the app writes here read back in-process without a prompt, for as
+/// long as the app keeps the same signing identity.
 ///
-/// Reads pass an `LAContext` with `interactionNotAllowed`: an item written by
-/// `security` before the switch (or a locked keychain) can wait forever
-/// on a consent prompt, and a page load must not hang on it. Such a read
-/// answers nil.
+/// Reads run with `LegacyKeychainPrompts` off. An item Quiver is not on
+/// the access list of (one written by `security` before Quiver moved to
+/// SecItem, or by an ad-hoc build whose signature has since changed), or
+/// a locked keychain, would otherwise put up a consent dialog that takes
+/// focus and can wait forever under a page load. Such a read answers nil.
 ///
 /// Writes and deletes are explicit user actions — the Save or Remove a
 /// person just clicked — so they may prompt. One consent puts Quiver on
@@ -145,7 +204,7 @@ public struct SecItemKeychain: SecretStoring {
         var query = Self.query(service: service, account: account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
-        let status = calls.copyMatching(query as CFDictionary, &item)
+        let status = calls.interaction(false) { calls.copyMatching(query as CFDictionary, &item) }
         guard status == errSecSuccess, let data = item as? Data else { return nil }
         return String(data: data, encoding: .utf8)
     }
@@ -155,15 +214,16 @@ public struct SecItemKeychain: SecretStoring {
     public func setGenericPassword(service: String, account: String, value: String) async throws {
         // Explicit save: the consent prompt is acceptable here, and one
         // consent on an item written by `security` grants Quiver access.
-        var query = Self.query(service: service, account: account, interactive: true)
+        var query = Self.query(service: service, account: account)
         let data = Data(value.utf8)
-        switch calls.update(query as CFDictionary,
-                            [kSecValueData as String: data] as CFDictionary) {
+        switch calls.interaction(true, {
+            calls.update(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        }) {
         case errSecSuccess:
             return
         case errSecItemNotFound:
             query[kSecValueData as String] = data
-            try Self.check(calls.add(query as CFDictionary, nil))
+            try Self.check(calls.interaction(true) { calls.add(query as CFDictionary, nil) })
         case let status:
             throw Self.error(status)
         }
@@ -171,29 +231,17 @@ public struct SecItemKeychain: SecretStoring {
 
     /// Removes the item; one that was never there is already removed.
     public func deleteGenericPassword(service: String, account: String) async throws {
-        let status = calls.delete(Self.query(service: service, account: account,
-                                             interactive: true) as CFDictionary)
+        let query = Self.query(service: service, account: account)
+        let status = calls.interaction(true) { calls.delete(query as CFDictionary) }
         if status != errSecItemNotFound {
             try Self.check(status)
         }
     }
 
-    private static func query(service: String, account: String,
-                              interactive: Bool = false) -> [String: Any] {
-        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                    kSecAttrService as String: service,
-                                    kSecAttrAccount as String: account]
-        if !interactive {
-            // Never put up a consent prompt on a read: it can wait
-            // forever while a page is trying to load. A context that may
-            // not interact is Apple's replacement for the deprecated
-            // kSecUseAuthenticationUIFail; the read fails with
-            // errSecInteractionNotAllowed instead of asking.
-            let context = LAContext()
-            context.interactionNotAllowed = true
-            query[kSecUseAuthenticationContext as String] = context
-        }
-        return query
+    private static func query(service: String, account: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: service,
+         kSecAttrAccount as String: account]
     }
 
     /// What a failed SecItem call throws: `commandFailed` with Security's
