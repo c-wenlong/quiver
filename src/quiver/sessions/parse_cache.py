@@ -31,6 +31,10 @@ a listing. Parsers called anywhere else compute every time, exactly as
 before. When the block closes, entries for files a harness's parser no
 longer visited are pruned, but only for harnesses whose parser ran to
 completion, so an ``--agent`` filtered run leaves the others alone.
+
+``standalone()`` opens the same kind of store in a file of its own, with
+its own deciding modules, for a caller outside a listing (the status
+column's tail reads). Its entries go only once their file is gone.
 """
 
 from __future__ import annotations
@@ -60,19 +64,20 @@ _FINGERPRINT_MODULES = (
 
 _local = threading.local()
 _fingerprint: str | None = None
+_digests: dict[tuple[str, ...], str] = {}
 
 
-def _source_fingerprint() -> str:
-    """Format version, package version and a hash of the deciding modules."""
-    global _fingerprint
-    if _fingerprint is not None:
-        return _fingerprint
+def _modules_digest(modules: tuple[str, ...]) -> str:
+    """Format version, package version and a hash of ``modules``' source."""
+    cached = _digests.get(modules)
+    if cached is not None:
+        return cached
     import importlib
 
     from quiver import __version__
 
     digest = hashlib.sha256()
-    for name in _FINGERPRINT_MODULES:
+    for name in modules:
         try:
             module = importlib.import_module(name)
             with open(module.__file__, "rb") as fh:
@@ -81,7 +86,17 @@ def _source_fingerprint() -> str:
             # No readable source (a zipapp, a frozen build): the package
             # version alone still separates releases.
             digest.update(f"nosrc:{name}".encode())
-    _fingerprint = f"{FORMAT_VERSION}:{__version__}:{digest.hexdigest()[:16]}"
+    value = _digests[modules] = (
+        f"{FORMAT_VERSION}:{__version__}:{digest.hexdigest()[:16]}"
+    )
+    return value
+
+
+def _source_fingerprint() -> str:
+    """The parse cache's version: its deciding modules' digest."""
+    global _fingerprint
+    if _fingerprint is None:
+        _fingerprint = _modules_digest(_FINGERPRINT_MODULES)
     return _fingerprint
 
 
@@ -97,9 +112,9 @@ def _signature(st: os.stat_result) -> list[int]:
 
 
 class _Store:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, fingerprint: str | None = None) -> None:
         self.path = path
-        self.fingerprint = _source_fingerprint()
+        self.fingerprint = fingerprint or _source_fingerprint()
         self.entries: dict[str, dict[str, list]] = {}
         self.touched: dict[str, set[str]] = {}
         # Harnesses whose parser ran to completion in this block. Only their
@@ -194,6 +209,24 @@ class _Store:
             pass
 
 
+class _FileStore(_Store):
+    """A store whose entries last as long as their files do.
+
+    For a caller that looks up whatever subset of files it was handed
+    (``swe session 10``, one remote row), so "not visited this run" says
+    nothing. An entry goes once its file no longer exists, checked only
+    when the cache is being rewritten anyway.
+    """
+
+    def prune(self) -> None:
+        if not self.dirty:
+            return
+        for namespace, files in self.entries.items():
+            seen = self.touched.get(namespace, set())
+            for p in [p for p in files if p not in seen and not os.path.exists(p)]:
+                del files[p]
+
+
 def _active() -> _Store | None:
     return getattr(_local, "store", None)
 
@@ -221,6 +254,28 @@ def activate(home: Path | None = None):
         yield store
     finally:
         _local.store = None
+        store.save()
+
+
+@contextmanager
+def standalone(path_for: Callable[[], Path], modules: tuple[str, ...]):
+    """A cache file of its own, for ``lookup_in``, outside ``activate()``.
+
+    ``path_for()`` names the file; ``modules`` are the ones whose code
+    decides the cached values, so editing any of them discards every
+    entry. Entries are pruned only once their file is gone. Yields
+    ``None`` (look-ups then just compute) when the path cannot be
+    resolved.
+    """
+    try:
+        store = _FileStore(path_for(), _modules_digest(modules))
+    except Exception:
+        yield None
+        return
+    store.load()
+    try:
+        yield store
+    finally:
         store.save()
 
 
@@ -267,7 +322,18 @@ def lookup(
     Outside ``activate()``, or when the file cannot be stat'ed, this is
     just ``compute()``.
     """
-    store = _active()
+    return lookup_in(_active(), namespace, path, compute, st, valid)
+
+
+def lookup_in(
+    store: _Store | None,
+    namespace: str,
+    path: str,
+    compute: Callable[[], Any],
+    st: os.stat_result | None = None,
+    valid: Callable[[Any], bool] | None = None,
+) -> Any:
+    """``lookup`` against ``store`` (one from ``standalone``); ``None`` computes."""
     if store is None:
         return compute()
     if st is None:
