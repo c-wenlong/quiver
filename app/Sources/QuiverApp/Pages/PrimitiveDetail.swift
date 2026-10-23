@@ -333,6 +333,10 @@ struct PartsCard: View {
     var onChanged: () -> Void
 
     @State private var tree: PrimitiveTree?
+    /// The tree's paths that stay inside `root` once symlinks resolve
+    /// (`PrimitiveTree.pathsInside`), worked out with the walk off the
+    /// main actor: only these may be trashed or edited.
+    @State private var inside: Set<String> = []
     /// The running tree walk, kept so a new reload cancels it before a
     /// stale tree can land over a newer one.
     @State private var treeTask: Task<Void, Never>?
@@ -399,7 +403,7 @@ struct PartsCard: View {
             previewable = nil
         }) {
             if let selected {
-                PrimitiveFileSheet(path: selected, root: root, editable: editable,
+                PrimitiveFileSheet(path: selected, editable: editable && inside.contains(selected),
                                    previewable: previewable, document: drafts.documents[selected],
                                    drafts: drafts, windowSize: sheetSize, onSaved: onChanged)
             }
@@ -507,7 +511,7 @@ struct PartsCard: View {
             .buttonStyle(.plain)
             // A symlink inside the folder that resolves outside it is
             // not the user's to trash.
-            if editable, PrimitiveOwnership.isInside(entry.path, root: root.path) {
+            if editable, inside.contains(entry.path) {
                 Button { trashEntry = entry } label: {
                     Image(systemName: "trash").font(.system(size: 11))
                 }
@@ -532,13 +536,19 @@ struct PartsCard: View {
     private func reload() {
         // The walk is disk work, and a big marketplace tree would freeze
         // the page if it ran here: it goes off the main actor like the
-        // previewability check in `.task(id: selected)`.
+        // previewability check in `.task(id: selected)`. Which paths stay
+        // inside the folder is worked out with it: `realpath` on a synced
+        // or stale folder can block, so it runs on a GCD queue.
         treeTask?.cancel()
         let root = root
         treeTask = Task {
-            let walked = await Task.detached { PrimitiveTree(root: root) }.value
+            let (walked, owned) = await offMain {
+                let tree = PrimitiveTree(root: root)
+                return (tree, tree.pathsInside(root))
+            }
             guard !Task.isCancelled else { return }
             tree = walked
+            inside = owned
             if let selected {
                 let all = walked.sections.flatMap(\.entries).flatMap { [$0] + $0.children }
                 if !all.contains(where: { $0.previewPath == selected }) { self.selected = nil }
@@ -607,7 +617,9 @@ struct NewPartMenu: View {
 /// survive close and reopen; closing with unsaved changes asks first.
 struct PrimitiveFileSheet: View {
     var path: String
-    var root: URL
+    /// The file may be edited: its folder is the user's and the file stays
+    /// inside it once symlinks resolve, which the parts card works out off
+    /// the main actor.
     var editable: Bool
     /// nil while the off-actor size and type check still runs.
     var previewable: Bool?
@@ -624,9 +636,7 @@ struct PrimitiveFileSheet: View {
     @State private var saveError: String?
 
     private var url: URL { URL(fileURLWithPath: path) }
-    private var fileEditable: Bool {
-        editable && PrimitiveOwnership.isInside(path, root: root.path)
-    }
+    private var fileEditable: Bool { editable }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -727,43 +737,60 @@ struct PluginDetailView: View {
     @State private var drafts = PrimitiveDrafts()
     @State private var leaving = false
     @State private var leaveError: String?
+    /// The plugin's folders, worked out off the main actor, with the ref
+    /// they were worked out for; nil until the first lands.
+    @State private var found: (ref: String, folders: PluginFolders)?
+
+    /// What `.task(id:)` recomputes the folders for: a catalog reload can
+    /// move the plugin's folder or its marketplace's registration.
+    private struct FolderInputs: Equatable {
+        var plugin: CatalogPlugin
+        var market: PluginMarketplace
+        var home: URL
+    }
 
     private var plugin: CatalogPlugin { entry.row.plugin }
-    private var editableDir: URL? {
-        PrimitiveOwnership.pluginDirectory(plugin, in: market, home: home)
+    /// The folders for the plugin on screen; nil while they are worked
+    /// out, so a result for a plugin opened before never shows.
+    private var folders: PluginFolders? {
+        guard let found, found.ref == plugin.ref else { return nil }
+        return found.folders
     }
-    private var dir: URL? {
-        if let editableDir { return editableDir }
-        // No editable folder: an installed or cached copy still shows its
-        // files, read-only.
-        let fm = FileManager.default
-        return plugin.folders
-            .first { fm.fileExists(atPath: $0) }
-            .map { URL(fileURLWithPath: $0) }
-    }
-    private var editable: Bool { editableDir != nil }
-    private var manifest: URL? {
-        editableDir.map { $0.appending(path: ".claude-plugin/plugin.json") }
-            .flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
-    }
+    private var dir: URL? { folders?.dir }
+    private var editable: Bool { folders?.editable ?? false }
+    private var manifest: URL? { folders?.manifest }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let leaveError {
                 ErrorCard(message: leaveError)
             }
-            if !editable { lockNote }
+            if folders != nil, !editable { lockNote }
             header
-            if let manifest { ManifestCard(url: manifest, onSaved: reload) }
-            if let dir {
-                PartsCard(root: dir, editable: editable, kinds: [.skill, .command, .agent],
-                          drafts: drafts, onChanged: reload)
+            if folders == nil {
+                LoadingCard(text: "Reading the plugin's folder…")
             } else {
-                Card {
-                    Text("This plugin has no local folder: its files come from a checkout swe manages.")
-                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                if let manifest { ManifestCard(url: manifest, onSaved: reload) }
+                if let dir {
+                    PartsCard(root: dir, editable: editable, kinds: [.skill, .command, .agent],
+                              drafts: drafts, onChanged: reload)
+                } else {
+                    Card {
+                        Text("This plugin has no local folder: its files come from a checkout swe manages.")
+                            .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                    }
                 }
             }
+        }
+        // `realpath` and `fileExists` on a synced or stale folder can
+        // block, so the folders are worked out on a GCD queue (#580). A
+        // new plugin or catalog reload cancels this task, and a cancelled
+        // task's result is dropped.
+        .task(id: FolderInputs(plugin: plugin, market: market, home: home)) {
+            let plugin = plugin, market = market, home = home
+            let worked = await offMain { PluginFolders(plugin: plugin, market: market, home: home) }
+            guard !Task.isCancelled else { return }
+            found = (plugin.ref, worked)
         }
         .onAppear {
             name = app.primitiveNames.name(forPlugin: plugin.ref) ?? plugin.displayName ?? plugin.name
@@ -929,22 +956,25 @@ struct SkillDetailView: View {
     @State private var drafts = PrimitiveDrafts()
     @State private var leaving = false
     @State private var leaveError: String?
+    /// The skill's folders, worked out off the main actor, with the path
+    /// they were worked out for; nil until the first lands.
+    @State private var found: (path: String, folders: SkillFolders)?
 
     private var root: URL { URL(fileURLWithPath: skill.path) }
-    private var editable: Bool {
-        PrimitiveOwnership.isEditable(skillPath: skill.path, home: home)
+    /// The folders for the skill on screen; nil while they are worked
+    /// out, so a result for a skill opened before never shows.
+    private var folders: SkillFolders? {
+        guard let found, found.path == skill.path else { return nil }
+        return found.folders
     }
-    private var skillFile: URL? {
-        let file = root.appending(path: "SKILL.md")
-        return FileManager.default.fileExists(atPath: file.path) ? file : nil
-    }
+    private var editable: Bool { folders?.editable ?? false }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let leaveError {
                 ErrorCard(message: leaveError)
             }
-            if !editable {
+            if folders != nil, !editable {
                 PrimitiveLockNote(text: "Only skills that live under ~/.quiver can be edited, so \(skill.name) is read-only.")
             }
             Card {
@@ -966,12 +996,24 @@ struct SkillDetailView: View {
                     if let links { links }
                 }
             }
-            if let skillFile {
-                FrontmatterCard(url: skillFile,
-                                editable: editable && PrimitiveOwnership.isInside(skillFile.path, root: root.path),
-                                onSaved: reload)
+            if let folders {
+                if let skillFile = folders.skillFile {
+                    FrontmatterCard(url: skillFile, editable: folders.skillFileEditable, onSaved: reload)
+                }
+                PartsCard(root: root, editable: editable, drafts: drafts, onChanged: reload)
+            } else {
+                LoadingCard(text: "Reading the skill's folder…")
             }
-            PartsCard(root: root, editable: editable, drafts: drafts, onChanged: reload)
+        }
+        // `realpath` and `fileExists` on a synced or stale folder can
+        // block, so the folders are worked out on a GCD queue (#580). A
+        // new skill cancels this task, and a cancelled task's result is
+        // dropped.
+        .task(id: [skill.path, home.path]) {
+            let path = skill.path, home = home
+            let worked = await offMain { SkillFolders(skillPath: path, home: home) }
+            guard !Task.isCancelled else { return }
+            found = (path, worked)
         }
         .onChange(of: app.navReselects) { leave() }
         // Invisible, but its shortcut goes back: reselecting the Skills
