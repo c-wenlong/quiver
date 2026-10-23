@@ -15,8 +15,9 @@ import UserNotifications
 @MainActor
 @Observable
 final class GitHubNotifier {
-    /// Off in Settings means banners stop; polling still runs so the
-    /// inbox, badge and board invalidations stay live.
+    /// Off until switched on in Settings, and switched off again when the
+    /// Inbox page is hidden. Off means banners stop; polling still runs so
+    /// the inbox, badge and board invalidations stay live.
     var bannersEnabled: Bool {
         didSet { UserDefaults.standard.set(bannersEnabled, forKey: "githubNotifications") }
     }
@@ -44,7 +45,7 @@ final class GitHubNotifier {
         self.model = model
         self.interval = interval
         self.post = post ?? { notes in await Self.postToSystem(notes) }
-        bannersEnabled = UserDefaults.standard.object(forKey: "githubNotifications") as? Bool ?? true
+        bannersEnabled = UserDefaults.standard.object(forKey: "githubNotifications") as? Bool ?? false
         stateFile = quiver.appending(path: "cache/github-notified.json")
         let saved = (try? Data(contentsOf: stateFile))
             .flatMap { try? JSONDecoder().decode(State.self, from: $0) }

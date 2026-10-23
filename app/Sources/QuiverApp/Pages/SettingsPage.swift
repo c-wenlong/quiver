@@ -214,9 +214,13 @@ private struct SettingsSectionView: View {
                 SettingSwitch(title: "Notify about limits", isOn: $limits.notifyEnabled)
             }
             SettingsDivider()
+            let inboxHidden = app.sidebar.isHidden(.inbox)
             SettingRow(title: "Notify about GitHub",
-                       detail: "New inbox notifications banner while the app runs; a click opens the repo's board.") {
+                       detail: "New inbox notifications banner while the app runs; a click opens the repo's board. Hiding Inbox in Sidebar turns this off.",
+                       warning: inboxHidden ? "Inbox is hidden in Sidebar. Show it to turn this on." : nil) {
+                // Banners open the Inbox, so they stay off while it is hidden.
                 SettingSwitch(title: "Notify about GitHub", isOn: $githubNotify.bannersEnabled)
+                    .disabled(inboxHidden)
             }
             SettingsDivider()
             SettingRow(title: "Refresh only what failed for",
