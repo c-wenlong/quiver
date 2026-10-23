@@ -40,7 +40,7 @@ private struct SessionsContent: View {
         DevinKeyHint.shows(
             // Cloud-only users count too: their stored sessions stop
             // updating once the key is gone.
-            hasDevin: model.rows.contains { DevinKeyHint.isDevin(harness: $0.session.harness) }
+            hasDevin: model.harnesses.contains { DevinKeyHint.isDevin(harness: $0) }
                 || app.others.cliInstalled["devin"] == true,
             keySet: app.services.statuses["DEVIN_API_KEY"]?.isSet,
             dismissed: devinKeyHintDismissed)
@@ -120,9 +120,10 @@ private struct SessionsContent: View {
             await model.loadIfStale(for: app.swePath)
             await keyStatus
         }
-        // New usage from a scan, without listing the sessions again.
+        // New usage from a scan, without listing the sessions again. A
+        // visit with no scan since the last one reads nothing.
         .task(id: app.overview?.completedScans) {
-            await model.refreshUsage(ledgerScanned: (app.overview?.completedScans ?? 0) > 0)
+            await model.refreshUsage(afterScans: app.overview?.completedScans ?? 0)
         }
         .sheet(item: $detail) { row in
             SessionDetail(row: row, resume: { resume(row) }, close: { detail = nil })

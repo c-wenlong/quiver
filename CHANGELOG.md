@@ -211,6 +211,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checks `workspace`'s columns first and joins it only as a path fallback
   when `directory` is there (older opencode, Kilo today).
 
+- **Quiver opens the Sessions page faster.** On a 2,450-session history a
+  switch to Sessions held the main thread for about 155 ms; it now takes
+  about 90 ms. The page used to filter every session several times per
+  redraw and reread the ledger on every visit. It now keeps the filtered
+  list, totals, day groups and filter choices until the sessions or
+  filters change, and rereads usage only after a new scan.
+
 - **Phone sends return immediately instead of hanging for the turn.**
   `POST /v1/sessions/{key}/message` now answers `202` and runs the send
   on a per-session worker: `queue` mode waits for the session to go idle
