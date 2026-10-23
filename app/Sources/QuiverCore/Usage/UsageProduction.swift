@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 /// The network, through an ephemeral session that keeps nothing: no cookies,
@@ -121,7 +122,7 @@ struct SecItemCalls: Sendable {
 /// memory. The reverse of KeychainCLI's read caveat applies too: items
 /// the app writes here read back in-process without a prompt.
 ///
-/// Reads ask for `kSecUseAuthenticationUIFail`: an item written by
+/// Reads pass an `LAContext` with `interactionNotAllowed`: an item written by
 /// `security` before the switch (or a locked keychain) can wait forever
 /// on a consent prompt, and a page load must not hang on it. Such a read
 /// answers nil.
@@ -184,8 +185,13 @@ public struct SecItemKeychain: SecretStoring {
                                     kSecAttrAccount as String: account]
         if !interactive {
             // Never put up a consent prompt on a read: it can wait
-            // forever while a page is trying to load.
-            query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
+            // forever while a page is trying to load. A context that may
+            // not interact is Apple's replacement for the deprecated
+            // kSecUseAuthenticationUIFail; the read fails with
+            // errSecInteractionNotAllowed instead of asking.
+            let context = LAContext()
+            context.interactionNotAllowed = true
+            query[kSecUseAuthenticationContext as String] = context
         }
         return query
     }

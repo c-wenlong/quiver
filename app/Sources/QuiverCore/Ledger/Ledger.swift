@@ -1417,7 +1417,8 @@ public actor Ledger {
         // resolution or a symlinked root counts off by the link's span.
         var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
         let resolvedRoot = realpath(root.path, &buffer) != nil
-            ? URL(fileURLWithPath: String(cString: buffer)) : root
+            ? URL(fileURLWithPath: String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) },
+                                          as: UTF8.self)) : root
         // Antigravity's transcript chain lives under `.system_generated`, so
         // its row keeps hidden entries; every other source keeps skipping.
         var options: FileManager.DirectoryEnumerationOptions = []

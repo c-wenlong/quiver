@@ -412,7 +412,7 @@ struct SourceSettingsRow: View {
                 Text(row.title).font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
                 Spacer(minLength: 16)
                 SettingSwitch(title: "Show \(row.title)",
-                              isOn: Binding(get: { shown }, set: setShown))
+                              isOn: Binding(get: { shown }, set: { setShown($0) }))
             }
             .padding(.vertical, 12)
             if !row.windows.isEmpty {

@@ -151,7 +151,7 @@ private struct TotalCard: View {
     @State private var unfocus: Task<Void, Never>?
     @State private var size: CGSize = .zero
 
-    static let space = "total-card"
+    nonisolated static let space = "total-card"
     /// The width the marbles clear around the figures: the widest line
     /// (a total like "35.3B" at display size) with room either side.
     static let clearWidth: CGFloat = 380
