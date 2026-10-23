@@ -4,11 +4,12 @@ import Testing
 
 @Suite struct SettingsSectionTests {
     @Test func subNavIsGroupedAsApproved() {
-        #expect(SettingsGroup.allCases.map(\.title) == ["App", "Usage", "Advanced"])
-        #expect(SettingsGroup.app.sections == [.general, .preferences, .sidebar, .notifications, .updates, .github, .remote])
+        #expect(SettingsGroup.allCases.map(\.title) == ["App", "Usage", "Integrations", "Advanced"])
+        #expect(SettingsGroup.app.sections == [.general, .sidebar, .notifications])
         #expect(SettingsGroup.usage.sections == [.providers, .services])
+        #expect(SettingsGroup.integrations.sections == [.github, .remote])
         #expect(SettingsGroup.advanced.sections == [.paths, .doctor, .experimental])
-        #expect(SettingsGroup.order == [.general, .preferences, .sidebar, .notifications, .updates, .github, .remote, .providers, .services, .paths, .doctor, .experimental])
+        #expect(SettingsGroup.order == [.general, .sidebar, .notifications, .providers, .services, .github, .remote, .paths, .doctor, .experimental])
     }
 
     @Test func everySectionHasATitleSymbolAndADescription() {
@@ -21,14 +22,13 @@ import Testing
     }
 
     @Test func arrowKeysWalkTheSubNavAndStopAtTheEnds() {
-        #expect(SettingsSection.general.step(1) == .preferences)
-        #expect(SettingsSection.preferences.step(1) == .sidebar)
+        #expect(SettingsSection.general.step(1) == .sidebar)
         #expect(SettingsSection.sidebar.step(1) == .notifications)
-        #expect(SettingsSection.notifications.step(1) == .updates)
-        #expect(SettingsSection.updates.step(1) == .github)
+        #expect(SettingsSection.notifications.step(1) == .providers)
+        #expect(SettingsSection.services.step(1) == .github)
         #expect(SettingsSection.github.step(1) == .remote)
-        #expect(SettingsSection.remote.step(1) == .providers)
-        #expect(SettingsSection.providers.step(-1) == .remote)
+        #expect(SettingsSection.remote.step(1) == .paths)
+        #expect(SettingsSection.github.step(-1) == .services)
         #expect(SettingsSection.general.step(-1) == .general)
         #expect(SettingsSection.paths.step(1) == .doctor)
         #expect(SettingsSection.doctor.step(1) == .experimental)
@@ -38,6 +38,9 @@ import Testing
     @Test func aSavedSectionRestoresAndAnUnknownOneFallsBackToGeneral() {
         #expect(SettingsSection(saved: "paths") == .paths)
         #expect(SettingsSection(saved: "appearance") == .general)
+        // Preferences and Updates folded into General.
+        #expect(SettingsSection(saved: "preferences") == .general)
+        #expect(SettingsSection(saved: "updates") == .general)
         #expect(SettingsSection(saved: nil) == .general)
     }
 

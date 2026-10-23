@@ -150,9 +150,9 @@ exceptions.
   again.
 - `QUIVER_BUILD_DIR` overrides where the bundle lands (default
   `app/build`); the app ends up at `$QUIVER_BUILD_DIR/Quiver.app`.
-  Settings > Updates uses this so a rebuild never overwrites the running
+  Settings > General > Updates uses this so a rebuild never overwrites the running
   copy.
 - `QUIVER_CHANNEL=dev|prod` (default `dev`) stamps `QuiverChannel` in the
   app's Info.plist. Dev builds also stamp `QuiverCommit`,
   `QuiverSourcePath` and `QuiverDirty` from the checkout, which is what
-  Settings > Updates compares against HEAD.
+  Settings > General > Updates compares against HEAD.
