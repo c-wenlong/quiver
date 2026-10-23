@@ -140,10 +140,69 @@ def _blocks_text(blocks) -> str:
     )
 
 
+def _claude_transcript_index() -> dict:
+    """``<id>.jsonl`` -> every ``~/.claude/projects/*/<id>.jsonl``.
+
+    Built once per ``session_statuses`` call: a glob per row re-listed every
+    project dir for every session (726 rows x 241 dirs was 175k ``lstat``
+    calls, most of a listing's wall time). Same matches and order as that
+    glob: hidden project dirs are skipped, symlinked ones followed.
+    """
+    root = os.path.expanduser("~/.claude/projects")
+    out: dict = {}
+    try:
+        with os.scandir(root) as projects:
+            for project in projects:
+                if project.name.startswith("."):
+                    continue
+                try:
+                    if not project.is_dir():
+                        continue
+                    with os.scandir(project.path) as entries:
+                        for entry in entries:
+                            if entry.name.endswith(".jsonl"):
+                                out.setdefault(entry.name, []).append(
+                                    os.path.join(root, project.name, entry.name)
+                                )
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return out
+
+
+def _cursor_transcript_index() -> dict:
+    """Session id -> ``~/.cursor/projects/*/agent-transcripts`` dirs naming it."""
+    root = os.path.expanduser("~/.cursor/projects")
+    out: dict = {}
+    try:
+        with os.scandir(root) as projects:
+            for project in projects:
+                if project.name.startswith("."):
+                    continue
+                transcripts = os.path.join(root, project.name, "agent-transcripts")
+                try:
+                    with os.scandir(transcripts) as entries:
+                        for entry in entries:
+                            out.setdefault(entry.name, []).append(transcripts)
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return out
+
+
+def _indexed(ctx: dict, key: str, build):
+    index = ctx.get(key)
+    if index is None:
+        index = ctx[key] = build()
+    return index
+
+
 def _probe_claude(session: Session, ctx: dict):
     """(phase, last-assistant-text) from the transcript's decisive tail record."""
-    root = os.path.expanduser("~/.claude/projects")
-    hits = glob.glob(os.path.join(root, "*", session.session_id + ".jsonl"))
+    index = _indexed(ctx, "claude_transcripts", _claude_transcript_index)
+    hits = list(index.get(session.session_id + ".jsonl", ()))
     if not hits:
         return None, ""
     # A session resumed from another cwd leaves a copy per project dir;
@@ -201,11 +260,16 @@ def _probe_claude(session: Session, ctx: dict):
 
 def _probe_cursor(session: Session, ctx: dict):
     """(phase, text) from the terminal ``turn_ended`` record."""
-    root = os.path.expanduser("~/.cursor/projects")
     sid = session.session_id
-    hits = glob.glob(
-        os.path.join(root, "*", "agent-transcripts", sid, sid + ".jsonl")
-    )
+    index = _indexed(ctx, "cursor_transcripts", _cursor_transcript_index)
+    hits = [
+        path
+        for path in (
+            os.path.join(transcripts, sid, sid + ".jsonl")
+            for transcripts in index.get(sid, ())
+        )
+        if os.path.lexists(path)
+    ]
     if not hits:
         return None, ""
     def walk(records):

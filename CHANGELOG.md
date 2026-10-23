@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe session` stops re-reading unchanged transcripts.** A per-file parse
+  cache (`~/.quiver/cache/session_parse_cache.json`) keeps what each
+  transcript said, keyed by path and stat signature, so a listing re-reads
+  only files that changed. Sidecars (codex session index and thread store,
+  cursor `meta.json`, freebuff `run-state.json`) are still honoured on every
+  run, and any code change discards the cache. The status probes and
+  transcript lookups also stop globbing the whole harness root once per
+  session. On a machine with 1,143 sessions, `swe session 100000 --json`
+  went from about 2.8 s to 1.7 s cold and 0.55 s warm.
+
 - **Pair a phone by Tailscale identity, no QR needed.** The PWA's pair
   button posts `/v1/pair/request`; the hub `tailscale whois`es the peer
   and shows a 6-digit code the phone displays while it polls. A second
