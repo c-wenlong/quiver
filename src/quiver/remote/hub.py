@@ -18,7 +18,6 @@ import json
 import os
 import queue
 import secrets
-import shutil
 import signal
 import socket
 import sqlite3
@@ -47,7 +46,6 @@ from quiver.remote import (
     usage as usage_mod,
 )
 from quiver.remote.journal import Journal
-from quiver.sessions.resume import launch_tool_name
 from quiver.webapp import api as webapp_api, static as webapp_static
 
 DEFAULT_PORT = 8477
@@ -85,6 +83,9 @@ MAX_SEND_BACKLOG = 20
 # than this — the journal trims at ~4k records and silently dropped
 # commands are worse than an honest 429.
 MAX_SAT_PENDING = 2000
+
+# /v1/folders lists at most this many subfolders of one folder.
+FOLDER_LIST_CAP = 500
 
 # A launch the phone started stays answerable at /v1/launches/<id> this
 # long; past it the tmux pane has long since been adopted or abandoned.
@@ -212,6 +213,19 @@ class HubState:
             if entry is not None and entry["state"] == "pending":
                 entry.update(fields)
 
+    def _settle_untracked(self, launch_id: str) -> None:
+        """A satellite started a harness swe can't read sessions of: no
+        session will ever name this launch, so say so now."""
+        with self._launch_lock:
+            entry = dict(self.launches.get(launch_id) or {})
+        row = catalog_mod.load_machines(self.home).get(entry.get("machine"))
+        if entry and entry["harness"] in (row or {}).get(
+                "untracked_harnesses", []):
+            self.settle_launch(launch_id, state="untracked", note=(
+                f"{entry['harness']} is running under tmux, but swe can't "
+                f"read its sessions, so there's no chat to open"
+            ))
+
     def launch_view(self, launch_id: str) -> dict | None:
         """``GET /v1/launches/<id>``: started only once the catalog has
         the row, so the phone can open the chat straight away."""
@@ -258,6 +272,8 @@ class HubState:
                 self.settle_launch(
                     lid, state="failed", note=str(data.get("note") or "")
                 )
+            elif lid and data.get("op") == "launch":
+                self._settle_untracked(lid)
         written = self.journal.append(key, event)
         self.bus.publish(key, written)
         if key != GLOBAL_KEY:
@@ -404,6 +420,7 @@ class HubState:
                 }
                 self.catalog.refresh()
                 self._adopt_launches()
+                self._refresh_launchable()
                 # Ownership can change outside HTTP — `swe remote
                 # attach`, pending adoption, dead-tmux pruning — and the
                 # phone needs the event either way.
@@ -422,6 +439,20 @@ class HubState:
             except Exception:
                 pass
             self._stop.wait(catalog_mod.REFRESH_INTERVAL_S)
+
+    def _refresh_launchable(self) -> None:
+        """Keep this machine's ``launchable`` current: Provider visibility
+        and the registry can change while the hub runs."""
+        launchable = catalog_mod.launchable_harnesses()
+        fields = {
+            "launchable": [item["name"] for item in launchable],
+            "harness_names": catalog_mod.harness_names(launchable),
+            "untracked_harnesses": catalog_mod.untracked(launchable),
+        }
+        if all(self.machine.get(k) == v for k, v in fields.items()):
+            return
+        self.machine.update(fields)
+        catalog_mod.upsert_machine(self.home, {"id": self.machine_id, **fields})
 
     def _adopt_launches(self) -> None:
         adopted = supervise.adopt_pending(
@@ -898,6 +929,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(200, view)
             return
 
+        if path == "/v1/folders":
+            self._folders(args)
+            return
+
         if path == "/v1/machines":
             self._send_json(200, {
                 "machines": list(
@@ -1204,6 +1239,47 @@ class _Handler(BaseHTTPRequestHandler):
 
         self._send_error(404, "not_found", "unknown route")
 
+    def _folders(self, args) -> None:
+        """``GET /v1/folders?path=``: the subfolders of one folder on the
+        hub machine, for the phone's folder browser. Names only, no files;
+        dot-folders stay hidden. A satellite's disk is not readable from
+        here, so another ``machine`` is refused."""
+        machine = str((args.get("machine") or [""])[0])
+        if machine and machine != self._state.machine_id:
+            self._send_error(422, "browse_unavailable",
+                             "only the hub machine's folders can be browsed")
+            return
+        raw = str((args.get("path") or [""])[0]) or os.path.expanduser("~")
+        if not raw.startswith("/") or "\x00" in raw:
+            self._send_error(422, "bad_cwd", "path must be absolute")
+            return
+        folder = os.path.realpath(raw)
+        if not os.path.isdir(folder):
+            self._send_error(422, "bad_cwd",
+                             f"no such folder on this machine: {raw}")
+            return
+        try:
+            with os.scandir(folder) as it:
+                names = sorted(
+                    (e.name for e in it
+                     if not e.name.startswith(".") and _is_dir(e)),
+                    key=str.casefold,
+                )
+        except OSError:
+            self._send_error(403, "not_readable",
+                             f"can't read {folder} on this machine")
+            return
+        parent = os.path.dirname(folder)
+        self._send_json(200, {
+            "path": folder,
+            "parent": parent if parent != folder else None,
+            "folders": [
+                {"name": n, "path": os.path.join(folder, n)}
+                for n in names[:FOLDER_LIST_CAP]
+            ],
+            "truncated": len(names) > FOLDER_LIST_CAP,
+        })
+
     def _launch(self) -> None:
         """``POST /v1/sessions``: start a harness on the hub or a satellite.
 
@@ -1224,8 +1300,8 @@ class _Handler(BaseHTTPRequestHandler):
         harness, cwd = cmd["harness"], cmd["cwd"]
         if machine != state.machine_id:
             row = catalog_mod.load_machines(state.home).get(machine) or {}
-            # Satellites older than the launchable field report only
-            # harnesses; trust the protocol set for those.
+            # A satellite older than the launchable field reports none;
+            # it checks its own registry when the command arrives.
             offered = row.get("launchable")
             if isinstance(offered, list) and harness not in offered:
                 self._send_error(422, "not_launchable",
@@ -1251,36 +1327,41 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(422, "bad_cwd",
                              f"no such folder on this machine: {cwd}")
             return
-        # Snapshot the catalog before launch: adoption later refuses
-        # any of these ids, so a pre-existing same-cwd session can
-        # never be claimed as the one we just started.
-        real_cwd = os.path.realpath(cwd)
-        known = [
-            s.session_id
-            for _k, s, _st in state.catalog.tail_rows()
-            if s.tool_name == harness
-            and os.path.realpath(s.path or "") == real_cwd
-        ]
+        rows = state.catalog.tail_rows()
         # Failures a phone can act on answer now; launch_new itself
         # runs after the reply, since priming the pane can take 30 s and
         # the phone needs the launch id to follow it.
-        binary = launch_tool_name(harness)
-        if not binary or not shutil.which(binary):
-            self._send_error(422, "launch_failed",
-                             f"{harness} is not installed on this machine")
+        binary = catalog_mod.launch_command(harness)
+        if binary is None:
+            self._send_error(
+                422, "not_launchable",
+                f"{harness} can't start here: archived, switched off in "
+                f"Provider visibility, or not installed",
+            )
             return
         if not supervise.tmux_bin():
             self._send_error(422, "launch_failed", "tmux is not installed")
             return
+        tracked = harness not in catalog_mod.untracked(
+            catalog_mod.launchable_harnesses())
         launch_id = state.new_launch(machine, harness, cwd)
 
         def run() -> None:
+            # Every same-cwd session that exists before launch: adoption
+            # later refuses these ids, so a pre-existing session can never
+            # be claimed as the one we just started.
+            known = catalog_mod.known_session_ids(rows, harness, cwd)
             ok, note, _name = supervise.launch_new(
                 state.home, harness, cwd, cmd["prompt"],
-                known_ids=known, launch_id=launch_id,
+                known_ids=known, launch_id=launch_id, binary=binary,
             )
             if not ok:
                 state.settle_launch(launch_id, state="failed", note=note)
+            elif not tracked:
+                state.settle_launch(launch_id, state="untracked", note=(
+                    f"{harness} is running under tmux, but swe can't read "
+                    f"its sessions, so there's no chat to open"
+                ))
 
         threading.Thread(
             target=run, name=f"remote-launch-{launch_id}", daemon=True
@@ -1845,6 +1926,13 @@ class _Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
             pass
+
+
+def _is_dir(entry: os.DirEntry) -> bool:
+    try:
+        return entry.is_dir()
+    except OSError:
+        return False
 
 
 def _parse_multipart(ctype: str, body: bytes) -> tuple[str, bytes | None]:

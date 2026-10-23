@@ -159,12 +159,25 @@ class TestTmuxHelpers(unittest.TestCase):
         self.assertEqual(supervise._shquote(""), "''")
 
 
+def _typing_pane(pane):
+    """A pane that shows ``pane`` until text is typed, then the typed
+    text, as a real TUI echoes it. Returns ``(capture, send_text)``."""
+    typed = []
+
+    def capture(*_a):
+        return f"{pane}\n> {typed[-1]}" if typed else pane
+
+    send = MagicMock(side_effect=lambda _n, t: typed.append(t) or True)
+    return capture, send
+
+
 class TestPrimePane(unittest.TestCase):
     def test_trust_dialog_down_enter(self):
         pane = "Do you trust the files in this folder? > No, exit / Yes, I trust this folder"
-        with patch.object(supervise, "capture_pane", return_value=pane), \
+        capture, send = _typing_pane(pane)
+        with patch.object(supervise, "capture_pane", side_effect=capture), \
              patch.object(supervise, "send_key") as sk, \
-             patch.object(supervise, "send_text") as st, \
+             patch.object(supervise, "send_text", send) as st, \
              patch.object(time, "sleep"):
             supervise.prime_pane("qv-x", "hello")
         keys = [c[0][1] for c in sk.call_args_list]
@@ -172,20 +185,20 @@ class TestPrimePane(unittest.TestCase):
         st.assert_called_once_with("qv-x", "hello")
 
     def test_no_dialog_sends_directly(self):
-        with patch.object(supervise, "capture_pane", return_value="❯"), \
+        capture, send = _typing_pane("❯")
+        with patch.object(supervise, "capture_pane", side_effect=capture), \
              patch.object(supervise, "send_key") as sk, \
-             patch.object(supervise, "send_text") as st, \
+             patch.object(supervise, "send_text", send) as st, \
              patch.object(time, "sleep"):
             supervise.prime_pane("qv-x", "hello")
         sk.assert_not_called()
         st.assert_called_once_with("qv-x", "hello")
 
     def test_confirm_dialog_bare_enter(self):
-        with patch.object(
-            supervise, "capture_pane",
-            return_value="Warning! Press Enter to confirm"
-        ), patch.object(supervise, "send_key") as sk, \
-             patch.object(supervise, "send_text") as st, \
+        capture, send = _typing_pane("Warning! Press Enter to confirm")
+        with patch.object(supervise, "capture_pane", side_effect=capture), \
+             patch.object(supervise, "send_key") as sk, \
+             patch.object(supervise, "send_text", send) as st, \
              patch.object(time, "sleep"):
             supervise.prime_pane("qv-x", "hello")
         sk.assert_called_once_with("qv-x", "Enter")
@@ -206,7 +219,7 @@ class TestPrimePane(unittest.TestCase):
         rule = "─" * 20
         unsent = f"Claude Code\n{rule}\n❯ hello there\n{rule}\n  auto mode"
         sent = f"❯ hello there\n⏺ hi\n{rule}\n❯ \n{rule}\n  auto mode"
-        panes = iter(["❯", unsent, sent])
+        panes = iter(["❯", "❯", unsent, sent])
         with patch.object(supervise, "capture_pane",
                           side_effect=lambda *_a: next(panes)), \
              patch.object(supervise, "send_key") as sk, \
@@ -218,7 +231,7 @@ class TestPrimePane(unittest.TestCase):
     def test_prompt_stuck_in_box_reports_false(self):
         rule = "─" * 20
         unsent = f"{rule}\n❯ hello there\n{rule}"
-        panes = iter(["❯"] + [unsent] * 4)
+        panes = iter(["❯", "❯"] + [unsent] * 4)
         with patch.object(supervise, "capture_pane",
                           side_effect=lambda *_a: next(panes)), \
              patch.object(supervise, "send_key") as sk, \
@@ -226,6 +239,32 @@ class TestPrimePane(unittest.TestCase):
              patch.object(time, "sleep"):
             self.assertFalse(supervise.prime_pane("qv-x", "hello there"))
         self.assertEqual(sk.call_count, 3)
+
+    def test_waits_for_the_splash_to_settle_and_retypes_a_lost_prompt(self):
+        # opencode draws its splash for a moment; text typed then is
+        # dropped and the frame is unchanged, so the prompt goes again.
+        ready = "Ask anything..."
+        panes = iter(["loading", "loading 2", ready, ready, ready,
+                      "> hello there"])
+        typed = []
+        with patch.object(supervise, "capture_pane",
+                          side_effect=lambda *_a: next(panes)), \
+             patch.object(supervise, "send_key") as sk, \
+             patch.object(supervise, "send_text",
+                          side_effect=lambda n, t: typed.append(t) or True), \
+             patch.object(time, "sleep"):
+            self.assertTrue(supervise.prime_pane("qv-x", "hello there"))
+        self.assertEqual(typed, ["hello there", "hello there"])
+        sk.assert_not_called()
+
+    def test_a_pane_that_never_takes_the_prompt_is_not_sent(self):
+        ready = "Ask anything..."
+        with patch.object(supervise, "capture_pane", return_value=ready), \
+             patch.object(supervise, "send_key"), \
+             patch.object(supervise, "send_text", return_value=True) as st, \
+             patch.object(time, "sleep"):
+            self.assertFalse(supervise.prime_pane("qv-x", "hello there"))
+        self.assertEqual(st.call_count, 2)
 
     def test_prompt_send_failure_propagates_false(self):
         with patch.object(supervise, "capture_pane", return_value="❯"), \
@@ -256,6 +295,31 @@ class TestAdoptPending(unittest.TestCase):
         meta = supervise.meta_for(self.home, adopted[0])
         self.assertEqual(meta["tmux"], "qv-new")
         self.assertFalse((folder / "qv-new.json").exists())
+
+    def test_database_harness_adopts_by_activity_time(self):
+        # opencode keeps sessions in SQLite: no JSONL birth time, so a
+        # session the catalog didn't know at launch, active since, is ours;
+        # one active before the launch is not.
+        folder = supervise._pending_dir(self.home)
+        folder.mkdir(parents=True)
+        proj = Path(tempfile.mkdtemp())
+        now = time.time()
+        (folder / "qv-oc.json").write_text(json.dumps(
+            {"tmux": "qv-oc", "tool_name": "opencode", "cwd": str(proj),
+             "launched_at": now, "exclude": ["known"]}))
+        def oc(sid, ts):
+            return Session(timestamp=int(ts * 1000), agent="OpenCode",
+                           path=str(proj), session_id=sid,
+                           tool_name="opencode")
+        rows = [
+            ("opencode:known", oc("known", now + 5), "active"),
+            ("opencode:stale", oc("stale", now - 600), "done"),
+            ("opencode:new", oc("new", now + 3), "active"),
+        ]
+        with patch("quiver.remote.tail.resolve_jsonl_path",
+                   return_value=None):
+            self.assertEqual(supervise.adopt_pending(self.home, rows),
+                             ["opencode:new"])
 
     def test_skips_mismatched_and_old(self):
         folder = supervise._pending_dir(self.home)
@@ -448,6 +512,17 @@ class TestLaunchNew(unittest.TestCase):
         self.assertEqual(adopted, ["claude:new"])
         self.assertEqual(
             supervise.meta_for(home, "claude:new")["launch_id"], "l9")
+
+    def test_binary_overrides_tool_name(self):
+        home = Path(tempfile.mkdtemp())
+        with patch.object(supervise, "launch_tmux",
+                          return_value="qv-n") as tmux, \
+             patch.object(supervise.shutil, "which",
+                          return_value="/usr/bin/cursor-agent"), \
+             patch.object(supervise, "prime_pane", return_value=True):
+            supervise.launch_new(home, "cursor", "/tmp", "hi",
+                                 binary="cursor-agent")
+        self.assertEqual(tmux.call_args[0][1], ["cursor-agent"])
 
     def test_unknown_harness(self):
         ok, note, name = supervise.launch_new(
