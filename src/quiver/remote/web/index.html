@@ -83,10 +83,19 @@
 <nav id="tabs" class="hidden">
   <button data-tab="sessions" class="tab active">Sessions</button>
   <button data-tab="inbox" class="tab">Inbox <span id="inbox-badge" class="badge hidden"></span></button>
+  <button data-tab="usage" class="tab">Usage</button>
 </nav>
 
 <section id="inbox-view" class="view hidden">
   <div id="inbox-list"></div>
+</section>
+
+<section id="usage-view" class="view hidden">
+  <div class="usage-head">
+    <span id="usage-meta" class="dim"></span>
+    <button id="usage-refresh" type="button">Refresh</button>
+  </div>
+  <div id="usage-body"></div>
 </section>
 
 <script src="/app.js"></script>
