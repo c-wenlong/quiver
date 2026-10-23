@@ -29,6 +29,7 @@ from quiver import __version__
 from quiver.remote import (
     attachments,
     catalog as catalog_mod,
+    injected as injected_mod,
     dismissals,
     inject,
     notify,
@@ -674,6 +675,9 @@ class _Handler(BaseHTTPRequestHandler):
             pass
 
     def _sse_write(self, ev: dict) -> None:
+        ev = injected_mod.clean_event(ev)
+        if ev is None:
+            return
         frame = (
             f"id: {ev.get('seq', 0)}\n"
             f"event: {ev.get('type', 'message')}\n"
@@ -1501,7 +1505,9 @@ class _Handler(BaseHTTPRequestHandler):
         limit = max(1, min(limit, 2000))
         events, _trunc = self._state.journal.read_since(key, 0)
         messages = [
-            ev for ev in events if ev.get("type") == "message.appended"
+            cleaned for ev in events
+            if ev.get("type") == "message.appended"
+            and (cleaned := injected_mod.clean_event(ev)) is not None
         ]
         if before:
             messages = [m for m in messages if m.get("seq", 0) < before]

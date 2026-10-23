@@ -108,6 +108,14 @@ Copy the `search_index.py` `files`-row pattern: byte-offset cursor per
 transcript, stat → read appended bytes → decode new records → emit
 events. ~1s poll while `sessions/status.py` says active, back off idle.
 
+Before a message leaves the hub, `injected.py` removes what a harness
+wrote into the transcript for itself rather than for you: Claude Code's
+`<system-reminder>` and `<task-notification>` envelopes (a finished task
+becomes one system line), Cursor's `<timestamp>`/`<user_query>` wrapper,
+Codex's developer turns, `AGENTS.md` and environment injections and its
+`<oai-mem-citation>` footer. It runs at decode and again when journal
+events are served, so history journaled before it existed is cleaned too.
+
 One upgrade over `reports/transcripts.py`: that layer *strips* thinking
 and collapses tool calls — right for reports, wrong for a chat UI that
 auto-collapses them. `tail.py` keeps the block detail the raw records
