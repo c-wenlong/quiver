@@ -399,9 +399,14 @@ public final class OverviewModel {
         return true
     }
 
+    /// Wakes every waiter, not just the next: each checks again, so one
+    /// runs, the ones it covers return, and the rest wait for it. Waking
+    /// one alone left the load behind a covered one asleep for good.
     private func endFullScan() {
         fullScanRunning = false
-        if !fullScanWaiters.isEmpty { fullScanWaiters.removeFirst().resume() }
+        let waiters = fullScanWaiters
+        fullScanWaiters = []
+        for waiter in waiters { waiter.resume() }
     }
 
     /// Full-scan loads currently watching progress; the last to finish clears it.

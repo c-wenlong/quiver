@@ -690,23 +690,27 @@ final class OverviewClock {
         #expect(model.completedScans == 2)
     }
 
-    @Test func aFullScanQueuedBehindAnotherIsCoveredByIt() async {
+    // A load left waiting hangs here; fail instead of stalling the run.
+    @Test(.timeLimit(.minutes(1))) func aFullScanQueuedBehindAnotherIsCoveredByIt() async {
         let ledger = FakeLedger()
         await ledger.holdNextScan()
         let model = model(ledger)
         let first = Task { await model.load(scan: true) }
         await until { await ledger.scanWaiting }
-        // Both ask while the first runs: the second's scan starts after
-        // the third asked, so the third has nothing left to read.
+        // All ask while the first runs: the second's scan starts after the
+        // third and fourth asked, so they have nothing left to read.
         let second = Task { await model.load(scan: true) }
         try? await Task.sleep(for: .milliseconds(50))
         let third = Task { await model.load(scan: true) }
+        let fourth = Task { await model.load(scan: true) }
         try? await Task.sleep(for: .milliseconds(50))
 
         await ledger.releaseScan()
         await first.value
         await second.value
+        // Both were covered by the second; neither may be left waiting.
         await third.value
+        await fourth.value
         #expect(await ledger.scans == 2)
     }
 
