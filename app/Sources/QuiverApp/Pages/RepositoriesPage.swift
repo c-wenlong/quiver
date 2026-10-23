@@ -41,6 +41,7 @@ struct RepositoriesPage: View {
                     EmptyView()
                 }
                 content
+                    .textSelection(.enabled)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if showsRail {
@@ -443,11 +444,20 @@ private struct RepoRail: View {
                             if open { rows(group.quiet) }
                         }
                     }
-                    RailRow(selected: false, muted: true, select: add) {
-                        Image(systemName: "plus").font(.system(size: 12))
-                        Text("Add repository").font(Theme.nav)
-                        Spacer(minLength: 0)
+                    // A real Button: outside the drag rows, so it can
+                    // take keyboard focus.
+                    Button(action: add) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "plus").font(.system(size: 12))
+                            Text("Add repository").font(Theme.nav)
+                            Spacer(minLength: 0)
+                        }
+                        .foregroundStyle(Theme.textMuted)
+                        .padding(.horizontal, 8)
+                        .frame(height: Theme.navRowHeight)
+                        .contentShape(.rect)
                     }
+                    .plainButton(cornerRadius: Theme.controlRadius)
                     .padding(.top, 14)
                 }
             }
@@ -520,15 +530,13 @@ private struct RailIconButton: View {
 /// Button would swallow the mouse-down the drag starts from).
 private struct RailRow<Content: View>: View {
     var selected: Bool
-    /// An action row (Add repository) rather than a place: muted text.
-    var muted = false
     var select: () -> Void
     @ViewBuilder var content: Content
     @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 8) { content }
-            .foregroundStyle(selected ? Theme.textPrimary : muted ? Theme.textMuted : Theme.textNav)
+            .foregroundStyle(selected ? Theme.textPrimary : Theme.textNav)
             .padding(.horizontal, 8)
             .frame(height: Theme.navRowHeight)
             .background(selected ? Theme.navActive : hovering ? Theme.hover : .clear,
