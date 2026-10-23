@@ -61,7 +61,7 @@ const SIDEBAR = [
   ["System", [["menubar", "Menu bar"], ["widgets", "Widgets"], ["status", "Service status"], ["settings", "Settings"]]],
 ];
 
-const PAGES = { overview: renderOverview, sessions: renderSessions };
+const PAGES = { overview: renderOverview, sessions: renderSessions, harnesses: renderHarnesses, accounts: renderAccounts };
 
 function renderSidebar(current) {
   const nav = document.getElementById("sidebar");
@@ -98,7 +98,7 @@ function renderSoon(id) {
   const label = SIDEBAR.flatMap(([, items]) => items).find(([key]) => key === id)?.[1] || id;
   document.getElementById("panel").innerHTML = `<div class="page">
     ${pageHeader(label, "This page is in the Mac app and not in the web app yet.")}
-    <div class="card"><p class="empty">Coming to the web app. Overview and Sessions are ready now.</p></div></div>`;
+    <div class="card"><p class="empty">Coming to the web app. Overview, Sessions, Accounts and Harnesses are ready now.</p></div></div>`;
 }
 
 function route() {
@@ -106,6 +106,8 @@ function route() {
   // A response still in flight belongs to the page left behind.
   overview.gen++;
   sessionsPage.gen++;
+  harnessesPage.gen++;
+  accountsPage.gen++;
   renderSidebar(id);
   if (!credential()) return renderGate("This browser has no device credential for this hub yet.");
   (PAGES[id] || renderSoon)(id);
@@ -127,6 +129,10 @@ async function renderOverview(_id, rescan = false) {
   if (!overview.data || rescan) {
     panel.innerHTML = `<div class="page">${overviewHeader(true)}<div class="card"><p class="empty">${
       overview.data ? "Rescanning…" : "Reading usage logs. The first scan can take a minute."}</p></div></div>`;
+  } else {
+    // Show what we have while the request runs, so the previous page's
+    // controls never stay on screen.
+    paintOverview();
   }
   const q = new URLSearchParams({ period: overview.period, tz: timeZone() });
   if (rescan) q.set("rescan", "1");
