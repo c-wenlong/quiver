@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Repositories: the rail runs the full height and holds the controls.**
+  The header buttons move into the page: the manage gear and Refresh (⌘R)
+  sit beside the rail's filter, "Add repository" is the rail's last row,
+  and the jump search (⌘K) rides the right end of the tab row.
+
 - **Repositories: one list beside a repo rail.** The page drops the card
   per repo for a single list of rows grouped under a plain header per repo,
   and a rail on the right lists the pins by owner with a CI dot and the
