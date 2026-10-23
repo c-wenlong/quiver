@@ -2,7 +2,7 @@ import CoreImage.CIFilterBuiltins
 import QuiverCore
 import SwiftUI
 
-/// Settings › Remote: Clockwork-style pairing card. Shows whether the hub
+/// Settings › Integrations › Remote: Clockwork-style pairing card. Shows whether the hub
 /// is reachable, lists paired devices, and mints a one-time pair token it
 /// renders as a QR code — the phone scans it to reach the PWA or the iOS
 /// wrapper over Tailscale.
