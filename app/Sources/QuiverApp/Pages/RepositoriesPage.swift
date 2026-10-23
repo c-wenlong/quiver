@@ -14,7 +14,6 @@ import SwiftUI
 struct RepositoriesPage: View {
     @Environment(AppModel.self) private var app
     @State private var adding = false
-    @State private var managing = false
     @State private var jumping = false
     /// The PR whose detail sheet is open, if any.
     @State private var detail: PrSelection?
@@ -30,124 +29,30 @@ struct RepositoriesPage: View {
         }
     }
 
+    /// The page's own frame rather than `Page`: the rail runs the full
+    /// height beside the title, and the header buttons live in the
+    /// rail (gear, Refresh, Add repository) and on the tab row (jump).
+    /// Same padding and width cap as `Page`.
     private var dashboard: some View {
-        @Bindable var model = model
-        return Page(title: "Repositories",
-             subtitle: "Your pinned repos' pull requests, issues and CI, from swe gh.",
-             scrolls: false) {
-            if model.envBlocked == nil {
-                Button("Add repository", systemImage: "plus") { adding = true }
-                    .primaryButton()
-                Button { managing = true } label: {
-                    Image(systemName: "gearshape")
+        HStack(alignment: .top, spacing: 24) {
+            VStack(alignment: .leading, spacing: 24) {
+                PageHeader(title: "Repositories",
+                           subtitle: "Your pinned repos' pull requests, issues and CI, from swe gh.") {
+                    EmptyView()
                 }
-                .iconButton()
-                .help("Manage pinned repositories")
-                .popover(isPresented: $managing, arrowEdge: .bottom) {
-                    RepoManager {
-                        managing = false
-                        // The sheet attaches once the popover is gone.
-                        DispatchQueue.main.async { adding = true }
-                    }
-                }
-                Button { jumping = true } label: {
-                    Image(systemName: "magnifyingglass")
-                }
-                .iconButton()
-                .keyboardShortcut("k", modifiers: .command)
-                .help("Jump to a repository (⌘K)")
-                Button("Refresh", systemImage: "arrow.clockwise") {
-                    Task {
-                        // A board call covers repos not yet hydrated;
-                        // the per-repo refreshes overlap after it.
-                        await model.loadBoards(visibleRepos.map(\.name),
-                                               swe: app.swe)
-                        let model = model
-                        let swe = app.swe
-                        await withTaskGroup(of: Void.self) { group in
-                            for repo in visibleRepos {
-                                group.addTask {
-                                    await model.refresh(repo: repo.name,
-                                                        swe: swe)
-                                }
-                                // The rail's CI dot reads the runs.
-                                if model.tab != .actions {
-                                    group.addTask {
-                                        await model.loadTab(.actions, repo: repo.name,
-                                                            swe: swe)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                .iconButton()
-                .keyboardShortcut("r", modifiers: .command)
-                .help("Fetch the visible tab again (⌘R)")
+                content
             }
-        } content: {
-            if let setup = model.envSetup {
-                GhSetupCard(status: setup) {
-                    Task { await model.refresh(swe: app.swe) }
-                }
-            } else if let blocked = model.envBlocked {
-                ErrorCard(message: blocked, actionTitle: "Refresh",
-                          actionShortcut: KeyboardShortcut("r", modifiers: .command)) {
-                    Task { await model.refresh(swe: app.swe) }
-                }
-            } else if !model.probed {
-                LoadingCard(text: "Checking gh and the pinned repos…")
-            } else if model.pins.isEmpty {
-                EmptyCard(text: "Pin a repository to see its pull requests, issues and CI here.",
-                          icon: "shippingbox", actionTitle: "Add repository") { adding = true }
-            } else {
-                HStack(alignment: .top, spacing: 24) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Tabs(options: GitHubModel.tabs(oneRepo: model.shownRepo != nil)
-                                .map { ($0, $0.title) },
-                             selection: $model.tab, style: .underline)
-                        let options = RepoRowFilter.options(for: model.tab)
-                        if !options.isEmpty {
-                            HStack(spacing: 6) {
-                                ForEach(options) { option in
-                                    FilterChip(title: option.title,
-                                               isOn: model.rowFilter.on.contains(option)) {
-                                        if model.rowFilter.on.contains(option) {
-                                            model.rowFilter.on.remove(option)
-                                        } else {
-                                            model.rowFilter.on.insert(option)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if let error = model.pinError ?? model.actionError {
-                            ErrorCard(message: error)
-                        }
-                        if let error = model.sessionError {
-                            ErrorCard(message: error)
-                        }
-                        ScrollViewReader { proxy in
-                            ScrollView {
-                                list.padding(.bottom, 24)
-                            }
-                            .scrollContentBackground(.hidden)
-                            .onChange(of: model.scrollTarget) { _, target in
-                                // Banner click-through: the rail already
-                                // narrowed to the repo; bring it up.
-                                guard let target else { return }
-                                model.scrollTarget = nil
-                                withAnimation { proxy.scrollTo(target, anchor: .top) }
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    RepoRail()
-                        .frame(width: 240)
-                }
-                .frame(maxHeight: .infinity, alignment: .top)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if showsRail {
+                RepoRail(add: { adding = true }, refresh: refresh)
+                    .frame(width: 240)
             }
         }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .padding(.horizontal, 40)
+        .padding(.vertical, 36)
+        .frame(maxWidth: 1280, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .task(id: Visible(tab: model.tab, swe: app.swePath,
                          filter: model.filter,
                          repos: Set(model.pins.map(\.name)))) {
@@ -193,6 +98,107 @@ struct RepositoriesPage: View {
         }
         .sheet(item: $detail) { selection in
             PrDetailSheet(selection: selection)
+        }
+    }
+
+    /// The rail shows once there are pins to list.
+    private var showsRail: Bool {
+        model.envSetup == nil && model.envBlocked == nil && model.probed && !model.pins.isEmpty
+    }
+
+    /// Refresh (⌘R, in the rail): every visible repo's tab, plus its
+    /// runs for the rail's CI dot.
+    private func refresh() {
+        Task {
+            // A board call covers repos not yet hydrated; the per-repo
+            // refreshes overlap after it.
+            await model.loadBoards(visibleRepos.map(\.name), swe: app.swe)
+            let model = model
+            let swe = app.swe
+            await withTaskGroup(of: Void.self) { group in
+                for repo in visibleRepos {
+                    group.addTask {
+                        await model.refresh(repo: repo.name, swe: swe)
+                    }
+                    if model.tab != .actions {
+                        group.addTask {
+                            await model.loadTab(.actions, repo: repo.name, swe: swe)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        @Bindable var model = model
+        if let setup = model.envSetup {
+            GhSetupCard(status: setup) {
+                Task { await model.refresh(swe: app.swe) }
+            }
+        } else if let blocked = model.envBlocked {
+            ErrorCard(message: blocked, actionTitle: "Refresh",
+                      actionShortcut: KeyboardShortcut("r", modifiers: .command)) {
+                Task { await model.refresh(swe: app.swe) }
+            }
+        } else if !model.probed {
+            LoadingCard(text: "Checking gh and the pinned repos…")
+        } else if model.pins.isEmpty {
+            EmptyCard(text: "Pin a repository to see its pull requests, issues and CI here.",
+                      icon: "shippingbox", actionTitle: "Add repository") { adding = true }
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .bottom, spacing: 12) {
+                    // Tabs expands for the full-width underline; the
+                    // jump rides the right end of the same row.
+                    Tabs(options: GitHubModel.tabs(oneRepo: model.shownRepo != nil)
+                            .map { ($0, $0.title) },
+                         selection: $model.tab, style: .underline)
+                        .layoutPriority(1)
+                    Button { jumping = true } label: {
+                        Image(systemName: "magnifyingglass")
+                    }
+                    .iconButton()
+                    .keyboardShortcut("k", modifiers: .command)
+                    .help("Jump to a repository (⌘K)")
+                    .padding(.bottom, 4)
+                }
+                let options = RepoRowFilter.options(for: model.tab)
+                if !options.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(options) { option in
+                            FilterChip(title: option.title,
+                                       isOn: model.rowFilter.on.contains(option)) {
+                                if model.rowFilter.on.contains(option) {
+                                    model.rowFilter.on.remove(option)
+                                } else {
+                                    model.rowFilter.on.insert(option)
+                                }
+                            }
+                        }
+                    }
+                }
+                if let error = model.pinError ?? model.actionError {
+                    ErrorCard(message: error)
+                }
+                if let error = model.sessionError {
+                    ErrorCard(message: error)
+                }
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        list.padding(.bottom, 24)
+                    }
+                    .scrollContentBackground(.hidden)
+                    .onChange(of: model.scrollTarget) { _, target in
+                        // Banner click-through: the rail already
+                        // narrowed to the repo; bring it up.
+                        guard let target else { return }
+                        model.scrollTarget = nil
+                        withAnimation { proxy.scrollTo(target, anchor: .top) }
+                    }
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
         }
     }
 
@@ -334,15 +340,19 @@ private struct FilterChip: View {
 
 // MARK: - Repo rail
 
-/// The page's right-hand rail: the filter, "All repos", then the pins
-/// by owner. Each row carries a CI dot (the default branch's newest
-/// run) and the tab's row count; repos with nothing on the tab fold
-/// under "N quiet". A tap narrows the list to that repo; a drag
+/// The page's right-hand rail, full height: the filter with the
+/// manage gear and Refresh, "All repos", the pins by owner, then "Add
+/// repository". Each repo row carries a CI dot (the default branch's
+/// newest run) and the tab's row count; repos with nothing on the tab
+/// fold under "N quiet". A tap narrows the list to that repo; a drag
 /// reorders the pins within the row's group.
 private struct RepoRail: View {
     @Environment(AppModel.self) private var app
+    var add: () -> Void
+    var refresh: () -> Void
     /// Owners whose quiet repos are unfolded.
     @State private var openQuiet: Set<String> = []
+    @State private var managing = false
 
     private var model: GitHubModel { app.github }
 
@@ -377,7 +387,22 @@ private struct RepoRail: View {
     var body: some View {
         @Bindable var model = model
         VStack(alignment: .leading, spacing: 8) {
-            SearchField(prompt: "Filter", text: $model.filter)
+            HStack(spacing: 4) {
+                SearchField(prompt: "Filter", text: $model.filter)
+                RailIconButton(symbol: "gearshape", help: "Manage pinned repositories") {
+                    managing = true
+                }
+                .popover(isPresented: $managing, arrowEdge: .bottom) {
+                    RepoManager {
+                        managing = false
+                        // The sheet attaches once the popover is gone.
+                        DispatchQueue.main.async { add() }
+                    }
+                }
+                RailIconButton(symbol: "arrow.clockwise",
+                               help: "Fetch the visible tab again (⌘R)", action: refresh)
+                    .keyboardShortcut("r", modifiers: .command)
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     RailRow(selected: model.shownRepo == nil,
@@ -418,6 +443,12 @@ private struct RepoRail: View {
                             if open { rows(group.quiet) }
                         }
                     }
+                    RailRow(selected: false, muted: true, select: add) {
+                        Image(systemName: "plus").font(.system(size: 12))
+                        Text("Add repository").font(Theme.nav)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.top, 14)
                 }
             }
             .scrollContentBackground(.hidden)
@@ -465,17 +496,39 @@ private struct RepoRail: View {
     }
 }
 
+/// A small chromeless icon button beside the rail's filter field.
+private struct RailIconButton: View {
+    var symbol: String
+    var help: String
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 28, height: 28)
+                .contentShape(.rect)
+        }
+        .plainButton(cornerRadius: Theme.controlRadius)
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
 /// A rail row: a tap target that leaves the drag to ReorderableRows (a
 /// Button would swallow the mouse-down the drag starts from).
 private struct RailRow<Content: View>: View {
     var selected: Bool
+    /// An action row (Add repository) rather than a place: muted text.
+    var muted = false
     var select: () -> Void
     @ViewBuilder var content: Content
     @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 8) { content }
-            .foregroundStyle(selected ? Theme.textPrimary : Theme.textNav)
+            .foregroundStyle(selected ? Theme.textPrimary : muted ? Theme.textMuted : Theme.textNav)
             .padding(.horizontal, 8)
             .frame(height: Theme.navRowHeight)
             .background(selected ? Theme.navActive : hovering ? Theme.hover : .clear,
