@@ -151,10 +151,19 @@ private struct SettingsSectionView: View {
                 }
             case .sidebar: SidebarSection()
             case .notifications: notificationsCard
-            case .github: githubCard
-            case .remote: RemoteSection()
             case .providers: ProvidersSection()
             case .services: ServicesCard(model: app.services)
+            case .integrations:
+                VStack(alignment: .leading, spacing: 28) {
+                    SettingsCardGroup(title: "GitHub",
+                                      detail: "The gh install behind the GitHub pages, and the synced repo catalog the Add-repo search reads.") {
+                        githubCard
+                    }
+                    SettingsCardGroup(title: "Remote",
+                                      detail: "Pair a phone to watch and steer sessions, and see which devices are paired.") {
+                        RemoteSection()
+                    }
+                }
             case .paths: pathsCard
             case .doctor: DoctorSection()
             case .experimental: ExperimentalSection()
@@ -666,11 +675,15 @@ private struct ServiceFieldRow: View {
 /// A card under a small heading, for a section that holds more than one.
 struct SettingsCardGroup<Content: View>: View {
     var title: String
+    var detail: String? = nil
     @ViewBuilder var content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+                if let detail { Text(detail).font(Theme.caption).foregroundStyle(Theme.textSecondary) }
+            }
             content
         }
     }

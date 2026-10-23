@@ -104,7 +104,7 @@ extension SweClient {
     }
 }
 
-/// Settings › Remote: hub reachability, paired devices, and the pair
+/// Settings › Integrations › Remote: hub reachability, paired devices, and the pair
 /// sheet's ticket state. One load at a time; a reload mid-flight replaces
 /// the earlier answer via `generation`.
 @MainActor
