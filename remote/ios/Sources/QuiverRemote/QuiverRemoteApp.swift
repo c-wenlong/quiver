@@ -50,7 +50,7 @@ struct MainTabs: View {
     var body: some View {
         TabView(selection: $tab) {
             NavigationStack(path: $sessionsPath) {
-                SessionsView().navigationDestination(for: Route.self, destination: destination)
+                SessionsView(path: $sessionsPath).navigationDestination(for: Route.self, destination: destination)
             }
             .tabItem { Label("Sessions", systemImage: "square.stack.3d.up") }
             .tag(Tab.sessions)

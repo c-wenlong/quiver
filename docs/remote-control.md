@@ -164,7 +164,8 @@ POST /v1/sessions/{id}/message       {text, mode: queue|steer, attachments[]}
 POST /v1/sessions/{id}/attachments   multipart upload → staged file, returns ref
 POST /v1/sessions/{id}/approval      {request_id, decision}
 POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill
-POST /v1/sessions                    new session {machine, harness, cwd, prompt}
+POST /v1/sessions                    new session {machine, harness, cwd, prompt} → launch_id
+GET  /v1/launches/{launch_id}        pending|started|failed; started carries the session key
 GET  /v1/machines · /v1/usage · /v1/search?q=
 GET  /v1/inbox                       pending decisions; ?done=1 adds finished-today
 POST /v1/inbox/dismiss               {key, last_active_at} → cleared for this device
@@ -180,6 +181,34 @@ steer injects mid-turn where the channel allows (codex turn input, tmux
 send-keys), else degrades to queue with a UI hint. `SessionRow.to_json`
 is reused verbatim so phone and macOS app share semantics —
 `docs/json-contracts.md` gains a section rather than a parallel dialect.
+
+`POST /v1/sessions` starts a harness under tmux (`supervise.launch_new`)
+on the hub, or queues a `launch` command for the satellite named in
+`machine` (empty means the hub). Only `protocol.LAUNCHABLE_HARNESSES`
+are accepted (claude, codex, cursor, droid, pi): each starts as a bare
+binary and writes a JSONL transcript, which is how the catalog finds the
+new session. `cwd` must be absolute and, on the hub, an existing folder
+(a satellite checks its own disk and fails the command otherwise);
+`prompt` is required, since a harness writes no transcript until its
+first message, and is typed into the pane once the TUI is up. Each
+machine row in `/v1/machines` carries `launchable`, the detected
+harnesses this route accepts there, and the hub refuses a satellite
+launch outside it (`422 not_launchable`). Errors: `422 bad_command`
+(body), `422 bad_cwd` (no such folder on the hub), `422 launch_failed`
+(binary or tmux missing), `429 backlog_full` (satellite too far behind).
+
+The answer is `202 {launch_id, state: "pending", note}` (plus
+`queued: true` for a satellite). The harness picks its own session id,
+so the key is not known yet: the launch id rides the pending marker into
+the supervised entry when `adopt_pending` claims the new transcript, and
+the adopting machine emits `session.launched {launch_id}` naming the
+new session (the hub puts it on the global stream: an event in the
+session's own journal before its tailer starts would make the tailer
+skip the transcript as history already sent). `GET /v1/launches/{launch_id}` then answers
+`{state: "started", key}`, only once the catalog has that row, so the
+phone can open the chat straight away; a satellite's failed `launch`
+command (`command.result` echoing `launch_id`) turns it `failed` with the
+note. The hub keeps launches in memory for a day.
 
 `GET /v1/search?q=&limit=` (`search.py`) answers from two sources. When
 the Quiver app's FTS5 index (`~/.quiver/data/search/search.sqlite`)

@@ -11,6 +11,9 @@ struct Machine: Codable, Identifiable, Hashable {
     let online: Bool?
     let lastSeenAt: Double?
     let harnesses: [String]?
+    /// What `POST /v1/sessions` accepts on this machine; nil from a hub
+    /// or satellite older than the new-session route.
+    var launchable: [String]? = nil
 
     /// "kais-macbook-pro.local" reads as "kais-macbook-pro".
     var displayName: String {
@@ -203,6 +206,16 @@ struct PendingPairRequest: Decodable, Identifiable, Hashable {
 struct PairRequestsResponse: Decodable { let requests: [PendingPairRequest] }
 
 struct SendAccepted: Decodable { let ok: Bool?; let waiting: Bool? }
+
+/// `POST /v1/sessions` and `GET /v1/launches/<id>` both answer with this.
+/// `key` is set once `state` is "started".
+struct LaunchStatus: Decodable, Equatable {
+    let launchId: String
+    let state: String?
+    let key: String?
+    let note: String?
+    let queued: Bool?
+}
 
 struct HubErrorBody: Decodable {
     struct Inner: Decodable { let code: String?; let message: String? }

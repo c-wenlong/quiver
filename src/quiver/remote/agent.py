@@ -241,8 +241,18 @@ class RemoteAgent:
         # reports it, or it reaches the hub still `observed` — writable
         # nowhere.
         rows = self.catalog.refresh()
-        if supervise.adopt_pending(self.home, self.catalog.tail_rows()):
+        adopted = supervise.adopt_pending(self.home, self.catalog.tail_rows())
+        if adopted:
             rows = self.catalog.refresh()
+        for key in adopted:
+            # Names the key a phone's launch became; the hub maps it to
+            # the hub-scoped key and answers GET /v1/launches with it.
+            lid = (supervise.meta_for(self.home, key) or {}).get("launch_id")
+            if lid:
+                self._capture(key, protocol.event(
+                    "session.launched", key, self.machine_id,
+                    {"launch_id": lid},
+                ))
         status, _ = _post(
             self.hub, "/v1/agent/catalog", self.cred,
             {"machine_id": self.machine_id, "rows": rows},
@@ -335,6 +345,8 @@ class RemoteAgent:
             fields["request_id"] = str(data["request_id"])
         if data.get("client_id"):
             fields["client_id"] = str(data["client_id"])
+        if data.get("launch_id"):
+            fields["launch_id"] = str(data["launch_id"])
         result = protocol.event(
             "command.result", key, self.machine_id, fields,
         )
@@ -366,6 +378,7 @@ class RemoteAgent:
                 ok, note, _ = supervise.launch_new(
                     self.home, harness, cwd,
                     str(data.get("prompt") or ""), known_ids=known,
+                    launch_id=str(data.get("launch_id") or ""),
                 )
                 return ok, note, False
             if op == "attachment":
