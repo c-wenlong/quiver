@@ -637,6 +637,10 @@ to use their own login state and environment."""
                                             transcript tailers, REST + SSE for
                                             the phone app. Binds this machine's
                                             Tailscale IP by default.
+  {c('cyan', 'swe remote serve --install')}             Keep the hub running as a macOS
+                                            LaunchAgent: starts at login,
+                                            restarts if it exits. --uninstall
+                                            stops and removes it.
   {c('cyan', 'swe remote pair [--name=N]')}             Mint a one-time pairing token;
                                             prints the URL to open on the phone
                                             (and a QR when qrencode is installed).
