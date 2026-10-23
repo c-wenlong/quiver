@@ -416,7 +416,7 @@ import Testing
         #expect(job["Label"] as? String == "com.cwenlong.quiver.fan")
         #expect(job["ProgramArguments"] as? [String] == [
             "/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan", "--fan-daemon",
-            "--control", "/Users/me/.quiver/fan/control.json"])
+            "--control", "/Users/me/.quiver/fan/control.json", "--helper-version", String(FanHelper.version)])
         #expect(job["KeepAlive"] as? Bool == true)
         #expect(job["RunAtLoad"] as? Bool == true)
     }
@@ -441,6 +441,32 @@ import Testing
         #expect(AdministratorInstaller.uninstallCommand.contains("/bin/rm -f '/Library/LaunchDaemons/"))
         #expect(AdministratorInstaller.script(#"echo "a\b" 'c'"#, prompt: #"Say "hi""#)
             == #"do shell script "echo \"a\\b\" 'c'" with prompt "Say \"hi\"" with administrator privileges"#)
+    }
+
+    /// The job names the helper's version, so an install from before it
+    /// (a copy of Quiver's executable, which crashed in dyld) or an older
+    /// helper fails `helperReady`'s comparison and gets reinstalled.
+    @Test func theJobCarriesTheHelperVersion() throws {
+        let control = URL(fileURLWithPath: "/Users/me/.quiver/fan/control.json")
+        let job = try PropertyListSerialization.propertyList(from: FanHelper.plist(control: control),
+                                                             format: nil) as? [String: Any]
+        let arguments = try #require(job?["ProgramArguments"] as? [String])
+        #expect(arguments == [FanHelper.installedExecutable, FanHelper.flag, "--control", control.path,
+                              "--helper-version", String(FanHelper.version)])
+        #expect(arguments != [FanHelper.installedExecutable, FanHelper.flag, "--control", control.path])
+        // The helper itself still finds its control file past the version.
+        #expect(FanHelper.parse(arguments) == control)
+    }
+
+    @Test func theBundledHelperIsPreferredOverTheApp() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "helper-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let app = dir.appending(path: "Quiver").path
+        #expect(FanHelper.bundledExecutable(appExecutable: app) == app)
+        let helper = dir.appending(path: FanHelper.bundledName).path
+        FileManager.default.createFile(atPath: helper, contents: Data(), attributes: [.posixPermissions: 0o755])
+        #expect(FanHelper.bundledExecutable(appExecutable: app) == helper)
     }
 
     @Test func theOneLineJobIsTheSameJob() throws {
