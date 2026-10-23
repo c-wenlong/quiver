@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from quiver.paths import expand_user, remote_dir_for
-from quiver.remote import protocol, supervise
+from quiver.remote import injected, protocol, supervise
 from quiver.reports import transcripts as _tr
 from quiver.sessions.models import Session
 
@@ -246,6 +246,10 @@ def _decode_codex(rec: dict) -> list[dict]:
     ptype = str(payload.get("type") or "")
     if rtype == "response_item":
         if ptype == "message":
+            # Codex's own instructions (developer/system turns: skills,
+            # time context, collaboration mode) are not the agent talking.
+            if str(payload.get("role") or "").lower() in {"developer", "system"}:
+                return []
             return [m for m in [
                 protocol.message(_role_kind(payload.get("role")),
                                  _codex_text(payload.get("content")), ts=ts)
@@ -337,7 +341,7 @@ def decode_record(tool_name: str, record: dict) -> list[dict]:
     """One transcript record → zero or more RemoteMessage payloads."""
     try:
         decoder = _DECODERS.get(tool_name, _decode_generic)
-        return decoder(record)
+        return injected.clean_all(decoder(record))
     except Exception:
         return []
 
@@ -630,10 +634,10 @@ class OpencodeSource:
                     out.append(protocol.message(
                         "compaction", "context compacted", ts=ts))
         except sqlite3.Error:
-            return out
+            return injected.clean_all(out)
         finally:
             conn.close()
-        return out
+        return injected.clean_all(out)
 
 
 class SnapshotSource:
@@ -723,7 +727,7 @@ class SnapshotSource:
         if self._backfill_cap is not None:
             new = new[-self._backfill_cap:]
             self._backfill_cap = None
-        out = [_normalized_to_payload(msg) for msg in new]
+        out = injected.clean_all([_normalized_to_payload(msg) for msg in new])
         self._fps = fps
         return out
 
