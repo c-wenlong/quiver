@@ -110,6 +110,7 @@ function renderSkills() {
   skillsPage.links = null;
   const q = new URLSearchParams((location.hash.split("?")[1]) || "");
   const path = q.get("skill");
+  skillsPage.onDetail = !!path;
   if (path) return renderSkillDetail(path);
   return renderSkillsList();
 }
@@ -133,8 +134,9 @@ async function renderSkillsList() {
 }
 
 function skillsHeader(busy) {
-  // The list's payload, or a skill's when the page opened on one.
-  const d = skillsPage.data || skillsPage.headerData;
+  // The payload of what is on screen: a skill's own on its detail page,
+  // so the header and the chips read the same link states.
+  const p = skillsPage, d = (p.onDetail && p.headerData) || p.data || p.headerData;
   const where = d && d.machine ? d.machine : "the hub";
   let links = "";
   if (d) {

@@ -98,6 +98,11 @@ def _inside(path: Path | str, root: Path | str) -> bool:
     return _real(path).startswith(inside + os.sep)
 
 
+def _contained(folder: Path | str, root: Path | str) -> bool:
+    """``folder`` is ``root`` or inside it once symlinks resolve."""
+    return _real(folder) == _real(root) or _inside(folder, root)
+
+
 def editable(skill_path: str, home: Path) -> bool:
     """PrimitiveOwnership.isEditable(skillPath:): under ~/.quiver after
     symlinks resolve, and not in its cache. The web app edits nothing; this
@@ -154,10 +159,13 @@ def read_text(path: Path) -> str | None:
     return data.decode("utf-8", errors="replace")
 
 
-def _entries(folder: Path, prefix: str = "", depth: int = 0, limit: int = 6, skip=()) -> list[dict]:
+def _entries(folder: Path, root: Path, prefix: str = "", depth: int = 0, limit: int = 6,
+             skip=()) -> list[dict]:
     """Every file under ``folder``, names relative to it, dotfiles skipped
-    at every level; ``skip`` names top-level folders left to a section."""
-    if depth > limit:
+    at every level; ``skip`` names top-level folders left to a section. A
+    folder whose symlinks lead out of ``root`` is not listed, so no name
+    from elsewhere on the hub reaches the page."""
+    if depth > limit or not _contained(folder, root):
         return []
     try:
         names = sorted(os.listdir(folder))
@@ -165,11 +173,13 @@ def _entries(folder: Path, prefix: str = "", depth: int = 0, limit: int = 6, ski
         return []
     out = []
     for name in names:
-        if name.startswith(".") or (depth == 0 and name in skip):
+        if name.startswith("."):
             continue
         item = folder / name
         if item.is_dir():
-            out += _entries(item, prefix + name + "/", depth + 1, limit)
+            if depth == 0 and name in skip:
+                continue
+            out += _entries(item, root, prefix + name + "/", depth + 1, limit)
         else:
             out.append({"name": prefix + name, "folder": False})
     return out
@@ -182,7 +192,7 @@ def tree(root: Path) -> list[dict]:
     sections = []
     for kind, title in _KINDS:
         folder = root / kind
-        if not folder.is_dir():
+        if not folder.is_dir() or not _contained(folder, root):
             continue
         entries = []
         try:
@@ -193,12 +203,14 @@ def tree(root: Path) -> list[dict]:
             if name.startswith("."):
                 continue
             item = folder / name
+            if item.is_dir() and not _contained(item, root):
+                continue
             if kind == "skills" and item.is_dir():
                 entries.append({
                     "name": name, "folder": True, "path": f"{kind}/{name}",
                     "preview": f"{kind}/{name}/SKILL.md",
                     "children": [{"name": e["name"], "path": f"{kind}/{name}/{e['name']}"}
-                                 for e in _entries(item)],
+                                 for e in _entries(item, root)],
                 })
             elif item.is_dir():
                 try:
@@ -214,7 +226,7 @@ def tree(root: Path) -> list[dict]:
         if entries:
             sections.append({"kind": kind, "title": title, "entries": entries})
     other = [{"name": e["name"], "folder": False, "path": e["name"]}
-             for e in _entries(root, limit=4, skip={k for k, _ in _KINDS})]
+             for e in _entries(root, root, limit=4, skip={k for k, _ in _KINDS})]
     if other:
         sections.append({"kind": "other", "title": "Other files", "entries": other})
     return sections

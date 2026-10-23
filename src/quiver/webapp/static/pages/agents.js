@@ -2,12 +2,34 @@
  * "Link with swe init" stay in swe and the Mac app. Global shows the
  * shared ~/.quiver/AGENTS.md and where swe init --check says it is linked;
  * Project shows one folder's AGENTS.md and CLAUDE.md. Data:
- * /v1/app/agents (pages/agents.py). Uses skillsPath and skillsMark from
- * skills.js, which the bundle loads after this file but before any render. */
+ * /v1/app/agents (pages/agents.py). The bundle runs each page script in
+ * its own scope, so nothing here comes from skills.js (its CSS classes do). */
 "use strict";
 
+/* `~/…` for a path under the hub's home. */
+function agentsPath(path, home) {
+  return home && path.startsWith(home + "/") ? "~" + path.slice(home.length) : path;
+}
+
+/* HarnessMarkView: the logo, a word after it when the logo is shared,
+ * or the name alone when there is no logo. */
+function agentsMark(h) {
+  const name = Fmt.harnessName(h);
+  const has = (id) => Fmt.logo(id).startsWith("<img");
+  let inner;
+  if (h === "claude") inner = `${Fmt.logo("claude")}<span>CLI</span>`;
+  else if (h === "claude-desktop") inner = `${Fmt.logo("claude")}<span>Desktop</span>`;
+  else if (has(h)) inner = Fmt.logo(h);
+  else {
+    const dash = h.lastIndexOf("-");
+    const base = dash > 0 ? h.slice(0, dash) : "", suffix = dash > 0 ? h.slice(dash + 1) : "";
+    inner = base && suffix && has(base) ? `${Fmt.logo(base)}<span>${esc(suffix)}</span>` : `<span>${esc(name)}</span>`;
+  }
+  return `<span class="sk-mark" title="${esc(name)}" aria-label="${esc(name)}">${inner}</span>`;
+}
+
 const agentsPage = {
-  scope: "global", data: null, seq: 0,
+  scope: "global", data: null, globalError: null, seq: 0,
   folder: null, project: null, projectError: null, file: "AGENTS.md",
 };
 const AGENTS_FOLDER_KEY = "quiver.agentsProjectFolder";
@@ -37,36 +59,46 @@ async function renderAgents() {
   if (p.folder === null) {
     try { p.folder = localStorage.getItem(AGENTS_FOLDER_KEY) || ""; } catch { p.folder = ""; }
   }
-  paintAgents(!p.data);
+  paintAgents(!p.data && !p.globalError);
   const loads = [api("/v1/app/agents")];
   if (p.folder) loads.push(api(`/v1/app/agents?folder=${encodeURIComponent(p.folder)}`));
   const [global, project] = await Promise.all(loads);
   if (gen !== routeGen || mine !== p.seq) return;
-  if (global.status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
-  if (global.status !== 200 || !global.data) return pageError(agentsHeader(false), global.status, global.data, renderAgents);
-  p.data = global.data;
+  if (global.status === 401 || (project && project.status === 401)) {
+    return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  }
+  // A failed check (an unreadable .linkignore, say) stays on the Global
+  // tab; the Project tab reads its folder all the same.
+  if (global.status === 200 && global.data) { p.data = global.data; p.globalError = null; }
+  else p.globalError = agentsErrorText(global);
   if (project) agentsTakeProject(project);
   paintAgents(false);
+}
+
+function agentsErrorText({ status, data }) {
+  return (data && data.error && data.error.message)
+    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then refresh.");
 }
 
 function agentsTakeProject({ status, data }) {
   const p = agentsPage;
   if (status === 200 && data) { p.project = data; p.projectError = null; return; }
   p.project = null;
-  p.projectError = (data && data.error && data.error.message)
-    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then refresh.");
+  p.projectError = agentsErrorText({ status, data });
 }
 
 function paintAgents(loading) {
   const p = agentsPage;
   let body;
-  if (loading) body = `<div class="card"><p class="empty">Checking links…</p></div>`;
-  else body = p.scope === "global" ? agentsGlobal(p.data) : agentsProject();
+  if (p.scope === "project" && !loading) body = agentsProject();
+  else if (p.scope === "global" && p.globalError && !loading) body = `<div class="card"><p class="error">${esc(p.globalError)}</p></div>`;
+  else if (loading || !p.data) body = `<div class="card"><p class="empty">Checking links…</p></div>`;
+  else body = agentsGlobal(p.data);
   document.getElementById("panel").innerHTML = `<div class="page">${agentsHeader(loading)}
     <div class="stack">${agentsTabs()}${body}</div></div>`;
   bindRefresh(renderAgents);
   for (const tab of document.querySelectorAll("[data-scope]")) {
-    tab.onclick = () => { p.scope = tab.dataset.scope; paintAgents(!p.data); };
+    tab.onclick = () => { p.scope = tab.dataset.scope; paintAgents(!p.data && !p.globalError); };
   }
   for (const tab of document.querySelectorAll("[data-file]")) {
     tab.onclick = () => { p.file = tab.dataset.file; paintAgents(false); };
@@ -93,10 +125,10 @@ function agentsGlobal(d) {
       ? '<p class="caption">Run <code>swe init</code> on the hub to link the rest. It never replaces a real file.</p>' : ""}
   </div>`;
   let inner;
-  if (!d.agents_file_exists) inner = `<p class="empty">${esc(skillsPath(d.agents_file, d.home))} doesn't exist yet. <code>swe init</code> on the hub writes it.</p>`;
+  if (!d.agents_file_exists) inner = `<p class="empty">${esc(agentsPath(d.agents_file, d.home))} doesn't exist yet. <code>swe init</code> on the hub writes it.</p>`;
   else if (d.text == null) inner = '<p class="caption">Can\'t preview this file.</p>';
   else inner = `<pre class="sk-text ag-text">${esc(d.text)}</pre>`;
-  return strip + agentsDoc(skillsPath(d.agents_file, d.home),
+  return strip + agentsDoc(agentsPath(d.agents_file, d.home),
     linked === 1 ? "Linked into 1 harness" : `Linked into ${linked} harnesses`, inner);
 }
 
@@ -104,8 +136,8 @@ function agentsLinkRow(h, home) {
   const s = h.instructions.state, title = agentStateTitle(s);
   const color = s === "linked" ? "linked" : agentBlocked(s) ? "danger" : agentInitFixes(s) ? "fixes" : "other";
   const name = Fmt.harnessName(h.name);
-  return `<span class="ag-link" title="${esc(name)}, ${esc(title.toLowerCase())}: ${esc(skillsPath(h.instructions.path, home))}"
-      aria-label="${esc(name)}: ${esc(title)}"><span class="ag-dot ${color}" aria-hidden="true"></span>${skillsMark(h.name)}${
+  return `<span class="ag-link" title="${esc(name)}, ${esc(title.toLowerCase())}: ${esc(agentsPath(h.instructions.path, home))}"
+      aria-label="${esc(name)}: ${esc(title)}"><span class="ag-dot ${color}" aria-hidden="true"></span>${agentsMark(h.name)}${
     s === "linked" ? "" : `<span class="caption">${esc(title.toLowerCase())}</span>`}</span>`;
 }
 

@@ -115,6 +115,18 @@ class TestDetail(unittest.TestCase):
         self.assertEqual(inner["preview"], "skills/inner/SKILL.md")
         self.assertEqual(inner["children"], [{"name": "SKILL.md", "path": "skills/inner/SKILL.md"}])
 
+    def test_no_names_from_folders_outside_the_skill(self):
+        private = self.home / "private"
+        private.mkdir()
+        (private / "plans.md").write_text("x")
+        os.symlink(private, self.root / "references" / "linked")
+        os.symlink(private, self.root / "commands")
+        (self.root / "hooks").write_text("a plain file named like a section")
+        names = [e["name"] for s in page.tree(self.root) for e in s["entries"]]
+        self.assertNotIn("references/linked/plans.md", names)
+        self.assertFalse(any("plans.md" in n for n in names))
+        self.assertIn("hooks", names)
+
     def test_editable_only_under_quiver_outside_cache(self):
         self.assertTrue(page.editable(str(self.home / ".quiver" / "skills" / "x"), self.home))
         self.assertFalse(page.editable(str(self.home / ".quiver" / "cache" / "x"), self.home))
@@ -145,6 +157,27 @@ class TestDetail(unittest.TestCase):
             with self.assertRaises(PageError) as unknown:
                 page.get(ctx, {"skill": str(self.home)})
             self.assertEqual(unknown.exception.status, 404)
+
+
+class TestPageScripts(unittest.TestCase):
+    def test_each_script_defines_the_helpers_it_calls(self):
+        """The bundle runs every page script in its own scope, so a page
+        can't call a function another page defines."""
+        import re
+        scripts = {p.name: p.read_text() for p in page.Path(pages_dir()).glob("*.js")}
+        defined = {name: set(re.findall(r"^(?:async )?function (\w+)", text, re.M))
+                   for name, text in scripts.items()}
+        for name, text in scripts.items():
+            for other, functions in defined.items():
+                if other == name:
+                    continue
+                for fn in functions - defined[name]:
+                    self.assertNotRegex(text, rf"\b{fn}\(", f"{name} calls {fn} from {other}")
+
+
+def pages_dir():
+    from quiver.webapp import pages
+    return pages.STATIC
 
 
 class TestRoute(HubBase):
