@@ -23,7 +23,7 @@ from quiver.sessions.engines import (
     strip_file_uri,
 )
 from quiver.sessions.engines.jsonl_engine import event_cwd
-from quiver.sessions import failures
+from quiver.sessions import failures, parse_cache
 from quiver.sessions.models import Session
 
 
@@ -442,6 +442,9 @@ def _claude_handed_off(path: str) -> str:
             start = max(0, size - _CLAUDE_HANDOFF_TAIL_BYTES)
             fh.seek(start)
             chunk = fh.read().decode("utf-8", errors="ignore")
+    except OSError:
+        parse_cache.note_read_error()
+        return ""
     except Exception:
         return ""
     lines = chunk.split("\n")
@@ -532,7 +535,14 @@ def parse_claude():
     for session_id, file_path in _claude_transcript_paths(base).items():
         if session_id not in by_id:
             continue
-        successor = _claude_handed_off(file_path)
+        # The tail read depends on the file alone; whether the successor is
+        # listed is decided fresh every run.
+        successor = parse_cache.lookup(
+            "claude:handoff",
+            file_path,
+            lambda fp=file_path: _claude_handed_off(fp),
+            valid=lambda v: isinstance(v, str),
+        )
         if successor and successor in by_id:
             superseded.add(session_id)
     if not superseded:
@@ -1040,6 +1050,14 @@ _CURSOR_TIMESTAMP_RE = re.compile(r"<timestamp>.*?</timestamp>", re.DOTALL)
 _CURSOR_USER_QUERY_RE = re.compile(r"</?user_query>")
 
 
+def _cursor_meta_title(meta: dict) -> str | None:
+    """The CLI's own title from ``meta.json``, cleaned, or None when unset."""
+    meta_title = meta.get("title") if isinstance(meta, dict) else None
+    if isinstance(meta_title, str) and meta_title.strip():
+        return clean_title(meta_title, 80)
+    return None
+
+
 def _cursor_session_title(first_user_text: str, meta: dict) -> str:
     """Title for a Cursor session.
 
@@ -1049,12 +1067,58 @@ def _cursor_session_title(first_user_text: str, meta: dict) -> str:
     content and unwrap the query before the usual cleaning. Legacy
     transcripts without the wrapper pass straight through ``clean_title``.
     """
-    meta_title = meta.get("title") if isinstance(meta, dict) else None
-    if isinstance(meta_title, str) and meta_title.strip():
-        return clean_title(meta_title, 80)
+    from_meta = _cursor_meta_title(meta)
+    if from_meta is not None:
+        return from_meta
     text = _CURSOR_TIMESTAMP_RE.sub("", first_user_text or "")
     text = _CURSOR_USER_QUERY_RE.sub("", text)
     return clean_title(text, 80)
+
+
+def _cursor_scan(jsonl_path: str, home: str) -> list:
+    """``[prompt title, tool-call paths under home]`` from one transcript.
+
+    The title is what ``_cursor_session_title`` makes of the first user
+    prompt with no meta.json to go on; meta.json is read every run and wins
+    over it. Stops once it has the prompt and five paths. A malformed line
+    ends the scan and keeps whatever was gathered before it.
+    """
+    first_user_text = ""
+    all_paths: list[str] = []
+    try:
+        with open(jsonl_path) as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                data = json.loads(line)
+                role = data.get("role", "")
+                content = data.get("message", {}).get("content", "")
+                if role == "user" and not first_user_text:
+                    first_user_text = extract_user_text(content)
+                if isinstance(content, list):
+                    for block in content:
+                        inp = block.get("input", {})
+                        if isinstance(inp, dict):
+                            p = inp.get("path", "")
+                            if p and p.startswith(home):
+                                all_paths.append(p)
+                if first_user_text and len(all_paths) >= 5:
+                    break
+    except OSError:
+        parse_cache.note_read_error()
+    except Exception:
+        pass
+    return [_cursor_session_title(first_user_text, {}), all_paths]
+
+
+def _is_cursor_scan(value) -> bool:
+    return (
+        isinstance(value, list)
+        and len(value) == 2
+        and isinstance(value[0], str)
+        and isinstance(value[1], list)
+        and all(isinstance(p, str) for p in value[1])
+    )
 
 
 def parse_cursor():
@@ -1083,36 +1147,22 @@ def parse_cursor():
                             mtime = get_mtime(jsonl_path)
                             if mtime == 0:
                                 continue
-                            first_user_text = ""
-                            all_paths: list[str] = []
-                            try:
-                                with open(jsonl_path) as f:
-                                    for line in f:
-                                        if not line.strip():
-                                            continue
-                                        data = json.loads(line)
-                                        role = data.get("role", "")
-                                        content = data.get("message", {}).get("content", "")
-                                        if role == "user" and not first_user_text:
-                                            first_user_text = extract_user_text(content)
-                                        if isinstance(content, list):
-                                            for block in content:
-                                                inp = block.get("input", {})
-                                                if isinstance(inp, dict):
-                                                    p = inp.get("path", "")
-                                                    if p and p.startswith(home):
-                                                        all_paths.append(p)
-                                        if first_user_text and len(all_paths) >= 5:
-                                            break
-                            except Exception:
-                                pass
+                            # The transcript scan is cached per file; meta.json
+                            # and the directory checks below run every time.
+                            prompt_title, all_paths = parse_cache.lookup(
+                                "cursor:scan",
+                                jsonl_path,
+                                lambda fp=jsonl_path: _cursor_scan(fp, home),
+                                valid=_is_cursor_scan,
+                            )
                             meta = _cursor_meta(uuid_entry.name)
+                            title = _cursor_meta_title(meta)
                             sessions.append(
                                 Session(
                                     timestamp=mtime,
                                     agent="Cursor",
                                     path=_cursor_session_dir(enc_entry.path, all_paths, meta),
-                                    title=_cursor_session_title(first_user_text, meta),
+                                    title=prompt_title if title is None else title,
                                     session_id=uuid_entry.name,
                                     tool_name="cursor",
                                 )
@@ -1131,6 +1181,33 @@ def parse_cursor():
     )
 
 
+def _freebuff_run_state(state_path: str) -> list:
+    """``[cwd, title]`` from a freebuff ``run-state.json``; either may be None.
+
+    A malformed file keeps whatever was read before the failure, the way
+    the inline version this replaced did.
+    """
+    cwd = None
+    title = None
+    try:
+        with open(state_path) as f:
+            state = json.load(f)
+        mas = state.get("sessionState", {}).get("mainAgentState", {}) or {}
+        cwd = mas.get("cwd") or mas.get("initialCwd")
+        for msg in mas.get("messageHistory", []) or []:
+            if msg.get("role") != "user":
+                continue
+            text = extract_user_text(msg.get("content"))
+            if text:
+                title = clean_title(text, 50)
+                break
+    except OSError:
+        parse_cache.note_read_error()
+    except Exception:
+        pass
+    return [cwd, title]
+
+
 def parse_freebuff():
     base = os.path.expanduser("~/.config/manicode/projects/")
 
@@ -1140,22 +1217,22 @@ def parse_freebuff():
         state_path = os.path.join(sess_dir, "run-state.json")
         if not os.path.exists(state_path):
             return
-        try:
-            with open(state_path) as f:
-                state = json.load(f)
-            mas = state.get("sessionState", {}).get("mainAgentState", {}) or {}
-            cwd = mas.get("cwd") or mas.get("initialCwd")
-            if cwd:
-                fields["path"] = cwd
-            for msg in mas.get("messageHistory", []) or []:
-                if msg.get("role") != "user":
-                    continue
-                text = extract_user_text(msg.get("content"))
-                if text:
-                    fields["title"] = clean_title(text, 50)
-                    break
-        except Exception:
-            pass
+        # run-state.json is cached under its own path and signature, so a
+        # change to it is seen even when log.jsonl did not move.
+        cwd, title = parse_cache.lookup(
+            "freebuff:run-state",
+            state_path,
+            lambda: _freebuff_run_state(state_path),
+            valid=lambda v: (
+                isinstance(v, list)
+                and len(v) == 2
+                and (v[1] is None or isinstance(v[1], str))
+            ),
+        )
+        if cwd:
+            fields["path"] = cwd
+        if title is not None:
+            fields["title"] = title
 
     return parse_jsonl_projects(
         JsonlParserConfig(

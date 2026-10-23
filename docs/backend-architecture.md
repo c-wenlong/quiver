@@ -39,7 +39,7 @@ An example per layer, from the harness domain:
 | package | controller | service | model (`--json` payloads) |
 |---|---|---|---|
 | `harness/` | `commands.py`, `discover_commands.py` | `registry.py`, `stars.py`, `archive.py`, `catalog.py`, `columns.py`, `tools.py`, `path_health.py`, `doctor.py`, `drift.py`, `rate_limits.py`, `discover.py` | `models.py`: `HarnessRow`, `RateLimitInfo`, `DoctorFinding`, `DoctorReport`, `StateReply`, `ArchiveReply`, `EditReply`, `DiscoveryRow` |
-| `sessions/` | `commands.py` | `aggregator.py`, `parsers.py`, `engines/`, `identity.py`, `status.py`, `query.py`, `picker.py`, `resume.py`, `usage.py`, `models_analytics.py`, `failures.py` | `models.py`: `Session`, `SessionRow`, `ResumeCmd` |
+| `sessions/` | `commands.py` | `aggregator.py`, `parse_cache.py`, `parsers.py`, `engines/`, `identity.py`, `status.py`, `query.py`, `picker.py`, `resume.py`, `usage.py`, `models_analytics.py`, `failures.py` | `models.py`: `Session`, `SessionRow`, `ResumeCmd` |
 | `mcp/` | `cli.py`, `discover_commands.py` | `inventory.py`, `formats.py`, `secrets.py`, `codex_io.py`, `discover.py`, `server.py` | `models.py`: `ServerRow`, `DiscoveryRow` |
 | `plugins/` | `commands.py` | `actions.py`, `catalog.py` | `models.py`: `ActionResult` |
 | `skills/` | `commands.py`, `layout_commands.py`, `catalog_commands.py` | `layout.py`, `link_ops.py`, `inventory.py`, `discovery.py`, `catalog_discover.py`, `catalogs.py`, `symlinks.py`, `help_text.py` | `models.py`: `LinkReply`, `UnlinkReply`, `MoveReply`, `CatalogRow` |

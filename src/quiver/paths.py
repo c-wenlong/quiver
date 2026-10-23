@@ -87,6 +87,11 @@ def cache_dir_for(home: Path | None = None) -> Path:
     return quiver_dir_for(home) / CACHE_SUBDIR
 
 
+def session_parse_cache_file_for(home: Path | None = None) -> Path:
+    """Per-transcript parse results the session listing reuses."""
+    return cache_dir_for(home) / "session_parse_cache.json"
+
+
 def data_dir_for(home: Path | None = None) -> Path:
     """``~/.quiver/data`` — app-owned stores (ledger, catalog, search index)."""
     return quiver_dir_for(home) / DATA_SUBDIR

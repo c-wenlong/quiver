@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 
-from quiver.sessions import failures
+from quiver.sessions import failures, parse_cache
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
@@ -415,6 +415,9 @@ def _title_from_tail(fp: str, config: JsonlParserConfig) -> tuple[str, str]:
             start = max(0, size - config.tail_bytes)
             f.seek(start)
             chunk = f.read().decode("utf-8", errors="ignore")
+    except OSError:
+        parse_cache.note_read_error()
+        return "", ""
     except Exception:
         return "", ""
     lines = chunk.split("\n")
@@ -476,7 +479,11 @@ def _session_from_jsonl(
     fallback_path: str,
     forced_id: str | None = None,
 ) -> Session | None:
-    mtime = get_mtime(fp)
+    try:
+        st = os.stat(fp)
+    except OSError:
+        return None
+    mtime = st.st_mtime * 1000
     if mtime == 0:
         return None
 
@@ -487,45 +494,15 @@ def _session_from_jsonl(
     else:
         sid = os.path.basename(fp).removesuffix(".jsonl")
 
-    path = ""
-    title = ""
-    title_source = ""
-    try:
-        with open(fp) as f:
-            for i, line in enumerate(f):
-                if not line.strip():
-                    continue
-                try:
-                    data = json.loads(line)
-                except Exception:
-                    continue
-                if not isinstance(data, dict):
-                    continue
-                if not path and config.path_from_event:
-                    try:
-                        path = config.path_from_event(data) or ""
-                    except Exception:
-                        path = ""
-                if not title and config.title_from_event:
-                    try:
-                        raw, source = _split_title(config.title_from_event(data))
-                        if raw:
-                            title = clean_title(raw, config.title_max_len)
-                            title_source = source
-                    except Exception:
-                        pass
-                if path and title:
-                    break
-                if not config.title_scan_full and i >= config.path_scan_lines:
-                    break
-                if path and not config.title_from_event and i >= config.path_scan_lines:
-                    break
-    except Exception:
-        pass
-
-    tail_title, tail_source = _title_from_tail(fp, config)
-    if tail_title:
-        title, title_source = tail_title, tail_source
+    # What the file itself says is cached per file; the fallbacks below
+    # depend on the caller and run every time.
+    path, title, title_source = parse_cache.lookup(
+        f"{config.tool_name}:jsonl",
+        fp,
+        lambda: _scan_jsonl(fp, config),
+        st=st,
+        valid=_is_scan,
+    )
 
     if not path:
         path = fallback_path or config.default_path or ""
@@ -541,6 +518,65 @@ def _session_from_jsonl(
         tool_name=config.tool_name,
         title_source=title_source,
     )
+
+
+def _is_scan(value) -> bool:
+    return (
+        isinstance(value, list)
+        and len(value) == 3
+        and isinstance(value[1], str)
+        and isinstance(value[2], str)
+    )
+
+
+def _scan_jsonl(fp: str, config: JsonlParserConfig) -> list:
+    """``[path, title, title_source]`` read from ``fp`` alone."""
+    path = ""
+    title = ""
+    title_source = ""
+    # With neither callback there is nothing a line could contribute, so
+    # the file is not read at all (freebuff's log.jsonl was parsed in full
+    # for nothing).
+    if config.path_from_event or config.title_from_event:
+        try:
+            with open(fp) as f:
+                for i, line in enumerate(f):
+                    if not line.strip():
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(data, dict):
+                        continue
+                    if not path and config.path_from_event:
+                        try:
+                            path = config.path_from_event(data) or ""
+                        except Exception:
+                            path = ""
+                    if not title and config.title_from_event:
+                        try:
+                            raw, source = _split_title(config.title_from_event(data))
+                            if raw:
+                                title = clean_title(raw, config.title_max_len)
+                                title_source = source
+                        except Exception:
+                            pass
+                    if path and title:
+                        break
+                    if not config.title_scan_full and i >= config.path_scan_lines:
+                        break
+                    if path and not config.title_from_event and i >= config.path_scan_lines:
+                        break
+        except OSError:
+            parse_cache.note_read_error()
+        except Exception:
+            pass
+
+    tail_title, tail_source = _title_from_tail(fp, config)
+    if tail_title:
+        title, title_source = tail_title, tail_source
+    return [path, title, title_source]
 
 
 # --- common event helpers used by adapters ---
