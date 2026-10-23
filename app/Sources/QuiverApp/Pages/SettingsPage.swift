@@ -215,7 +215,7 @@ private struct SettingsSectionView: View {
             }
             SettingsDivider()
             SettingRow(title: "Notify about GitHub",
-                       detail: "New inbox notifications banner while the app runs; a click opens the repo's board.") {
+                       detail: "New inbox notifications banner while the app runs; a click opens the repo's board. Hiding Inbox in Sidebar turns this off.") {
                 SettingSwitch(title: "Notify about GitHub", isOn: $githubNotify.bannersEnabled)
             }
             SettingsDivider()
