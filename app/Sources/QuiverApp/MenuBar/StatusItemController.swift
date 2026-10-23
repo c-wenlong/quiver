@@ -15,6 +15,7 @@ final class StatusItemController: NSObject {
     private var panel: MenuBarPanel!
     private var outsideClickMonitor: Any?
     private var localClickMonitor: Any?
+    private var sizeObservation: NSKeyValueObservation?
     private let model: AppModel
 
     init(model: AppModel) {
@@ -27,6 +28,12 @@ final class StatusItemController: NSObject {
         host.sizingOptions = [.preferredContentSize]
         panel = MenuBarPanel(contentViewController: host)
         panel.onEscape = { [weak self] in self?.close() }
+        // Rows that load, refresh away or wrap while the panel is open
+        // change the content's size; follow it rather than keep the size
+        // it opened with, which would leave empty space or clip.
+        sizeObservation = host.observe(\.preferredContentSize) { [weak self] _, _ in
+            Task { @MainActor in self?.fitPanel() }
+        }
         if let button = item.button {
             button.action = #selector(toggle)
             button.target = self
@@ -114,6 +121,16 @@ final class StatusItemController: NSObject {
             }
             return event
         }
+    }
+
+    /// Resizes the open panel to its content, keeping the top edge where
+    /// `open()` put it, under the status item.
+    private func fitPanel() {
+        guard panel.isVisible, let size = panel.contentViewController?.preferredContentSize,
+              size != panel.contentRect(forFrameRect: panel.frame).size else { return }
+        let topLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+        panel.setContentSize(size)
+        panel.setFrameTopLeftPoint(topLeft)
     }
 
     private func close() {
@@ -268,12 +285,15 @@ struct UsageTabContent: View {
         VStack(alignment: .leading, spacing: 12) {
             if app.popup.showIncidents { ServiceStatusMenuLine(openMain: openMain) }
             // Everything else stays put; the limits scroll once there are
-            // more than the screen can hold.
-            ViewThatFits(in: .vertical) {
-                PanelLimits(dismiss: dismiss)
-                ScrollView { PanelLimits(dismiss: dismiss) }.scrollIndicators(.automatic)
-            }
-            .frame(maxHeight: Self.limitsMaxHeight)
+            // more than the screen can hold. Fixed vertically, the scroll
+            // view takes the rows' own height, capped by the frame, so a
+            // short list leaves no empty space above the spend donut
+            // however much height the panel or the Menu bar page offers.
+            ScrollView { PanelLimits(dismiss: dismiss) }
+                .scrollIndicators(.automatic)
+                .scrollBounceBehavior(.basedOnSize)
+                .frame(maxHeight: Self.limitsMaxHeight)
+                .fixedSize(horizontal: false, vertical: true)
             if app.popup.showStats, let spend = app.overview?.spend {
                 Divider()
                 SpendDonut(slices: spend)
