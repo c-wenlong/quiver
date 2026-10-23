@@ -83,6 +83,9 @@ final class AppModel {
             // to once it's rendered.
             github.filter = ""
             github.scrollTarget = repo
+            // Before the tab: a one-repo tab (Releases) needs the list
+            // narrowed first, or going back to all repos resets it.
+            github.shownRepo = repo
             github.tab = switch type {
             case "PullRequest": .pulls
             case "Issue": .issues

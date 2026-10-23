@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Repositories: one list beside a repo rail.** The page drops the card
+  per repo for a single list of rows grouped under a plain header per repo,
+  and a rail on the right lists the pins by owner with a CI dot and the
+  tab's row count. Repos with nothing on the tab fold under "N quiet" and
+  leave the list. A tap narrows the list to one repo, which also opens the
+  Pages, Releases, Tags and Branches tabs; across all repos the tabs are
+  Pull requests, Issues and Actions. Dragging a repo in the rail reorders
+  the pins (within its owner), and the list follows. Chips filter by
+  failing CI, drafts, and dependency bots (Devin's PRs stay).
+
 - **`swe session` stops re-reading unchanged transcripts.** A per-file parse
   cache (`~/.quiver/cache/session_parse_cache.json`) keeps what each
   transcript said, keyed by path and stat signature, so a listing re-reads

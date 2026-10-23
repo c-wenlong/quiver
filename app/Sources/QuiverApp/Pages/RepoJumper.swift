@@ -128,6 +128,7 @@ struct RepoJumper: View {
             model.filter = ""
             model.focused = nil
             model.selected = repo
+            model.shownRepo = repo
             model.scrollTarget = repo
             dismiss()
         }
