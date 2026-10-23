@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote: start a session from the iPhone app.** Sessions gets a plus
+  button that opens a new-session sheet: pick a machine, one of its
+  recent folders, a harness by its logo, and a first prompt, and the
+  chat opens once the session shows up. `POST /v1/sessions` now accepts
+  only harnesses it can launch and adopt (Claude Code, Codex, Cursor,
+  Droid, Pi), checks the folder and requires a prompt, and answers a
+  `launch_id`; `GET /v1/launches/<id>` names the new session once the
+  hub or satellite adopts it. Machine rows list `launchable` harnesses.
+  A first prompt whose Enter Claude's TUI swallowed is now pressed
+  again instead of sitting unsent in the input box.
+
 - **Remote: satellites report usage, so a MacBook's quota shows on the
   hub.** `swe remote agent` posts the machine's `swe list --usage` rows
   every 5 minutes, and the hub keeps each machine's last report. The
