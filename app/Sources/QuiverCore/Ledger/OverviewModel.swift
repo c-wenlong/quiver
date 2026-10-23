@@ -285,6 +285,11 @@ public final class OverviewModel {
     /// search index's reconcile tick passes a small one so live sessions
     /// re-index without a full backlog sweep; nil scans everything.
     public func load(scan: Bool, recentLimit: Int? = nil) async {
+        let fullScan = scan && recentLimit == nil
+        if fullScan {
+            guard await beginFullScan() else { return }
+        }
+        defer { if fullScan { endFullScan() } }
         loadGeneration += 1
         summaryGeneration += 1
         warming?.cancel()
@@ -327,6 +332,21 @@ public final class OverviewModel {
         }
 
         let now = now()
+        let ledger = self.ledger
+        let calendar = self.calendar
+        let todayStart = calendar.startOfDay(for: now)
+        let yesterdayStart = calendar.date(byAdding: .day, value: -1, to: todayStart) ?? todayStart
+        let halfYear = DateInterval(start: calendar.date(byAdding: .day, value: -182, to: todayStart) ?? todayStart, end: now)
+        // The same rolling range as the Overview's "30 days", to the minute.
+        let thirtyDays = OverviewPeriod.thirtyDays.range(now: now, calendar: calendar)
+        // The ledger answers these on read connections of their own, so
+        // they run side by side with the period's figures below.
+        async let todaySpend = ledger.byHarness(in: DateInterval(start: todayStart, end: now))
+        async let yesterdaySpend = ledger.byHarness(in: DateInterval(start: yesterdayStart, end: todayStart))
+        async let thirtyDaySpend = ledger.byHarness(in: thirtyDays)
+        async let halfYearRead = ledger.daily(in: halfYear, calendar: calendar)
+        async let recentRead = ledger.daily(in: thirtyDays, calendar: calendar)
+
         // The selected period is reused when nothing changed underneath it.
         let summary: OverviewSummary
         if let cached = cacheEntry(for: period, now: now), cached.fresh {
@@ -336,23 +356,18 @@ public final class OverviewModel {
             summary = await summarize(period, now: now)
             if mySummary == summaryGeneration { storeCached(summary, at: now, stamped: stamped) }
         }
-        let todayStart = calendar.startOfDay(for: now)
-        let yesterdayStart = calendar.date(byAdding: .day, value: -1, to: todayStart) ?? todayStart
+        // Shown before the rest arrives: it is what the page waits on.
+        if mySummary == summaryGeneration || firstFigures(summary) { self.summary = summary }
         let spend = [
-            SpendSlice(period: .today, byHarness: await ledger.byHarness(in: DateInterval(start: todayStart, end: now))),
-            SpendSlice(period: .yesterday, byHarness: await ledger.byHarness(in: DateInterval(start: yesterdayStart, end: todayStart))),
-            SpendSlice(period: .thirtyDays, byHarness: await ledger.byHarness(
-                in: OverviewPeriod.thirtyDays.range(now: now, calendar: calendar))),
+            SpendSlice(period: .today, byHarness: await todaySpend),
+            SpendSlice(period: .yesterday, byHarness: await yesterdaySpend),
+            SpendSlice(period: .thirtyDays, byHarness: await thirtyDaySpend),
         ]
-        let halfYear = DateInterval(start: calendar.date(byAdding: .day, value: -182, to: todayStart) ?? todayStart, end: now)
-        let halfYearRows = await ledger.daily(in: halfYear, calendar: calendar)
+        let halfYearRows = await halfYearRead
         let activity = Self.combineDays(halfYearRows)
-        let thirtyDays = OverviewPeriod.thirtyDays.range(now: now, calendar: calendar)
-        // The same rolling range as the Overview's "30 days", to the minute.
-        let recentRows = await ledger.daily(in: thirtyDays, calendar: calendar)
+        let recentRows = await recentRead
         let recentModels = Self.models(recentRows)
 
-        if mySummary == summaryGeneration { self.summary = summary }
         guard mine == loadGeneration else { return }
         self.spend = spend
         self.activity = activity
@@ -363,6 +378,37 @@ public final class OverviewModel {
         warmCache()
     }
 
+    /// Full-scan loads run one at a time. Two at once (the timer's and the
+    /// search index's, both at launch) interleave on the ledger and each
+    /// starves the other, so the progress count stalls.
+    private var fullScanRunning = false
+    private var fullScanWaiters: [CheckedContinuation<Void, Never>] = []
+    private var fullScansStarted = 0
+
+    /// Waits for the running full-scan load, if any. False when another
+    /// full scan started after this one asked and has finished: it read
+    /// everything this one would, so there is nothing left to do.
+    private func beginFullScan() async -> Bool {
+        let asked = fullScansStarted
+        while fullScanRunning {
+            await withCheckedContinuation { fullScanWaiters.append($0) }
+        }
+        guard fullScansStarted == asked else { return false }
+        fullScanRunning = true
+        fullScansStarted += 1
+        return true
+    }
+
+    /// Wakes every waiter, not just the next: each checks again, so one
+    /// runs, the ones it covers return, and the rest wait for it. Waking
+    /// one alone left the load behind a covered one asleep for good.
+    private func endFullScan() {
+        fullScanRunning = false
+        let waiters = fullScanWaiters
+        fullScanWaiters = []
+        for waiter in waiters { waiter.resume() }
+    }
+
     /// Full-scan loads currently watching progress; the last to finish clears it.
     private var scanWatchers = 0
 
@@ -370,9 +416,13 @@ public final class OverviewModel {
     /// `scanWatchInterval` (the first read after one interval, so a quick
     /// scan never shows any), and until the first scan has completed,
     /// rebuilds the selected period from what has committed so far on the
-    /// first read and every third after it. The ledger commits per file, so
-    /// those figures only grow; they are never cached, and the scan's own
-    /// rebuild replaces them.
+    /// third read that finds the scan running and every third after it.
+    /// The ledger commits per file, so those figures only grow; they are
+    /// never cached, and the scan's own rebuild replaces them.
+    ///
+    /// Not sooner: the rebuild's queries share the ledger with the scan and
+    /// take seconds, so one on the first read froze a launch scan that
+    /// otherwise skips its unchanged files in about a second.
     private func watchScan() -> Task<Void, Never>? {
         guard let interval = scanWatchInterval else { return nil }
         return Task { [weak self] in
@@ -383,8 +433,9 @@ public final class OverviewModel {
                 let progress = await self.ledger.scanProgress()
                 guard !Task.isCancelled else { return }
                 self.scanProgress = progress
+                guard progress != nil else { continue }
                 reads += 1
-                guard progress != nil, !self.fullScanFinished, reads % 3 == 1 else { continue }
+                guard !self.fullScanFinished, reads % 3 == 0 else { continue }
                 let generation = self.summaryGeneration
                 let partial = await self.summarize(self.period, now: self.now())
                 guard !Task.isCancelled, generation == self.summaryGeneration else { continue }
@@ -429,17 +480,36 @@ public final class OverviewModel {
         defer { inFlight -= 1 }
         let stamped = revision
         let summary = await summarize(period, now: now)
-        guard mine == summaryGeneration else { return }
-        storeCached(summary, at: now, stamped: stamped)
+        if mine == summaryGeneration {
+            storeCached(summary, at: now, stamped: stamped)
+        } else if !firstFigures(summary) {
+            return
+        }
         self.summary = summary
+    }
+
+    /// The page still shows no figures and `summary` is for the period it
+    /// wants. A newer request superseding the one that built it would
+    /// otherwise throw it away, and at launch the page's own reload and a
+    /// queued scan can each supersede the one before, holding the figures
+    /// back until the last of them finishes.
+    private func firstFigures(_ summary: OverviewSummary) -> Bool {
+        self.summary == nil && summary.period == period
     }
 
     private func summarize(_ period: OverviewPeriod, now: Date) async -> OverviewSummary {
         let range = period.range(now: now, calendar: calendar)
-        let harnesses = await ledger.byHarness(in: range)
-        let accounts = await ledger.byAccount(in: range)
-        let accountHarnesses = await ledger.harnessByAccount(in: range)
-        let daily = await ledger.daily(in: range, calendar: calendar)
+        let ledger = self.ledger
+        let calendar = self.calendar
+        // Side by side: the ledger reads each on its own connection.
+        async let harnessRead = ledger.byHarness(in: range)
+        async let accountRead = ledger.byAccount(in: range)
+        async let accountHarnessRead = ledger.harnessByAccount(in: range)
+        async let dailyRead = ledger.daily(in: range, calendar: calendar)
+        let harnesses = await harnessRead
+        let accounts = await accountRead
+        let accountHarnesses = await accountHarnessRead
+        let daily = await dailyRead
         var total = UsageTotals()
         for value in harnesses.values { total.add(value) }
         let grand = Double(max(total.totalTokens, 1))
