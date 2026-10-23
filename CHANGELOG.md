@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Service status.** The Mac app's Service status page in the
+  browser: a card per status page (Claude, OpenAI / Codex, GitHub /
+  Copilot, Cursor, Gemini, Devin, npm, Vercel, Cloudflare) with its
+  health, and behind "Show details" the outage summary, affected
+  components and open incidents with their latest update. The Swift
+  status code is ported to a stdlib `quiver.status` package (catalog,
+  Statuspage and Google Cloud parsers, poller): each page is asked at most
+  every five minutes (one for Refresh), with ETags and `Retry-After`
+  honoured, a per-request timeout, and readings cached in
+  `~/.quiver/cache/web-service-status.json`. Read only; pages added in the
+  Mac app stay there.
+
 - **Web app: pages as plugins.** A web app page is now one module in
   `quiver/webapp/pages/` (`GET /v1/app/<page>`, optional `POST
   /v1/app/<page>/<action>`) and one script in `static/pages/`, served
