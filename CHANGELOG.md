@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Repositories: one list beside a repo rail.** The page drops the card
+  per repo for a single list of rows grouped under a plain header per repo,
+  and a rail on the right lists the pins by owner with a CI dot and the
+  tab's row count. Repos with nothing on the tab fold under "N quiet" and
+  leave the list. A tap narrows the list to one repo, which also opens the
+  Pages, Releases, Tags and Branches tabs; across all repos the tabs are
+  Pull requests, Issues and Actions. Dragging a repo in the rail reorders
+  the pins (within its owner), and the list follows. Chips filter by
+  failing CI, drafts, and dependency bots (Devin's PRs stay).
+
 - **⌘1 to ⌘9 switch Quiver's sidebar pages.** The digits follow the
   pages the sidebar shows, top to bottom, so a hidden page gives its number
   to the next one. Holding ⌘ shows a `⌘1` style key cap on each numbered
