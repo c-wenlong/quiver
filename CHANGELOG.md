@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote: search ranks by what matched, then by how recent.** A
+  session whose title holds the query comes first, then one whose folder,
+  harness or id does, then transcript matches (the exact phrase, then all
+  the words, then any word). Inside each tier a match counts less the
+  older the session is (half the decaying part every 14 days, never
+  below 0.3 of full). A phrase match no longer hides sessions that have
+  the words apart, and a title match no longer sits behind fifty passing
+  mentions. The iPhone app's offline fallback ranks the same way.
+
 - **Overview: the harness logos load as a pill while the marbles pour.**
   On the first pour after launch the logo row is a pill that fills in each
   harness's colour as its marbles land, left to right in the logos' order.

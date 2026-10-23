@@ -239,7 +239,9 @@ class SearchTest(TempHomeTest):
         self.assertTrue(hit.file_path.endswith("sess-alpha.jsonl"))
 
     def test_a_missing_index_returns_empty(self):
-        empty = Path(tempfile.mkdtemp())
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        empty = Path(tmp.name)
         self.assertEqual(search_index.search(empty, "ledger"), [])
 
 
@@ -500,6 +502,36 @@ class McpSearchTest(TempHomeTest):
             out = self.server.get_recent_sessions(limit=5)
             self.assertIn("fix the login bug", out)
             self.assertIn("refactor the retry loop", out)
+
+
+class SearchPassesTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.home = Path(tmp.name)
+        write_index(self.home)
+
+    def test_every_rung_without_snippets(self):
+        passes = search_index.search_passes(self.home, "scan offsets")
+        self.assertEqual([[h.session_id for h in p] for p in passes],
+                         [["sess-alpha"], ["sess-alpha", "sess-gamma"], ["sess-alpha", "sess-gamma"]])
+        self.assertTrue(all(h.snippet == "" and h.fts and h.rowid for p in passes for h in p))
+
+    def test_one_word_has_one_rung(self):
+        self.assertEqual(len(search_index.search_passes(self.home, "ledger")), 1)
+
+    def test_fill_snippets(self):
+        hits = search_index.search_passes(self.home, "scan offsets")[1]
+        filled = search_index.fill_snippets(self.home, hits)
+        self.assertTrue(all("offsets" in h.snippet for h in filled))
+        self.assertTrue(all("\ue000" in h.marked_snippet for h in filled))
+
+    def test_missing_index(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        empty = Path(tmp.name)
+        self.assertEqual(search_index.search_passes(empty, "ledger"), [])
+        self.assertEqual(search_index.fill_snippets(empty, []), [])
 
 
 if __name__ == "__main__":
