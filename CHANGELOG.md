@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Calendar.** When each harness was working on the hub
+  machine, as the Mac app draws it: blocks of activity per project (a
+  session's responses join until 30 minutes of silence, and sessions of
+  one repository merge under the same gap; every Grok Bot session is one
+  "Grok Bot" project) on a Day, Week, N-day or Month grid in the
+  browser's time zone, coloured by harness, with the mini month, the
+  harness and account legend with time totals, and the same keys (D, W,
+  M, 1 to 9, T, S, arrows). A block's hover card and session list add
+  its tokens and spend; a session opens the Sessions page's detail.
+  Read only, from the shared ledger.
+
 - **Web app: pages as plugins.** A web app page is now one module in
   `quiver/webapp/pages/` (`GET /v1/app/<page>`, optional `POST
   /v1/app/<page>/<action>`) and one script in `static/pages/`, served
