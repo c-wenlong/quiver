@@ -563,18 +563,21 @@ public final class SessionsModel {
         CursorUsageFeed.isDayBucket(session) ? "\(harness)|\(account)|\(session)" : "\(harness)|\(session)"
     }
 
-    /// Re-reads usage once per completed ledger scan: `scans` is the
-    /// overview's count of them. The Sessions page calls this each time
-    /// it opens, and with no new scan since the last call the usage on
-    /// show is already the newest, so it skips the read and the rejoin.
-    public func refreshUsage(afterScans scans: Int) async {
-        guard scans != refreshedForScans else { return }
-        refreshedForScans = scans
+    /// Re-reads usage once per ledger change: `scans` is the overview's
+    /// count of completed scans and `ledgerRevision` its revision, which
+    /// also moves on a feed import or a price change. The Sessions page
+    /// calls this each time it opens, and with neither moved since the
+    /// last call the usage on show is already the newest, so it skips
+    /// the read and the rejoin.
+    public func refreshUsage(afterScans scans: Int, ledgerRevision: Int) async {
+        let stamp = [scans, ledgerRevision]
+        guard stamp != refreshedFor else { return }
+        refreshedFor = stamp
         await refreshUsage(ledgerScanned: scans > 0)
     }
 
-    /// The scan count the last `refreshUsage(afterScans:)` read for.
-    private var refreshedForScans: Int?
+    /// The scan count and revision the last `refreshUsage(afterScans:ledgerRevision:)` read for.
+    private var refreshedFor: [Int]?
 
     /// Two usage rows of one session added together. The account is the
     /// one that recorded the later event.
@@ -979,11 +982,13 @@ public final class SessionsModel {
         var filter: Int
         /// The minute it was worked out in: every window but All time
         /// slides with the clock, so an answer lasts a minute at most.
+        /// Zero for All time, whose start never moves.
         var minute: Int
     }
 
     private var filteredKey: FilteredKey {
-        FilteredKey(rows: rowsVersion, filter: filterVersion, minute: Int(now().timeIntervalSince1970 / 60))
+        FilteredKey(rows: rowsVersion, filter: filterVersion,
+                    minute: filter.window == .all ? 0 : Int(now().timeIntervalSince1970 / 60))
     }
 
     // A page draws `summary`, `groupedByDay`, `hiddenTrivialCount` and

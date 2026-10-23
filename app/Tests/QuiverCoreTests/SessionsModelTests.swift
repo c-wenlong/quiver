@@ -621,11 +621,11 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         // b becomes trivial once its usage reads as empty after a scan.
         var empty = usage("b", "codex", models: ["gpt"], cost: 0, home: "/Users/k/.codex")
         empty.totals = UsageTotals()
-        await model.refreshUsage(afterScans: 1)
+        await model.refreshUsage(afterScans: 1, ledgerRevision: 0)
         #expect(model.visible.map(\.id) == ["b"])
         await ledger.set([
             usage("a", "claude", models: ["opus"], cost: 1), empty])
-        await model.refreshUsage(afterScans: 2)
+        await model.refreshUsage(afterScans: 2, ledgerRevision: 0)
         #expect(model.visible.isEmpty)
         #expect(model.hiddenTrivialCount == 1)
         model.showTrivial = true
@@ -677,15 +677,37 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         let model = await model([session("a", "claude", cwd: nil, at: 1_791_699_000)], [], ledger: ledger)
         await model.load()
         let afterLoad = await ledger.ranges.count
-        await model.refreshUsage(afterScans: 3)
-        await model.refreshUsage(afterScans: 3)
+        await model.refreshUsage(afterScans: 3, ledgerRevision: 5)
+        await model.refreshUsage(afterScans: 3, ledgerRevision: 5)
         #expect(await ledger.ranges.count == afterLoad + 1)
         #expect(model.ledgerScanned)
 
         await ledger.set([usage("a", "claude", models: ["opus"], cost: 2)])
-        await model.refreshUsage(afterScans: 4)
+        await model.refreshUsage(afterScans: 4, ledgerRevision: 5)
         #expect(await ledger.ranges.count == afterLoad + 2)
         #expect(model.rows.first?.usage?.totals.costUSD == 2)
+
+        // A feed import or a price change moves the revision, not the
+        // scan count: that rereads too.
+        await ledger.set([usage("a", "claude", models: ["opus"], cost: 3)])
+        await model.refreshUsage(afterScans: 4, ledgerRevision: 6)
+        #expect(await ledger.ranges.count == afterLoad + 3)
+        #expect(model.rows.first?.usage?.totals.costUSD == 3)
+    }
+
+    @Test func allTimeStaysPutAsTheClockMoves() async {
+        final class Clock: @unchecked Sendable { var now = Date(timeIntervalSince1970: 1_791_700_000) }
+        let clock = Clock()
+        let model = SessionsModel(
+            source: FakeSessionSource(list: SessionList(sessions: [
+                session("a", "claude", cwd: nil, at: 1_000)], failures: [])),
+            ledger: FakeSessionLedger(), now: { clock.now }, calendar: calendar)
+        await model.load()
+        model.filter.window = .all
+        let first = model.visible
+        clock.now.addTimeInterval(3600)
+        #expect(model.visible.map(\.id) == first.map(\.id))
+        #expect(model.summary.sessions == 1)
     }
 }
 

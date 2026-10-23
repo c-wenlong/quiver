@@ -216,7 +216,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   about 90 ms. The page used to filter every session several times per
   redraw and reread the ledger on every visit. It now keeps the filtered
   list, totals, day groups and filter choices until the sessions or
-  filters change, and rereads usage only after a new scan.
+  filters change, and rereads usage only when the ledger changed.
 
 - **Phone sends return immediately instead of hanging for the turn.**
   `POST /v1/sessions/{key}/message` now answers `202` and runs the send
