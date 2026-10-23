@@ -96,6 +96,27 @@ class TestCommandValidation(unittest.TestCase):
         with self.assertRaises(ValueError):
             protocol.parse_control_command({"op": "detonate"})
 
+    def test_launch(self):
+        out = protocol.parse_launch_command(
+            {"harness": "codex", "cwd": "/srv/app", "prompt": "go"})
+        self.assertEqual(out, {"machine": "", "harness": "codex",
+                               "cwd": "/srv/app", "prompt": "go"})
+        bad = [
+            {"harness": "gemini", "cwd": "/a", "prompt": "go"},
+            {"harness": ["claude"], "cwd": "/a", "prompt": "go"},
+            {"harness": {"x": 1}, "cwd": "/a", "prompt": "go"},
+            {"harness": "claude", "cwd": "~/a", "prompt": "go"},
+            {"harness": "claude", "cwd": "/a\x00b", "prompt": "go"},
+            {"harness": "claude", "cwd": "/a", "prompt": ""},
+            {"harness": "claude", "cwd": "/a",
+             "prompt": "x" * (protocol.MAX_LAUNCH_PROMPT + 1)},
+            {"harness": "claude", "cwd": "/a", "prompt": "go", "machine": 3},
+            [],
+        ]
+        for body in bad:
+            with self.assertRaises(ValueError, msg=body):
+                protocol.parse_launch_command(body)
+
 
 if __name__ == "__main__":
     unittest.main()

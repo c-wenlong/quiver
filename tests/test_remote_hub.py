@@ -642,6 +642,25 @@ class TestHubWriteRoutes(unittest.TestCase):
         )
         self.assertEqual(status, 404)
 
+    def _launch(self, body, installed=True):
+        with patch("quiver.remote.hub.shutil.which",
+                   return_value="/usr/bin/x" if installed else None), \
+             patch("quiver.remote.supervise.tmux_bin",
+                   return_value="/usr/bin/tmux"):
+            status, data = self.srv.request(
+                "POST", "/v1/sessions", body=body, headers=self.hdr)
+        return status, json.loads(data)
+
+    def _wait_launch_threads(self):
+        for t in threading.enumerate():
+            if t.name.startswith("remote-launch-"):
+                t.join(timeout=5)
+
+    def _launch_view(self, launch_id):
+        status, data = self.srv.request(
+            "GET", f"/v1/launches/{launch_id}", headers=self.hdr)
+        return status, json.loads(data)
+
     def test_new_session_launch(self):
         # launch_new is mocked: without it this route could spawn a real
         # claude process wherever tmux happens to be installed.
@@ -649,23 +668,109 @@ class TestHubWriteRoutes(unittest.TestCase):
             "quiver.remote.supervise.launch_new",
             return_value=(True, "launched", "qv-t"),
         ) as launch:
-            status, data = self.srv.request(
-                "POST", "/v1/sessions",
-                body={"harness": "claude", "cwd": "/tmp", "prompt": "hi"},
-                headers=self.hdr,
-            )
-        self.assertEqual(status, 202, data)
-        launch.assert_called_once()
+            status, body = self._launch(
+                {"harness": "claude", "cwd": "/tmp", "prompt": "hi"})
+            self._wait_launch_threads()
+        self.assertEqual(status, 202, body)
+        launch_id = body["launch_id"]
+        self.assertEqual(body["state"], "pending")
+        self.assertEqual(launch.call_args[1]["launch_id"], launch_id)
+        status, view = self._launch_view(launch_id)
+        self.assertEqual((status, view["state"]), (200, "pending"))
+        # Adoption names the key; the launch reads started once the
+        # catalog has that row (claude:s1 is in this server's catalog).
+        self.srv.state.emit("_global", protocol.event(
+            "session.launched", "claude:s1", "m", {"launch_id": launch_id}))
+        _, view = self._launch_view(launch_id)
+        self.assertEqual((view["state"], view["key"]), ("started", "claude:s1"))
+
+    def test_launch_started_waits_for_catalog_row(self):
+        with patch("quiver.remote.supervise.launch_new",
+                   return_value=(True, "launched", "qv-t")):
+            _, body = self._launch(
+                {"harness": "claude", "cwd": "/tmp", "prompt": "hi"})
+            self._wait_launch_threads()
+        self.srv.state.emit("claude:new", protocol.event(
+            "session.launched", "claude:new", "m",
+            {"launch_id": body["launch_id"]}))
+        _, view = self._launch_view(body["launch_id"])
+        self.assertEqual(view["state"], "pending")
+
+    def test_launch_failure_after_reply_is_remembered(self):
+        # launch_new runs after the 202, so its failure lands on the
+        # launch the phone is polling.
         with patch(
             "quiver.remote.supervise.launch_new",
-            return_value=(False, "tmux is not available", None),
+            return_value=(False, "tmux launch failed", None),
         ):
-            status, data = self.srv.request(
-                "POST", "/v1/sessions",
-                body={"harness": "claude", "cwd": "/tmp", "prompt": "hi"},
-                headers=self.hdr,
-            )
-        self.assertEqual(status, 422, data)
+            status, body = self._launch(
+                {"harness": "claude", "cwd": "/tmp", "prompt": "hi"})
+            self._wait_launch_threads()
+        self.assertEqual(status, 202, body)
+        _, view = self._launch_view(body["launch_id"])
+        self.assertEqual(view["state"], "failed")
+        self.assertIn("tmux", view["note"])
+
+    def test_missing_binary_is_422_before_launch(self):
+        with patch("quiver.remote.supervise.launch_new") as launch:
+            status, body = self._launch(
+                {"harness": "claude", "cwd": "/tmp", "prompt": "hi"},
+                installed=False)
+        self.assertEqual((status, body["error"]["code"]),
+                         (422, "launch_failed"))
+        launch.assert_not_called()
+        self.assertEqual(self.srv.state.launches, {})
+
+    def test_launch_validation(self):
+        with patch("quiver.remote.supervise.launch_new") as launch:
+            cases = [
+                ({"harness": "gemini", "cwd": "/tmp", "prompt": "hi"},
+                 "bad_command"),
+                ({"harness": "claude", "cwd": "tmp", "prompt": "hi"},
+                 "bad_command"),
+                ({"harness": "claude", "cwd": "/tmp", "prompt": "  "},
+                 "bad_command"),
+                ({"harness": "claude", "cwd": "/no/such/dir", "prompt": "hi"},
+                 "bad_cwd"),
+            ]
+            for req, code in cases:
+                status, body = self._launch(req)
+                self.assertEqual((status, body["error"]["code"]),
+                                 (422, code), req)
+        launch.assert_not_called()
+        self.assertEqual(self.srv.state.launches, {})
+
+    def test_unknown_launch_404(self):
+        status, _ = self._launch_view("lnope")
+        self.assertEqual(status, 404)
+
+    def test_launches_require_auth(self):
+        status, _ = self.srv.request("GET", "/v1/launches/lx")
+        self.assertEqual(status, 401)
+
+    def test_old_launches_are_pruned(self):
+        old = self.srv.state.new_launch("m", "claude", "/tmp")
+        self.srv.state.launches[old]["created_at"] -= 2 * 86400
+        self.srv.state.new_launch("m", "claude", "/tmp")
+        self.assertNotIn(old, self.srv.state.launches)
+
+    def test_adoption_leaves_the_sessions_journal_empty(self):
+        # The tailer skips history when the session already has a
+        # journal, so session.launched must not land there first.
+        lid = self.srv.state.new_launch("m", "claude", "/tmp")
+        with patch("quiver.remote.supervise.adopt_pending",
+                   return_value=["claude:new"]), \
+             patch("quiver.remote.supervise.meta_for",
+                   return_value={"launch_id": lid}):
+            self.srv.state._adopt_launches()
+        self.assertEqual(self.srv.state.journal.last_seq("claude:new"), 0)
+        self.assertEqual(self.srv.state.launches[lid]["key"], "claude:new")
+
+    def test_settled_launch_stays_settled(self):
+        lid = self.srv.state.new_launch("m", "claude", "/tmp")
+        self.srv.state.settle_launch(lid, state="started", key="claude:s1")
+        self.srv.state.settle_launch(lid, state="failed", note="late")
+        self.assertEqual(self.srv.state.launches[lid]["state"], "started")
 
     def test_static_assets(self):
         for path in ("/", "/app.js", "/styles.css",

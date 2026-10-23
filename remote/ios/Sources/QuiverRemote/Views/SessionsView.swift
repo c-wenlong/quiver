@@ -3,8 +3,12 @@ import SwiftUI
 /// P4: every session on the paired machines, grouped by project.
 struct SessionsView: View {
     @Environment(AppModel.self) private var app
+    /// The tab's navigation path, so a just-started session's chat can open.
+    @Binding var path: [Route]
     @State private var filter: SessionFilter = .all
     @State private var showDevices = false
+    @State private var showNewSession = false
+    @State private var startedKey: String?
     @State private var confirmUnpair = false
     @State private var search = SessionSearch()
 
@@ -47,6 +51,12 @@ struct SessionsView: View {
         .navigationTitle("Sessions")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                Button { showNewSession = true } label: {
+                    Image(systemName: "plus").font(.system(size: 15, weight: .medium))
+                }
+                .accessibilityLabel("New session")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Section(app.hub?.baseURL.host ?? "") {
                         Button { showDevices = true } label: { Label("Pair requests and devices", systemImage: "iphone.and.arrow.forward") }
@@ -59,6 +69,14 @@ struct SessionsView: View {
             }
         }
         .sheet(isPresented: $showDevices) { NavigationStack { DevicesView() } }
+        // The chat opens after the sheet is gone, so the push isn't lost
+        // under the dismiss animation.
+        .sheet(isPresented: $showNewSession, onDismiss: {
+            if let key = startedKey { path.append(.chat(key)) }
+            startedKey = nil
+        }) {
+            NavigationStack { NewSessionView { startedKey = $0 } }
+        }
         .confirmationDialog("Unpair this device?", isPresented: $confirmUnpair, titleVisibility: .visible) {
             Button("Unpair", role: .destructive) { app.unpair() }
         } message: {

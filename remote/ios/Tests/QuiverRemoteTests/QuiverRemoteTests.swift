@@ -358,3 +358,126 @@ final class SessionSearchTests: XCTestCase {
         XCTAssertEqual(body.indexed, true)
     }
 }
+
+final class NewSessionOptionsTests: XCTestCase {
+    private func row(_ key: String, _ harness: String, cwd: String, machine: String = "m1", at: Double) -> SessionRow {
+        SessionRow(key: key, harness: harness, agent: nil, cwd: cwd, title: nil, lastActiveAt: at,
+                   status: nil, machineId: machine, ownership: nil, attachable: nil)
+    }
+
+    private func machine(_ id: String, name: String, online: Bool = true, harnesses: [String]? = nil, launchable: [String]? = nil) -> Machine {
+        Machine(id: id, name: name, os: nil, online: online, lastSeenAt: nil, harnesses: harnesses, launchable: launchable)
+    }
+
+    func testFoldersAreDistinctNewestFirstPerMachine() {
+        let rows = [row("a", "claude", cwd: "/p/old", at: 1), row("b", "codex", cwd: "/p/new", at: 3),
+                    row("c", "claude", cwd: "/p/old", at: 2), row("d", "claude", cwd: "/other", machine: "m2", at: 9),
+                    row("e", "claude", cwd: "", at: 5)]
+        XCTAssertEqual(NewSessionOptions.folders(on: "m1", sessions: rows), ["/p/new", "/p/old"])
+    }
+
+    func testHarnessesPreferRecentUseAndFallBackToHarnesses() {
+        let rows = [row("a", "codex", cwd: "/p", at: 5), row("b", "claude", cwd: "/p", at: 1)]
+        let m = machine("m1", name: "mac", launchable: ["claude", "codex", "pi"])
+        XCTAssertEqual(NewSessionOptions.harnesses(on: m, sessions: rows), ["codex", "claude", "pi"])
+        // An older row with no launchable field offers its launchable harnesses.
+        let old = machine("m1", name: "mac", harnesses: ["claude", "gemini", "opencode"])
+        XCTAssertEqual(NewSessionOptions.harnesses(on: old, sessions: []), ["claude"])
+    }
+
+    func testMachinesDropThoseThatCanLaunchNothingOnlineFirst() {
+        let ms = [machine("z", name: "zeta", launchable: ["claude"]),
+                  machine("o", name: "alpha", online: false, launchable: ["claude"]),
+                  machine("n", name: "none", launchable: []),
+                  machine("b", name: "beta.local", launchable: ["codex"])]
+        XCTAssertEqual(NewSessionOptions.machines(ms, sessions: []).map(\.id), ["b", "z", "o"])
+    }
+
+    func testDefaultHarnessIsTheFoldersLastOneWhenOffered() {
+        let rows = [row("a", "codex", cwd: "/p", at: 5), row("b", "claude", cwd: "/q", at: 9)]
+        XCTAssertEqual(NewSessionOptions.defaultHarness(folder: "/p", machineId: "m1", offered: ["claude", "codex"], sessions: rows), "codex")
+        XCTAssertEqual(NewSessionOptions.defaultHarness(folder: "/p", machineId: "m1", offered: ["claude"], sessions: rows), "claude")
+        XCTAssertNil(NewSessionOptions.defaultHarness(folder: "/p", machineId: "m1", offered: [], sessions: rows))
+    }
+
+    func testDecodesHubLaunchAndMachineRows() throws {
+        let launch = try Hub.decoder.decode(LaunchStatus.self, from: Data(
+            #"{"ok":true,"launch_id":"l1a2","state":"pending","queued":true,"note":"queued for satellite"}"#.utf8))
+        XCTAssertEqual(launch.launchId, "l1a2")
+        XCTAssertEqual(launch.queued, true)
+        let m = try Hub.decoder.decode(Machine.self, from: Data(
+            #"{"id":"m","name":"mac","harnesses":["claude","gemini"],"launchable":["claude"]}"#.utf8))
+        XCTAssertEqual(m.launchable, ["claude"])
+    }
+}
+
+@MainActor
+final class LaunchFlowTests: XCTestCase {
+    private func status(_ state: String, key: String? = nil, note: String? = nil, queued: Bool? = nil) -> LaunchStatus {
+        LaunchStatus(launchId: "l1", state: state, key: key, note: note, queued: queued)
+    }
+
+    func testPollsUntilStarted() async {
+        let flow = LaunchFlow()
+        var answers = [status("pending"), status("started", key: "claude:new")]
+        var asked: [String] = []
+        let key = await flow.run(post: { self.status("pending") },
+                                 fetch: { asked.append($0); return answers.removeFirst() },
+                                 interval: .zero)
+        XCTAssertEqual(key, "claude:new")
+        XCTAssertEqual(asked, ["l1", "l1"])
+        XCTAssertEqual(flow.phase, .started("claude:new"))
+    }
+
+    func testTheLastPollIsStillRead() async {
+        let flow = LaunchFlow()
+        let key = await flow.run(post: { self.status("pending") },
+                                 fetch: { _ in self.status("started", key: "claude:late") },
+                                 attempts: 1, interval: .zero)
+        XCTAssertEqual(key, "claude:late")
+    }
+
+    func testCancelledLaunchStopsWithoutAKey() async {
+        let flow = LaunchFlow()
+        let task = Task { await flow.run(post: { self.status("pending") },
+                                         fetch: { _ in self.status("pending") },
+                                         interval: .seconds(30)) }
+        task.cancel()
+        let key = await task.value
+        XCTAssertNil(key)
+        XCTAssertEqual(flow.phase, .idle)
+    }
+
+    func testFailedLaunchShowsTheHubsNote() async {
+        let flow = LaunchFlow()
+        let key = await flow.run(post: { self.status("pending") },
+                                 fetch: { _ in self.status("failed", note: "no such folder on this machine: /x") },
+                                 interval: .zero)
+        XCTAssertNil(key)
+        XCTAssertEqual(flow.phase, .failed("The session didn't start: no such folder on this machine: /x"))
+    }
+
+    func testRejectedPostAndLostLaunch() async {
+        let flow = LaunchFlow()
+        var key = await flow.run(post: { throw HubError(status: 422, code: "bad_cwd", message: "That folder doesn't exist on this machine.") },
+                                 fetch: { _ in self.status("pending") }, interval: .zero)
+        XCTAssertNil(key)
+        XCTAssertEqual(flow.phase, .failed("That folder doesn't exist on this machine."))
+        key = await flow.run(post: { self.status("pending") },
+                             fetch: { _ in throw HubError(status: 404, code: "unknown_launch", message: "lost") },
+                             interval: .zero)
+        XCTAssertNil(key)
+        XCTAssertEqual(flow.phase, .failed("lost"))
+    }
+
+    func testTimeoutWordingSaysWhetherItWasQueued() async {
+        let flow = LaunchFlow()
+        var fetches = 0
+        _ = await flow.run(post: { self.status("pending", queued: true) },
+                           fetch: { _ in fetches += 1; throw HubError.network(URLError(.timedOut)) },
+                           attempts: 3, interval: .zero)
+        XCTAssertEqual(fetches, 3)
+        guard case .unconfirmed(let message) = flow.phase else { return XCTFail("expected unconfirmed") }
+        XCTAssertTrue(message.hasPrefix("Queued."))
+    }
+}

@@ -142,6 +142,13 @@ class TestRemoteCatalog(unittest.TestCase):
         self.assertIn("claude", found)
         self.assertNotIn("opencode", found)
 
+    def test_local_machine_offers_only_launchable(self):
+        with patch.object(catalog_mod, "detected_harnesses",
+                          return_value=["claude", "gemini", "opencode"]):
+            row = catalog_mod.local_machine(self.home)
+        self.assertEqual(row["harnesses"], ["claude", "gemini", "opencode"])
+        self.assertEqual(row["launchable"], ["claude"])
+
 
 class TestPresence(unittest.TestCase):
     def setUp(self):
@@ -481,6 +488,58 @@ class TestAgentRoutes(unittest.TestCase):
         replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
         self.assertEqual(replay[0]["data"]["op"], "launch")
         self.assertEqual(replay[0]["data"]["harness"], "claude")
+        launch_id = json.loads(data)["launch_id"]
+        self.assertEqual(replay[0]["data"]["launch_id"], launch_id)
+
+    def test_satellite_launch_settles_from_events(self):
+        _, data = self.srv.request(
+            "POST", "/v1/sessions",
+            {"machine": "sat-m1", "harness": "claude",
+             "cwd": "/tmp/x", "prompt": "go"},
+            headers=self.srv.auth)
+        launch_id = json.loads(data)["launch_id"]
+        self._push_catalog([{"key": "claude:r9", "ownership": "attached"}])
+        self.srv.state.catalog.refresh()
+        self.srv.request(
+            "POST", "/v1/agent/events",
+            {"machine_id": self.mid, "events": [protocol.event(
+                "session.launched", "claude:r9", self.mid,
+                {"launch_id": launch_id})]},
+            headers=self.srv.auth)
+        _, view = self.srv.request(
+            "GET", f"/v1/launches/{launch_id}", headers=self.srv.auth)
+        view = json.loads(view)
+        self.assertEqual(view["state"], "started")
+        self.assertEqual(view["key"], "claude:r9@sat-m1")
+
+    def test_satellite_launch_failure_settles(self):
+        _, data = self.srv.request(
+            "POST", "/v1/sessions",
+            {"machine": "sat-m1", "harness": "claude",
+             "cwd": "/tmp/x", "prompt": "go"},
+            headers=self.srv.auth)
+        launch_id = json.loads(data)["launch_id"]
+        self.srv.request(
+            "POST", "/v1/agent/events",
+            {"machine_id": self.mid, "events": [protocol.event(
+                "command.result", "", self.mid,
+                {"op": "launch", "ok": False, "launch_id": launch_id,
+                 "note": "no such folder on this machine: /tmp/x"})]},
+            headers=self.srv.auth)
+        launch = self.srv.state.launches[launch_id]
+        self.assertEqual(launch["state"], "failed")
+        self.assertIn("no such folder", launch["note"])
+
+    def test_launch_refuses_harness_machine_lacks(self):
+        catalog_mod.upsert_machine(
+            self.srv.home, {"id": "sat-m1", "launchable": ["codex"]})
+        status, data = self.srv.request(
+            "POST", "/v1/sessions",
+            {"machine": "sat-m1", "harness": "claude",
+             "cwd": "/tmp/x", "prompt": "go"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 422, data)
+        self.assertEqual(json.loads(data)["error"]["code"], "not_launchable")
 
     def test_remote_attachment_stages_and_queues_pull(self):
         self._push_catalog([{
@@ -857,9 +916,32 @@ class TestAgentEdges(unittest.TestCase):
         ) as ln:
             ok, note, _deg = ag._execute(
                 "k", "launch",
-                {"harness": "claude", "cwd": "/tmp", "prompt": "hi"})
+                {"harness": "claude", "cwd": "/tmp", "prompt": "hi",
+                 "launch_id": "l1"})
         self.assertTrue(ok)
         self.assertEqual(ln.call_args[1]["known_ids"], [])
+        self.assertEqual(ln.call_args[1]["launch_id"], "l1")
+
+    def test_adopted_launch_reports_session_launched(self):
+        ag = self._agent()
+        ag.catalog.refresh = lambda: []
+        with patch.object(supervise, "adopt_pending",
+                          return_value=["claude:new"]), \
+             patch.object(supervise, "meta_for",
+                          return_value={"launch_id": "l7"}), \
+             patch.object(agent_mod, "_post", return_value=(200, {})):
+            ag._push_catalog()
+        launched = [e for e in ag.outbox if e["type"] == "session.launched"]
+        self.assertEqual(launched[0]["session"], "claude:new")
+        self.assertEqual(launched[0]["data"]["launch_id"], "l7")
+
+    def test_launch_result_echoes_launch_id(self):
+        ag = self._agent()
+        with patch.object(ag, "_execute", return_value=(False, "nope", False)):
+            ag._dispatch({"session": "", "data": {
+                "op": "launch", "command_id": "c1", "launch_id": "l3"}})
+        result = [e for e in ag.outbox if e["type"] == "command.result"][-1]
+        self.assertEqual(result["data"]["launch_id"], "l3")
 
     def test_execute_attachment_paths(self):
         ag = self._agent()
@@ -997,7 +1079,8 @@ class TestAgentRouteValidation(unittest.TestCase):
         # not have connected yet — the offline queue is the point.
         status, data = self.srv.request(
             "POST", "/v1/sessions",
-            {"machine": "ghost", "harness": "claude", "cwd": "/x"},
+            {"machine": "ghost", "harness": "claude", "cwd": "/x",
+             "prompt": "go"},
             headers=self.srv.auth)
         self.assertEqual(status, 202)
         replay, _ = self.srv.state.journal.read_since("_sat_ghost", 0)

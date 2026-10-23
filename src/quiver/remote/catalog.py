@@ -97,14 +97,22 @@ def tailscale_ip() -> str:
 
 
 def local_machine(home: Path | str | None = None) -> dict:
-    """This machine's ``/v1/machines`` row."""
+    """This machine's ``/v1/machines`` row.
+
+    ``launchable`` is what the phone's new-session sheet offers: the
+    detected harnesses ``POST /v1/sessions`` accepts.
+    """
+    harnesses = detected_harnesses()
     return {
         "id": load_machine_id(home),
         "name": platform.node() or "localhost",
         "os": platform.system().lower() or os.name,
         "online": True,
         "last_seen_at": time.time(),
-        "harnesses": detected_harnesses(),
+        "harnesses": harnesses,
+        "launchable": [
+            h for h in harnesses if h in protocol.LAUNCHABLE_HARNESSES
+        ],
     }
 
 
