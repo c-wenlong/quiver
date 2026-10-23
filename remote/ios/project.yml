@@ -19,6 +19,7 @@ targets:
         # screen size (black bars top and bottom).
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSCameraUsageDescription: Scan the pair QR that swe remote pair --app shows.
         CFBundleURLTypes:
           - CFBundleURLName: com.quiver.remote.pair
             CFBundleURLSchemes: [quiver]
@@ -32,3 +33,26 @@ targets:
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "5.0"
+  QuiverRemoteTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Tests/QuiverRemoteTests
+    dependencies:
+      - target: QuiverRemote
+    settings:
+      base:
+        DEVELOPMENT_TEAM: MAK855QGSV
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+schemes:
+  QuiverRemote:
+    build:
+      targets:
+        QuiverRemote: all
+        QuiverRemoteTests: [test]
+    test:
+      targets:
+        - QuiverRemoteTests

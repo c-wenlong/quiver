@@ -210,18 +210,17 @@ writes-go-through-tested-Python rule.
 [remote/ROADMAP.md](../remote/ROADMAP.md) tracks the client redesign:
 every page, component and feature, and the hub work each needs.
 
-Three tiers. The hub serves a static SPA (`remote/web/`): the whole
-feature works over Tailscale with "add to home screen", zero store
-friction. Then a thin WKWebView wrapper buys a real icon, a share-sheet
-target, a Face ID launch gate and WidgetKit/Live Activities via app
-extensions, without porting the UI. Native SwiftUI comes last, and only
-if dictation (`SFSpeechRecognizer`), a real offline cache (service
-workers in WKWebView are flaky) or general polish justify it. Push comes
-from ntfy, not the app. One caveat: Safari's PWA storage and WKWebView's
-data store are separate, so a device credential paired in the PWA does
-not carry into the wrapper — re-scanning the QR once inside the app is
-expected, not a bug. Share only protocol DTOs with QuiverCore — decoding
-stays server-side and most of QuiverCore is AppKit-bound.
+Two clients. The hub serves a static SPA (`src/quiver/remote/web/`),
+so the whole feature works in any browser over Tailscale with "add to
+home screen". On iPhone the client is native SwiftUI (`remote/ios/`):
+it reads the same REST routes and SSE streams, keeps its credential in
+the Keychain, and leaves room for widgets, Live Activities, Face ID and
+APNs. It replaced an earlier WKWebView wrapper around the SPA once the
+webview's scrolling, keyboard handling and blank offline launch showed.
+Push comes from ntfy for now. A device paired in Safari's PWA and the
+app pair separately; each holds its own credential. Share only protocol
+DTOs with QuiverCore: decoding stays server-side and most of QuiverCore
+is AppKit-bound.
 
 Screens:
 
@@ -280,7 +279,7 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
 | R1 | hub + tail + catalog + SSE + PWA read-only chat, Linux only | streaming, rendering on real transcripts |
 | R2 | inject A-tier claude headless + tmux supervisor + attach | phone can prompt |
 | R3 | satellite + machine registry + offline queue | MacBook joins |
-| R4 | iOS shell (WKWebView wrapper) + Inbox + ntfy push + approval cards | notifications |
+| R4 | iOS app (a WKWebView shell, since replaced by SwiftUI) + Inbox + ntfy push + approval cards | notifications |
 | R5 | opencode serve adapter, codex app-server adapter, diff pane, Queue/Steer polish | tier-A depth |
 
 ## Risks
