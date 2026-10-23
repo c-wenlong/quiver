@@ -152,6 +152,9 @@ private struct TotalCard: View {
     @State private var size: CGSize = .zero
 
     static let space = "total-card"
+    /// The width the marbles clear around the figures: the widest line
+    /// (a total like "35.3B" at display size) with room either side.
+    static let clearWidth: CGFloat = 380
     /// Tall enough that the pile has room under the figures.
     static let minHeight: CGFloat = 440
 
@@ -179,10 +182,11 @@ private struct TotalCard: View {
                 Tabs(options: OverviewPeriod.allCases.map { ($0, $0.title) }, selection: $period, style: .period)
             }
             figures
-                // Straight to the scene, not through state: the frame moves
-                // on every frame of the roll (see `MarblePile`).
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.space)) } action: {
-                    MarbleScene.shared.clearRect = $0
+                // Straight to the scene rather than through state, so a
+                // resize doesn't rebuild the card. The figures fill the
+                // card's width, so the clear zone is the middle of it.
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.space)) } action: { box in
+                    MarbleScene.shared.clearRect = box.insetBy(dx: max((box.width - Self.clearWidth) / 2, 0), dy: 0)
                 }
         }
         .padding(Theme.cardPadding)
@@ -201,35 +205,38 @@ private struct TotalCard: View {
         .onChange(of: focus, initial: true) { MarbleScene.shared.focus = focus }
     }
 
+    /// The figures roll on a hover with `RollingText`, Core Animation on
+    /// layers, not SwiftUI's `.numericText`: that laid the text out again
+    /// on every frame, and each frame laid out the whole Overview page, so
+    /// the hover lagged. These lines keep one size, so a hover is one
+    /// SwiftUI update.
     private var figures: some View {
         let focused = shares.first { $0.harness == focus }
         let totals = focused?.totals ?? summary.totals
+        // Focusing a harness rolls down to its smaller figures; leaving
+        // rolls back up to the totals.
+        let up = focused == nil
+        let cost = UsageFormat.dollars(totals.costUSD)
         return VStack(spacing: 6) {
-            Text(focused.map { "\(UsageFormat.harness($0.harness)) tokens" } ?? "Total tokens")
-                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                .contentTransition(.numericText())
-            Text(UsageFormat.tokens(totals.totalTokens))
-                .font(Theme.display).tracking(-1.8).monospacedDigit()
-                .foregroundStyle(Theme.textPrimary)
-                .contentTransition(.numericText(countsDown: focused != nil))
-            HStack(spacing: 6) {
-                Text(UsageFormat.dollars(totals.costUSD))
-                    .font(Theme.figure).monospacedDigit()
-                    .foregroundStyle(Theme.accent)
-                    .contentTransition(.numericText(countsDown: focused != nil))
-                if totals.unpricedTokens > 0 {
-                    Button { app.selection = .pricing } label: {
-                        Image(systemName: "info.circle")
-                            .foregroundStyle(Theme.textSecondary)
-                            .hoverTip("\(UsageFormat.tokens(totals.unpricedTokens)) tokens from models with no list price aren't in this total: \(totals.unpricedModels.sorted().joined(separator: ", "))")
+            RollingText(text: focused.map { "\(UsageFormat.harness($0.harness)) tokens" } ?? "Total tokens",
+                        font: Self.captionFont, color: NSColor(Theme.textSecondary), perCharacter: false, up: up)
+            RollingText(text: UsageFormat.tokens(totals.totalTokens), font: Self.displayFont,
+                        color: NSColor(Theme.textPrimary), kern: -1.8, up: up)
+            RollingText(text: cost, font: Self.figureFont, color: NSColor(Theme.accent), up: up)
+                .overlay {
+                    if totals.unpricedTokens > 0 {
+                        Button { app.selection = .pricing } label: {
+                            Image(systemName: "info.circle")
+                                .foregroundStyle(Theme.textSecondary)
+                                .hoverTip("\(UsageFormat.tokens(totals.unpricedTokens)) tokens from models with no list price aren't in this total: \(totals.unpricedModels.sorted().joined(separator: ", "))")
+                        }
+                        .buttonStyle(.plain)
+                        .help("See unpriced models on the Pricing page")
+                        .offset(x: RollingText.width(of: cost, font: Self.figureFont) / 2 + 14)
                     }
-                    .buttonStyle(.plain)
-                    .help("See unpriced models on the Pricing page")
                 }
-            }
-            Text(focused.map(detail) ?? summaryLine)
-                .font(Theme.caption).foregroundStyle(Theme.textMuted).monospacedDigit()
-                .contentTransition(.numericText())
+            RollingText(text: focused.map(detail) ?? summaryLine, font: Self.captionDigitsFont,
+                        color: NSColor(Theme.textMuted), perCharacter: false, up: up)
             if shares.isEmpty {
                 Text(summary.totals.totalTokens > 0
                      ? "Every provider with usage this period is hidden in Settings."
@@ -241,8 +248,13 @@ private struct TotalCard: View {
             }
         }
         .padding(.vertical, 12)
-        .animation(.snappy(duration: 0.3), value: focus)
     }
+
+    // The AppKit fonts behind `Theme.caption`, `.display` and `.figure`.
+    static let captionFont = NSFont.systemFont(ofSize: 12)
+    static let captionDigitsFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+    static let displayFont = NSFont.monospacedDigitSystemFont(ofSize: 72, weight: .bold)
+    static let figureFont = NSFont.monospacedDigitSystemFont(ofSize: 20, weight: .bold)
 
     /// One logo per harness: the pointer on one focuses it, and so does a
     /// click or Space for the keyboard. One centred row while they fit,

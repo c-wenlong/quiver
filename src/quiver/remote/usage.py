@@ -7,17 +7,31 @@ part that touches the network, and they come through
 ``get_all_rate_limits`` with its 300 s disk cache, so a phone polling the
 page costs a provider call at most once per cache window.
 
-Satellites don't report usage yet, so a MacBook's quota is not here.
+Satellites run the same ``snapshot`` and post it every
+``SATELLITE_PUSH_S`` (``POST /v1/agent/usage``). The hub keeps each
+machine's last report on disk under ``satellite-usage/``, so a sleeping
+MacBook still shows its last figures, dated, after a hub restart.
 """
 
 from __future__ import annotations
 
+import json
 import threading
 import time
+from pathlib import Path
+
+from quiver.paths import atomic_write_text, remote_dir_for
+from quiver.remote.catalog import _safe_mid
 
 # A cold fetch takes seconds per provider; two phones opening the page at
 # once would otherwise both miss the cache and call every endpoint twice.
 _FETCH_LOCK = threading.Lock()
+
+# The hub and satellites poll on their own schedule, like the Mac app, so
+# they pin swe's default TTL rather than inherit SWE_RATE_LIMITS_TTL from
+# the shell that started them: ``inf`` there would serve one reading
+# forever and the page would never move.
+CACHE_TTL_S = 300.0
 
 # ``?refresh=1`` refetches readings older than this, and failed ones.
 # A full bypass would let a refresh button hammer endpoints that
@@ -25,6 +39,11 @@ _FETCH_LOCK = threading.Lock()
 REFRESH_TTL_S = 60.0
 
 WINDOW_DAYS = 100
+
+# How often a satellite reports. The rate-limit cache holds readings for
+# 300 s, so pushing more often would only resend the same figures, and
+# each push past the TTL costs one call per starred provider.
+SATELLITE_PUSH_S = 300.0
 
 
 def snapshot(refresh: bool = False) -> dict:
@@ -54,7 +73,7 @@ def snapshot(refresh: bool = False) -> dict:
             tool_names={name for name in starred if name in tools},
             deadline=_RATE_LIMIT_FETCH_DEADLINE_TTY,
             refresh_failed=refresh,
-            cache_ttl=REFRESH_TTL_S if refresh else None,
+            cache_ttl=REFRESH_TTL_S if refresh else CACHE_TTL_S,
         )
         counts = session_counts(WINDOW_DAYS)
     return {
@@ -66,3 +85,53 @@ def snapshot(refresh: bool = False) -> dict:
         "window_days": WINDOW_DAYS,
         "server_time": time.time(),
     }
+
+
+def _satellite_file(home: Path | None, machine_id: str) -> Path:
+    return remote_dir_for(home) / "satellite-usage" / f"{_safe_mid(machine_id)}.json"
+
+
+def save_satellite(home: Path | None, machine_id: str, body: dict) -> dict:
+    """Store one satellite's report; returns the stored record.
+
+    ``reported_at`` is the satellite's clock at snapshot time and
+    ``received_at`` the hub's, so a client can age the satellite's
+    ``fetched_at`` stamps without trusting the two clocks to agree.
+    Raises ``ValueError`` on a body without a ``harnesses`` list.
+    """
+    harnesses = body.get("harnesses")
+    if not isinstance(harnesses, list):
+        raise ValueError("harnesses must be a list")
+    reported_at = body.get("server_time")
+    record = {
+        "machine_id": machine_id,
+        "harnesses": [h for h in harnesses if isinstance(h, dict)],
+        "window_days": body.get("window_days") or WINDOW_DAYS,
+        "reported_at": (reported_at if isinstance(reported_at, (int, float))
+                        and not isinstance(reported_at, bool) else None),
+        "received_at": time.time(),
+    }
+    path = _satellite_file(home, machine_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, json.dumps(record))
+    return record
+
+
+def load_satellites(home: Path | None) -> list[dict]:
+    """Every stored satellite report, newest first."""
+    base = remote_dir_for(home) / "satellite-usage"
+    out: list[dict] = []
+    try:
+        files = list(base.glob("*.json"))
+    except OSError:
+        return out
+    for f in files:
+        try:
+            record = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (isinstance(record, dict) and record.get("machine_id")
+                and isinstance(record.get("harnesses"), list)):
+            out.append(record)
+    out.sort(key=lambda r: r.get("received_at") or 0, reverse=True)
+    return out

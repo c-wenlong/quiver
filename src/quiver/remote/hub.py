@@ -30,6 +30,7 @@ from quiver import __version__
 from quiver.remote import (
     attachments,
     catalog as catalog_mod,
+    injected as injected_mod,
     dismissals,
     inject,
     notify,
@@ -743,6 +744,9 @@ class _Handler(BaseHTTPRequestHandler):
             pass
 
     def _sse_write(self, ev: dict) -> None:
+        ev = injected_mod.clean_event(ev)
+        if ev is None:
+            return
         frame = (
             f"id: {ev.get('seq', 0)}\n"
             f"event: {ev.get('type', 'message')}\n"
@@ -856,6 +860,7 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_error(503, "usage_unavailable", str(exc))
                 return
             body["machine"] = self._state.machine
+            body["machines"] = self._usage_machines(body)
             self._send_json(200, body)
             return
 
@@ -1041,6 +1046,28 @@ class _Handler(BaseHTTPRequestHandler):
                         ),
                     )
             self._send_json(200, {"ok": True, "rows": len(rows)})
+            return
+
+        if path == "/v1/agent/usage":
+            body = self._read_body()
+            if body is None:
+                self._send_error(400, "bad_body", "unreadable JSON body")
+                return
+            mid = str(body.get("machine_id") or "")
+            if not mid:
+                self._send_error(
+                    422, "bad_command", "machine_id is required"
+                )
+                return
+            try:
+                usage_mod.save_satellite(self._state.home, mid, body)
+            except ValueError as exc:
+                self._send_error(422, "bad_command", str(exc))
+                return
+            except OSError as exc:
+                self._send_error(503, "usage_unavailable", str(exc))
+                return
+            self._send_json(200, {"ok": True})
             return
 
         if path == "/v1/agent/events":
@@ -1612,7 +1639,9 @@ class _Handler(BaseHTTPRequestHandler):
         limit = max(1, min(limit, 2000))
         events, _trunc = self._state.journal.read_since(key, 0)
         messages = [
-            ev for ev in events if ev.get("type") == "message.appended"
+            cleaned for ev in events
+            if ev.get("type") == "message.appended"
+            and (cleaned := injected_mod.clean_event(ev)) is not None
         ]
         if before:
             messages = [m for m in messages if m.get("seq", 0) < before]
@@ -1625,6 +1654,37 @@ class _Handler(BaseHTTPRequestHandler):
             else None,
             "has_more": len(messages) > len(tail_events),
         })
+
+    def _usage_machines(self, own: dict) -> list[dict]:
+        """``/v1/usage``'s per-machine list: the hub, then each satellite.
+
+        Every entry carries ``reported_at`` (the reporting machine's
+        clock when it took the snapshot) and ``received_at`` (the hub's
+        clock when it got it); for the hub both are its ``server_time``.
+        """
+        now = own.get("server_time") or time.time()
+        machines = catalog_mod.load_machines(self._state.home)
+        out = [{
+            "machine": self._state.machine,
+            "harnesses": own.get("harnesses") or [],
+            "window_days": own.get("window_days"),
+            "reported_at": now,
+            "received_at": now,
+            "hub": True,
+        }]
+        for record in usage_mod.load_satellites(self._state.home):
+            mid = record["machine_id"]
+            if mid == self._state.machine_id:
+                continue
+            out.append({
+                "machine": machines.get(mid) or {"id": mid, "name": mid},
+                "harnesses": record["harnesses"],
+                "window_days": record.get("window_days"),
+                "reported_at": record.get("reported_at"),
+                "received_at": record.get("received_at"),
+                "hub": False,
+            })
+        return out
 
     # -- static PWA --------------------------------------------------------
 

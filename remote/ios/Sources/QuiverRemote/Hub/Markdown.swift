@@ -15,6 +15,22 @@ enum Markdown {
         case code(language: String?, text: String)
         case table(Table)
         case rule
+        /// An image on its own line. The phone can't open the agent's
+        /// local file, so it shows as a labelled chip.
+        case image(alt: String, source: String)
+        /// A view a harness drew (Droid's `<json-render>`): no way to draw
+        /// it here, so it folds into a note.
+        case rendered(String)
+    }
+
+    /// A task item's box, read off the start of a list item's text.
+    enum TaskBox: Hashable { case open, done }
+
+    static func taskBox(_ text: String) -> (TaskBox, String)? {
+        let lower = text.lowercased()
+        if lower.hasPrefix("[ ] ") { return (.open, String(text.dropFirst(4))) }
+        if lower.hasPrefix("[x] ") { return (.done, String(text.dropFirst(4))) }
+        return nil
     }
 
     struct Table: Hashable {
@@ -27,7 +43,7 @@ enum Markdown {
     }
 
     static func parse(_ text: String) -> [Block] {
-        let lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+        var lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
         var blocks: [Block] = []
         var paragraph: [String] = []
         var i = 0
@@ -64,6 +80,35 @@ enum Markdown {
 
             if trimmed.isEmpty {
                 flushParagraph()
+                i += 1
+                continue
+            }
+
+            if trimmed.hasPrefix("<json-render>") {
+                flushParagraph()
+                var body = trimmed
+                while !body.contains("</json-render>"), i + 1 < lines.count {
+                    i += 1
+                    body += "\n" + lines[i]
+                }
+                // Text after the closing tag on its line parses as usual.
+                if let close = body.range(of: "</json-render>") {
+                    let rest = body[close.upperBound...].trimmingCharacters(in: .whitespaces)
+                    body = String(body[..<close.upperBound])
+                    if !rest.isEmpty {
+                        lines[i] = rest
+                        blocks.append(.rendered(body))
+                        continue
+                    }
+                }
+                i += 1
+                blocks.append(.rendered(body))
+                continue
+            }
+
+            if let (alt, source) = imageLine(trimmed) {
+                flushParagraph()
+                blocks.append(.image(alt: alt, source: source))
                 i += 1
                 continue
             }
@@ -141,10 +186,43 @@ enum Markdown {
 
     // MARK: Pieces
 
+    /// `![alt](source)` alone on a line.
+    static func imageLine(_ line: String) -> (String, String)? {
+        guard line.hasPrefix("!["), line.hasSuffix(")"),
+              let close = line.range(of: "]("), line.firstIndex(of: "]") == close.lowerBound
+        else { return nil }
+        let alt = String(line[line.index(line.startIndex, offsetBy: 2)..<close.lowerBound])
+        let source = String(line[close.upperBound..<line.index(before: line.endIndex)])
+        // Exactly one image: `![a](x)![b](y)` stays for inline rendering.
+        guard !source.contains(" "), !source.contains(")"), !source.contains("![") else { return nil }
+        return (alt, source)
+    }
+
+    /// Inline `![alt](source)` inside a sentence, as text the phone can show.
+    /// Code spans and an escaped `\![` keep what the agent wrote.
+    static func inlineImagesAsText(_ text: String) -> String {
+        guard text.contains("!["), let re = inlineImageRE else { return text }
+        let ns = text as NSString
+        var out = ""
+        var at = 0
+        for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            guard m.range(at: 2).location != NSNotFound else { continue } // a code span
+            out += ns.substring(with: NSRange(location: at, length: m.range.location - at))
+            out += "*Image: \(ns.substring(with: m.range(at: 2)))*"
+            at = m.range.location + m.range.length
+        }
+        return out + ns.substring(from: at)
+    }
+
+    /// A code span (left as is), or an unescaped image (group 2 its alt).
+    private static let inlineImageRE = try? NSRegularExpression(
+        pattern: #"(`+)[\s\S]*?\1|(?<!\\)!\[([^\]]*)\]\([^)\s]+\)"#)
+
     /// Whether `lines[i]` opens a block that isn't list-item text.
     static func startsBlock(_ lines: [String], at i: Int) -> Bool {
         let t = lines[i].trimmingCharacters(in: .whitespaces)
         if t.hasPrefix("```") || t.hasPrefix("~~~") || t.hasPrefix(">") || heading(t) != nil { return true }
+        if t.hasPrefix("<json-render>") || imageLine(t) != nil { return true }
         if t.contains("|"), i + 1 < lines.count, separatorAlignments(lines[i + 1]) != nil { return true }
         return false
     }

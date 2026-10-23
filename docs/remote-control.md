@@ -108,6 +108,14 @@ Copy the `search_index.py` `files`-row pattern: byte-offset cursor per
 transcript, stat → read appended bytes → decode new records → emit
 events. ~1s poll while `sessions/status.py` says active, back off idle.
 
+Before a message leaves the hub, `injected.py` removes what a harness
+wrote into the transcript for itself rather than for you: Claude Code's
+`<system-reminder>` and `<task-notification>` envelopes (a finished task
+becomes one system line), Cursor's `<timestamp>`/`<user_query>` wrapper,
+Codex's developer turns, `AGENTS.md` and environment injections and its
+`<oai-mem-citation>` footer. It runs at decode and again when journal
+events are served, so history journaled before it existed is cleaned too.
+
 One upgrade over `reports/transcripts.py`: that layer *strips* thinking
 and collapses tool calls — right for reports, wrong for a chat UI that
 auto-collapses them. `tail.py` keeps the block detail the raw records
@@ -224,14 +232,28 @@ metadata only, since the index is per machine.
 `swe list --usage --json` rows as `harnesses`, plus `window_days` (100),
 `machine` and `server_time`: every active harness with its 100-day
 session count, and a `rate_limit` reading for each starred one. Readings
-come through the rate-limit disk cache (300 s), and concurrent requests
-share one fetch. `refresh=1` refetches only readings older than 60 s and
+come through the rate-limit disk cache with swe's default 300 s TTL,
+pinned so a `SWE_RATE_LIMITS_TTL` override in the shell that started the
+hub can't freeze them (the Mac app strips it for the same reason), and
+concurrent requests share one fetch. `refresh=1` refetches only readings older than 60 s and
 failed ones, so a refresh button can't hammer providers that rate-limit.
 Each reading carries `fetched_at`; one older than the cache window is
 the 24 h outage fallback (newer fetches failed), and the PWA marks it
-stale. An unreadable registry answers 503 `usage_unavailable`. Satellites don't
-report usage yet, so their quotas are not in it. The PWA's Usage tab
-reads this route.
+stale. An unreadable registry answers 503 `usage_unavailable`.
+
+Satellites run the same snapshot every 300 s and post it to
+`POST /v1/agent/usage` (`{machine_id, harnesses, window_days,
+server_time}`); a failed push retries after 60 s. The hub keeps each
+machine's last report in `data/remote/satellite-usage/<machine>.json`,
+so a sleeping MacBook still shows its last figures after a hub restart.
+`GET /v1/usage` lists every machine under `machines`, hub first:
+`{machine, harnesses, window_days, reported_at, received_at, hub}`.
+`reported_at` is the reporting machine's clock when it took the
+snapshot and `received_at` the hub's when the report arrived, so a
+client can age a satellite's `fetched_at` stamps without trusting the
+two clocks to agree. The top-level `harnesses` stay the hub's own rows.
+The PWA's Usage tab reads this route, with a machine switcher once more
+than one machine reports.
 
 `journal.py` is the reconnect story: seq-numbered per-session ring on
 disk; client resumes with `?last=seq`. "Open the app, catch up on 30 min
