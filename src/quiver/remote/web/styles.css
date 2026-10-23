@@ -200,6 +200,7 @@ details.tool.has-diff > summary { color: var(--text); }
 .usage-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .usage-title .t { font-weight: 600; }
 .usage-card p { margin: 8px 0 0; font-size: .85rem; }
+.usage-card p.stale { color: var(--yellow); }
 .limit { margin-top: 10px; }
 .limit-row { display: flex; justify-content: space-between; font-size: .88rem; }
 .limit-sub { font-size: .75rem; min-height: 1em; margin-top: 3px; }

@@ -198,7 +198,9 @@ session count, and a `rate_limit` reading for each starred one. Readings
 come through the rate-limit disk cache (300 s), and concurrent requests
 share one fetch. `refresh=1` refetches only readings older than 60 s and
 failed ones, so a refresh button can't hammer providers that rate-limit.
-An unreadable registry answers 503 `usage_unavailable`. Satellites don't
+Each reading carries `fetched_at`; one older than the cache window is
+the 24 h outage fallback (newer fetches failed), and the PWA marks it
+stale. An unreadable registry answers 503 `usage_unavailable`. Satellites don't
 report usage yet, so their quotas are not in it. The PWA's Usage tab
 reads this route.
 

@@ -23,6 +23,7 @@ const state = {
   pairTimer: null,
   pairGen: 0,
   approveTimer: null,
+  usageGen: 0,
   inboxCount: 0,
   openGen: 0,
 };
@@ -814,22 +815,37 @@ function windowLabel(w) {
   return s % 86400 === 0 ? `${s / 86400}d` : `${Math.round(s / 3600)}h`;
 }
 
+/* Rate limits are cached for 300 s; a reading older than that (plus
+ * slack) is the outage fallback, which can be up to a day old. */
+const STALE_READING_S = 360;
+
+function ago(seconds) {
+  const d = Math.max(0, seconds);
+  if (d < 60) return "just now";
+  if (d < 3600) return `${Math.floor(d / 60)}m ago`;
+  if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
+  return `${Math.floor(d / 86400)}d ago`;
+}
+
 function usd(n) {
   return "$" + Number(n).toFixed(2);
 }
 
-function limitBar(label, w) {
+function limitBar(label, w, now) {
   const used = Math.max(0, Math.min(100, w.used_percent || 0));
   const tone = w.limit_reached || used >= 90 ? "hot" : used >= 70 ? "warm" : "";
   const right = w.unavailable ? "unavailable" : `${used}% used`;
   return `<div class="limit">
     <div class="limit-row"><span>${esc(label)}</span><span class="dim">${esc(right)}</span></div>
     <div class="bar"><div class="fill ${tone}" style="width:${w.unavailable ? 0 : used}%"></div></div>
-    <div class="limit-sub dim">${esc(resetIn(w.reset_at))}</div>
+    <div class="limit-sub dim">${esc([
+      resetIn(w.reset_at),
+      w.as_of ? `as of ${ago(now - w.as_of)}` : "",
+    ].filter(Boolean).join(" · "))}</div>
   </div>`;
 }
 
-function limitCard(h) {
+function limitCard(h, now) {
   const rl = h.rate_limit;
   const plan = rl.plan_type ? `<span class="own">${esc(rl.plan_type)}</span>` : "";
   let body;
@@ -837,7 +853,7 @@ function limitCard(h) {
     body = `<p class="dim">${esc(LIMIT_STATUS[rl.status] || rl.status)}</p>`;
   } else {
     const windows = rl.windows && rl.windows.length ? rl.windows : [rl];
-    body = windows.map((w) => limitBar(windowLabel(w), w)).join("");
+    body = windows.map((w) => limitBar(windowLabel(w), w, now)).join("");
     if (rl.total_units != null && rl.remaining_units != null) {
       body += `<p class="dim">${esc(rl.total_units < 0
         ? "Unlimited credits"
@@ -851,6 +867,12 @@ function limitCard(h) {
       body += `<p class="dim">On-demand: ${esc(usd(od.used_usd || 0))} of ${esc(usd(od.limit_usd))}</p>`;
     } else if (od && od.state === "unlimited") {
       body += `<p class="dim">On-demand: ${esc(usd(od.used_usd || 0))}, no limit</p>`;
+    }
+    if (rl.fetched_at) {
+      const age = now - rl.fetched_at;
+      body += age > STALE_READING_S
+        ? `<p class="stale">Stale: last read ${esc(ago(age))}, newer reads failed.</p>`
+        : `<p class="dim">Read ${esc(ago(age))}</p>`;
     }
   }
   return `<div class="card usage-card">
@@ -866,9 +888,11 @@ function renderUsage(data) {
   const used = rows.filter((h) => h.sessions_100d > 0)
     .sort((a, b) => b.sessions_100d - a.sessions_100d);
   const most = used.length ? used[0].sessions_100d : 1;
+  // Ages are measured on the hub's clock, which also stamped fetched_at.
+  const now = data.server_time || Date.now() / 1000;
   let html = `<div class="usage-group"><h2>Limits</h2>`;
   html += limited.length
-    ? limited.map(limitCard).join("")
+    ? limited.map((h) => limitCard(h, now)).join("")
     : `<p class="dim">No limits to show. Star a harness on the hub with
        <code>swe hs star &lt;name&gt;</code> to track its quota.</p>`;
   html += `</div><div class="usage-group"><h2>Sessions in the last ${esc(days)} days</h2>`;
@@ -886,7 +910,11 @@ function renderUsage(data) {
   el("usage-meta").textContent = machine ? `On ${machine}` : "";
 }
 
+/* The timer, tab clicks and Refresh can overlap; only the newest
+ * request may draw or re-enable the button, so a slow older answer
+ * never replaces a newer one. */
 async function loadUsage(refresh = false) {
+  const gen = ++state.usageGen;
   const btn = el("usage-refresh");
   btn.disabled = true;
   if (!el("usage-body").innerHTML) {
@@ -894,6 +922,7 @@ async function loadUsage(refresh = false) {
   }
   try {
     const { status, data } = await api("/v1/usage" + (refresh ? "?refresh=1" : ""));
+    if (gen !== state.usageGen) return;
     if (status === 401) { store.cred = null; boot(); return; }
     if (status !== 200 || !data) {
       const msg = data && data.error ? data.error.message : `hub answered ${status}`;
@@ -902,9 +931,11 @@ async function loadUsage(refresh = false) {
     }
     if (state.view === "usage") renderUsage(data);
   } catch {
-    el("usage-body").innerHTML = `<p class="error">Couldn't reach the hub.</p>`;
+    if (gen === state.usageGen) {
+      el("usage-body").innerHTML = `<p class="error">Couldn't reach the hub.</p>`;
+    }
   } finally {
-    btn.disabled = false;
+    if (gen === state.usageGen) btn.disabled = false;
   }
 }
 
