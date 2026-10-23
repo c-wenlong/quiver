@@ -22,7 +22,7 @@
     inbox.loading = false;
     if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
     inbox.status = status;
-    inbox.data = status === 200 ? data : { error: data && data.error, transport: true };
+    inbox.data = status === 200 && data ? data : { error: data && data.error, transport: true };
     paint();
   }
 
