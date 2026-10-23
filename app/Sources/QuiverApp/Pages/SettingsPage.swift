@@ -125,6 +125,8 @@ private struct SettingsSectionView: View {
     var section: SettingsSection
     @Binding var drafts: PathDrafts
     @Binding var loginFailure: String?
+    /// Terminals LaunchServices can't find, checked when General appears.
+    @State private var missingTerminals: Set<TerminalApp> = []
     /// The draft "Refresh only what failed for" value, in minutes.
     @State private var refreshMinutes = 0
     @FocusState private var refreshFocused: Bool
@@ -172,13 +174,23 @@ private struct SettingsSectionView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var terminalDetail: String {
+        let missing = TerminalApp.allCases.filter(missingTerminals.contains).map(\.title)
+        guard !missing.isEmpty else { return "Used by Terminal, Sign in and Resume." }
+        let names = ListFormatter.localizedString(byJoining: missing)
+        return "Used by Terminal, Sign in and Resume. \(names) \(missing.count == 1 ? "isn't" : "aren't") installed."
+    }
+
     private var generalCard: some View {
         SettingsCard {
             LoginItemRow(failure: $loginFailure)
             SettingsDivider()
             @Bindable var app = app
-            SettingRow(title: "Terminal", detail: "Used by Terminal, Sign in and Resume.") {
-                Tabs(options: TerminalApp.allCases.map { ($0, $0.title) }, selection: $app.terminal)
+            SettingRow(title: "Terminal", detail: terminalDetail,
+                       warning: missingTerminals.contains(app.terminal)
+                           ? app.terminal.notInstalledMessage : nil) {
+                Tabs(options: TerminalApp.allCases.map { ($0, $0.title) }, selection: $app.terminal,
+                     disabled: missingTerminals)
             }
             SettingsDivider()
             SettingRow(title: "Show in Dock",
@@ -193,6 +205,9 @@ private struct SettingsSectionView: View {
                 Button("Run setup") { app.showsFirstRunSetup = true }
                     .secondaryButton()
             }
+        }
+        .onAppear {
+            missingTerminals = Set(TerminalApp.allCases.filter { !$0.isInstalled })
         }
     }
 
@@ -797,17 +812,6 @@ private struct PathRow: View {
         if panel.runModal() == .OK, let url = panel.url {
             draft = url.path
             use()
-        }
-    }
-}
-
-extension TerminalApp {
-    var title: String {
-        switch self {
-        case .terminal: "Terminal"
-        case .iterm: "iTerm"
-        case .ghostty: "Ghostty"
-        case .wezterm: "WezTerm"
         }
     }
 }
