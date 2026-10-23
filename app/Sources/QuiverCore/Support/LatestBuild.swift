@@ -1,5 +1,17 @@
 import Foundation
 
+/// Runs `work` on a global dispatch queue and returns its result: for disk
+/// work that may block (`realpath(2)` or `fileExists` on a synced or stale
+/// folder). A blocked GCD thread costs nothing else; a blocked thread of
+/// the concurrency pool, which `Task.detached` would use, starves every
+/// task in the app. Cancelling the caller does not stop `work`, so check
+/// `Task.isCancelled` before using the result.
+public func offMain<Value: Sendable>(_ work: @escaping @Sendable () -> Value) async -> Value {
+    await withCheckedContinuation { (done: CheckedContinuation<Value, Never>) in
+        DispatchQueue.global(qos: .userInitiated).async { done.resume(returning: work()) }
+    }
+}
+
 /// Work too slow for the main actor, run off it with only the newest
 /// start's result kept.
 ///
@@ -36,9 +48,7 @@ public final class LatestBuild<Value: Sendable> {
         let mine = generation
         isRunning = true
         Task { [weak self] in
-            let value = await withCheckedContinuation { (done: CheckedContinuation<Value, Never>) in
-                DispatchQueue.global(qos: .userInitiated).async { done.resume(returning: work()) }
-            }
+            let value = await offMain(work)
             guard let self, self.generation == mine else { return }
             self.isRunning = false
             publish(value)
