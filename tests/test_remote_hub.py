@@ -18,8 +18,9 @@ from quiver.remote import pairing
 from quiver.sessions.models import Session
 
 
-def _session(sid="s1", tool="claude", path="/tmp/proj"):
-    return Session(timestamp=0, agent="Claude Code", path=path,
+def _session(sid="s1", tool="claude", path="/tmp/proj", ts=0):
+    """``ts`` is seconds since the epoch; Session keeps milliseconds."""
+    return Session(timestamp=int(ts * 1000), agent="Claude Code", path=path,
                    title="test", session_id=sid, tool_name=tool)
 
 
@@ -519,7 +520,7 @@ class TestHubWriteRoutes(unittest.TestCase):
 
     def test_inbox_item_shape(self):
         srv = _Server(
-            sessions=[_session(sid="f1")],
+            sessions=[_session(sid="f1", ts=time.time())],
             statuses=lambda ss: ["followup"],
         )
         self.addCleanup(srv.stop)
@@ -554,6 +555,26 @@ class TestHubWriteRoutes(unittest.TestCase):
             {"request_id": "req-1"}))
         status, data = srv.request("GET", "/v1/inbox", headers=hdr)
         self.assertEqual(json.loads(data)["items"], [])
+
+    def test_inbox_old_approval_never_cut_or_dismissed(self):
+        # A pending approval blocks its agent, so neither the age cutoff
+        # nor a dismissal may hide it.
+        old = time.time() - 30 * 86_400
+        srv = _Server(sessions=[_session(sid="a2", ts=old)],
+                      statuses=lambda ss: ["followup"])
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        hdr = {"Authorization": f"Bearer {cred['credential']}"}
+        status, data = srv.request("GET", "/v1/inbox", headers=hdr)
+        self.assertEqual(json.loads(data)["items"], [])
+        srv.state.emit("claude:a2", protocol.event(
+            "approval.requested", "claude:a2", "mbp",
+            {"request_id": "req-2", "prompt": "run it?"}))
+        srv.request("POST", "/v1/inbox/dismiss", headers=hdr, body={
+            "key": "claude:a2", "last_active_at": old})
+        status, data = srv.request("GET", "/v1/inbox", headers=hdr)
+        items = json.loads(data)["items"]
+        self.assertEqual([i["status"] for i in items], ["approval"])
 
     def test_advertise_url_never_wildcard(self):
         from quiver.remote import catalog, hub
@@ -666,6 +687,169 @@ class TestHubWriteRoutes(unittest.TestCase):
             self.assertEqual(conn.getresponse().status, 400)
         finally:
             conn.close()
+
+
+class TestInboxCutoff(unittest.TestCase):
+    """catalog.inbox(): the age cutoff, dismissals and finished-today."""
+
+    NOW = 1_800_000_000.0
+
+    def _catalog(self, rows):
+        from quiver.remote.catalog import Catalog
+        home = Path(tempfile.mkdtemp())
+        sessions = [_session(sid=sid, ts=ts) for sid, ts, _st in rows]
+        cat = Catalog(home, machine_id="mbp",
+                      fetch_sessions=lambda: sessions,
+                      status_of=lambda ss: [st for _s, _t, st in rows])
+        cat.refresh()
+        return cat
+
+    def keys(self, items):
+        return sorted(i["key"] for i in items)
+
+    def test_cutoff_drops_old_followups_errors_interrupts(self):
+        from quiver.remote.catalog import INBOX_MAX_AGE_S
+        fresh = self.NOW - INBOX_MAX_AGE_S + 60
+        stale = self.NOW - INBOX_MAX_AGE_S - 60
+        cat = self._catalog([
+            ("f-new", fresh, "followup"), ("f-old", stale, "followup"),
+            ("e-new", fresh, "error"), ("e-old", stale, "error"),
+            ("i-new", fresh, "interrupted"), ("i-old", stale, "interrupted"),
+            ("active", fresh, "active"),
+        ])
+        self.assertEqual(
+            self.keys(cat.inbox(now=self.NOW)),
+            ["claude:e-new", "claude:f-new", "claude:i-new"],
+        )
+
+    def test_approval_never_cut(self):
+        cat = self._catalog([("a", 0, "active")])
+        items = cat.inbox(pending={"claude:a": "r1"}, now=self.NOW)
+        self.assertEqual(
+            [(i["status"], i["request_id"]) for i in items],
+            [("approval", "r1")],
+        )
+
+    def test_dismissal_hides_until_new_activity(self):
+        t = self.NOW - 3600
+        cat = self._catalog([("f", t, "followup")])
+        self.assertEqual(
+            cat.inbox(dismissed={"claude:f": t}, now=self.NOW), [])
+        self.assertEqual(
+            cat.inbox(dismissed={"claude:f": t + 1}, now=self.NOW), [])
+        self.assertEqual(
+            self.keys(cat.inbox(dismissed={"claude:f": t - 1},
+                                now=self.NOW)),
+            ["claude:f"],
+        )
+
+    def test_done_today_is_opt_in(self):
+        from quiver.remote.catalog import _local_midnight
+        midnight = _local_midnight(self.NOW)
+        cat = self._catalog([
+            ("today", midnight + 1, "done"),
+            ("yesterday", midnight - 1, "done"),
+        ])
+        self.assertEqual(cat.inbox(now=self.NOW), [])
+        items = cat.inbox(include_done=True, now=self.NOW)
+        self.assertEqual([(i["key"], i["status"]) for i in items],
+                         [("claude:today", "done")])
+        self.assertEqual(
+            cat.inbox(include_done=True, now=self.NOW,
+                      dismissed={"claude:today": midnight + 1}),
+            [],
+        )
+
+
+class TestInboxDismiss(unittest.TestCase):
+    """POST /v1/inbox/dismiss: auth, per-device storage, reappearing."""
+
+    def setUp(self):
+        self.t = time.time() - 3600
+        self.srv = _Server(sessions=[_session(sid="f1", ts=self.t)],
+                           statuses=lambda ss: ["followup"])
+        self.addCleanup(self.srv.stop)
+
+    def hdr(self, cred):
+        return {"Authorization": f"Bearer {cred['credential']}"}
+
+    def inbox_keys(self, cred):
+        status, data = self.srv.request("GET", "/v1/inbox",
+                                        headers=self.hdr(cred))
+        self.assertEqual(status, 200)
+        return [i["key"] for i in json.loads(data)["items"]]
+
+    def dismiss(self, cred, body):
+        return self.srv.request("POST", "/v1/inbox/dismiss", body=body,
+                                headers=self.hdr(cred) if cred else {})
+
+    def test_requires_auth(self):
+        status, _ = self.dismiss(
+            None, {"key": "claude:f1", "last_active_at": self.t})
+        self.assertEqual(status, 401)
+        cred = self.srv.pair()
+        pairing.revoke_device(self.srv.home, cred["device_id"])
+        status, _ = self.dismiss(
+            cred, {"key": "claude:f1", "last_active_at": self.t})
+        self.assertEqual(status, 401)
+
+    def test_rejects_bad_body(self):
+        cred = self.srv.pair()
+        for body in ({}, {"key": "claude:f1"},
+                     {"key": "", "last_active_at": 1.0},
+                     {"key": "claude:f1", "last_active_at": "1"},
+                     {"key": "claude:f1", "last_active_at": True},
+                     {"key": 5, "last_active_at": 1.0}):
+            status, data = self.dismiss(cred, body)
+            self.assertEqual(status, 422, body)
+            self.assertEqual(json.loads(data)["error"]["code"], "bad_dismiss")
+
+    def test_dismiss_is_per_device_and_persists(self):
+        from quiver.remote import dismissals
+        phone, tablet = self.srv.pair(), self.srv.pair()
+        self.assertEqual(self.inbox_keys(phone), ["claude:f1"])
+        status, data = self.dismiss(
+            phone, {"key": "claude:f1", "last_active_at": self.t})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(self.inbox_keys(phone), [])
+        self.assertEqual(self.inbox_keys(tablet), ["claude:f1"])
+        path = dismissals.dismissals_file(self.srv.home)
+        self.assertEqual(path.parent, pairing.devices_file(
+            self.srv.home).parent)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        # Read straight off disk: what a restarted hub would see.
+        self.assertEqual(
+            dismissals.for_device(self.srv.home, phone["device_id"]),
+            {"claude:f1": self.t},
+        )
+
+    def test_new_activity_brings_item_back(self):
+        cred = self.srv.pair()
+        self.dismiss(cred, {"key": "claude:f1", "last_active_at": self.t})
+        self.assertEqual(self.inbox_keys(cred), [])
+        later = [_session(sid="f1", ts=self.t + 60)]
+        self.srv.state.catalog._fetch = lambda: later
+        self.srv.state.catalog.refresh()
+        self.assertEqual(self.inbox_keys(cred), ["claude:f1"])
+
+    def test_store_prunes_by_dismissal_time(self):
+        from quiver.remote import dismissals
+        home = self.srv.home
+        now = time.time()
+        dismissals.dismiss(home, "d1", "claude:old", 5.0,
+                           now=now - dismissals.KEEP_S - 1)
+        dismissals.dismiss(home, "d1", "claude:new", 5.0, now=now)
+        self.assertEqual(dismissals.for_device(home, "d1", now=now),
+                         {"claude:new": 5.0})
+        raw = json.loads(dismissals.dismissals_file(home).read_text())
+        self.assertEqual(list(raw["devices"]["d1"]), ["claude:new"])
+
+    def test_stale_retry_keeps_newer_dismissal(self):
+        from quiver.remote import dismissals
+        home = self.srv.home
+        dismissals.dismiss(home, "d1", "k", 20.0)
+        dismissals.dismiss(home, "d1", "k", 10.0)
+        self.assertEqual(dismissals.for_device(home, "d1"), {"k": 20.0})
 
 
 class TestSendQueue(unittest.TestCase):
