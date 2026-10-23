@@ -53,9 +53,15 @@ already do, through satellites; that is a later step.
 
 ## Pages, in order
 
-1. Overview (tokens, cost, harness split, daily activity, top models).
+1. Overview (tokens, cost, harness split, daily activity, top models). Shipped.
 2. Sessions (the hub's catalog, with tokens and cost per session from the
-   ledger).
+   ledger). Shipped. Differences from the app: Resume becomes "Copy resume
+   command" (the browser may be on another machine), transcript full-text
+   search and the Claude desktop "Started from" label are left out, the model
+   filter counts tokens of the sessions in the chosen window rather than the
+   app's daily rows, and usage joins only for sessions on the hub machine
+   (a satellite's rows list without tokens). Sessions only in a Quiver
+   account profile's home, and Devin cloud sessions, are not listed yet.
 3. Harnesses and Accounts limits (`/v1/usage`'s rows).
 4. Skills, AGENTS.md, MCP servers, Plugins, Doctor: read-only first, from the
    `swe … --json` builders.

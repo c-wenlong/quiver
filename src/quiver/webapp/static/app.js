@@ -61,7 +61,7 @@ const SIDEBAR = [
   ["System", [["menubar", "Menu bar"], ["widgets", "Widgets"], ["status", "Service status"], ["settings", "Settings"]]],
 ];
 
-const PAGES = { overview: renderOverview };
+const PAGES = { overview: renderOverview, sessions: renderSessions };
 
 function renderSidebar(current) {
   const nav = document.getElementById("sidebar");
@@ -98,12 +98,14 @@ function renderSoon(id) {
   const label = SIDEBAR.flatMap(([, items]) => items).find(([key]) => key === id)?.[1] || id;
   document.getElementById("panel").innerHTML = `<div class="page">
     ${pageHeader(label, "This page is in the Mac app and not in the web app yet.")}
-    <div class="card"><p class="empty">Coming to the web app. Overview is ready now.</p></div></div>`;
+    <div class="card"><p class="empty">Coming to the web app. Overview and Sessions are ready now.</p></div></div>`;
 }
 
 function route() {
   const id = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
-  overview.gen++; // a response still in flight belongs to the page left behind
+  // A response still in flight belongs to the page left behind.
+  overview.gen++;
+  sessionsPage.gen++;
   renderSidebar(id);
   if (!credential()) return renderGate("This browser has no device credential for this hub yet.");
   (PAGES[id] || renderSoon)(id);

@@ -40,10 +40,10 @@ def period_start(period: str, now: float, tz: tzinfo) -> float | None:
     return None if days is None else now - days * 86400
 
 
-class _Priced:
+class Priced:
     """Prices store groups and sums them by day, harness and model."""
 
-    def __init__(self, store: LedgerStore, catalog: PricingCatalog, tz: tzinfo):
+    def __init__(self, store: LedgerStore, catalog: PricingCatalog, tz: tzinfo | None = None):
         self.store, self.catalog, self.tz = store, catalog, tz
         self._resolved: dict[tuple[str, str], tuple] = {}
         self.thresholds = {}
@@ -58,23 +58,25 @@ class _Priced:
             self._resolved[key] = self.catalog.resolve(model, tier or None)
         return self._resolved[key]
 
+    def price(self, model: str, tier: str, long, logged, inp: int, out: int, cr: int,
+              cw: int, cw1h: int, reas: int, cost_sum: float) -> tuple[float, int]:
+        """``(cost, unpriced tokens)`` for one group of events. A logged
+        cost wins; an unpriced model's tokens are counted, never as $0."""
+        if logged:
+            return cost_sum, 0
+        status, rates, t = self._resolve(model, tier)
+        if status == "priced":
+            return rates.cost(inp, out, cr, cw, cw1h, reas, tier=t, long=bool(long)), 0
+        return 0.0, (inp + out + cr + cw + reas if status == "unpriced" else 0)
+
     def rows(self, start: float | None, end: float):
         """``(day, harness, model, counts dict, cost, unpriced tokens)``."""
         day_of: dict[int, date] = {}
         for (harness, model, tier, bucket, long, logged, inp, out, cr, cw, cw1h,
              reas, cost_sum) in self.store.groups(start, end, self.thresholds):
             tokens = inp + out + cr + cw + reas
-            unpriced = 0
-            if logged:
-                cost = cost_sum
-            else:
-                status, rates, t = self._resolve(model, tier)
-                if status == "priced":
-                    cost = rates.cost(inp, out, cr, cw, cw1h, reas, tier=t, long=bool(long))
-                else:
-                    cost = 0.0
-                    if status == "unpriced":
-                        unpriced = tokens
+            cost, unpriced = self.price(model, tier, long, logged, inp, out, cr, cw,
+                                        cw1h, reas, cost_sum)
             if bucket not in day_of:
                 day_of[bucket] = datetime.fromtimestamp(bucket * 900, self.tz).date()
             counts = {"input": inp, "output": out, "cache_read": cr,
@@ -100,7 +102,7 @@ def build(store: LedgerStore, catalog: PricingCatalog, period: str = DEFAULT_PER
     if period not in PERIODS:
         period = DEFAULT_PERIOD
     tz = zone(tz_name)
-    priced = _Priced(store, catalog, tz)
+    priced = Priced(store, catalog, tz)
     start = period_start(period, now, tz)
 
     totals = _blank()
@@ -163,7 +165,7 @@ def build(store: LedgerStore, catalog: PricingCatalog, period: str = DEFAULT_PER
     }
 
 
-def heatmap(priced: _Priced, now: float, tz: tzinfo, weeks: int = HEATMAP_WEEKS) -> dict:
+def heatmap(priced: Priced, now: float, tz: tzinfo, weeks: int = HEATMAP_WEEKS) -> dict:
     """Daily totals from local midnight 182 days ago, as week columns
     starting on Sunday, oldest first. Levels are quartiles of the busy
     days, so one huge day doesn't wash out the rest."""
