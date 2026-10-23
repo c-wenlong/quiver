@@ -143,6 +143,7 @@ private struct TotalCard: View {
     @Binding var period: OverviewPeriod
 
     @Environment(AppModel.self) private var app
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The harness whose logo is under the pointer.
     @State private var focus: String?
     /// Clears `focus` a moment after the pointer leaves a logo, so sliding
@@ -257,12 +258,21 @@ private struct TotalCard: View {
 
     /// One logo per harness: the pointer on one focuses it, and so does a
     /// click or Space for the keyboard. One centred row while they fit,
-    /// wrapping once there are too many for the card.
+    /// wrapping once there are too many for the card. While the marbles
+    /// pour in from empty, `PourBar` fills where the logos sit and folds
+    /// into their circles at the end; until then the logos are hidden and
+    /// take no pointer.
     private var logos: some View {
-        ViewThatFits(in: .horizontal) {
+        let pouring = MarbleScene.shared.pour.pouring && !reduceMotion
+        return ViewThatFits(in: .horizontal) {
             HStack(spacing: 6) { logoButtons }
             FlowLayout(spacing: 6, lineSpacing: 6) { logoButtons }
         }
+        .opacity(pouring ? 0 : 1)
+        .allowsHitTesting(!pouring)
+        .accessibilityHidden(pouring)
+        .animation(.easeOut(duration: 0.15), value: pouring)
+        .overlay { PourBar().allowsHitTesting(false).accessibilityHidden(true) }
     }
 
     private var logoButtons: some View {
