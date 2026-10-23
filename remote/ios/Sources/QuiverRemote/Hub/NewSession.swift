@@ -103,6 +103,10 @@ final class LaunchFlow {
                 phase = .started(key)
                 return key
             }
+            if status.state == "untracked" {
+                phase = .unconfirmed("Started. Quiver can't read this harness's sessions yet, so there's no chat to open. It keeps running under tmux on the machine.")
+                return nil
+            }
             if status.state == "failed" {
                 phase = .failed(status.note.map { "The session didn't start: \($0)" } ?? "The session didn't start.")
                 return nil

@@ -234,10 +234,14 @@ Provider visibility, in that setting's order (read from the app's
 preferences, `providerOrder` and `providerDisabled`; a machine without
 the app keeps registry order). The launch runs the registry command, so
 `cursor` starts `cursor-agent`. Providers with no CLI, like Antigravity,
-can't start. Adoption knows a new session by its JSONL transcript's birth
+can't start. A harness swe has no session parser for (qwen-code) still
+starts, but nothing can ever name its session: the machine row lists it
+in `untracked_harnesses`, and its launch settles `untracked` with a note
+instead of staying pending. Adoption knows a new session by its JSONL transcript's birth
 time; harnesses that keep sessions in a database (opencode, kilo, devin,
 cline) are matched by the session's own activity time instead, with every
-session the catalog knew at launch excluded. `cwd` must be absolute and,
+session that existed at launch excluded (the catalog's rows plus a fresh
+run of that harness's parser, since the catalog can be a minute old). `cwd` must be absolute and,
 on the hub, an existing folder
 (a satellite checks its own disk and fails the command otherwise);
 `prompt` is required, since a harness writes no transcript until its

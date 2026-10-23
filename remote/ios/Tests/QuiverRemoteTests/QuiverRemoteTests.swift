@@ -539,6 +539,16 @@ final class LaunchFlowTests: XCTestCase {
         XCTAssertEqual(flow.phase, .idle)
     }
 
+    func testUntrackedLaunchSaysThereIsNoChat() async {
+        let flow = LaunchFlow()
+        let key = await flow.run(post: { self.status("pending") },
+                                 fetch: { _ in self.status("untracked") },
+                                 interval: .zero)
+        XCTAssertNil(key)
+        guard case .unconfirmed(let message) = flow.phase else { return XCTFail("expected unconfirmed") }
+        XCTAssertTrue(message.contains("no chat"))
+    }
+
     func testFailedLaunchShowsTheHubsNote() async {
         let flow = LaunchFlow()
         let key = await flow.run(post: { self.status("pending") },

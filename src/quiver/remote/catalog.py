@@ -100,11 +100,20 @@ def _provider_visibility() -> tuple[list[str], set[str]]:
     )
 
 
+def _session_parsers() -> dict:
+    """``name -> parser`` for every harness swe can list sessions of."""
+    from quiver.sessions.aggregator import PARSER_REGISTRY
+
+    return {name: parser for name, parser, _keys in PARSER_REGISTRY}
+
+
 def launchable_harnesses() -> list[dict]:
     """What ``POST /v1/sessions`` can start here, in Provider visibility
     order: every harness ``swe list`` shows (not archived) whose command
     is on PATH, minus the ones switched off in the Mac app's Settings.
-    Each item is ``{name, command, display_name}``."""
+    Each item is ``{name, command, display_name, tracked}``; ``tracked``
+    is false for a harness swe has no session parser for (qwen-code): it
+    starts, but no session ever shows up to open as a chat."""
     from quiver.harness import registry
 
     try:
@@ -113,6 +122,7 @@ def launchable_harnesses() -> list[dict]:
         return []
     order, disabled = _provider_visibility()
     rank = {name: i for i, name in enumerate(order)}
+    parsers = _session_parsers()
     out = []
     for position, (name, entry) in enumerate(reg.items()):
         if not isinstance(entry, dict) or not registry.is_active(entry):
@@ -126,9 +136,40 @@ def launchable_harnesses() -> list[dict]:
             "name": name,
             "command": command,
             "display_name": str(entry.get("display_name") or name),
+            "tracked": name in parsers,
         }))
     out.sort(key=lambda pair: pair[0])
     return [item for _rank, item in out]
+
+
+def known_session_ids(
+    rows: list[tuple[str, Session, str]], harness: str, cwd: str
+) -> list[str]:
+    """Ids of ``harness`` sessions already in ``cwd``, for adoption to
+    refuse. The catalog can be a minute old, so the harness's own parser
+    runs too: a session started since then is known as well."""
+    real_cwd = os.path.realpath(cwd)
+
+    def here(session: Session) -> bool:
+        return (session.tool_name == harness
+                and os.path.realpath(session.path or "") == real_cwd)
+
+    known = {s.session_id for _k, s, _st in rows if here(s)}
+    parser = _session_parsers().get(harness)
+    if parser is not None:
+        try:
+            known.update(s.session_id for s in parser() if here(s))
+        except Exception:
+            pass
+    return sorted(known)
+
+
+def harness_names(launchable: list[dict]) -> dict[str, str]:
+    return {item["name"]: item["display_name"] for item in launchable}
+
+
+def untracked(launchable: list[dict]) -> list[str]:
+    return [item["name"] for item in launchable if not item["tracked"]]
 
 
 def launch_command(harness: str) -> str | None:
@@ -174,9 +215,8 @@ def local_machine(home: Path | str | None = None) -> dict:
         "last_seen_at": time.time(),
         "harnesses": harnesses,
         "launchable": [item["name"] for item in launchable],
-        "harness_names": {
-            item["name"]: item["display_name"] for item in launchable
-        },
+        "harness_names": harness_names(launchable),
+        "untracked_harnesses": untracked(launchable),
     }
 
 

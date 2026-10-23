@@ -134,6 +134,12 @@ struct NewSessionView: View {
                 .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
+        if let harness, machine.untrackedHarnesses?.contains(harness) == true {
+            Text("Quiver can't read \(NewSessionOptions.name(harness, on: machine, sessions: rows)) sessions yet: it starts, but no chat opens.")
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
+        }
     }
 
     private var promptSection: some View {
@@ -304,6 +310,9 @@ struct FolderBrowserView: View {
     var path: String?
     var onPick: (String) -> Void
 
+    /// Where this screen reads from; Home replaces it when `path` is gone
+    /// (an old worktree folder).
+    @State private var current: String??
     @State private var listing: FolderListing?
     @State private var error: String?
     @State private var query = ""
@@ -357,6 +366,13 @@ struct FolderBrowserView: View {
             } else if let error {
                 StateCard(icon: "exclamationmark.triangle", title: "Can't open this folder", message: error, tone: .error,
                           actionTitle: "Try again") { Task { await load() } }
+                if (current ?? path) != nil {
+                    Button("Open your home folder") {
+                        current = .some(nil)
+                        Task { await load() }
+                    }
+                    .secondaryButton(compact: true)
+                }
             } else {
                 LoadingRow(text: "Loading folders")
             }
@@ -379,7 +395,7 @@ struct FolderBrowserView: View {
         guard let client = app.client else { return }
         error = nil
         do {
-            listing = try await client.folders(machine: machineId, path: path)
+            listing = try await client.folders(machine: machineId, path: current ?? path)
         } catch {
             self.error = (error as? HubError)?.message ?? error.localizedDescription
         }

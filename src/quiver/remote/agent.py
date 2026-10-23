@@ -289,6 +289,8 @@ class RemoteAgent:
             self.hub, "/v1/agent/catalog", self.cred,
             {"machine_id": self.machine_id, "rows": rows},
         )
+        if self._refresh_launchable():
+            self._register()
         return status == 200
 
     def _push_usage(self) -> bool:
@@ -298,6 +300,20 @@ class RemoteAgent:
             {"machine_id": self.machine_id, **body},
         )
         return status == 200
+
+    def _refresh_launchable(self) -> bool:
+        """Re-read what this machine can launch; True when it changed, so
+        a Provider visibility change reaches the hub without a restart."""
+        launchable = catalog_mod.launchable_harnesses()
+        fields = {
+            "launchable": [item["name"] for item in launchable],
+            "harness_names": catalog_mod.harness_names(launchable),
+            "untracked_harnesses": catalog_mod.untracked(launchable),
+        }
+        if all(self.machine.get(k) == v for k, v in fields.items()):
+            return False
+        self.machine.update(fields)
+        return True
 
     def _register(self) -> bool:
         status, _ = _post(
@@ -407,14 +423,9 @@ class RemoteAgent:
                 harness = str(data.get("harness") or "")
                 cwd = str(data.get("cwd") or "")
                 # Same pre-launch snapshot the hub takes: any session
-                # the catalog already knows must not be adopted.
-                real_cwd = os.path.realpath(cwd)
-                known = [
-                    s.session_id
-                    for _k, s, _st in self.catalog.tail_rows()
-                    if s.tool_name == harness
-                    and os.path.realpath(s.path or "") == real_cwd
-                ]
+                # that exists must not be adopted.
+                known = catalog_mod.known_session_ids(
+                    self.catalog.tail_rows(), harness, cwd)
                 binary = catalog_mod.launch_command(harness)
                 if binary is None:
                     return False, (

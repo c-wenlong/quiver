@@ -208,6 +208,19 @@ class HubState:
             if entry is not None and entry["state"] == "pending":
                 entry.update(fields)
 
+    def _settle_untracked(self, launch_id: str) -> None:
+        """A satellite started a harness swe can't read sessions of: no
+        session will ever name this launch, so say so now."""
+        with self._launch_lock:
+            entry = dict(self.launches.get(launch_id) or {})
+        row = catalog_mod.load_machines(self.home).get(entry.get("machine"))
+        if entry and entry["harness"] in (row or {}).get(
+                "untracked_harnesses", []):
+            self.settle_launch(launch_id, state="untracked", note=(
+                f"{entry['harness']} is running under tmux, but swe can't "
+                f"read its sessions, so there's no chat to open"
+            ))
+
     def launch_view(self, launch_id: str) -> dict | None:
         """``GET /v1/launches/<id>``: started only once the catalog has
         the row, so the phone can open the chat straight away."""
@@ -254,6 +267,8 @@ class HubState:
                 self.settle_launch(
                     lid, state="failed", note=str(data.get("note") or "")
                 )
+            elif lid and data.get("op") == "launch":
+                self._settle_untracked(lid)
         written = self.journal.append(key, event)
         self.bus.publish(key, written)
         if key != GLOBAL_KEY:
@@ -423,17 +438,15 @@ class HubState:
         """Keep this machine's ``launchable`` current: Provider visibility
         and the registry can change while the hub runs."""
         launchable = catalog_mod.launchable_harnesses()
-        names = [item["name"] for item in launchable]
-        if names == self.machine.get("launchable"):
-            return
-        self.machine["launchable"] = names
-        self.machine["harness_names"] = {
-            item["name"]: item["display_name"] for item in launchable
+        fields = {
+            "launchable": [item["name"] for item in launchable],
+            "harness_names": catalog_mod.harness_names(launchable),
+            "untracked_harnesses": catalog_mod.untracked(launchable),
         }
-        catalog_mod.upsert_machine(self.home, {
-            "id": self.machine_id, "launchable": names,
-            "harness_names": self.machine["harness_names"],
-        })
+        if all(self.machine.get(k) == v for k, v in fields.items()):
+            return
+        self.machine.update(fields)
+        catalog_mod.upsert_machine(self.home, {"id": self.machine_id, **fields})
 
     def _adopt_launches(self) -> None:
         adopted = supervise.adopt_pending(
@@ -1294,16 +1307,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(422, "bad_cwd",
                              f"no such folder on this machine: {cwd}")
             return
-        # Snapshot the catalog before launch: adoption later refuses
-        # any of these ids, so a pre-existing same-cwd session can
-        # never be claimed as the one we just started.
-        real_cwd = os.path.realpath(cwd)
-        known = [
-            s.session_id
-            for _k, s, _st in state.catalog.tail_rows()
-            if s.tool_name == harness
-            and os.path.realpath(s.path or "") == real_cwd
-        ]
+        rows = state.catalog.tail_rows()
         # Failures a phone can act on answer now; launch_new itself
         # runs after the reply, since priming the pane can take 30 s and
         # the phone needs the launch id to follow it.
@@ -1318,15 +1322,26 @@ class _Handler(BaseHTTPRequestHandler):
         if not supervise.tmux_bin():
             self._send_error(422, "launch_failed", "tmux is not installed")
             return
+        tracked = harness not in catalog_mod.untracked(
+            catalog_mod.launchable_harnesses())
         launch_id = state.new_launch(machine, harness, cwd)
 
         def run() -> None:
+            # Every same-cwd session that exists before launch: adoption
+            # later refuses these ids, so a pre-existing session can never
+            # be claimed as the one we just started.
+            known = catalog_mod.known_session_ids(rows, harness, cwd)
             ok, note, _name = supervise.launch_new(
                 state.home, harness, cwd, cmd["prompt"],
                 known_ids=known, launch_id=launch_id, binary=binary,
             )
             if not ok:
                 state.settle_launch(launch_id, state="failed", note=note)
+            elif not tracked:
+                state.settle_launch(launch_id, state="untracked", note=(
+                    f"{harness} is running under tmux, but swe can't read "
+                    f"its sessions, so there's no chat to open"
+                ))
 
         threading.Thread(
             target=run, name=f"remote-launch-{launch_id}", daemon=True

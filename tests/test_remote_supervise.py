@@ -257,6 +257,15 @@ class TestPrimePane(unittest.TestCase):
         self.assertEqual(typed, ["hello there", "hello there"])
         sk.assert_not_called()
 
+    def test_a_pane_that_never_takes_the_prompt_is_not_sent(self):
+        ready = "Ask anything..."
+        with patch.object(supervise, "capture_pane", return_value=ready), \
+             patch.object(supervise, "send_key"), \
+             patch.object(supervise, "send_text", return_value=True) as st, \
+             patch.object(time, "sleep"):
+            self.assertFalse(supervise.prime_pane("qv-x", "hello there"))
+        self.assertEqual(st.call_count, 2)
+
     def test_prompt_send_failure_propagates_false(self):
         with patch.object(supervise, "capture_pane", return_value="❯"), \
              patch.object(supervise, "send_text", return_value=False):

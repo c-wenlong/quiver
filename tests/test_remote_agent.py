@@ -147,13 +147,14 @@ class TestRemoteCatalog(unittest.TestCase):
                           return_value=["claude", "gemini", "opencode"]), \
              patch.object(catalog_mod, "launchable_harnesses", return_value=[
                  {"name": "opencode", "command": "opencode",
-                  "display_name": "OpenCode"},
-                 {"name": "claude", "command": "claude",
-                  "display_name": "Claude Code"}]):
+                  "display_name": "OpenCode", "tracked": True},
+                 {"name": "qwen-code", "command": "qwen",
+                  "display_name": "Qwen Code", "tracked": False}]):
             row = catalog_mod.local_machine(self.home)
         self.assertEqual(row["harnesses"], ["claude", "gemini", "opencode"])
-        self.assertEqual(row["launchable"], ["opencode", "claude"])
+        self.assertEqual(row["launchable"], ["opencode", "qwen-code"])
         self.assertEqual(row["harness_names"]["opencode"], "OpenCode")
+        self.assertEqual(row["untracked_harnesses"], ["qwen-code"])
 
     def _launchable(self, reg, prefs=None, on_path=None):
         import plistlib
@@ -166,7 +167,11 @@ class TestRemoteCatalog(unittest.TestCase):
              patch.object(catalog_mod, "APP_PREFS", prefs_path), \
              patch.object(catalog_mod.shutil, "which",
                           side_effect=lambda c: f"/bin/{c}" if c in on_path
-                          else None):
+                          else None), \
+             patch.object(catalog_mod, "_session_parsers",
+                          return_value={"claude": None, "cursor": None,
+                                        "kilo": None, "pi": None,
+                                        "codex": None}):
             return catalog_mod.launchable_harnesses()
 
     def test_launchable_follows_registry_and_visibility(self):
@@ -186,6 +191,25 @@ class TestRemoteCatalog(unittest.TestCase):
                          ["qwen-code", "cursor", "claude"])
         self.assertEqual(items[1]["command"], "cursor-agent")
         self.assertEqual(items[2]["display_name"], "Claude Code")
+        # No session parser for qwen: offered, but flagged untracked.
+        self.assertEqual([i["tracked"] for i in items], [False, True, True])
+
+    def test_known_session_ids_adds_the_parsers_fresh_view(self):
+        proj = tempfile.mkdtemp()
+        def sess(sid, path=proj, tool="opencode"):
+            return Session(timestamp=0, agent="x", path=path,
+                           session_id=sid, tool_name=tool)
+        rows = [("k1", sess("cached"), "done"),
+                ("k2", sess("elsewhere", path="/other"), "done")]
+        with patch.object(catalog_mod, "_session_parsers", return_value={
+                "opencode": lambda: [sess("fresh"), sess("cached"),
+                                     sess("x", tool="claude")]}):
+            self.assertEqual(
+                catalog_mod.known_session_ids(rows, "opencode", proj),
+                ["cached", "fresh"])
+        with patch.object(catalog_mod, "_session_parsers", return_value={}):
+            self.assertEqual(
+                catalog_mod.known_session_ids(rows, "qwen-code", proj), [])
 
     def test_launchable_without_the_mac_app_keeps_registry_order(self):
         reg = {"pi": {"command": "pi"}, "codex": {"command": "codex"},
@@ -577,6 +601,25 @@ class TestAgentRoutes(unittest.TestCase):
         launch = self.srv.state.launches[launch_id]
         self.assertEqual(launch["state"], "failed")
         self.assertIn("no such folder", launch["note"])
+
+    def test_satellite_untracked_launch_settles(self):
+        catalog_mod.upsert_machine(self.srv.home, {
+            "id": "sat-m1", "launchable": ["qwen-code"],
+            "untracked_harnesses": ["qwen-code"]})
+        _, data = self.srv.request(
+            "POST", "/v1/sessions",
+            {"machine": "sat-m1", "harness": "qwen-code",
+             "cwd": "/tmp/x", "prompt": "go"},
+            headers=self.srv.auth)
+        launch_id = json.loads(data)["launch_id"]
+        self.srv.request(
+            "POST", "/v1/agent/events",
+            {"machine_id": self.mid, "events": [protocol.event(
+                "command.result", "", self.mid,
+                {"op": "launch", "ok": True, "launch_id": launch_id})]},
+            headers=self.srv.auth)
+        self.assertEqual(self.srv.state.launches[launch_id]["state"],
+                         "untracked")
 
     def test_launch_refuses_harness_machine_lacks(self):
         catalog_mod.upsert_machine(
@@ -991,6 +1034,16 @@ class TestAgentEdges(unittest.TestCase):
         launched = [e for e in ag.outbox if e["type"] == "session.launched"]
         self.assertEqual(launched[0]["session"], "claude:new")
         self.assertEqual(launched[0]["data"]["launch_id"], "l7")
+
+    def test_visibility_change_re_registers(self):
+        ag = self._agent()
+        items = [{"name": "kilo", "command": "kilo", "display_name": "Kilo",
+                  "tracked": True}]
+        with patch.object(catalog_mod, "launchable_harnesses",
+                          return_value=items):
+            self.assertTrue(ag._refresh_launchable())
+            self.assertFalse(ag._refresh_launchable())
+        self.assertEqual(ag.machine["launchable"], ["kilo"])
 
     def test_launch_result_echoes_launch_id(self):
         ag = self._agent()

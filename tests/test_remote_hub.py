@@ -643,9 +643,15 @@ class TestHubWriteRoutes(unittest.TestCase):
         )
         self.assertEqual(status, 404)
 
-    def _launch(self, body, installed=True):
+    def _launch(self, body, installed=True, tracked=True):
         with patch("quiver.remote.catalog.launch_command",
                    return_value="claude" if installed else None), \
+             patch("quiver.remote.catalog.launchable_harnesses",
+                   return_value=[]), \
+             patch("quiver.remote.catalog.untracked",
+                   return_value=[] if tracked else [body.get("harness")]), \
+             patch("quiver.remote.catalog.known_session_ids",
+                   return_value=["old"]), \
              patch("quiver.remote.supervise.tmux_bin",
                    return_value="/usr/bin/tmux"):
             status, data = self.srv.request(
@@ -712,6 +718,33 @@ class TestHubWriteRoutes(unittest.TestCase):
         _, view = self._launch_view(body["launch_id"])
         self.assertEqual(view["state"], "failed")
         self.assertIn("tmux", view["note"])
+
+    def test_untracked_harness_launch_says_no_chat(self):
+        with patch("quiver.remote.supervise.launch_new",
+                   return_value=(True, "launched", "qv-t")) as launch:
+            _, body = self._launch(
+                {"harness": "qwen-code", "cwd": "/tmp", "prompt": "hi"},
+                tracked=False)
+            self._wait_launch_threads()
+        self.assertEqual(launch.call_args[1]["known_ids"], ["old"])
+        _, view = self._launch_view(body["launch_id"])
+        self.assertEqual(view["state"], "untracked")
+        self.assertIn("no chat", view["note"])
+
+    def test_refresh_launchable_notices_a_renamed_harness(self):
+        state = self.srv.state
+        items = [{"name": "kilo", "command": "kilo", "display_name": "Kilo",
+                  "tracked": True}]
+        with patch("quiver.remote.catalog.launchable_harnesses",
+                   return_value=items):
+            state._refresh_launchable()
+        items[0]["display_name"] = "Kilo Code"
+        with patch("quiver.remote.catalog.launchable_harnesses",
+                   return_value=items):
+            state._refresh_launchable()
+        from quiver.remote import catalog as catalog_mod
+        row = catalog_mod.load_machines(state.home)[state.machine_id]
+        self.assertEqual(row["harness_names"], {"kilo": "Kilo Code"})
 
     def test_missing_binary_is_422_before_launch(self):
         with patch("quiver.remote.supervise.launch_new") as launch:

@@ -659,20 +659,24 @@ def _deliver(name: str, prompt: str, *, before: str) -> bool:
     # Claude's TUI can take fast-typed text as a paste and swallow the
     # Enter right behind it, leaving the prompt in the input box and no
     # transcript for adoption to find: press Enter again while it sits
-    # there. A pane exactly as it was before typing took nothing at all,
-    # so the prompt is typed once more.
+    # there. A pane exactly as it was before typing took nothing at all:
+    # the prompt is typed once more, and a pane still unchanged after
+    # that is a failed delivery, never a sent one.
+    pane = before
     for _ in range(3):
         time.sleep(1.0)
         pane = capture_pane(name)
-        if pane == before and not retyped:
-            retyped = True
-            if not send_text(name, prompt):
-                return False
+        if pane == before:
+            if not retyped:
+                retyped = True
+                if not send_text(name, prompt):
+                    return False
             continue
         if not _prompt_unsent(pane, prompt):
             return True
         send_key(name, "Enter")
-    return not _prompt_unsent(capture_pane(name), prompt)
+    pane = capture_pane(name)
+    return pane != before and not _prompt_unsent(pane, prompt)
 
 
 def _prompt_unsent(pane: str, prompt: str) -> bool:

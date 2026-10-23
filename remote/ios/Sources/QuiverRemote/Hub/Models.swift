@@ -16,6 +16,9 @@ struct Machine: Codable, Identifiable, Hashable {
     var launchable: [String]? = nil
     /// Each launchable harness's registry name, e.g. "Qwen Code".
     var harnessNames: [String: String]? = nil
+    /// Launchable harnesses swe can't read sessions of: they start, but
+    /// no chat ever opens.
+    var untrackedHarnesses: [String]? = nil
 
     /// "kais-macbook-pro.local" reads as "kais-macbook-pro".
     var displayName: String {
