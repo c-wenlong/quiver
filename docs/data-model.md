@@ -45,6 +45,7 @@ under those names.
 |---|---|---|---|---|
 | `cache/session_cache.json` | swe | JSON `{cached_at, sessions}` | all parsed sessions | 60s; `invalidate_cache()`; bypassed with `use_cache=False` (`swe session` itself always reparses) |
 | `cache/session_parse_cache.json` | swe | JSON `{version, entries: {"<harness>:<what>": {abs path: [[size, mtime_ns, ctime_ns, ino], value]}}}`, mode 600 | what each transcript (and freebuff `run-state.json`) says on its own: cwd, title, title source, cursor tool paths, claude handoff target | per file: a changed stat signature re-reads it; `version` holds format, package version and a hash of the parser modules, so any code change discards it; entries a harness's parser no longer visits are pruned when it ran; sidecars (codex index and thread store, cursor `meta.json`) are read fresh every run |
+| `cache/session_status_cache.json` | swe | JSON `{version, entries: {"<harness>": {abs path: [[size, mtime_ns, ctime_ns, ino], [phase, followup]]}}}`, mode 600 | what each transcript's tail decides for the `swe session` status column (claude, codex, cursor, pi) | per file, like the parse cache; `version` hashes `status.py` and `parse_cache.py`; an entry goes once its file is gone |
 | `cache/session_counts.json` | swe | JSON per window (`"7"`, `"30"`, `"100"`, `"all"`) | session counts + broken parser names | 24h, `SWE_SESSION_COUNTS_TTL`; `invalidate_counts_cache()`; rebuilt on `swe list` |
 | `cache/rate_limits_cache.json` | swe | JSON per provider | last limit reading per provider | 300s, `SWE_RATE_LIMITS_TTL`; stale fallback up to 24h; per-provider `updated_at` |
 | `cache/claude_usage_cache.json` | swe | JSON `{info, retry_at, credential_fingerprint, fetched_at}` | Claude usage endpoint's last reading + 429 cooldown | reading kept up to 24h; cooldown from `Retry-After` |
@@ -190,6 +191,7 @@ resumes) and left in place.
 | `service-status.json` | `{version: 1, ...}` | readings and incident state per service |
 | `session_cache.json` | `{cached_at, sessions}` | 60s |
 | `session_parse_cache.json` | `{version: "<format>:<package version>:<source hash>", entries}` | per-file stat signature; a version mismatch, unreadable file or wrong-shaped entry reads as a miss |
+| `session_status_cache.json` | `{version: "<format>:<package version>:<source hash>", entries}` | per-file stat signature; a version mismatch, unreadable file or wrong-shaped entry reads as a miss |
 | `session_counts.json` | `{windows: {<days>: {cached_at, counts, broken}}}` | 24h |
 | `rate_limits_cache.json` | `{<provider>: {info, updated_at}}` | 300s, per-provider |
 | `claude_usage_cache.json` | `{info, retry_at, credential_fingerprint, fetched_at}` | cooldown + last good reading |
@@ -204,7 +206,7 @@ resumes) and left in place.
 | `swe list --usage --exclude` (other providers) | `OtherLimitsModel` memory | 300s poll | yes |
 | swe rate-limit fetches (Claude/Codex/...) | `rate_limits_cache.json` + `claude_usage_cache.json` | 300s, per-provider deadlines, negative caching | threads, one run per invocation |
 | `swe session --json` | `sessions.json` snapshot + `SessionsModel` inflight task | listing reused under 60s; swe itself always reparses (freshness wins over the aggregator cache) | yes, shared inflight |
-| swe session parsing | `session_cache.json` (`swe list` only) + `session_parse_cache.json` (every listing, per file) | 60s disk / until the file changes | n/a (one process) |
+| swe session parsing | `session_cache.json` (`swe list` only) + `session_parse_cache.json` (every listing, per file) + `session_status_cache.json` (status column, per file) | 60s disk / until the file changes | n/a (one process) |
 | `swe session` counts | `session_counts.json` | 24h per window | n/a |
 | `swe skills --json` | `skills.json` snapshot + model | reload on visit/edit | yes |
 | `swe find plugins --json` | `plugins.json` snapshot | reload on visit/edit | yes |

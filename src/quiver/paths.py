@@ -92,6 +92,11 @@ def session_parse_cache_file_for(home: Path | None = None) -> Path:
     return cache_dir_for(home) / "session_parse_cache.json"
 
 
+def session_status_cache_file_for(home: Path | None = None) -> Path:
+    """What each transcript's tail says for the session status column."""
+    return cache_dir_for(home) / "session_status_cache.json"
+
+
 def data_dir_for(home: Path | None = None) -> Path:
     """``~/.quiver/data`` — app-owned stores (ledger, catalog, search index)."""
     return quiver_dir_for(home) / DATA_SUBDIR

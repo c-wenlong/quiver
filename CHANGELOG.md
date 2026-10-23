@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session. On a machine with 1,143 sessions, `swe session 100000 --json`
   went from about 2.8 s to 1.7 s cold and 0.55 s warm.
 
+- **The `swe session` status column stops re-reading unchanged tails.**
+  What a transcript's tail decides (its phase, and whether the last reply
+  asks the user something) is cached per file in
+  `~/.quiver/cache/session_status_cache.json` under the same stat
+  signature as the parse cache. The clock, live pids and background-job
+  states still apply on every call. On 1,145 sessions the status column
+  went from about 210 ms to 22 ms, and a warm `swe session 100000 --json`
+  from about 0.49 s to 0.30 s.
+
 - **Pair a phone by Tailscale identity, no QR needed.** The PWA's pair
   button posts `/v1/pair/request`; the hub `tailscale whois`es the peer
   and shows a 6-digit code the phone displays while it polls. A second

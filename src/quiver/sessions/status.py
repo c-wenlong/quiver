@@ -25,6 +25,8 @@ import re
 import sqlite3
 import time
 
+from quiver.paths import session_status_cache_file_for
+from quiver.sessions import parse_cache
 from quiver.sessions.models import Session
 
 ACTIVE = "active"
@@ -199,12 +201,12 @@ def _indexed(ctx: dict, key: str, build):
     return index
 
 
-def _probe_claude(session: Session, ctx: dict):
-    """(phase, last-assistant-text) from the transcript's decisive tail record."""
+def _claude_transcript(session: Session, ctx: dict) -> str:
+    """The session's live transcript path, or "" when there is none."""
     index = _indexed(ctx, "claude_transcripts", _claude_transcript_index)
     hits = list(index.get(session.session_id + ".jsonl", ()))
     if not hits:
-        return None, ""
+        return ""
     # A session resumed from another cwd leaves a copy per project dir;
     # the newest write is the live one — probing a stale copy reports a
     # finished session that is in fact still running.
@@ -213,96 +215,102 @@ def _probe_claude(session: Session, ctx: dict):
             hits.sort(key=lambda p: os.path.getmtime(p), reverse=True)
         except OSError:
             pass
+    return hits[0]
 
-    def walk(records):
-        for rec in reversed(records):
-            kind = rec.get("type")
-            if kind == "assistant":
-                if rec.get("isApiErrorMessage"):
-                    return "error", ""
-                msg = rec.get("message") or {}
-                content = msg.get("content")
-                blocks = content if isinstance(content, list) else []
-                if msg.get("stop_reason") == "tool_use" or any(
-                    isinstance(b, dict) and b.get("type") == "tool_use"
-                    for b in blocks
+
+def _claude_walk(records):
+    for rec in reversed(records):
+        kind = rec.get("type")
+        if kind == "assistant":
+            if rec.get("isApiErrorMessage"):
+                return "error", ""
+            msg = rec.get("message") or {}
+            content = msg.get("content")
+            blocks = content if isinstance(content, list) else []
+            if msg.get("stop_reason") == "tool_use" or any(
+                isinstance(b, dict) and b.get("type") == "tool_use"
+                for b in blocks
+            ):
+                return "midturn", ""
+            # A record with no text blocks and no tool_use (e.g. a
+            # thinking-only record carrying end_turn) is still finished.
+            return "finished", _blocks_text(blocks)
+        if kind == "user":
+            msg = rec.get("message") or {}
+            content = msg.get("content")
+            if isinstance(content, list):
+                if any(
+                    isinstance(b, dict) and b.get("type") == "tool_result"
+                    for b in content
                 ):
                     return "midturn", ""
-                # A record with no text blocks and no tool_use (e.g. a
-                # thinking-only record carrying end_turn) is still finished.
-                return "finished", _blocks_text(blocks)
-            if kind == "user":
-                msg = rec.get("message") or {}
-                content = msg.get("content")
-                if isinstance(content, list):
-                    if any(
-                        isinstance(b, dict) and b.get("type") == "tool_result"
-                        for b in content
-                    ):
-                        return "midturn", ""
-                    text = _blocks_text(content)
-                else:
-                    text = content if isinstance(content, str) else ""
-                if "[Request interrupted by user" in text:
-                    return "aborted", ""
-                # Slash-command bookkeeping the model does not answer.
-                if (
-                    rec.get("isMeta")
-                    or "<command-name>" in text
-                    or "<local-command-" in text
-                ):
-                    continue
-                return "midturn", ""  # a prompt awaiting the model
-        return None, ""
+                text = _blocks_text(content)
+            else:
+                text = content if isinstance(content, str) else ""
+            if "[Request interrupted by user" in text:
+                return "aborted", ""
+            # Slash-command bookkeeping the model does not answer.
+            if (
+                rec.get("isMeta")
+                or "<command-name>" in text
+                or "<local-command-" in text
+            ):
+                continue
+            return "midturn", ""  # a prompt awaiting the model
+    return None, ""
 
-    return _walk_tail(hits[0], walk)
+
+def _probe_claude(session: Session, ctx: dict):
+    """(phase, last-assistant-text) from the transcript's decisive tail record."""
+    path = _claude_transcript(session, ctx)
+    return _walk_tail(path, _claude_walk) if path else (None, "")
+
+
+def _cursor_transcript(session: Session, ctx: dict) -> str:
+    sid = session.session_id
+    index = _indexed(ctx, "cursor_transcripts", _cursor_transcript_index)
+    for transcripts in index.get(sid, ()):
+        path = os.path.join(transcripts, sid, sid + ".jsonl")
+        if os.path.lexists(path):
+            return path
+    return ""
+
+
+def _cursor_walk(records):
+    if not records:
+        return None, ""
+    last = records[-1]
+    if last.get("type") != "turn_ended":
+        # An assistant or user record with no turn_ended after it
+        # means the turn never closed.
+        if last.get("role") in ("user", "assistant"):
+            return "midturn", ""
+        return None, ""
+    status = last.get("status")
+    if status == "error":
+        return "error", ""
+    if status == "aborted":
+        return "aborted", ""
+    # success: walk back to the nearest assistant record that has
+    # text, but no further than this turn's own boundary — a
+    # tool_use-only turn does not inherit the previous turn's text.
+    for rec in reversed(records[:-1]):
+        if rec.get("type") == "turn_ended" or rec.get("role") == "user":
+            break
+        if rec.get("role") != "assistant":
+            continue
+        msg = rec.get("message") or {}
+        blocks = msg.get("content")
+        text = _blocks_text(blocks if isinstance(blocks, list) else [])
+        if text:
+            return "finished", text
+    return "finished", ""
 
 
 def _probe_cursor(session: Session, ctx: dict):
     """(phase, text) from the terminal ``turn_ended`` record."""
-    sid = session.session_id
-    index = _indexed(ctx, "cursor_transcripts", _cursor_transcript_index)
-    hits = [
-        path
-        for path in (
-            os.path.join(transcripts, sid, sid + ".jsonl")
-            for transcripts in index.get(sid, ())
-        )
-        if os.path.lexists(path)
-    ]
-    if not hits:
-        return None, ""
-    def walk(records):
-        if not records:
-            return None, ""
-        last = records[-1]
-        if last.get("type") != "turn_ended":
-            # An assistant or user record with no turn_ended after it
-            # means the turn never closed.
-            if last.get("role") in ("user", "assistant"):
-                return "midturn", ""
-            return None, ""
-        status = last.get("status")
-        if status == "error":
-            return "error", ""
-        if status == "aborted":
-            return "aborted", ""
-        # success: walk back to the nearest assistant record that has
-        # text, but no further than this turn's own boundary — a
-        # tool_use-only turn does not inherit the previous turn's text.
-        for rec in reversed(records[:-1]):
-            if rec.get("type") == "turn_ended" or rec.get("role") == "user":
-                break
-            if rec.get("role") != "assistant":
-                continue
-            msg = rec.get("message") or {}
-            blocks = msg.get("content")
-            text = _blocks_text(blocks if isinstance(blocks, list) else [])
-            if text:
-                return "finished", text
-        return "finished", ""
-
-    return _walk_tail(hits[0], walk)
+    path = _cursor_transcript(session, ctx)
+    return _walk_tail(path, _cursor_walk) if path else (None, "")
 
 
 def _pid_alive(pid: int) -> bool:
@@ -412,6 +420,51 @@ def _codex_message_text(payload: dict) -> str:
     )
 
 
+def _codex_rollout(session: Session, ctx: dict) -> str:
+    return _codex_rollout_path(session.session_id)
+
+
+def _codex_walk(records):
+    for rec in reversed(records):
+        if rec.get("type") != "event_msg":
+            continue
+        payload = rec.get("payload") or {}
+        kind = payload.get("type")
+        if kind == "task_complete":
+            text = payload.get("last_agent_message")
+            return "finished", text if isinstance(text, str) else ""
+        if kind == "turn_aborted":
+            return "aborted", ""
+        if kind == "task_started":
+            return "midturn", ""
+        # token_count, item_completed, agent_message and friends are
+        # bookkeeping that says nothing about where the turn stands.
+    for rec in reversed(records):
+        if rec.get("type") != "response_item":
+            continue
+        payload = rec.get("payload") or {}
+        kind = payload.get("type")
+        if kind == "message":
+            role = payload.get("role")
+            if role == "assistant":
+                return "finished", _codex_message_text(payload)
+            if role in ("user", "developer"):
+                return "midturn", ""
+            continue
+        if kind in (
+            "function_call",
+            "custom_tool_call",
+            # A tool output as the last item means the tool answered
+            # and the model has not replied yet: still mid-turn.
+            "function_call_output",
+            "custom_tool_call_output",
+        ):
+            return "midturn", ""
+        # Reasoning and other state-free items are skipped, not
+        # decisive; an earlier message or call may still classify.
+    return None, ""
+
+
 def _probe_codex(session: Session, ctx: dict):
     """(phase, text) from the rollout tail's decisive ``event_msg``.
 
@@ -421,51 +474,8 @@ def _probe_codex(session: Session, ctx: dict):
     A window with no decisive event falls back to the last response_item.
     Codex records no error signal in the rollout.
     """
-    path = _codex_rollout_path(session.session_id)
-    if not path:
-        return None, ""
-
-    def walk(records):
-        for rec in reversed(records):
-            if rec.get("type") != "event_msg":
-                continue
-            payload = rec.get("payload") or {}
-            kind = payload.get("type")
-            if kind == "task_complete":
-                text = payload.get("last_agent_message")
-                return "finished", text if isinstance(text, str) else ""
-            if kind == "turn_aborted":
-                return "aborted", ""
-            if kind == "task_started":
-                return "midturn", ""
-            # token_count, item_completed, agent_message and friends are
-            # bookkeeping that says nothing about where the turn stands.
-        for rec in reversed(records):
-            if rec.get("type") != "response_item":
-                continue
-            payload = rec.get("payload") or {}
-            kind = payload.get("type")
-            if kind == "message":
-                role = payload.get("role")
-                if role == "assistant":
-                    return "finished", _codex_message_text(payload)
-                if role in ("user", "developer"):
-                    return "midturn", ""
-                continue
-            if kind in (
-                "function_call",
-                "custom_tool_call",
-                # A tool output as the last item means the tool answered
-                # and the model has not replied yet: still mid-turn.
-                "function_call_output",
-                "custom_tool_call_output",
-            ):
-                return "midturn", ""
-            # Reasoning and other state-free items are skipped, not
-            # decisive; an earlier message or call may still classify.
-        return None, ""
-
-    return _walk_tail(path, walk)
+    path = _codex_rollout(session, ctx)
+    return _walk_tail(path, _codex_walk) if path else (None, "")
 
 
 def _probe_opencode(session: Session, ctx: dict):
@@ -620,50 +630,53 @@ def _probe_cline(session: Session, ctx: dict):
     return phase, ""
 
 
+def _pi_transcript(session: Session, ctx: dict) -> str:
+    # A pi ``Session.session_id`` is the transcript's full path.
+    path = session.session_id
+    return path if path and os.path.isfile(path) else ""
+
+
+def _pi_walk(records):
+    for rec in reversed(records):
+        if rec.get("type") != "message":
+            continue
+        msg = rec.get("message") or {}
+        role = msg.get("role")
+        if role == "assistant":
+            content = msg.get("content")
+            blocks = content if isinstance(content, list) else []
+            if any(
+                isinstance(b, dict) and b.get("type") == "toolCall"
+                for b in blocks
+            ):
+                return "midturn", ""
+            texts = [
+                str(b.get("text") or "")
+                for b in blocks
+                if isinstance(b, dict) and b.get("type") == "text"
+            ]
+            if texts:
+                return "finished", "\n".join(texts)
+            # Empty-content placeholder: the reply never landed.
+            return "midturn", ""
+        if role in ("toolResult", "user"):
+            return "midturn", ""
+        # Other roles carry no turn state; keep walking.
+    return None, ""
+
+
 def _probe_pi(session: Session, ctx: dict):
     """(phase, text) from the transcript's trailing ``message`` record.
 
-    A pi ``Session.session_id`` is the transcript's full path. Message
-    records carry ``message.role`` and a ``content`` block list; every
-    other record type (``session``, ``session_info``, ``model_change``,
-    ``thinking_level_change``, ...) is bookkeeping and says nothing about
-    where the turn stands. Pi appends an empty-content assistant record
-    when a reply starts, so one at the tail means the reply never landed.
-    There is no error or abort signal.
+    Message records carry ``message.role`` and a ``content`` block list;
+    every other record type (``session``, ``session_info``,
+    ``model_change``, ``thinking_level_change``, ...) is bookkeeping and
+    says nothing about where the turn stands. Pi appends an empty-content
+    assistant record when a reply starts, so one at the tail means the
+    reply never landed. There is no error or abort signal.
     """
-    path = session.session_id
-    if not path or not os.path.isfile(path):
-        return None, ""
-
-    def walk(records):
-        for rec in reversed(records):
-            if rec.get("type") != "message":
-                continue
-            msg = rec.get("message") or {}
-            role = msg.get("role")
-            if role == "assistant":
-                content = msg.get("content")
-                blocks = content if isinstance(content, list) else []
-                if any(
-                    isinstance(b, dict) and b.get("type") == "toolCall"
-                    for b in blocks
-                ):
-                    return "midturn", ""
-                texts = [
-                    str(b.get("text") or "")
-                    for b in blocks
-                    if isinstance(b, dict) and b.get("type") == "text"
-                ]
-                if texts:
-                    return "finished", "\n".join(texts)
-                # Empty-content placeholder: the reply never landed.
-                return "midturn", ""
-            if role in ("toolResult", "user"):
-                return "midturn", ""
-            # Other roles carry no turn state; keep walking.
-        return None, ""
-
-    return _walk_tail(path, walk)
+    path = _pi_transcript(session, ctx)
+    return _walk_tail(path, _pi_walk) if path else (None, "")
 
 
 _PROBES = {
@@ -676,6 +689,57 @@ _PROBES = {
     "kilo": _probe_kilo,
     "pi": _probe_pi,
 }
+
+# Probes that only read a transcript's tail: how each finds its file and
+# the walk it runs there. What the walk decides depends on nothing but
+# the file's bytes, so ``_verdict`` caches it per file. Keyed by probe
+# function, so a probe swapped in for a test runs as a plain probe.
+_TAIL_PROBES = {
+    _probe_claude: (_claude_transcript, _claude_walk),
+    _probe_codex: (_codex_rollout, _codex_walk),
+    _probe_cursor: (_cursor_transcript, _cursor_walk),
+    _probe_pi: (_pi_transcript, _pi_walk),
+}
+
+# Modules whose code decides a cached tail verdict.
+_TAIL_CACHE_MODULES = ("quiver.sessions.parse_cache", "quiver.sessions.status")
+_PHASES = (None, "error", "aborted", "midturn", "finished")
+
+
+def _valid_verdict(value) -> bool:
+    return (
+        isinstance(value, list)
+        and len(value) == 2
+        and value[0] in _PHASES
+        and isinstance(value[1], bool)
+    )
+
+
+def _verdict(session: Session, probe, ctx: dict) -> tuple:
+    """(phase, whether a finished turn asks the user something).
+
+    A tail probe's answer comes from ``ctx["tail_cache"]`` while its
+    transcript is unchanged; the clock, live pids and job states are
+    applied by the caller on every run.
+    """
+    tail = _TAIL_PROBES.get(probe)
+    if tail is None:
+        phase, text = probe(session, ctx)
+        return phase, phase == "finished" and needs_followup(text)
+    locate, walk = tail
+    path = locate(session, ctx)
+    if not path:
+        return None, False
+
+    def compute():
+        phase, text = _walk_tail(path, walk)
+        return [phase, phase == "finished" and needs_followup(text)]
+
+    phase, followup = parse_cache.lookup_in(
+        ctx.get("tail_cache"), session.tool_name, path, compute,
+        valid=_valid_verdict,
+    )
+    return phase, followup
 
 
 def _claude_live_session_ids() -> set:
@@ -774,10 +838,11 @@ def session_statuses(sessions: list[Session], now: float | None = None) -> list[
         else None,
     }
     try:
-        out = []
-        for session in sessions:
-            out.append(_one_status(session, now, ctx))
-        return out
+        with parse_cache.standalone(
+            session_status_cache_file_for, _TAIL_CACHE_MODULES
+        ) as store:
+            ctx["tail_cache"] = store
+            return [_one_status(session, now, ctx) for session in sessions]
     finally:
         for key in ("devin_conn", "opencode_conn", "kilo_conn"):
             conn = ctx.get(key)
@@ -793,7 +858,7 @@ def _one_status(session: Session, now: float, ctx: dict) -> str:
     if probe is None:
         return UNKNOWN
     try:
-        phase, text = probe(session, ctx)
+        phase, followup = _verdict(session, probe, ctx)
     except Exception:
         return UNKNOWN
     if phase == "error":
@@ -820,7 +885,7 @@ def _one_status(session: Session, now: float, ctx: dict) -> str:
                 return FOLLOWUP
             if state == "failed":
                 return ERROR
-        return FOLLOWUP if needs_followup(text) else DONE
+        return FOLLOWUP if followup else DONE
     return UNKNOWN
 
 
