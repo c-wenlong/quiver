@@ -1338,10 +1338,11 @@ struct PrStateIcons: View {
         }
     }
 
-    /// Passing checks with nothing else in the way: no conflicts, no
-    /// outstanding review, not a draft.
+    /// Passing checks with nothing else in the way: GitHub confirmed
+    /// no conflicts (unknown doesn't count), no outstanding review,
+    /// not a draft.
     private var readyToMerge: Bool {
-        !pr.draft && pr.mergeable != .conflicting
+        !pr.draft && pr.mergeable == .mergeable
             && pr.reviewDecision != .changesRequested && pr.reviewDecision != .reviewRequired
     }
 
