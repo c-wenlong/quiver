@@ -47,7 +47,7 @@ struct SkillsPage: View {
             await model.loadIfStale(for: app.swePath)
             await catalog
         }
-        .sheet(isPresented: $adding) {
+        .quiverSheet(isPresented: $adding) {
             NewSkillSheet()
         }
     }
@@ -56,7 +56,7 @@ struct SkillsPage: View {
 /// Writes ~/.quiver/skills/<name>/SKILL.md through `swe skills new`.
 private struct NewSkillSheet: View {
     @Environment(AppModel.self) private var app
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSheet) private var dismiss
     @State private var name = ""
     @State private var description = ""
     @State private var error: String?

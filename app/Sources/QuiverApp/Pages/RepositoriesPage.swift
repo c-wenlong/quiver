@@ -90,10 +90,10 @@ struct RepositoriesPage: View {
                 }
             }
         }
-        .sheet(isPresented: $adding) {
+        .quiverSheet(isPresented: $adding) {
             AddRepoSheet()
         }
-        .sheet(item: $detail) { selection in
+        .quiverSheet(item: $detail) { selection in
             PrDetailSheet(selection: selection)
         }
     }

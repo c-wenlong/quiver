@@ -120,7 +120,7 @@ final class GitHubHistory: @unchecked Sendable {
                   WHERE repo = ? AND surface = ? ORDER BY \(order)
                   """)
         else { return [] }
-        _ = try? statement.bind([.text(repo), .text(surface.rawValue)])
+        statement.bind([.text(repo), .text(surface.rawValue)])
         var out: [Row] = []
         while (try? statement.step()) == true {
             if let text = statement.text(0),
@@ -299,7 +299,7 @@ final class GitHubHistory: @unchecked Sendable {
               let statement = try? db.prepare(
                   "SELECT 1 FROM fetched WHERE repo = ? AND surface = ?")
         else { return false }
-        _ = try? statement.bind([.text(repo), .text(surface.rawValue)])
+        statement.bind([.text(repo), .text(surface.rawValue)])
         return (try? statement.step()) == true
     }
 

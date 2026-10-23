@@ -119,6 +119,7 @@ public final class AccountsModel {
     private let launcher: Launching
     private let running: RunningInstances
     private let terminal: () -> TerminalApp
+    private let terminalInstalled: (TerminalApp) -> Bool
     private let loginPath: @Sendable () async -> String
     private let renewer: ClaudeSignInRenewing
     /// Where a vendor's desktop app is installed (the same AppLocator the
@@ -128,6 +129,7 @@ public final class AccountsModel {
 
     public init(store: ProfileStore, usage: UsageFetching, launcher: Launching,
                 terminal: @escaping () -> TerminalApp,
+                terminalInstalled: @escaping (TerminalApp) -> Bool = { _ in true },
                 loginPath: @escaping @Sendable () async -> String = { await CLIPath.terminalShellPath() },
                 renewer: ClaudeSignInRenewing = ClaudeSignInRenewer(),
                 running: RunningInstances = AppRunningInstances(),
@@ -137,6 +139,7 @@ public final class AccountsModel {
         self.launcher = launcher
         self.running = running
         self.terminal = terminal
+        self.terminalInstalled = terminalInstalled
         self.loginPath = loginPath
         self.renewer = renewer
         self.installedApp = installedApp
@@ -331,7 +334,7 @@ public final class AccountsModel {
     /// A harness's CLI in a terminal. The command comes from harness.json,
     /// so it is quoted as one word rather than run as shell text.
     public func openTerminal(command: String) async throws {
-        try await launcher.launch(LaunchPlanner.terminal(terminal(), running: LaunchPlanner.shellQuote(command)))
+        try await launchInTerminal(LaunchPlanner.shellQuote(command))
     }
 
     /// An already-built shell line in a terminal. For callers like the Add
@@ -339,7 +342,16 @@ public final class AccountsModel {
     /// `openTerminal(command:)` the line is trusted as shell text, so the
     /// caller must quote its tokens.
     public func runInTerminal(line: String) async throws {
-        try await launcher.launch(LaunchPlanner.terminal(terminal(), running: line))
+        try await launchInTerminal(line)
+    }
+
+    /// Every terminal launch goes through here, so a chosen terminal that
+    /// isn't installed fails with a clear message rather than the raw
+    /// LaunchServices or osascript error.
+    private func launchInTerminal(_ line: String) async throws {
+        let app = terminal()
+        guard terminalInstalled(app) else { throw LaunchError.failed(app.notInstalledMessage) }
+        try await launcher.launch(LaunchPlanner.terminal(app, running: line))
     }
 
     /// A harness's own sign-in in a terminal, where its CLI has one.
@@ -351,7 +363,7 @@ public final class AccountsModel {
         if !CLIPath.contains(cli, path: await loginPath()) {
             throw LaunchError.failed("\(cli) isn't installed. Install it first.")
         }
-        try await launcher.launch(LaunchPlanner.terminal(terminal(), running: login))
+        try await launchInTerminal(login)
     }
 
     /// The CLI in a terminal, as this account.
@@ -359,7 +371,7 @@ public final class AccountsModel {
         let paths = store.paths(for: profile)
         let line = LaunchPlanner.shellLine(for: profile, paths: paths,
                                            command: LaunchPlanner.cliName(for: profile.vendor))
-        try await launcher.launch(LaunchPlanner.terminal(terminal(), running: line))
+        try await launchInTerminal(line)
     }
 
     /// The CLI's sign-in flow in a terminal, for this account's folder.
@@ -377,7 +389,7 @@ public final class AccountsModel {
             throw LaunchError.failed(
                 "\(LaunchPlanner.cliName(for: profile.vendor)) isn't installed. Install it first.")
         }
-        try await launcher.launch(LaunchPlanner.terminal(terminal(), running: line))
+        try await launchInTerminal(line)
     }
 
     /// The CLI this account's Sign in runs, or nil when it signs in inside

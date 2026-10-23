@@ -27,10 +27,10 @@ struct HarnessesPage: View {
             model = harnesses
             await harnesses.load()
         }
-        .sheet(isPresented: $detecting) {
+        .quiverSheet(isPresented: $detecting) {
             if let model { DetectSheet(model: model, reload: { await reload() }) }
         }
-        .sheet(isPresented: $adding) {
+        .quiverSheet(isPresented: $adding) {
             if let model {
                 AddHarnessSheet(model: model, known: Set(model.all.map(\.name)), reload: { await reload() })
             }
@@ -178,7 +178,7 @@ private struct HarnessRow: View {
         .onHover { hovering = $0 }
         .accessibilityAction(named: "Edit") { editing = true }
         .help("Click to edit \(harness.title)")
-        .sheet(isPresented: $editing) { HarnessEditor(harness: harness, model: model) }
+        .quiverSheet(isPresented: $editing) { HarnessEditor(harness: harness, model: model) }
         .opacity(busy ? 0.6 : 1)
         .disabled(busy)
     }
@@ -268,7 +268,7 @@ private struct HarnessRow: View {
 
 /// Every registry field swe keeps for a harness, edited through `swe edit`.
 private struct HarnessEditor: View {
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSheet) private var dismiss
     var harness: Harness
     var model: HarnessesModel
     @State private var draft: HarnessEdit

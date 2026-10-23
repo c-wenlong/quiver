@@ -47,7 +47,7 @@ public enum ActivityParsers {
     /// one bad write must not fail the whole file.
     public static func jsonl(_ path: String,
                              line body: ([String: Any]) -> Void) throws {
-        try JSONLReader().read(URL(fileURLWithPath: path), from: 0) { data in
+        _ = try JSONLReader().read(URL(fileURLWithPath: path), from: 0) { data in
             guard let object = try? JSONSerialization.jsonObject(with: data),
                   let dict = object as? [String: Any] else { return }
             body(dict)
