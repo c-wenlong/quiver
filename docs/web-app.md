@@ -62,7 +62,15 @@ already do, through satellites; that is a later step.
    app's daily rows, and usage joins only for sessions on the hub machine
    (a satellite's rows list without tokens). Sessions only in a Quiver
    account profile's home, and Devin cloud sessions, are not listed yet.
-3. Harnesses and Accounts limits (`/v1/usage`'s rows).
+3. Harnesses and Accounts limits. Shipped, read only. Harnesses lists
+   `/v1/app/harnesses` (every registered harness, archived included, as
+   `swe list --scope=all`) with the app's In use / Archived scopes, search,
+   starred-first order and the fold for unstarred rows. Accounts is one
+   card per starred harness from `/v1/usage`, per machine (hub and each
+   satellite), with the app's limit bars, plan badge, on-demand and extra
+   usage rows and status lines. Star, archive, edit, Detect and Add stay in
+   `swe` and the Mac app; Quiver's own Claude and Codex account profiles,
+   history, and Open app / Terminal are Mac-only.
 4. Skills, AGENTS.md, MCP servers, Plugins, Doctor: read-only first, from the
    `swe … --json` builders.
 5. Writes for the Manage pages.

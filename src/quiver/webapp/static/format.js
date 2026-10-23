@@ -107,5 +107,56 @@ const Fmt = (() => {
     };
   }
 
-  return { tokens, dollars, ago, harnessName, harnessColor, logo, marbleScale };
+  /* UsageFormat.resetIn: "in 12m", "in 4h 28m", "in 25d"; minutes round up. */
+  function resetIn(epoch, now = Date.now() / 1000) {
+    const seconds = epoch - now;
+    if (seconds <= 0) return "now";
+    const minutes = Math.ceil(seconds / 60);
+    if (minutes < 60) return `in ${minutes}m`;
+    if (minutes < 24 * 60) {
+      const rest = minutes % 60;
+      return rest ? `in ${Math.floor(minutes / 60)}h ${rest}m` : `in ${minutes / 60}h`;
+    }
+    return `in ${Math.floor(minutes / (24 * 60))}d`;
+  }
+
+  /* UsageFormat.window: a limit window named as the harness's CLI does. */
+  function windowLabel(label) {
+    return { included: "Included", auto: "Auto", api: "API", grok_bot: harnessName("grok-bot") }[label]
+      || label || "Usage";
+  }
+
+  /* "max_20x" -> "Max 20x"; blank or a dash means no plan. */
+  function planTitle(plan) {
+    if (!plan || plan === "—" || plan === "-") return "";
+    return plan.replace(/_/g, " ").split(" ").filter(Boolean)
+      .map((w) => (/^\d/.test(w) ? w : w[0].toUpperCase() + w.slice(1))).join(" ");
+  }
+
+  /* Money: whole dollars when integral, else cents. Balances: always cents. */
+  function money(amount) {
+    const whole = Math.round(amount) === amount;
+    return amount.toLocaleString("en-US", { style: "currency", currency: "USD",
+      minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2 });
+  }
+  function balance(amount) {
+    return amount.toLocaleString("en-US", { style: "currency", currency: "USD",
+      minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  /* Harness.onDemandLines: [value, detail] for Cursor's on-demand spend. */
+  function onDemand(od) {
+    const used = od.used_usd || 0;
+    if (od.state === "fixed" && od.limit_usd != null) {
+      return [`${money(used)} / ${money(od.limit_usd)}`, `${money(Math.max(0, od.limit_usd - used))} remaining`];
+    }
+    if (od.state === "unlimited") {
+      return [money(used), od.scope === "team-member" ? "No personal limit" : "No monthly limit"];
+    }
+    if (od.state === "disabled") return [used > 0 ? money(used) : "Disabled", "On-demand usage is off"];
+    return [used > 0 ? money(used) : "Unavailable", "On-demand limit unavailable"];
+  }
+
+  return { tokens, dollars, ago, harnessName, harnessColor, logo, marbleScale,
+    resetIn, windowLabel, planTitle, money, balance, onDemand };
 })();
