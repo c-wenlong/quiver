@@ -191,3 +191,24 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .92em;
 .diff-del { background: rgba(239, 90, 111, .12); color: var(--red); }
 .diff-meta { color: var(--dim); font-style: italic; padding: 3px 10px; }
 details.tool.has-diff > summary { color: var(--text); }
+
+/* usage */
+.usage-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.usage-head button { padding: 6px 12px; font-size: .85rem; }
+.usage-head button:disabled { opacity: .5; }
+.usage-group h2 { font-size: .95rem; margin: 18px 0 6px; }
+.usage-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.usage-title .t { font-weight: 600; }
+.usage-card p { margin: 8px 0 0; font-size: .85rem; }
+.limit { margin-top: 10px; }
+.limit-row { display: flex; justify-content: space-between; font-size: .88rem; }
+.limit-sub { font-size: .75rem; min-height: 1em; margin-top: 3px; }
+.bar { height: 8px; background: var(--panel2); border-radius: 99px; overflow: hidden; margin-top: 5px; }
+.bar .fill { height: 100%; background: var(--green); border-radius: 99px; }
+.bar .fill.warm { background: var(--yellow); }
+.bar .fill.hot { background: var(--red); }
+.count-row { display: grid; grid-template-columns: minmax(0, 7.5rem) 1fr auto; align-items: center; gap: 10px; padding: 5px 0; font-size: .88rem; }
+.count-row .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.count-row .bar { margin-top: 0; }
+.count-row .bar .fill { background: var(--accent); min-width: 4px; }
+.count-row .n { font-variant-numeric: tabular-nums; color: var(--dim); min-width: 2.5ch; text-align: right; }

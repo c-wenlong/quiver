@@ -191,6 +191,17 @@ which could backtrack without bound), newest first. Results are catalog rows, so
 opens through the usual session routes; satellite sessions match on
 metadata only, since the index is per machine.
 
+`GET /v1/usage[?refresh=1]` (`usage.py`) returns the hub machine's
+`swe list --usage --json` rows as `harnesses`, plus `window_days` (100),
+`machine` and `server_time`: every active harness with its 100-day
+session count, and a `rate_limit` reading for each starred one. Readings
+come through the rate-limit disk cache (300 s), and concurrent requests
+share one fetch. `refresh=1` refetches only readings older than 60 s and
+failed ones, so a refresh button can't hammer providers that rate-limit.
+An unreadable registry answers 503 `usage_unavailable`. Satellites don't
+report usage yet, so their quotas are not in it. The PWA's Usage tab
+reads this route.
+
 `journal.py` is the reconnect story: seq-numbered per-session ring on
 disk; client resumes with `?last=seq`. "Open the app, catch up on 30 min
 of agent work" replays the journal instead of refetching a transcript —

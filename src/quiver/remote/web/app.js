@@ -60,7 +60,7 @@ function setConn(on) {
 
 function show(view) {
   state.view = view;
-  for (const v of ["pair-view", "approve-view", "sessions-view", "chat-view", "inbox-view"]) {
+  for (const v of ["pair-view", "approve-view", "sessions-view", "chat-view", "inbox-view", "usage-view"]) {
     el(v).classList.add("hidden");
   }
   el(view + "-view").classList.remove("hidden");
@@ -781,6 +781,135 @@ async function loadInbox() {
   });
 }
 
+/* ── usage ───────────────────────────────────────────────── */
+
+const LIMIT_STATUS = {
+  "no-sub": "No subscription on this account.",
+  "auth-required": "Signed out. Log in to it again on the hub.",
+  timeout: "The provider didn't answer in time.",
+};
+
+function resetIn(ts) {
+  if (!ts) return "";
+  const d = ts - Date.now() / 1000;
+  if (d <= 0) return "resets now";
+  if (d < 3600) return `resets in ${Math.ceil(d / 60)}m`;
+  if (d < 86400) return `resets in ${Math.floor(d / 3600)}h ${Math.floor((d % 3600) / 60)}m`;
+  return `resets in ${Math.floor(d / 86400)}d ${Math.floor((d % 86400) / 3600)}h`;
+}
+
+/* swe leaves display_name null when the registry names none; names
+ * always start with a capital, as in the Mac app. */
+function harnessName(h) {
+  const n = h.display_name || h.name || "";
+  return n.charAt(0).toUpperCase() + n.slice(1);
+}
+
+/* A provider's own window label ("5h", "7d", "grok_bot"), else one made
+ * from its length: Codex reports a 7-day window with no label. */
+function windowLabel(w) {
+  if (w.window) return String(w.window).replace(/_/g, " ");
+  const s = w.window_seconds;
+  if (!s) return "Quota";
+  return s % 86400 === 0 ? `${s / 86400}d` : `${Math.round(s / 3600)}h`;
+}
+
+function usd(n) {
+  return "$" + Number(n).toFixed(2);
+}
+
+function limitBar(label, w) {
+  const used = Math.max(0, Math.min(100, w.used_percent || 0));
+  const tone = w.limit_reached || used >= 90 ? "hot" : used >= 70 ? "warm" : "";
+  const right = w.unavailable ? "unavailable" : `${used}% used`;
+  return `<div class="limit">
+    <div class="limit-row"><span>${esc(label)}</span><span class="dim">${esc(right)}</span></div>
+    <div class="bar"><div class="fill ${tone}" style="width:${w.unavailable ? 0 : used}%"></div></div>
+    <div class="limit-sub dim">${esc(resetIn(w.reset_at))}</div>
+  </div>`;
+}
+
+function limitCard(h) {
+  const rl = h.rate_limit;
+  const plan = rl.plan_type ? `<span class="own">${esc(rl.plan_type)}</span>` : "";
+  let body;
+  if (rl.status !== "ok") {
+    body = `<p class="dim">${esc(LIMIT_STATUS[rl.status] || rl.status)}</p>`;
+  } else {
+    const windows = rl.windows && rl.windows.length ? rl.windows : [rl];
+    body = windows.map((w) => limitBar(windowLabel(w), w)).join("");
+    if (rl.total_units != null && rl.remaining_units != null) {
+      body += `<p class="dim">${esc(rl.total_units < 0
+        ? "Unlimited credits"
+        : `${rl.remaining_units} of ${rl.total_units} credits left`)}</p>`;
+    }
+    if (rl.extra_usage_usd != null) {
+      body += `<p class="dim">${esc(usd(rl.extra_usage_usd))} extra usage left</p>`;
+    }
+    const od = rl.on_demand;
+    if (od && od.state === "fixed" && od.limit_usd != null) {
+      body += `<p class="dim">On-demand: ${esc(usd(od.used_usd || 0))} of ${esc(usd(od.limit_usd))}</p>`;
+    } else if (od && od.state === "unlimited") {
+      body += `<p class="dim">On-demand: ${esc(usd(od.used_usd || 0))}, no limit</p>`;
+    }
+  }
+  return `<div class="card usage-card">
+    <div class="usage-title"><span class="t">${esc(harnessName(h))}</span>${plan}</div>
+    ${body}
+  </div>`;
+}
+
+function renderUsage(data) {
+  const rows = data.harnesses || [];
+  const limited = rows.filter((h) => h.rate_limit);
+  const days = data.window_days || 100;
+  const used = rows.filter((h) => h.sessions_100d > 0)
+    .sort((a, b) => b.sessions_100d - a.sessions_100d);
+  const most = used.length ? used[0].sessions_100d : 1;
+  let html = `<div class="usage-group"><h2>Limits</h2>`;
+  html += limited.length
+    ? limited.map(limitCard).join("")
+    : `<p class="dim">No limits to show. Star a harness on the hub with
+       <code>swe hs star &lt;name&gt;</code> to track its quota.</p>`;
+  html += `</div><div class="usage-group"><h2>Sessions in the last ${esc(days)} days</h2>`;
+  html += used.length
+    ? `<div class="card">${used.map((h) => `
+        <div class="count-row">
+          <span class="name">${esc(harnessName(h))}</span>
+          <div class="bar"><div class="fill" style="width:${(h.sessions_100d / most) * 100}%"></div></div>
+          <span class="n">${esc(h.sessions_100d)}</span>
+        </div>`).join("")}</div>`
+    : `<p class="dim">No sessions on this machine in that window.</p>`;
+  html += "</div>";
+  el("usage-body").innerHTML = html;
+  const machine = data.machine && (data.machine.name || data.machine.id);
+  el("usage-meta").textContent = machine ? `On ${machine}` : "";
+}
+
+async function loadUsage(refresh = false) {
+  const btn = el("usage-refresh");
+  btn.disabled = true;
+  if (!el("usage-body").innerHTML) {
+    el("usage-body").innerHTML = `<p class="dim">Loading usage…</p>`;
+  }
+  try {
+    const { status, data } = await api("/v1/usage" + (refresh ? "?refresh=1" : ""));
+    if (status === 401) { store.cred = null; boot(); return; }
+    if (status !== 200 || !data) {
+      const msg = data && data.error ? data.error.message : `hub answered ${status}`;
+      el("usage-body").innerHTML = `<p class="error">Couldn't load usage: ${esc(msg)}</p>`;
+      return;
+    }
+    if (state.view === "usage") renderUsage(data);
+  } catch {
+    el("usage-body").innerHTML = `<p class="error">Couldn't reach the hub.</p>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+el("usage-refresh").addEventListener("click", () => loadUsage(true));
+
 /* ── composer + controls ─────────────────────────────────── */
 
 function newClientId() {
@@ -922,6 +1051,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
     show(tab.dataset.tab);
     if (tab.dataset.tab === "inbox") loadInbox();
     if (tab.dataset.tab === "sessions") loadSessions();
+    if (tab.dataset.tab === "usage") loadUsage();
   });
 });
 
@@ -958,6 +1088,7 @@ function boot() {
   clearInterval(state.sessionTimer);
   state.sessionTimer = setInterval(() => {
     if (state.view === "sessions") loadSessions();
+    if (state.view === "usage") loadUsage();
     loadInbox();
   }, 15000);
 }
@@ -969,6 +1100,7 @@ document.addEventListener("visibilitychange", () => {
     }
     loadSessions();
     loadInbox();
+    if (state.view === "usage") loadUsage();
   }
 });
 

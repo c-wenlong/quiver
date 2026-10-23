@@ -39,6 +39,7 @@ from quiver.remote import (
     supervise,
     tail,
     tsid,
+    usage as usage_mod,
 )
 from quiver.remote.journal import Journal
 
@@ -769,8 +770,19 @@ class _Handler(BaseHTTPRequestHandler):
             ))
             return
 
+        if path == "/v1/usage":
+            refresh = str((args.get("refresh") or [""])[0]) in {"1", "true"}
+            try:
+                body = usage_mod.snapshot(refresh=refresh)
+            except (OSError, ValueError) as exc:
+                self._send_error(503, "usage_unavailable", str(exc))
+                return
+            body["machine"] = self._state.machine
+            self._send_json(200, body)
+            return
+
         if path == "/v1/inbox":
-            done = str((args.get("done") or [""])[0])
+            done =str((args.get("done") or [""])[0])
             self._send_json(200, {
                 "items": self._state.catalog.inbox(
                     pending=self._state.pending_approvals,
