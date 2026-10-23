@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   built by `init.commands.check_document`, which the page calls in process.
 
 
+- **Web app: star, archive and restore harnesses.** The Harnesses page
+  can now change a harness's state, the web app's first writes: a star
+  button on each row, Archive with an inline form that needs a reason,
+  and Restore on archived rows. They post to `/v1/app/harness/<action>`
+  (device bearer and Origin check), which writes through the same
+  registry functions as `swe harness star|archive`, one at a time. The
+  row changes when the hub answers; a refusal shows in an error card.
+
 - **Web app: Compute.** What the starred harnesses run on the hub
   machine and what it costs it, read from Linux's `/proc` and `/sys`
   (and `nvidia-smi` when present): the totals line, the hub's CPU,
