@@ -1372,6 +1372,65 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(model.searchOverflow == 0)
     }
 
+    @Test func aRevisitWithTheSameFeedKeepsTheMatchersAnswers() async throws {
+        // Every page visit runs `load`. With no new models fetch since
+        // the last one, it must not decode the models again or drop the
+        // matcher's answers: both used to run on the main thread.
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("opus", "Claude Opus 5.5", "claude-opus-5-5",
+                  creator: "anthropic", intelligence: 70),
+        ])
+        let model = makeModel(dir: dir,
+                              slices: [slice("claude-opus-5-5", "claude", tokens: 10)])
+        await model.load()
+        let warmed = model.matcherMisses
+        #expect(warmed > 0)
+        #expect(model.updatedAt == Date(timeIntervalSince1970: 1_800_000_000))
+        await model.load()
+        #expect(model.matcherMisses == warmed)
+        #expect(model.rows.first?.aa?.id == "opus")
+        #expect(model.updatedAt == Date(timeIntervalSince1970: 1_800_000_000))
+    }
+
+    @Test func aNewFeedOrLinksFileLandsOnTheNextVisit() async throws {
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("opus", "Claude Opus 5.5", "claude-opus-5-5",
+                  creator: "anthropic", intelligence: 70),
+        ])
+        let store = ArtificialAnalysisStore(directory: dir.path("aa"))
+        let used = [slice("my-alias", "claude", tokens: 10)]
+        let model = ModelsModel(store: store, keyReader: { "key" }, transport: StubHTTP(),
+                                linksURL: dir.path("config/model-links.json"),
+                                slices: { _ in used },
+                                now: { Date(timeIntervalSince1970: 1_800_000_000) },
+                                calendar: Calendar(identifier: .gregorian), searchDelay: .zero)
+        await model.load()
+        #expect(model.allModels.map(\.id) == ["opus"])
+        #expect(model.unmatched.map(\.model) == ["my-alias"])
+
+        // Another window or the CLI writes a manual link: the next visit
+        // rematches against the same models.
+        try ModelMatcher.saveLinks(["my-alias": "opus"], to: dir.path("config/model-links.json"))
+        await model.load()
+        #expect(model.unmatched.isEmpty)
+        #expect(model.rows.first?.aa?.id == "opus")
+
+        // A newer models fetch replaces the list and its tables.
+        let body = try JSONSerialization.data(withJSONObject: ["data": [
+            entry("opus", "Claude Opus 5.5", "claude-opus-5-5", creator: "anthropic", intelligence: 70),
+            entry("sol", "GPT-6.1 Sol", "gpt-6-1-sol", creator: "openai", intelligence: 80),
+        ]])
+        try store.database.recordAAPayload(.llms, body: body, at: Date(timeIntervalSince1970: 1_800_000_100),
+                                           status: 200, rateLimitHeaders: nil, url: "test")
+        await model.load()
+        #expect(model.allModels.map(\.id) == ["opus", "sol"])
+        #expect(model.updatedAt == Date(timeIntervalSince1970: 1_800_000_100))
+        model.set(scope: .top25)
+        #expect(model.rows.map(\.aa?.id) == ["sol", "opus"])
+    }
+
     @Test func aRepeatQueryReadsTheCacheNotTheParser() async throws {
         // match answers memoize per name: a needle the search already
         // ran adds zero index lookups, which is what keeps typing cheap.

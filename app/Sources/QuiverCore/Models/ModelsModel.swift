@@ -216,19 +216,9 @@ public final class ModelsModel {
     public private(set) var harnessOptions: [String] = []
     public private(set) var unmatched: [Unmatched] = []
     /// Every AA model, for the link sheet's searchable list and the
-    /// page's own search.
-    public private(set) var allModels: [AALanguageModel] = [] {
-        didSet {
-            matcherInputsChanged()
-            modelsByID = allModels.reduce(into: [:]) { $0[$1.id] = $1 }
-            aaHay = allModels.map {
-                (model: $0, hay: [Self.normalized($0.name), Self.normalized($0.slug),
-                                  Self.normalized($0.creatorName),
-                                  Self.normalized($0.creatorSlug)])
-            }
-            costPercentiles = Self.costRanks(in: allModels)
-        }
-    }
+    /// page's own search. Set only by `readStored`, with the tables
+    /// derived from it.
+    public private(set) var allModels: [AALanguageModel] = []
     public private(set) var isLoading = false
     public private(set) var isRefreshing = false
     /// When the models feed last landed.
@@ -243,7 +233,13 @@ public final class ModelsModel {
     private let transport: any HTTPTransport
     /// `~/.quiver/config/model-links.json`.
     private let linksURL: URL
-    private var links: [String: String] = [:] { didSet { matcherInputsChanged() } }
+    private var links: [String: String] = [:]
+    /// The models feed fetch `allModels` was decoded from. While it is
+    /// still the latest, a visit skips the decode and keeps the matcher.
+    private var modelsFetchID: Int64?
+    /// Bumped by every `readStored`, so an older read never lands over a
+    /// newer one.
+    private var storedGeneration = 0
     /// The period's per-model-per-harness usage; overridable in tests.
     private let slices: @Sendable (DateInterval) async -> [ModelUsage]
     /// The price catalog the ledger charges with; nil leaves used rows
@@ -251,23 +247,7 @@ public final class ModelsModel {
     private let pricing: @Sendable () async -> PricingCatalog?
     private var pricingCatalog: PricingCatalog?
     /// Current LiteLLM rows per AA model id, from the catalog join.
-    private var catalogPrices: [String: [CatalogDatabase.PriceRow]] = [:] {
-        didSet {
-            catalogHay = catalogPrices
-                .map { (id: $0.key, hay: $0.value.map { Self.normalized($0.key) }) }
-                .sorted { $0.id < $1.id }
-        }
-    }
-    /// Current LiteLLM rows no alias links to an AA model: the search's
-    /// price-only side.
-    private var unmatchedPrices: [CatalogDatabase.PriceRow] = [] {
-        didSet {
-            liteHay = unmatchedPrices.map {
-                (row: $0, hay: Self.normalized($0.key),
-                 bare: Self.normalized(PricingCatalog.bareName($0.key)))
-            }
-        }
-    }
+    private var catalogPrices: [String: [CatalogDatabase.PriceRow]] = [:]
     /// The parse index over `allModels` and `links`, built once and
     /// reused across per-keystroke rebuilds; nilled when either changes.
     private var matchIndex: ModelMatcher.Index?
@@ -281,14 +261,19 @@ public final class ModelsModel {
     /// Times the index actually parsed a name; flat across repeat
     /// queries proves the memoization works.
     private(set) var matcherMisses = 0
-    /// The lookup tables `allModels`, `catalogPrices` and
-    /// `unmatchedPrices` fill once: the id join, the normalized
-    /// haystacks a query scans, and the percentile every row reads.
+    /// The lookup tables `allModels` and the catalog's prices fill once,
+    /// off the main actor: the id join, the normalized haystacks a query
+    /// scans, the percentile every row reads, and the leaderboard's
+    /// one-entry-per-family list.
     private var modelsByID: [String: AALanguageModel] = [:]
     private var aaHay: [(model: AALanguageModel, hay: [String])] = []
+    /// Current LiteLLM keys per AA model id, normalized.
     private var catalogHay: [(id: String, hay: [String])] = []
+    /// Current LiteLLM rows no alias links to an AA model: the search's
+    /// price-only side, with each key and bare name normalized.
     private var liteHay: [(row: CatalogDatabase.PriceRow, hay: String, bare: String)] = []
     private var costPercentiles: [String: Double] = [:]
+    private var headlines: [AALanguageModel] = []
     /// Typing coalesces: each keystroke re-arms this instead of
     /// rebuilding, so a fast typist waits for one rebuild, not seven.
     private var searchTask: Task<Void, Never>?
@@ -353,17 +338,21 @@ public final class ModelsModel {
         let key = await keyReader()
         guard generation == loadGeneration else { return }
         hasKey = key != nil
-        if allowRefresh && hasKey && store.llmsIsStale() {
+        let store = store
+        let stale = allowRefresh && hasKey
+            ? await Task.detached(operation: { store.llmsIsStale() }).value : false
+        // A newer load may have started meanwhile: only it reads on, or
+        // this one's later `readStored` would supersede the newer read.
+        guard generation == loadGeneration else { return }
+        if stale {
             // Unstructured, so leaving the page (which cancels the page's
             // task) can't cancel the fetches mid-way and record every
             // endpoint left as a "cancelled" failure.
             await Task { await refresh() }.value
             guard generation == loadGeneration else { return }
         }
-        links = ModelMatcher.loadLinks(from: linksURL)
-        allModels = store.languageModels() ?? []
-        updatedAt = store.meta()[AAEndpoint.llms.rawValue]?.fetchedAt
-            .map { Date(timeIntervalSince1970: $0) }
+        await readStored()
+        guard generation == loadGeneration else { return }
         await loadPrices()
         guard generation == loadGeneration else { return }
         if !hasLoaded {
@@ -437,10 +426,7 @@ public final class ModelsModel {
         hasKey = true
         let errors = await store.refresh(key: key, transport: transport)
         refreshError = errors[.llms] ?? errors.values.sorted().first
-        links = ModelMatcher.loadLinks(from: linksURL)
-        allModels = store.languageModels() ?? []
-        updatedAt = store.meta()[AAEndpoint.llms.rawValue]?.fetchedAt
-            .map { Date(timeIntervalSince1970: $0) }
+        await readStored()
         await loadPrices()
         rebuild()
     }
@@ -471,6 +457,7 @@ public final class ModelsModel {
         next[ModelMatcher.parse(logged).base] = aaID
         try ModelMatcher.saveLinks(next, to: linksURL)
         links = next
+        matcherInputsChanged()
         rebuild()
         // The catalog's price-key aliases follow the links file.
         let database = store.database
@@ -500,18 +487,108 @@ public final class ModelsModel {
                    listPrice: listPrice(logged: logged, aa: aa))
     }
 
+    /// What `readStored` hands the main actor: the links file, the
+    /// models feed's latest fetch, and, only when that changed, the
+    /// models and every table over them. The matcher index is rebuilt
+    /// when either input changed.
+    private struct Stored: Sendable {
+        var fetch: CatalogDatabase.Fetch?
+        var links: [String: String]
+        var models: ModelTables?
+        /// Nil when neither input changed; `.some(nil)` when there are no
+        /// models to index.
+        var index: ModelMatcher.Index??
+    }
+
+    /// `allModels` and the lookup tables derived from it.
+    private struct ModelTables: Sendable {
+        var models: [AALanguageModel]
+        var byID: [String: AALanguageModel]
+        var hay: [(model: AALanguageModel, hay: [String])]
+        var costPercentiles: [String: Double]
+        var headlines: [AALanguageModel]
+
+        init(_ models: [AALanguageModel]) {
+            self.models = models
+            byID = models.reduce(into: [:]) { $0[$1.id] = $1 }
+            hay = models.map {
+                (model: $0, hay: [ModelsModel.normalized($0.name), ModelsModel.normalized($0.slug),
+                                  ModelsModel.normalized($0.creatorName),
+                                  ModelsModel.normalized($0.creatorSlug)])
+            }
+            costPercentiles = ModelsModel.costRanks(in: models)
+            headlines = ModelMatcher.headlines(in: models)
+        }
+    }
+
+    /// Reads the links file and the stored models off the main actor, and
+    /// decodes the models only when a newer feed landed since the last
+    /// read: a revisit used to decode every row, re-parse every name and
+    /// throw away the matcher's answers, all on the main thread, and could
+    /// wait there on the database lock a background alias rebuild held.
+    private func readStored() async {
+        storedGeneration += 1
+        let generation = storedGeneration
+        let store = store, linksURL = linksURL
+        let known = (fetchID: modelsFetchID, models: allModels, links: links)
+        let stored = await Task.detached(priority: .userInitiated) { () -> Stored in
+            let fetch = store.llmsFetch()
+            let links = ModelMatcher.loadLinks(from: linksURL)
+            var models = known.models
+            var tables: ModelTables?
+            if fetch == nil || fetch?.id != known.fetchID {
+                models = store.languageModels() ?? []
+                if models != known.models { tables = ModelTables(models) }
+            }
+            guard tables != nil || links != known.links else {
+                return Stored(fetch: fetch, links: links)
+            }
+            return Stored(fetch: fetch, links: links, models: tables,
+                          index: .some(models.isEmpty ? nil : ModelMatcher.Index(models: models, links: links)))
+        }.value
+        guard generation == storedGeneration else { return }
+        modelsFetchID = stored.fetch?.id
+        updatedAt = stored.fetch?.fetchedAt
+        if let tables = stored.models {
+            allModels = tables.models
+            modelsByID = tables.byID
+            aaHay = tables.hay
+            costPercentiles = tables.costPercentiles
+            headlines = tables.headlines
+        }
+        if case .some(let index) = stored.index {
+            matcherInputsChanged()
+            // A link saved while the read was out is newer than the file
+            // it read: keep it, and let the next match build the index.
+            if links == known.links {
+                links = stored.links
+                matchIndex = index
+            }
+        }
+    }
+
     /// Reads the ledger's catalog and the catalog join's current prices,
     /// both halves: the keys an AA model claims and the LiteLLM-only
-    /// tail the search lists on its own.
+    /// tail the search lists on its own. The haystacks are normalized
+    /// off the main actor too: a few thousand keys.
     private func loadPrices() async {
         pricingCatalog = await pricing()
         let database = store.database
         let prices = await Task.detached {
-            (models: database.currentPricesByModel(),
-             unmatched: database.currentPricesUnmatched())
+            let models = database.currentPricesByModel()
+            let unmatched = database.currentPricesUnmatched()
+            let catalogHay = models
+                .map { (id: $0.key, hay: $0.value.map { ModelsModel.normalized($0.key) }) }
+                .sorted { $0.id < $1.id }
+            let liteHay = unmatched.map {
+                (row: $0, hay: ModelsModel.normalized($0.key),
+                 bare: ModelsModel.normalized(PricingCatalog.bareName($0.key)))
+            }
+            return (models: models, catalogHay: catalogHay, liteHay: liteHay)
         }.value
         catalogPrices = prices.models
-        unmatchedPrices = prices.unmatched
+        catalogHay = prices.catalogHay
+        liteHay = prices.liteHay
     }
 
     /// The list price a row shows: the ledger's entry for `logged` when it
@@ -559,6 +636,8 @@ public final class ModelsModel {
     }
 
     /// `allModels` or `links` changed: every matcher-derived answer goes.
+    /// `readStored` hands over a fresh index; after a link, the next
+    /// match builds one.
     private func matcherInputsChanged() {
         matchIndex = nil
         matchCache = [:]
@@ -794,7 +873,7 @@ public final class ModelsModel {
     /// AA's leaders under the current metric, best first: one entry per
     /// foundation model, the same entry a logged name resolves to.
     private func topAA(excluding matched: Set<String>, count: Int) -> [AALanguageModel] {
-        ModelMatcher.headlines(in: allModels)
+        headlines
             .filter { !matched.contains($0.id) }
             .filter { metric.value(of: $0) != nil }
             .sorted { a, b in
@@ -825,7 +904,7 @@ public final class ModelsModel {
 
     /// Search compares the alphanumeric skeleton: "kimi k3" hits
     /// "Kimi K3", "kimi-k3" and "us.moonshotai.kimi-k3" alike.
-    static func normalized(_ name: String) -> String {
+    nonisolated static func normalized(_ name: String) -> String {
         name.lowercased().filter { $0.isLetter || $0.isNumber }
     }
 
@@ -851,7 +930,7 @@ public final class ModelsModel {
     /// Every priced model's percentile against the rest, from one pass
     /// over the sorted prices; `CostPercentile.rank` rescans the whole
     /// list per row, which a per-keystroke rebuild felt.
-    private static func costRanks(in models: [AALanguageModel]) -> [String: Double] {
+    nonisolated private static func costRanks(in models: [AALanguageModel]) -> [String: Double] {
         let priced = models.compactMap(\.priceBlended).filter { $0 > 0 }.sorted()
         guard priced.count > 1 else { return [:] }
         // First index the predicate stops holding: `< price` counts the
