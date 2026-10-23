@@ -378,12 +378,21 @@ public struct FanHold {
     }
 }
 
-/// The `--fan-daemon` mode of Quiver's own executable. The one-time
-/// install copies the executable to a root-owned path and has launchd run
-/// it as root with this flag; main.swift calls this before the app
-/// starts, so the helper never draws a window.
+/// The `--fan-daemon` mode of the QuiverFanHelper executable that ships
+/// in Quiver.app. The one-time install copies it to a root-owned path and
+/// has launchd run it as root with this flag. Quiver's own executable
+/// still answers the flags (main.swift), for a build without the helper.
 public enum FanHelper {
     public static let flag = "--fan-daemon"
+    /// Bump when the helper's behaviour changes. It goes into the launchd
+    /// job, and an installed job with another version (or none, from
+    /// before helpers had one) counts as not installed, so the next Set
+    /// speed reinstalls it once instead of steering an old or broken one.
+    /// 2: its own executable, after copies of Quiver's crashed in dyld.
+    public static let version = 2
+    static let versionFlag = "--helper-version"
+    /// The helper inside the app bundle, where build-app.sh puts it.
+    public static let bundledName = "QuiverFanHelper"
     public static let label = "com.cwenlong.quiver.fan"
     /// Root-owned, so nothing running as the user can swap the binary
     /// launchd starts as root.
@@ -419,12 +428,26 @@ public enum FanHelper {
         return nil
     }
 
+    /// What launchd runs, which `helperReady` also compares against.
+    public static func programArguments(control: URL) -> [String] {
+        [installedExecutable, flag, "--control", control.path, versionFlag, String(version)]
+    }
+
+    /// The helper to install: QuiverFanHelper next to Quiver's executable,
+    /// or Quiver's own when it isn't there (a `swift run` without the
+    /// bundle), which answers the same flags.
+    public static func bundledExecutable(appExecutable: String?) -> String {
+        let app = appExecutable ?? CommandLine.arguments[0]
+        let helper = (app as NSString).deletingLastPathComponent + "/" + bundledName
+        return FileManager.default.isExecutableFile(atPath: helper) ? helper : app
+    }
+
     /// The launchd job: run as root from boot, restarted if it exits,
     /// steered by the user's control file.
     public static func plist(control: URL) -> Data {
         let job: [String: Any] = [
             "Label": label,
-            "ProgramArguments": [installedExecutable, flag, "--control", control.path],
+            "ProgramArguments": programArguments(control: control),
             "RunAtLoad": true,
             "KeepAlive": true,
             "ProcessType": "Background",
