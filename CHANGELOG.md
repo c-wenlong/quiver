@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Overview: the harness logos load as a pill while the marbles pour.**
+  On the first pour after launch the logo row is a pill that fills in each
+  harness's colour as its marbles land, left to right in the logos' order.
+  Once every marble is down each colour springs into its logo's circle and
+  the logos fade in; hovering works from then on. A wrapped logo row fades
+  across instead, and Reduce motion shows the logos straight away.
+
 - **Web app: Sessions.** The web app's second page lists every session the
   hub knows (this machine and its satellites) with tokens and spend from
   the web ledger, the Mac app's search and its tool, time (90 days by
