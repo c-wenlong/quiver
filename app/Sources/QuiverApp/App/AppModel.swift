@@ -488,7 +488,8 @@ final class AppModel {
             ledger.setHidesTrivialSessions(hidesTrivial)
             overview = OverviewModel(ledger: ledger, roots: { directory().roots },
                                      accountLabel: { directory().label(for: $0) },
-                                     refreshPricing: { await pricing.refreshIfStale() })
+                                     refreshPricing: { await pricing.refreshIfStale() },
+                                     scanWatchInterval: .seconds(1))
             overviewError = nil
             sessions = SessionsModel(source: CurrentSwe(), ledger: ledger,
                                      defaultHomes: [home.appending(path: ".claude").path, home.appending(path: ".codex").path],
