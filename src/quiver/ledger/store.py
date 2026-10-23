@@ -131,9 +131,7 @@ class LedgerStore:
         15 minutes because every time zone offset is a multiple of that,
         so a bucket never straddles two local days.
         """
-        self.db.execute("CREATE TEMP TABLE IF NOT EXISTS thresholds (model TEXT PRIMARY KEY, n INTEGER)")
-        self.db.execute("DELETE FROM thresholds")
-        self.db.executemany("INSERT INTO thresholds VALUES (?, ?)", list(thresholds.items()))
+        self._load_thresholds(thresholds)
         where, args = [], []
         if start is not None:
             where.append("e.ts >= ?")
@@ -153,6 +151,36 @@ class LedgerStore:
             GROUP BY 1, 2, 3, 4, 5, 6
         """
         return self.db.execute(sql, args).fetchall()
+
+    def session_groups(self, thresholds: dict[str, int]) -> list[tuple]:
+        """Per-session sums for pricing, over all history: one row per
+        (harness, session, model, tier, long context, logged cost), with
+        the event count and first and last timestamps."""
+        self._load_thresholds(thresholds)
+        return self.db.execute(f"""
+            SELECT e.harness, e.session, e.model, COALESCE(e.tier, ''),
+                CASE WHEN t.n IS NOT NULL
+                     AND e.input + e.cache_read + e.cache_write > t.n THEN 1 ELSE 0 END,
+                e.cost IS NOT NULL,
+                SUM(e.input), SUM(e.output), SUM(e.cache_read), SUM(e.cache_write),
+                SUM(e.cache_write_1h), SUM(e.reasoning), SUM(COALESCE(e.cost, 0)),
+                COUNT(*), MIN(e.ts), MAX(e.ts)
+            FROM events e LEFT JOIN thresholds t ON t.model = e.model
+            GROUP BY 1, 2, 3, 4, 5, 6
+        """).fetchall()
+
+    def session_folders(self) -> list[tuple]:
+        """``(harness, session, cwd, events, last ts)`` per folder a
+        session's events name, for picking the folder most of them used."""
+        return self.db.execute(
+            "SELECT harness, session, cwd, COUNT(*), MAX(ts) FROM events"
+            " WHERE cwd IS NOT NULL GROUP BY 1, 2, 3"
+        ).fetchall()
+
+    def _load_thresholds(self, thresholds: dict[str, int]) -> None:
+        self.db.execute("CREATE TEMP TABLE IF NOT EXISTS thresholds (model TEXT PRIMARY KEY, n INTEGER)")
+        self.db.execute("DELETE FROM thresholds")
+        self.db.executemany("INSERT INTO thresholds VALUES (?, ?)", list(thresholds.items()))
 
     def models(self) -> list[str]:
         return [r[0] for r in self.db.execute("SELECT DISTINCT model FROM events")]

@@ -977,6 +977,21 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(200, body)
             return
 
+        if path == "/v1/app/sessions":
+            try:
+                body = self._state.webapp.sessions(
+                    self._state.catalog.rows(),
+                    hub_machine_id=self._state.machine_id,
+                    machines=catalog_mod.load_machines(self._state.home),
+                    rescan=str((args.get("rescan") or [""])[0]) in {"1", "true"},
+                )
+            except (OSError, sqlite3.Error) as exc:
+                self._send_error(503, "ledger_unavailable", str(exc))
+                return
+            body["machine"] = self._state.machine.get("name")
+            self._send_json(200, body)
+            return
+
         if path == "/v1/inbox":
             done =str((args.get("done") or [""])[0])
             self._send_json(200, {
