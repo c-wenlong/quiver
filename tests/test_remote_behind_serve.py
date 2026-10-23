@@ -280,17 +280,23 @@ class TestCommands(unittest.TestCase):
                 patch("quiver.remote.commands.os.access", return_value=True), \
                 patch.object(commands.launchd, "loaded_pid",
                              return_value=(False, None)), \
+                patch.object(commands.launchd, "bundled_swe", return_value=None), \
+                patch.object(commands.launchd, "protected_dir", return_value=None), \
                 patch.object(commands.launchd, "install", fake_install), \
-                patch.object(commands, "_probe", return_value=None) as probe:
-            rc, _, _ = _run(["serve", "--install",
-                             "--public-url=https://box.ts.net:8477"])
+                patch.object(commands, "_probe",
+                             side_effect=[None, {"ok": True}]) as probe:
+            rc, out, _ = _run(["serve", "--install",
+                               "--public-url=https://box.ts.net:8477"])
         self.assertEqual(rc, 0)
+        self.assertIn("hub answering on 127.0.0.1:8477", out)
         # Behind serve the agent binds loopback, never waits on --tailnet.
         self.assertEqual(seen["program"], [
             "/opt/swe/bin/swe", "remote", "serve", "--host=127.0.0.1",
             "--public-url=https://box.ts.net:8477",
         ])
-        probe.assert_called_once_with("127.0.0.1", 8477, timeout=1.0)
+        # The stray check and the wait both look at the loopback bind.
+        self.assertEqual([c.args for c in probe.call_args_list],
+                         [("127.0.0.1", 8477), ("127.0.0.1", 8477)])
 
     def test_install_bad_public_url(self):
         with patch.object(commands.sys, "platform", "darwin"):

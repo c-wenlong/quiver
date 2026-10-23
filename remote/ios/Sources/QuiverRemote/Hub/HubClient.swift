@@ -114,6 +114,9 @@ struct HubClient: Sendable {
         case "backlog_full": "Too many messages are waiting. Try again shortly."
         case "no_match": "That code doesn't match a pending request."
         case "self_approval": "Approve from a different device."
+        case "bad_cwd": "That folder doesn't exist on this machine."
+        case "not_launchable": "That harness can't start on this machine."
+        case "unknown_launch": "The hub lost track of this launch. Check Sessions in a moment."
         default: fallback ?? "The hub answered with an error (\(status))."
         }
     }
@@ -153,6 +156,18 @@ struct HubClient: Sendable {
         let (_, status) = try await raw(request("POST", "/v1/sessions/\(Self.encodeKey(key))/approval",
                                                 body: ["request_id": requestId, "decision": decision]))
         return status == 202
+    }
+
+    /// Starts `harness` in `cwd` on `machine` with `prompt` as its first
+    /// message. The hub answers before the harness has a session id, so
+    /// poll `launch(_:)` for the key.
+    func startSession(machine: String, harness: String, cwd: String, prompt: String) async throws -> LaunchStatus {
+        try await send(request("POST", "/v1/sessions",
+                               body: ["machine": machine, "harness": harness, "cwd": cwd, "prompt": prompt]))
+    }
+
+    func launch(_ id: String) async throws -> LaunchStatus {
+        try await send(request("GET", "/v1/launches/\(Self.encodeKey(id))"))
     }
 
     func pair(token: String, name: String) async throws -> Credential {

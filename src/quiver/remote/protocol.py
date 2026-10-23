@@ -41,6 +41,15 @@ EVENT_TYPES = frozenset(
     }
 )
 
+# ``POST /v1/sessions`` launches only these: each starts as a bare binary
+# under tmux, and each writes a JSONL transcript whose birth time lets
+# ``supervise.adopt_pending`` find the new session. A harness outside
+# this set either has no resume path or no transcript adoption can see.
+LAUNCHABLE_HARNESSES = frozenset({"claude", "codex", "cursor", "droid", "pi"})
+
+# Cap on a first prompt; the phone's composer never gets near it.
+MAX_LAUNCH_PROMPT = 32_000
+
 # RemoteMessage.kind values. ``tool`` payloads pair over ``call_id``;
 # ``result_ref`` on a tool_result names the call it answers.
 MESSAGE_KINDS = frozenset(
@@ -232,3 +241,33 @@ def parse_control_command(body: dict) -> dict:
     if value is not None and not isinstance(value, str):
         raise ValueError("control.value must be a string when given")
     return {"op": op, "value": value}
+
+
+def parse_launch_command(body: dict) -> dict:
+    """Validate a ``POST /v1/sessions`` body; raises ValueError on bad input.
+
+    Checks only what holds on every machine: a known harness, an absolute
+    folder, a prompt. Whether the folder exists is the launching
+    machine's call (``supervise.launch_new``), since a satellite's disk
+    is not the hub's.
+    """
+    if not isinstance(body, dict):
+        raise ValueError("body must be a JSON object")
+    harness = body.get("harness") or body.get("tool") or ""
+    if not isinstance(harness, str) or harness not in LAUNCHABLE_HARNESSES:
+        raise ValueError(
+            f"harness must be one of {sorted(LAUNCHABLE_HARNESSES)}"
+        )
+    cwd = body.get("cwd")
+    if not isinstance(cwd, str) or not cwd.startswith("/") or "\x00" in cwd:
+        raise ValueError("cwd must be an absolute path")
+    prompt = body.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("prompt must be a non-empty string")
+    if len(prompt) > MAX_LAUNCH_PROMPT:
+        raise ValueError(f"prompt is over {MAX_LAUNCH_PROMPT} characters")
+    machine = body.get("machine") or ""
+    if not isinstance(machine, str):
+        raise ValueError("machine must be a string")
+    return {"machine": machine, "harness": harness, "cwd": cwd,
+            "prompt": prompt}
