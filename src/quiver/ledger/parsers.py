@@ -1,0 +1,449 @@
+"""Harness logs to ledger records.
+
+Ports ``ClaudeLogParser.swift``, ``CodexFileParser.swift`` and the OpenCode
+and Devin readers in ``DatabaseSources.swift``. Keys and token splits must
+stay identical to the Swift ones, so both ledgers count a response once and
+the same way.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import sqlite3
+from pathlib import Path
+
+from quiver.ledger.models import (
+    LedgerRecord,
+    UsageEvent,
+    first_present,
+    json_int,
+    json_str,
+    parse_timestamp,
+)
+
+# ---------------------------------------------------------------- Claude
+
+_USAGE_MARKER = b'"usage"'
+_SEMVER_PREFIX = re.compile(r"^\d+\.\d+\.\d")
+
+
+def claude_records(line: bytes, account: str) -> list[LedgerRecord]:
+    """Records from one Claude Code transcript line.
+
+    Claude Code writes a line per content block of a response, all with
+    the same ``message.id`` and ``requestId`` and a growing output count,
+    and a resumed session copies earlier responses into its new file, so
+    the key is the message id plus the request id; the store keeps the
+    copy with the largest total.
+    """
+    if _USAGE_MARKER not in line:
+        return []
+    try:
+        obj = json.loads(line)
+    except (ValueError, UnicodeDecodeError):
+        return []
+    if not isinstance(obj, dict):
+        return []
+    message = obj.get("message")
+    usage = message.get("usage") if isinstance(message, dict) else None
+    if not isinstance(usage, dict):
+        return []
+    # Swift's ``is NSNumber``, which a JSON bool also passes.
+    if not all(isinstance(usage.get(k), (int, float))
+               for k in ("input_tokens", "output_tokens")):
+        return []
+    ts_text = obj.get("timestamp")
+    ts = parse_timestamp(ts_text)
+    if ts is None or not _claude_valid(obj, message):
+        return []
+
+    message_id = json_str(message.get("id"))
+    request_id = json_str(obj.get("requestId"))
+    session = json_str(obj.get("sessionId")) or "unknown"
+    cwd = json_str(obj.get("cwd"))
+    sidechain = obj.get("isSidechain") is True
+    model = json_str(message.get("model")) or "unknown"
+    tier = "fast" if usage.get("speed") == "fast" else None
+    cost = obj.get("costUSD")
+    logged = float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else None
+
+    if message_id:
+        base = f"claude:{message_id}:{request_id}" if request_id else f"claude:{message_id}"
+    else:
+        # No id to collide on: key by position so a rescan stays idempotent.
+        base = f"claude:anon:{session}:{ts_text}:{model}"
+
+    def event(source: dict, model_name: str, logged_cost) -> UsageEvent:
+        ev = UsageEvent(harness="claude", account=account, session=session, cwd=cwd,
+                        model=model_name, ts=ts, cost=logged_cost, tier=tier)
+        _claude_tokens(source, ev)
+        return ev
+
+    out: list[LedgerRecord] = []
+    ev = event(usage, model, logged)
+    if ev.total > 0 or (logged or 0) > 0:
+        out.append(LedgerRecord(key=base, event=ev, msg=message_id, sidechain=sidechain))
+
+    # Advisor calls run a second model inside one response and are not in
+    # the parent's usage; ordinary iterations are, so they are skipped.
+    iterations = usage.get("iterations")
+    if isinstance(iterations, list):
+        index = 0
+        for it in iterations:
+            if not isinstance(it, dict) or it.get("type") != "advisor_message":
+                continue
+            advisor = json_str(it.get("model"))
+            if advisor is None:
+                continue
+            ev = event(it, advisor, None)
+            if ev.total > 0:
+                out.append(LedgerRecord(
+                    key=f"{base}:advisor:{index}", event=ev,
+                    msg=f"{message_id}:advisor:{index}" if message_id else None,
+                    sidechain=sidechain,
+                ))
+            index += 1
+    return out
+
+
+def _claude_tokens(usage: dict, ev: UsageEvent) -> None:
+    output = json_int(usage.get("output_tokens"))
+    details = usage.get("output_tokens_details")
+    thinking = None
+    if isinstance(details, dict):
+        thinking = first_present(details, "thinking_tokens", "reasoning_tokens")
+    reasoning = min(output, json_int(thinking))
+    ev.input = json_int(usage.get("input_tokens"))
+    ev.output = output - reasoning
+    ev.reasoning = reasoning
+    ev.cache_read = json_int(usage.get("cache_read_input_tokens"))
+    aggregate = json_int(usage.get("cache_creation_input_tokens"))
+    split = usage.get("cache_creation")
+    if isinstance(split, dict):
+        five = json_int(split.get("ephemeral_5m_input_tokens"))
+        hour = json_int(split.get("ephemeral_1h_input_tokens"))
+        ev.cache_write = max(aggregate, five + hour)
+        ev.cache_write_1h = hour
+    else:
+        ev.cache_write = aggregate
+
+
+def _claude_valid(obj: dict, message: dict) -> bool:
+    """ccusage's rules: a non-semver ``version`` marks a foreign format, and
+    ids or a model that are present but empty mark a malformed line."""
+    version = obj.get("version")
+    if isinstance(version, str) and not _SEMVER_PREFIX.match(version):
+        return False
+    for value in (obj.get("sessionId"), obj.get("requestId"),
+                  message.get("id"), message.get("model")):
+        if isinstance(value, str) and value == "":
+            return False
+    return True
+
+
+# ---------------------------------------------------------------- Codex
+
+_CODEX_MARKERS = (b'"session_meta"', b'"turn_context"', b'"token_count"',
+                  b'"token_usage_record"', b'"task_started"',
+                  b'"thread_settings_applied"')
+CODEX_FALLBACK_MODEL = "gpt-5"
+
+
+def _codex_usage(obj: dict) -> tuple[int, int, int, int, int, int]:
+    """(input, cached, cache_write, output, reasoning, total)."""
+    return (
+        json_int(first_present(obj, "input_tokens", "prompt_tokens")),
+        json_int(first_present(obj, "cached_input_tokens", "cache_read_input_tokens")),
+        json_int(first_present(obj, "cache_write_input_tokens", "cache_creation_input_tokens")),
+        json_int(first_present(obj, "output_tokens", "completion_tokens")),
+        json_int(first_present(obj, "reasoning_output_tokens", "reasoning_tokens")),
+        json_int(obj.get("total_tokens")),
+    )
+
+
+def _floor(x: float) -> float:
+    return float(int(x // 1))
+
+
+class CodexFileParser:
+    """One Codex rollout, read from its first line.
+
+    Codex logs cumulative totals (``token_count``) or one record per
+    response (``token_usage_record``). A resumed or compacted rollout
+    replays old totals, so every total seen is remembered and a repeat
+    emits nothing. A child thread (fork, sub-agent) replays its parent's
+    history before its own first turn; nothing is emitted until its own
+    ``task_started``.
+    """
+
+    def __init__(self, path: Path, account: str):
+        self.account = account
+        self.session = path.stem
+        self.cwd: str | None = None
+        self.model: str | None = None
+        self.tier: str | None = None
+        self.saw_meta = False
+        self.gate: float | None = None
+        self.seen: set[tuple] = set()
+        self.last_total: tuple | None = None
+        self.uses_records = False
+
+    @staticmethod
+    def wants(line: bytes) -> bool:
+        return any(m in line for m in _CODEX_MARKERS)
+
+    def records(self, obj: dict) -> list[LedgerRecord]:
+        kind = obj.get("type")
+        payload = obj.get("payload")
+        if not isinstance(payload, dict):
+            payload = {}
+        ts_text = obj.get("timestamp") if isinstance(obj.get("timestamp"), str) else None
+        line_time = parse_timestamp(ts_text)
+
+        if kind == "session_meta":
+            if self.saw_meta:
+                return []
+            self.saw_meta = True
+            self.cwd = json_str(payload.get("cwd")) or self.cwd
+            if self._is_child(payload):
+                created = parse_timestamp(payload.get("timestamp"))
+                if created is None:
+                    created = line_time
+                self.gate = _floor(created) if created is not None else -1.0
+            return []
+        if kind == "turn_context":
+            model = json_str(payload.get("model"))
+            if model:
+                self.model = model
+            cwd = json_str(payload.get("cwd"))
+            if cwd:
+                self.cwd = cwd
+            return []
+        if kind == "token_usage_record":
+            self.uses_records = True
+            usage = payload.get("usage")
+            if not isinstance(usage, dict) or line_time is None:
+                return []
+            response_id = json_str(payload.get("response_id"))
+            key = (f"codex:resp:{response_id}" if response_id
+                   else f"codex:{self.session}:{ts_text or ''}:record")
+            return self._record(_codex_usage(usage), key, line_time)
+        if kind != "event_msg":
+            return []
+
+        sub = payload.get("type")
+        if sub == "thread_settings_applied":
+            settings = payload.get("thread_settings")
+            raw = settings.get("service_tier") if isinstance(settings, dict) and "service_tier" in settings \
+                else payload.get("service_tier")
+            tier = json_str(raw)
+            if tier:
+                self.tier = normalized_tier(tier)
+            return []
+        if sub == "task_started":
+            started = payload.get("started_at")
+            if self.gate is not None and isinstance(started, (int, float)) and not isinstance(started, bool):
+                if self.gate >= 0:
+                    threshold = self.gate
+                else:
+                    threshold = _floor(line_time) if line_time is not None else float("inf")
+                if started >= threshold:
+                    self.gate = None
+            return []
+        if sub == "token_count":
+            return self._token_count(payload, ts_text, line_time)
+        return []
+
+    def _token_count(self, payload: dict, ts_text, time) -> list[LedgerRecord]:
+        info = payload.get("info")
+        if not isinstance(info, dict) or time is None or ts_text is None:
+            return []
+        total_raw = info.get("total_token_usage")
+        last_raw = info.get("last_token_usage")
+        total = _codex_usage(total_raw) if isinstance(total_raw, dict) else None
+        last = _codex_usage(last_raw) if isinstance(last_raw, dict) else None
+        if self.gate is not None or self.uses_records:
+            if total is not None:
+                self._remember(total)
+            return []
+        if total is not None:
+            if total in self.seen:
+                return []
+            if last is not None:
+                usage = last
+            else:
+                prev = self.last_total or (0,) * 6
+                usage = tuple(max(0, a - b) for a, b in zip(total, prev))
+            self._remember(total)
+        elif last is not None:
+            usage = last
+        else:
+            return []
+        return self._record(usage, f"codex:{self.session}:{ts_text}", time)
+
+    def _remember(self, total: tuple) -> None:
+        self.seen.add(total)
+        self.last_total = total
+
+    def _record(self, usage: tuple, key: str, time: float) -> list[LedgerRecord]:
+        inp, cached, write, out, reas, _total = usage
+        if not (inp or cached or out or reas or write):
+            return []
+        cached = min(cached, inp)
+        write = min(write, inp - cached)
+        reas = min(reas, out)
+        ev = UsageEvent(
+            harness="codex", account=self.account, session=self.session, cwd=self.cwd,
+            model=self.model or CODEX_FALLBACK_MODEL, ts=time,
+            input=inp - cached - write, output=out - reas,
+            cache_read=cached, cache_write=write, reasoning=reas, tier=self.tier,
+        )
+        return [LedgerRecord(key=key, event=ev)]
+
+    @staticmethod
+    def _is_child(payload: dict) -> bool:
+        if json_str(payload.get("forked_from_id")) or json_str(payload.get("parent_thread_id")):
+            return True
+        if payload.get("thread_source") == "subagent":
+            return True
+        source = payload.get("source")
+        return isinstance(source, dict) and source.get("subagent") is not None
+
+
+def normalized_tier(tier: str) -> str | None:
+    t = tier.lower()
+    if t in {"default", "auto", "standard"}:
+        return None
+    if t in {"fast", "priority"}:
+        return "priority"
+    return t
+
+
+def codex_file_records(path: Path, account: str) -> list[LedgerRecord]:
+    parser = CodexFileParser(path, account)
+    out: list[LedgerRecord] = []
+    for line in iter_lines(path):
+        if not parser.wants(line):
+            continue
+        try:
+            obj = json.loads(line)
+        except (ValueError, UnicodeDecodeError):
+            continue
+        if isinstance(obj, dict):
+            out.extend(parser.records(obj))
+    return out
+
+
+# ---------------------------------------------------------------- files
+
+MAX_LINE = 64 << 20
+
+
+def iter_lines(path: Path, offset: int = 0, end: list | None = None):
+    """Complete, newline-terminated lines from ``offset``. A trailing
+    partial line is left for the next read; ``end[0]`` is set to the
+    offset just past the last complete line. Raises ``OSError`` when the
+    file can't be opened."""
+    pos = offset
+    # An unreadable file raises, so the caller notes it and keeps its
+    # cursor; a silent empty read would mark it done for good.
+    with open(path, "rb") as f:
+        f.seek(offset)
+        for line in f:
+            if not line.endswith(b"\n"):
+                break
+            pos += len(line)
+            if len(line) > MAX_LINE:
+                continue
+            yield line
+    if end is not None:
+        end.append(pos)
+
+
+# ---------------------------------------------------------------- sqlite sources
+
+def _open_ro(path: Path) -> sqlite3.Connection:
+    return sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+
+
+def opencode_records(db: Path) -> list[LedgerRecord]:
+    """``opencode.db`` assistant messages. Older rows folded reasoning
+    into output; a recorded cost of 0 means OpenCode did not know the
+    price, so it is no recorded cost."""
+    conn = _open_ro(db)
+    try:
+        rows = conn.execute("""
+            SELECT m.id, m.session_id, m.time_created, s.directory,
+                json_extract(m.data, '$.modelID'), json_extract(m.data, '$.cost'),
+                json_extract(m.data, '$.tokens.input'), json_extract(m.data, '$.tokens.output'),
+                json_extract(m.data, '$.tokens.reasoning'), json_extract(m.data, '$.tokens.cache.read'),
+                json_extract(m.data, '$.tokens.cache.write'), json_extract(m.data, '$.tokens.total')
+            FROM message m LEFT JOIN session s ON s.id = m.session_id
+            WHERE json_extract(m.data, '$.role') = 'assistant'
+            ORDER BY m.time_updated
+        """).fetchall()
+    finally:
+        conn.close()
+    account = str(db.parent)
+    out: list[LedgerRecord] = []
+    for (mid, session, created, directory, model, cost,
+         inp, outp, reas, cread, cwrite, total) in rows:
+        inp, outp, reas = int(inp or 0), int(outp or 0), int(reas or 0)
+        cread, cwrite = int(cread or 0), int(cwrite or 0)
+        inside = reas > 0 and total is not None and int(total) == inp + outp + cread + cwrite
+        ev = UsageEvent(
+            harness="opencode", account=account, session=session or "unknown",
+            cwd=directory, model=model or "unknown", ts=(created or 0) / 1000,
+            input=max(0, inp), output=max(0, outp - reas if inside else outp),
+            cache_read=max(0, cread), cache_write=max(0, cwrite), reasoning=max(0, reas),
+            cost=float(cost) if isinstance(cost, (int, float)) and cost > 0 else None,
+        )
+        if ev.total > 0:
+            out.append(LedgerRecord(key=f"opencode:{mid or ''}", event=ev))
+    return out
+
+
+def devin_records(db: Path) -> list[LedgerRecord]:
+    """Devin CLI ``sessions.db``: usage on assistant ``message_nodes``.
+    Replays copy nodes, so ``request_id`` is the key across the install."""
+    conn = _open_ro(db)
+    try:
+        has_sessions = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sessions'"
+        ).fetchone() is not None
+        rows = conn.execute(f"""
+            SELECT n.session_id, n.created_at, {"s.working_directory" if has_sessions else "NULL"},
+                json_extract(n.chat_message, '$.metadata.request_id'),
+                json_extract(n.chat_message, '$.metadata.generation_model'),
+                json_extract(n.chat_message, '$.metadata.created_at'),
+                json_extract(n.chat_message, '$.metadata.metrics.input_tokens'),
+                json_extract(n.chat_message, '$.metadata.metrics.output_tokens'),
+                json_extract(n.chat_message, '$.metadata.metrics.cache_read_tokens'),
+                json_extract(n.chat_message, '$.metadata.metrics.cache_creation_tokens')
+            FROM message_nodes n {"LEFT JOIN sessions s ON s.id = n.session_id" if has_sessions else ""}
+            WHERE json_valid(n.chat_message)
+                AND json_extract(n.chat_message, '$.role') = 'assistant'
+                AND json_extract(n.chat_message, '$.metadata.request_id') IS NOT NULL
+            ORDER BY n.row_id
+        """).fetchall()
+    finally:
+        conn.close()
+    account = str(db.parent)
+    out: list[LedgerRecord] = []
+    for (session, created, cwd, request_id, model, meta_created,
+         inp, outp, cread, cwrite) in rows:
+        if inp is None or outp is None:
+            continue  # still waiting for metrics
+        ts = parse_timestamp(meta_created)
+        if ts is None:
+            ts = float(created or 0)
+        ev = UsageEvent(
+            harness="devin", account=account, session=session or "unknown", cwd=cwd,
+            model=model or "unknown", ts=ts,
+            input=max(0, int(inp)), output=max(0, int(outp)),
+            cache_read=max(0, int(cread or 0)), cache_write=max(0, int(cwrite or 0)),
+        )
+        if ev.total > 0 and request_id:
+            out.append(LedgerRecord(key=f"devin:{request_id}", event=ev))
+    return out

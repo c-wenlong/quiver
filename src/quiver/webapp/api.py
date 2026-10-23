@@ -1,0 +1,65 @@
+"""JSON for the web app's pages (``GET /v1/app/*`` on the hub).
+
+Each page's builder runs in process, like ``/v1/usage``. The ledger is
+scanned on demand: a request finds the store fresh if the last scan is
+under ``SCAN_TTL_S`` old, else it scans first (new lines only, so a
+warm scan is quick). Only one scan runs at a time; a second request
+waits for it rather than reading the same files again.
+"""
+
+from __future__ import annotations
+
+import threading
+import time
+from pathlib import Path
+
+from quiver.ledger import overview as overview_mod
+from quiver.ledger.pricing import load_catalog
+from quiver.ledger.scan import scan
+from quiver.ledger.store import LedgerStore, ledger_path_for
+
+SCAN_TTL_S = 60.0
+CATALOG_TTL_S = 3600.0
+
+
+class WebApp:
+    """The state the pages share: one ledger store and price list."""
+
+    def __init__(self, home: Path | None = None, download_prices: bool = True):
+        self.home = home
+        self.download_prices = download_prices
+        self._lock = threading.Lock()
+        self._store: LedgerStore | None = None
+        self._catalog = None
+        self._catalog_at = 0.0
+        self._scanned_at = 0.0
+        self._last_scan = None
+
+    def _ensure(self, rescan: bool) -> None:
+        if self._store is None:
+            self._store = LedgerStore(ledger_path_for(self.home))
+        now = time.time()
+        if self._catalog is None or now - self._catalog_at > CATALOG_TTL_S:
+            self._catalog = load_catalog(self.home, download=self.download_prices)
+            self._catalog_at = now
+        if rescan or now - self._scanned_at > SCAN_TTL_S:
+            self._last_scan = scan(self._store, self.home)
+            self._scanned_at = time.time()
+
+    def overview(self, period: str, tz_name: str | None, rescan: bool = False) -> dict:
+        with self._lock:
+            self._ensure(rescan)
+            body = overview_mod.build(self._store, self._catalog, period, tz_name)
+            body["scanned_at"] = self._scanned_at
+            notes = []
+            if self._last_scan is not None and self._last_scan.errors:
+                notes.append(f"{len(self._last_scan.errors)} log files couldn't be read: "
+                             + "; ".join(self._last_scan.errors[:3]))
+            body["notes"] = notes
+            return body
+
+    def close(self) -> None:
+        with self._lock:
+            if self._store is not None:
+                self._store.close()
+                self._store = None
