@@ -77,6 +77,68 @@ def detected_harnesses() -> list[str]:
     return out
 
 
+# The Mac app's preferences: Settings > Provider visibility keeps the
+# provider order and the ones switched off here.
+APP_PREFS = Path.home() / "Library/Preferences/com.cwenlong.quiver.plist"
+
+
+def _provider_visibility() -> tuple[list[str], set[str]]:
+    """``(order, disabled)`` from the Mac app's Provider visibility, or
+    empty when the app has never run here (a Linux hub)."""
+    import plistlib
+
+    try:
+        with open(APP_PREFS, "rb") as fh:
+            prefs = plistlib.load(fh)
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return [], set()
+    order = prefs.get("providerOrder")
+    disabled = prefs.get("providerDisabled")
+    return (
+        [str(x) for x in order] if isinstance(order, list) else [],
+        {str(x) for x in disabled} if isinstance(disabled, list) else set(),
+    )
+
+
+def launchable_harnesses() -> list[dict]:
+    """What ``POST /v1/sessions`` can start here, in Provider visibility
+    order: every harness ``swe list`` shows (not archived) whose command
+    is on PATH, minus the ones switched off in the Mac app's Settings.
+    Each item is ``{name, command, display_name}``."""
+    from quiver.harness import registry
+
+    try:
+        reg = registry.load_registry_readonly()
+    except (OSError, ValueError):
+        return []
+    order, disabled = _provider_visibility()
+    rank = {name: i for i, name in enumerate(order)}
+    out = []
+    for position, (name, entry) in enumerate(reg.items()):
+        if not isinstance(entry, dict) or not registry.is_active(entry):
+            continue
+        if name in disabled:
+            continue
+        command = str(entry.get("command") or name)
+        if not shutil.which(command):
+            continue
+        out.append((rank.get(name, len(rank) + position), {
+            "name": name,
+            "command": command,
+            "display_name": str(entry.get("display_name") or name),
+        }))
+    out.sort(key=lambda pair: pair[0])
+    return [item for _rank, item in out]
+
+
+def launch_command(harness: str) -> str | None:
+    """The command that starts ``harness``, or None when it can't start here."""
+    for item in launchable_harnesses():
+        if item["name"] == harness:
+            return item["command"]
+    return None
+
+
 def tailscale_ip() -> str:
     """This machine's tailnet IPv4, or '' when Tailscale is absent."""
     exe = shutil.which("tailscale")
@@ -99,10 +161,11 @@ def tailscale_ip() -> str:
 def local_machine(home: Path | str | None = None) -> dict:
     """This machine's ``/v1/machines`` row.
 
-    ``launchable`` is what the phone's new-session sheet offers: the
-    detected harnesses ``POST /v1/sessions`` accepts.
+    ``launchable`` is what the phone's new-session sheet offers, in order
+    (``launchable_harnesses``); ``harness_names`` names each one.
     """
     harnesses = detected_harnesses()
+    launchable = launchable_harnesses()
     return {
         "id": load_machine_id(home),
         "name": platform.node() or "localhost",
@@ -110,9 +173,10 @@ def local_machine(home: Path | str | None = None) -> dict:
         "online": True,
         "last_seen_at": time.time(),
         "harnesses": harnesses,
-        "launchable": [
-            h for h in harnesses if h in protocol.LAUNCHABLE_HARNESSES
-        ],
+        "launchable": [item["name"] for item in launchable],
+        "harness_names": {
+            item["name"]: item["display_name"] for item in launchable
+        },
     }
 
 

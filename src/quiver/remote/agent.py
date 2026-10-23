@@ -384,10 +384,17 @@ class RemoteAgent:
                     if s.tool_name == harness
                     and os.path.realpath(s.path or "") == real_cwd
                 ]
+                binary = catalog_mod.launch_command(harness)
+                if binary is None:
+                    return False, (
+                        f"{harness} can't start here: archived, switched "
+                        f"off in Provider visibility, or not installed"
+                    ), False
                 ok, note, _ = supervise.launch_new(
                     self.home, harness, cwd,
                     str(data.get("prompt") or ""), known_ids=known,
                     launch_id=str(data.get("launch_id") or ""),
+                    binary=binary,
                 )
                 return ok, note, False
             if op == "attachment":

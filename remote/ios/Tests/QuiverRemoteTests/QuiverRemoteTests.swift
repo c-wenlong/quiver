@@ -441,13 +441,13 @@ final class NewSessionOptionsTests: XCTestCase {
         XCTAssertEqual(NewSessionOptions.folders(on: "m1", sessions: rows), ["/p/new", "/p/old"])
     }
 
-    func testHarnessesPreferRecentUseAndFallBackToHarnesses() {
-        let rows = [row("a", "codex", cwd: "/p", at: 5), row("b", "claude", cwd: "/p", at: 1)]
-        let m = machine("m1", name: "mac", launchable: ["claude", "codex", "pi"])
-        XCTAssertEqual(NewSessionOptions.harnesses(on: m, sessions: rows), ["codex", "claude", "pi"])
-        // An older row with no launchable field offers its launchable harnesses.
-        let old = machine("m1", name: "mac", harnesses: ["claude", "gemini", "opencode"])
-        XCTAssertEqual(NewSessionOptions.harnesses(on: old, sessions: []), ["claude"])
+    func testHarnessesKeepTheMachinesOrderAndFallBack() {
+        let m = machine("m1", name: "mac", launchable: ["qwen-code", "claude", "kilo"])
+        XCTAssertEqual(NewSessionOptions.harnesses(on: m), ["qwen-code", "claude", "kilo"])
+        // A row older than `launchable` offers what it detected; the hub
+        // refuses any it can't start.
+        let old = machine("m1", name: "mac", harnesses: ["claude", "gemini"])
+        XCTAssertEqual(NewSessionOptions.harnesses(on: old), ["claude", "gemini"])
     }
 
     func testMachinesDropThoseThatCanLaunchNothingOnlineFirst() {
@@ -455,7 +455,22 @@ final class NewSessionOptionsTests: XCTestCase {
                   machine("o", name: "alpha", online: false, launchable: ["claude"]),
                   machine("n", name: "none", launchable: []),
                   machine("b", name: "beta.local", launchable: ["codex"])]
-        XCTAssertEqual(NewSessionOptions.machines(ms, sessions: []).map(\.id), ["b", "z", "o"])
+        XCTAssertEqual(NewSessionOptions.machines(ms).map(\.id), ["b", "z", "o"])
+    }
+
+    func testFolderSearchMatchesEveryWordAnyCase() {
+        let folders = ["/Users/k/Projects/quiver", "/Users/k/Projects/quiver-render", "/Users/k/Indie/kopifund"]
+        XCTAssertEqual(NewSessionOptions.matching(folders, query: "QUIVER rend"), ["/Users/k/Projects/quiver-render"])
+        XCTAssertEqual(NewSessionOptions.matching(folders, query: "  "), folders)
+        XCTAssertEqual(NewSessionOptions.matching(folders, query: "nothing"), [])
+    }
+
+    func testHarnessNamesComeFromTheMachineCapitalised() {
+        var m = machine("m1", name: "mac", launchable: ["devin", "kilo"])
+        m.harnessNames = ["devin": "devin", "kilo": "Kilo"]
+        XCTAssertEqual(NewSessionOptions.name("devin", on: m, sessions: []), "Devin")
+        XCTAssertEqual(NewSessionOptions.name("kilo", on: m, sessions: []), "Kilo")
+        XCTAssertEqual(NewSessionOptions.name("pi", on: nil, sessions: []), "Pi")
     }
 
     func testDefaultHarnessIsTheFoldersLastOneWhenOffered() {
@@ -471,8 +486,12 @@ final class NewSessionOptionsTests: XCTestCase {
         XCTAssertEqual(launch.launchId, "l1a2")
         XCTAssertEqual(launch.queued, true)
         let m = try Hub.decoder.decode(Machine.self, from: Data(
-            #"{"id":"m","name":"mac","harnesses":["claude","gemini"],"launchable":["claude"]}"#.utf8))
+            #"{"id":"m","name":"mac","harnesses":["claude","gemini"],"launchable":["claude"],"harness_names":{"claude":"Claude Code"}}"#.utf8))
         XCTAssertEqual(m.launchable, ["claude"])
+        XCTAssertEqual(m.harnessNames?["claude"], "Claude Code")
+        let listing = try Hub.decoder.decode(FolderListing.self, from: Data(
+            #"{"path":"/Users/k","parent":"/Users","folders":[{"name":"Projects","path":"/Users/k/Projects"}],"truncated":false}"#.utf8))
+        XCTAssertEqual(listing.folders.map(\.name), ["Projects"])
     }
 }
 

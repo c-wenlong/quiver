@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote: the new-session sheet finds folders and offers every active
+  harness.** Machine, harness, prompt and Start now sit above the folder
+  list, which starts folded to four, with Show all and a search field at
+  its top. Browse walks the hub machine's folders (`GET /v1/folders`) to
+  pick one no session has used yet. The harness row follows the Mac
+  app's Settings › Provider visibility: every harness `swe list` shows
+  whose command is on PATH, in that order, minus the ones switched off,
+  in place of a fixed five. Launches run the registry command (`cursor`
+  starts `cursor-agent`), sessions kept in databases are adopted by
+  activity time, and the first prompt waits for a TUI's splash to settle
+  and is typed again if it was dropped.
+
 - **Remote: start a session from the iPhone app.** Sessions gets a plus
   button that opens a new-session sheet: pick a machine, one of its
   recent folders, a harness by its logo, and a first prompt, and the

@@ -41,11 +41,8 @@ EVENT_TYPES = frozenset(
     }
 )
 
-# ``POST /v1/sessions`` launches only these: each starts as a bare binary
-# under tmux, and each writes a JSONL transcript whose birth time lets
-# ``supervise.adopt_pending`` find the new session. A harness outside
-# this set either has no resume path or no transcript adoption can see.
-LAUNCHABLE_HARNESSES = frozenset({"claude", "codex", "cursor", "droid", "pi"})
+# A harness name in a launch body: a registry key, nothing else.
+_HARNESS_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 
 # Cap on a first prompt; the phone's composer never gets near it.
 MAX_LAUNCH_PROMPT = 32_000
@@ -246,18 +243,17 @@ def parse_control_command(body: dict) -> dict:
 def parse_launch_command(body: dict) -> dict:
     """Validate a ``POST /v1/sessions`` body; raises ValueError on bad input.
 
-    Checks only what holds on every machine: a known harness, an absolute
-    folder, a prompt. Whether the folder exists is the launching
+    Checks only what holds on every machine: a harness name, an absolute
+    folder, a prompt. Which harnesses can start is the launching
+    machine's call (``catalog.launchable_harnesses``). Whether the folder exists is the launching
     machine's call (``supervise.launch_new``), since a satellite's disk
     is not the hub's.
     """
     if not isinstance(body, dict):
         raise ValueError("body must be a JSON object")
     harness = body.get("harness") or body.get("tool") or ""
-    if not isinstance(harness, str) or harness not in LAUNCHABLE_HARNESSES:
-        raise ValueError(
-            f"harness must be one of {sorted(LAUNCHABLE_HARNESSES)}"
-        )
+    if not isinstance(harness, str) or not _HARNESS_RE.fullmatch(harness):
+        raise ValueError("harness must be a harness name")
     cwd = body.get("cwd")
     if not isinstance(cwd, str) or not cwd.startswith("/") or "\x00" in cwd:
         raise ValueError("cwd must be an absolute path")

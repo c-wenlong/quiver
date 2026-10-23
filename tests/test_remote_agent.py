@@ -144,10 +144,58 @@ class TestRemoteCatalog(unittest.TestCase):
 
     def test_local_machine_offers_only_launchable(self):
         with patch.object(catalog_mod, "detected_harnesses",
-                          return_value=["claude", "gemini", "opencode"]):
+                          return_value=["claude", "gemini", "opencode"]), \
+             patch.object(catalog_mod, "launchable_harnesses", return_value=[
+                 {"name": "opencode", "command": "opencode",
+                  "display_name": "OpenCode"},
+                 {"name": "claude", "command": "claude",
+                  "display_name": "Claude Code"}]):
             row = catalog_mod.local_machine(self.home)
         self.assertEqual(row["harnesses"], ["claude", "gemini", "opencode"])
-        self.assertEqual(row["launchable"], ["claude"])
+        self.assertEqual(row["launchable"], ["opencode", "claude"])
+        self.assertEqual(row["harness_names"]["opencode"], "OpenCode")
+
+    def _launchable(self, reg, prefs=None, on_path=None):
+        import plistlib
+        prefs_path = Path(tempfile.mkdtemp()) / "prefs.plist"
+        if prefs is not None:
+            prefs_path.write_bytes(plistlib.dumps(prefs))
+        on_path = set(reg) if on_path is None else on_path
+        with patch("quiver.harness.registry.load_registry_readonly",
+                   return_value=reg), \
+             patch.object(catalog_mod, "APP_PREFS", prefs_path), \
+             patch.object(catalog_mod.shutil, "which",
+                          side_effect=lambda c: f"/bin/{c}" if c in on_path
+                          else None):
+            return catalog_mod.launchable_harnesses()
+
+    def test_launchable_follows_registry_and_visibility(self):
+        reg = {
+            "claude": {"command": "claude", "display_name": "Claude Code"},
+            "cursor": {"command": "cursor-agent", "state": "starred"},
+            "droid": {"command": "droid", "state": "archived"},
+            "kilo": {"command": "kilo"},
+            "qwen-code": {"command": "qwen"},
+        }
+        items = self._launchable(
+            reg,
+            prefs={"providerOrder": ["qwen-code", "kilo", "cursor", "claude"],
+                   "providerDisabled": ["kilo"]},
+            on_path={"claude", "cursor-agent", "droid", "kilo", "qwen"})
+        self.assertEqual([i["name"] for i in items],
+                         ["qwen-code", "cursor", "claude"])
+        self.assertEqual(items[1]["command"], "cursor-agent")
+        self.assertEqual(items[2]["display_name"], "Claude Code")
+
+    def test_launchable_without_the_mac_app_keeps_registry_order(self):
+        reg = {"pi": {"command": "pi"}, "codex": {"command": "codex"},
+               "devin": {"command": "devin"}}
+        items = self._launchable(reg, on_path={"pi", "codex"})
+        self.assertEqual([i["name"] for i in items], ["pi", "codex"])
+        with patch.object(catalog_mod, "launchable_harnesses",
+                          return_value=items):
+            self.assertEqual(catalog_mod.launch_command("codex"), "codex")
+            self.assertIsNone(catalog_mod.launch_command("devin"))
 
 
 class TestPresence(unittest.TestCase):
@@ -913,7 +961,8 @@ class TestAgentEdges(unittest.TestCase):
         ag.catalog._status_of = lambda ss: []
         with patch.object(
             supervise, "launch_new", return_value=(True, "launched", {})
-        ) as ln:
+        ) as ln, patch.object(catalog_mod, "launch_command",
+                              return_value="claude"):
             ok, note, _deg = ag._execute(
                 "k", "launch",
                 {"harness": "claude", "cwd": "/tmp", "prompt": "hi",
@@ -921,6 +970,14 @@ class TestAgentEdges(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(ln.call_args[1]["known_ids"], [])
         self.assertEqual(ln.call_args[1]["launch_id"], "l1")
+        self.assertEqual(ln.call_args[1]["binary"], "claude")
+        with patch.object(supervise, "launch_new") as ln, \
+             patch.object(catalog_mod, "launch_command", return_value=None):
+            ok, note, _deg = ag._execute(
+                "k", "launch", {"harness": "gemini", "cwd": "/tmp"})
+        self.assertFalse(ok)
+        self.assertIn("Provider visibility", note)
+        ln.assert_not_called()
 
     def test_adopted_launch_reports_session_launched(self):
         ag = self._agent()

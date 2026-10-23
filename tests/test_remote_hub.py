@@ -2,6 +2,7 @@
 
 import http.client
 import json
+import os
 import queue
 import socket
 import tempfile
@@ -643,8 +644,8 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertEqual(status, 404)
 
     def _launch(self, body, installed=True):
-        with patch("quiver.remote.hub.shutil.which",
-                   return_value="/usr/bin/x" if installed else None), \
+        with patch("quiver.remote.catalog.launch_command",
+                   return_value="claude" if installed else None), \
              patch("quiver.remote.supervise.tmux_bin",
                    return_value="/usr/bin/tmux"):
             status, data = self.srv.request(
@@ -675,6 +676,7 @@ class TestHubWriteRoutes(unittest.TestCase):
         launch_id = body["launch_id"]
         self.assertEqual(body["state"], "pending")
         self.assertEqual(launch.call_args[1]["launch_id"], launch_id)
+        self.assertEqual(launch.call_args[1]["binary"], "claude")
         status, view = self._launch_view(launch_id)
         self.assertEqual((status, view["state"]), (200, "pending"))
         # Adoption names the key; the launch reads started once the
@@ -717,14 +719,14 @@ class TestHubWriteRoutes(unittest.TestCase):
                 {"harness": "claude", "cwd": "/tmp", "prompt": "hi"},
                 installed=False)
         self.assertEqual((status, body["error"]["code"]),
-                         (422, "launch_failed"))
+                         (422, "not_launchable"))
         launch.assert_not_called()
         self.assertEqual(self.srv.state.launches, {})
 
     def test_launch_validation(self):
         with patch("quiver.remote.supervise.launch_new") as launch:
             cases = [
-                ({"harness": "gemini", "cwd": "/tmp", "prompt": "hi"},
+                ({"harness": "Not A Name", "cwd": "/tmp", "prompt": "hi"},
                  "bad_command"),
                 ({"harness": "claude", "cwd": "tmp", "prompt": "hi"},
                  "bad_command"),
@@ -765,6 +767,43 @@ class TestHubWriteRoutes(unittest.TestCase):
             self.srv.state._adopt_launches()
         self.assertEqual(self.srv.state.journal.last_seq("claude:new"), 0)
         self.assertEqual(self.srv.state.launches[lid]["key"], "claude:new")
+
+    def test_folders_lists_subfolders_only(self):
+        root = Path(tempfile.mkdtemp())
+        for name in ("beta", "Alpha", ".hidden"):
+            (root / name).mkdir()
+        (root / "notes.txt").write_text("x")
+        status, data = self.srv.request(
+            "GET", f"/v1/folders?path={root}", headers=self.hdr)
+        body = json.loads(data)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["path"], os.path.realpath(root))
+        self.assertEqual([f["name"] for f in body["folders"]],
+                         ["Alpha", "beta"])
+        self.assertEqual(body["parent"],
+                         os.path.dirname(os.path.realpath(root)))
+        self.assertFalse(body["truncated"])
+
+    def test_folders_defaults_home_and_refuses_bad_paths(self):
+        home = Path(tempfile.mkdtemp())
+        with patch.dict(os.environ, {"HOME": str(home)}):
+            status, data = self.srv.request(
+                "GET", "/v1/folders", headers=self.hdr)
+        self.assertEqual(json.loads(data)["path"], os.path.realpath(home))
+        for query, code in (("path=relative", "bad_cwd"),
+                            ("path=/no/such/dir", "bad_cwd"),
+                            ("machine=other", "browse_unavailable")):
+            status, data = self.srv.request(
+                "GET", f"/v1/folders?{query}", headers=self.hdr)
+            self.assertEqual((status, json.loads(data)["error"]["code"]),
+                             (422, code), query)
+
+    def test_folders_root_has_no_parent_and_needs_auth(self):
+        status, data = self.srv.request(
+            "GET", "/v1/folders?path=/", headers=self.hdr)
+        self.assertIsNone(json.loads(data)["parent"])
+        status, _ = self.srv.request("GET", "/v1/folders?path=/")
+        self.assertEqual(status, 401)
 
     def test_settled_launch_stays_settled(self):
         lid = self.srv.state.new_launch("m", "claude", "/tmp")
