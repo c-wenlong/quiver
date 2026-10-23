@@ -661,7 +661,7 @@ def _read_copilot(session: Session) -> NormalizedTranscript:
 
 
 @register_reader("devin")
-def _read_devin(session: Session) -> NormalizedTranscript:
+def _read_devin(session: Session, max_nodes: int | None = None) -> NormalizedTranscript:
     """Devin keeps each turn as a JSON ``chat_message`` in ``message_nodes``.
 
     The nodes form a forest: a streamed assistant reply is stored again
@@ -676,6 +676,11 @@ def _read_devin(session: Session) -> NormalizedTranscript:
     conversation, so they are dropped. An assistant row's ``tool_calls``
     become tool messages, and a ``tool`` row's output is labelled with the
     name of the call it answers (``tool_call_id`` joins the two).
+
+    ``max_nodes`` reads only the newest that many nodes of the chain, one
+    indexed row at a time from the head, so a long session (whose forest
+    can hold hundreds of MB of streamed copies) is never loaded whole.
+    The live tailer uses it; reports read everything.
     """
     path = Path(os.path.expanduser("~/.local/share/devin/cli/sessions.db"))
     conn = _open_ro(path)
@@ -688,25 +693,18 @@ def _read_devin(session: Session) -> NormalizedTranscript:
             "SELECT main_chain_id FROM sessions WHERE id = ?", (session.session_id,),
         ).fetchone()
         head = head_row[0] if head_row else None
-        nodes: dict[int, tuple[int | None, str]] = {}
-        for node_id, parent_id, raw in conn.execute(
-            "SELECT node_id, parent_node_id, chat_message FROM message_nodes "
-            "WHERE session_id = ? ORDER BY node_id",
-            (session.session_id,),
-        ):
-            nodes[node_id] = (parent_id, raw)
-        if head not in nodes and nodes:
-            head = max(nodes)
-        ordered: list[str] = []
-        seen: set[int] = set()
-        cursor: int | None = head
-        while cursor in nodes and cursor not in seen:
-            seen.add(cursor)
-            parent_id, raw = nodes[cursor]
-            ordered.append(raw)
-            cursor = parent_id
-        ordered.reverse()
-        for raw in ordered:
+        if max_nodes is not None:
+            # A margin of older nodes resolves tool-call names for results
+            # near the window's start; their own messages are not kept.
+            # Without it a result's label would change as its call slid
+            # out, and the live tailer would see the window as rewritten.
+            ordered = _devin_chain_tail(conn, session.session_id, head, max_nodes + _DEVIN_NAME_MARGIN)
+            context = max(0, len(ordered) - max_nodes)
+        else:
+            ordered = _devin_chain(conn, session.session_id, head)
+            context = 0
+        for index, raw in enumerate(ordered):
+            keep = index >= context
             try:
                 record = json.loads(raw)
             except (TypeError, json.JSONDecodeError, RecursionError):
@@ -716,13 +714,13 @@ def _read_devin(session: Session) -> NormalizedTranscript:
             role = _role(record.get("role"))
             if role == "tool":
                 label = call_names.get(str(record.get("tool_call_id") or ""), "tool result")
-                msg = _tool_message(label, output=record.get("content"))
+                msg = _tool_message(label, output=record.get("content")) if keep else None
                 if msg:
                     transcript.messages.append(msg)
                 continue
             if role not in {"human", "assistant"}:
                 continue
-            msg = _message(role, record.get("content"))
+            msg = _message(role, record.get("content")) if keep else None
             if msg:
                 transcript.messages.append(msg)
             for call in record.get("tool_calls") or []:
@@ -731,7 +729,7 @@ def _read_devin(session: Session) -> NormalizedTranscript:
                 name = call.get("name")
                 if call.get("id") and name:
                     call_names[str(call["id"])] = str(name)
-                msg = _tool_message(name, call.get("arguments"))
+                msg = _tool_message(name, call.get("arguments")) if keep else None
                 if msg:
                     transcript.messages.append(msg)
     except sqlite3.Error as exc:
@@ -739,6 +737,78 @@ def _read_devin(session: Session) -> NormalizedTranscript:
     finally:
         conn.close()
     return transcript
+
+
+# Extra chain nodes a bounded Devin read walks only to learn tool-call
+# names (a result names the call it answers, which sits just before it).
+_DEVIN_NAME_MARGIN = 64
+
+
+def _devin_chain(conn: sqlite3.Connection, session_id: str, head: int | None) -> list[str]:
+    """Every node of the main chain, oldest first (loads the forest)."""
+    nodes: dict[int, tuple[int | None, str]] = {}
+    for node_id, parent_id, raw in conn.execute(
+        "SELECT node_id, parent_node_id, chat_message FROM message_nodes "
+        "WHERE session_id = ? ORDER BY node_id",
+        (session_id,),
+    ):
+        nodes[node_id] = (parent_id, raw)
+    if head not in nodes and nodes:
+        head = max(nodes)
+    ordered: list[str] = []
+    seen: set[int] = set()
+    cursor: int | None = head
+    while cursor in nodes and cursor not in seen:
+        seen.add(cursor)
+        parent_id, raw = nodes[cursor]
+        ordered.append(raw)
+        cursor = parent_id
+    ordered.reverse()
+    return ordered
+
+
+def _devin_chain_tail(
+    conn: sqlite3.Connection, session_id: str, head: int | None, max_nodes: int
+) -> list[str]:
+    """The newest ``max_nodes`` nodes of the main chain, oldest first,
+    walked parent by parent through the (session_id, node_id) index."""
+    row = conn.execute(
+        "SELECT node_id FROM message_nodes WHERE session_id = ? AND node_id = ?",
+        (session_id, head),
+    ).fetchone() if head is not None else None
+    if row is None:
+        row = conn.execute(
+            "SELECT MAX(node_id) FROM message_nodes WHERE session_id = ?", (session_id,),
+        ).fetchone()
+    cursor = row[0] if row else None
+    ordered: list[str] = []
+    seen: set[int] = set()
+    while cursor is not None and cursor not in seen and len(ordered) < max_nodes:
+        seen.add(cursor)
+        node = conn.execute(
+            "SELECT parent_node_id, chat_message FROM message_nodes "
+            "WHERE session_id = ? AND node_id = ?",
+            (session_id, cursor),
+        ).fetchone()
+        if node is None:
+            break
+        ordered.append(node[1])
+        cursor = node[0]
+    ordered.reverse()
+    return ordered
+
+
+def read_transcript_tail(session: Session, max_messages: int) -> NormalizedTranscript:
+    """``read_transcript`` bounded to roughly the newest ``max_messages``
+    where the store allows it (Devin); a full read elsewhere."""
+    if session.tool_name == "devin":
+        try:
+            transcript = _read_devin(session, max_nodes=max_messages)
+            transcript.messages = _deduplicate(transcript.messages)
+            return transcript
+        except Exception as exc:
+            return _unreadable(session, f"{type(exc).__name__}: {exc}")
+    return read_transcript(session)
 
 
 @register_reader("forge")

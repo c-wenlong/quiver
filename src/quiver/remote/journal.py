@@ -38,6 +38,9 @@ class Journal:
         self.dir = root / "journal"
         self.dir.mkdir(parents=True, exist_ok=True)
         self._seqs: dict[str, int] = {}
+        # Line counts for journals already past the trim size, kept so a
+        # trim check costs nothing per append. Counted once from disk.
+        self._lines: dict[str, int] = {}
 
     def _file(self, session_key: str) -> Path:
         return self.dir / f"{key_slug(session_key)}.jsonl"
@@ -97,24 +100,36 @@ class Journal:
                     fh.write(json.dumps(event, ensure_ascii=False) + "\n")
             except OSError:
                 return event
+            if str(path) in self._lines:
+                self._lines[str(path)] += 1
             self._maybe_trim(path)
             return event
 
     def _maybe_trim(self, path: Path) -> None:
-        try:
-            size = path.stat().st_size
-        except OSError:
-            return
-        # Byte check first: a line is ~200-400 B, so a 2 MB file is
-        # already well past RING_MAX records and counting lines is cheap.
-        if size < 1024 * 1024:
+        key = str(path)
+        count = self._lines.get(key)
+        if count is None:
+            try:
+                size = path.stat().st_size
+            except OSError:
+                return
+            # Small journals can't be past RING_MAX yet. Past 1 MB the
+            # lines are counted once; appends keep the count after that.
+            # (Re-reading the file per append made a journal of large
+            # tool events, over 1 MB but under RING_MAX lines, cost a
+            # full read on every event.)
+            if size < 1024 * 1024:
+                return
+            count = self._count_lines(path)
+            if count is None:
+                return
+            self._lines[key] = count
+        if count <= RING_MAX:
             return
         try:
             with open(path, encoding="utf-8", errors="replace") as fh:
                 lines = fh.readlines()
         except OSError:
-            return
-        if len(lines) <= RING_MAX:
             return
         kept = lines[-RING_KEEP:]
         tmp = path.with_suffix(".tmp")
@@ -122,11 +137,20 @@ class Journal:
             with open(tmp, "w", encoding="utf-8") as fh:
                 fh.writelines(kept)
             os.replace(tmp, path)
+            self._lines[key] = len(kept)
         except OSError:
             try:
                 tmp.unlink(missing_ok=True)
             except OSError:
                 pass
+
+    @staticmethod
+    def _count_lines(path: Path) -> int | None:
+        try:
+            with open(path, "rb") as fh:
+                return sum(chunk.count(b"\n") for chunk in iter(lambda: fh.read(1 << 20), b""))
+        except OSError:
+            return None
 
     def read_since(
         self,

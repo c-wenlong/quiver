@@ -201,6 +201,236 @@ class TestSnapshotSource(unittest.TestCase):
             self.assertEqual(out[0]["text"], "c")
 
 
+class _Transcript:
+    def __init__(self, texts, sources=()):
+        from quiver.reports.transcripts import NormalizedMessage
+        self.messages = [NormalizedMessage(role="assistant", text=t, kind="message") for t in texts]
+        self.source_paths = list(sources)
+
+
+class TestSnapshotChangeGate(unittest.TestCase):
+    """Snapshot stores re-read only when their change token moves."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.store = self.tmp / "store.json"
+        self.store.write_text("{}")
+
+    def _session(self, tool="nope"):
+        return Session(timestamp=0, agent="X", path="/tmp", session_id="s1", tool_name=tool)
+
+    def test_unchanged_files_skip_the_read(self):
+        src = tail.SnapshotSource(self._session())
+        reads = []
+
+        def read(_s):
+            reads.append(1)
+            return _Transcript(["a", "b"] + ["c"] * (len(reads) > 1), [str(self.store)])
+
+        with patch.object(tail._tr, "read_transcript", side_effect=read):
+            self.assertEqual(len(src.poll()), 2)
+            self.assertEqual(src.poll(), [])
+            self.assertEqual(src.poll(), [])
+            self.assertEqual(len(reads), 1, "polls after the first trust the unchanged token")
+            # A write moves the token: the next poll reads and emits it.
+            time.sleep(0.01)
+            self.store.write_text('{"more": true}')
+            out = src.poll()
+            self.assertEqual([m["text"] for m in out], ["c"])
+            self.assertEqual(len(reads), 2)
+
+    def test_wal_write_counts_as_a_change(self):
+        src = tail.SnapshotSource(self._session())
+        with patch.object(tail._tr, "read_transcript", return_value=_Transcript(["a"], [str(self.store)])) as rt:
+            src.poll(); src.poll()
+            calls = rt.call_count
+            (self.tmp / "store.json-wal").write_bytes(b"x")
+            src.poll()
+            self.assertEqual(rt.call_count, calls + 1)
+
+    def test_full_reread_after_the_recheck_window(self):
+        src = tail.SnapshotSource(self._session())
+        with patch.object(tail._tr, "read_transcript", return_value=_Transcript(["a"], [str(self.store)])) as rt, \
+                patch.object(tail, "SNAPSHOT_RECHECK_S", 0.0):
+            src.poll(); src.poll(); src.poll()
+            self.assertEqual(rt.call_count, 3)
+
+    def test_devin_uses_its_row_token(self):
+        src = tail.SnapshotSource(self._session("devin"))
+        token = [((5, 5), (2,))]
+        with patch.object(tail, "_devin_token", side_effect=lambda _sid: token[0]), \
+                patch.object(tail._tr, "read_transcript_tail", return_value=_Transcript(["a"])) as rt:
+            src.poll(); src.poll(); src.poll()
+            self.assertEqual(rt.call_count, 1)
+            token[0] = ((6, 6), (2,))
+            src.poll()
+            self.assertEqual(rt.call_count, 2)
+
+    def test_devin_token_reads_one_sessions_rows(self):
+        import sqlite3
+        db = self.tmp / "sessions.db"
+        conn = sqlite3.connect(db)
+        conn.executescript(
+            "CREATE TABLE sessions(id TEXT PRIMARY KEY, main_chain_id INTEGER);"
+            "CREATE TABLE message_nodes(row_id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT,"
+            " node_id INTEGER, parent_node_id INTEGER, chat_message TEXT, created_at INTEGER);"
+            "INSERT INTO sessions VALUES ('s1', 1), ('s2', 1);"
+            "INSERT INTO message_nodes(session_id, node_id, chat_message, created_at)"
+            " VALUES ('s1', 1, '{}', 0), ('s2', 1, '{}', 0);"
+        )
+        conn.commit()
+        with patch.object(tail, "DEVIN_DB", str(db)):
+            before = tail._devin_token("s1")
+            conn.execute("INSERT INTO message_nodes(session_id, node_id, chat_message, created_at) VALUES ('s2', 2, '{}', 0)")
+            conn.commit()
+            self.assertEqual(tail._devin_token("s1"), before, "another session's write leaves s1's token alone")
+            conn.execute("INSERT INTO message_nodes(session_id, node_id, chat_message, created_at) VALUES ('s1', 2, '{}', 0)")
+            conn.commit()
+            self.assertNotEqual(tail._devin_token("s1"), before)
+        conn.close()
+        with patch.object(tail, "DEVIN_DB", str(self.tmp / "missing.db")):
+            self.assertIsNone(tail._devin_token("s1"))
+
+
+class TestSlidingWindowDiff(unittest.TestCase):
+    def test_new_from(self):
+        self.assertEqual(tail._new_from([], ["a", "b"]), 0)
+        self.assertEqual(tail._new_from(["a", "b"], ["a", "b", "c"]), 2)  # grew
+        self.assertEqual(tail._new_from(["a", "b", "c"], ["b", "c", "d", "e"]), 2)  # slid
+        self.assertEqual(tail._new_from(["a", "b"], ["x", "y"]), 0)  # nothing shared
+        self.assertEqual(tail._new_from(["a", "b", "c"], ["a", "x"]), 1)  # rewrite at the fork
+        # A repeated message makes [a] a chance prefix; the slide overlap [a, c] wins.
+        self.assertEqual(tail._new_from(["a", "b", "a", "c"], ["a", "c", "d", "e"]), 2)
+
+    def test_windowed_snapshot_emits_only_the_slid_in_messages(self):
+        src = tail.SnapshotSource(Session(timestamp=0, agent="X", path="/tmp", session_id="s", tool_name="nope"))
+        with patch.object(tail._tr, "read_transcript", return_value=_Transcript(["m1", "m2", "m3"])):
+            src.poll()
+        with patch.object(tail._tr, "read_transcript", return_value=_Transcript(["m2", "m3", "m4", "m5"])):
+            self.assertEqual([m["text"] for m in src.poll()], ["m4", "m5"])
+
+
+class TestDevinChainTail(unittest.TestCase):
+    def test_tail_walk_matches_the_full_chain_end(self):
+        import sqlite3
+        from quiver.reports import transcripts as tr
+        conn = sqlite3.connect(":memory:")
+        conn.executescript(
+            "CREATE TABLE message_nodes(row_id INTEGER PRIMARY KEY, session_id TEXT, node_id INTEGER,"
+            " parent_node_id INTEGER, chat_message TEXT, created_at INTEGER, UNIQUE(session_id, node_id));"
+        )
+        # Chain 1<-2<-3<-5 with a stale sibling 4 (an earlier streamed copy) under 3.
+        for node, parent in [(1, None), (2, 1), (3, 2), (4, 3), (5, 3)]:
+            conn.execute("INSERT INTO message_nodes(session_id, node_id, parent_node_id, chat_message, created_at)"
+                         " VALUES ('s', ?, ?, ?, 0)", (node, parent, f"n{node}"))
+        self.assertEqual(tr._devin_chain(conn, "s", 5), ["n1", "n2", "n3", "n5"])
+        self.assertEqual(tr._devin_chain_tail(conn, "s", 5, 2), ["n3", "n5"])
+        self.assertEqual(tr._devin_chain_tail(conn, "s", 5, 99), ["n1", "n2", "n3", "n5"])
+        self.assertEqual(tr._devin_chain_tail(conn, "s", None, 99), ["n1", "n2", "n3", "n5"], "no head: newest node")
+
+
+class TestDevinBoundedRead(unittest.TestCase):
+    def test_result_keeps_its_tool_name_after_its_call_leaves_the_window(self):
+        import sqlite3
+        from quiver.reports import transcripts as tr
+        tmp = Path(tempfile.mkdtemp())
+        db = tmp / "sessions.db"
+        conn = sqlite3.connect(db)
+        conn.executescript(
+            "CREATE TABLE sessions(id TEXT PRIMARY KEY, main_chain_id INTEGER);"
+            "CREATE TABLE message_nodes(row_id INTEGER PRIMARY KEY, session_id TEXT, node_id INTEGER,"
+            " parent_node_id INTEGER, chat_message TEXT, created_at INTEGER, UNIQUE(session_id, node_id));"
+        )
+        rows = [
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "name": "read", "arguments": "{}"}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "file body"},
+            {"role": "assistant", "content": "done"},
+        ]
+        for i, rec in enumerate(rows, start=1):
+            conn.execute("INSERT INTO message_nodes(session_id, node_id, parent_node_id, chat_message, created_at)"
+                         " VALUES ('s', ?, ?, ?, 0)", (i, i - 1 if i > 1 else None, json.dumps(rec)))
+        conn.execute("INSERT INTO sessions VALUES ('s', 3)")
+        conn.commit(); conn.close()
+        session = Session(timestamp=0, agent="Devin", path="/tmp", session_id="s", tool_name="devin")
+        with patch("os.path.expanduser", side_effect=lambda p: str(db) if "devin" in p else p):
+            full = tr.read_transcript(session).messages
+            window = tr.read_transcript_tail(session, 2).messages
+        self.assertEqual([m.text for m in window], [m.text for m in full][-len(window):])
+        self.assertTrue(any("read" in m.text for m in window), "the result still names its call")
+
+
+class TestBackfillCap(unittest.TestCase):
+    """A session seen for the first time backfills recent history only."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def test_jsonl_starts_on_a_whole_line_near_the_end(self):
+        path = self.tmp / "t.jsonl"
+        with open(path, "w") as fh:
+            for i in range(200):
+                fh.write(json.dumps(_claude_user(f"m{i:03d}")) + "\n")
+        src = tail.JsonlTailSource(path, "claude")
+        src.start_near_end(max_bytes=600)
+        texts = [m["text"] for m in src.poll()]
+        self.assertTrue(0 < len(texts) < 20)
+        self.assertEqual(texts[-1], "m199")
+        self.assertTrue(all(t.startswith("m") and len(t) == 4 for t in texts), "no partial first line")
+        with open(path, "a") as fh:
+            fh.write(json.dumps(_claude_user("new")) + "\n")
+        self.assertEqual([m["text"] for m in src.poll()], ["new"])
+
+    def test_alignment_walks_past_a_record_bigger_than_a_chunk(self):
+        path = self.tmp / "t.jsonl"
+        big = json.dumps({"type": "user", "message": {"role": "user", "content": "x" * (tail._MAX_CHUNK * 2)}})
+        with open(path, "w") as fh:
+            fh.write(big + "\n")
+            fh.write(json.dumps(_claude_user("after")) + "\n")
+        src = tail.JsonlTailSource(path, "claude")
+        src.start_near_end(max_bytes=tail._MAX_CHUNK * 2)  # starts inside the big record
+        texts = []
+        for _ in range(6):
+            texts += [m["text"] for m in src.poll()]
+        self.assertEqual(texts, ["after"])
+
+    def test_truncation_before_the_aligned_read_keeps_the_first_record(self):
+        path = self.tmp / "t.jsonl"
+        with open(path, "w") as fh:
+            for i in range(100):
+                fh.write(json.dumps(_claude_user(f"m{i:03d}")) + "\n")
+        src = tail.JsonlTailSource(path, "claude")
+        src.start_near_end(max_bytes=600)
+        path.write_text(json.dumps(_claude_user("fresh")) + "\n")  # replaced before any poll
+        self.assertEqual([m["text"] for m in src.poll()], ["fresh"])
+
+    def test_small_jsonl_reads_whole(self):
+        path = self.tmp / "t.jsonl"
+        path.write_text(json.dumps(_claude_user("only")) + "\n")
+        src = tail.JsonlTailSource(path, "claude")
+        src.start_near_end(max_bytes=1 << 20)
+        self.assertEqual([m["text"] for m in src.poll()], ["only"])
+
+    def test_snapshot_emits_the_newest_messages_first_time_only(self):
+        src = tail.SnapshotSource(Session(timestamp=0, agent="X", path="/tmp", session_id="s", tool_name="nope"))
+        src.start_near_end(max_messages=2)
+        with patch.object(tail._tr, "read_transcript", return_value=_Transcript(["a", "b", "c", "d"])):
+            self.assertEqual([m["text"] for m in src.poll()], ["c", "d"])
+        with patch.object(tail._tr, "read_transcript", return_value=_Transcript(["a", "b", "c", "d", "e"])):
+            self.assertEqual([m["text"] for m in src.poll()], ["e"])
+
+    def test_fresh_tailer_backfills_only_the_tail(self):
+        path = self.tmp / "t.jsonl"
+        with open(path, "w") as fh:
+            for i in range(300):
+                fh.write(json.dumps(_claude_user(f"m{i:03d}")) + "\n")
+        with patch.object(tail, "BACKFILL_BYTES", 500):
+            t = tail.Tailer("k", _session_for(), tail.JsonlTailSource(path, "claude"),
+                            self.tmp / "cursors", has_journal=False)
+        msgs = t.poll(time.time(), active=True)
+        self.assertTrue(0 < len(msgs) < 20)
+        self.assertEqual(msgs[-1]["text"], "m299")
+
+
 class TestOpencodeSource(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
