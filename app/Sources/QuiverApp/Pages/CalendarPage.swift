@@ -140,12 +140,12 @@ private struct CalendarContent: View {
             model.noteScanCompleted()
             Task { await model.load(force: true) }
         }
-        .sheet(item: $detail) { row in
+        .quiverSheet(item: $detail) { row in
             SessionDetail(row: row,
                           resume: { resume(row) },
                           close: { detail = nil })
         }
-        .sheet(item: $projectDetail) { block in
+        .quiverSheet(item: $projectDetail) { block in
             ProjectSessionsSheet(block: block, model: model,
                                  rows: sessionIndex.rows(for: block),
                                  resume: resume)
@@ -1559,7 +1559,7 @@ private struct ProjectSessionsSheet: View {
     var rows: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)]
     var resume: (SessionsModel.Row) -> Void
 
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSheet) private var dismiss
     @State private var detail: SessionsModel.Row?
 
     private static let clock: DateFormatter = {
@@ -1598,7 +1598,7 @@ private struct ProjectSessionsSheet: View {
         }
         .padding(20)
         .frame(width: 420)
-        .sheet(item: $detail) { row in
+        .quiverSheet(item: $detail) { row in
             SessionDetail(row: row, resume: { resume(row) }, close: { detail = nil })
         }
     }

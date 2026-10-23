@@ -14,7 +14,7 @@ struct McpAddServerSheet: View {
     var reload: () async -> Void
 
     @Environment(AppModel.self) private var app
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSheet) private var dismiss
 
     enum Kind: String, CaseIterable { case command = "Command", url = "URL" }
 
@@ -67,94 +67,16 @@ struct McpAddServerSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Add a server").font(Theme.sectionTitle).tracking(-0.5)
-            FormField("Name") {
-                TextField("github", text: $name).quiverField()
+            HStack(alignment: .center) {
+                Text("Add a server").font(Theme.sectionTitle).tracking(-0.5)
+                Spacer(minLength: 16)
+                Button("Close", systemImage: "xmark") { dismiss() }
+                    .labelStyle(.iconOnly)
+                    .iconButton()
             }
-            FormField("Kind") {
-                Picker("", selection: $kind) {
-                    ForEach(Kind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented).labelsHidden()
-            }
-            if kind == .command {
-                FormField("Command", hint: commandHint, problem: words == nil) {
-                    TextField("npx -y @modelcontextprotocol/server-github", text: $commandLine)
-                        .quiverField(monospaced: true)
-                }
-            } else {
-                FormField("URL") {
-                    HStack(spacing: 8) {
-                        TextField("https://mcp.example.com/mcp", text: $url)
-                            .quiverField(monospaced: true)
-                        Picker("", selection: $sse) {
-                            Text("HTTP").tag(false)
-                            Text("SSE").tag(true)
-                        }
-                        .pickerStyle(.segmented).labelsHidden().frame(width: 130)
-                    }
-                }
-            }
-            FormField(kind == .command ? "Env vars" : "Headers") {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach($variables) { $variable in
-                        VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 8) {
-                            TextField(kind == .command ? "NAME" : "Header",
-                                      text: $variable.key)
-                                .quiverField(monospaced: true).frame(width: 190)
-                            Group {
-                                if variable.secret {
-                                    SecureField("value", text: $variable.value)
-                                } else {
-                                    TextField("value or ${NAME}", text: $variable.value)
-                                }
-                            }
-                            .quiverField(monospaced: true)
-                            Toggle("Secret", isOn: Binding(
-                                get: { variable.secret },
-                                set: { variable.secret = $0; variable.secretTouched = true }))
-                                .toggleStyle(.switch).controlSize(.mini)
-                                .onChange(of: variable.key) { _, key in
-                                    if !variable.secretTouched {
-                                        variable.secret = mcpIsSecretName(key)
-                                    }
-                                }
-                            Button("Remove", systemImage: "minus.circle") {
-                                variables.removeAll { $0.id == variable.id }
-                            }
-                            .labelStyle(.iconOnly).iconButton()
-                        }
-                        if variable.secret && !variable.key.isEmpty {
-                            Text("saved as ${\(mcpSecretName(server: name.isEmpty ? "SERVER" : name, key: variable.key))}")
-                                .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                        }
-                        }
-                    }
-                    Button(kind == .command ? "Add variable" : "Add header",
-                           systemImage: "plus") {
-                        variables.append(Variable())
-                    }
-                    .secondaryButton()
-                    Text("Secret values go to ~/.quiver/secrets/mcp/.api_keys; "
-                         + "the configs get ${NAME} references.")
-                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                }
-            }
-            FormField("Add to", hint: "Always saved to the Quiver hub (~/.quiver/mcp.json).") {
-                FlowLayout(spacing: 6, lineSpacing: 6) {
-                    ForEach(harnesses, id: \.self) { harness in
-                        Toggle(HarnessMark(harness).name, isOn: Binding(
-                            get: { targets.contains(harness) },
-                            set: { on in
-                                if on { targets.insert(harness) } else { targets.remove(harness) }
-                            }))
-                        .toggleStyle(.switch).controlSize(.small)
-                    }
-                }
-            }
-            Toggle("Replace if it already exists", isOn: $force)
-                .toggleStyle(.switch).controlSize(.small)
+            serverSection
+            variablesSection
+            whereSection
             if let error {
                 Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -167,8 +89,122 @@ struct McpAddServerSheet: View {
                     .disabled(saveDisabled)
             }
         }
-        .sheetScaffold(width: 560)
+        .sheetScaffold(width: 640)
         .background(Theme.panel)
+    }
+
+    /// Name and kind side by side, then what runs it.
+    private var serverSection: some View {
+        Card(title: "Server") {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 12) {
+                    FormField("Name") {
+                        TextField("github", text: $name).quiverField()
+                    }
+                    FormField("Kind") {
+                        Tabs(options: Kind.allCases.map { (value: $0, title: $0.rawValue) },
+                             selection: $kind)
+                            .frame(height: Theme.fieldHeight)
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                }
+                if kind == .command {
+                    FormField("Command", hint: commandHint, problem: words == nil) {
+                        TextField("npx -y @modelcontextprotocol/server-github", text: $commandLine)
+                            .quiverField(monospaced: true)
+                    }
+                } else {
+                    FormField("URL") {
+                        HStack(spacing: 8) {
+                            TextField("https://mcp.example.com/mcp", text: $url)
+                                .quiverField(monospaced: true)
+                            Tabs(options: [(value: false, title: "HTTP"), (value: true, title: "SSE")],
+                                 selection: $sse)
+                                .frame(height: Theme.fieldHeight)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Env vars for a command, headers for a URL; each can be a secret.
+    private var variablesSection: some View {
+        Card(title: kind == .command ? "Env vars" : "Headers") {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach($variables) { $variable in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            TextField(kind == .command ? "NAME" : "Header", text: $variable.key)
+                                .quiverField(monospaced: true)
+                                .frame(width: 170)
+                            Group {
+                                if variable.secret {
+                                    SecureField("value", text: $variable.value)
+                                } else {
+                                    TextField("value or ${NAME}", text: $variable.value)
+                                }
+                            }
+                            .quiverField(monospaced: true)
+                            HStack(spacing: 6) {
+                                Text("Secret").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                                SettingSwitch(title: "Secret", isOn: Binding(
+                                    get: { variable.secret },
+                                    set: { variable.secret = $0; variable.secretTouched = true }))
+                            }
+                            .fixedSize()
+                            Button("Remove", systemImage: "minus") {
+                                variables.removeAll { $0.id == variable.id }
+                            }
+                            .labelStyle(.iconOnly)
+                            .iconButton()
+                        }
+                        .onChange(of: variable.key) { _, key in
+                            if !variable.secretTouched {
+                                variable.secret = mcpIsSecretName(key)
+                            }
+                        }
+                        if variable.secret && !variable.key.isEmpty {
+                            Text("saved as ${\(mcpSecretName(server: name.isEmpty ? "SERVER" : name, key: variable.key))}")
+                                .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                        }
+                    }
+                }
+                Button(kind == .command ? "Add variable" : "Add header", systemImage: "plus") {
+                    variables.append(Variable())
+                }
+                .secondaryButton()
+                Text("Secret values go to ~/.quiver/secrets/mcp/.api_keys; "
+                     + "the configs get ${NAME} references.")
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+            }
+        }
+    }
+
+    /// Which harnesses get the server, and whether it may overwrite one.
+    private var whereSection: some View {
+        Card(title: "Where") {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .center, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Add to").font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
+                        Text("Always saved to the Quiver hub too")
+                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    }
+                    Spacer(minLength: 8)
+                    HarnessTargetsMenu(harnesses: harnesses, active: active, targets: $targets)
+                }
+                .padding(.bottom, 14)
+                Rectangle().fill(Theme.border).frame(height: Theme.hairline)
+                HStack(alignment: .center, spacing: 16) {
+                    Text("Replace if it already exists")
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
+                    Spacer(minLength: 8)
+                    SettingSwitch(title: "Replace if it already exists", isOn: $force)
+                }
+                .padding(.top, 14)
+            }
+        }
     }
 
     private func save() async {
@@ -211,5 +247,124 @@ struct McpAddServerSheet: View {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+}
+
+/// "Add to" as one select: the face says how many of the harnesses are
+/// ticked, and the popover is a checklist that stays open so several can
+/// change in one go, with "All active" and "None" at the top. A harness
+/// shows as its logo, with a word only where the logo is ambiguous.
+private struct HarnessTargetsMenu: View {
+    var harnesses: [String]
+    var active: [String]
+    @Binding var targets: Set<String>
+    @State private var open = false
+    @State private var hovering = false
+
+    var body: some View {
+        Button { open.toggle() } label: {
+            HStack(spacing: 6) {
+                Text(mcpTargetsSummary(targets, of: harnesses))
+                    .foregroundStyle(Theme.textPrimary).lineLimit(1)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down").font(.system(size: 12))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .font(Theme.bodySmall)
+            .padding(.horizontal, 12)
+            .frame(height: Theme.fieldHeight)
+            .fixedSize()
+            .background(Theme.field, in: .rect(cornerRadius: Theme.selectRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.selectRadius)
+                .strokeBorder(hovering ? Theme.borderHover : Theme.border, lineWidth: 1))
+            .contentShape(.rect(cornerRadius: Theme.selectRadius))
+        }
+        .plainButton(cornerRadius: Theme.selectRadius)
+        .onHover { hovering = $0 }
+        .fixedSize()
+        .accessibilityLabel("Add to")
+        .accessibilityValue(mcpTargetsSummary(targets, of: harnesses))
+        .popover(isPresented: $open, arrowEdge: .bottom) { checklist }
+    }
+
+    private var checklist: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 4) {
+                ChecklistShortcut(title: "All active") { targets = Set(active) }
+                ChecklistShortcut(title: "None") { targets = [] }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 6)
+            .padding(.bottom, 6)
+            Rectangle().fill(Theme.border).frame(height: Theme.hairline)
+                .padding(.bottom, 6)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(harnesses, id: \.self) { harness in
+                        ChecklistRow(harness: harness, isOn: targets.contains(harness)) {
+                            if targets.contains(harness) { targets.remove(harness) } else { targets.insert(harness) }
+                        }
+                    }
+                }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(maxHeight: 360)
+        }
+        .padding(.vertical, 8)
+        .frame(minWidth: 200)
+        .fixedSize(horizontal: true, vertical: true)
+    }
+}
+
+/// A quiet text button for the checklist's shortcuts.
+private struct ChecklistShortcut: View {
+    var title: String
+    var action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(Theme.control)
+                .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
+                .padding(.horizontal, 8)
+                .frame(height: 24)
+                .background(hovering ? Theme.rowHover : .clear, in: .rect(cornerRadius: Theme.smallRadius))
+                .contentShape(.rect(cornerRadius: Theme.smallRadius))
+        }
+        .plainButton(cornerRadius: Theme.smallRadius)
+        .onHover { hovering = $0 }
+    }
+}
+
+/// One harness in the checklist: a check when it's in, then its mark.
+private struct ChecklistRow: View {
+    var harness: String
+    var isOn: Bool
+    var toggle: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(spacing: 10) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 14)
+                    .opacity(isOn ? 1 : 0)
+                HarnessMarkView(harness: harness, size: 16)
+                    .font(Theme.bodySmall)
+                    .foregroundStyle(Theme.textPrimary)
+                Spacer(minLength: 12)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(hovering ? Theme.rowHover : .clear)
+            .contentShape(.rect)
+        }
+        .plainButton(cornerRadius: 0)
+        .onHover { hovering = $0 }
+        .accessibilityLabel(HarnessMark(harness).name)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 }

@@ -343,6 +343,15 @@ func fixture(_ name: String) throws -> Data {
         #expect(mcpSecretName(server: "1password", key: "Authorization") == "MCP_1PASSWORD_AUTHORIZATION")
     }
 
+    @Test func addToSummaryCountsPicksStillListed() {
+        let harnesses = ["claude", "codex", "cursor"]
+        #expect(mcpTargetsSummary(["claude", "codex"], of: harnesses) == "2 of 3 harnesses")
+        #expect(mcpTargetsSummary([], of: harnesses) == "0 of 3 harnesses")
+        // A pick that left the list isn't counted.
+        #expect(mcpTargetsSummary(["claude", "gone"], of: harnesses) == "1 of 3 harnesses")
+        #expect(mcpTargetsSummary(["claude"], of: ["claude"]) == "1 of 1 harness")
+    }
+
     @Test func commandLineSplitsLikeAShell() {
         #expect(mcpCommandWords("npx -y @a/b --flag=x") == ["npx", "-y", "@a/b", "--flag=x"])
         #expect(mcpCommandWords("run 'two words'") == ["run", "two words"])

@@ -106,10 +106,12 @@ struct MainWindow: View {
         }
         .background(Theme.wash)
         .ignoresSafeArea(.container, edges: .top)
-        .sheet(isPresented: Binding(
+        // Modal: a setup you can't click away from mid-way. Its own
+        // buttons finish or skip it.
+        .quiverSheet(isPresented: Binding(
             get: { model.showsFirstRunSetup },
-            set: { if !$0 { model.closeFirstRunSetup() } })) {
-            FirstRunSetupSheet().environment(model)
+            set: { if !$0 { model.closeFirstRunSetup() } }), modal: true) {
+            FirstRunSetupSheet()
         }
         .overlay(alignment: .topLeading) {
             Sidebar(width: sidebarWidth)
@@ -130,6 +132,8 @@ struct MainWindow: View {
         .onAppear {
             model.openMainWindow = { [openWindow] in openWindow(id: "main") }
         }
+        // Outermost, so a card from any page covers the sidebar too.
+        .sheetHost()
     }
 }
 

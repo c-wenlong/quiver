@@ -50,18 +50,55 @@ class SearchTest(unittest.TestCase):
                          ["claude:far@m2", "claude:other", "claude:sess-alpha"])
         self.assertTrue(all(r["source"] == "metadata" for r in out["results"]))
 
-    def test_index_hits_come_first_with_snippets(self):
+    def test_title_matches_lead_newest_first_and_keep_their_snippet(self):
         write_index(self.home)
         out = search.search(self.rows, "ledger", home=self.home)
         self.assertTrue(out["indexed"])
-        first = out["results"][0]
-        self.assertEqual(first["key"], "claude:sess-alpha")
-        self.assertEqual(first["source"], "index")
-        self.assertIn("ledger", first["snippet"].lower())
-        # Metadata-only matches follow, without repeating the index hit.
         keys = [r["key"] for r in out["results"]]
-        self.assertEqual(keys.count("claude:sess-alpha"), 1)
-        self.assertIn("claude:other", keys)
+        # All three titles hold "ledger": the title tier, newest first.
+        self.assertEqual(keys, ["claude:far@m2", "claude:other", "claude:sess-alpha"])
+        alpha = out["results"][2]
+        self.assertEqual(alpha["source"], "metadata")
+        self.assertIn("ledger", alpha["snippet"].lower())
+        self.assertIsNone(out["results"][1]["snippet"])
+
+    def test_title_match_beats_a_newer_transcript_mention(self):
+        write_index(self.home)
+        rows = self.rows + [_row("claude:old", "old", "Settings page redesign", ago=90 * 86400)]
+        keys = [r["key"] for r in search.search(rows, "settings page", home=self.home)["results"]]
+        self.assertEqual(keys, ["claude:old", "codex:sess-beta"])
+
+    def test_phrase_match_does_not_hide_sessions_with_the_words_apart(self):
+        write_index(self.home)
+        rows = self.rows + [_row("droid:sess-gamma", "sess-gamma", "Gamma title", harness="droid")]
+        out = search.search(rows, "scan offsets", home=self.home)["results"]
+        # sess-alpha has the phrase; sess-gamma only has both words apart.
+        self.assertEqual([r["key"] for r in out], ["claude:sess-alpha", "droid:sess-gamma"])
+        self.assertTrue(all(r["source"] == "index" for r in out))
+        self.assertTrue(all(r["snippet"] for r in out))
+
+    def test_words_apart_across_title_and_folder(self):
+        rows = [_row("k1", "s1", "Ledger fix", cwd="/work/quiver"), _row("k2", "s2", "Ledger quiver")]
+        keys = [r["key"] for r in search.search(rows, "quiver ledger", home=self.home)["results"]]
+        # k2's title holds both words; k1 has them across title and folder.
+        self.assertEqual(keys, ["k2", "k1"])
+
+    def test_recent_session_leads_within_a_tier(self):
+        rows = [_row("old", "s1", "ledger", ago=60 * 86400), _row("new", "s2", "ledger", ago=86400)]
+        keys = [r["key"] for r in search.search(rows, "ledger", home=self.home)["results"]]
+        self.assertEqual(keys, ["new", "old"])
+
+    def test_strong_old_transcript_match_beats_a_weak_new_one(self):
+        rows = [_row("claude:a", "a", "x", ago=30 * 86400), _row("claude:b", "b", "y", ago=0)]
+        hit = lambda sid, score: search_index.SearchHit(  # noqa: E731
+            session_id=sid, agent="claude", title="", cwd="", updated_at="", score=score,
+            role="user", ts="", snippet="s")
+        with patch.object(search_index, "available", return_value=True), \
+                patch.object(search_index, "search_passes", return_value=[[hit("a", 10.0), hit("b", 1.0)]]), \
+                patch.object(search_index, "fill_snippets", side_effect=lambda home, hits: hits):
+            keys = [r["key"] for r in search.search(rows, "zzz", home=self.home)["results"]]
+        # a: 1.0 x ~0.41 for 30 days; b: 0.1 x 1.0 for today.
+        self.assertEqual(keys, ["claude:a", "claude:b"])
 
     def test_transcript_only_match_needs_the_index(self):
         # "dark mode to the settings" is only in sess-beta's transcript.
@@ -76,20 +113,26 @@ class SearchTest(unittest.TestCase):
         keys = [r["key"] for r in search.search(self.rows, "parser chokes", home=self.home)["results"]]
         self.assertEqual(keys, [])
 
-    def test_catalog_match_ranked_past_fifty_hidden_hits_still_shows(self):
+    def test_hits_outside_the_catalog_do_not_use_up_the_limit(self):
         write_index(self.home)
         rows = [_row("codex:sess-beta", "sess-beta", "Untitled")]
         hidden = [search_index.SearchHit(session_id=f"gone-{i}", agent="claude", title="", cwd="",
-                                         updated_at="", score=100.0 - i, role="user", ts="", snippet="x")
+                                         updated_at="", score=100.0 - i, role="user", ts="", snippet="")
                   for i in range(150)]
-        real = search_index.search(self.home, "settings page")
-        everything = hidden + real
-        with patch.object(search_index, "search",
-                          side_effect=lambda home, q, limit: everything[:limit]) as fake:
-            keys = [r["key"] for r in search.search(rows, "settings page", home=self.home)["results"]]
-        self.assertEqual(keys, ["codex:sess-beta"])
-        # First batch (100) was all hidden hits; it went deeper to find it.
-        self.assertGreater(fake.call_args.kwargs["limit"], 100)
+        real = search_index.search_passes(self.home, "settings page")
+        passes = [hidden + real[0]] + real[1:]
+        with patch.object(search_index, "search_passes", return_value=passes) as fake:
+            out = search.search(rows, "settings page", home=self.home, limit=5)["results"]
+        self.assertEqual([r["key"] for r in out], ["codex:sess-beta"])
+        self.assertIn("settings", out[0]["snippet"])
+        self.assertEqual(fake.call_args.kwargs["limit"], search.INDEX_FETCH)
+
+    def test_recency_weight(self):
+        now = 1_000_000_000.0
+        self.assertAlmostEqual(search.recency_weight(now, now), 1.0)
+        self.assertAlmostEqual(search.recency_weight(now - 14 * 86400, now), 0.65)
+        self.assertAlmostEqual(search.recency_weight(None, now), search.RECENCY_FLOOR)
+        self.assertAlmostEqual(search.recency_weight("bad", now), search.RECENCY_FLOOR)
 
     def test_empty_query_and_limit(self):
         self.assertEqual(search.search(self.rows, "  ", home=self.home)["results"], [])

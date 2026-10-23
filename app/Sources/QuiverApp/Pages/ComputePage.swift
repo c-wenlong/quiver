@@ -55,7 +55,7 @@ struct ComputePage: View {
                         .allowsHitTesting(false)
                 }
             }
-            .sheet(isPresented: $cleaning) {
+            .quiverSheet(isPresented: $cleaning) {
                 CleanupSheet(items: cleanupSnapshot, model: model)
             }
         } content: {
@@ -565,7 +565,7 @@ private struct OrphanRowView: View {
 private struct CleanupSheet: View {
     var items: [CleanupItem]
     var model: ComputeModel
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSheet) private var dismiss
     @State private var selected: Set<String>
     /// Ids whose quits are being given their five seconds to take.
     @State private var quitting: Set<String> = []
