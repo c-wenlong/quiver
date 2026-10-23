@@ -302,6 +302,8 @@ def _overrides(home: Path | None) -> dict[str, ModelRates]:
     app's ``PricingOverrides`` reads it: input and output required, a
     missing cache price is $0, and each becomes a LiteLLM-shaped entry."""
     raw = _read_json(quiver_dir_for(home) / "config" / "pricing.json").get("models") or {}
+    if not isinstance(raw, dict):
+        return {}  # an unsupported shape, ignored as the app ignores it
     out = {}
 
     def usd(value) -> float | None:

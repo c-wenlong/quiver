@@ -107,6 +107,14 @@ class TestLoading(unittest.TestCase):
         self.assertEqual((rates.cache_read, rates.cache_write), (0, 0))
         self.assertEqual(cat.resolve("bad", None)[0], "unpriced")
 
+    def test_an_unsupported_override_shape_is_ignored(self):
+        home = Path(tempfile.mkdtemp())
+        cfg = home / ".quiver" / "config"
+        cfg.mkdir(parents=True)
+        (cfg / "pricing.json").write_text(json.dumps({"models": [{"model": "x", "input": 1}]}))
+        cat = load_catalog(home, download=False)
+        self.assertEqual(cat.resolve("claude-opus-5", None)[0], "priced")
+
     def test_download_is_cached_for_a_day(self):
         home = Path(tempfile.mkdtemp())
         listing = {f"model-{i}": {"input_cost_per_token": 1e-06, "output_cost_per_token": 2e-06}

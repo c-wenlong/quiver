@@ -266,39 +266,45 @@ function bindHarnessFocus() {
  * physics; a settled pile says the same thing. */
 function drawMarbles() {
   const svg = document.getElementById("marbles");
-  if (!svg || !overview.scale) return;
+  if (!svg || !overview.data) return;
   const box = svg.getBoundingClientRect();
   const width = Math.round(box.width) || 800, height = Math.round(box.height) || 240;
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  const marbles = [];
-  for (const { harness, count } of overview.scale.counts) {
-    for (let i = 0; i < count; i++) marbles.push(Fmt.harnessColor(harness));
-  }
-  if (!marbles.length) { svg.innerHTML = ""; return; }
   // Keep clear of the widest line of the figures (the unpriced note can
   // be wider than the total), so no marble sits behind text.
   const r = 9, mid = width / 2;
   const widest = Math.max(0, ...[...document.querySelectorAll(".total-figures > *")]
     .map((el) => el.scrollWidth || el.getBoundingClientRect().width));
   const clear = Math.max(Math.min(380, width * 0.5), widest + 4 * r) / 2;
-  // Fill bottom-up, left and right of the clear zone, rows offset like a pile.
+  // Every place a marble can sit, bottom row first, rows offset like a pile.
+  const slots = [];
+  for (let row = 0; row < 40; row++) {
+    const y = height - r - 1 - row * r * 1.75;
+    if (y < r) break;
+    const shrink = row * r * 0.9;
+    for (let x = r + (row % 2 ? r : 0) + shrink; x < width - r - shrink; x += r * 2) {
+      if (Math.abs(x - mid) < clear && y < height - r * 2.5) continue;
+      slots.push([x, y]);
+    }
+  }
+  // The scale is picked for the room the pile really has, so the caption's
+  // "1 marble = …" matches what is drawn.
+  const shares = overview.data.harnesses.filter((h) => h.tokens > 0);
+  overview.scale = Fmt.marbleScale(shares, Math.min(marbleCapacity(), slots.length));
+  const row = document.getElementById("harness-row");
+  const detail = document.getElementById("total-detail");
+  if (detail && !(row && row.classList.contains("focusing"))) {
+    detail.textContent = rangeCaption(overview.data, overview.scale);
+  }
+  const marbles = [];
+  for (const { harness, count } of overview.scale.counts) {
+    for (let i = 0; i < count; i++) marbles.push(Fmt.harnessColor(harness));
+  }
   let seed = 7;
   const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
   const shuffled = marbles.map((c) => [rand(), c]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
-  const out = [];
-  let row = 0, i = 0;
-  while (i < shuffled.length && row < 40) {
-    const y = height - r - 1 - row * r * 1.75;
-    if (y < r) break;
-    const offset = row % 2 ? r : 0;
-    const shrink = row * r * 0.9;
-    for (let x = r + offset + shrink; x < width - r - shrink && i < shuffled.length; x += r * 2) {
-      if (Math.abs(x - mid) < clear && y < height - r * 2.5) continue;
-      out.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r - 0.6}" fill="${shuffled[i++]}" opacity=".9"/>`);
-    }
-    row++;
-  }
-  svg.innerHTML = out.join("");
+  svg.innerHTML = shuffled.slice(0, slots.length).map((fill, i) =>
+    `<circle cx="${slots[i][0].toFixed(1)}" cy="${slots[i][1].toFixed(1)}" r="${r - 0.6}" fill="${fill}" opacity=".9"/>`).join("");
 }
 
 function breakdownCard(d) {
@@ -366,7 +372,11 @@ function drawHeatmap() {
   for (let w = 0; w < weeks; w++) {
     const week = days.slice(w * 7, w * 7 + 7);
     const month = week.length ? dayLabel(week[0].date).split(" ")[0] : "";
-    cells.push(`<span class="month">${month !== lastMonth ? month : ""}</span>`);
+    // A label is wider than its column, so the first week's gives way when
+    // the next week already starts another month.
+    const next = days[(w + 1) * 7] ? dayLabel(days[(w + 1) * 7].date).split(" ")[0] : month;
+    const show = month !== lastMonth && !(w === 0 && next !== month);
+    cells.push(`<span class="month">${show ? month : ""}</span>`);
     lastMonth = month;
     for (const day of week) {
       cells.push(day.future ? '<span></span>'
