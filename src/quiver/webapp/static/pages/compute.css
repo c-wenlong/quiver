@@ -1,0 +1,115 @@
+/* Compute. The series colours are the Mac app's ThermalComponent
+ * colours (slots 1 to 7 of its categorical palette), light and dark. */
+:root {
+  --series-cpu: #2a78d6; --series-gpu: #eb6834; --series-memory: #1baf7a; --series-ssd: #eda100;
+  --series-battery: #e87ba4; --series-airflow: #008300; --series-display: #6250d6;
+  --fan-shade: rgba(115,115,115,.14);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --series-cpu: #3987e5; --series-gpu: #d95926; --series-memory: #199e70; --series-ssd: #c98500;
+    --series-battery: #d55181; --series-display: #9085e9; --fan-shade: rgba(163,163,163,.14);
+  }
+}
+:root[data-theme="dark"] {
+  --series-cpu: #3987e5; --series-gpu: #d95926; --series-memory: #199e70; --series-ssd: #c98500;
+  --series-battery: #d55181; --series-display: #9085e9; --fan-shade: rgba(163,163,163,.14);
+}
+
+.compute-page .logo.big { width: 20px; height: 20px; }
+/* Wrappers that keep their children in the parent's flex gap. */
+.compute-part { display: contents; }
+.compute-totals, .compute-machine { margin: 0; }
+.compute-machine { color: var(--text-muted); }
+
+/* Harness cards: a header button that folds the rows away. */
+.compute-harness { gap: 0; }
+.compute-head {
+  display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: transparent;
+  padding: 0; text-align: left; cursor: pointer; min-width: 0;
+}
+.compute-head.idle { cursor: default; }
+.compute-head .card-title { flex: none; }
+.compute-figures { flex: 1; min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compute-head .chevron { flex: none; font-size: 12px; width: 12px; text-align: center; }
+.compute-rows { display: flex; flex-direction: column; }
+.compute-harness .compute-rows { margin-top: 10px; }
+.compute-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto 52px; gap: 12px; align-items: center;
+  padding: 9px 0; border-top: 1px solid var(--border);
+}
+.compute-rows > .compute-row:first-child { border-top: 0; }
+.compute-row.orphan { grid-template-columns: minmax(0, 1fr) auto; padding: 10px 0; }
+.compute-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.compute-name { display: flex; align-items: center; gap: 6px; font-size: 13px; min-width: 0; }
+.compute-mem { color: var(--text-primary); text-align: right; }
+.compute-cpu { text-align: right; }
+.compute-expand {
+  display: flex; align-items: center; gap: 6px; border: 0; border-top: 1px solid var(--border);
+  background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; padding: 10px 0 0;
+}
+.compute-expand:hover { color: var(--text-primary); }
+.compute-expand .chevron { margin-left: auto; }
+
+.compute-empty { flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.compute-empty-label { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 13px; }
+.compute-empty-label svg { width: 15px; height: 15px; flex: none; }
+.compute-button {
+  display: inline-flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px;
+  border: 1px solid var(--border-strong); background: var(--subtle); color: var(--text-primary);
+  font-size: 12px; font-weight: 500; text-decoration: none; cursor: pointer;
+}
+.compute-button:hover { background: var(--tab-hover); }
+
+/* Trend card */
+.compute-trend-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.compute-trend-head .tabs { flex: 1 1 auto; min-width: 0; }
+.compute-trend-head select.field { width: 150px; flex: none; }
+.compute-placeholder { min-height: 180px; display: grid; place-items: center; text-align: center; margin: 0; }
+.compute-chart { position: relative; min-height: 180px; }
+.compute-chart svg { display: block; overflow: visible; }
+.compute-chart .grid { stroke: var(--border); stroke-width: 1; }
+.compute-chart .axis { fill: var(--text-secondary); font-size: 10px; }
+.compute-chart .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.compute-chart .flag { stroke: var(--warning); stroke-width: 1; stroke-dasharray: 4 4; }
+.compute-chart .flag-label { fill: var(--warning); font-size: 12px; }
+.compute-chart .end-label { fill: var(--text-secondary); font-size: 12px; }
+.compute-chart .hover-rule { stroke: var(--border-strong); stroke-width: 1; }
+.compute-chart .fan-shade { fill: var(--fan-shade); }
+.compute-chart .end-icon { position: absolute; width: 16px; height: 16px; pointer-events: none; }
+.compute-chart .end-icon .logo { display: block; }
+.compute-bubble[hidden] { display: none; }
+.compute-bubble { display: flex; flex-direction: column; gap: 4px; min-width: 120px; background: var(--panel); }
+.compute-bubble .bubble-row { display: grid; grid-template-columns: 12px auto minmax(0, 1fr); gap: 6px; align-items: center; }
+.compute-bubble .bubble-row .num { text-align: right; padding-left: 12px; }
+.compute-page .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+.compute-page .shade, .compute-bubble .shade {
+  width: 12px; height: 10px; border-radius: 2px; display: inline-block; background: var(--fan-shade);
+}
+.compute-bubble .shade { width: 8px; height: 8px; background: transparent; border: 1px solid var(--border-strong); }
+.compute-bubble .shade.up { background: var(--fan-shade); }
+
+.compute-legend { display: flex; flex-wrap: wrap; gap: 6px; }
+.compute-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 12px;
+  border: 1px solid var(--border); background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer;
+}
+.compute-chip.on { background: var(--subtle); color: var(--text-primary); }
+.compute-chip .dot { border: 1px solid var(--border-strong); }
+.compute-chip.on .dot { border-color: transparent; }
+.compute-chip.key { border-color: transparent; cursor: default; }
+
+/* Settings sheet */
+.compute-setting { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center;
+  padding: 10px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.compute-setting-control { display: flex; gap: 6px; }
+.compute-setting-control input.field { width: 64px; text-align: right; }
+.compute-setting-control select.field { width: 96px; }
+
+@media (max-width: 720px) {
+  .compute-head { flex-wrap: wrap; }
+  .compute-figures { order: 3; flex-basis: 100%; text-align: left; white-space: normal; padding-left: 30px; }
+  .compute-head .chevron { margin-left: auto; }
+  .compute-trend-head select.field { width: auto; }
+  .compute-setting { grid-template-columns: minmax(0, 1fr); }
+}
