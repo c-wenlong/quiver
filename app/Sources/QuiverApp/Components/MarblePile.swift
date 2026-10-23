@@ -59,6 +59,8 @@ final class MarbleScene: SKScene {
     private var queue: [String] = []
     private var lastDrop: TimeInterval = 0
     private var lastUpdate: TimeInterval = 0
+    /// Set on wake, so the next update doesn't count the paused time.
+    private var resumed = true
     private var textures: [String: SKTexture] = [:]
     private lazy var shade = MarbleArt.shading(radius: Self.radius).map(SKTexture.init(cgImage:)) ?? SKTexture()
     /// Frames in a row with nothing moving or fading; the view pauses after
@@ -163,8 +165,10 @@ final class MarbleScene: SKScene {
             lastDrop = currentTime
             add(harness)
         }
-        // Capped so the first frame after a pause isn't one giant step.
-        let elapsed = min(max(currentTime - lastUpdate, 0), 1.0 / 30)
+        // The first frame after a pause would count the whole pause, so it
+        // takes one 60fps frame; after that the real time, even under load.
+        let elapsed = resumed ? 1.0 / 60 : max(currentTime - lastUpdate, 0)
+        resumed = false
         lastUpdate = currentTime
         let ease = CGFloat(1 - exp(-elapsed / Self.fadeTime))
         let clear = CGRect(x: clearRect.minX, y: size.height - clearRect.maxY,
@@ -202,6 +206,7 @@ final class MarbleScene: SKScene {
 
     private func wake() {
         quietFrames = 0
+        if view?.isPaused ?? true { resumed = true }
         view?.isPaused = false
     }
 }
