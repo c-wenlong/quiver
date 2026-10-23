@@ -9,6 +9,7 @@ the network: the poller gets a fake transport and a fake clock.
 
 import copy
 import datetime
+import http.client
 import json
 import ssl
 import tempfile
@@ -455,6 +456,15 @@ class TestPoller(PollerBase):
         self.assertIs(poller.newer(early, late), late)
         self.assertIs(poller.newer(late, early), late)
         self.assertIs(poller.newer(None, early), early)
+
+    def test_a_failing_check_never_wedges_the_page(self):
+        self.transport.replies.append(RuntimeError("bug"))
+        self.transport.replies.append(http.client.IncompleteRead(b"{"))
+        p = self.make()
+        self.assertEqual(self.one(p, "npm").problem, "Couldn't read status.npmjs.org")
+        self.clock.now += 301
+        self.assertEqual(self.one(p, "npm").problem, "Couldn't reach status.npmjs.org")
+        self.assertEqual(len(self.transport.requests), 2)
 
     def test_google_cloud_feed(self):
         self.transport.reply(200, open_gemini_incident())

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import datetime
 import email.utils
+import http.client
 import json
 import os
 import ssl
@@ -302,14 +303,19 @@ class StatusPoller:
 
     def _run(self, service: StatusService, attempt: Entry, flight: _Flight) -> None:
         try:
-            entry = self._check(service, attempt)
-        except Exception:  # a parser or transport bug must not wedge the flight
-            entry = replace(attempt, problem=f"Couldn't read {service.host}", problem_until=None)
-        with self._lock:
-            self._save({service.id: entry})
-            if self._in_flight.get(service.id) is flight:
-                del self._in_flight[service.id]
-        flight.done.set()
+            try:
+                entry = self._check(service, attempt)
+            except Exception:  # a parser or transport bug must not wedge the flight
+                entry = replace(attempt, problem=f"Couldn't read {service.host}", problem_until=None)
+            with self._lock:
+                self._save({service.id: entry})
+        finally:
+            # Whatever happened, the page is no longer in flight, or no
+            # later load would ever ask it again.
+            with self._lock:
+                if self._in_flight.get(service.id) is flight:
+                    del self._in_flight[service.id]
+            flight.done.set()
 
     def _check(self, service: StatusService, entry: Entry) -> Entry:
         """One request, folded into the page's entry."""
@@ -324,7 +330,9 @@ class StatusPoller:
 
         try:
             response = self._transport(service.feed_url, headers, self._timeout)
-        except (OSError, ValueError):
+        except (OSError, ValueError, http.client.HTTPException):
+            # HTTPException: a truncated body or a garbled status line, which
+            # are not OSErrors but mean the same as a dropped connection.
             entry.problem, entry.problem_until = f"Couldn't reach {service.host}", None
             return entry
         # Read after the answer: a Retry-After counts from when it arrived,

@@ -35,7 +35,9 @@ function statusLogo(id) {
 /* Foundation's .relative(presentation: .named): "now", "5 minutes ago",
  * "yesterday". */
 function statusRelative(epoch) {
-  const diff = epoch - Date.now() / 1000;
+  // Every time shown this way is past; a hub clock a little ahead of this
+  // browser's must not read "in 2 minutes".
+  const diff = Math.min(0, epoch - Date.now() / 1000);
   const abs = Math.abs(diff);
   const rtf = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" });
   for (const [unit, size] of [["year", 31536000], ["month", 2592000], ["week", 604800],
