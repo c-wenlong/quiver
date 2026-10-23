@@ -315,6 +315,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **OpenCode 2.x sessions show up again.** OpenCode 2.x writes new
+  sessions only to `session_v2` and their turns only to
+  `session_message`, so every session made since the upgrade was missing
+  from `swe session`, search, status, transcripts, the phone app and
+  usage. swe and the Mac app now read both stores, each session and
+  reply once.
+
 - **Quiver switches pages at once.** Clicking a sidebar row or pressing
   ⌘1 to ⌘9 used to keep the old page up for 70 to 460 ms while the new
   page's rows were laid out. The new page's header now draws in the first

@@ -60,7 +60,8 @@ enum DatabaseSources {
     // MARK: - OpenCode
 
     /// `~/.local/share/opencode/opencode.db`: one `message` row per message,
-    /// its JSON `data` carrying role, model, cost and token counts. Messages
+    /// its JSON `data` carrying role, model, cost and token counts, plus the
+    /// `session_message` rows OpenCode 2.x writes instead. Messages
     /// are rewritten while they stream, so the watermark is `time_updated`
     /// and the key is the message id (the larger total wins).
     ///
@@ -81,6 +82,7 @@ enum DatabaseSources {
         let watermark = try watermark(metaKey, fingerprint, store: store)
 
         let source = try passed ?? reading { try openReadOnly(at: url.path) }
+        let tables = try reading { try tableNames(in: source) }
         let statement = try reading { try source.prepare("""
             SELECT m.id, m.session_id, m.time_created, m.time_updated, s.directory,
                 json_extract(m.data, '$.modelID'), json_extract(m.data, '$.cost'),
@@ -88,8 +90,9 @@ enum DatabaseSources {
                 json_extract(m.data, '$.tokens.reasoning'), json_extract(m.data, '$.tokens.cache.read'),
                 json_extract(m.data, '$.tokens.cache.write'), json_extract(m.data, '$.tokens.total')
             FROM message m LEFT JOIN session s ON s.id = m.session_id
-            WHERE m.time_updated >= ? AND json_extract(m.data, '$.role') = 'assistant'
-            ORDER BY m.time_updated
+            WHERE m.time_updated >= ?1 AND json_extract(m.data, '$.role') = 'assistant'
+            \(tables.contains("session_message") ? openCodeV2Replies(hasSessionV2: tables.contains("session_v2")) : "")
+            ORDER BY 4
             """) }
         statement.bind([.int(watermark)])
         let accountHome = url.deletingLastPathComponent().path
@@ -125,6 +128,37 @@ enum DatabaseSources {
             throw error
         }
         return true
+    }
+
+    /// OpenCode 2.x writes new replies only to `session_message` (and new
+    /// sessions only to `session_v2`), naming the model `model.id` and
+    /// keeping no `tokens.total`: its counts are disjoint, like current
+    /// `message` rows. The 2.x migration copied old replies there under
+    /// their `message` ids, so those are left to the `message` half.
+    private static func openCodeV2Replies(hasSessionV2: Bool) -> String {
+        """
+        UNION ALL
+        SELECT sm.id, sm.session_id, sm.time_created, sm.time_updated,
+            \(hasSessionV2 ? "COALESCE(v.directory, s.directory)" : "s.directory"),
+            json_extract(sm.data, '$.model.id'), json_extract(sm.data, '$.cost'),
+            json_extract(sm.data, '$.tokens.input'), json_extract(sm.data, '$.tokens.output'),
+            json_extract(sm.data, '$.tokens.reasoning'), json_extract(sm.data, '$.tokens.cache.read'),
+            json_extract(sm.data, '$.tokens.cache.write'), NULL
+        FROM session_message sm LEFT JOIN session s ON s.id = sm.session_id
+            \(hasSessionV2 ? "LEFT JOIN session_v2 v ON v.id = sm.session_id" : "")
+        WHERE sm.time_updated >= ?1 AND sm.type = 'assistant'
+            AND NOT EXISTS (SELECT 1 FROM message m WHERE m.id = sm.id)
+        """
+    }
+
+    /// The tables `db` declares.
+    static func tableNames(in db: SQLiteDatabase) throws -> Set<String> {
+        let statement = try db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        var names: Set<String> = []
+        while try statement.step() {
+            if let name = statement.text(0) { names.insert(name) }
+        }
+        return names
     }
 
     // MARK: - Devin

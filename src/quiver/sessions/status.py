@@ -5,8 +5,9 @@ existed": Claude Code (transcript tail, live-pid registry, bg-job state),
 Cursor (terminal ``turn_ended`` record), Devin (main-chain head row in
 its SQLite store, plus the ``session_locks`` pid files for liveness),
 Codex (decisive ``event_msg`` in the rollout tail, with a
-``response_item`` fallback), OpenCode (last ``message`` row's ``finish``
-field in its SQLite store), Kilo (same drizzle schema, ``kilo.db``),
+``response_item`` fallback), OpenCode (the newest ``session_message``
+row 2.x writes, else the last legacy ``message`` row's ``finish`` field),
+Kilo (same drizzle schema, ``kilo.db``),
 Cline (the ``status``/``pid`` lifecycle fields in the session metadata
 file) and Pi (the trailing ``message`` record in the JSONL transcript).
 Every other harness shows ``-``.
@@ -26,7 +27,7 @@ import sqlite3
 import time
 
 from quiver.paths import session_status_cache_file_for
-from quiver.sessions import parse_cache
+from quiver.sessions import opencode_store, parse_cache
 from quiver.sessions.models import Session
 
 ACTIVE = "active"
@@ -478,8 +479,17 @@ def _probe_codex(session: Session, ctx: dict):
     return _walk_tail(path, _codex_walk) if path else (None, "")
 
 
+# v2 rows read from the newest back: enough to step over a run of
+# system / compaction bookkeeping to the turn's own records.
+_OPENCODE_V2_WINDOW = 50
+
+
 def _probe_opencode(session: Session, ctx: dict):
-    """(phase, text) from the session's last ``message`` row.
+    """(phase, text) from the session's last message.
+
+    OpenCode 2.x rows (``session_message``) go through
+    ``opencode_store.v2_phase``; a session with none reads its last
+    legacy ``message`` row.
 
     The drizzle schema keeps the payload in a JSON ``data`` column: a
     ``user`` head means the model has not replied, an assistant ``finish``
@@ -491,6 +501,11 @@ def _probe_opencode(session: Session, ctx: dict):
     if conn is None:
         return None, ""
     sid = session.session_id
+    # OpenCode 2.x keeps new turns only in ``session_message``; when the
+    # session has any there, the newest of them decides.
+    v2 = opencode_store.v2_rows(conn, sid, newest=_OPENCODE_V2_WINDOW)
+    if v2:
+        return opencode_store.v2_phase(v2)
     row = conn.execute(
         "SELECT id, data FROM message WHERE session_id = ? "
         "ORDER BY time_created DESC, id DESC LIMIT 1",
