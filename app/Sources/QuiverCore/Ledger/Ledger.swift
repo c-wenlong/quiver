@@ -160,6 +160,17 @@ public struct SessionUsage: Sendable, Equatable, Codable {
     public var lastTimestamp: Date
 }
 
+/// How far a full scan has got: every source item it listed up front
+/// (transcript files and databases), and how many it has finished.
+public struct ScanProgress: Sendable, Equatable {
+    public var filesDone: Int
+    public var filesTotal: Int
+    public init(filesDone: Int, filesTotal: Int) {
+        self.filesDone = filesDone
+        self.filesTotal = filesTotal
+    }
+}
+
 /// What a scan did.
 public struct ScanReport: Sendable, Equatable {
     public var filesRead = 0
@@ -275,36 +286,135 @@ public actor Ledger {
 
     // MARK: - Scanning
 
+    /// Publishes the running full scan's progress for `scanProgress()`.
+    /// Behind a lock so the Overview reads it without queueing on the actor.
+    private let progressState = OSAllocatedUnfairLock<ScanProgress?>(initialState: nil)
+    /// Bumped by every full scan; only the newest one writes progress, so
+    /// two overlapping sweeps never interleave their counts.
+    private var progressOwner = 0
+
+    /// The newest finished full scan's final progress. Tests read it.
+    private(set) var lastFullScanProgress: ScanProgress?
+
+    /// How far the running full scan has got, or nil when none is running.
+    /// Capped scans (`recentLimit`) report nothing: they are short, and
+    /// they run beside a full scan.
+    public nonisolated func scanProgress() -> ScanProgress? {
+        progressState.withLock { $0 }
+    }
+
+    /// Counts one source item done, when `owner` is still the newest full scan.
+    private func advanceProgress(_ owner: Int) {
+        guard owner != 0, owner == progressOwner else { return }
+        progressState.withLock { $0?.filesDone += 1 }
+    }
+
+    /// One index-pure source root's files, enumerated before any is read.
+    private struct IndexJob {
+        var source: SearchTranscriptSource
+        var harness: SearchDecoder.Harness
+        var cursorMeta: [String: URL]
+        var files: [URL]
+    }
+
     /// `recentLimit` caps the sweep to each source's newest files — the
     /// first N of each mtime-ordered list, sessions inside a database
     /// included — so a caller that only needs live sessions hot (the
     /// search index's reconcile tick) skips the backlog. Staleness checks
     /// run only on the kept files; the rest wait for an unlimited pass.
+    ///
+    /// Every source is enumerated before the first file is read, so a full
+    /// scan can publish "files done of total" through `scanProgress()`.
     @discardableResult
     public func scan(roots: LedgerRoots? = nil, recentLimit: Int? = nil) async throws -> ScanReport {
         let roots = roots ?? .standard()
         var report = ScanReport()
         var seen = Set<String>()
-        for home in roots.claudeHomes {
-            for file in Self.capped(
-                Self.jsonlFiles(under: home.appendingPathComponent("projects")),
-                recentLimit: recentLimit) {
+
+        let claudeFiles = roots.claudeHomes.map { home in
+            (home, Self.capped(Self.jsonlFiles(under: home.appendingPathComponent("projects")),
+                               recentLimit: recentLimit))
+        }
+        // Active sessions first, so a rollout that also sits in the archive
+        // is attributed to the live copy.
+        let codexFiles = roots.codexHomes.flatMap { home in
+            ["sessions", "archived_sessions"].map { directory in
+                (home, Self.capped(Self.jsonlFiles(under: home.appendingPathComponent(directory)),
+                                   recentLimit: recentLimit))
+            }
+        }
+        let openCodeDatabases = roots.openCodeDatabases.filter {
+            FileManager.default.fileExists(atPath: $0.path)
+        }
+        let devinDatabases = roots.devinDatabases.filter {
+            FileManager.default.fileExists(atPath: $0.path)
+        }
+        // Devin's transcripts are pretty-printed ATIF documents beside
+        // `sessions.db`, not JSONL — they feed the index only, never the
+        // ledger's records, so they are listed only while an indexer is set.
+        let devinTranscripts: [URL] = indexer == nil ? [] : roots.devinDatabases.flatMap { database in
+            Self.capped(
+                Self.files(under: database.deletingLastPathComponent().appendingPathComponent("transcripts"),
+                           suffix: ".json"),
+                recentLimit: recentLimit)
+        }
+        let piFiles = roots.piHomes.map { home in
+            (home, Self.capped(Self.jsonlFiles(under: home.appendingPathComponent("agent/sessions")),
+                               recentLimit: recentLimit))
+        }
+        let droidFiles = roots.droidHomes.map { home in
+            (home, Self.capped(Self.files(under: home.appendingPathComponent("sessions"),
+                                          suffix: ".settings.json"),
+                               recentLimit: recentLimit))
+        }
+        // `<id>/<id>.json`: the stem must equal its session directory.
+        // Filter before the cap — sibling `.json` files that fail it must
+        // not crowd sessions out of a limited window.
+        let clineFiles = roots.clineHomes.map { home in
+            (home, Self.capped(
+                Self.files(under: home.appendingPathComponent("data/sessions"), suffix: ".json")
+                    .filter {
+                        $0.deletingPathExtension().lastPathComponent
+                            == $0.deletingLastPathComponent().lastPathComponent
+                    },
+                recentLimit: recentLimit))
+        }
+        let indexJobs = indexer == nil ? [] : Self.indexJobs(roots: roots, recentLimit: recentLimit)
+
+        var owner = 0
+        if recentLimit == nil {
+            progressOwner += 1
+            owner = progressOwner
+            let fileLists: [[URL]] = claudeFiles.map(\.1) + codexFiles.map(\.1) + piFiles.map(\.1)
+                + droidFiles.map(\.1) + clineFiles.map(\.1) + indexJobs.map(\.files)
+                + [devinTranscripts]
+            // OpenCode databases are visited twice with an indexer: once to
+            // index their sessions, once for tokens.
+            let total: Int = fileLists.reduce(0) { $0 + $1.count }
+                + openCodeDatabases.count * (indexer == nil ? 1 : 2) + devinDatabases.count
+            progressState.withLock { $0 = ScanProgress(filesDone: 0, filesTotal: total) }
+        }
+        defer {
+            if owner != 0, owner == progressOwner {
+                lastFullScanProgress = progressState.withLock { $0 }
+                progressState.withLock { $0 = nil }
+            }
+        }
+
+        for (home, files) in claudeFiles {
+            for file in files {
                 if Task.isCancelled { throw CancellationError() }
                 try scanFile(file, accountHome: home.path, parser: ClaudeFileParser.self, seen: &seen, report: &report)
+                advanceProgress(owner)
                 await Task.yield()
             }
         }
-        for home in roots.codexHomes {
-            // Active sessions first, so a rollout that also sits in the archive
-            // is attributed to the live copy.
-            for directory in ["sessions", "archived_sessions"] {
-                for file in Self.capped(
-                    Self.jsonlFiles(under: home.appendingPathComponent(directory)),
-                    recentLimit: recentLimit) {
-                    if Task.isCancelled { throw CancellationError() }
-                    try scanFile(file, accountHome: home.path, parser: CodexFileParser.self, seen: &seen, report: &report)
-                    await Task.yield()
-                }
+        for (home, files) in codexFiles {
+            for file in files {
+                if Task.isCancelled { throw CancellationError() }
+                try scanFile(file, accountHome: home.path, parser: CodexFileParser.self, seen: &seen, report: &report)
+                advanceProgress(owner)
+                await Task.yield()
             }
         }
         if let indexer {
@@ -314,162 +424,120 @@ public actor Ledger {
             // token scan below so its fingerprint check compares against
             // the last scan's committed value — after `scanOpenCode` runs,
             // the stored fingerprint is always the current one.
-            for database in roots.openCodeDatabases
-            where FileManager.default.fileExists(atPath: database.path) {
+            for database in openCodeDatabases {
                 try indexOpenCodeSessions(database, indexer: indexer,
                                           recentLimit: recentLimit, report: &report)
+                advanceProgress(owner)
                 await Task.yield()
             }
         }
-        for database in roots.openCodeDatabases where FileManager.default.fileExists(atPath: database.path) {
+        for database in openCodeDatabases {
             report.databasesRead += try scanSource(database, kind: HarnessMark("opencode").name,
                                                    scan: { try DatabaseSources.scanOpenCode($0, store: $1) },
                                                    report: &report)
+            advanceProgress(owner)
         }
-        for database in roots.devinDatabases where FileManager.default.fileExists(atPath: database.path) {
+        for database in devinDatabases {
             report.databasesRead += try scanSource(database, kind: HarnessMark("devin").name,
                                                    scan: DatabaseSources.scanDevin, report: &report)
+            advanceProgress(owner)
         }
         if let indexer {
-            // Devin's transcripts are pretty-printed ATIF documents beside
-            // `sessions.db`, not JSONL — they feed the index only, never the
-            // ledger's records, so the loop runs only while an indexer is set.
-            for database in roots.devinDatabases {
-                let transcripts = database.deletingLastPathComponent()
-                    .appendingPathComponent("transcripts")
-                for file in Self.capped(
-                    Self.files(under: transcripts, suffix: ".json"),
-                    recentLimit: recentLimit) {
-                    if Task.isCancelled { throw CancellationError() }
-                    indexWholeFile(file, harness: .devin, indexer: indexer, report: &report)
-                    await Task.yield()
-                }
-            }
-        }
-        for home in roots.piHomes {
-            for file in Self.capped(
-                Self.jsonlFiles(under: home.appendingPathComponent("agent/sessions")),
-                recentLimit: recentLimit) {
+            for file in devinTranscripts {
                 if Task.isCancelled { throw CancellationError() }
-                try scanFile(file, accountHome: home.path, parser: PiFileParser.self, seen: &seen, report: &report)
+                indexWholeFile(file, harness: .devin, indexer: indexer, report: &report)
+                advanceProgress(owner)
                 await Task.yield()
             }
         }
-        for home in roots.droidHomes {
-            for file in Self.capped(
-                Self.files(under: home.appendingPathComponent("sessions"), suffix: ".settings.json"),
-                recentLimit: recentLimit) {
+        for (home, files) in piFiles {
+            for file in files {
+                if Task.isCancelled { throw CancellationError() }
+                try scanFile(file, accountHome: home.path, parser: PiFileParser.self, seen: &seen, report: &report)
+                advanceProgress(owner)
+                await Task.yield()
+            }
+        }
+        for (home, files) in droidFiles {
+            for file in files {
                 if Task.isCancelled { throw CancellationError() }
                 try scanSessionFile(file, accountHome: home.path,
                                     watched: SessionTotalsFile.droidTranscript(for: file),
                                     parse: { try SessionTotalsFile.droid(settings: $0, accountHome: home.path) },
                                     report: &report)
+                advanceProgress(owner)
                 await Task.yield()
             }
         }
-        for home in roots.clineHomes {
-            // `<id>/<id>.json`: the stem must equal its session directory.
-            // Filter before the cap — sibling `.json` files that fail it
-            // must not crowd sessions out of a limited window.
-            for file in Self.capped(
-                Self.files(under: home.appendingPathComponent("data/sessions"), suffix: ".json")
-                    .filter {
-                        $0.deletingPathExtension().lastPathComponent
-                            == $0.deletingLastPathComponent().lastPathComponent
-                    },
-                recentLimit: recentLimit) {
+        for (home, files) in clineFiles {
+            for file in files {
                 if Task.isCancelled { throw CancellationError() }
                 try scanSessionFile(file, accountHome: home.path,
                                     parse: { try SessionTotalsFile.cline(session: $0, accountHome: home.path) },
                                     report: &report)
+                advanceProgress(owner)
                 await Task.yield()
             }
         }
         if let indexer {
-            // Index-pure transcript sources: `SearchTranscriptSource` rows
-            // with a decoder whose files feed no ledger records (cursor's
-            // usage is an API feed; droid and cline ride `scanSessionFile`
-            // above for totals only). `transcriptRoots` holds the default
-            // root set; the explicit fields win wherever they overlap —
-            // claude/codex/pi/devin's passes above already enumerate them.
-            var indexRoots = roots.transcriptRoots
-            indexRoots[.cursor] = roots.cursorProjects
-            indexRoots[.droid] = roots.droidHomes.flatMap {
-                [$0.appendingPathComponent("sessions"),
-                 $0.appendingPathComponent("projects")]
-            }
-            indexRoots[.cline] = roots.clineSessions
-            for source in SearchTranscriptSource.table() where source.harness != nil {
-                guard let harness = source.harness,
-                      let sourceRoots = indexRoots[harness] else { continue }
-                for root in sourceRoots {
-                    // Cursor's chat id → meta.json index, one per scan per
-                    // chats root: the `chats` tree is the `projects` root's
-                    // sibling (Orca's `cursorChatsRootFromTranscriptPath`,
-                    // resolved on the configured root rather than per file).
-                    let cursorMeta = harness == .cursor
-                        ? Self.cursorChatMetaIndex(under: root
-                            .deletingLastPathComponent().appendingPathComponent("chats"))
-                        : [:]
-                    for file in Self.capped(
-                        Self.transcriptFiles(under: root, source: source),
-                        recentLimit: recentLimit) {
-                        if Task.isCancelled { throw CancellationError() }
-                        let pathSessionID = source.sessionIDFromPath?(file)
-                        switch harness {
-                        case .cline:
-                            indexClineFile(file, indexer: indexer, report: &report)
-                        case .rovo:
-                            indexRovoFile(file, sessionID: pathSessionID,
-                                          indexer: indexer, report: &report)
-                        case .kiro:
-                            indexKiroFile(file, sessionID: pathSessionID,
-                                          indexer: indexer, report: &report)
-                        case .grok:
-                            indexGrokFile(file, sessionID: pathSessionID,
-                                          indexer: indexer, report: &report)
-                        case .kimi:
-                            indexKimiFile(file, sessionID: pathSessionID,
-                                          indexer: indexer, report: &report)
-                        case .cursor:
-                            indexCursorFile(file, metaIndex: cursorMeta,
-                                            indexer: indexer, report: &report)
-                        case .antigravity:
-                            if file.lastPathComponent == "transcript_full.jsonl" {
-                                // The compact sibling's predicate flipped to
-                                // skip the moment this file existed — its
-                                // already-indexed row would otherwise keep
-                                // answering searches forever.
-                                let compact = file.deletingLastPathComponent()
-                                    .appendingPathComponent("transcript.jsonl")
-                                try? indexer.store.removeFile(
-                                    compact.resolvingSymlinksInPath().path)
-                            }
-                            indexJSONLFile(file, harness: harness,
-                                           sessionID: pathSessionID,
-                                           indexer: indexer, report: &report)
-                        case .gemini:
-                            // Orca's `parseGeminiSessionFile` dispatches on
-                            // the extension: `.jsonl` streams, the legacy
-                            // `.json` checkpoint reads whole.
-                            if file.pathExtension.lowercased() == "jsonl" {
-                                indexJSONLFile(file, harness: harness,
-                                               indexer: indexer, report: &report)
-                            } else {
-                                indexWholeFile(file, harness: harness,
-                                               indexer: indexer, report: &report)
-                            }
-                        default:
-                            if source.isJSONL {
-                                indexJSONLFile(file, harness: harness, sessionID: pathSessionID,
-                                               indexer: indexer, report: &report)
-                            } else {
-                                indexWholeFile(file, harness: harness, sessionID: pathSessionID,
-                                               indexer: indexer, report: &report)
-                            }
+            for job in indexJobs {
+                for file in job.files {
+                    if Task.isCancelled { throw CancellationError() }
+                    let pathSessionID = job.source.sessionIDFromPath?(file)
+                    switch job.harness {
+                    case .cline:
+                        indexClineFile(file, indexer: indexer, report: &report)
+                    case .rovo:
+                        indexRovoFile(file, sessionID: pathSessionID,
+                                      indexer: indexer, report: &report)
+                    case .kiro:
+                        indexKiroFile(file, sessionID: pathSessionID,
+                                      indexer: indexer, report: &report)
+                    case .grok:
+                        indexGrokFile(file, sessionID: pathSessionID,
+                                      indexer: indexer, report: &report)
+                    case .kimi:
+                        indexKimiFile(file, sessionID: pathSessionID,
+                                      indexer: indexer, report: &report)
+                    case .cursor:
+                        indexCursorFile(file, metaIndex: job.cursorMeta,
+                                        indexer: indexer, report: &report)
+                    case .antigravity:
+                        if file.lastPathComponent == "transcript_full.jsonl" {
+                            // The compact sibling's predicate flipped to
+                            // skip the moment this file existed — its
+                            // already-indexed row would otherwise keep
+                            // answering searches forever.
+                            let compact = file.deletingLastPathComponent()
+                                .appendingPathComponent("transcript.jsonl")
+                            try? indexer.store.removeFile(
+                                compact.resolvingSymlinksInPath().path)
                         }
-                        await Task.yield()
+                        indexJSONLFile(file, harness: job.harness,
+                                       sessionID: pathSessionID,
+                                       indexer: indexer, report: &report)
+                    case .gemini:
+                        // Orca's `parseGeminiSessionFile` dispatches on
+                        // the extension: `.jsonl` streams, the legacy
+                        // `.json` checkpoint reads whole.
+                        if file.pathExtension.lowercased() == "jsonl" {
+                            indexJSONLFile(file, harness: job.harness,
+                                           indexer: indexer, report: &report)
+                        } else {
+                            indexWholeFile(file, harness: job.harness,
+                                           indexer: indexer, report: &report)
+                        }
+                    default:
+                        if job.source.isJSONL {
+                            indexJSONLFile(file, harness: job.harness, sessionID: pathSessionID,
+                                           indexer: indexer, report: &report)
+                        } else {
+                            indexWholeFile(file, harness: job.harness, sessionID: pathSessionID,
+                                           indexer: indexer, report: &report)
+                        }
                     }
+                    advanceProgress(owner)
+                    await Task.yield()
                 }
             }
         }
@@ -481,6 +549,41 @@ public actor Ledger {
             }
         }
         return report
+    }
+
+    /// Index-pure transcript sources: `SearchTranscriptSource` rows with a
+    /// decoder whose files feed no ledger records (cursor's usage is an API
+    /// feed; droid and cline ride `scanSessionFile` for totals only).
+    /// `transcriptRoots` holds the default root set; the explicit fields win
+    /// wherever they overlap — claude/codex/pi/devin's passes already
+    /// enumerate them.
+    private static func indexJobs(roots: LedgerRoots, recentLimit: Int?) -> [IndexJob] {
+        var indexRoots = roots.transcriptRoots
+        indexRoots[.cursor] = roots.cursorProjects
+        indexRoots[.droid] = roots.droidHomes.flatMap {
+            [$0.appendingPathComponent("sessions"),
+             $0.appendingPathComponent("projects")]
+        }
+        indexRoots[.cline] = roots.clineSessions
+        var jobs: [IndexJob] = []
+        for source in SearchTranscriptSource.table() where source.harness != nil {
+            guard let harness = source.harness,
+                  let sourceRoots = indexRoots[harness] else { continue }
+            for root in sourceRoots {
+                // Cursor's chat id → meta.json index, one per scan per
+                // chats root: the `chats` tree is the `projects` root's
+                // sibling (Orca's `cursorChatsRootFromTranscriptPath`,
+                // resolved on the configured root rather than per file).
+                let cursorMeta = harness == .cursor
+                    ? cursorChatMetaIndex(under: root
+                        .deletingLastPathComponent().appendingPathComponent("chats"))
+                    : [:]
+                jobs.append(IndexJob(
+                    source: source, harness: harness, cursorMeta: cursorMeta,
+                    files: capped(transcriptFiles(under: root, source: source), recentLimit: recentLimit)))
+            }
+        }
+        return jobs
     }
 
     /// One index-pure transcript a database does not cover: read whole into

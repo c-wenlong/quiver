@@ -150,7 +150,7 @@ Phases in order. Phase 4 can run alongside 1 to 3.
 - [x] The release check calls the `c-wenlong/quiver` releases API, so the repo has to be public. (the repo is public)
 
 **Phase 5. Polish**
-- [ ] First ledger scan: show files done out of total, and partial results. A heavy user waits minutes behind a spinner.
+- [x] First ledger scan: show files done out of total, and partial results. A heavy user waits minutes behind a spinner.
 - [ ] Explain the Desktop and Documents folder prompt before it appears (first Sessions or Calendar load).
 - [ ] Don't start the Cursor, Devin cloud and Codex daily pollers for users without those harnesses.
 - [ ] Fan helper: offer it only on Macs with fans, remove it when Quiver is removed, and reinstall a stale helper binary after an update.
