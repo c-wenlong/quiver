@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   satellite agent verifies an https hub against the OS CA bundle when
   its Python ships none.
 
+- **Remote: the hub survives a restart.** `swe remote serve --install`
+  runs the hub as a macOS LaunchAgent that starts at login and restarts
+  it whenever it exits; `--uninstall` removes it. Under launchd the hub
+  waits for Tailscale instead of binding localhost, and `serve.log` now
+  has timestamped start and stop lines. A hub started with `nohup` used
+  to die on every reboot and stay down until someone noticed.
+
 - **Remote: satellites report usage, so a MacBook's quota shows on the
   hub.** `swe remote agent` posts the machine's `swe list --usage` rows
   every 5 minutes, and the hub keeps each machine's last report. The

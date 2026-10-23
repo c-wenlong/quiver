@@ -71,6 +71,10 @@ pair` prints `https://` links (the `quiver://` deep link gains
 Satellites dial the `https://` URL; when Python's default store has no
 CA certificates (python.org builds on macOS), the agent retries once
 against the OS bundle and keeps it, never skipping verification.
+On a Mac, `swe remote serve --install --public-url=URL` writes a
+LaunchAgent that runs the hub on `127.0.0.1` with that URL instead of
+`--tailnet`; on Linux, run the same `serve --public-url=URL` under a
+systemd user unit.
 
 ## Precedents
 
@@ -120,6 +124,7 @@ remote/
   hub.py         # http.server ThreadingHTTPServer: REST + SSE, device auth
   agent.py       # satellite daemon: dial hub, run local tail/inject
   notify.py      # needs-you/finished/error fan-out via self-hosted ntfy
+  launchd.py     # serve --install: the hub as a per-user LaunchAgent
   commands.py    # swe remote serve|agent|pair|attach|status — argv + print
 ```
 
@@ -266,6 +271,20 @@ remote), and the prompt references the path: `@`-ref syntax where the
 harness supports it, an inlined path otherwise. Caps: 20 MB per file,
 image/pdf/text only, swept after 7 days or at session end, whichever
 comes first.
+
+## Keeping the hub up — `launchd.py`
+
+A hub started from a shell dies with the login session, and nothing
+restarts it. `swe remote serve --install` writes
+`~/Library/LaunchAgents/com.cwenlong.quiver.remote-hub.plist` with
+`RunAtLoad` and `KeepAlive`, so the hub starts at login and launchd
+restarts it 15 s after it exits. The agent runs the same `swe` that
+installed it, with that shell's `PATH`, and logs to
+`~/.quiver/data/remote/serve.log` with timestamped start and stop lines.
+It runs `serve --tailnet`: with no Tailscale address yet (early in a
+login) the hub exits instead of binding localhost, and launchd retries.
+`--install` again restarts it; `--uninstall` stops and removes it. On
+Linux, run `swe remote serve` under a systemd unit instead.
 
 ## Satellite — `agent.py`
 

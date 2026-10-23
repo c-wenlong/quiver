@@ -640,6 +640,10 @@ to use their own login state and environment."""
   {c('cyan', 'swe remote serve --public-url=URL')}      Run behind tailscale serve: binds
                                             127.0.0.1, trusts serve's client
                                             headers, and hands phones URL.
+  {c('cyan', 'swe remote serve --install')}             Keep the hub running as a macOS
+                                            LaunchAgent: starts at login,
+                                            restarts if it exits. --uninstall
+                                            stops and removes it.
   {c('cyan', 'swe remote pair [--name=N]')}             Mint a one-time pairing token;
                                             prints the URL to open on the phone
                                             (and a QR when qrencode is installed).

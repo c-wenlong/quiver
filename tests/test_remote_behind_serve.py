@@ -268,6 +268,36 @@ class TestCommands(unittest.TestCase):
                                 "public_url": "https://box.ts.net:8477"})
         self.assertIn("https://box.ts.net:8477", out)
 
+    def test_install_keeps_public_url_and_loopback(self):
+        seen = {}
+
+        def fake_install(program, log_path, path_env):
+            seen["program"] = program
+            return Path("/h/Library/LaunchAgents/x.plist")
+
+        with patch.object(commands.sys, "platform", "darwin"), \
+                patch.object(commands.sys, "argv", ["/opt/swe/bin/swe"]), \
+                patch("quiver.remote.commands.os.access", return_value=True), \
+                patch.object(commands.launchd, "loaded_pid",
+                             return_value=(False, None)), \
+                patch.object(commands.launchd, "install", fake_install), \
+                patch.object(commands, "_probe", return_value=None) as probe:
+            rc, _, _ = _run(["serve", "--install",
+                             "--public-url=https://box.ts.net:8477"])
+        self.assertEqual(rc, 0)
+        # Behind serve the agent binds loopback, never waits on --tailnet.
+        self.assertEqual(seen["program"], [
+            "/opt/swe/bin/swe", "remote", "serve", "--host=127.0.0.1",
+            "--public-url=https://box.ts.net:8477",
+        ])
+        probe.assert_called_once_with("127.0.0.1", 8477, timeout=1.0)
+
+    def test_install_bad_public_url(self):
+        with patch.object(commands.sys, "platform", "darwin"):
+            rc, _, err = _run(["serve", "--install", "--public-url=nope"])
+        self.assertEqual(rc, 1)
+        self.assertIn("--public-url", err)
+
     def test_serve_bad_public_url(self):
         rc, _, err = _run(["serve", "--public-url=box.ts.net"])
         self.assertEqual(rc, 1)
