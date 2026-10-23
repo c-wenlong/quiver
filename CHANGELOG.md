@@ -21,6 +21,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replies for a minute, and are read only; merging, re-running, marking
   read and pinning stay in `swe gh` and the Mac app.
 
+- **Web app: Compute.** What the starred harnesses run on the hub
+  machine and what it costs it, read from Linux's `/proc` and `/sys`
+  (and `nvidia-smi` when present): the totals line, the hub's CPU,
+  memory, load and GPU, the RAM / CPU / GPU / Temperature trend card
+  with its interval picker, a card per running harness with its
+  processes, the Orphaned card, and the thresholds behind the gear.
+  Read only; quitting processes and fan control stay in the Mac app.
+  A non-Linux hub says the page needs Linux. docs/web-app/compute.md
+  has the sources and the differences.
+
+- **Web app: Service status.** The Mac app's Service status page in the
+  browser: a card per status page (Claude, OpenAI / Codex, GitHub /
+  Copilot, Cursor, Gemini, Devin, npm, Vercel, Cloudflare) with its
+  health, and behind "Show details" the outage summary, affected
+  components and open incidents with their latest update. The Swift
+  status code is ported to a stdlib `quiver.status` package (catalog,
+  Statuspage and Google Cloud parsers, poller): each page is asked at most
+  every five minutes (one for Refresh), with ETags and `Retry-After`
+  honoured, a per-request timeout, and readings cached in
+  `~/.quiver/cache/web-service-status.json`. Read only; pages added in the
+  Mac app stay there.
+
+- **Web app: Pricing and Models.** Pricing lists every model the hub's
+  ledger saw in the period, grouped by provider, with the price its name
+  resolves to per 1M tokens (input, output, cache read and write), where
+  that price came from (LiteLLM, Quiver, your own, free, billed by the
+  harness, or none), the charged tiers and the tokens, plus a list of
+  unpriced models; filter by harness and period. Models lists the models
+  you used with their lab, harnesses, list price and tokens, and searches
+  LiteLLM's price list. Read only: setting a price, and every Artificial
+  Analysis benchmark (which needs the app's API key), stay in the Mac app.
+  docs/web-app/pricing.md and models.md have the details.
+
 - **Web app: Plugins.** The Mac app's Plugins page in the browser, read
   only. Health lists, per harness, where Claude Code and Codex no longer
   match `~/.quiver/plugins`, each finding with the fix swe would run and a
