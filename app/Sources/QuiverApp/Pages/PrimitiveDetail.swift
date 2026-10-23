@@ -344,6 +344,10 @@ struct PartsCard: View {
     /// Whether `selected` can preview, checked off the main actor before
     /// any document is opened for it; nil while the check still runs.
     @State private var previewable: Bool?
+    /// Whether `selected` stays inside `root` once symlinks resolve,
+    /// rechecked off the main actor with `previewable` each time a file
+    /// opens; nil while the check runs, and editing stays off until true.
+    @State private var selectedInside: Bool?
     /// The running previewability check, kept so a new selection can
     /// cancel it before a stale result lands on the shared flag.
     @State private var previewTask: Task<Void, Never>?
@@ -380,19 +384,24 @@ struct PartsCard: View {
             previewTask?.cancel()
             guard let selected else {
                 previewable = nil
+                selectedInside = nil
                 return
             }
+            let root = root
             previewTask = Task {
-                // Size and type first, off the main actor: a document is
-                // only ever opened for a file that can preview.
-                let url = URL(fileURLWithPath: selected)
-                let canPreview = await Task.detached { PrimitiveTree.isTextFile(url) }.value
+                // Size, type and where the file really lives first, off
+                // the main actor on a GCD queue: a document is only ever
+                // opened for a file that can preview, and editing waits
+                // for the inside-the-folder check, since the file may have
+                // become an outward link since the tree was walked.
+                let check = await offMain { PrimitiveFileCheck(path: selected, root: root) }
                 // A check for an older selection can still finish after a
                 // newer one: publish only when this task was not cancelled
                 // and the path it checked is still the selected one.
                 guard !Task.isCancelled, self.selected == selected else { return }
-                previewable = canPreview
-                if canPreview { drafts.document(for: selected) }
+                selectedInside = check.isInside
+                previewable = check.canPreview
+                if check.canPreview { drafts.document(for: selected) }
             }
         }
         .sheet(isPresented: $sheetOpen, onDismiss: {
@@ -401,9 +410,10 @@ struct PartsCard: View {
             // with its edits.
             selected = nil
             previewable = nil
+            selectedInside = nil
         }) {
             if let selected {
-                PrimitiveFileSheet(path: selected, editable: editable && inside.contains(selected),
+                PrimitiveFileSheet(path: selected, editable: editable && selectedInside == true,
                                    previewable: previewable, document: drafts.documents[selected],
                                    drafts: drafts, windowSize: sheetSize, onSaved: onChanged)
             }
@@ -526,6 +536,7 @@ struct PartsCard: View {
     private func present(_ entry: PrimitiveTree.Entry) {
         selected = entry.previewPath
         previewable = nil
+        selectedInside = nil
         if let window = NSApp.keyWindow ?? NSApp.mainWindow {
             sheetSize = CGSize(width: max(900, window.frame.width * 0.9),
                                height: max(640, window.frame.height * 0.9))
@@ -618,8 +629,8 @@ struct NewPartMenu: View {
 struct PrimitiveFileSheet: View {
     var path: String
     /// The file may be edited: its folder is the user's and the file stays
-    /// inside it once symlinks resolve, which the parts card works out off
-    /// the main actor.
+    /// inside it once symlinks resolve, which the parts card rechecks off
+    /// the main actor each time the sheet opens.
     var editable: Bool
     /// nil while the off-actor size and type check still runs.
     var previewable: Bool?
@@ -747,7 +758,12 @@ struct PluginDetailView: View {
         var plugin: CatalogPlugin
         var market: PluginMarketplace
         var home: URL
+        /// `refresh`: a reload (trashing the manifest, say) can leave the
+        /// catalog's entry as it was.
+        var refresh: Int
     }
+    /// Bumped by `reload()` so the folders are worked out again.
+    @State private var refresh = 0
 
     private var plugin: CatalogPlugin { entry.row.plugin }
     /// The folders for the plugin on screen; nil while they are worked
@@ -786,7 +802,7 @@ struct PluginDetailView: View {
         // block, so the folders are worked out on a GCD queue (#580). A
         // new plugin or catalog reload cancels this task, and a cancelled
         // task's result is dropped.
-        .task(id: FolderInputs(plugin: plugin, market: market, home: home)) {
+        .task(id: FolderInputs(plugin: plugin, market: market, home: home, refresh: refresh)) {
             let plugin = plugin, market = market, home = home
             let worked = await offMain { PluginFolders(plugin: plugin, market: market, home: home) }
             guard !Task.isCancelled else { return }
@@ -934,6 +950,7 @@ struct PluginDetailView: View {
     }
 
     private func reload() {
+        refresh += 1
         Task {
             await app.pluginCatalog.load(swe: app.swe, for: app.swePath)
             await app.skills.load(for: app.swePath)
@@ -959,6 +976,9 @@ struct SkillDetailView: View {
     /// The skill's folders, worked out off the main actor, with the path
     /// they were worked out for; nil until the first lands.
     @State private var found: (path: String, folders: SkillFolders)?
+    /// Bumped by `reload()` so the folders are worked out again after a
+    /// change on disk that leaves the skill's path as it was.
+    @State private var refresh = 0
 
     private var root: URL { URL(fileURLWithPath: skill.path) }
     /// The folders for the skill on screen; nil while they are worked
@@ -1007,9 +1027,10 @@ struct SkillDetailView: View {
         }
         // `realpath` and `fileExists` on a synced or stale folder can
         // block, so the folders are worked out on a GCD queue (#580). A
-        // new skill cancels this task, and a cancelled task's result is
-        // dropped.
-        .task(id: [skill.path, home.path]) {
+        // new skill or a reload cancels this task, and a cancelled task's
+        // result is dropped. `refresh` is in the key because a reload
+        // (trashing SKILL.md, say) can leave the path unchanged.
+        .task(id: [skill.path, home.path, String(refresh)]) {
             let path = skill.path, home = home
             let worked = await offMain { SkillFolders(skillPath: path, home: home) }
             guard !Task.isCancelled else { return }
@@ -1051,6 +1072,7 @@ struct SkillDetailView: View {
     }
 
     private func reload() {
+        refresh += 1
         Task { await app.skills.load(for: app.swePath) }
     }
 }

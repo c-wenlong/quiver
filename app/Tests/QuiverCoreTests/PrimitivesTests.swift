@@ -153,6 +153,20 @@ final class PrimitiveHome {
         #expect(none.skillFile == nil && !none.skillFileEditable)
     }
 
+    @Test func aFileSwappedForAnOutwardLinkChecksAsOutside() throws {
+        let t = try PrimitiveHome()
+        let root = try t.dir(".quiver/plugins/development/eng")
+        let file = try t.write(".quiver/plugins/development/eng/commands/go.md", "go")
+        let before = PrimitiveFileCheck(path: file.path, root: root)
+        #expect(before.canPreview && before.isInside)
+        // The tree saw a plain file; it becomes a link out before opening.
+        let outside = try t.write("elsewhere/go.md", "away")
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.createSymbolicLink(atPath: file.path, withDestinationPath: outside.path)
+        let after = PrimitiveFileCheck(path: file.path, root: root)
+        #expect(after.canPreview && !after.isInside)
+    }
+
     @Test func pathsInsideLeavesOutALinkThatPointsOutside() throws {
         let t = try PrimitiveHome()
         let root = try t.dir(".quiver/plugins/development/eng")

@@ -54,6 +54,25 @@ public struct SkillFolders: Sendable, Equatable {
     }
 }
 
+/// What the file sheet needs to know about a picked file, checked when it
+/// opens rather than taken from the tree walk: a listed file may have been
+/// swapped for a link that points outside the folder since. Reads the
+/// file and resolves symlinks, so work it out off the main actor.
+public struct PrimitiveFileCheck: Sendable, Equatable {
+    /// Small enough and UTF-8, so it opens in the editor
+    /// (`PrimitiveTree.isTextFile`).
+    public let canPreview: Bool
+    /// The file stays inside `root` once symlinks resolve, so it may be
+    /// edited when the folder is the user's.
+    public let isInside: Bool
+
+    public init(path: String, root: URL,
+                resolve: (String) -> String = FolderOwners.realPath) {
+        canPreview = PrimitiveTree.isTextFile(URL(fileURLWithPath: path))
+        isInside = PrimitiveOwnership.isInside(path, root: root.path, resolve: resolve)
+    }
+}
+
 extension PrimitiveTree {
     /// The paths of every row, and of every file a row opens, that stay
     /// inside `root` once symlinks resolve: the ones a detail page may
