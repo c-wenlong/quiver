@@ -11,9 +11,13 @@ const harnessesPage = { data: null, gen: 0, scope: "in-use", query: "", expanded
 async function renderHarnesses() {
   const panel = document.getElementById("panel");
   const gen = ++harnessesPage.gen;
+  // Paint before awaiting, cached or loading, so the previous page's
+  // controls never stay on screen while the request runs.
   if (!harnessesPage.data) {
     panel.innerHTML = `<div class="page">${harnessesHeader()}<div class="card"><p class="empty">Reading the registry…</p></div></div>`;
     bindRefresh(renderHarnesses, () => { harnessesPage.data = null; });
+  } else {
+    paintHarnesses();
   }
   const { status, data } = await api("/v1/app/harnesses");
   if (gen !== harnessesPage.gen) return;
@@ -57,7 +61,7 @@ function paintHarnesses() {
   }
   const count = list.length + hidden;
   let body;
-  if (!all.length) body = `<p class="empty">No harnesses registered yet. Run <code>swe harness discover</code> on the hub.</p>`;
+  if (!all.length) body = `<p class="empty">No harnesses registered yet. Run <code>swe harness discover --apply</code> on the hub.</p>`;
   else if (!list.length) {
     body = `<p class="empty">${q ? "No harnesses match." : p.scope === "archived" ? "Nothing archived." : "Every harness is archived."}</p>`;
   } else {
@@ -138,9 +142,14 @@ async function renderAccounts(_id, refresh = false) {
   if (!accountsPage.data || refresh) {
     panel.innerHTML = `<div class="page">${accountsHeader(true)}<div class="card"><p class="empty">${
       accountsPage.data ? "Refreshing…" : "Reading limits…"}</p></div></div>`;
+  } else {
+    paintAccounts();
   }
+  startAccountsClock();
+  accountsPage.loading = true;
   const { status, data } = await api(`/v1/usage${refresh ? "?refresh=1" : ""}`);
   if (gen !== accountsPage.gen) return;
+  accountsPage.loading = false;
   if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
   if (status !== 200 || !data) return pageError(accountsHeader(false), status, data, () => renderAccounts("accounts", true));
   accountsPage.data = data;
@@ -179,6 +188,17 @@ function paintAccounts() {
   }
 }
 
+/* Ages, countdowns, staleness and the late-satellite note move with the
+ * clock, so the open page repaints them every 30 s (no provider call). */
+function startAccountsClock() {
+  if (accountsPage.timer) return;
+  accountsPage.timer = setInterval(() => {
+    const onPage = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "accounts";
+    if (!onPage) { clearInterval(accountsPage.timer); accountsPage.timer = null; return; }
+    if (accountsPage.data && !accountsPage.loading && !document.hidden) paintAccounts();
+  }, 30000);
+}
+
 /* A reading's windows, or one built from its top-level fields. */
 function readingWindows(rl) {
   if (rl.windows && rl.windows.length) return rl.windows;
@@ -189,12 +209,15 @@ function barColor(pct) {
   return pct >= 90 ? "var(--danger)" : pct >= 70 ? "var(--warning)" : "var(--accent-fill)";
 }
 
+/* ``now`` ages the machine's own stamps (as_of); a reset time is the
+ * provider's absolute clock, so it counts down on this browser's. */
 function windowRow(w, now) {
   const pct = Math.max(0, Math.min(100, Math.round(w.used_percent || 0)));
   const failed = !!w.unavailable;
+  const real = Date.now() / 1000;
   const right = failed
     ? (w.as_of ? `as of ${Fmt.ago(w.as_of, now)}` : "")
-    : (w.reset_at && w.reset_at > now ? `Resets ${Fmt.resetIn(w.reset_at, now)}` : "");
+    : (w.reset_at && w.reset_at > real ? `Resets ${Fmt.resetIn(w.reset_at, real)}` : "");
   return `<div class="limit${failed ? " failed" : ""}">
     <div class="limit-head"><span class="limit-label">${esc(Fmt.windowLabel(w.window))}</span>
       <span class="num">${failed && !w.as_of ? "—" : `${pct}%`}</span></div>

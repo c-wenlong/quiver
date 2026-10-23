@@ -129,6 +129,10 @@ async function renderOverview(_id, rescan = false) {
   if (!overview.data || rescan) {
     panel.innerHTML = `<div class="page">${overviewHeader(true)}<div class="card"><p class="empty">${
       overview.data ? "Rescanning…" : "Reading usage logs. The first scan can take a minute."}</p></div></div>`;
+  } else {
+    // Show what we have while the request runs, so the previous page's
+    // controls never stay on screen.
+    paintOverview();
   }
   const q = new URLSearchParams({ period: overview.period, tz: timeZone() });
   if (rescan) q.set("rescan", "1");
