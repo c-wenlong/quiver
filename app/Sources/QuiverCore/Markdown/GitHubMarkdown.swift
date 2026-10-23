@@ -491,7 +491,7 @@ public enum GitHubMarkdown {
                 newline(2); out += "---"; newline(2)
             case "blockquote":
                 if closing {
-                    prefixes.popLast(); newline(2)
+                    _ = prefixes.popLast(); newline(2)
                 } else {
                     newline(2); prefixes.append("> ")
                 }

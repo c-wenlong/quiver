@@ -343,7 +343,7 @@ struct ChartCard: View {
     static let inset: CGFloat = 6
     static let spacing: CGFloat = 8
     /// The space the hover card is laid out in.
-    private static let space = "modelChart"
+    private nonisolated static let space = "modelChart"
 
     @State private var width: CGFloat = 0
     /// Which bar's card shows, and the waits around it.

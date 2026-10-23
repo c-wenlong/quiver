@@ -314,12 +314,12 @@ public final class SkillsModel {
 
     public func link(_ root: SkillRoot) async {
         guard root.link == .notLinked else { return }
-        await change(root) { try await $0.link(root) }
+        _ = await change(root) { try await $0.link(root) }
     }
 
     public func unlink(_ root: SkillRoot) async {
         guard root.link == .linked else { return }
-        await change(root) { try await $0.unlink(root) }
+        _ = await change(root) { try await $0.unlink(root) }
     }
 
     /// What "Link all" can safely take on: loose folders that cost nothing
