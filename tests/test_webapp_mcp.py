@@ -48,6 +48,13 @@ class TestRedaction(unittest.TestCase):
             mcp.summary("npx", ["-y", "@x/server", "--api-key", "sk-abcdefghijklmnop", "--token=xyz"], None),
             "npx -y @x/server --api-key … --token=…")
 
+    def test_swe_credential_words_inside_a_shell_command(self):
+        self.assertEqual(mcp.summary("bash", ["-c", "exec server --cookie abcdefghijklmnop"], None),
+                         "bash -c exec server --cookie …")
+        self.assertEqual(mcp.summary("srv", ["--signature=abc", "--bearer", "abc", "--session-cookies=x"], None),
+                         "srv --signature=… --bearer … --session-cookies=…")
+        self.assertEqual(mcp.summary("srv", ["--headers", "X-Api: abc"], None), "srv --headers X-Api:…")
+
     def test_header_keeps_its_name(self):
         self.assertEqual(mcp.summary("srv", ["-H", "Authorization: Bearer x"], None), "srv -H Authorization:…")
         self.assertEqual(mcp.summary("srv", ["--header=X-Key: y"], None), "srv --header=X-Key:…")
@@ -173,6 +180,16 @@ class TestPayload(unittest.TestCase):
         folder = body["folders"]["items"][0]
         self.assertEqual((folder["name"], folder["group"], folder["used_by"]), ("linear-mcp", "custom", ["linear"]))
         self.assertEqual(body["machine"], "box")
+
+    def test_a_cookie_in_a_wrapped_command_stays_on_the_hub(self):
+        row = {"name": "wrapped", "transport": "stdio", "command": "bash",
+               "args": ["-c", "exec server --cookie abcdefghijklmnop"], "url": None,
+               "env_keys": [], "header_keys": [], "harnesses": ["claude"], "conflict": False,
+               "variants": [["claude"]], "secrets_missing": [], "in_hub": False}
+        with patch.object(mcp, "inventory", return_value=(["claude"], [(row, {})])):
+            body = mcp.get(_ctx(self.home), {})
+        self.assertNotIn("abcdefghijklmnop", json.dumps(body))
+        self.assertEqual(body["servers"][0]["summary"], "bash -c exec server --cookie …")
 
     def test_health_only_when_asked(self):
         with patch.object(mcp, "inventory", return_value=(["claude"], _pairs())), \

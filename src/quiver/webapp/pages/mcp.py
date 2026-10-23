@@ -27,6 +27,8 @@ from concurrent.futures import ThreadPoolExecutor, wait
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+from quiver.mcp.secrets import _SECRET_FLAG_RE
+
 # A health probe HEADs each URL with its own five-second timeout; the whole
 # check gets this long before a server still being probed reads "unknown".
 HEALTH_DEADLINE_S = 30.0
@@ -114,7 +116,8 @@ def probe_all(pairs: list[tuple[dict, object]],
 # of a command line or URL that may hold a secret, hidden as "…".
 
 _SECRET_FLAG_ENDINGS = ("token", "key", "secret", "password", "passwd", "credential",
-                        "credentials", "auth", "authorization", "header")
+                        "credentials", "auth", "authorization", "header", "headers")
+_HEADER_FLAG_ENDINGS = ("header", "headers")
 _KEY_PREFIXES = ("sk-", "sk_", "pk_", "rk_", "ghp_", "gho_", "ghu_", "ghs_", "ghr_",
                  "github_pat_", "glpat-", "xoxa-", "xoxb-", "xoxp-", "xoxs-", "xapp-",
                  "AIza", "AKIA", "ASIA", "hf_", "gsk_", "xai-", "pplx-", "r8_", "npm_")
@@ -161,7 +164,10 @@ def is_secret_flag(flag: str) -> bool:
     if flag == "-H":
         return True
     name = "".join(ch for ch in flag if ch not in "-_").lower()
-    return bool(name) and name.endswith(_SECRET_FLAG_ENDINGS)
+    # The app's endings, and anywhere in the name swe's own credential
+    # words (cookie, signature, bearer, passw...), whichever hides more.
+    return bool(name) and (name.endswith(_SECRET_FLAG_ENDINGS)
+                           or _SECRET_FLAG_RE.search(name) is not None)
 
 
 def shell_words(line: str) -> list[str]:
@@ -218,7 +224,7 @@ def command_words(command: str, args: list[str]) -> list[str]:
 
 def _secret_value(value: str, flag: str) -> str:
     flag = _bare(flag)
-    header = flag == "-H" or flag.lower().endswith("header")
+    header = flag == "-H" or flag.lower().endswith(_HEADER_FLAG_ENDINGS)
     if header and ":" in value:
         return value[:value.index(":") + 1] + "…"
     return "…"
