@@ -159,7 +159,12 @@ def _cmd_serve_launchd(flags: dict) -> int:
               file=sys.stderr)
         return 1
     if flags.get("--uninstall"):
-        if launchd.uninstall():
+        try:
+            removed = launchd.uninstall()
+        except RuntimeError as exc:
+            print(c("red", f"launchctl could not stop the hub: {exc}"), file=sys.stderr)
+            return 1
+        if removed:
             print(f"stopped the hub and removed {launchd.plist_path()}")
         else:
             print(c("dim", "no hub LaunchAgent was installed"))

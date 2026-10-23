@@ -276,6 +276,31 @@ class TestServe(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("systemd", err)
 
+    def test_uninstall_reports_a_failed_stop(self):
+        with patch.object(commands.sys, "platform", "darwin"), \
+             patch.object(commands.launchd, "uninstall", side_effect=RuntimeError("busy")):
+            rc, _, err = _run(["serve", "--uninstall"])
+        self.assertEqual(rc, 1)
+        self.assertIn("could not stop the hub: busy", err)
+
+    def test_install_needs_the_swe_executable(self):
+        with patch.object(commands.sys, "platform", "darwin"), \
+             patch.object(commands.sys, "argv", ["-c"]), \
+             patch("quiver.remote.commands.os.access", return_value=False):
+            rc, _, err = _run(["serve", "--install"])
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot find the swe executable", err)
+
+    def test_install_reports_a_failed_load(self):
+        with patch.object(commands.sys, "platform", "darwin"), \
+             patch.object(commands.sys, "argv", ["/opt/swe/bin/swe"]), \
+             patch("quiver.remote.commands.os.access", return_value=True), \
+             patch.object(commands.launchd, "loaded_pid", return_value=(True, 1)), \
+             patch.object(commands.launchd, "install", side_effect=RuntimeError("denied")):
+            rc, _, err = _run(["serve", "--install", "--host=100.1.2.3"])
+        self.assertEqual(rc, 1)
+        self.assertIn("could not load the hub: denied", err)
+
     def test_uninstall(self):
         with patch.object(commands.sys, "platform", "darwin"), \
              patch.object(commands.launchd, "uninstall", return_value=False):

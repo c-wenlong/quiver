@@ -82,10 +82,18 @@ def install(program: list[str], log_path: Path, path_env: str,
 
 
 def uninstall(home: Path | None = None, run: Runner = subprocess.run) -> bool:
-    """Stop the hub and remove the plist. False when none was installed."""
+    """Stop the hub and remove the plist. False when none was installed.
+
+    Raises RuntimeError, keeping the plist, when launchctl fails to stop
+    a job that is still loaded; a failed bootout of an absent job is
+    the normal "nothing to stop" case.
+    """
     path = plist_path(home)
     res = run(["launchctl", "bootout", f"{_domain()}/{LABEL}"],
               capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    if res.returncode != 0 and loaded_pid(run)[0]:
+        msg = (res.stderr or res.stdout or "").strip()
+        raise RuntimeError(msg or f"launchctl bootout exited {res.returncode}")
     existed = path.exists()
     if existed:
         path.unlink()

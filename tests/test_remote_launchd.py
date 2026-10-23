@@ -48,7 +48,14 @@ class LaunchdTest(unittest.TestCase):
         launchd.install(["/x/swe"], self.log, "", home=self.home, run=FakeLaunchctl())
         self.assertTrue(launchd.uninstall(home=self.home, run=FakeLaunchctl()))
         self.assertFalse(launchd.plist_path(self.home).exists())
-        self.assertFalse(launchd.uninstall(home=self.home, run=FakeLaunchctl(fail={"bootout"})))
+        # Absent job: bootout and print both fail, nothing to remove.
+        self.assertFalse(launchd.uninstall(home=self.home, run=FakeLaunchctl(fail={"bootout", "print"})))
+
+    def test_uninstall_keeps_the_plist_when_the_hub_will_not_stop(self):
+        launchd.install(["/x/swe"], self.log, "", home=self.home, run=FakeLaunchctl())
+        with self.assertRaisesRegex(RuntimeError, "boom"):
+            launchd.uninstall(home=self.home, run=FakeLaunchctl(fail={"bootout"}))
+        self.assertTrue(launchd.plist_path(self.home).exists())
 
     def test_loaded_pid_reads_launchctl_print(self):
         out = f"gui/501/{launchd.LABEL} = {{\n\tstate = running\n\tpid = 4807\n}}"
