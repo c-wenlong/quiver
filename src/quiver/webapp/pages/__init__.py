@@ -65,8 +65,16 @@ def load(name: str) -> ModuleType | None:
 
 
 def bundle(suffix: str) -> bytes:
-    """Every ``static/pages/*<suffix>`` file, in name order, as one body."""
+    """Every ``static/pages/*<suffix>`` file, in name order, as one body.
+
+    Each script runs in its own function scope, so two pages may both
+    define ``render`` or the same ``const`` without clobbering each other
+    or stopping the bundle; a page reaches the app only through the
+    globals it calls (``registerPage``, ``api``...)."""
     parts = []
     for path in sorted(STATIC.glob(f"*{suffix}")):
-        parts.append(f"/* {path.name} */\n".encode() + path.read_bytes())
+        body = path.read_bytes()
+        if suffix == ".js":
+            body = b"(function () {\n" + body + b"\n})();"
+        parts.append(f"/* {path.name} */\n".encode() + body)
     return b"\n".join(parts)

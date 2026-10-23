@@ -17,6 +17,8 @@ final class StatusItemController: NSObject {
     private var localClickMonitor: Any?
     private var sizeObservation: NSKeyValueObservation?
     private let model: AppModel
+    /// The screen the panel opened on, read by the Usage tab's height cap.
+    private let panelScreen = PanelScreen()
 
     init(model: AppModel) {
         self.model = model
@@ -24,7 +26,8 @@ final class StatusItemController: NSObject {
         let content = MenuBarContent(
             openMain: { [weak self] in self?.openMainWindow() },
             dismiss: { [weak self] in self?.close() })
-        let host = NSHostingController(rootView: content.environment(model))
+        let host = NSHostingController(
+            rootView: content.environment(model).environment(\.panelScreen, panelScreen))
         host.sizingOptions = [.preferredContentSize]
         panel = MenuBarPanel(contentViewController: host)
         panel.onEscape = { [weak self] in self?.close() }
@@ -90,7 +93,9 @@ final class StatusItemController: NSObject {
         let anchor = window.convertToScreen(button.frame)
         let size = panel.contentViewController?.preferredContentSize ?? CGSize(width: 340, height: 300)
         panel.setContentSize(size)
-        if NSScreen.screens.contains(where: { $0.frame.intersects(anchor) }) {
+        let anchorScreen = NSScreen.screens.first { $0.frame.intersects(anchor) }
+        panelScreen.screen = anchorScreen ?? NSScreen.main
+        if anchorScreen != nil {
             panel.setFrameTopLeftPoint(NSPoint(x: anchor.midX - size.width / 2, y: anchor.minY - 6))
         } else if let screen = NSScreen.main {
             // macOS hides a status item that overflows behind the notch or
@@ -151,6 +156,18 @@ final class StatusItemController: NSObject {
             window.makeKeyAndOrderFront(nil)
         }
     }
+}
+
+/// The screen the menu bar panel opens on, set by `StatusItemController`
+/// before it shows the panel. Views outside the panel (the Menu bar page's
+/// preview) leave it unset and fall back to `NSScreen.main`.
+@MainActor @Observable
+final class PanelScreen {
+    var screen: NSScreen?
+}
+
+extension EnvironmentValues {
+    @Entry var panelScreen: PanelScreen? = nil
 }
 
 /// The status item's gauge, drawn so it follows the menu bar's appearance.
@@ -278,6 +295,7 @@ private struct PopupTabBar: View {
 /// The Usage tab: the incidents line, every shown limit, and spend.
 struct UsageTabContent: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.panelScreen) private var panelScreen
     var openMain: () -> Void
     var dismiss: () -> Void
 
@@ -292,7 +310,7 @@ struct UsageTabContent: View {
             ScrollView { PanelLimits(dismiss: dismiss) }
                 .scrollIndicators(.automatic)
                 .scrollBounceBehavior(.basedOnSize)
-                .frame(maxHeight: Self.limitsMaxHeight)
+                .frame(maxHeight: Self.limitsMaxHeight(on: panelScreen?.screen))
                 .fixedSize(horizontal: false, vertical: true)
             if app.popup.showStats, let spend = app.overview?.spend {
                 Divider()
@@ -302,8 +320,10 @@ struct UsageTabContent: View {
     }
 
     /// The screen's height less the header, status line and spend donut.
-    static var limitsMaxHeight: CGFloat {
-        max(220, (NSScreen.main?.visibleFrame.height ?? 800) - 430)
+    /// `screen` is the one the panel opened on; the main screen stands in
+    /// when it is unknown, as in the Menu bar page's preview.
+    static func limitsMaxHeight(on screen: NSScreen?) -> CGFloat {
+        max(220, ((screen ?? NSScreen.main)?.visibleFrame.height ?? 800) - 430)
     }
 }
 

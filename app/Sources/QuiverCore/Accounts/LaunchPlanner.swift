@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// A process to start: an executable and its argv. Plain data, so the planner
@@ -15,6 +16,36 @@ public struct LaunchCommand: Equatable, Sendable {
 /// Terminal apps a profile's CLI can be opened in.
 public enum TerminalApp: String, Codable, CaseIterable, Sendable {
     case terminal, iterm, ghostty, wezterm
+
+    public var title: String {
+        switch self {
+        case .terminal: "Terminal"
+        case .iterm: "iTerm"
+        case .ghostty: "Ghostty"
+        case .wezterm: "WezTerm"
+        }
+    }
+
+    /// What LaunchServices knows the app by, wherever it's installed.
+    public var bundleID: String {
+        switch self {
+        case .terminal: "com.apple.Terminal"
+        case .iterm: "com.googlecode.iterm2"
+        case .ghostty: "com.mitchellh.ghostty"
+        case .wezterm: "com.github.wez.wezterm"
+        }
+    }
+
+    /// Whether LaunchServices can find the app. Terminal ships with macOS.
+    public var isInstalled: Bool {
+        self == .terminal || NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) != nil
+    }
+
+    /// What a launch says when the chosen terminal is missing, instead of
+    /// LaunchServices' or osascript's own error text.
+    public var notInstalledMessage: String {
+        "\(title) isn't installed. Pick another terminal in Settings › General."
+    }
 }
 
 /// Works out what to run to open a profile's desktop app or CLI. Pure

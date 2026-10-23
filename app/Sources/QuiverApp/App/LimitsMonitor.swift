@@ -180,10 +180,19 @@ final class LimitsMonitor {
                                             content: content, trigger: nil)
         Task {
             let center = UNUserNotificationCenter.current()
-            let granted = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+            var granted = false
+            do {
+                granted = try await center.requestAuthorization(options: [.alert, .sound])
+            } catch {
+                Self.log.error("Alert authorization failed: \(error.localizedDescription, privacy: .public)")
+            }
             notificationsBlocked = !granted
             guard granted else { return }
-            try? await center.add(request)
+            do {
+                try await center.add(request)
+            } catch {
+                Self.log.error("Posting alert failed: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 

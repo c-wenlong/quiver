@@ -339,6 +339,9 @@ struct Tabs<Value: Hashable>: View {
     /// Segmented only: the track takes the offered width and the tabs
     /// split it evenly, instead of hugging their titles.
     var fillWidth = false
+    /// Tabs shown dimmed that can't be picked, like an app that isn't
+    /// installed. One already selected still reads as selected.
+    var disabled: Set<Value> = []
     @FocusState private var focused: Int?
 
     var body: some View {
@@ -372,12 +375,14 @@ struct Tabs<Value: Hashable>: View {
                 onSelect?(option.value)
             }
                 .focused($focused, equals: index)
+                .disabled(disabled.contains(option.value))
         }
     }
 
     private func step(_ offset: Int) -> KeyPress.Result {
         guard let index = options.firstIndex(where: { $0.value == selection }) else { return .ignored }
-        let next = index + offset
+        var next = index + offset
+        while options.indices.contains(next), disabled.contains(options[next].value) { next += offset }
         guard options.indices.contains(next) else { return .handled }
         selection = options[next].value
         if focused != nil { focused = next }
