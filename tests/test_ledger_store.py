@@ -100,6 +100,29 @@ class TestScan(unittest.TestCase):
         scan(self.store, self.home)
         self.assertIn("claude:m3:r3", _inputs(self.store))
 
+    def test_rewrite_in_place_is_read_again(self):
+        f = self.proj / "a.jsonl"
+        f.write_text(_line("m1", "r1", 5))
+        scan(self.store, self.home)
+        # Same inode and length, different bytes: a restore from backup.
+        with open(f, "r+") as fh:
+            fh.write(_line("m7", "r1", 5))
+        os.utime(f, ns=(1, 1))
+        scan(self.store, self.home)
+        self.assertIn("claude:m7:r1", _inputs(self.store))
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads anything")
+    def test_unreadable_file_is_retried_once_readable(self):
+        f = self.proj / "a.jsonl"
+        f.write_text(_line("m1", "r1", 5))
+        f.chmod(0)
+        result = scan(self.store, self.home)
+        self.assertEqual(len(result.errors), 1)
+        self.assertEqual(_inputs(self.store), {})
+        f.chmod(0o644)
+        scan(self.store, self.home)
+        self.assertEqual(_inputs(self.store), {"claude:m1:r1": 5})
+
     def test_profile_homes_and_codex(self):
         prof = self.home / ".quiver" / "accounts" / "claude" / "p1" / "home" / "projects" / "x"
         prof.mkdir(parents=True)
@@ -186,6 +209,27 @@ class TestDatabaseSources(unittest.TestCase):
         rows = self._rows()
         self.assertEqual(set(rows), {"devin:r1"})
         self.assertEqual(rows["devin:r1"], ("devin", "swe-2", 7, 2, 0, 4, None, "/repo"))
+
+    def test_wal_only_update_is_picked_up(self):
+        import sqlite3
+
+        def msg(i):
+            return json.dumps({"role": "assistant", "modelID": "m", "tokens": {
+                "input": i, "output": 1, "cache": {"read": 0, "write": 0}}})
+        path = self._db(".local/share/opencode/opencode.db", f"""
+            PRAGMA journal_mode=WAL;
+            CREATE TABLE session (id TEXT, directory TEXT);
+            CREATE TABLE message (id TEXT, session_id TEXT, time_created INT, time_updated INT, data TEXT);
+            INSERT INTO message VALUES ('m1', 's', 1790000000000, 1, '{msg(1)}');
+        """)
+        scan(self.store, self.home)
+        writer = sqlite3.connect(path)
+        self.addCleanup(writer.close)
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute("INSERT INTO message VALUES ('m2', 's', 1790000000000, 2, ?)", (msg(2),))
+        writer.commit()
+        scan(self.store, self.home)
+        self.assertIn("opencode:m2", self._rows())
 
     def test_unreadable_database_is_a_note_not_a_crash(self):
         path = self.home / ".local/share/opencode/opencode.db"

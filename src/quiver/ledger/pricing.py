@@ -275,8 +275,11 @@ def _refresh_download(home: Path | None, now: float) -> None:
         if not isinstance(data, dict) or len(data) < 100:
             return
     except (OSError, ValueError):
-        # Offline or refused: keep the last download, or the snapshot.
+        # Offline or refused: keep the last download, or the snapshot,
+        # and mark the attempt so the next one waits a day too. An empty
+        # file reads as no download, which falls back to the snapshot.
         try:
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.touch()
         except OSError:
             pass
@@ -295,19 +298,30 @@ def _read_json(path: Path) -> dict:
 
 def _overrides(home: Path | None) -> dict[str, ModelRates]:
     """``config/pricing.json``: ``{"models": {name: {input, output,
-    cache_read, cache_write}}}`` in USD per million tokens."""
+    cache_read, cache_write}}}`` in USD per million tokens, read as the
+    app's ``PricingOverrides`` reads it: input and output required, a
+    missing cache price is $0, and each becomes a LiteLLM-shaped entry."""
     raw = _read_json(quiver_dir_for(home) / "config" / "pricing.json").get("models") or {}
     out = {}
+
+    def usd(value) -> float | None:
+        ok = isinstance(value, (int, float)) and not isinstance(value, bool)
+        return float(value) if ok else None
+
     for name, p in raw.items():
         if not isinstance(p, dict):
             continue
-        inp, outp = p.get("input"), p.get("output")
-        if not isinstance(inp, (int, float)) or not isinstance(outp, (int, float)):
+        inp, outp = usd(p.get("input")), usd(p.get("output"))
+        if inp is None or outp is None or inp < 0 or outp < 0:
             continue
-        per = 1e-6
-        cr = p.get("cache_read") if isinstance(p.get("cache_read"), (int, float)) else inp
-        cw = p.get("cache_write") if isinstance(p.get("cache_write"), (int, float)) else inp
-        out[name] = ModelRates(inp * per, outp * per, cr * per, cw * per, cw * per, outp * per)
+        rates = rates_from_entry({
+            "input_cost_per_token": inp / 1e6,
+            "output_cost_per_token": outp / 1e6,
+            "cache_read_input_token_cost": (usd(p.get("cache_read")) or 0) / 1e6,
+            "cache_creation_input_token_cost": (usd(p.get("cache_write")) or 0) / 1e6,
+        })
+        if rates is not None:
+            out[name] = rates
     return out
 
 

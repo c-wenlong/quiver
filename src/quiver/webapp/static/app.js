@@ -13,8 +13,14 @@ const esc = (s) => String(s == null ? "" : s)
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
+/* status 0 means the hub didn't answer at all (offline, connection lost). */
 async function api(path) {
-  const resp = await fetch(path, { headers: { Authorization: `Bearer ${credential()}` } });
+  let resp;
+  try {
+    resp = await fetch(path, { headers: { Authorization: `Bearer ${credential()}` } });
+  } catch {
+    return { status: 0, data: null };
+  }
   let data = null;
   try { data = await resp.json(); } catch { /* empty body */ }
   return { status: resp.status, data };
@@ -97,6 +103,7 @@ function renderSoon(id) {
 
 function route() {
   const id = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+  overview.gen++; // a response still in flight belongs to the page left behind
   renderSidebar(id);
   if (!credential()) return renderGate("This browser has no device credential for this hub yet.");
   (PAGES[id] || renderSoon)(id);
@@ -125,7 +132,8 @@ async function renderOverview(_id, rescan = false) {
   if (gen !== overview.gen) return;
   if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
   if (status !== 200 || !data) {
-    const msg = (data && data.error && data.error.message) || `The hub answered ${status}.`;
+    const msg = (data && data.error && data.error.message)
+      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then rescan.");
     panel.innerHTML = `<div class="page">${overviewHeader(false)}<div class="card"><p class="error">${esc(msg)}</p></div></div>`;
     bindOverviewHeader();
     return;
@@ -167,6 +175,7 @@ function paintOverview() {
   }
   bindHarnessFocus();
   drawMarbles();
+  drawHeatmap();
   bindHeatmap();
 }
 
@@ -266,7 +275,12 @@ function drawMarbles() {
     for (let i = 0; i < count; i++) marbles.push(Fmt.harnessColor(harness));
   }
   if (!marbles.length) { svg.innerHTML = ""; return; }
-  const r = 9, clear = Math.min(380, width * 0.5) / 2, mid = width / 2;
+  // Keep clear of the widest line of the figures (the unpriced note can
+  // be wider than the total), so no marble sits behind text.
+  const r = 9, mid = width / 2;
+  const widest = Math.max(0, ...[...document.querySelectorAll(".total-figures > *")]
+    .map((el) => el.scrollWidth || el.getBoundingClientRect().width));
+  const clear = Math.max(Math.min(380, width * 0.5), widest + 4 * r) / 2;
   // Fill bottom-up, left and right of the clear zone, rows offset like a pile.
   let seed = 7;
   const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
@@ -326,11 +340,23 @@ function quickCard(d) {
   return `<div class="card">${chips}<div class="card-title">Top models</div>${models}</div>`;
 }
 
-function activityCard(d) {
-  // As many recent weeks as the side column fits, 8 to 26, like the app.
-  const side = document.getElementById("panel").clientWidth >= 1080 ? 300 : document.getElementById("panel").clientWidth - 80;
-  const weeks = Math.max(8, Math.min(d.heatmap.weeks, Math.floor((side - 40 - 24) / 15)));
-  const days = d.heatmap.days.slice((d.heatmap.weeks - weeks) * 7);
+function activityCard() {
+  return `<div class="card"><div><div class="card-title">Activity</div>
+    <div class="card-subtitle" id="heatmap-subtitle"></div></div>
+    <div class="heatmap-wrap" id="heatmap-wrap"></div>
+    <div class="legend">Less ${[0, 1, 2, 3, 4].map((l) => `<span class="cell" style="background: var(--heat-${l})"></span>`).join("")} More</div>
+  </div>`;
+}
+
+/* As many recent weeks as the card's measured width fits, 8 to 26, like
+ * the app. Runs after layout and again on resize. */
+function drawHeatmap() {
+  const wrap = document.getElementById("heatmap-wrap");
+  if (!wrap || !overview.data) return;
+  const hm = overview.data.heatmap;
+  const fit = Math.floor((wrap.getBoundingClientRect().width - 24) / 15);
+  const weeks = Math.max(8, Math.min(hm.weeks, fit || hm.weeks));
+  const days = hm.days.slice((hm.weeks - weeks) * 7);
   const cells = [];
   // Column 0 carries the weekday labels; each week is a header cell
   // (month name on a month's first week) and seven days.
@@ -347,11 +373,8 @@ function activityCard(d) {
         : `<span class="cell l${day.level}" data-day="${day.date}" data-tokens="${day.tokens}" data-cost="${day.cost_usd}"></span>`);
     }
   }
-  return `<div class="card"><div><div class="card-title">Activity</div>
-    <div class="card-subtitle">Tokens a day, last ${weeks} weeks</div></div>
-    <div class="heatmap-wrap" id="heatmap-wrap"><div class="heatmap" style="grid-template-columns: 24px repeat(${weeks}, 12px)">${cells.join("")}</div></div>
-    <div class="legend">Less ${[0, 1, 2, 3, 4].map((l) => `<span class="cell" style="background: var(--heat-${l})"></span>`).join("")} More</div>
-  </div>`;
+  document.getElementById("heatmap-subtitle").textContent = `Tokens a day, last ${weeks} weeks`;
+  wrap.innerHTML = `<div class="heatmap" style="grid-template-columns: 24px repeat(${weeks}, 12px)">${cells.join("")}</div>`;
 }
 
 function bindHeatmap() {
@@ -379,5 +402,9 @@ function bindHeatmap() {
 }
 
 window.addEventListener("hashchange", route);
-window.addEventListener("resize", () => { if (overview.data && document.getElementById("marbles")) drawMarbles(); });
+window.addEventListener("resize", () => {
+  if (!overview.data || !document.getElementById("marbles")) return;
+  drawMarbles();
+  drawHeatmap();
+});
 route();

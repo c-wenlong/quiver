@@ -41,11 +41,15 @@ class LedgerStore:
             CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
             CREATE TABLE IF NOT EXISTS files (
                 path TEXT PRIMARY KEY, inode INTEGER, size INTEGER,
-                mtime_ns INTEGER, offset INTEGER
+                mtime_ns INTEGER, offset INTEGER, fp TEXT
             );
             CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
             INSERT OR IGNORE INTO meta (k, v) VALUES ('schema', '{SCHEMA}');
         """)
+        # Stores made before read cursors were fingerprinted.
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(files)")}
+        if "fp" not in columns:
+            self.db.execute("ALTER TABLE files ADD COLUMN fp TEXT")
         self.db.commit()
 
     def close(self) -> None:
@@ -94,16 +98,17 @@ class LedgerStore:
         )
 
     def file_cursor(self, path: str) -> tuple | None:
-        """``(inode, size, mtime_ns, offset)`` from the last read."""
+        """``(inode, size, mtime_ns, offset, fp)`` from the last read;
+        ``fp`` fingerprints the bytes read so far (see scan.py)."""
         return self.db.execute(
-            "SELECT inode, size, mtime_ns, offset FROM files WHERE path = ?", (path,)
+            "SELECT inode, size, mtime_ns, offset, fp FROM files WHERE path = ?", (path,)
         ).fetchone()
 
     def set_file_cursor(self, path: str, inode: int, size: int, mtime_ns: int,
-                        offset: int) -> None:
+                        offset: int, fp: str | None = None) -> None:
         self.db.execute(
-            "INSERT OR REPLACE INTO files (path, inode, size, mtime_ns, offset)"
-            " VALUES (?,?,?,?,?)", (path, inode, size, mtime_ns, offset),
+            "INSERT OR REPLACE INTO files (path, inode, size, mtime_ns, offset, fp)"
+            " VALUES (?,?,?,?,?,?)", (path, inode, size, mtime_ns, offset, fp),
         )
 
     def meta(self, key: str) -> str | None:

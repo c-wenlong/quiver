@@ -10,6 +10,7 @@ when their files change, also keyed.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import time
 from dataclasses import dataclass, field
@@ -101,25 +102,45 @@ def _scan_claude_file(store: LedgerStore, path: Path, account: str,
     key = str(path)
     cursor = store.file_cursor(key)
     offset = 0
-    if cursor is not None:
-        c_inode, c_size, c_mtime, c_offset = cursor
-        if (c_inode, c_size, c_mtime) == (inode, size, mtime):
-            return
-        # Appended to: read on. Replaced or truncated: from the start.
-        if c_inode == inode and size >= (c_offset or 0):
-            offset = c_offset or 0
-    end: list[int] = []
     try:
+        if cursor is not None:
+            c_inode, _c_size, _c_mtime, c_offset, c_fp = cursor
+            if tuple(cursor[:3]) == (inode, size, mtime):
+                return
+            # Appended to: read on. Replaced, truncated or rewritten in
+            # place (the bytes already read no longer match): from the start.
+            c_offset = c_offset or 0
+            if (c_inode == inode and size >= c_offset
+                    and c_fp == _fingerprint(path, c_offset)):
+                offset = c_offset
+        end: list[int] = []
         for line in parsers.iter_lines(path, offset, end):
             for rec in parsers.claude_records(line, account):
                 store.upsert(rec)
                 result.records += 1
+        done = end[0] if end else offset
+        fp = _fingerprint(path, done)
     except OSError as exc:
         result.errors.append(f"{path}: {exc}")
         return
-    store.set_file_cursor(key, inode, size, mtime, end[0] if end else offset)
+    store.set_file_cursor(key, inode, size, mtime, done, fp)
     result.files_read += 1
     store.db.commit()
+
+
+_FP_SPAN = 4096
+
+
+def _fingerprint(path: Path, offset: int) -> str:
+    """A hash of the head of the file and of the bytes just before
+    ``offset``, the native ledger's check that what was read is still
+    there before reading on from it."""
+    h = hashlib.sha1()
+    with open(path, "rb") as f:
+        h.update(f.read(min(_FP_SPAN, offset)))
+        f.seek(max(0, offset - _FP_SPAN))
+        h.update(f.read(min(_FP_SPAN, offset)))
+    return f"{offset}:{h.hexdigest()}"
 
 
 def _scan_whole(store: LedgerStore, path: Path, result: ScanResult, read,

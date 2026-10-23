@@ -93,13 +93,19 @@ class TestLoading(unittest.TestCase):
         cfg = home / ".quiver" / "config"
         cfg.mkdir(parents=True)
         (cfg / "pricing.json").write_text(json.dumps(
-            {"models": {"my-model": {"input": 1, "output": 2}}}))
-        with patch.object(pricing.urllib.request, "urlopen", side_effect=OSError("offline")):
+            {"models": {"my-model": {"input": 1, "output": 2}, "bad": {"input": 1}}}))
+        with patch.object(pricing.urllib.request, "urlopen", side_effect=OSError("offline")) as fetch:
             cat = load_catalog(home)
+            load_catalog(home)
+        # The failed attempt is remembered, so a reload doesn't retry it.
+        self.assertEqual(fetch.call_count, 1)
         self.assertEqual(cat.resolve("claude-opus-5", None)[0], "priced")
         status, rates, _ = cat.resolve("my-model", None)
         self.assertEqual(status, "priced")
         self.assertAlmostEqual(rates.input, 1e-06)
+        # A missing cache price is $0, as the app reads the same file.
+        self.assertEqual((rates.cache_read, rates.cache_write), (0, 0))
+        self.assertEqual(cat.resolve("bad", None)[0], "unpriced")
 
     def test_download_is_cached_for_a_day(self):
         home = Path(tempfile.mkdtemp())

@@ -343,15 +343,12 @@ MAX_LINE = 64 << 20
 def iter_lines(path: Path, offset: int = 0, end: list | None = None):
     """Complete, newline-terminated lines from ``offset``. A trailing
     partial line is left for the next read; ``end[0]`` is set to the
-    offset just past the last complete line."""
+    offset just past the last complete line. Raises ``OSError`` when the
+    file can't be opened."""
     pos = offset
-    try:
-        f = open(path, "rb")
-    except OSError:
-        if end is not None:
-            end.append(offset)
-        return
-    with f:
+    # An unreadable file raises, so the caller notes it and keeps its
+    # cursor; a silent empty read would mark it done for good.
+    with open(path, "rb") as f:
         f.seek(offset)
         for line in f:
             if not line.endswith(b"\n"):
