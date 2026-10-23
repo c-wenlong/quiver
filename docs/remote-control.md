@@ -207,6 +207,9 @@ writes-go-through-tested-Python rule.
 
 ## Phone client
 
+[remote/ROADMAP.md](../remote/ROADMAP.md) tracks the client redesign:
+every page, component and feature, and the hub work each needs.
+
 Three tiers. The hub serves a static SPA (`remote/web/`): the whole
 feature works over Tailscale with "add to home screen", zero store
 friction. Then a thin WKWebView wrapper buys a real icon, a share-sheet
