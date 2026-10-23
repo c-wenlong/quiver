@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: pages as plugins.** A web app page is now one module in
+  `quiver/webapp/pages/` (`GET /v1/app/<page>`, optional `POST
+  /v1/app/<page>/<action>`) and one script in `static/pages/`, served
+  together as `/app/pages.js`, so new pages are built side by side
+  without editing a shared file. The sidebar marks Menu bar and Widgets
+  as Mac only. docs/web-app.md, "Adding a page", has the layout.
+
 - **Web app: Harnesses and Accounts.** Harnesses lists every harness swe
   knows on the hub machine, with the Mac app's In use / Archived scopes,
   search, starred-first order, a fold for the unstarred ones, version,
