@@ -17,6 +17,7 @@ const page = {
   seq: { health: 0, explore: 0 },
   opened: new Set(),          // Health cards unfolded, by harness
   harness: "", query: "",
+  sheet: null,                // the plugin whose sheet is open, by ref
   expanded: new Set(),        // Explore marketplaces opened this session
   closedInSearch: new Set(),  // closed during the current search
   needle: "",
@@ -49,9 +50,9 @@ const onPage = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?
 
 async function render() {
   paint();
-  // Health decides the first tab; Explore loads when it is the tab.
-  await load("health");
-  if (page.tab === "explore") await load("explore");
+  // Health decides the first tab (and reads Explore if it opens it);
+  // once a tab is on show, only that tab is read.
+  await load(page.tab);
 }
 
 async function load(view, refresh = false) {
@@ -72,14 +73,17 @@ async function load(view, refresh = false) {
     page.error[view] = null;
     page.data[view] = data;
     // An empty hub gives Health an empty page: open Explore once, never
-    // over a tab the user picked (PluginsFirstTab).
-    // render() then reads Explore.
+    // over a tab the user picked (PluginsFirstTab). Whichever call read
+    // Health (the first visit or a Refresh), Explore is read from here.
     if (view === "health" && !page.chosen && data.sources === 0 && !data.drift.length) {
       page.tab = "explore";
       page.chosen = true;
+      paint();
+      return load("explore");
     }
   }
-  paint();
+  // A reply for the tab not on show only updates what that tab will show.
+  if (view === page.tab) paint();
 }
 
 /* ------------------------------------------------------------- frame */
@@ -110,6 +114,8 @@ function paint() {
   const tabs = `<div class="pl-tabs" role="tablist">${[["health", "Health"], ["explore", "Explore"]].map(([id, label]) =>
     `<button class="pl-tab${page.tab === id ? " selected" : ""}" role="tab" aria-selected="${page.tab === id}" data-pl-tab="${id}">${label}</button>`).join("")}</div>`;
   const body = page.tab === "health" ? healthBody() : exploreBody();
+  const active = document.activeElement && document.activeElement.id === "pl-search"
+    ? document.activeElement.selectionStart : null;
   document.getElementById("panel").innerHTML = `<div class="page">${header()}
     <div class="stack">${tabs}${body}</div></div>
     <dialog class="sheet" id="plugin-sheet"></dialog>`;
@@ -127,6 +133,11 @@ function paint() {
     };
   }
   if (page.tab === "health") bindHealth(); else bindExplore();
+  // A repaint (a reply landing, say) keeps the search being typed in and
+  // the plugin sheet being read.
+  const search = document.getElementById("pl-search");
+  if (search && active != null) { search.focus(); search.setSelectionRange(active, active); }
+  if (page.tab === "explore" && page.sheet) openPlugin(page.sheet);
 }
 
 const loadingCard = (text) => `<div class="card"><p class="empty">${esc(text)}</p></div>`;
@@ -381,11 +392,7 @@ function bindExplore() {
       const needle = needleOf(page.query);
       // A new search forgets what was closed during the last one.
       if (needle !== page.needle) { page.needle = needle; page.closedInSearch.clear(); }
-      const at = search.selectionStart;
-      paint();
-      const again = document.getElementById("pl-search");
-      again.focus();
-      again.setSelectionRange(at, at);
+      paint();  // keeps the caret where it was
     };
   }
   for (const btn of document.querySelectorAll("[data-pl-market]")) {
@@ -413,7 +420,9 @@ function openPlugin(ref) {
   const d = page.data.explore;
   const p = d && d.plugins[ref];
   const sheet = document.getElementById("plugin-sheet");
-  if (!p || !sheet) return;
+  if (!p || !sheet) { page.sheet = null; return; }
+  page.sheet = ref;
+  sheet.onclose = () => { page.sheet = null; };
   let market = null;
   for (const s of d.sources) for (const m of s.marketplaces) if (!market && m.name === p.marketplace) market = m;
   const field = (label, value) => (value ? `<div class="field-row"><span class="caption">${label}</span><span>${value}</span></div>` : "");
