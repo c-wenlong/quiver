@@ -10,11 +10,21 @@ final class AppModel {
     static let shared = AppModel()
 
     private(set) var swe: SweClient
-    /// The open page, kept across launches.
-    var selection: AppSection? = UserDefaults.standard.string(forKey: "lastSection")
-        .flatMap(AppSection.init(rawValue:)) ?? .overview {
-        didSet { UserDefaults.standard.set(selection?.rawValue, forKey: "lastSection") }
+    /// The open page, kept across launches. It stays put while a card is
+    /// over the window (a notification or the menu bar panel can ask to
+    /// switch): the card belongs to this page, and switching would drop it
+    /// and anything unsaved in it without its close check.
+    var selection: AppSection? {
+        get { openSection }
+        set {
+            guard newValue != openSection, !SheetOverlayRegistry.shared.anyCovered else { return }
+            openSection = newValue
+            UserDefaults.standard.set(newValue?.rawValue, forKey: "lastSection")
+        }
     }
+
+    private var openSection: AppSection? = UserDefaults.standard.string(forKey: "lastSection")
+        .flatMap(AppSection.init(rawValue:)) ?? .overview
 
     /// Tapping the sidebar item or tab of the view already shown bumps
     /// this; a detail page open there goes back through its own ask.

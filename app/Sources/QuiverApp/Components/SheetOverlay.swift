@@ -207,7 +207,9 @@ private struct SheetLayer: View {
 }
 
 /// The scrim and one card, sized like a system sheet: its ideal size, never
-/// past the window less `sheetMargin`, centred.
+/// past the window less `sheetMargin`, centred. A card that can't fit even
+/// then (a fixed-height sheet in a short window) scrolls as a whole, so its
+/// footer is always reachable.
 private struct SheetCard: View {
     var entry: SheetEntry
     @State private var request = DismissRequestSlot()
@@ -218,25 +220,24 @@ private struct SheetCard: View {
         ZStack {
             Theme.scrim
                 .ignoresSafeArea()
-                .contentShape(.rect)
-                .onTapGesture { if !entry.modal { requestDismiss() } }
-                .accessibilityElement()
-                .accessibilityLabel("Close")
-                .accessibilityAddTraits(entry.modal ? [] : .isButton)
-                .accessibilityHidden(entry.modal)
-            SheetCardLayout(margin: Theme.sheetMargin) {
-                entry.content
-                    .environment(\.dismissSheet, DismissSheetAction(action: entry.dismiss))
-                    .environment(\.sheetDismissRequest, request)
-                    .background(Theme.dialog)
-                    .clipShape(.rect(cornerRadius: Theme.dialogRadius))
-                    .overlay(RoundedRectangle(cornerRadius: Theme.dialogRadius)
-                        .strokeBorder(Theme.border, lineWidth: 1))
-                    .contentShape(.rect(cornerRadius: Theme.dialogRadius))
-                    .background(SheetKeyBridge(modal: entry.modal, onEscape: requestDismiss))
-                    .shadow(color: Theme.dialogShadow, radius: 30, y: 20)
-                    .scaleEffect(settled || reduceMotion ? 1 : 0.98)
-                    .accessibilityAddTraits(.isModal)
+                .accessibilityHidden(true)
+            GeometryReader { room in
+                ScrollView(.vertical) {
+                    SheetCardLayout(margin: Theme.sheetMargin, room: room.size) { card }
+                        // The scrim's click target lives in the scrolled
+                        // content, around the card, so the scroll view
+                        // can't swallow it.
+                        .background {
+                            Color.clear
+                                .contentShape(.rect)
+                                .onTapGesture { scrimClicked() }
+                                .accessibilityElement()
+                                .accessibilityLabel("Close")
+                                .accessibilityAddTraits(entry.modal ? [] : .isButton)
+                                .accessibilityHidden(entry.modal)
+                        }
+                }
+                .scrollBounceBehavior(.basedOnSize)
             }
         }
         .onAppear {
@@ -244,28 +245,58 @@ private struct SheetCard: View {
         }
     }
 
+    private var card: some View {
+        entry.content
+            .environment(\.dismissSheet, DismissSheetAction(action: entry.dismiss))
+            .environment(\.sheetDismissRequest, request)
+            .background(Theme.dialog)
+            .clipShape(.rect(cornerRadius: Theme.dialogRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.dialogRadius)
+                .strokeBorder(Theme.border, lineWidth: 1))
+            .contentShape(.rect(cornerRadius: Theme.dialogRadius))
+            .background(SheetKeyBridge(modal: entry.modal, slot: request, onEscape: requestDismiss))
+            .shadow(color: Theme.dialogShadow, radius: 30, y: 20)
+            .scaleEffect(settled || reduceMotion ? 1 : 0.98)
+            .accessibilityAddTraits(.isModal)
+    }
+
+    /// The click that closes a popover open over the card (the "Add to"
+    /// checklist) only closes the popover, as it would anywhere else.
+    private func scrimClicked() {
+        guard !entry.modal, !request.childWindowWasOpen else { return }
+        requestDismiss()
+    }
+
     private func requestDismiss() {
         if let intercept = request.intercept { intercept() } else { entry.dismiss() }
     }
 }
 
-/// A sheet's ideal size, capped to the room inside the margin, centred.
+/// The card at its ideal size, capped to `room` less the margin, centred.
 /// A system sheet sizes to its content the same way, so the sheets keep
-/// their sizes; one that wants more room than the window has scrolls or
-/// squeezes as it would in a short window.
+/// their sizes and one with its own scroll view scrolls inside. When the
+/// card still comes back taller than the room (a fixed frame ignores the
+/// cap), the layout grows past `room` and the scroll view around it takes
+/// over.
 private struct SheetCardLayout: Layout {
     var margin: CGFloat
+    var room: CGSize
+
+    private func offer(for card: LayoutSubview) -> ProposedViewSize {
+        let ideal = card.sizeThatFits(.unspecified)
+        return ProposedViewSize(width: min(ideal.width, max(0, room.width - 2 * margin)),
+                                height: min(ideal.height, max(0, room.height - 2 * margin)))
+    }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        proposal.replacingUnspecifiedDimensions()
+        guard let card = subviews.first else { return room }
+        let fitted = card.sizeThatFits(offer(for: card))
+        return CGSize(width: room.width, height: max(room.height, fitted.height + 2 * margin))
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         guard let card = subviews.first else { return }
-        let ideal = card.sizeThatFits(.unspecified)
-        let offer = ProposedViewSize(width: min(ideal.width, max(0, bounds.width - 2 * margin)),
-                                     height: min(ideal.height, max(0, bounds.height - 2 * margin)))
-        card.place(at: CGPoint(x: bounds.midX, y: bounds.midY), anchor: .center, proposal: offer)
+        card.place(at: CGPoint(x: bounds.midX, y: bounds.midY), anchor: .center, proposal: offer(for: card))
     }
 }
 
@@ -273,9 +304,12 @@ private struct SheetCardLayout: Layout {
 
 /// Where a sheet's `onSheetDismissRequest` handler waits for the card's
 /// scrim and Esc. A plain reference, not state: the handler is replaced on
-/// every render so it never acts on a stale copy of the sheet.
+/// every render so it never acts on a stale copy of the sheet. The key
+/// bridge also notes here whether the last click landed while a popover
+/// was open.
 @MainActor final class DismissRequestSlot {
     var intercept: (() -> Void)?
+    var childWindowWasOpen = false
 }
 
 private struct DismissRequestRegistrar: View {
@@ -306,23 +340,29 @@ enum SheetKeys {
     }
 }
 
-/// Windows with a card up, so ⌘W closes the card (PopupKeyRouting) rather
-/// than the window, as it does for a system sheet.
-@MainActor enum SheetOverlayRegistry {
-    private static var counts: [ObjectIdentifier: Int] = [:]
+/// Windows with a card up. ⌘W closes the card (PopupKeyRouting) rather
+/// than the window, as it does for a system sheet, and the menu's page
+/// shortcuts stand down: switching page would drop the card and whatever
+/// it held (an unsaved edit) without asking. Observable, so menu items
+/// that read `anyCovered` update.
+@MainActor @Observable final class SheetOverlayRegistry {
+    static let shared = SheetOverlayRegistry()
+    private var counts: [ObjectIdentifier: Int] = [:]
+
+    var anyCovered: Bool { !counts.isEmpty }
 
     static func cover(_ window: NSWindow) {
-        counts[ObjectIdentifier(window), default: 0] += 1
+        shared.counts[ObjectIdentifier(window), default: 0] += 1
     }
 
     static func uncover(_ window: NSWindow) {
         let key = ObjectIdentifier(window)
-        guard let count = counts[key] else { return }
-        counts[key] = count > 1 ? count - 1 : nil
+        guard let count = shared.counts[key] else { return }
+        shared.counts[key] = count > 1 ? count - 1 : nil
     }
 
     static func isCovered(_ window: NSWindow) -> Bool {
-        counts[ObjectIdentifier(window)] != nil
+        shared.counts[ObjectIdentifier(window)] != nil
     }
 }
 
@@ -331,6 +371,7 @@ enum SheetKeys {
 /// system sheet's first responder), and hands focus back when it closes.
 private struct SheetKeyBridge: NSViewRepresentable {
     var modal: Bool
+    var slot: DismissRequestSlot
     var onEscape: () -> Void
 
     func makeNSView(context: Context) -> SheetKeyBridgeView { SheetKeyBridgeView() }
@@ -340,6 +381,7 @@ private struct SheetKeyBridge: NSViewRepresentable {
         // which bridge is on top.
         view.isTop = context.environment.isEnabled
         view.modal = modal
+        view.slot = slot
         view.onEscape = onEscape
     }
 
@@ -351,10 +393,13 @@ private struct SheetKeyBridge: NSViewRepresentable {
 final class SheetKeyBridgeView: NSView {
     var isTop = true
     var modal = false
+    var slot: DismissRequestSlot?
     var onEscape: () -> Void = {}
     private var monitor: Any?
     private weak var attached: NSWindow?
-    private weak var previousResponder: NSResponder?
+    /// The view that had the cursor before the card: the field itself,
+    /// not the field editor every text field in the window shares.
+    private weak var previousResponder: NSView?
 
     // Clicks belong to the card above it.
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -368,15 +413,19 @@ final class SheetKeyBridgeView: NSView {
         guard attached == nil else { return }
         attached = window
         SheetOverlayRegistry.cover(window)
-        previousResponder = window.firstResponder
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        previousResponder = Self.owningView(of: window.firstResponder)
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown]) { [weak self] event in
             // Only Sendable values cross into assumeIsolated (see
             // PopupKeyRouting); the event itself is returned out here.
-            let keyCode = event.keyCode
+            let isKey = event.type == .keyDown
+            let keyCode = isKey ? event.keyCode : 0
             let flags = event.modifierFlags
             let windowNumber = event.windowNumber
             let handled = MainActor.assumeIsolated {
-                self?.handleKey(keyCode: keyCode, flags: flags, windowNumber: windowNumber) ?? false
+                guard let self else { return false }
+                if isKey { return self.handleKey(keyCode: keyCode, flags: flags, windowNumber: windowNumber) }
+                self.noteMouseDown(windowNumber: windowNumber)
+                return false
             }
             return handled ? nil : event
         }
@@ -390,11 +439,30 @@ final class SheetKeyBridgeView: NSView {
         attached = nil
         SheetOverlayRegistry.uncover(window)
         // Back to where the cursor was before the card, as a closing
-        // system sheet does.
-        if let previous = previousResponder as? NSView, previous.window === window,
-           !previous.isHiddenOrHasHiddenAncestor {
+        // system sheet does. On the next turn: the covered page is
+        // enabled again only once the host sees the card gone, and a
+        // disabled field refuses first responder.
+        guard let previous = previousResponder else { return }
+        DispatchQueue.main.async {
+            guard previous.window === window, !previous.isHiddenOrHasHiddenAncestor,
+                  !SheetOverlayRegistry.isCovered(window) else { return }
             window.makeFirstResponder(previous)
         }
+    }
+
+    /// A field editor stands for the field it edits.
+    private static func owningView(of responder: NSResponder?) -> NSView? {
+        if let editor = responder as? NSTextView, editor.isFieldEditor {
+            return editor.delegate as? NSView
+        }
+        return responder as? NSView
+    }
+
+    /// A click in this window while one of its popovers (a child window)
+    /// is open closes that popover; the scrim then lets it be.
+    private func noteMouseDown(windowNumber: Int) {
+        guard let window = attached, window.windowNumber == windowNumber else { return }
+        slot?.childWindowWasOpen = window.childWindows?.contains { $0.isVisible } ?? false
     }
 
     private func handleKey(keyCode: UInt16, flags: NSEvent.ModifierFlags, windowNumber: Int) -> Bool {

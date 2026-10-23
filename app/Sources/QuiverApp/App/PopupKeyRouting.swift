@@ -22,20 +22,25 @@ import AppKit
             let act = MainActor.assumeIsolated {
                 action(chars: chars, flags: flags, key: NSApp.keyWindow)
             }
-            switch act {
-            case .passThrough:
-                return event
-            case .sendEscape:
-                MainActor.assumeIsolated {
-                    if let key = NSApp.keyWindow {
-                        NSApp.sendEvent(escapeEvent(onto: key))
-                    }
-                }
-                return nil
-            case .quit:
-                MainActor.assumeIsolated { NSApp.terminate(nil) }
-                return nil
-            }
+            let consumed = MainActor.assumeIsolated { perform(act, key: NSApp.keyWindow) }
+            return consumed ? nil : event
+        }
+    }
+
+    /// Carries out `action` for the key window `key`; true when the key
+    /// press is used up. Split out so a test can drive it with its own
+    /// window, since a test process has no key window.
+    @discardableResult
+    static func perform(_ action: Action, key: NSWindow?) -> Bool {
+        switch action {
+        case .passThrough:
+            return false
+        case .sendEscape:
+            if let key { NSApp.sendEvent(escapeEvent(onto: key)) }
+            return true
+        case .quit:
+            NSApp.terminate(nil)
+            return true
         }
     }
 

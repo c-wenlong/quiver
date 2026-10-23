@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Testing
 @testable import QuiverApp
 
@@ -26,17 +27,65 @@ import Testing
         #expect(!SheetKeys.closesOnEscape(keyCode: 36, flags: [], isTop: true, modal: false, composing: false))
     }
 
-    @Test func cmdWOnACoveredWindowClosesTheCard() {
+    @Test func aNestedCardKeepsTheWindowCoveredUntilTheLastCloses() {
         let main = window()
-        #expect(PopupKeyRouting.action(chars: "w", flags: [.command], key: main) == .passThrough)
         SheetOverlayRegistry.cover(main)
-        #expect(PopupKeyRouting.action(chars: "w", flags: [.command], key: main) == .sendEscape)
-        // A nested card keeps the window covered until the last one closes.
         SheetOverlayRegistry.cover(main)
         SheetOverlayRegistry.uncover(main)
         #expect(SheetOverlayRegistry.isCovered(main))
         SheetOverlayRegistry.uncover(main)
         #expect(!SheetOverlayRegistry.isCovered(main))
         #expect(PopupKeyRouting.action(chars: "w", flags: [.command], key: main) == .passThrough)
+    }
+
+    /// A real card in a real window: ⌘W goes through PopupKeyRouting, its
+    /// Esc reaches the card's key monitor, the presentation binding goes
+    /// false, and the window stays open. The test process has no key
+    /// window, so the routing gets the window directly; the rest is the
+    /// path the app runs.
+    @Test func cmdWClosesAHostedCardAndKeepsTheWindow() {
+        _ = NSApplication.shared
+        let flag = Flag()
+        let main = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+                            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        main.isReleasedWhenClosed = false
+        main.contentView = NSHostingView(rootView: Host(flag: flag))
+        main.orderFront(nil)
+        defer { main.orderOut(nil) }
+
+        spin { SheetOverlayRegistry.isCovered(main) }
+        #expect(SheetOverlayRegistry.isCovered(main))
+        let action = PopupKeyRouting.action(chars: "w", flags: [.command], key: main)
+        #expect(action == .sendEscape)
+        #expect(PopupKeyRouting.perform(action, key: main))
+
+        spin { !flag.isPresented && !SheetOverlayRegistry.isCovered(main) }
+        #expect(!flag.isPresented)
+        #expect(!SheetOverlayRegistry.isCovered(main))
+        #expect(main.isVisible)
+    }
+
+    private func spin(timeout: TimeInterval = 3, until done: () -> Bool) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !done() && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+    }
+}
+
+@MainActor @Observable private final class Flag {
+    var isPresented = true
+}
+
+private struct Host: View {
+    @Bindable var flag: Flag
+
+    var body: some View {
+        Color.clear
+            .frame(width: 600, height: 400)
+            .quiverSheet(isPresented: $flag.isPresented) {
+                Text("A card").frame(width: 200, height: 100)
+            }
+            .sheetHost()
     }
 }
