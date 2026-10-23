@@ -101,6 +101,46 @@ class TestLoading(unittest.TestCase):
         self.assertEqual(status, "priced")
         self.assertAlmostEqual(rates.input, 1e-06)
 
+    def test_download_is_cached_for_a_day(self):
+        home = Path(tempfile.mkdtemp())
+        listing = {f"model-{i}": {"input_cost_per_token": 1e-06, "output_cost_per_token": 2e-06}
+                   for i in range(120)}
+
+        class Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return json.dumps(listing).encode()
+
+        with patch.object(pricing.urllib.request, "urlopen", return_value=Resp()) as fetch:
+            cat = load_catalog(home)
+            load_catalog(home)
+        self.assertEqual(fetch.call_count, 1)
+        self.assertEqual(cat.resolve("model-7", None)[0], "priced")
+        # The download replaces the snapshot rather than adding to it.
+        self.assertEqual(cat.resolve("claude-opus-5", None)[0], "unpriced")
+
+    def test_a_short_or_broken_download_keeps_the_snapshot(self):
+        home = Path(tempfile.mkdtemp())
+
+        class Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b'{"tiny": {}}'
+
+        with patch.object(pricing.urllib.request, "urlopen", return_value=Resp()):
+            cat = load_catalog(home)
+        self.assertEqual(cat.resolve("claude-opus-5", None)[0], "priced")
+
 
 if __name__ == "__main__":
     unittest.main()

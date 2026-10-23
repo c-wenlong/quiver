@@ -118,3 +118,78 @@ class TestScan(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDatabaseSources(unittest.TestCase):
+    """OpenCode and Devin read through scan(), against minimal schemas."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.store = LedgerStore(ledger_path_for(self.home))
+        self.addCleanup(self.store.close)
+
+    def _db(self, rel, script):
+        import sqlite3
+        path = self.home / rel
+        path.parent.mkdir(parents=True)
+        conn = sqlite3.connect(path)
+        conn.executescript(script)
+        conn.commit()
+        conn.close()
+        return path
+
+    def _rows(self):
+        return {r[0]: r[1:] for r in self.store.db.execute(
+            "SELECT key, harness, model, input, output, reasoning, cache_read, cost, cwd FROM events")}
+
+    def test_opencode(self):
+        new = json.dumps({"role": "assistant", "modelID": "gpt-x", "cost": 0.5, "tokens": {
+            "input": 10, "output": 5, "reasoning": 2, "cache": {"read": 3, "write": 0}, "total": 20}})
+        # An older row folded reasoning into output (total excludes it).
+        old = json.dumps({"role": "assistant", "modelID": "gpt-x", "cost": 0, "tokens": {
+            "input": 1, "output": 5, "reasoning": 2, "cache": {"read": 0, "write": 0}, "total": 6}})
+        user = json.dumps({"role": "user", "tokens": {"input": 9}})
+        self._db(".local/share/opencode/opencode.db", f"""
+            CREATE TABLE session (id TEXT, directory TEXT);
+            CREATE TABLE message (id TEXT, session_id TEXT, time_created INT, time_updated INT, data TEXT);
+            INSERT INTO session VALUES ('s1', '/w');
+            INSERT INTO message VALUES ('m1', 's1', 1790000000000, 1, '{new}');
+            INSERT INTO message VALUES ('m2', 's1', 1790000000000, 2, '{old}');
+            INSERT INTO message VALUES ('m3', 's1', 1790000000000, 3, '{user}');
+        """)
+        scan(self.store, self.home)
+        rows = self._rows()
+        self.assertEqual(rows["opencode:m1"], ("opencode", "gpt-x", 10, 5, 2, 3, 0.5, "/w"))
+        self.assertEqual(rows["opencode:m2"][3:7], (3, 2, 0, None))
+        self.assertNotIn("opencode:m3", rows)
+        # Unchanged database: nothing read again.
+        self.assertEqual(scan(self.store, self.home).files_read, 0)
+
+    def test_devin(self):
+        def node(rid, metrics=True):
+            meta = {"request_id": rid, "generation_model": "swe-2",
+                    "created_at": "2026-10-03T10:00:00Z"}
+            if metrics:
+                meta["metrics"] = {"input_tokens": 7, "output_tokens": 2,
+                                   "cache_read_tokens": 4, "cache_creation_tokens": 1}
+            return json.dumps({"role": "assistant", "metadata": meta})
+        self._db(".local/share/devin/cli/sessions.db", f"""
+            CREATE TABLE sessions (id TEXT, working_directory TEXT);
+            CREATE TABLE message_nodes (row_id INTEGER, session_id TEXT, created_at REAL, chat_message TEXT);
+            INSERT INTO sessions VALUES ('d1', '/repo');
+            INSERT INTO message_nodes VALUES (1, 'd1', 0, '{node("r1")}');
+            INSERT INTO message_nodes VALUES (2, 'd1', 0, '{node("r1")}');
+            INSERT INTO message_nodes VALUES (3, 'd1', 0, '{node("r2", metrics=False)}');
+            INSERT INTO message_nodes VALUES (4, 'd1', 0, 'not json');
+        """)
+        scan(self.store, self.home)
+        rows = self._rows()
+        self.assertEqual(set(rows), {"devin:r1"})
+        self.assertEqual(rows["devin:r1"], ("devin", "swe-2", 7, 2, 0, 4, None, "/repo"))
+
+    def test_unreadable_database_is_a_note_not_a_crash(self):
+        path = self.home / ".local/share/opencode/opencode.db"
+        path.parent.mkdir(parents=True)
+        path.write_text("not a database")
+        result = scan(self.store, self.home)
+        self.assertEqual(len(result.errors), 1)
