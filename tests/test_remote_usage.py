@@ -1,10 +1,13 @@
 """usage.py and GET /v1/usage: swe list --usage rows for the hub machine."""
 
 import json
+import tempfile
 import unittest
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from quiver.harness.models import RateLimitInfo
+from quiver.remote import agent as agent_mod
 from quiver.remote import usage
 
 from tests.test_remote_hub import HubBase
@@ -67,7 +70,7 @@ class TestSnapshot(unittest.TestCase):
         # Only starred harnesses are polled, as swe list does.
         self.assertEqual(p.calls[0]["tool_names"], {"codex"})
         self.assertFalse(p.calls[0]["refresh_failed"])
-        self.assertIsNone(p.calls[0]["cache_ttl"])
+        self.assertEqual(p.calls[0]["cache_ttl"], usage.CACHE_TTL_S)
 
     def test_archived_harness_left_out(self):
         reg = {"codex": {"command": "codex"}, "old": {"command": "old"}}
@@ -82,6 +85,15 @@ class TestSnapshot(unittest.TestCase):
                       stars=["codex", "ghost"]) as p:
             usage.snapshot()
         self.assertEqual(p.calls[0]["tool_names"], {"codex"})
+
+    def test_ttl_override_from_shell_ignored(self):
+        # SWE_RATE_LIMITS_TTL=inf in the shell that started the hub must
+        # not freeze the page on one reading.
+        with patch.dict("os.environ", {"SWE_RATE_LIMITS_TTL": "inf"}), \
+                _Patched({"codex": {"command": "codex"}},
+                         stars=["codex"]) as p:
+            usage.snapshot()
+        self.assertEqual(p.calls[0]["cache_ttl"], 300.0)
 
     def test_refresh_retries_failed_and_stale_only(self):
         with _Patched({"codex": {"command": "codex"}}, stars=["codex"]) as p:
@@ -123,6 +135,171 @@ class TestUsageRoute(HubBase):
         self.assertEqual(status, 503)
         self.assertEqual(json.loads(data)["error"]["code"],
                          "usage_unavailable")
+
+
+class TestSatelliteStore(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+
+    def test_round_trip_newest_first(self):
+        with patch("quiver.remote.usage.time.time", return_value=100.0):
+            usage.save_satellite(self.home, "old", {
+                "harnesses": [{"name": "codex"}], "server_time": 90.0,
+            })
+        with patch("quiver.remote.usage.time.time", return_value=200.0):
+            usage.save_satellite(self.home, "mbp", {
+                "harnesses": [{"name": "claude"}, "junk"],
+                "window_days": 100, "server_time": 195.5,
+            })
+        records = usage.load_satellites(self.home)
+        self.assertEqual([r["machine_id"] for r in records], ["mbp", "old"])
+        self.assertEqual(records[0]["harnesses"], [{"name": "claude"}])
+        self.assertEqual(records[0]["reported_at"], 195.5)
+        self.assertEqual(records[0]["received_at"], 200.0)
+
+    def test_bad_harnesses_rejected(self):
+        with self.assertRaises(ValueError):
+            usage.save_satellite(self.home, "mbp", {"harnesses": "x"})
+        self.assertEqual(usage.load_satellites(self.home), [])
+
+    def test_bool_server_time_not_a_clock(self):
+        record = usage.save_satellite(
+            self.home, "mbp", {"harnesses": [], "server_time": True}
+        )
+        self.assertIsNone(record["reported_at"])
+
+    def test_machine_id_cannot_escape_the_store(self):
+        usage.save_satellite(self.home, "../../evil", {"harnesses": []})
+        store = usage._satellite_file(self.home, "../../evil")
+        self.assertEqual(store.parent.name, "satellite-usage")
+        self.assertEqual(len(usage.load_satellites(self.home)), 1)
+
+    def test_corrupt_file_skipped(self):
+        usage.save_satellite(self.home, "mbp", {"harnesses": []})
+        usage._satellite_file(self.home, "bad").write_text("{nope")
+        self.assertEqual(
+            [r["machine_id"] for r in usage.load_satellites(self.home)],
+            ["mbp"],
+        )
+
+
+class TestAgentUsageRoute(HubBase):
+    def _usage(self, auth):
+        with patch.object(usage, "snapshot", return_value={
+            "harnesses": [{"name": "hubtool"}], "window_days": 100,
+            "server_time": 1000.0,
+        }):
+            status, data = self.srv.request(
+                "GET", "/v1/usage", headers=auth
+            )
+        self.assertEqual(status, 200)
+        return json.loads(data)
+
+    def test_requires_auth(self):
+        status, _ = self.srv.request(
+            "POST", "/v1/agent/usage",
+            {"machine_id": "mbp", "harnesses": []},
+        )
+        self.assertEqual(status, 401)
+
+    def test_rejects_missing_machine_and_bad_rows(self):
+        auth = self.auth()
+        for body in ({"harnesses": []},
+                     {"machine_id": "mbp", "harnesses": {"a": 1}}):
+            status, _ = self.srv.request(
+                "POST", "/v1/agent/usage", body, headers=auth
+            )
+            self.assertEqual(status, 422, body)
+
+    def test_satellite_report_listed_after_hub(self):
+        auth = self.auth()
+        status, _ = self.srv.request(
+            "POST", "/v1/agent/register",
+            {"machine": {"id": "mbp", "name": "MacBook"}}, headers=auth,
+        )
+        self.assertEqual(status, 200)
+        status, _ = self.srv.request(
+            "POST", "/v1/agent/usage",
+            {"machine_id": "mbp", "harnesses": [{"name": "claude"}],
+             "window_days": 100, "server_time": 990.0},
+            headers=auth,
+        )
+        self.assertEqual(status, 200)
+        body = self._usage(auth)
+        # The hub's own rows stay at the top level for older clients.
+        self.assertEqual(body["harnesses"], [{"name": "hubtool"}])
+        hub, sat = body["machines"]
+        self.assertTrue(hub["hub"])
+        self.assertEqual(hub["machine"]["id"], self.srv.state.machine_id)
+        self.assertEqual(hub["reported_at"], 1000.0)
+        self.assertFalse(sat["hub"])
+        self.assertEqual(sat["machine"]["name"], "MacBook")
+        self.assertEqual(sat["harnesses"], [{"name": "claude"}])
+        self.assertEqual(sat["reported_at"], 990.0)
+        self.assertIsInstance(sat["received_at"], float)
+
+    def test_unregistered_satellite_named_by_id(self):
+        auth = self.auth()
+        self.srv.request("POST", "/v1/agent/usage",
+                         {"machine_id": "ghost", "harnesses": []},
+                         headers=auth)
+        sat = self._usage(auth)["machines"][1]
+        self.assertEqual(sat["machine"], {"id": "ghost", "name": "ghost"})
+
+    def test_report_under_hub_id_ignored(self):
+        auth = self.auth()
+        self.srv.request(
+            "POST", "/v1/agent/usage",
+            {"machine_id": self.srv.state.machine_id, "harnesses": []},
+            headers=auth,
+        )
+        self.assertEqual(len(self._usage(auth)["machines"]), 1)
+
+
+class TestAgentPushesUsage(unittest.TestCase):
+    def test_push_sends_machine_and_snapshot(self):
+        agent = agent_mod.RemoteAgent(
+            "http://hub", "cred", home=Path(tempfile.mkdtemp())
+        )
+        snap = {"harnesses": [{"name": "claude"}], "window_days": 100,
+                "server_time": 5.0}
+        with patch.object(usage, "snapshot", return_value=snap), \
+                patch.object(agent_mod, "_post",
+                             return_value=(200, {"ok": True})) as post:
+            self.assertTrue(agent._push_usage())
+        hub, path, cred, payload = post.call_args.args
+        self.assertEqual((hub, path, cred),
+                         ("http://hub", "/v1/agent/usage", "cred"))
+        self.assertEqual(payload, {"machine_id": agent.machine_id, **snap})
+
+    def test_failed_push_reports_false(self):
+        agent = agent_mod.RemoteAgent(
+            "http://hub", "cred", home=Path(tempfile.mkdtemp())
+        )
+        with patch.object(usage, "snapshot", return_value={"harnesses": []}), \
+                patch.object(agent_mod, "_post", return_value=(0, {})):
+            self.assertFalse(agent._push_usage())
+
+
+class TestUsageLoop(unittest.TestCase):
+    def _waits(self, push):
+        agent = agent_mod.RemoteAgent(
+            "http://hub", "cred", home=Path(tempfile.mkdtemp())
+        )
+        agent._stop = MagicMock()
+        agent._stop.is_set.side_effect = [False, True]
+        with patch.object(agent, "_push_usage", side_effect=push):
+            agent._usage_loop()
+        return [c.args[0] for c in agent._stop.wait.call_args_list]
+
+    def test_success_waits_the_push_interval(self):
+        self.assertEqual(self._waits([True]), [usage.SATELLITE_PUSH_S])
+
+    def test_failure_retries_sooner(self):
+        retry = agent_mod.RECONNECT_S * 12
+        self.assertEqual(self._waits([False]), [retry])
+        self.assertEqual(self._waits(RuntimeError("hub down")), [retry])
+        self.assertLess(retry, usage.SATELLITE_PUSH_S)
 
 
 if __name__ == "__main__":
