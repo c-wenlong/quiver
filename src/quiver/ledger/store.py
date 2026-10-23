@@ -189,6 +189,23 @@ class LedgerStore:
         row = self.db.execute("SELECT MIN(ts) FROM events").fetchone()
         return row[0] if row else None
 
+    def activity_events(self, start: float, end: float,
+                        harnesses: list[str] | None = None) -> list[tuple]:
+        """Every response in ``[start, end)``, one session's in a row and
+        oldest first, for the Calendar's activity blocks: ``(harness,
+        account, session, cwd, model, tier, ts, input, output, cache_read,
+        cache_write, cache_write_1h, reasoning, cost)``."""
+        where, args = "ts >= ? AND ts < ?", [start, end]
+        if harnesses is not None:
+            where += f" AND harness IN ({','.join('?' * len(harnesses))})"
+            args += list(harnesses)
+        return self.db.execute(
+            "SELECT harness, account, session, cwd, model, COALESCE(tier, ''), ts, input,"
+            " output, cache_read, cache_write, cache_write_1h, reasoning, cost"
+            f" FROM events WHERE {where} ORDER BY harness, account, session, ts, key",
+            args,
+        ).fetchall()
+
 
 def _wins(new_sidechain: bool, new_total: int, old_sidechain: bool, old_total: int) -> bool:
     if new_sidechain != old_sidechain:
