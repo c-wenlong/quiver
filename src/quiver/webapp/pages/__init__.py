@@ -20,6 +20,7 @@ moment its script registers. See docs/web-app.md, "Adding a page".
 from __future__ import annotations
 
 import importlib
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,14 +68,21 @@ def load(name: str) -> ModuleType | None:
 def bundle(suffix: str) -> bytes:
     """Every ``static/pages/*<suffix>`` file, in name order, as one body.
 
-    Each script runs in its own function scope, so two pages may both
-    define ``render`` or the same ``const`` without clobbering each other
-    or stopping the bundle; a page reaches the app only through the
-    globals it calls (``registerPage``, ``api``...)."""
+    Each script is compiled and run on its own (``new Function``), so two
+    pages may both define ``render`` or the same ``const``, and one page
+    that fails to parse or throws while loading is logged and skipped
+    instead of stopping every page after it. A page reaches the app only
+    through globals (``registerPage``, ``api``...; helpers it shares with
+    another page go on ``globalThis``). ``sourceURL`` keeps the page's own
+    file name in the browser's errors and debugger."""
     parts = []
     for path in sorted(STATIC.glob(f"*{suffix}")):
         body = path.read_bytes()
         if suffix == ".js":
-            body = b"(function () {\n" + body + b"\n})();"
+            source = body.decode("utf-8") + f"\n//# sourceURL=/app/pages/{path.name}\n"
+            body = (
+                f"try {{ new Function({json.dumps(source)})(); }}\n"
+                f"catch (err) {{ console.error({json.dumps('web app page ' + path.name + ' failed to load:')}, err); }}"
+            ).encode("utf-8")
         parts.append(f"/* {path.name} */\n".encode() + body)
     return b"\n".join(parts)
