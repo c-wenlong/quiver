@@ -391,7 +391,7 @@ struct PartsCard: View {
                 if canPreview { drafts.document(for: selected) }
             }
         }
-        .sheet(isPresented: $sheetOpen, onDismiss: {
+        .quiverSheet(isPresented: $sheetOpen, onDismiss: {
             // Drop the pick so reopening the same file restarts the
             // size and type check; a draft still in the store reopens
             // with its edits.
@@ -617,7 +617,7 @@ struct PrimitiveFileSheet: View {
     var windowSize: CGSize
     var onSaved: () -> Void = {}
 
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSheet) private var dismiss
     @State private var confirmingClose = false
     /// A save in the close prompt that failed: the reason shows in the
     /// sheet, which stays open.
@@ -673,6 +673,8 @@ struct PrimitiveFileSheet: View {
             if document?.isDirty != true { saveError = nil }
         }
         .onExitCommand(perform: requestClose)
+        // A click outside the card or Esc asks first too.
+        .onSheetDismissRequest(requestClose)
         .alert("Unsaved changes", isPresented: $confirmingClose) {
             Button("Save") { saveAndClose() }
             Button("Discard", role: .destructive) {
