@@ -642,10 +642,19 @@ class TestHubWriteRoutes(unittest.TestCase):
         )
         self.assertEqual(status, 404)
 
-    def _launch(self, body):
-        status, data = self.srv.request(
-            "POST", "/v1/sessions", body=body, headers=self.hdr)
+    def _launch(self, body, installed=True):
+        with patch("quiver.remote.hub.shutil.which",
+                   return_value="/usr/bin/x" if installed else None), \
+             patch("quiver.remote.supervise.tmux_bin",
+                   return_value="/usr/bin/tmux"):
+            status, data = self.srv.request(
+                "POST", "/v1/sessions", body=body, headers=self.hdr)
         return status, json.loads(data)
+
+    def _wait_launch_threads(self):
+        for t in threading.enumerate():
+            if t.name.startswith("remote-launch-"):
+                t.join(timeout=5)
 
     def _launch_view(self, launch_id):
         status, data = self.srv.request(
@@ -661,6 +670,7 @@ class TestHubWriteRoutes(unittest.TestCase):
         ) as launch:
             status, body = self._launch(
                 {"harness": "claude", "cwd": "/tmp", "prompt": "hi"})
+            self._wait_launch_threads()
         self.assertEqual(status, 202, body)
         launch_id = body["launch_id"]
         self.assertEqual(body["state"], "pending")
@@ -679,24 +689,37 @@ class TestHubWriteRoutes(unittest.TestCase):
                    return_value=(True, "launched", "qv-t")):
             _, body = self._launch(
                 {"harness": "claude", "cwd": "/tmp", "prompt": "hi"})
+            self._wait_launch_threads()
         self.srv.state.emit("claude:new", protocol.event(
             "session.launched", "claude:new", "m",
             {"launch_id": body["launch_id"]}))
         _, view = self._launch_view(body["launch_id"])
         self.assertEqual(view["state"], "pending")
 
-    def test_launch_failure_is_422_and_remembered(self):
+    def test_launch_failure_after_reply_is_remembered(self):
+        # launch_new runs after the 202, so its failure lands on the
+        # launch the phone is polling.
         with patch(
             "quiver.remote.supervise.launch_new",
-            return_value=(False, "tmux is not available", None),
+            return_value=(False, "tmux launch failed", None),
         ):
             status, body = self._launch(
                 {"harness": "claude", "cwd": "/tmp", "prompt": "hi"})
-        self.assertEqual(status, 422, body)
-        self.assertEqual(body["error"]["code"], "launch_failed")
-        (launch,) = self.srv.state.launches.values()
-        self.assertEqual(launch["state"], "failed")
-        self.assertIn("tmux", launch["note"])
+            self._wait_launch_threads()
+        self.assertEqual(status, 202, body)
+        _, view = self._launch_view(body["launch_id"])
+        self.assertEqual(view["state"], "failed")
+        self.assertIn("tmux", view["note"])
+
+    def test_missing_binary_is_422_before_launch(self):
+        with patch("quiver.remote.supervise.launch_new") as launch:
+            status, body = self._launch(
+                {"harness": "claude", "cwd": "/tmp", "prompt": "hi"},
+                installed=False)
+        self.assertEqual((status, body["error"]["code"]),
+                         (422, "launch_failed"))
+        launch.assert_not_called()
+        self.assertEqual(self.srv.state.launches, {})
 
     def test_launch_validation(self):
         with patch("quiver.remote.supervise.launch_new") as launch:

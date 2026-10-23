@@ -207,7 +207,9 @@ launch outside it (`422 not_launchable`). Errors: `422 bad_command`
 (binary or tmux missing), `429 backlog_full` (satellite too far behind).
 
 The answer is `202 {launch_id, state: "pending", note}` (plus
-`queued: true` for a satellite). The harness picks its own session id,
+`queued: true` for a satellite). On the hub it comes before the pane is
+primed, which can take 30 s; a launch that fails after that reads
+`failed` at the route below. The harness picks its own session id,
 so the key is not known yet: the launch id rides the pending marker into
 the supervised entry when `adopt_pending` claims the new transcript, and
 the adopting machine emits `session.launched {launch_id}` naming the

@@ -103,6 +103,8 @@ class TestCommandValidation(unittest.TestCase):
                                "cwd": "/srv/app", "prompt": "go"})
         bad = [
             {"harness": "gemini", "cwd": "/a", "prompt": "go"},
+            {"harness": ["claude"], "cwd": "/a", "prompt": "go"},
+            {"harness": {"x": 1}, "cwd": "/a", "prompt": "go"},
             {"harness": "claude", "cwd": "~/a", "prompt": "go"},
             {"harness": "claude", "cwd": "/a\x00b", "prompt": "go"},
             {"harness": "claude", "cwd": "/a", "prompt": ""},

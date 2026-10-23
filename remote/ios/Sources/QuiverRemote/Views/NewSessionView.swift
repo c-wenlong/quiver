@@ -15,6 +15,9 @@ struct NewSessionView: View {
     @State private var prompt = ""
     @State private var showAllFolders = false
     @State private var flow = LaunchFlow()
+    /// The running launch, so Cancel or a swipe-down stops it before it
+    /// can open a chat behind a sheet that is gone.
+    @State private var launch: Task<Void, Never>?
     /// The session list as it was when the sheet opened: the 15 s poll
     /// would otherwise re-sort the folders under a finger.
     @State private var rows: [SessionRow] = []
@@ -42,9 +45,15 @@ struct NewSessionView: View {
         .navigationTitle("New session")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") {
+                    launch?.cancel()
+                    dismiss()
+                }
+            }
         }
         .interactiveDismissDisabled(flow.busy)
+        .onDisappear { launch?.cancel() }
         .onAppear {
             guard machineId == nil else { return }
             rows = app.sessions
@@ -73,6 +82,7 @@ struct NewSessionView: View {
                             .strokeBorder(selected ? Theme.borderStrong : Theme.border, lineWidth: 1))
                     }
                     .buttonStyle(.plain)
+                    .disabled(flow.busy)
                     .accessibilityAddTraits(selected ? .isSelected : [])
                 }
             }
@@ -156,7 +166,7 @@ struct NewSessionView: View {
     private func startSection(_ machine: Machine) -> some View {
         let ready = folder != nil && harness != nil && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(alignment: .leading, spacing: 8) {
-            Button { Task { await start(machine) } } label: {
+            Button { launch = Task { await start(machine) } } label: {
                 HStack(spacing: 8) {
                     if flow.busy { ProgressView().controlSize(.small).tint(Theme.primaryForeground) }
                     Text(flow.phase == .waiting ? "Waiting for the session" : flow.busy ? "Starting" : "Start session")
@@ -181,7 +191,7 @@ struct NewSessionView: View {
     // MARK: Actions
 
     private func select(machine: Machine?) {
-        guard let machine else { return }
+        guard let machine, !flow.busy else { return }
         machineId = machine.id
         showAllFolders = false
         harnessPicked = false
@@ -203,8 +213,9 @@ struct NewSessionView: View {
         let key = await flow.run(
             post: { try await client.startSession(machine: machine.id, harness: harness, cwd: folder, prompt: text) },
             fetch: { try await client.launch($0) })
-        guard let key else { return }
+        guard let key, !Task.isCancelled else { return }
         await app.refresh()
+        guard !Task.isCancelled else { return }
         onStarted(key)
         dismiss()
     }

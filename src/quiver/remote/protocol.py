@@ -254,7 +254,7 @@ def parse_launch_command(body: dict) -> dict:
     if not isinstance(body, dict):
         raise ValueError("body must be a JSON object")
     harness = body.get("harness") or body.get("tool") or ""
-    if harness not in LAUNCHABLE_HARNESSES:
+    if not isinstance(harness, str) or harness not in LAUNCHABLE_HARNESSES:
         raise ValueError(
             f"harness must be one of {sorted(LAUNCHABLE_HARNESSES)}"
         )

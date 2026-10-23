@@ -91,9 +91,11 @@ final class LaunchFlow {
             phase = .failed((error as? HubError)?.message ?? error.localizedDescription)
             return nil
         }
+        if Task.isCancelled { phase = .idle; return nil }
         phase = .waiting
         var status = accepted
-        for _ in 0..<attempts {
+        var polls = 0
+        while true {
             if let key = status.key, status.state == "started" {
                 phase = .started(key)
                 return key
@@ -102,6 +104,8 @@ final class LaunchFlow {
                 phase = .failed(status.note.map { "The session didn't start: \($0)" } ?? "The session didn't start.")
                 return nil
             }
+            if polls == attempts { break }
+            polls += 1
             try? await Task.sleep(for: interval)
             if Task.isCancelled { phase = .idle; return nil }
             do {

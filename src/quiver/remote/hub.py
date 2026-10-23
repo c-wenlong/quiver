@@ -18,6 +18,7 @@ import json
 import os
 import queue
 import secrets
+import shutil
 import signal
 import socket
 import threading
@@ -44,6 +45,7 @@ from quiver.remote import (
     usage as usage_mod,
 )
 from quiver.remote.journal import Journal
+from quiver.sessions.resume import launch_tool_name
 
 DEFAULT_PORT = 8477
 _MAX_BODY = 4 << 20  # 4 MB JSON cap; attachments go through their own route
@@ -1183,18 +1185,33 @@ class _Handler(BaseHTTPRequestHandler):
             if s.tool_name == harness
             and os.path.realpath(s.path or "") == real_cwd
         ]
-        launch_id = state.new_launch(machine, harness, cwd)
-        ok, note, _name = supervise.launch_new(
-            state.home, harness, cwd, cmd["prompt"],
-            known_ids=known, launch_id=launch_id,
-        )
-        if not ok:
-            state.settle_launch(launch_id, state="failed", note=note)
-            self._send_error(422, "launch_failed", note)
+        # Failures a phone can act on answer now; launch_new itself
+        # runs after the reply, since priming the pane can take 30 s and
+        # the phone needs the launch id to follow it.
+        binary = launch_tool_name(harness)
+        if not binary or not shutil.which(binary):
+            self._send_error(422, "launch_failed",
+                             f"{harness} is not installed on this machine")
             return
+        if not supervise.tmux_bin():
+            self._send_error(422, "launch_failed", "tmux is not installed")
+            return
+        launch_id = state.new_launch(machine, harness, cwd)
+
+        def run() -> None:
+            ok, note, _name = supervise.launch_new(
+                state.home, harness, cwd, cmd["prompt"],
+                known_ids=known, launch_id=launch_id,
+            )
+            if not ok:
+                state.settle_launch(launch_id, state="failed", note=note)
+
+        threading.Thread(
+            target=run, name=f"remote-launch-{launch_id}", daemon=True
+        ).start()
         self._send_json(202, {
             "ok": True, "launch_id": launch_id, "state": "pending",
-            "note": note,
+            "note": "starting under tmux",
         })
 
     def _injector(self, key: str):

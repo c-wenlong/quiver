@@ -429,6 +429,25 @@ final class LaunchFlowTests: XCTestCase {
         XCTAssertEqual(flow.phase, .started("claude:new"))
     }
 
+    func testTheLastPollIsStillRead() async {
+        let flow = LaunchFlow()
+        let key = await flow.run(post: { self.status("pending") },
+                                 fetch: { _ in self.status("started", key: "claude:late") },
+                                 attempts: 1, interval: .zero)
+        XCTAssertEqual(key, "claude:late")
+    }
+
+    func testCancelledLaunchStopsWithoutAKey() async {
+        let flow = LaunchFlow()
+        let task = Task { await flow.run(post: { self.status("pending") },
+                                         fetch: { _ in self.status("pending") },
+                                         interval: .seconds(30)) }
+        task.cancel()
+        let key = await task.value
+        XCTAssertNil(key)
+        XCTAssertEqual(flow.phase, .idle)
+    }
+
     func testFailedLaunchShowsTheHubsNote() async {
         let flow = LaunchFlow()
         let key = await flow.run(post: { self.status("pending") },
