@@ -63,7 +63,7 @@ struct PluginExplorer: View {
         let sources = index.sources(harness: model.harness, query: model.query)
         filters(index, shown: PluginExploreIndex.distinctPlugins(in: sources))
         if !index.problems.other.isEmpty { Card { Problems(problems: index.problems.other) } }
-        if let line = index.problems.missingLine {
+        if let line = index.missingNote {
             // One quiet line, not a warning each: a registration synced
             // from another Mac is nothing to fix from here.
             Label(line, systemImage: "info.circle")
@@ -71,7 +71,7 @@ struct PluginExplorer: View {
                 .hoverTip(index.problems.missing.joined(separator: ", "), title: "Registered, not on this Mac")
         }
         if index.total == 0 {
-            EmptyCard(text: "No plugin marketplaces registered in Claude Code, Codex or Cursor.",
+            EmptyCard(text: index.emptyText,
                       icon: "puzzlepiece.extension",
                       actionTitle: "Add marketplace", action: addMarketplace)
         } else if sources.isEmpty {

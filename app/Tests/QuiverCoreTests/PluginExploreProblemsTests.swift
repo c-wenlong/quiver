@@ -67,6 +67,33 @@ import Testing
         #expect(index.problems.missing.count == 7)
     }
 
+    @Test func theMissingLineSitsAboveAListOnly() {
+        let index = PluginExploreIndex(catalog: syncedCatalog, skills: [])
+        #expect(index.missingNote == "7 marketplaces are registered but missing on this Mac")
+    }
+
+    @Test func whenEveryMarketplaceIsMissingTheEmptyPageSaysSoOnce() {
+        // Nothing else registered: no list, so no line above one, and the
+        // empty card says why instead of "none registered".
+        let catalog = PluginCatalog(harnesses: ["claude"], actions: ["claude"], marketplaces: [
+            PluginMarketplace(name: "design", hub: true, harnesses: ["claude": .init(sourceType: "directory",
+                                                                                     readable: false)],
+                              plugins: []),
+            PluginMarketplace(name: "nus", hub: true, harnesses: ["claude": .init(sourceType: "directory",
+                                                                                  readable: false)],
+                              plugins: []),
+        ], errors: [missing("design"), missing("nus")])
+        let index = PluginExploreIndex(catalog: catalog, skills: [])
+        #expect(index.total == 0)
+        #expect(index.sources.isEmpty)
+        #expect(index.missingNote == nil)
+        #expect(index.emptyText == "No plugins to show. 2 marketplaces are registered but missing on this Mac.")
+
+        let none = PluginExploreIndex(catalog: PluginCatalog(harnesses: ["claude"], actions: [], marketplaces: []),
+                                      skills: [])
+        #expect(none.emptyText == "No plugin marketplaces registered in Claude Code, Codex or Cursor.")
+    }
+
     @Test func aMissingMarketplaceWithAnInstalledCopyStillShows() {
         // Its folder is gone, but something installed from it is not:
         // that copy can still be turned off or removed.

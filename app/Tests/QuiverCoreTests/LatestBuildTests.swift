@@ -86,6 +86,44 @@ private final class BuildGate: @unchecked Sendable {
         #expect(published == ["second"])
     }
 
+    /// Starts a `settled()` caller and returns once it is waiting.
+    private func parkedWaiter(on build: LatestBuild<String>) async -> Task<Void, Never> {
+        await withCheckedContinuation { (parked: CheckedContinuation<Task<Void, Never>, Never>) in
+            var waiter: Task<Void, Never>?
+            build.onWait = {
+                build.onWait = nil
+                parked.resume(returning: waiter!)
+            }
+            waiter = Task { await build.settled() }
+        }
+    }
+
+    @Test func aWaiterGoesOnWhenANewerBuildPublishesWhileTheOldOneIsStuck() async {
+        let build = LatestBuild<String>()
+        let stuck = BuildGate()
+        var published: [String] = []
+        build.start({ stuck.hold(); return "stuck" }) { published.append($0) }
+        await stuck.waitForStart()
+        let waiter = await parkedWaiter(on: build)
+        // Waiting on the stuck build's own task would never end.
+        build.start({ "new" }) { published.append($0) }
+        await waiter.value
+        #expect(published == ["new"])
+        stuck.open()
+    }
+
+    @Test func aWaiterGoesOnWhenTheStuckBuildIsCancelled() async {
+        let build = LatestBuild<String>()
+        let stuck = BuildGate()
+        build.start({ stuck.hold(); return "stuck" }) { _ in }
+        await stuck.waitForStart()
+        let waiter = await parkedWaiter(on: build)
+        build.cancel()
+        await waiter.value
+        #expect(!build.isRunning)
+        stuck.open()
+    }
+
     @Test func aCancelledBuildIsNeverPublished() async {
         let build = LatestBuild<Int>()
         let gate = BuildGate()

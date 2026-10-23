@@ -15,9 +15,17 @@ import Foundation
 @MainActor
 public final class LatestBuild<Value: Sendable> {
     private var generation = 0
-    private var running: Task<Void, Never>?
+    /// Callers of `settled()`, woken when the latest build publishes or is
+    /// cancelled. Never tied to one build's task: a build stuck on disk
+    /// must not hold a waiter once a newer one has published.
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    /// Called each time a `settled()` caller starts waiting; for tests.
+    var onWait: (() -> Void)?
 
     public init() {}
+
+    /// A build is in flight whose result will be published.
+    public private(set) var isRunning = false
 
     /// Runs `work` off the main actor, then hands its result to `publish`
     /// on the main actor, unless `start` or `cancel` was called again
@@ -26,30 +34,39 @@ public final class LatestBuild<Value: Sendable> {
                       publish: @escaping @MainActor (Value) -> Void) {
         generation += 1
         let mine = generation
-        running = Task { [weak self] in
+        isRunning = true
+        Task { [weak self] in
             let value = await withCheckedContinuation { (done: CheckedContinuation<Value, Never>) in
                 DispatchQueue.global(qos: .userInitiated).async { done.resume(returning: work()) }
             }
             guard let self, self.generation == mine else { return }
-            self.running = nil
+            self.isRunning = false
             publish(value)
+            self.wake()
         }
     }
 
-    /// Drops the build in flight: its result is never published.
+    /// Drops the build in flight: its result is never published, and
+    /// whoever waits on `settled()` goes on.
     public func cancel() {
         generation += 1
-        running = nil
+        isRunning = false
+        wake()
     }
 
-    /// A build is in flight whose result will be published.
-    public var isRunning: Bool { running != nil }
-
     /// Returns once the latest start has published, or been cancelled.
+    /// A start made while waiting is waited for too.
     public func settled() async {
-        while let current = running {
-            await current.value
-            if running == current { return }
+        guard isRunning else { return }
+        await withCheckedContinuation { (waiter: CheckedContinuation<Void, Never>) in
+            waiters.append(waiter)
+            onWait?()
         }
+    }
+
+    private func wake() {
+        let woken = waiters
+        waiters = []
+        for waiter in woken { waiter.resume() }
     }
 }

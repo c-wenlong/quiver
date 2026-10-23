@@ -168,6 +168,19 @@ public struct PluginExploreIndex: Sendable, Equatable {
                                missing: Set(problems.missing))
     }
 
+    /// The quiet line above the list about marketplaces missing on this
+    /// Mac; nil when none are, or when there is no list to put it above
+    /// (`emptyText` says it then).
+    public var missingNote: String? { total == 0 ? nil : problems.missingLine }
+
+    /// What the page says when it has no plugin at all.
+    public var emptyText: String {
+        guard let line = problems.missingLine else {
+            return "No plugin marketplaces registered in Claude Code, Codex or Cursor."
+        }
+        return "No plugins to show. \(line)."
+    }
+
     /// Whether the marketplace named `name` can be renamed.
     public func isEditable(marketplace name: String) -> Bool { editableMarketplaces.contains(name) }
 
