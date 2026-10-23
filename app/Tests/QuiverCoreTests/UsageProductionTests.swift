@@ -1,5 +1,4 @@
 import Foundation
-import LocalAuthentication
 import Security
 import Testing
 @testable import QuiverCore
@@ -73,17 +72,17 @@ extension SecItemKeychainTests {
     final class FakeKeychain: @unchecked Sendable {
         var items: [String: Data] = [:]
         private(set) var calls: [String] = []
-        /// Reads must ask to fail instead of prompting; writes may prompt.
+        /// Reads must run with prompts off; writes may prompt.
         private(set) var promptsForbidden = true
         private(set) var writesMayPrompt = true
+        /// The prompt switch as the call in flight sees it; nil outside one.
+        private var promptsAllowed: Bool?
 
         func make() -> SecItemCalls {
             SecItemCalls(
                 copyMatching: { [self] query, result in
                     calls.append("read")
-                    let context = (query as? [String: Any])?[kSecUseAuthenticationContext as String]
-                        as? LAContext
-                    if context?.interactionNotAllowed != true {
+                    if promptsAllowed != false {
                         promptsForbidden = false
                     }
                     guard let q = query as? [String: Any],
@@ -96,7 +95,7 @@ extension SecItemKeychainTests {
                 },
                 update: { [self] query, attributes in
                     calls.append("update")
-                    if (query as? [String: Any])?[kSecUseAuthenticationContext as String] != nil {
+                    if promptsAllowed != true {
                         writesMayPrompt = false
                     }
                     guard let q = query as? [String: Any],
@@ -108,6 +107,9 @@ extension SecItemKeychainTests {
                 },
                 add: { [self] query, _ in
                     calls.append("add")
+                    if promptsAllowed != true {
+                        writesMayPrompt = false
+                    }
                     guard let q = query as? [String: Any],
                           let data = q[kSecValueData as String] as? Data else {
                         return errSecParam
@@ -117,11 +119,19 @@ extension SecItemKeychainTests {
                 },
                 delete: { [self] query in
                     calls.append("delete")
+                    if promptsAllowed != true {
+                        writesMayPrompt = false
+                    }
                     guard let q = query as? [String: Any],
                           items.removeValue(forKey: key(q)) != nil else {
                         return errSecItemNotFound
                     }
                     return errSecSuccess
+                },
+                interaction: { [self] allowed, call in
+                    promptsAllowed = allowed
+                    defer { promptsAllowed = nil }
+                    return call()
                 })
         }
 
@@ -191,8 +201,38 @@ extension SecItemKeychainTests {
         let store = SecItemKeychain(calls: keychain.make())
         _ = await store.genericPassword(service: "svc", account: "acct")
         try await store.setGenericPassword(service: "svc", account: "acct", value: "v")
+        try await store.setGenericPassword(service: "svc", account: "acct", value: "w")
+        try await store.deleteGenericPassword(service: "svc", account: "acct")
+        #expect(keychain.calls == ["read", "update", "add", "update", "delete"])
         #expect(keychain.promptsForbidden)
         #expect(keychain.writesMayPrompt)
+    }
+
+    @Test func theLegacySwitchIsOffForTheCallThenPutBack() {
+        // The real process-wide switch, never an item: this macOS still
+        // has it, the call sees it off, and it reads as before afterwards.
+        guard let before = LegacyKeychainPrompts.isAllowed() else {
+            Issue.record("SecKeychainSetUserInteractionAllowed did not resolve")
+            return
+        }
+        var during: Bool?
+        let status = LegacyKeychainPrompts.run(allowed: false) {
+            during = Self.peekSwitch()
+            return errSecSuccess
+        }
+        #expect(status == errSecSuccess)
+        #expect(during == false)
+        #expect(LegacyKeychainPrompts.isAllowed() == before)
+    }
+
+    /// The switch read straight from Security, since `isAllowed` takes
+    /// the lock `run` is holding.
+    private static func peekSwitch() -> Bool? {
+        typealias Get = @convention(c) (UnsafeMutablePointer<DarwinBoolean>) -> OSStatus
+        guard let handle = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY),
+              let get = dlsym(handle, "SecKeychainGetUserInteractionAllowed") else { return nil }
+        var state = DarwinBoolean(true)
+        return unsafeBitCast(get, to: Get.self)(&state) == errSecSuccess ? state.boolValue : nil
     }
 }
 
