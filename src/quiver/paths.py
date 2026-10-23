@@ -121,6 +121,7 @@ def remote_dir_for(home: Path | None = None) -> Path:
     """``~/.quiver/data/remote`` — the remote-control hub's state.
 
     Holds ``devices.json`` (paired phone credentials, mode 600),
+    ``inbox_dismissals.json`` (per-device inbox dismissals, mode 600),
     ``machine.json`` (this machine's stable remote id), ``pair_tokens.json``
     (one-time pairing hand-offs), ``cursors/`` (per-session transcript read
     offsets), ``journal/`` (per-session event logs) and ``inbox/`` (staged

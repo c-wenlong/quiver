@@ -33,6 +33,11 @@ REFRESH_INTERVAL_S = 10.0
 # phone wants the live end.
 MAX_ROWS = 500
 
+# Follow-ups, errors and interrupts leave the inbox this long after the
+# session's last activity; pending approvals never do.
+INBOX_MAX_AGE_S = 3 * 86_400
+INBOX_STATUSES = frozenset({"followup", "error", "interrupted"})
+
 
 def load_machine_id(home: Path | str | None = None) -> str:
     """This machine's stable remote id, minted on first use.
@@ -323,20 +328,46 @@ class Catalog:
         now = time.time() if now is None else now
         return now - self._refreshed_at >= REFRESH_INTERVAL_S
 
-    def inbox(self, pending: dict[str, str] | None = None) -> list[dict]:
+    def inbox(
+        self,
+        pending: dict[str, str] | None = None,
+        dismissed: dict[str, float] | None = None,
+        include_done: bool = False,
+        now: float | None = None,
+    ) -> list[dict]:
         """Pending decisions: sessions asking for input or in trouble.
 
         ``pending`` maps session key -> outstanding approval request id.
         A session waiting on an approval belongs in the inbox even when
-        its transcript status is still ``active``.
+        its transcript status is still ``active``, and it stays there
+        whatever its age or any dismissal: it blocks an agent until
+        answered.
+
+        Follow-ups, errors and interrupts older than ``INBOX_MAX_AGE_S``
+        drop out. ``dismissed`` maps key -> the ``last_active_at`` a
+        device cleared; the item stays hidden until it moves past that.
+        ``include_done`` adds sessions that finished since local
+        midnight as ``done`` items.
         """
         pending = pending or {}
+        dismissed = dismissed or {}
+        now = time.time() if now is None else now
+        cutoff = now - INBOX_MAX_AGE_S
+        midnight = _local_midnight(now)
         items = []
         for _key, _s, row, status in self._rows:
             rid = pending.get(row["key"])
+            last = _num(row.get("last_active_at"))
             if rid is not None:
                 status = "approval"
-            elif status not in {"followup", "error", "interrupted"}:
+            elif status in INBOX_STATUSES:
+                if last < cutoff:
+                    continue
+            elif not (include_done and status == "done" and last >= midnight):
+                continue
+            if rid is None and row["key"] in dismissed and (
+                last <= dismissed[row["key"]]
+            ):
                 continue
             item = {
                 "key": row["key"],
@@ -352,3 +383,16 @@ class Catalog:
                 item["request_id"] = rid
             items.append(item)
         return items
+
+
+def _num(value: object) -> float:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _local_midnight(now: float) -> float:
+    """Start of ``now``'s day in the hub's local time."""
+    t = time.localtime(now)
+    return time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1))
