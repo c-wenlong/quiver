@@ -54,6 +54,10 @@ class TestReadText(unittest.TestCase):
         self.assertIsNone(page.read_text(self.dir / "c.md"))
         self.assertIsNone(page.read_text(self.dir / "missing.md"))
         self.assertIsNone(page.read_text(self.dir))
+        (self.dir / "d.txt").write_bytes(b"ok \xff\xfe")
+        self.assertIsNone(page.read_text(self.dir / "d.txt"))
+        (self.dir / "e.md").write_bytes(b"a" * 8191 + "é and more".encode())
+        self.assertTrue(page.read_text(self.dir / "e.md").endswith("é and more"))
 
 
 class TestPlacement(unittest.TestCase):

@@ -106,6 +106,8 @@ function skillsChip(name, link, { compact = false, root = "" } = {}) {
 /* ------------------------------------------------------------------ list */
 
 function renderSkills() {
+  // The Harness links popover never stays open across a page change.
+  skillsPage.links = null;
   const q = new URLSearchParams((location.hash.split("?")[1]) || "");
   const path = q.get("skill");
   if (path) return renderSkillDetail(path);
@@ -444,9 +446,11 @@ async function openSkillFile(d, name) {
       <div class="card-subtitle sk-mono-sub">${esc(skillsPath(path, d.home))}</div></div>
       <button class="sk-button" value="close">Close</button></div>${inner}</form>`;
   sheet.innerHTML = head('<p class="caption">Reading…</p>');
+  sheet.dataset.file = name;
   if (!sheet.open) sheet.showModal();
   const { status, data } = await api(`/v1/app/skills?skill=${encodeURIComponent(d.skill.path)}&file=${encodeURIComponent(name)}`);
-  if (!sheet.isConnected || !sheet.open) return;
+  // Closed, or another file picked while this one was read.
+  if (!sheet.isConnected || !sheet.open || sheet.dataset.file !== name) return;
   let body;
   if (status !== 200 || !data) {
     body = `<p class="error">${esc((data && data.error && data.error.message) || `The hub answered ${status}.`)}</p>`;

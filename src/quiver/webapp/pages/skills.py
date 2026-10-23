@@ -149,7 +149,7 @@ def read_text(path: Path) -> str | None:
         head.decode("utf-8")
     except UnicodeDecodeError as exc:
         # A character cut at the 8 KB mark is not a binary file.
-        if exc.start < len(head) - 3:
+        if len(data) <= _HEAD or exc.start < len(head) - 3:
             return None
     return data.decode("utf-8", errors="replace")
 
