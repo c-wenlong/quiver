@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Compute.** What the starred harnesses run on the hub
+  machine and what it costs it, read from Linux's `/proc` and `/sys`
+  (and `nvidia-smi` when present): the totals line, the hub's CPU,
+  memory, load and GPU, the RAM / CPU / GPU / Temperature trend card
+  with its interval picker, a card per running harness with its
+  processes, the Orphaned card, and the thresholds behind the gear.
+  Read only; quitting processes and fan control stay in the Mac app.
+  A non-Linux hub says the page needs Linux. docs/web-app/compute.md
+  has the sources and the differences.
+
 - **Web app: Service status.** The Mac app's Service status page in the
   browser: a card per status page (Claude, OpenAI / Codex, GitHub /
   Copilot, Cursor, Gemini, Devin, npm, Vercel, Cloudflare) with its
