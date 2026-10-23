@@ -1,12 +1,19 @@
 /* Harnesses and Accounts: ports of the Mac app's HarnessesPage and the
- * starred-harness cards on AccountsPage. Read only for now; starring,
- * archiving and editing stay in swe and the Mac app. Loaded before app.js.
+ * starred-harness cards on AccountsPage. Harnesses can star, unstar,
+ * archive (with a reason) and restore, through POST /v1/app/harness/<action>;
+ * editing, Detect and Add stay in swe and the Mac app. Loaded before app.js.
  */
 "use strict";
 
 /* ---------------------------------------------------------------- Harnesses */
 
-const harnessesPage = { data: null, gen: 0, scope: "in-use", query: "", expanded: false };
+const harnessesPage = {
+  data: null, gen: 0, scope: "in-use", query: "", expanded: false,
+  // Writes: rows waiting on the hub, the row whose archive form is open
+  // (and what is typed in it), and the last action's error.
+  busy: new Set(), archiving: null, reason: "", actionError: null,
+};
+const REASON_MAX = 500;
 
 async function renderHarnesses() {
   const panel = document.getElementById("panel");
@@ -29,7 +36,7 @@ async function renderHarnesses() {
 
 function harnessesHeader() {
   const where = harnessesPage.data && harnessesPage.data.machine ? ` on ${harnessesPage.data.machine}` : "";
-  return pageHeader("Harnesses", `The AI coding CLIs swe knows about${where}. Star or archive them with swe or in the Mac app.`,
+  return pageHeader("Harnesses", `The AI coding CLIs swe knows about${where}. Star the ones you use; archive the ones you've ruled out.`,
     `<button class="icon-button" id="page-refresh" aria-label="Refresh" title="Refresh">${icon("rescan")}</button>`);
 }
 
@@ -80,6 +87,7 @@ function paintHarnesses() {
           value="${esc(p.query)}" autocomplete="off" spellcheck="false">
         <span class="caption count">${count} harness${count === 1 ? "" : "es"}</span>
       </div>
+      ${p.actionError ? `<div class="card harness-error"><p class="error" role="alert">${esc(p.actionError)}</p></div>` : ""}
       <div class="card list">${body}</div>
     </div></div>`;
   bindRefresh(renderHarnesses, () => { harnessesPage.data = null; });
@@ -96,6 +104,7 @@ function paintHarnesses() {
   };
   const fold = document.getElementById("harness-fold");
   if (fold) fold.onclick = () => { p.expanded = !p.expanded; paintHarnesses(); };
+  bindHarnessActions();
 }
 
 function archivedLine(a) {
@@ -110,15 +119,15 @@ function archivedLine(a) {
 
 function harnessRow(h) {
   const aliases = (h.aliases || []).map((a) => `<span class="badge">${esc(a)}</span>`).join("");
-  const star = h.state === "starred" ? '<span class="star" title="Starred">★</span>' : "";
+  const busy = harnessesPage.busy.has(h.name);
   const installed = h.installed == null ? ""
     : `<span class="badge">${h.installed ? "Installed" : "Not on PATH"}</span>`;
   const sessions = h.sessions_100d == null ? ""
     : `<span class="caption">${h.sessions_100d} session${h.sessions_100d === 1 ? "" : "s"} in 100 days</span>`;
-  return `<div class="list-row">
+  return `<div class="list-row harness-row${busy ? " busy" : ""}" data-harness="${esc(h.name)}"${busy ? ' aria-busy="true"' : ""}>
     <span class="session-logo">${Fmt.logo(h.name)}</span>
     <div class="list-main">
-      <div class="list-title">${star}<span class="name">${esc(harnessTitle(h))}</span>
+      <div class="list-title"><span class="name">${esc(harnessTitle(h))}</span>
         ${h.version ? `<code class="muted">${esc(h.version)}</code>` : ""}
         <code>${esc(h.command)}</code>${aliases}</div>
       ${h.description ? `<div class="caption">${esc(h.description)}</div>` : ""}
@@ -126,7 +135,193 @@ function harnessRow(h) {
       ${(h.tags || []).length ? `<div class="caption muted">${h.tags.map(esc).join(" · ")}</div>` : ""}
     </div>
     <div class="list-side">${installed}${sessions}</div>
+    ${harnessActions(h, busy)}
+    ${harnessesPage.archiving === h.name && h.state !== "archived" ? archiveForm(h, busy) : ""}
   </div>`;
+}
+
+/* ------------------------------------------------------- Harnesses: writes */
+
+const HARNESS_ICON = {
+  star: '<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/>',
+  archive: '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/>',
+};
+
+function harnessIcon(name, filled = false) {
+  return `<svg viewBox="0 0 24 24" width="15" height="15" fill="${filled ? "currentColor" : "none"}" stroke="currentColor"
+    stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${HARNESS_ICON[name]}</svg>`;
+}
+
+/* Archived rows get Restore; the rest get Archive over Star, as in the app. */
+function harnessActions(h, busy) {
+  const off = busy ? " disabled" : "";
+  const name = esc(harnessTitle(h));
+  if (h.state === "archived") {
+    return `<div class="harness-actions">
+      <button class="harness-button" data-act="restore"${off}>Restore</button></div>`;
+  }
+  const starred = h.state === "starred";
+  const open = harnessesPage.archiving === h.name;
+  return `<div class="harness-actions">
+    <button class="icon-button harness-icon${open ? " pressed" : ""}" data-act="archive-open" aria-expanded="${open}"
+      aria-label="Archive ${name}" title="Archive: hide it from swe list and record why"${off}>${harnessIcon("archive")}</button>
+    <button class="icon-button harness-icon${starred ? " starred" : ""}" data-act="${starred ? "unstar" : "star"}"
+      aria-pressed="${starred}" aria-label="${starred ? "Unstar" : "Star"} ${name}"
+      title="${starred ? "Unstar: stop pinning it to the top" : "Star: pin it to the top and track its limits"}"${off}>${harnessIcon("star", starred)}</button>
+  </div>`;
+}
+
+/* The app's archive popover, inline under the row: a reason is required. */
+function archiveForm(h, busy) {
+  const p = harnessesPage;
+  const empty = !p.reason.trim();
+  return `<form class="harness-archive" novalidate>
+    <div class="card-title">Archive ${esc(harnessTitle(h))}</div>
+    <p class="caption">It drops out of swe list. Nothing is uninstalled, and the reason is kept so you remember why.</p>
+    <input class="field" id="harness-reason" type="text" maxlength="${REASON_MAX}" autocomplete="off"
+      placeholder="Why? Like: too slow, or no MCP support" aria-label="Why are you archiving it?"
+      value="${esc(p.reason)}"${busy ? " disabled" : ""}>
+    <div class="harness-form-buttons">
+      <button type="button" class="harness-button" data-act="archive-cancel"${busy ? " disabled" : ""}>Cancel</button>
+      <button type="submit" class="harness-button primary" id="harness-archive-go"${empty || busy ? " disabled" : ""}>${busy ? "Archiving…" : "Archive"}</button>
+    </div>
+  </form>`;
+}
+
+function bindHarnessActions() {
+  const p = harnessesPage;
+  for (const btn of document.querySelectorAll(".harness-row [data-act]")) {
+    const name = btn.closest(".harness-row").dataset.harness;
+    btn.onclick = (event) => {
+      event.stopPropagation();
+      const act = btn.dataset.act;
+      if (act === "archive-open") {
+        p.archiving = p.archiving === name ? null : name;
+        p.reason = "";
+        paintHarnesses();
+        const field = document.getElementById("harness-reason");
+        if (field) field.focus();
+      } else if (act === "archive-cancel") {
+        closeArchiveForm();
+      } else {
+        harnessWrite(act, name);
+      }
+    };
+  }
+  const form = document.querySelector(".harness-archive");
+  if (!form) return;
+  const name = form.closest(".harness-row").dataset.harness;
+  const field = document.getElementById("harness-reason");
+  const go = document.getElementById("harness-archive-go");
+  field.oninput = () => {
+    p.reason = field.value;
+    go.disabled = !field.value.trim() || p.busy.has(name);
+  };
+  field.onkeydown = (event) => {
+    if (event.key === "Escape") { event.preventDefault(); closeArchiveForm(); }
+  };
+  form.onsubmit = (event) => {
+    event.preventDefault();
+    const why = p.reason.trim();
+    if (why && !p.busy.has(name)) harnessWrite("archive", name, { reason: why });
+  };
+}
+
+function closeArchiveForm() {
+  const p = harnessesPage, name = p.archiving;
+  p.archiving = null;
+  p.reason = "";
+  paintHarnesses();
+  const back = name && document.querySelector(`.harness-row[data-harness="${CSS.escape(name)}"] [data-act="archive-open"]`);
+  if (back) back.focus();
+}
+
+/* POST one write. The row changes only once the hub answers, from the row
+ * it sends back; until then it is dimmed and its buttons are off. */
+async function harnessWrite(action, name, extra = {}) {
+  const p = harnessesPage;
+  if (p.busy.has(name)) return;
+  p.busy.add(name);
+  p.actionError = null;
+  if (onHarnessesPage()) paintHarnesses();
+  const { status, data } = await apiPost(`/v1/app/harness/${action}`, { name, ...extra });
+  p.busy.delete(name);
+  // A list read still in flight may have read the registry before this
+  // write landed: drop it, so it can't paint the old state over the reply.
+  if (status === 200) p.gen++;
+  if (status === 401) {
+    if (onHarnessesPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    return;
+  }
+  if (status !== 200 || !data) {
+    p.actionError = (data && data.error && data.error.message)
+      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+  } else if (p.data) {
+    const rows = p.data.harnesses;
+    const at = rows.findIndex((h) => h.name === data.name);
+    if (data.harness && at >= 0) rows[at] = data.harness;
+    else if (data.harness) rows.push(data.harness);
+    else if (at >= 0) rows.splice(at, 1);
+    if (action === "archive" && p.archiving === name) { p.archiving = null; p.reason = ""; }
+  } else {
+    // A refresh is under way; let it read the registry after this write.
+    if (action === "archive" && p.archiving === name) { p.archiving = null; p.reason = ""; }
+    if (onHarnessesPage()) renderHarnesses();
+    return;
+  }
+  if (!onHarnessesPage() || !p.data) return;
+  const ok = status === 200;
+  repaintHarnesses(() => {
+    // Nothing kept focus (the clicked button was disabled while it ran):
+    // put it back on the row's star, or on the reason after a failed archive.
+    const next = { star: ok ? "unstar" : "star", unstar: ok ? "star" : "unstar" }[action];
+    const row = document.querySelector(`.harness-row[data-harness="${CSS.escape(name)}"]`);
+    return row && (next ? row.querySelector(`[data-act="${next}"]`)
+      : action === "archive" && !ok ? row.querySelector("#harness-reason") : null);
+  });
+}
+
+/* Repaint without taking focus from where the user is now: a reply can
+ * land while they type in another row's reason or the search field. Only
+ * when focus had nowhere to stay does ``fallback()`` pick the element. */
+function repaintHarnesses(fallback) {
+  const el = document.activeElement;
+  const row = el && el.closest ? el.closest(".harness-row") : null;
+  const key = !el || el === document.body ? null
+    : el.id ? `#${CSS.escape(el.id)}`
+    : row && el.dataset.act ? `.harness-row[data-harness="${CSS.escape(row.dataset.harness)}"] [data-act="${el.dataset.act}"]`
+    : null;
+  const caret = key && typeof el.selectionStart === "number" ? [el.selectionStart, el.selectionEnd] : null;
+  paintHarnesses();
+  const again = key ? document.querySelector(key) : null;
+  if (again && !again.disabled) {
+    again.focus();
+    if (caret) { try { again.setSelectionRange(caret[0], caret[1]); } catch { /* not a text field */ } }
+    return;
+  }
+  const target = fallback && fallback();
+  if (target) target.focus();
+}
+
+function onHarnessesPage() {
+  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "harnesses";
+}
+
+/* app.js's api() only reads; writes send JSON with the same credential. */
+async function apiPost(path, body) {
+  let resp;
+  try {
+    resp = await fetch(path, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${credential()}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { status: 0, data: null };
+  }
+  let data = null;
+  try { data = await resp.json(); } catch { /* empty body */ }
+  return { status: resp.status, data };
 }
 
 /* ---------------------------------------------------------------- Accounts */
@@ -181,8 +376,8 @@ function paintAccounts() {
   const starred = (current.harnesses || []).filter((h) => h.state === "starred");
   const body = starred.length
     ? `<div class="account-grid">${starred.map((h) => accountCard(h, current)).join("")}</div>
-       <p class="caption footer">Only starred harnesses show here. Star one with <code>swe harness star &lt;name&gt;</code>, or on the Mac app's Harnesses page.</p>`
-    : `<div class="card"><p class="empty">Nothing starred. Star a harness with <code>swe harness star &lt;name&gt;</code> to see its limits here.</p></div>`;
+       <p class="caption footer">Only starred harnesses show here. Star one on the <a href="#/harnesses">Harnesses</a> page, or with <code>swe harness star &lt;name&gt;</code>.</p>`
+    : `<div class="card"><p class="empty">Nothing starred. Star a harness on the <a href="#/harnesses">Harnesses</a> page to see its limits here.</p></div>`;
   document.getElementById("panel").innerHTML = `<div class="page">${accountsHeader(false)}
     <div class="stack">${chips}${lateNote}${body}</div></div>`;
   bindRefresh(() => renderAccounts("accounts", true));
