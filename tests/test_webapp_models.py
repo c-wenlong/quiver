@@ -2,6 +2,7 @@
 
 import json
 import unittest
+from unittest.mock import patch
 
 from quiver.webapp.api import WebApp
 from quiver.webapp.pages import models
@@ -64,6 +65,10 @@ class TestSearch(unittest.TestCase):
         self.assertEqual(models.search(cat, "kimi", limit=2)["total"], 5)
         self.assertEqual(len(models.search(cat, "kimi", limit=2)["matches"]), 2)
         self.assertEqual(models.search(cat, " - ")["matches"], [])
+        # Keys the page already lists as your models neither show nor count.
+        body = models.search(cat, "kimi", limit=2, exclude={"kimi-k3", "moonshot/kimi-k3"})
+        self.assertEqual([m["model"] for m in body["matches"]], ["kimi-k3-turbo", "vendor/kimi-k3-eu"])
+        self.assertEqual(body["total"], 3)
 
 
 class TestRoute(HubBase):
@@ -78,11 +83,16 @@ class TestRoute(HubBase):
         self.assertEqual(status, 200, data)
         body = json.loads(data)
         self.assertEqual((body["rows"], body["period"]), ([], "month"))
-        status, data = self.srv.request("GET", "/v1/app/models?q=claude-opus", headers=self.auth())
+        # Search reads its own cached price list, never the ledger (no scan).
+        with patch.object(self.srv.state.webapp, "ledger", side_effect=AssertionError("scanned")):
+            status, data = self.srv.request("GET", "/v1/app/models?q=claude-opus&exclude=claude-opus-5%0Ax",
+                                            headers=self.auth())
         self.assertEqual(status, 200, data)
         found = json.loads(data)
         self.assertGreater(found["total"], 0)
-        self.assertTrue(all("claudeopus" in models.normalized(m["model"]) for m in found["matches"]))
+        names = [m["model"] for m in found["matches"]]
+        self.assertTrue(all("claudeopus" in models.normalized(n) for n in names))
+        self.assertNotIn("claude-opus-5", names)
 
 
 if __name__ == "__main__":

@@ -70,5 +70,10 @@ The page says this in a card above the table.
 `list_price`, when present: `{"key", "source": "litellm"|"quiver"|"yours",
 "input", "output", "cache_read", "cache_write"}` in USD per 1M tokens.
 
-`GET /v1/app/models?q=<query>` searches the price list instead:
-`{"query", "matches": [rows as above, with no tokens], "total": <all hits>}`.
+`GET /v1/app/models?q=<query>&exclude=<names, one per line>` searches the
+price list instead: `{"query", "matches": [rows as above, with no tokens],
+"total": <all hits>}`. `exclude` carries the used models the page already
+lists for the query, so they neither repeat nor count toward "+N more".
+Search reads its own copy of the price list (the same files, never
+downloading, kept an hour) rather than the ledger, so typing never waits
+behind a usage scan.

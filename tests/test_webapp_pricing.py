@@ -30,8 +30,10 @@ def catalog():
         {"claude-opus-5": _rates(5e-06, 25e-06, cache_read_input_token_cost=5e-07),
          "gpt-x": _rates(1e-06, 2e-06),
          "grok-mine": _rates(3e-06, 4e-06),
-         "grok-bot": _rates(1e-06, 1e-06)},
-        {"tier_multipliers": {"claude-opus-5": {"fast": 2}}},
+         "grok-bot": _rates(1e-06, 1e-06),
+         "gpt-y": _rates(2e-06, 8e-06, input_cost_per_token_priority=3.5e-06)},
+        {"tier_multipliers": {"claude-opus-5": {"fast": 2}},
+         "default_tier_multipliers": {"priority": 2}},
         overrides={"gpt-x"}, quiver={"grok-mine"})
 
 
@@ -91,6 +93,14 @@ class TestRows(_Store):
         self.assertEqual(row["tiers"], [{"name": "fast", "multiplier": 2.0}])
         self.assertEqual(body["unpriced"], [])
         self.assertEqual(body["harness_options"], ["devin", "claude"])
+
+    def test_a_tier_with_explicit_rates_shows_no_multiplier(self):
+        # The ledger prices gpt-y's priority tier at its own rates, not ×2.
+        self.add("gpt-y", 10, harness="codex", tier="priority")
+        self.add("gpt-x", 10, harness="codex", tier="priority")
+        rows = {r["model"]: r for g in self.build()["groups"] for r in g["models"]}
+        self.assertEqual(rows["gpt-y"]["tiers"], [{"name": "priority", "multiplier": None}])
+        self.assertEqual(rows["gpt-x"]["tiers"], [{"name": "priority", "multiplier": 2.0}])
 
     def test_sources_free_and_unpriced(self):
         self.add("gpt-x", 10, harness="codex")

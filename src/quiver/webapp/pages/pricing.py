@@ -126,7 +126,10 @@ def rows(all_slices: list[dict], catalog: PricingCatalog, picked: list[str]) -> 
         if not any_logged[model]:
             row["harness_billed"] = False
         rates = row.pop("rates")
-        row["tiers"] = [{"name": t, "multiplier": (rates.tier_multipliers.get(t) if rates else None)}
+        # A multiplier only where the ledger applies one: a tier with
+        # explicit rates is priced at them (ModelRates.cost), not scaled.
+        row["tiers"] = [{"name": t, "multiplier": (rates.tier_multipliers.get(t)
+                                                   if rates and t not in rates.tiers else None)}
                         for t in sorted(row.pop("tier_names"))]
         row["rates"] = _per_million(rates)
         row["spend_source"] = _spend_source(row)

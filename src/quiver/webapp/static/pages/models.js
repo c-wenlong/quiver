@@ -32,6 +32,8 @@
     state.data = data;
     state.harness = data.harness_filter || [];
     paint();
+    // New rows change which keys the search leaves out: ask again.
+    if (normalized(state.query)) runSearch(gen);
   }
 
   function header(busy) {
@@ -66,10 +68,11 @@
   function paint() {
     const d = state.data;
     const notes = (d.notes || []).map((n) => `<div class="card"><p class="note">${esc(n)}</p></div>`).join("");
-    const { rows, overflow, empty } = visibleRows();
-    const body = rows.length ? table(rows)
+    const { rows, overflow, empty, error } = visibleRows();
+    const failed = error ? `<div class="card"><p class="error">Couldn't search LiteLLM's price list: ${esc(error)}</p></div>` : "";
+    const body = failed + (rows.length ? table(rows)
       + (overflow > 0 ? `<p class="caption muted qm-overflow">+${overflow} more matches. Tighten the query to list them.</p>` : "")
-      : `<div class="card"><p class="empty">${esc(empty)}</p></div>`;
+      : error ? "" : `<div class="card"><p class="empty">${esc(empty)}</p></div>`);
     document.getElementById("panel").innerHTML = `<div class="page qp-page">${header(false)}
       <div class="stack">${notes}${toolbar()}${macOnlyCard()}${body}</div></div>`;
     bindHeader();
@@ -87,7 +90,10 @@
       state.query = search.value;
       clearTimeout(state.timer);
       // Keystrokes coalesce: one catalog search once the typist pauses.
-      state.timer = setTimeout(runSearch, 150);
+      // The page's generation is taken now, so a search that fires after
+      // the user left for another page never paints over it.
+      const gen = routeGen;
+      state.timer = setTimeout(() => runSearch(gen), 150);
     };
   }
 
@@ -100,23 +106,42 @@
       return { rows: used, overflow: 0, empty: state.harness.length
         ? "None of these harnesses ran a model this period." : "No usage in this period." };
     }
-    const hits = used.filter((r) => normalized(r.model).includes(needle));
-    const s = state.search && normalized(state.search.query) === needle ? state.search : null;
-    const seen = new Set(hits.map((r) => r.model));
-    const lite = s ? s.matches.filter((m) => !seen.has(m.model)) : [];
-    const all = hits.concat(lite);
+    const hits = usedHits(needle);
+    // The answer for this query and these rows only: the server left out
+    // the keys already shown as your models, so its total counts the rest.
+    const s = state.search && state.search.needle === needle && state.search.exclude === hitKey(hits)
+      ? state.search : null;
+    if (s && s.error) return { rows: hits, overflow: 0, empty: "", error: s.error };
+    const all = hits.concat(s ? s.matches : []);
     const shown = all.slice(0, RESULT_LIMIT);
     const overflow = s ? Math.max(0, s.total - s.matches.length) + (all.length - shown.length) : 0;
     return { rows: shown, overflow, empty: s ? "No model or LiteLLM price key matches." : "Searching…" };
   }
 
-  async function runSearch() {
-    const query = state.query, seq = ++state.searchSeq, gen = routeGen;
-    if (!normalized(query)) { state.search = null; return repaintKeepingFocus(); }
+  function usedHits(needle) {
+    return state.data.rows.filter((r) => normalized(r.model).includes(needle));
+  }
+
+  /* The used names a search excluded, one per line (no model name holds a newline). */
+  function hitKey(hits) {
+    return hits.map((r) => r.model).join("\n");
+  }
+
+  async function runSearch(gen) {
+    if (gen !== routeGen || !state.data) return;
+    const query = state.query, needle = normalized(query), seq = ++state.searchSeq;
+    if (!needle) { state.search = null; return repaintKeepingFocus(); }
     repaintKeepingFocus();
-    const { status, data } = await api(`/v1/app/models?${new URLSearchParams({ q: query })}`);
+    const exclude = hitKey(usedHits(needle));
+    const q = new URLSearchParams({ q: query });
+    if (exclude) q.set("exclude", exclude);
+    const { status, data } = await api(`/v1/app/models?${q}`);
     if (gen !== routeGen || seq !== state.searchSeq) return;
-    state.search = status === 200 && data ? data : { query, matches: [], total: 0 };
+    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    state.search = status === 200 && data
+      ? { needle, exclude, matches: data.matches, total: data.total }
+      : { needle, exclude, error: (data && data.error && data.error.message)
+          || (status ? `the hub answered ${status}.` : "couldn't reach the hub. Check the connection and type again.") };
     repaintKeepingFocus();
   }
 

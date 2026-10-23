@@ -19,7 +19,8 @@ import re
 import time
 
 from quiver.ledger import overview
-from quiver.ledger.pricing import PricingCatalog
+from quiver.ledger.pricing import PricingCatalog, load_catalog
+from quiver.webapp.api import CATALOG_TTL_S
 from quiver.ledger.store import LedgerStore
 from quiver.webapp.pages import pricing as pricing_page
 from quiver.webapp.pages._brands import brand_for
@@ -136,16 +137,19 @@ def normalized(text: str) -> str:
     return "".join(ch for ch in text.lower() if ch.isalnum())
 
 
-def search(catalog: PricingCatalog, query: str, limit: int = SEARCH_LIMIT) -> dict:
+def search(catalog: PricingCatalog, query: str, limit: int = SEARCH_LIMIT,
+           exclude: set[str] | frozenset = frozenset()) -> dict:
     """Price list keys whose name holds ``query``: a bare-name exact hit
     first, then a bare-name prefix, then anything the key contains,
-    shorter keys first in each (``ModelsModel.liteRank``)."""
+    shorter keys first in each (``ModelsModel.liteRank``). ``exclude``
+    holds the names the page already lists as your models; they neither
+    show nor count toward ``total``."""
     needle = normalized(query)
     if not needle:
         return {"query": query, "matches": [], "total": 0}
     hits = []
     for key in catalog.entries:
-        if needle not in normalized(key):
+        if key in exclude or needle not in normalized(key):
             continue
         bare = normalized(key[key.rfind("/") + 1:])
         group = 0 if bare == needle else 1 if bare.startswith(needle) else 2 if needle in bare else 3
@@ -173,12 +177,28 @@ def build(store: LedgerStore, catalog: PricingCatalog, period: str, tz_name: str
     }
 
 
+_CATALOGS: dict[str, tuple[float, PricingCatalog]] = {}
+
+
+def search_catalog(home) -> PricingCatalog:
+    """The price list search reads: loaded from the same files as the
+    ledger's (never downloading) and kept an hour, outside the ledger's
+    lock, so typing never waits behind a usage scan."""
+    key, now = str(home), time.time()
+    hit = _CATALOGS.get(key)
+    if hit is None or now - hit[0] > CATALOG_TTL_S:
+        hit = (now, load_catalog(home, download=False))
+        _CATALOGS[key] = hit
+    return hit[1]
+
+
 def get(ctx, args: dict) -> dict:
     period, tz_name, picked, rescan = pricing_page.parse_args(args)
     query = args.get("q")
+    if query is not None:
+        exclude = {name for name in (args.get("exclude") or "").split("\n") if name}
+        return search(search_catalog(ctx.home), query, exclude=exclude)
     with ctx.state.webapp.ledger(rescan=rescan) as (store, catalog, scan_ok):
-        if query is not None:
-            return search(catalog, query)
         body = build(store, catalog, period, tz_name, picked)
     body["notes"] = [] if scan_ok else [pricing_page.SCAN_NOTE]
     body["machine"] = ctx.machine.get("name")

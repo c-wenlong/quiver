@@ -78,6 +78,9 @@ a name the same way.
 - Prices are today's: the web ledger keeps no price history (see
   `ledger/pricing.py`), so usage before a price change is priced at the new
   rate, where the app prices it at the old one.
+- A tier the catalog prices at explicit rates (`gpt-4.1` priority) shows its
+  name alone; the app labels it with the default multiplier, which the
+  ledger does not apply to it.
 - Hover help is the browser's title tooltip; the cache rates are on the rate
   cells' tooltip at every width, not only when the columns are dropped.
 - A Rescan button, like the other web pages.

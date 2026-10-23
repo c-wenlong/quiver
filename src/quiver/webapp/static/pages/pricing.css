@@ -66,6 +66,9 @@
 @container (max-width: 519px) {
   .qp-src { display: none; }
   .qp-src-caption { display: block; }
+  /* The name gets the row's width; its harness icons and tier wrap under it. */
+  .qp-line { flex-wrap: wrap; row-gap: 2px; }
+  .qp-line > .ellipsis { flex: 1 0 100%; }
   .qp-grid { grid-template-columns: minmax(0, 1fr) repeat(2, 60px) 52px; gap: 8px; padding: 0 16px; }
   .qp-card-head { padding: 16px 16px 10px; }
 }
