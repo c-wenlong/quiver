@@ -75,7 +75,7 @@ enum PairingStore {
 }
 
 /// Parses what a pair QR or link carries:
-/// `quiver://pair?host=…&port=…&token=…[&name=…]` or the browser form
+/// `quiver://pair?host=…&port=…&token=…[&scheme=https][&name=…]` or the browser form
 /// `http://host:port/#pair=<token>[&name=…]`.
 struct PairLink: Equatable {
     let baseURL: URL
@@ -87,7 +87,10 @@ struct PairLink: Equatable {
             let q = Self.query(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
             guard let host = q["host"], !host.isEmpty, let token = q["token"], !token.isEmpty else { return nil }
             let port = q["port"].flatMap(Int.init) ?? Hub.defaultPort
-            guard let base = URL(string: "http://\(host):\(port)") else { return nil }
+            // A hub behind `tailscale serve` adds `scheme=https`; links
+            // without it are plain http, as before.
+            let scheme = q["scheme"] == "https" ? "https" : "http"
+            guard let base = URL(string: "\(scheme)://\(host):\(port)") else { return nil }
             self.baseURL = base
             self.token = token
             self.name = q["name"]?.isEmpty == false ? q["name"] : nil

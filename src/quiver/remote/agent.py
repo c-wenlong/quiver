@@ -11,6 +11,7 @@ simply drops offline on the hub until it wakes and replays the queue.
 import json
 import os
 import queue as queue_mod
+import ssl
 import threading
 import time
 import urllib.error
@@ -48,6 +49,36 @@ def save_agent(home: Path | None, conf: dict) -> Path:
     return path
 
 
+# Set once an https hub's certificate fails against Python's default
+# store: python.org builds on macOS ship no CA certificates, so a hub
+# behind ``tailscale serve`` (a real Let's Encrypt cert) is unverifiable
+# until the OS bundle is loaded. Verification is never turned off.
+_fallback_ctx: "ssl.SSLContext | None" = None
+
+
+def _urlopen(req: urllib.request.Request, timeout: float | None):
+    """``urlopen`` that retries a certificate failure once against the
+    OS CA bundle, then keeps using that bundle for every later call."""
+    global _fallback_ctx
+    if _fallback_ctx is not None:
+        return urllib.request.urlopen(req, timeout=timeout,
+                                      context=_fallback_ctx)
+    try:
+        return urllib.request.urlopen(req, timeout=timeout)
+    except urllib.error.URLError as exc:
+        if not isinstance(getattr(exc, "reason", None),
+                          ssl.SSLCertVerificationError):
+            raise
+        from quiver.harness.rate_limits import _verified_context
+
+        ctx = _verified_context()
+        if ctx is None:
+            raise
+        resp = urllib.request.urlopen(req, timeout=timeout, context=ctx)
+        _fallback_ctx = ctx
+        return resp
+
+
 def _headers(credential: str, ctype: str | None = "application/json") -> dict:
     h = {"Authorization": f"Bearer {credential}"}
     if ctype:
@@ -63,7 +94,7 @@ def _post(hub: str, path: str, credential: str, payload: dict,
         headers=_headers(credential), method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _urlopen(req, timeout) as resp:
             return resp.status, json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         try:
@@ -80,7 +111,7 @@ def _get_bytes(hub: str, path: str, credential: str,
         hub.rstrip("/") + path, headers=_headers(credential, None),
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _urlopen(req, timeout) as resp:
             return resp.read()
     except Exception:
         return None
@@ -285,7 +316,7 @@ class RemoteAgent:
         )
         req = urllib.request.Request(url, headers=_headers(self.cred, None))
         try:
-            resp = urllib.request.urlopen(req, timeout=90)
+            resp = _urlopen(req, 90)
         except Exception:
             time.sleep(RECONNECT_S)
             return
