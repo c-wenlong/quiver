@@ -126,6 +126,10 @@ struct HubClient: Sendable {
 
     func inbox() async throws -> InboxResponse { try await send(request("GET", "/v1/inbox")) }
 
+    func search(_ query: String, limit: Int = 50) async throws -> SearchResponse {
+        try await send(request("GET", "/v1/search", query: ["q": query, "limit": "\(limit)"]))
+    }
+
     func messages(_ key: String, limit: Int = 500) async throws -> MessagesResponse {
         try await send(request("GET", "/v1/sessions/\(Self.encodeKey(key))/messages", query: ["limit": "\(limit)"]))
     }

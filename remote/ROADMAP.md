@@ -164,7 +164,8 @@ are server changes in `src/quiver/remote/`.
 - [ ] Siri and Shortcuts: "Approve the pending request", "What needs me"
 - [ ] Deep links: `quiver://pair` (exists), `quiver://session/<key>`
 - [ ] Dictation in the composer
-- [ ] Search across transcripts on all machines
+- [x] Search sessions from Sessions: transcripts through the hub's FTS index when present, titles and folders as text always (`GET /v1/search`)
+- [ ] Search satellite transcripts (the index covers the hub machine only)
 - [ ] Usage and limits view from `swe list --usage --json`
 - [ ] Diff viewer with commit and push through `swe gh`
 - [ ] iPad layout: sessions list and chat side by side
