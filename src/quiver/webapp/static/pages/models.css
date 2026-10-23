@@ -1,0 +1,18 @@
+/* Models: the toolbar, the Mac-only note and the table. qm- prefixed. */
+
+.qm-toolbar { align-items: center; }
+.qm-mac { gap: 6px; }
+.qm-mac p { margin: 0; }
+.qm-table-card { padding: 8px 20px; }
+table.qm-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 520px; }
+.qm-table th {
+  font-size: 12px; font-weight: 500; color: var(--table-header); text-align: left;
+  padding: 8px 8px; white-space: nowrap;
+}
+.qm-table td { padding: 8px; border-top: 1px solid var(--row-divider); white-space: nowrap; }
+.qm-table tr:hover td { background: var(--row-hover); }
+.qm-table .qm-tokens { text-align: right; }
+.qm-table th.qm-price { cursor: help; }
+.qm-model { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 42vw; }
+.qm-ran { display: flex; align-items: center; gap: 4px; }
+.qm-overflow { padding: 0 4px; margin: -8px 0 0; }
