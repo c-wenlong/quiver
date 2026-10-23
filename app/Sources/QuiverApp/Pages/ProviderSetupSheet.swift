@@ -8,7 +8,7 @@ import SwiftUI
 /// can prompt for a password, so the command runs where sudo works).
 struct ProviderSetupSheet: View {
     @Environment(AppModel.self) private var app
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSheet) private var dismiss
     var provider: Provider
     /// What Settings › Providers found; the catalog's own answer wins once
     /// it loads, since it checked PATH just now.

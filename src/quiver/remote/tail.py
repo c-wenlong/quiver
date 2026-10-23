@@ -13,6 +13,7 @@ Three source kinds cover every parser the registry knows:
 - ``JsonlTailSource`` — incremental byte-offset reads over a transcript
   file (claude, codex, pi, cursor, droid, grok, freebuff).
 - ``OpencodeSource`` — SQLite ``part`` rows with a ``time_created``
+  cursor, plus opencode 2.x ``session_message`` rows with a ``seq``
   cursor (opencode, kilo share the drizzle schema).
 - ``SnapshotSource`` — ``read_transcript`` re-reads diffed by message
   fingerprint, for the remaining JSON/SQLite stores (continue, cline,
@@ -38,6 +39,7 @@ from typing import Any, Callable
 from quiver.paths import expand_user, remote_dir_for
 from quiver.remote import injected, protocol, supervise
 from quiver.reports import transcripts as _tr
+from quiver.sessions import opencode_store
 from quiver.sessions.models import Session
 
 # Poll cadence: tight while the session is mid-turn, relaxed otherwise.
@@ -511,13 +513,28 @@ class JsonlTailSource:
         return size
 
 
+def _completed(data: dict) -> bool:
+    """Whether an opencode 2.x assistant row has finished streaming."""
+    times = data.get("time")
+    return isinstance(times, dict) and bool(times.get("completed"))
+
+
 class OpencodeSource:
-    """Incremental poll over opencode/kilo's drizzle ``part`` table."""
+    """Incremental poll over opencode/kilo's drizzle ``part`` table, and
+    the ``session_message`` rows opencode 2.x writes instead.
+
+    The two stores keep separate cursors: ``cursor`` is the newest
+    ``part.time_created`` (epoch ms) seen, ``seq`` the last v2 row
+    emitted. A v2 assistant row is written when its reply starts and
+    rewritten as it streams, so the v2 cursor stops before the first
+    assistant row with no ``time.completed`` and reads it again next poll.
+    """
 
     def __init__(self, db_path: Path, session_id: str) -> None:
         self.db_path = db_path
         self.session_id = session_id
         self.cursor = 0  # max time_created (epoch ms) seen
+        self.seq: int | None = None  # last v2 row emitted; None = not placed yet
         self._roles: dict[str, str] = {}
 
     def state(self) -> dict:
@@ -525,6 +542,7 @@ class OpencodeSource:
             "source": "opencode",
             "session_id": self.session_id,
             "cursor": self.cursor,
+            "seq": self.seq,
         }
 
     def restore(self, state: dict) -> None:
@@ -533,6 +551,11 @@ class OpencodeSource:
                 self.cursor = int(state.get("cursor") or 0)
             except (TypeError, ValueError):
                 self.cursor = 0
+            try:
+                seq = state.get("seq")
+                self.seq = None if seq is None else int(seq)
+            except (TypeError, ValueError):
+                self.seq = None
 
     def skip_to_end(self) -> None:
         conn = self._open()
@@ -547,8 +570,34 @@ class OpencodeSource:
                 self.cursor = int(row[0])
         except sqlite3.Error:
             pass
+        try:
+            self.seq = self._settled_seq(opencode_store.v2_rows(conn, self.session_id), -1)
+        except sqlite3.Error:
+            pass
         finally:
             conn.close()
+
+    @staticmethod
+    def _settled_seq(rows: list, seq: int) -> int:
+        """The last seq before the first assistant row still streaming:
+        that row is rewritten in place when it finishes, so a cursor past
+        it would never read the finished reply."""
+        for _id, kind, row_seq, _created, data in rows:
+            if kind == "assistant" and not _completed(data):
+                break
+            seq = row_seq
+        return seq
+
+    def _place_seq(self, conn: sqlite3.Connection) -> int:
+        """The v2 cursor for a source restored from a cursor file written
+        before it existed: every v2 row at or before the ``part`` cursor's
+        time counts as already sent, so an upgrade replays nothing."""
+        if self.seq is None:
+            self.seq = -1  # seq starts at 0
+            if self.cursor:
+                sent = [r for r in opencode_store.v2_rows(conn, self.session_id) if r[3] <= self.cursor]
+                self.seq = self._settled_seq(sent, -1)
+        return self.seq
 
     def _open(self) -> sqlite3.Connection | None:
         try:
@@ -633,11 +682,70 @@ class OpencodeSource:
                 elif "compact" in ptype:
                     out.append(protocol.message(
                         "compaction", "context compacted", ts=ts))
+            out.extend(self._poll_v2(conn))
         except sqlite3.Error:
             return injected.clean_all(out)
         finally:
             conn.close()
         return injected.clean_all(out)
+
+    def _poll_v2(self, conn: sqlite3.Connection) -> list[dict]:
+        out: list[dict] = []
+        after = self._place_seq(conn)
+        for _id, kind, seq, created, data in opencode_store.v2_rows(
+            conn, self.session_id, after_seq=after
+        ):
+            ts = float(created) / 1000
+            if kind in opencode_store.PROMPT_TYPES:
+                text = _tr._clean_text(data.get("text"))
+                if text:
+                    out.append(protocol.message("user", text, ts=ts))
+            elif kind == "assistant":
+                if not _completed(data):
+                    break  # still streaming: read it again next poll
+                out.extend(self._v2_assistant(data, ts))
+            elif kind == "compaction":
+                out.append(protocol.message(
+                    "compaction", "context compacted", ts=ts))
+            self.seq = seq
+        return out
+
+    def _v2_assistant(self, data: dict, ts: float) -> list[dict]:
+        out: list[dict] = []
+        for block in opencode_store.content_blocks(data):
+            btype = str(block.get("type") or "").lower()
+            if btype == "text":
+                text = _tr._clean_text(block.get("text"))
+                if text:
+                    out.append(protocol.message("assistant", text, ts=ts))
+            elif btype in {"reasoning", "thinking"}:
+                text = _tr._clean_text(block.get("text"))
+                if text:
+                    out.append(protocol.message("thinking", text, ts=ts))
+            elif btype == "tool":
+                state = block.get("state")
+                state = state if isinstance(state, dict) else {}
+                name = str(block.get("name") or "tool")
+                call_id = str(block.get("id") or "")
+                summary, full = _summarize_args(name, state.get("input"))
+                out.append(protocol.message(
+                    "tool_use", "",
+                    ts=ts,
+                    tool={
+                        "name": name,
+                        "call_id": call_id,
+                        "args_summary": summary,
+                        "args_full": full,
+                    },
+                ))
+                if str(state.get("status") or "") in {"completed", "error"}:
+                    out.append(protocol.message(
+                        "tool_result",
+                        _tr._clean_text(state.get("content") or state.get("error")),
+                        ts=ts,
+                        result_ref=call_id or None,
+                    ))
+        return out
 
 
 class SnapshotSource:

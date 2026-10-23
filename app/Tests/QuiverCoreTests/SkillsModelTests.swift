@@ -255,7 +255,28 @@ let inventoryJSON = #"""
         #expect(model.placement == nil)
         #expect(model.visibleSkills.isEmpty)
         model.plugins = .ready(PluginCatalog(harnesses: ["claude"], actions: ["claude"], marketplaces: []))
+        // Placed off the main actor: still nothing until it is done.
+        #expect(model.placement == nil)
+        await model.placed()
         #expect(model.visibleSkills.map(\.name) == ["alpha", "only-codex", "future", "hammer"])
+    }
+
+    @Test func aPlacementOvertakenByANewerCatalogIsDropped() async {
+        let (model, _) = model([(["skills", "--json"], ok(inventoryJSON))])
+        await model.load()
+        let kit = PluginCatalog(harnesses: ["claude"], actions: ["claude"], marketplaces: [
+            PluginMarketplace(name: "kit", harnesses: ["claude": .init()], plugins: [
+                CatalogPlugin(name: "toolkit", marketplace: "kit", sourcePath: "/h/.claude/plugins/cache/kit/toolkit",
+                              harnesses: ["claude": PluginHarnessState(available: true, installed: true)]),
+            ]),
+        ])
+        model.plugins = .ready(kit)
+        // swe fails before the first placement lands: its result must not
+        // replace the newer one, which keeps every skill here.
+        model.plugins = .unavailable("swe plugins failed")
+        await model.placed()
+        #expect(model.pluginSkillCount == 0)
+        #expect(model.visibleSkills.count == 4)
     }
 
     @Test func aPluginSkillMovesToThePluginThatShipsIt() async throws {
@@ -286,6 +307,7 @@ let inventoryJSON = #"""
                               harnesses: ["claude": PluginHarnessState(available: true, installed: true)]),
             ]),
         ]))
+        await model.placed()
         #expect(model.source == nil)
         #expect(model.visibleSkills.count == 3)
     }

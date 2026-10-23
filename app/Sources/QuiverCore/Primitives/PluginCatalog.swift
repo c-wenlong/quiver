@@ -771,7 +771,10 @@ public final class PluginWork {
 @Observable
 public final class PluginCatalogModel {
     public var state: Loadable<PluginCatalog> { loader.state }
-    /// The rows, worked out from the catalog on show and `skills`.
+    /// The rows, worked out from the catalog on show and `skills`. Built
+    /// off the main actor, since it resolves every plugin and skill folder
+    /// on disk; nil until the first one is ready, and the last one stays
+    /// on show while the next is built.
     public private(set) var index: PluginExploreIndex?
     /// Bumped whenever the catalog on show or `lookup` changes, for the
     /// skills model to watch cheaply.
@@ -811,16 +814,32 @@ public final class PluginCatalogModel {
     private let loader: SnapshotLoader<PluginCatalog>
     /// The catalog `revision` last counted.
     private var counted: (catalog: PluginCatalog?, lookup: CatalogLookupKind) = (nil, .pending)
+    /// Builds `index` off the main actor, newest inputs only.
+    private let indexBuild = LatestBuild<PluginExploreIndex>()
+    /// What the index on show, or the one being built, is worked out from.
+    private var indexedFrom: (catalog: PluginCatalog, skills: [Skill])?
+    /// Whose `~/.quiver/plugins` makes a marketplace editable.
+    private let home: URL
 
     /// - Parameters:
     ///   - snapshots: where the last catalog is kept between launches.
     ///   - work: shared with `PluginsModel`, so an action and a fix never
     ///     run at once.
+    ///   - home: whose `~/.quiver/plugins` makes a marketplace editable.
     public init(snapshots: (any SnapshotStoring<Snapshot<PluginCatalog>>)? = nil, maxAge: TimeInterval = 60,
                 timeout: Duration = .seconds(60), now: @escaping @Sendable () -> Date = Date.init,
-                work: PluginWork = PluginWork()) {
+                work: PluginWork = PluginWork(),
+                home: URL = FileManager.default.homeDirectoryForCurrentUser) {
         loader = SnapshotLoader(snapshots: snapshots, maxAge: maxAge, timeout: timeout, now: now)
         self.work = work
+        self.home = home
+    }
+
+    /// Returns once the index for the latest catalog and `skills` is on
+    /// show. `load`, `restore` and `run` wait for it themselves; this is
+    /// for a caller that changed `skills`.
+    public func indexed() async {
+        await indexBuild.settled()
     }
 
     /// A search is on: every marketplace it matches shows open.
@@ -855,18 +874,21 @@ public final class PluginCatalogModel {
     public func restore() async {
         await loader.restore()
         reindex()
+        await indexed()
     }
 
     /// Reads again unless this swe's catalog is fresh; joins a read in flight.
     public func loadIfStale(swe: SweClient, for source: String) async {
         await loader.loadIfStale(from: source) { try await swe.pluginCatalog() }
         reindex()
+        await indexed()
     }
 
     /// Always reads. `source` is the swe asked, as set in Settings; nil keeps the last one.
     public func load(swe: SweClient, for source: String? = nil) async {
         await loader.load(from: source) { try await swe.pluginCatalog() }
         reindex()
+        await indexed()
     }
 
     /// Runs `action`, then reads the catalog again. Call only after the user
@@ -902,12 +924,23 @@ public final class PluginCatalogModel {
             await loader.load(from: nil) { try await swe.pluginCatalog() }
         }
         reindex()
+        // The chip's spinner stays until the rows show the change.
+        await indexed()
     }
 
+    /// Starts a new index when the catalog or `skills` changed. Never on
+    /// the main actor: `realpath` and `fileExists` on a folder a file
+    /// provider or a stale mount holds can block for as long as they like,
+    /// which beachballed the app on a fresh Mac (#580).
     private func reindex() {
         let catalog: PluginCatalog? = if case .loaded(let catalog) = loader.state { catalog } else { nil }
-        if let catalog, index?.catalog != catalog || index?.skills != skills {
-            index = PluginExploreIndex(catalog: catalog, skills: skills)
+        if let catalog, indexedFrom?.catalog != catalog || indexedFrom?.skills != skills {
+            indexedFrom = (catalog, skills)
+            let skills = skills
+            let home = home
+            indexBuild.start({ PluginExploreIndex(catalog: catalog, skills: skills, home: home) }) { [weak self] in
+                self?.index = $0
+            }
         }
         let kind = CatalogLookupKind(lookup)
         if kind != counted.lookup || (catalog != nil && catalog != counted.catalog) {

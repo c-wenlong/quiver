@@ -79,13 +79,15 @@ def scan(store: LedgerStore, home: Path | None = None) -> ScanResult:
                 _scan_whole(store, path, result,
                             lambda p=path, a=str(codex_home): parsers.codex_file_records(p, a))
 
-    for db, reader in (
-        (home / ".local/share/opencode/opencode.db", parsers.opencode_records),
-        (home / ".local/share/devin/cli/sessions.db", parsers.devin_records),
+    # The opencode cursor's key names its reader: one saved by a build that
+    # read only the legacy tables must not skip the 2.x rows it missed.
+    for db, reader, key in (
+        (home / ".local/share/opencode/opencode.db", parsers.opencode_records, "#v2"),
+        (home / ".local/share/devin/cli/sessions.db", parsers.devin_records, ""),
     ):
         if db.is_file():
             _scan_whole(store, db, result, lambda d=db, r=reader: r(d),
-                        companions=[Path(str(db) + "-wal")])
+                        companions=[Path(str(db) + "-wal")], key_suffix=key)
 
     store.set_meta("scanned_at", str(time.time()))
     store.db.commit()
@@ -144,7 +146,7 @@ def _fingerprint(path: Path, offset: int) -> str:
 
 
 def _scan_whole(store: LedgerStore, path: Path, result: ScanResult, read,
-                companions: list[Path] | None = None) -> None:
+                companions: list[Path] | None = None, key_suffix: str = "") -> None:
     st = _stat(path)
     if st is None:
         return
@@ -155,7 +157,7 @@ def _scan_whole(store: LedgerStore, path: Path, result: ScanResult, read,
         if est is not None:
             size += est[1]
             mtime = max(mtime, est[2])
-    key = str(path)
+    key = str(path) + key_suffix
     cursor = store.file_cursor(key)
     if cursor is not None and tuple(cursor[:3]) == (inode, size, mtime):
         return

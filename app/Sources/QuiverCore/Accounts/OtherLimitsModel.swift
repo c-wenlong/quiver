@@ -344,7 +344,7 @@ public final class OtherLimitsModel {
                 extras, force: force, refreshFailed: refreshFailed)
             guard mine == request else { return }
             extraReadings.merge(readings) { _, new in new }
-            for (profile, paths) in extras {
+            for (profile, _) in extras {
                 let vendor = profile.vendor.rawValue
                 guard starred?.contains(vendor) == true else { continue }
                 let reading = extraReadings[profile.id]

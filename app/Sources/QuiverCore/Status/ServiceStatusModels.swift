@@ -230,23 +230,36 @@ public struct StatusService: Sendable, Hashable, Identifiable {
 
 /// Short summaries for the menu bar.
 public enum ServiceStatusSummary {
-    /// The worst known state among the providers, or nil when none is known.
+    /// The worst known state among the providers and any infrastructure
+    /// `affected` names, so the dot beside the line matches it; nil when
+    /// none is known.
     public static func worst(_ statuses: [ServiceStatus]) -> ServiceHealth? {
-        statuses.filter { $0.service.group == .providers }.compactMap(\.report?.health).max()
+        statuses.compactMap { status -> ServiceHealth? in
+            guard let health = status.report?.health else { return nil }
+            return status.service.group == .providers || health >= threshold(for: status.service.group)
+                ? health : nil
+        }.max()
     }
 
-    /// The providers with an incident, worst first and in catalog order
-    /// among equals; empty when every provider is up or under maintenance.
+    /// The providers with an incident, plus infrastructure with a major or
+    /// worse outage (a minor npm or Vercel blip isn't worth the line),
+    /// worst first and in catalog order among equals; empty when nothing
+    /// clears that bar.
     public static func affected(_ statuses: [ServiceStatus]) -> [ServiceStatus] {
         statuses
-            .filter { $0.service.group == .providers && ($0.report?.health ?? .operational) >= .minor }
+            .filter { ($0.report?.health ?? .operational) >= threshold(for: $0.service.group) }
             .enumerated()
             .sorted { ($0.element.report!.health, -$0.offset) > ($1.element.report!.health, -$1.offset) }
             .map(\.element)
     }
 
-    /// "Claude: minor incident" for providers with an incident, worst first;
-    /// nil when every provider is up or under maintenance.
+    /// The least a service's state must be to reach the menu line.
+    static func threshold(for group: StatusService.Group) -> ServiceHealth {
+        group == .providers ? .minor : .major
+    }
+
+    /// "Claude: minor incident" for every `affected` service, worst first;
+    /// nil when none is.
     public static func menuLine(_ statuses: [ServiceStatus]) -> String? {
         let hit = affected(statuses)
         guard let first = hit.first else { return nil }

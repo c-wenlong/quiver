@@ -6,7 +6,7 @@ import SwiftUI
 /// itself is verified by `swe gh repo add` before it lands.
 struct AddRepoSheet: View {
     @Environment(AppModel.self) private var app
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSheet) private var dismiss
 
     @State private var query = ""
     @State private var working = false
