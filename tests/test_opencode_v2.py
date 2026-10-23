@@ -194,6 +194,13 @@ class StatusTest(OpencodeV2Case):
         for sid in ("s_prompt", "s_tools", "s_synth"):
             self.assertEqual(self.probe(sid), ("midturn", ""), sid)
 
+    def test_bookkeeping_alone_keeps_the_legacy_verdict(self):
+        conn = self.conn()
+        self.v2_row(conn, "m_switch", "ses_old", "model-switched", 9, {"model": {"id": "x"}}, T0 + 9000)
+        conn.commit()
+        conn.close()
+        self.assertEqual(self.probe("ses_old"), ("finished", "Fixed the old bug."))
+
     def test_idle_outcomes_and_finish_error(self):
         self.add_session("s_failed", [("user", {"text": "go"}), ("idle", {"outcome": "failed"})])
         self.add_session("s_stopped", [("user", {"text": "go"}), ("idle", {"outcome": "interrupted"})])
@@ -272,6 +279,21 @@ class LedgerTest(OpencodeV2Case):
         self.assertEqual(new.cost, 0.002)
 
 
+    def test_a_cursor_saved_before_v2_reads_the_database_again(self):
+        from quiver.ledger.scan import scan
+        from quiver.ledger.store import LedgerStore
+
+        store = LedgerStore(self.home / "ledger.sqlite")
+        self.addCleanup(store.db.close)
+        st = self.db.stat()
+        # What a legacy-only build left: a cursor under the plain path.
+        store.set_file_cursor(str(self.db), st.st_ino, st.st_size, st.st_mtime_ns, st.st_size)
+        store.db.commit()
+        result = scan(store, self.home)
+        self.assertEqual(result.records, 2)  # msg_a and the 2.x reply m3
+        self.assertIsNotNone(store.file_cursor(str(self.db) + "#v2"))
+
+
 class TailTest(OpencodeV2Case):
     def source(self, sid):
         from quiver.remote.tail import OpencodeSource
@@ -303,6 +325,26 @@ class TailTest(OpencodeV2Case):
         self.assertEqual([e["text"] for e in src.poll()], ["next"])
         self.assertEqual(src.state()["seq"], 16)
 
+        conn = self.conn()
+        conn.execute("UPDATE session_message SET data = ? WHERE id = 'm6'",
+                     (json.dumps(_assistant([{"type": "text", "text": "complete reply"}])),))
+        conn.commit()
+        conn.close()
+        self.assertEqual([e["text"] for e in src.poll()], ["complete reply"])
+
+    def test_skip_to_end_stops_before_a_streaming_reply(self):
+        # A journal with no cursor file skips to the end; a reply still
+        # streaming there must arrive once it finishes.
+        conn = self.conn()
+        self.v2_row(conn, "m5", "ses_new", "user", 16, {"text": "next"}, T0 + 5000)
+        self.v2_row(conn, "m6", "ses_new", "assistant", 17,
+                    _assistant([{"type": "text", "text": "partial"}], finish=None, completed=False), T0 + 5100)
+        conn.commit()
+        conn.close()
+        src = self.source("ses_new")
+        src.skip_to_end()
+        self.assertEqual(src.state()["seq"], 16)
+        self.assertEqual(src.poll(), [])
         conn = self.conn()
         conn.execute("UPDATE session_message SET data = ? WHERE id = 'm6'",
                      (json.dumps(_assistant([{"type": "text", "text": "complete reply"}])),))

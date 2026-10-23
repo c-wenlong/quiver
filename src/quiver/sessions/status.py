@@ -502,10 +502,12 @@ def _probe_opencode(session: Session, ctx: dict):
         return None, ""
     sid = session.session_id
     # OpenCode 2.x keeps new turns only in ``session_message``; when the
-    # session has any there, the newest of them decides.
-    v2 = opencode_store.v2_rows(conn, sid, newest=_OPENCODE_V2_WINDOW)
-    if v2:
-        return opencode_store.v2_phase(v2)
+    # session has a decisive row there, the newest decides. Bookkeeping
+    # alone (a model switch on a migrated session) leaves the legacy rows'
+    # verdict standing.
+    phase = opencode_store.v2_phase(opencode_store.v2_rows(conn, sid, newest=_OPENCODE_V2_WINDOW))
+    if phase[0] is not None:
+        return phase
     row = conn.execute(
         "SELECT id, data FROM message WHERE session_id = ? "
         "ORDER BY time_created DESC, id DESC LIMIT 1",

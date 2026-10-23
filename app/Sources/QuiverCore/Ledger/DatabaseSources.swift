@@ -77,7 +77,7 @@ enum DatabaseSources {
     ///   passed connection is used as-is.
     static func scanOpenCode(_ url: URL, store: LedgerStore, source passed: SQLiteDatabase? = nil) throws -> Bool {
         guard let fingerprint = Fingerprint(url) else { return false }
-        let metaKey = "opencode:\(url.path)"
+        let metaKey = openCodeMetaKey(url)
         if try store.meta(metaKey + ":fingerprint") == fingerprint.text { return false }
         let watermark = try watermark(metaKey, fingerprint, store: store)
 
@@ -129,6 +129,13 @@ enum DatabaseSources {
         }
         return true
     }
+
+    /// The meta rows one OpenCode database's fingerprint, watermark and
+    /// census live under, shared by the token scan and the search pass.
+    /// The `v2` names the reader: a build that read only the legacy tables
+    /// saved a fingerprint and watermark that would skip the 2.x rows, so
+    /// the first scan after the upgrade starts over (every row is keyed).
+    static func openCodeMetaKey(_ url: URL) -> String { "opencode-v2:\(url.path)" }
 
     /// OpenCode 2.x writes new replies only to `session_message` (and new
     /// sessions only to `session_v2`), naming the model `model.id` and

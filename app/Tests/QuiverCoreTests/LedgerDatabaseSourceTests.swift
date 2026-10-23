@@ -65,6 +65,21 @@ func execute(_ sql: String, on url: URL) throws {
         #expect(await ledger.events(in: allTime).count == 4)
     }
 
+    /// A build that read only the legacy tables saved a fingerprint for
+    /// the database as it stands; the 2.x reader must not take it as
+    /// "nothing moved" and skip the rows that build never read.
+    @Test func aFingerprintFromTheLegacyReaderDoesNotSkipTheScan() throws {
+        let temp = try TempDir()
+        let db = temp.path("opencode/opencode.db")
+        try makeDatabase("opencode.sql", at: db)
+        let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
+        let fingerprint = try #require(DatabaseSources.Fingerprint(db))
+        try store.setMeta("opencode:\(db.path):fingerprint", fingerprint.text)
+
+        #expect(try DatabaseSources.scanOpenCode(db, store: store))
+        #expect(try store.events(in: allTime).count == 2)
+    }
+
     /// OpenCode 2.x writes new sessions only to `session_v2` and their
     /// replies only to `session_message`; its migration copied old replies
     /// there under their `message` ids, which must not count twice.

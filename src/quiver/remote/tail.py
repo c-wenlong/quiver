@@ -513,6 +513,12 @@ class JsonlTailSource:
         return size
 
 
+def _completed(data: dict) -> bool:
+    """Whether an opencode 2.x assistant row has finished streaming."""
+    times = data.get("time")
+    return isinstance(times, dict) and bool(times.get("completed"))
+
+
 class OpencodeSource:
     """Incremental poll over opencode/kilo's drizzle ``part`` table, and
     the ``session_message`` rows opencode 2.x writes instead.
@@ -565,12 +571,22 @@ class OpencodeSource:
         except sqlite3.Error:
             pass
         try:
-            rows = opencode_store.v2_rows(conn, self.session_id, newest=1)
-            self.seq = rows[-1][2] if rows else -1
+            self.seq = self._settled_seq(opencode_store.v2_rows(conn, self.session_id), -1)
         except sqlite3.Error:
             pass
         finally:
             conn.close()
+
+    @staticmethod
+    def _settled_seq(rows: list, seq: int) -> int:
+        """The last seq before the first assistant row still streaming:
+        that row is rewritten in place when it finishes, so a cursor past
+        it would never read the finished reply."""
+        for _id, kind, row_seq, _created, data in rows:
+            if kind == "assistant" and not _completed(data):
+                break
+            seq = row_seq
+        return seq
 
     def _place_seq(self, conn: sqlite3.Connection) -> int:
         """The v2 cursor for a source restored from a cursor file written
@@ -579,9 +595,8 @@ class OpencodeSource:
         if self.seq is None:
             self.seq = -1  # seq starts at 0
             if self.cursor:
-                for _id, _kind, seq, created, _data in opencode_store.v2_rows(conn, self.session_id):
-                    if created <= self.cursor:
-                        self.seq = seq
+                sent = [r for r in opencode_store.v2_rows(conn, self.session_id) if r[3] <= self.cursor]
+                self.seq = self._settled_seq(sent, -1)
         return self.seq
 
     def _open(self) -> sqlite3.Connection | None:
@@ -686,8 +701,7 @@ class OpencodeSource:
                 if text:
                     out.append(protocol.message("user", text, ts=ts))
             elif kind == "assistant":
-                times = data.get("time") if isinstance(data.get("time"), dict) else {}
-                if not times.get("completed"):
+                if not _completed(data):
                     break  # still streaming: read it again next poll
                 out.extend(self._v2_assistant(data, ts))
             elif kind == "compaction":
