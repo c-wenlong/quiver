@@ -52,7 +52,7 @@ struct ProviderVisibilityCard: View {
         }
         // Closing the sheet rechecks, so an install or uninstall run from
         // it shows up in the switches.
-        .sheet(item: $opened, onDismiss: { Task { await model.load() } }) { row in
+        .quiverSheet(item: $opened, onDismiss: { Task { await model.load() } }) { row in
             ProviderSetupSheet(provider: row.provider, isInstalled: row.isInstalled)
         }
         // Once per swe: this card is rebuilt on every visit and at the

@@ -8,7 +8,7 @@ struct DetectSheet: View {
     var model: HarnessesModel
     var reload: () async -> Void
     @Environment(AppModel.self) private var app
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSheet) private var dismiss
 
     @State private var discovery: HarnessDiscovery?
     @State private var checked: Set<String> = []
@@ -114,7 +114,7 @@ struct AddHarnessSheet: View {
     var known: Set<String>
     var reload: () async -> Void
     @Environment(AppModel.self) private var app
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSheet) private var dismiss
 
     @State private var name = ""
     @State private var command = ""

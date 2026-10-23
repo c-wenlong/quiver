@@ -48,7 +48,7 @@ private struct ModelsContent: View {
         .task(id: app.overview?.completedScans) {
             await model.loadIfNeeded(usageStamp: app.overview?.completedScans)
         }
-        .sheet(isPresented: Binding(get: { linking != nil },
+        .quiverSheet(isPresented: Binding(get: { linking != nil },
                                     set: { if !$0 { linking = nil; linkError = nil } })) {
             if let linking {
                 LinkSheet(model: model, logged: linking, error: $linkError) {
