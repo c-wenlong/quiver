@@ -179,6 +179,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`swe session` lists OpenCode sessions again.** opencode 2.x turned its
+  `workspace` table into provider bindings with no `directory` column, so
+  the session query's `workspace` join failed with "no such column:
+  w.directory" and every OpenCode row silently vanished. The query now
+  checks `workspace`'s columns first and joins it only as a path fallback
+  when `directory` is there (older opencode, Kilo today).
+
 - **Phone sends return immediately instead of hanging for the turn.**
   `POST /v1/sessions/{key}/message` now answers `202` and runs the send
   on a per-session worker: `queue` mode waits for the session to go idle

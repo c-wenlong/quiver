@@ -22,7 +22,9 @@ class SqliteParserConfig:
     tool_name: str
     agent: str
     db_path: str
-    query: str
+    # SQL text, or a callable that builds it from the open connection (for
+    # stores whose schema shifts between versions; probe with PRAGMA there).
+    query: str | Callable[[Any], str]
     # Column indexes in query result
     session_id: int | None = None
     path: int | None = None
@@ -52,7 +54,8 @@ def parse_sqlite(config: SqliteParserConfig) -> list[Session]:
     db_mtime = get_mtime(db_path)
     try:
         cur = conn.cursor()
-        rows = cur.execute(config.query, config.params).fetchall()
+        query = config.query(conn) if callable(config.query) else config.query
+        rows = cur.execute(query, config.params).fetchall()
         for row in rows:
             path = _col(row, config.path) or _col(row, config.path_fallback) or ""
             if not path and config.default_path:
