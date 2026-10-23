@@ -147,6 +147,60 @@ final class MarkdownTests: XCTestCase {
         XCTAssertEqual(t.rows, [["1", "2"]])
     }
 
+    func testRenderingDefectsFromTheHarnessSurvey() {
+        let blocks = Markdown.parse("""
+        Done.
+
+        ![Backfill outcomes](/Users/k/Downloads/outcomes.png)
+
+        - [ ] **Privacy (your call).**
+        - [x] Shipped
+        <json-render>{"root":"d",
+        "elements":{}}</json-render>
+        After.
+        """)
+        XCTAssertEqual(blocks[1], .image(alt: "Backfill outcomes", source: "/Users/k/Downloads/outcomes.png"))
+        guard case .listItem(_, _, let open) = blocks[2], case .listItem(_, _, let done) = blocks[3] else { return XCTFail() }
+        XCTAssertEqual(Markdown.taskBox(open)?.0, .open)
+        XCTAssertEqual(Markdown.taskBox(open)?.1, "**Privacy (your call).**")
+        XCTAssertEqual(Markdown.taskBox(done)?.0, .done)
+        guard case .rendered = blocks[4] else { return XCTFail("expected a rendered view block") }
+        XCTAssertEqual(blocks[5], .paragraph("After."))
+        XCTAssertEqual(Markdown.inlineImagesAsText("see ![chart](a.png) here"), "see *Image: chart* here")
+    }
+
+    func testRenderingReviewEdgeCases() {
+        // Code spans and escaped syntax keep the example as written.
+        XCTAssertEqual(Markdown.inlineImagesAsText("write `![chart](a.png)` or ![b](b.png)"), "write `![chart](a.png)` or *Image: b*")
+        XCTAssertEqual(Markdown.inlineImagesAsText(#"literal \![x](y.png)"#), #"literal \![x](y.png)"#)
+        // Two images on one line are not one image.
+        XCTAssertNil(Markdown.imageLine("![first](a.png)![second](b.png)"))
+        // Text after the closing tag still shows.
+        XCTAssertEqual(Markdown.parse("<json-render>{}</json-render> Saved successfully."),
+                       [.rendered("<json-render>{}</json-render>"), .paragraph("Saved successfully.")])
+        // A view or an image under a list item gets its own block.
+        let blocks = Markdown.parse("- Result\n  <json-render>{}</json-render>\n- Chart\n  ![c](c.png)")
+        XCTAssertEqual(blocks, [.listItem(indent: 0, marker: "•", text: "Result"), .rendered("<json-render>{}</json-render>"),
+                                .listItem(indent: 0, marker: "•", text: "Chart"), .image(alt: "c", source: "c.png")])
+    }
+
+    func testLocalFileLinksBecomeFileNames() {
+        let s = RichText.inline("Read [AGENTS.md](/Users/k/.quiver/AGENTS.md), [ai.py](finance/ai.py) and [PR](https://github.com/x/y/pull/1).")
+        let links = s.runs.compactMap(\.link)
+        XCTAssertEqual(links.map(\.absoluteString), ["https://github.com/x/y/pull/1"])
+        XCTAssertTrue(String(s.characters).contains("AGENTS.md"))
+    }
+
+    func testMcpToolNamesRead() {
+        XCTAssertEqual(ToolArgs.displayName("mcp__computer-use__app_batch"), "computer-use · app_batch")
+        XCTAssertEqual(ToolArgs.displayName("mcp__dv__github__create_pull_request"), "dv · github__create_pull_request")
+        XCTAssertEqual(ToolArgs.displayName("Bash"), "Bash")
+        let call = ToolCall(name: "mcp__computer-use__app_batch", callId: nil, argsSummary: "mcp__computer-use__app_batch", argsFull: nil)
+        XCTAssertEqual(ToolArgs.summary(call), "computer-use · app_batch")
+        let withPath = ToolCall(name: "mcp__fs__read", callId: nil, argsSummary: "mcp__fs__read · src/a.py", argsFull: nil)
+        XCTAssertEqual(ToolArgs.summary(withPath), "fs · read · src/a.py")
+    }
+
     func testUnclosedFenceIsCode() {
         XCTAssertEqual(Markdown.parse("```\nhalf"), [.code(language: nil, text: "half")])
     }
