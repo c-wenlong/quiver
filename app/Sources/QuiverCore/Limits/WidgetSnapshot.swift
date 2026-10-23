@@ -260,10 +260,12 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
         }
 
         // Sources group together in the dragged order; until the first
-        // drag that's pressure, so the widget changes nothing. A source's
-        // own windows keep their byPressure order inside the group.
+        // drag that's pressure over every reading, hidden ones included,
+        // so hiding a window never moves its source. A source's own
+        // windows keep their byPressure order inside the group.
+        let sourceRank = selection.limits.defaultRank(LimitReading.byPressure(limits, now: now))
         let sortedLimits = LimitReading.byPressure(selection.limits.filter(limits), now: now)
-        let limitRows = selection.limits.ordered(selection.limits.defaultRank(sortedLimits))
+        let limitRows = selection.limits.ordered(sourceRank)
             .flatMap { source in sortedLimits.filter { $0.source == source } }
             .prefix(limitCount)
 
