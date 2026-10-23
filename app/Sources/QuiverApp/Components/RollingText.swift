@@ -86,6 +86,8 @@ final class RollingTextView: NSView {
     private var perCharacter = true
     /// Bumped per change, so a finished roll doesn't tidy up after a newer one.
     private var generation = 0
+    /// The glyphs the latest roll is sliding out, removed once it lands.
+    private var leaving: [CALayer] = []
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -233,7 +235,7 @@ final class RollingTextView: NSView {
 
         let now = CACurrentMediaTime()
         let shift = style.lineHeight * (up ? 1 : -1)
-        var leaving: [CALayer] = []
+        leaving = []
         CATransaction.begin()
         CATransaction.setAnimationDuration(Self.duration)
         CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1))
@@ -263,7 +265,7 @@ final class RollingTextView: NSView {
         let timer = Timer(timeInterval: end, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.generation == current else { return }
-                self.tidy(leaving)
+                self.tidy()
             }
         }
         // Common modes, so it fires during a mouse drag or scroll too.
@@ -291,10 +293,11 @@ final class RollingTextView: NSView {
 
     /// After a roll: drop the glyphs that rolled out and the boxes that
     /// ended empty, and clear the finished animations.
-    private func tidy(_ leaving: [CALayer]) {
+    private func tidy() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         for glyph in leaving { glyph.removeFromSuperlayer() }
+        leaving = []
         cells.removeAll { cell in
             guard cell.text.isEmpty else { return false }
             cell.box.removeFromSuperlayer()
