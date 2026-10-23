@@ -70,6 +70,9 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     "remote serve": [
         ("--host=", "Bind address (default: this machine's Tailscale IP)"),
         ("--port=", "Port (default 8477)"),
+        ("--install", "Keep the hub running as a LaunchAgent (macOS)"),
+        ("--uninstall", "Stop the hub LaunchAgent and remove it"),
+        ("--tailnet", "Exit instead of binding localhost when Tailscale is down"),
     ],
     "remote pair": [
         ("--host=", "Hub address to put in the pairing URL"),
