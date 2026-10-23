@@ -569,10 +569,14 @@ private struct NotificationsStep: View {
     }
 
     private var permissionDetail: String {
+        if let failure = app.limits.notificationRequestError,
+           app.limits.notificationStatus == .notDetermined {
+            return "macOS could not ask for permission (\(failure)). Try Allow again, or turn them on in System Settings › Notifications."
+        }
         switch app.limits.notificationStatus {
-        case .authorized, .provisional, .ephemeral: "Allowed."
-        case .denied: "Turned off for Quiver. Turn them on in System Settings › Notifications."
-        default: "Click Allow, then Allow again in the macOS dialog."
+        case .authorized, .provisional, .ephemeral: return "Allowed."
+        case .denied: return "Turned off for Quiver. In System Settings › Notifications, find Quiver in the list and turn on Allow notifications."
+        default: return "Click Allow, then Allow again in the macOS dialog."
         }
     }
 
