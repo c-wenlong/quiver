@@ -254,6 +254,15 @@ class TestPullRequest(_Base):
 STATIC = Path(R.__file__).resolve().parent.parent / "static" / "pages"
 
 
+def _node(script: str, stdin: str = "") -> subprocess.CompletedProcess:
+    """Run ``script`` from a file: the bundle is too big for ``node -e``."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "run.js"
+        path.write_text(script)
+        return subprocess.run(["node", str(path)], input=stdin, capture_output=True,
+                              text=True, timeout=30)
+
+
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestMarkdown(unittest.TestCase):
     """GhUI.markdown, run under node with the two globals it borrows."""
@@ -266,9 +275,9 @@ class TestMarkdown(unittest.TestCase):
             "global.Fmt = { ago: () => '' };\n"
             + (STATIC / "github.js").read_text()
             + "\nprocess.stdout.write(GhUI.markdown(require('fs').readFileSync(0, 'utf8')));"
+            + "\nprocess.exit(0);"
         )
-        done = subprocess.run(["node", "-e", script], input=body, capture_output=True,
-                              text=True, timeout=30)
+        done = _node(script, stdin=body)
         self.assertEqual(done.returncode, 0, done.stderr)
         return done.stdout
 
@@ -315,9 +324,16 @@ class TestBundle(unittest.TestCase):
             "global.document = { addEventListener() {} };\n"
             "global.location = { hash: '' };\n"
         )
-        script = (stubs + pages.bundle(".js").decode()
-                  + "\nprocess.stdout.write(JSON.stringify(registered));")
-        done = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30)
+        # Only this page group's scripts, bundled exactly as the hub does,
+        # so another page's load-time needs never decide this test.
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("github.js", "inbox.js", "repositories.js"):
+                shutil.copy(STATIC / name, Path(tmp) / name)
+            with patch.object(pages, "STATIC", Path(tmp)):
+                bundle = pages.bundle(".js").decode()
+        script = (stubs + bundle
+                  + "\nprocess.stdout.write(JSON.stringify(registered));\nprocess.exit(0);")
+        done = _node(script)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertTrue({"repositories", "inbox"} <= set(json.loads(done.stdout)))
 
