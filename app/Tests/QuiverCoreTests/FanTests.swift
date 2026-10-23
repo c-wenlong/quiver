@@ -285,6 +285,18 @@ import Testing
         #expect(reports.first?.reason == "The SMC refused manual mode for Fan 1 (F0Md: refused), even with Ftst open.")
     }
 
+    @Test func aGateThatWouldNotOpenSaysSo() {
+        let smc = FakeSMC.twoFans()
+        smc.refuseModeWrites = .max
+        smc.refuseGateWrites = true
+        var reports: [FanHelperStatus] = []
+        var hold = hold(smc, [ask(0.5)])
+        hold.report = { reports.append($0) }
+        hold.run()
+        #expect(reports.first?.reason == "The SMC refused manual mode for Fan 1 (F0Md: refused), "
+            + "and opening the Ftst gate failed (refused).")
+    }
+
     @Test func aHeldRequestIsReportedOnce() {
         var reports: [FanHelperStatus] = []
         var hold = hold(FakeSMC.twoFans(gate: false), [ask(0.5), ask(0.5), ask(0.7, at: 2)])
@@ -871,9 +883,18 @@ import Testing
         let installer = FakeInstaller()
         installer.installed.value = true
         let (fans, _) = control(FakeSMC.twoFans(), installer: installer, status: status)
+        // An error from an earlier run, still in the file when the request
+        // is made, says nothing about the helper now.
+        status.value = FanHelperStatus(state: .error, reason: "old run",
+                                       at: Date(timeIntervalSince1970: 1_799_999_990))
         await fans.refresh()
         await fans.applyManual()
-        status.value = FanHelperStatus(state: .error, reason: "The fan helper couldn't open the SMC.")
+        #expect(fans.phase == .starting)
+        await fans.refresh()
+        #expect(fans.phase == .starting)
+        // The restarted helper failing after the request does.
+        status.value = FanHelperStatus(state: .error, reason: "The fan helper couldn't open the SMC.",
+                                       at: Date(timeIntervalSince1970: 1_800_000_005))
         await fans.refresh()
         #expect(fans.phase == .failed("The fan helper couldn't open the SMC."))
     }
@@ -934,6 +955,8 @@ import Testing
         var refuseModeWrites = 0
         /// Mode writes back to automatic to refuse, like a busy SMC.
         var refuseReleaseWrites = 0
+        /// Ftst writes to refuse, like a gate the SMC won't open.
+        var refuseGateWrites = false
         var onWrite: (String, [UInt8]) -> Void = { _, _ in }
 
         static func twoFans(gate: Bool = true) -> FakeSMC {
@@ -965,6 +988,7 @@ import Testing
         @discardableResult
         func write(_ key: String, _ bytes: [UInt8]) -> Bool {
             guard let old = values[key], old.bytes.count == bytes.count else { return false }
+            if key == "Ftst" && refuseGateWrites { return false }
             // Going manual is gated; going back to automatic never is.
             if key.hasPrefix("F"), key.lowercased().hasSuffix("md"), bytes == [1] {
                 let gated = values["Ftst"] != nil

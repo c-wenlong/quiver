@@ -327,8 +327,10 @@ public struct FanHold {
             return .refused("The SMC refused manual mode for \(name) (\(mode): \(first)), "
                             + "and this Mac has no Ftst gate to open.")
         }
+        // Kept for the refusal: "even with Ftst open" only when it opened.
+        var opened = SMCWriteResult.ok
         if gate.number != 1 {
-            let opened = smc.writeResult(FanKeys.unlock, gate.encoding(1) ?? [1])
+            opened = smc.writeResult(FanKeys.unlock, gate.encoding(1) ?? [1])
             log("Ftst: \(gate.summary); write 1 -> \(opened)")
         } else {
             log("Ftst: \(gate.summary), already open")
@@ -346,6 +348,10 @@ public struct FanHold {
             }
         }
         log("\(name): \(mode) still refused after \(Int(unlockTimeout)) s behind Ftst: \(last)")
+        guard opened == .ok else {
+            return .refused("The SMC refused manual mode for \(name) (\(mode): \(last)), "
+                            + "and opening the Ftst gate failed (\(opened)).")
+        }
         return .refused("The SMC refused manual mode for \(name) (\(mode): \(last)), even with Ftst open.")
     }
 

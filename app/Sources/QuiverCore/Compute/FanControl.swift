@@ -336,11 +336,14 @@ public final class FanControl {
     private var refusal: String? {
         guard let helperStatus else { return nil }
         switch helperStatus.state {
-        case .error:
+        // Not tied to a request, so only one written after this request
+        // was made counts: an error left by an earlier run (install and
+        // removal leave the file) says nothing about the helper now.
+        case .error where current?.requested.map { helperStatus.at >= $0 } ?? false:
             return helperStatus.reason ?? Self.notTaken
         case .refused where helperStatus.answers(current):
             return helperStatus.reason ?? Self.notTaken
-        case .ready, .held, .refused:
+        case .ready, .held, .refused, .error:
             return nil
         }
     }
