@@ -227,6 +227,62 @@ class TestServe(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("cannot bind", err)
 
+    def test_serve_logs_timestamped_start_and_stop(self):
+        state = MagicMock()
+        state.machine = {"name": "srv"}
+        state.machine_id = "m1"
+        with patch.object(commands, "HubState", return_value=state), \
+             patch.object(commands, "serve", lambda *a: 0), \
+             patch.object(commands, "_stamp", return_value="2026-10-23 17:01:00"), \
+             patch("quiver.remote.commands._tailscale_ip", return_value="100.1.2.3"):
+            rc, out, _ = _run(["serve"])
+        self.assertEqual(rc, 0)
+        self.assertIn("2026-10-23 17:01:00  remote hub on", out)
+        self.assertIn("2026-10-23 17:01:00  remote hub stopped", out)
+
+    def test_serve_tailnet_exits_without_tailscale(self):
+        with patch.object(commands, "HubState") as hub, \
+             patch("quiver.remote.commands._tailscale_ip", return_value=None):
+            rc, _, err = _run(["serve", "--tailnet"])
+        self.assertEqual(rc, 1)
+        self.assertIn("launchd retries", err)
+        hub.assert_not_called()
+
+    def test_install_hands_the_hub_to_launchd(self):
+        seen = {}
+
+        def fake_install(program, log_path, path_env):
+            seen["program"], seen["log"] = program, log_path
+            return Path("/h/Library/LaunchAgents/x.plist")
+
+        with patch.object(commands.sys, "platform", "darwin"), \
+             patch.object(commands.sys, "argv", ["/opt/swe/bin/swe"]), \
+             patch("quiver.remote.commands.os.access", return_value=True), \
+             patch.object(commands.launchd, "loaded_pid", return_value=(False, None)), \
+             patch.object(commands.launchd, "install", fake_install), \
+             patch.object(commands, "_probe", return_value={"ok": True}), \
+             patch("quiver.remote.commands._tailscale_ip", return_value="100.1.2.3"):
+            rc, out, err = _run(["serve", "--install", "--port=9000"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen["program"], ["/opt/swe/bin/swe", "remote", "serve", "--tailnet", "--port=9000"])
+        self.assertEqual(seen["log"].name, "serve.log")
+        self.assertIn("installed", out)
+        # A shell-started hub still holds the port.
+        self.assertIn("outside launchd", err)
+
+    def test_install_is_macos_only(self):
+        with patch.object(commands.sys, "platform", "linux"):
+            rc, _, err = _run(["serve", "--install"])
+        self.assertEqual(rc, 1)
+        self.assertIn("systemd", err)
+
+    def test_uninstall(self):
+        with patch.object(commands.sys, "platform", "darwin"), \
+             patch.object(commands.launchd, "uninstall", return_value=False):
+            rc, out, _ = _run(["serve", "--uninstall"])
+        self.assertEqual(rc, 0)
+        self.assertIn("no hub LaunchAgent", out)
+
     def test_bad_port(self):
         rc, _, err = _run(["serve", "--port=abc"])
         self.assertEqual(rc, 1)

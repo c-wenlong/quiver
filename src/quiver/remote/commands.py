@@ -1,7 +1,8 @@
 """``swe remote serve|pair|status|devices|attach`` — argv + print only.
 
-The serve command runs the hub in the foreground (a launchd/systemd
-unit or ``nohup`` keeps it alive); ``pair`` mints a one-time token into
+The serve command runs the hub in the foreground; ``serve --install``
+hands it to a LaunchAgent that restarts it after a crash or a reboot
+(``launchd.py``), and a systemd unit does the same on Linux. ``pair`` mints a one-time token into
 ``pair_tokens.json`` that the running hub honors on ``POST /v1/pair``;
 ``status`` probes the hub and reports reachability, machines and paired
 devices.
@@ -10,6 +11,7 @@ devices.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -24,7 +26,7 @@ from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.paths import remote_dir_for
 from quiver.remote import agent as agent_mod
 from quiver.remote import catalog as catalog_mod
-from quiver.remote import notify, pairing, protocol, supervise, tail
+from quiver.remote import launchd, notify, pairing, protocol, supervise, tail
 from quiver.remote.hub import DEFAULT_PORT, HubState, serve
 
 _SUBCOMMANDS = {"serve", "pair", "status", "devices", "attach", "agent",
@@ -35,10 +37,13 @@ _VALUE_FLAGS = {
     "--hub", "--token", "--ntfy", "--topic", "--ntfy-token",
     "--approve", "--deny",
 }
-_BOOL_FLAGS = {"--on", "--off", "--app", "--requests"}
+_BOOL_FLAGS = {"--on", "--off", "--app", "--requests", "--install",
+               "--uninstall", "--tailnet"}
 
 _USAGE = f"""\
   {c('cyan', 'swe remote serve [--host=H] [--port=N]')}   Run the hub (REST + SSE)
+  {c('cyan', 'swe remote serve --install | --uninstall')}
+                                  Keep the hub running as a LaunchAgent
   {c('cyan', 'swe remote agent --hub=URL [--token=T]')}   Satellite: dial out to the hub
   {c('cyan', 'swe remote pair [--name=N] [--host=H] [--port=N] [--app] [--json]')}
                                   Print a pairing URL + token for a phone
@@ -102,7 +107,13 @@ def _probe(host: str, port: int, timeout: float = 3.0) -> dict | None:
         return None
 
 
+def _stamp() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _cmd_serve(flags: dict) -> int:
+    if flags.get("--install") or flags.get("--uninstall"):
+        return _cmd_serve_launchd(flags)
     try:
         host, port = _host_port(flags)
     except ValueError as exc:
@@ -110,6 +121,12 @@ def _cmd_serve(flags: dict) -> int:
         return 1
     if not host:
         host = _tailscale_ip() or "127.0.0.1"
+        if host == "127.0.0.1" and flags.get("--tailnet"):
+            # Under launchd at login Tailscale may not be up yet: exit so
+            # launchd retries, rather than serve a hub the phone can't reach.
+            print(f"{_stamp()}  no Tailscale address yet; exiting so launchd retries",
+                  file=sys.stderr, flush=True)
+            return 1
         if host == "127.0.0.1":
             print(
                 c("yellow",
@@ -117,17 +134,74 @@ def _cmd_serve(flags: dict) -> int:
                 file=sys.stderr,
             )
     state = HubState()
+    # Timestamped and flushed: the log is often a file, and a hub killed
+    # by a restart otherwise leaves no trace of when it ran.
     print(
-        f"remote hub on {c('cyan', f'http://{host}:{port}')} "
-        f"as {c('bold', state.machine['name'])} ({state.machine_id})"
+        f"{_stamp()}  remote hub on {c('cyan', f'http://{host}:{port}')} "
+        f"as {c('bold', state.machine['name'])} ({state.machine_id})",
+        flush=True,
     )
-    print(c("dim", f"state: {remote_dir_for()}"))
+    print(c("dim", f"state: {remote_dir_for()}"), flush=True)
     try:
-        return serve(state, host, port)
+        rc = serve(state, host, port)
     except OSError as exc:
-        print(c("red", f"cannot bind {host}:{port} — {exc}"),
+        print(c("red", f"{_stamp()}  cannot bind {host}:{port} — {exc}"),
+              file=sys.stderr, flush=True)
+        return 1
+    print(f"{_stamp()}  remote hub stopped", flush=True)
+    return rc
+
+
+def _cmd_serve_launchd(flags: dict) -> int:
+    if sys.platform != "darwin":
+        print(c("red", "--install and --uninstall manage a macOS LaunchAgent; "
+                       "on Linux run `swe remote serve` under a systemd unit"),
               file=sys.stderr)
         return 1
+    if flags.get("--uninstall"):
+        if launchd.uninstall():
+            print(f"stopped the hub and removed {launchd.plist_path()}")
+        else:
+            print(c("dim", "no hub LaunchAgent was installed"))
+        return 0
+    try:
+        host, port = _host_port(flags)
+    except ValueError as exc:
+        print(c("red", str(exc)), file=sys.stderr)
+        return 1
+    swe = os.path.abspath(sys.argv[0])
+    if not os.access(swe, os.X_OK):
+        print(c("red", f"cannot find the swe executable ({sys.argv[0]}); "
+                       "run this as `swe remote serve --install`"),
+              file=sys.stderr)
+        return 1
+    program = [swe, "remote", "serve"]
+    program += [f"--host={host}"] if host else ["--tailnet"]
+    if flags.get("--port"):
+        program.append(f"--port={port}")
+    # A hub started from a shell would keep the port, and launchd's copy
+    # would fail to bind on every retry.
+    probe_host = host or _tailscale_ip() or "127.0.0.1"
+    loaded, _ = launchd.loaded_pid()
+    stray = not loaded and _probe(probe_host, port, timeout=1.0) is not None
+    log_path = remote_dir_for() / "serve.log"
+    try:
+        path = launchd.install(program, log_path, os.environ.get("PATH", ""))
+    except RuntimeError as exc:
+        print(c("red", f"launchctl could not load the hub: {exc}"), file=sys.stderr)
+        return 1
+    print(f"installed {path}")
+    print(f"  runs  {' '.join(program)}")
+    print(f"  log   {log_path}")
+    print(c("dim", "  starts at login and restarts if it exits; "
+                   "run --install again to restart it, --uninstall to stop it"))
+    if stray:
+        print(c("yellow",
+                f"a hub started outside launchd already answers on {probe_host}:{port}. "
+                "Stop it (pgrep -f 'swe remote serve') and launchd starts its own "
+                f"within {launchd.THROTTLE_S} s."),
+              file=sys.stderr)
+    return 0
 
 
 def _cmd_pair(flags: dict, json_view: bool) -> int:
