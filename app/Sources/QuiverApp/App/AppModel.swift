@@ -20,6 +20,16 @@ final class AppModel {
     /// this; a detail page open there goes back through its own ask.
     var navReselects = 0
 
+    /// A sidebar click or its ⌘-number shortcut: opens the page, or asks
+    /// the page already open to go back.
+    func select(_ section: AppSection) {
+        if selection == section {
+            navReselects += 1
+        } else {
+            selection = section
+        }
+    }
+
     /// The sidebar pinned to an icon rail; hovering it floats it open.
     var sidebarCollapsed = UserDefaults.standard.bool(forKey: "sidebarCollapsed") {
         didSet { UserDefaults.standard.set(sidebarCollapsed, forKey: "sidebarCollapsed") }
@@ -708,6 +718,11 @@ final class AppModel {
         // A page hidden in Settings › Sidebar never comes back as the
         // open one on launch.
         if let selection, sidebar.isHidden(selection) { self.selection = .overview }
+        // GitHub banners open the Inbox, so they stop when it is hidden.
+        if sidebar.isHidden(.inbox) { githubNotify.bannersEnabled = false }
+        sidebar.onHide = { [githubNotify] section in
+            if section == .inbox { githubNotify.bannersEnabled = false }
+        }
     }
 
     /// Pids launchd manages, from `launchctl list`: user agents look like

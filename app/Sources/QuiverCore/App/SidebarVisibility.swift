@@ -28,6 +28,9 @@ public final class SidebarVisibilityModel {
     /// order inside a group ever changes.
     private var order: [AppSection]
     private var hidden: Set<AppSection>
+    /// Runs with each page a toggle or Disable all just switched off, so
+    /// a feature tied to a page can stop with it.
+    @ObservationIgnored public var onHide: ((AppSection) -> Void)?
 
     public init(store: KeyValueStoring) {
         self.store = store
@@ -56,6 +59,19 @@ public final class SidebarVisibilityModel {
         SidebarGroup.allCases.filter { !sections(in: $0).isEmpty }
     }
 
+    /// ⌘1 to ⌘9 open the first nine shown pages, top to bottom; the
+    /// sidebar badges the same rows while ⌘ is held.
+    public static let shortcutCount = 9
+
+    public var shortcutSections: [AppSection] {
+        Array(order.filter(isVisible).prefix(Self.shortcutCount))
+    }
+
+    /// The digit `section` answers to, or nil past the ninth shown page.
+    public func shortcutNumber(of section: AppSection) -> Int? {
+        shortcutSections.firstIndex(of: section).map { $0 + 1 }
+    }
+
     public var enabledCount: Int { order.count { isVisible($0) } }
     public var totalCount: Int { order.count }
 
@@ -67,7 +83,11 @@ public final class SidebarVisibilityModel {
 
     public func setEnabled(_ section: AppSection, _ enabled: Bool) {
         guard !section.isCore else { return }
-        if enabled { hidden.remove(section) } else { hidden.insert(section) }
+        if enabled {
+            hidden.remove(section)
+        } else if hidden.insert(section).inserted {
+            onHide?(section)
+        }
         save()
     }
 
@@ -78,8 +98,10 @@ public final class SidebarVisibilityModel {
 
     /// Every optional page off; the core ones stay.
     public func disableAll() {
+        let wasShown = order.filter(isVisible)
         hidden = Set(AppSection.allCases.filter { !$0.isCore })
         save()
+        for section in wasShown where isHidden(section) { onHide?(section) }
     }
 
     /// Moves `id` to sit just before `target`. A nil target drops it last

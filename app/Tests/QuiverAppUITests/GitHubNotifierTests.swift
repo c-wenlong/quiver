@@ -237,6 +237,13 @@ struct GitHubNotifierTests {
         #expect(try deliveredIds(dir).contains("b"))
     }
 
+    /// GitHub banners are opt-in: with nothing saved the switch reads off.
+    @Test func bannersStartOff() {
+        UserDefaults.standard.removeObject(forKey: "githubNotifications")
+        let notifier = GitHubNotifier(quiver: quiverDir(), model: GitHubModel()) { _ in }
+        #expect(!notifier.bannersEnabled)
+    }
+
     /// The watcher loop returns when its task is cancelled rather than
     /// holding the AppModel watcher slot forever.
     @Test func keepFreshStopsOnCancel() async throws {

@@ -14,6 +14,8 @@ final class AppModel {
     private(set) var connection: Connection = .connecting
     private(set) var loadError: String?
     private(set) var loadedOnce = false
+    /// When the lists last loaded; an open search reruns when it moves.
+    private(set) var refreshedAt: Date?
     var pairing = PairingFlow()
 
     private var refreshTask: Task<Void, Never>?
@@ -62,6 +64,7 @@ final class AppModel {
             sessions = sessionsBody.sessions
             machines = sessionsBody.machines ?? machines
             inbox = inboxBody.items
+            refreshedAt = Date()
             connection = .online
             loadError = nil
         } catch let error as HubError {
