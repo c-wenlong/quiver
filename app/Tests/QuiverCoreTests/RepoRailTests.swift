@@ -63,19 +63,12 @@ import Testing
     }
 
     @Test func botsAreDependencyBotsInEitherSpelling() {
-        #expect(RepoRowFilter.isBot("app/dependabot"))
-        #expect(RepoRowFilter.isBot("dependabot[bot]"))
-        #expect(RepoRowFilter.isBot("app/renovate"))
-        // Coding agents open real work from app accounts: kept.
-        #expect(!RepoRowFilter.isBot("app/devin-ai-integration"))
-        #expect(!RepoRowFilter.isBot("c-wenlong"))
-    }
-
-    @Test func eachTabOffersOnlyChipsThatApply() {
-        #expect(RepoRowFilter.options(for: .pulls) == [.failing, .drafts, .hideBots])
-        #expect(RepoRowFilter.options(for: .issues) == [.hideBots])
-        #expect(RepoRowFilter.options(for: .actions) == [.failing])
-        #expect(RepoRowFilter.options(for: .tags).isEmpty)
+        #expect(GitHubBots.isBot("app/dependabot"))
+        #expect(GitHubBots.isBot("dependabot[bot]"))
+        #expect(GitHubBots.isBot("app/renovate"))
+        // Coding agents open real work from app accounts: not "bot".
+        #expect(!GitHubBots.isBot("app/devin-ai-integration"))
+        #expect(!GitHubBots.isBot("c-wenlong"))
     }
 
     @Test func dragMovesWithinItsGroupAndLeavesOtherSlots() {
@@ -88,7 +81,7 @@ import Testing
                 == ["o/b", "x/c", "o/d", "o/a"])
     }
 
-    @Test func countsFollowChipsAndUnloadedReposStayUnknown() async {
+    @Test func countsFollowSearchStateWordsAndUnloadedReposStayUnknown() async {
         let model = await model(
             a: board("o/a", pulls: [pr(1), pr(2, author: "app/dependabot", checks: "failing"),
                                     pr(3, draft: true)]),
@@ -97,14 +90,16 @@ import Testing
         // Loaded and empty is quiet; never fetched is unknown, not quiet.
         #expect(model.rowCount("o/b", tab: .pulls) == 0)
         #expect(model.rowCount("x/c", tab: .pulls) == nil)
-        model.rowFilter.on = [.hideBots]
+        // The search matches the words the row's icons stand for.
+        model.filter = "bot"
+        #expect(model.rowCount("o/a", tab: .pulls) == 1)
+        model.filter = "failing"
+        #expect(model.rowCount("o/a", tab: .pulls) == 1)
+        model.filter = "draft"
+        #expect(model.rowCount("o/a", tab: .pulls) == 1)
+        model.filter = "passing"
         #expect(model.rowCount("o/a", tab: .pulls) == 2)
-        model.rowFilter.on = [.failing]
-        #expect(model.rowCount("o/a", tab: .pulls) == 1)
-        model.rowFilter.on = [.drafts]
-        #expect(model.rowCount("o/a", tab: .pulls) == 1)
         // A repo shown by fallback filters its rows by the text too.
-        model.rowFilter.on = []
         model.filter = "f2"
         #expect(model.rowCount("o/a", tab: .pulls) == 1)
     }
@@ -128,7 +123,7 @@ import Testing
         #expect(other.ciState("o/a") == .unknown)
         // A timeout is a failure for the dot and the chip alike.
         #expect(other.ciState("o/b") == .failing)
-        other.rowFilter.on = [.failing]
+        other.filter = "failing"
         #expect(other.rowCount("o/b", tab: .actions) == 1)
         // A failing feature branch doesn't paint the repo red.
         #expect(model.ciState("o/a") == .passing)
