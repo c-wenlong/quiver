@@ -186,7 +186,7 @@ class TestServe(unittest.TestCase):
     def test_serve_binds_tailscale(self):
         seen = {}
 
-        def fake_serve(state, host, port):
+        def fake_serve(state, host, port, public_url=""):
             seen["host"], seen["port"] = host, port
             return 0
 

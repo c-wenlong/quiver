@@ -35,13 +35,13 @@ The pages call `/v1/app/*` with the device credential the hub's PWA already
 pairs (`Authorization: Bearer`, kept in `localStorage` under the hub's
 origin). `/app/` and `/` share that origin, so a browser paired for the PWA
 is already paired for the web app; an unpaired one is sent to `/` to pair.
-Behind `tailscale serve` every client looks like 127.0.0.1 to the hub, so
-`tailscale whois` pairing cannot work there; pair with a token
-(`swe remote pair`).
+Behind `tailscale serve`, run the hub with `--public-url=https://…` so it
+reads the tailnet client from Serve's headers: "Pair with Tailscale" then
+works, and the Origin check accepts the `https://` origin Serve presents.
+A pair token (`swe remote pair`) works either way.
 
 The first pages only read. Writes (star a harness, link a skill, sync MCP)
-come later and wait on the hub's Origin check accepting the `https://`
-origin Tailscale Serve presents; today it only accepts `http://<Host>`.
+come later, as `POST`s under the same Origin check the PWA's writes use.
 
 ## Data on the hub machine
 

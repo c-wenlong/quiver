@@ -135,20 +135,27 @@ def mint_pair_token(home: Path | str | None = None) -> str:
 
 
 def pair_payload(host: str, port: int, token: str,
-                 name: str = "") -> str:
-    """The QR/URL payload handed to the phone."""
+                 name: str = "", scheme: str = "http") -> str:
+    """The QR/URL payload handed to the phone.
+
+    ``scheme`` rides along only when it isn't plain http (a hub behind
+    ``tailscale serve``), so older apps keep reading the links they know.
+    """
     out = (
         f"quiver://pair?host={quote(host, safe='')}"
         f"&port={port}&token={quote(token, safe='')}"
     )
+    if scheme != "http":
+        out += f"&scheme={quote(scheme, safe='')}"
     if name:
         out += f"&name={quote(name, safe='')}"
     return out
 
 
-def pair_url(host: str, port: int, token: str, name: str = "") -> str:
-    """The https form a phone browser can open directly."""
-    out = f"http://{host}:{port}/#pair={quote(token, safe='')}"
+def pair_url(host: str, port: int, token: str, name: str = "",
+             scheme: str = "http") -> str:
+    """The form a phone browser can open directly."""
+    out = f"{scheme}://{host}:{port}/#pair={quote(token, safe='')}"
     if name:
         out += f"&name={quote(name, safe='')}"
     return out
