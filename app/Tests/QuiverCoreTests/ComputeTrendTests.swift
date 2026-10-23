@@ -155,7 +155,7 @@ import Testing
     }
 
     /// Every harness in the palette reads apart from the others; a
-    /// repeat would merge two harnesses in the share bar and calendar.
+    /// repeat would merge two harnesses in the marble pile and calendar.
     @Test func theHandPickedColoursAreDistinct() {
         let hexes = HarnessColor.fixed.values.map(\.hex)
         #expect(Set(hexes).count == hexes.count)

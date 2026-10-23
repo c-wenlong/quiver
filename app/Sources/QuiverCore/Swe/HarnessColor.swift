@@ -65,7 +65,7 @@ public struct HarnessRGB: Sendable, Equatable {
 }
 
 /// The one colour each harness draws in, on every page: the Overview
-/// share bar, the menu bar donut, Calendar blocks, Compute trend lines,
+/// marble pile, the menu bar donut, Calendar blocks, Compute trend lines,
 /// widgets and the Models chart's Anthropic bars. A hand-picked hue for
 /// the harnesses in `fixed`; anything else takes a hue from its bundled
 /// colour logo, else a stable palette pick, lifted to read on the dark

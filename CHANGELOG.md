@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Overview: the totals sit over a pile of marbles.** The share bar and
+  harness tiles give way to marbles that drop in from the top of the card
+  on the first launch, one per round amount of spend ($1, $2, $5, $10 and
+  so on, picked per period so the pile fills about half the card whatever
+  you spend), each in its harness's colour with its logo, shaded and
+  textured like glass. Marbles behind the figures fade so the text stays
+  readable. Hovering a harness logo under the figures leaves only that
+  harness's marbles and rolls the figures over to its tokens, spend, share
+  and models. A new period or a rescan only drops in or fades out the
+  difference. With Reduce motion on, marbles fade in on top of the pile
+  instead of falling.
+
 - **Repositories: state as icons, search instead of chips.** A PR row's
   conflicts, review and CI show as icons only, centred in the row, with
   the meaning on hover ("Ready to merge", "Merge conflicts"); running CI
