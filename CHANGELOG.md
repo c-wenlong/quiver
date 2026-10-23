@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Skills and AGENTS.md.** Skills lists every skill on the hub
+  machine outside a plugin, with the Mac app's Harness and Source filters,
+  search, order and fold, the Harness links summary with a chip per skills
+  folder, and a detail page per skill: source, link chips, frontmatter,
+  SKILL.md and its files. AGENTS.md shows the shared file with each
+  harness's link state from `swe init --check`, and a project folder's
+  AGENTS.md and CLAUDE.md. Both are read only; linking, New skill and
+  editing stay in `swe` and the Mac app. `swe init --check --json` is now
+  built by `init.commands.check_document`, which the page calls in process.
+
+
 - **Web app: star, archive and restore harnesses.** The Harnesses page
   can now change a harness's state, the web app's first writes: a star
   button on each row, Archive with an inline form that needs a reason,
