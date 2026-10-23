@@ -95,6 +95,26 @@ final class AppModel {
 
     func session(_ key: String) -> SessionRow? { sessions.first { $0.key == key } }
 
+    // MARK: Chats
+
+    /// Chats opened recently, newest last. Going back into one shows what
+    /// it already had and replays only the events since, instead of
+    /// fetching and laying out the transcript again.
+    private var chats: [ChatModel] = []
+    static let chatCacheSize = 8
+
+    func chat(_ key: String) -> ChatModel {
+        if let i = chats.firstIndex(where: { $0.key == key }) {
+            let chat = chats.remove(at: i)
+            chats.append(chat)
+            return chat
+        }
+        let chat = ChatModel(key: key, app: self)
+        chats.append(chat)
+        if chats.count > Self.chatCacheSize { chats.removeFirst().stop() }
+        return chat
+    }
+
     /// A session's status or ownership changed on the live stream; patch
     /// the cached row so the list agrees before the next poll.
     func patch(_ key: String, status: String? = nil, ownership: String? = nil) {
@@ -129,6 +149,7 @@ final class AppModel {
         self.hub = hub
         sessions = []
         inbox = []
+        dropChats()
         loadedOnce = false
         connection = .connecting
         pairing = PairingFlow()
@@ -142,7 +163,13 @@ final class AppModel {
         sessions = []
         machines = []
         inbox = []
+        dropChats()
         loadedOnce = false
+    }
+
+    private func dropChats() {
+        for chat in chats { chat.stop() }
+        chats = []
     }
 
     /// `quiver://pair` deep link or a scanned QR.
