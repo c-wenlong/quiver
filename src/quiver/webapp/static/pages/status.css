@@ -1,0 +1,67 @@
+/* Service status. Theme.success and Theme.cardHover have no token in
+ * styles.css, so they are defined here, light and dark, by the same rules. */
+:root { --status-ok: #10b981; --status-card-hover: #fafafa; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --status-ok: #34d399; --status-card-hover: rgba(38,38,38,.6); }
+}
+:root[data-theme="dark"] { --status-ok: #34d399; --status-card-hover: rgba(38,38,38,.6); }
+
+.status-page { gap: 24px; }
+.status-group { display: flex; flex-direction: column; gap: 12px; }
+.status-group-title { margin: 0; font-size: 14px; font-weight: 500; color: var(--text-secondary); }
+/* As many columns of at least 360px as fit; a row's cards share its height. */
+.status-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr)); gap: 16px; }
+
+.status-card { padding: 0; gap: 0; transition: background .15s, border-color .15s; }
+.status-card:hover { background: var(--status-card-hover); border-color: var(--border-strong); }
+.status-body { flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 20px; min-width: 0; }
+.status-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.status-name { flex: 1; min-width: 0; font-size: 16px; font-weight: 500; }
+.status-open, .status-incident-link {
+  display: grid; place-items: center; color: var(--text-secondary); border-radius: 6px; flex: none;
+}
+.status-open { width: 24px; height: 24px; }
+.status-open:hover, .status-incident-link:hover { color: var(--text-primary); background: var(--hover); }
+.status-open svg { width: 15px; height: 15px; }
+
+.status-health-block { display: flex; flex-direction: column; gap: 4px; }
+.status-health { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.health-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--border-strong); }
+.health-operational { background: var(--status-ok); }
+.health-maintenance { background: var(--text-secondary); }
+.health-minor { background: var(--warning); }
+.health-major, .health-critical { background: var(--danger); }
+
+.status-components { display: flex; flex-direction: column; gap: 4px; }
+.status-component { display: flex; align-items: center; gap: 8px; font-size: 12px; min-width: 0; }
+.component-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.component-maintenance { background: var(--text-secondary); }
+.component-degraded { background: var(--warning); }
+.component-partial_outage, .component-major_outage { background: var(--danger); }
+.status-component-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-component-state { color: var(--text-secondary); flex: none; }
+
+.status-incidents { display: flex; flex-direction: column; gap: 12px; padding-top: 2px; }
+.status-incident { display: flex; flex-direction: column; gap: 4px; padding-left: 10px; border-left: 2px solid var(--border); }
+.status-incident-name { font-size: 14px; font-weight: 500; }
+.status-incident-link { display: inline-grid; width: 18px; height: 18px; margin-left: 4px; vertical-align: -3px; }
+.status-incident-link svg { width: 11px; height: 11px; }
+.status-update {
+  white-space: pre-line; overflow-wrap: anywhere; overflow: hidden; display: -webkit-box;
+  -webkit-line-clamp: 4; -webkit-box-orient: vertical; user-select: text;
+}
+.status-more { font-size: 12px; color: var(--text-secondary); text-decoration: underline; align-self: flex-start; }
+.status-more:hover { color: var(--text-primary); }
+
+.status-problem { display: flex; align-items: flex-start; gap: 6px; }
+.status-problem svg { width: 13px; height: 13px; flex: none; margin-top: 1px; }
+
+/* The app's ExpandRow on the card's bottom edge. */
+.status-expand {
+  display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 36px;
+  border: 0; background: transparent; cursor: pointer;
+  border-radius: 0 0 15px 15px; color: var(--text-secondary); font-size: 12px; font-weight: 500;
+}
+.status-expand:hover { background: var(--row-hover); color: var(--text-primary); }
+.status-expand svg { width: 13px; height: 13px; }
+.status-expand .muted { font-weight: 500; }
