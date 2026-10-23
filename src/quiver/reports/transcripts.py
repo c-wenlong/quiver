@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sqlite3
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -369,7 +370,41 @@ def _deduplicate(messages: list[NormalizedMessage]) -> list[NormalizedMessage]:
     return result
 
 
+# (root, patterns) -> {stem or path part: first candidate carrying it}. One
+# walk of a root answers every later lookup under it; see _find_session_file.
+_SESSION_FILE_INDEX: dict[tuple[str, tuple[str, ...]], dict[str, Path]] = {}
+_SESSION_FILE_INDEX_LOCK = threading.Lock()
+
+
+def _session_file_index(
+    root: Path, patterns: tuple[str, ...], rebuild: bool = False
+) -> dict[str, Path]:
+    key = (str(root), tuple(patterns))
+    with _SESSION_FILE_INDEX_LOCK:
+        index = None if rebuild else _SESSION_FILE_INDEX.get(key)
+        if index is None:
+            index = {}
+            # Candidates in the order the per-lookup glob produced them, and
+            # the first one to carry a key keeps it, so a lookup returns the
+            # same file the old scan stopped at.
+            for pattern in patterns:
+                for path in root.glob(f"**/{pattern}"):
+                    for part in (path.stem, *path.parts):
+                        index.setdefault(part, path)
+            _SESSION_FILE_INDEX[key] = index
+        return index
+
+
 def _find_session_file(root: Path, session_id: str, patterns: tuple[str, ...] = ("*.jsonl",)) -> Path | None:
+    """The transcript under ``root`` whose stem is ``session_id``, or that sits
+    in a directory named for it.
+
+    The tree is walked once per root and pattern set per process, so a
+    report or picker resolving N sessions pays for one walk, not N. A miss,
+    or a hit whose file has since gone, walks again before answering, so a
+    transcript created after the last walk is still found and "not found"
+    always reflects the disk as it is now.
+    """
     if session_id:
         direct = expand_user(session_id)
         if direct.is_file():
@@ -382,13 +417,10 @@ def _find_session_file(root: Path, session_id: str, patterns: tuple[str, ...] = 
         return None
     if not root.exists():
         return None
-    candidates: list[Path] = []
-    for pattern in patterns:
-        candidates.extend(root.glob(f"**/{pattern}"))
-    for path in candidates:
-        if sid == path.stem or sid in path.parts:
-            return path
-    return None
+    path = _session_file_index(root, patterns).get(sid)
+    if path is not None and os.path.lexists(path):
+        return path
+    return _session_file_index(root, patterns, rebuild=True).get(sid)
 
 
 def _jsonl_reader(root: str, patterns: tuple[str, ...] = ("*.jsonl",)) -> Reader:
