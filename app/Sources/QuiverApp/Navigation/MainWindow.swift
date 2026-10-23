@@ -172,14 +172,12 @@ private struct Sidebar: View {
                                 NavItem(section: section, isSelected: model.selection == section,
                                         isFocused: focused == section,
                                         collapsed: !isExpanded,
-                                        badge: section == .inbox ? model.github.unreadCount : 0) {
+                                        badge: section == .inbox ? model.github.unreadCount : 0,
+                                        shortcut: CommandKeyHold.shared.isHeld
+                                            ? model.sidebar.shortcutNumber(of: section) : nil) {
                                     // Reselecting the open page asks a detail
                                     // view on it to go back.
-                                    if model.selection == section {
-                                        model.navReselects += 1
-                                    } else {
-                                        model.selection = section
-                                    }
+                                    model.select(section)
                                 }
                                 .focused($focused, equals: section)
                             }
@@ -306,6 +304,11 @@ private struct NavItem: View {
     /// rows pass nothing. Expanded: a source-list capsule. Collapsed: a
     /// dot on the icon's corner.
     var badge = 0
+    /// While ⌘ is held, the digit of this row's ⌘-number shortcut. The
+    /// cap is pinned to the row's trailing edge so every cap lines up in
+    /// one column, covering the unread count; in the rail it sits on the
+    /// icon.
+    var shortcut: Int?
     var action: () -> Void
     @State private var hovering = false
 
@@ -333,7 +336,7 @@ private struct NavItem: View {
                         .padding(.vertical, 1)
                         .background(Theme.subtle, in: .capsule)
                         .fixedSize()
-                        .opacity(collapsed ? 0 : 1)
+                        .opacity(collapsed || shortcut != nil ? 0 : 1)
                 }
             }
             .foregroundStyle(isSelected || hovering ? Theme.textPrimary : Theme.textNav)
@@ -344,6 +347,20 @@ private struct NavItem: View {
             .background(isSelected ? Theme.navActive : hovering ? Theme.hover : .clear,
                         in: .rect(cornerRadius: Theme.controlRadius))
             .contentShape(.rect(cornerRadius: Theme.controlRadius))
+            // An overlay, not a row item: a long label in a narrow
+            // sidebar can't push the cap out of the column.
+            .overlay(alignment: .trailing) {
+                if !collapsed, let shortcut {
+                    ShortcutCap(text: "⌘\(shortcut)", width: 26)
+                        .padding(.trailing, 6)
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if collapsed, let shortcut {
+                    ShortcutCap(text: "\(shortcut)", width: 14)
+                        .offset(x: 2, y: 2)
+                }
+            }
             .overlay(alignment: .topTrailing) {
                 if collapsed, badge > 0 {
                     Circle()
@@ -358,6 +375,26 @@ private struct NavItem: View {
         .onHover { hovering = $0 }
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityValue(badge > 0 ? "\(badge) unread" : "")
+    }
+}
+
+/// The key cap a held ⌘ shows on a sidebar row: "⌘3" in the expanded
+/// sidebar, "3" on a rail icon.
+private struct ShortcutCap: View {
+    var text: String
+    var width: CGFloat
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11).monospacedDigit())
+            .foregroundStyle(Theme.textSecondary)
+            .frame(width: width, height: 18)
+            .background(Theme.panel, in: .rect(cornerRadius: 5))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.borderStrong, lineWidth: 1))
+            .fixedSize()
+            // The menu items already speak the shortcut.
+            .accessibilityHidden(true)
+            .transition(.opacity)
     }
 }
 

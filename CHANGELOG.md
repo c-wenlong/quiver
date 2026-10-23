@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **⌘1 to ⌘9 switch Quiver's sidebar pages.** The digits follow the
+  pages the sidebar shows, top to bottom, so a hidden page gives its number
+  to the next one. Holding ⌘ shows a `⌘1` style key cap on each numbered
+  row, lined up in one column at the sidebar's right edge (a digit on the
+  icon when the sidebar is a rail). The shortcuts also sit in the View menu.
+
 - **The remote hub's inbox stops growing forever.** `GET /v1/inbox` drops
   follow-ups, errors and interrupts whose last activity is over 3 days old
   (pending approvals never age out), so a phone's badge no longer counts

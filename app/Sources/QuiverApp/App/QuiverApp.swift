@@ -37,6 +37,13 @@ struct QuiverApp: App {
                     model.resetSidebarWidth()
                 }
                 .disabled(model.sidebarCollapsed)
+                Divider()
+                ForEach(Array(model.sidebar.shortcutSections.enumerated()), id: \.element) { index, section in
+                    Button(section.title) {
+                        model.select(section)
+                    }
+                    .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+                }
             }
         }
     }
@@ -56,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         UNUserNotificationCenter.current().delegate = self
         PopupKeyRouting.install()
         FocusVisibility.start()
+        CommandKeyHold.start()
         statusItem = StatusItemController(model: AppModel.shared)
         AppModel.shared.applyAppIcon()
         AppModel.shared.start()
