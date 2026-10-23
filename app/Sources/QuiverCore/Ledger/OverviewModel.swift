@@ -67,6 +67,25 @@ public struct HarnessShare: Sendable, Equatable, Identifiable {
     public var modelCount = 0
 }
 
+extension Array where Element == HarnessShare {
+    /// Most spend first; harnesses with no priced spend after, most tokens
+    /// first; otherwise the current order (Settings') between equals.
+    public func sortedBySpend() -> [HarnessShare] {
+        enumerated().sorted { a, b in
+            if a.element.totals.costUSD != b.element.totals.costUSD {
+                return a.element.totals.costUSD > b.element.totals.costUSD
+            }
+            // Tokens only order harnesses with no priced spend at all; an
+            // equal positive spend keeps Settings' order.
+            if a.element.totals.costUSD == 0, a.element.totals.totalTokens != b.element.totals.totalTokens {
+                return a.element.totals.totalTokens > b.element.totals.totalTokens
+            }
+            return a.offset < b.offset
+        }
+        .map(\.element)
+    }
+}
+
 /// One model's slice of the period, for the top models list.
 public struct ModelShare: Sendable, Equatable, Identifiable {
     public var id: String { model }
