@@ -71,6 +71,15 @@ class LaunchdTest(unittest.TestCase):
         self.assertIsNone(launchd.protected_dir(self.home / "code/quiver/.venv/bin/swe", self.home))
         self.assertIsNone(launchd.protected_dir("/opt/homebrew/bin/swe", self.home))
 
+    def test_protected_dir_follows_symlinks(self):
+        real = self.home / "Desktop/quiver/.venv/bin/swe"
+        real.parent.mkdir(parents=True)
+        real.write_text("")
+        link = self.home / "bin/swe"
+        link.parent.mkdir()
+        link.symlink_to(real)
+        self.assertEqual(launchd.protected_dir(link, self.home), "Desktop")
+
     def test_loaded_pid_reads_launchctl_print(self):
         out = f"gui/501/{launchd.LABEL} = {{\n\tstate = running\n\tpid = 4807\n}}"
         self.assertEqual(launchd.loaded_pid(run=FakeLaunchctl(stdout=out)), (True, 4807))

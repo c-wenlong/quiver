@@ -128,9 +128,14 @@ mv "$staged" "$dest"
 # A remote hub LaunchAgent (swe remote serve --install) runs this bundle's
 # swe: restart it so it serves the new code rather than a mix of both.
 hub_plist="$HOME/Library/LaunchAgents/com.cwenlong.quiver.remote-hub.plist"
-if [ -f "$hub_plist" ] && grep -q "$dest/Contents/Resources/swe" "$hub_plist"; then
-  launchctl kickstart -k "gui/$(id -u)/com.cwenlong.quiver.remote-hub" >/dev/null 2>&1 \
-    && echo "install-app: restarted the remote hub on the new bundle" || true
+if [ -f "$hub_plist" ]; then
+  hub_program="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$hub_plist" 2>/dev/null || true)"
+  case "$hub_program" in
+    "$dest"/*)
+      launchctl kickstart -k "gui/$(id -u)/com.cwenlong.quiver.remote-hub" >/dev/null 2>&1 \
+        && echo "install-app: restarted the remote hub on the new bundle" || true
+      ;;
+  esac
 fi
 rm -rf "$dest.old"
 open "$dest"

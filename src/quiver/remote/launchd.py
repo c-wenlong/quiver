@@ -52,9 +52,13 @@ def bundled_swe(home: Path | None = None) -> Path | None:
 
 
 def protected_dir(path: str | Path, home: Path | None = None) -> str | None:
-    """The protected home folder ``path`` sits in ("Desktop"), or None."""
-    p = Path(path)
-    base = home or Path.home()
+    """The protected home folder ``path`` sits in ("Desktop"), or None.
+
+    Symlinks are followed: what launchd must read is where the link
+    points, so ``~/bin/swe`` linking into ~/Desktop counts as Desktop.
+    """
+    p = Path(path).resolve()
+    base = (home or Path.home()).resolve()
     for name in PROTECTED_DIRS:
         try:
             p.relative_to(base / name)

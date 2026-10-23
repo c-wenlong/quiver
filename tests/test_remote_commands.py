@@ -295,27 +295,27 @@ class TestServe(unittest.TestCase):
         with patch.object(commands.sys, "platform", "darwin"), \
              patch.object(commands.sys, "argv", ["/Users/k/Desktop/quiver/.venv/bin/swe"]), \
              patch.object(commands.launchd, "bundled_swe", return_value=shim), \
-             patch.object(commands.launchd, "loaded_pid", side_effect=[(False, None), (True, 4321)]), \
+             patch.object(commands.launchd, "loaded_pid", return_value=(False, None)), \
              patch.object(commands.launchd, "install", fake_install), \
-             patch.object(commands, "_probe", return_value=None), \
+             patch.object(commands, "_probe", side_effect=[None, None, {"ok": True}]), \
              patch("quiver.remote.commands.time.sleep"), \
              patch("quiver.remote.commands._tailscale_ip", return_value="100.1.2.3"):
             rc, out, _ = _run(["serve", "--install"])
         self.assertEqual(rc, 0)
         self.assertEqual(seen["program"][0], str(shim))
-        self.assertIn("hub running (pid 4321)", out)
+        self.assertIn("hub answering on 100.1.2.3:8477", out)
 
     def test_install_warns_when_the_hub_does_not_start(self):
         with patch.object(commands.sys, "platform", "darwin"), \
              patch.object(commands.launchd, "bundled_swe", return_value=Path("/A/swe")), \
-             patch.object(commands.launchd, "loaded_pid", side_effect=[(False, None), (True, None)]), \
+             patch.object(commands.launchd, "loaded_pid", return_value=(False, None)), \
              patch.object(commands.launchd, "install", return_value=Path("/h/x.plist")), \
              patch.object(commands, "_probe", return_value=None), \
              patch("quiver.remote.commands.time.sleep"), \
              patch("quiver.remote.commands._tailscale_ip", return_value="100.1.2.3"):
             rc, _, err = _run(["serve", "--install"])
         self.assertEqual(rc, 0)
-        self.assertIn("not running yet", err)
+        self.assertIn("not answering on 100.1.2.3:8477 after 20 s", err)
 
     def test_install_refuses_a_swe_in_a_protected_folder(self):
         home = Path.home()

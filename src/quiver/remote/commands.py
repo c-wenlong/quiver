@@ -107,6 +107,11 @@ def _probe(host: str, port: int, timeout: float = 3.0) -> dict | None:
         return None
 
 
+# How long --install waits for the new hub to answer: start-up plus a
+# slow `tailscale ip` lookup and one launchd retry.
+_INSTALL_WAIT_S = 20
+
+
 def _stamp() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -211,14 +216,16 @@ def _cmd_serve_launchd(flags: dict) -> int:
     print(c("dim", "  starts at login and restarts if it exits; "
                    "run --install again to restart it, --uninstall to stop it"))
     if not stray:
-        # A hub that can't start exits at once and launchd only retries,
-        # so say so here rather than leave the phone offline.
-        time.sleep(3)
-        _, pid = launchd.loaded_pid()
-        if pid:
-            print(c("green", f"  hub running (pid {pid})"))
+        # A hub that can't start exits and launchd only retries, so wait
+        # for it to answer rather than leave the phone offline unsaid.
+        for _ in range(_INSTALL_WAIT_S):
+            if _probe(probe_host, port, timeout=1.0) is not None:
+                print(c("green", f"  hub answering on {probe_host}:{port}"))
+                break
+            time.sleep(1)
         else:
-            print(c("yellow", f"the hub is not running yet; see {log_path}"), file=sys.stderr)
+            print(c("yellow", f"the hub is not answering on {probe_host}:{port} after "
+                              f"{_INSTALL_WAIT_S} s; see {log_path}"), file=sys.stderr)
     if stray:
         print(c("yellow",
                 f"a hub started outside launchd already answers on {probe_host}:{port}. "
