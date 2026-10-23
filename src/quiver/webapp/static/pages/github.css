@@ -1,0 +1,252 @@
+/* Repositories and Inbox (github.js, repositories.js, inbox.js). Uses the
+ * tokens in styles.css; GitHub's purple is the app's ghPurple. */
+:root { --gh-purple: #8250df; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --gh-purple: #a371f7; } }
+:root[data-theme="dark"] { --gh-purple: #a371f7; }
+
+.gh-ico { width: 16px; height: 16px; flex: none; display: inline-block; vertical-align: middle; }
+.gh-ico.gh-big { width: 19px; height: 19px; }
+.gh-ico.gh-small { width: 12px; height: 12px; }
+.gh-success { color: var(--accent-fill); }
+.gh-danger { color: var(--danger); }
+.gh-danger-text { color: var(--danger-text); }
+.gh-warning { color: var(--warning); }
+.gh-warn-text { color: var(--warning-text); }
+.gh-merged { color: var(--gh-purple); }
+.gh-accent { color: var(--accent); }
+.gh-secondary { color: var(--text-secondary); }
+.gh-muted { color: var(--text-muted); }
+.gh-mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; }
+.gh-spacer { flex: 1; }
+.gh-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.gh-clamp3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.gh-spin { animation: spin 1.2s linear infinite; }
+.gh-inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.gh-button {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--card); color: var(--text-primary); font-size: 13px;
+  cursor: pointer; text-decoration: none; white-space: nowrap;
+}
+.gh-button:hover { background: var(--tab-hover); }
+a.icon-button { color: inherit; }
+
+/* Setup card (GhSetupCard) */
+.gh-setup-title { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary); }
+.gh-setup-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gh-command { font-size: 13px; padding: 6px 10px; border-radius: 8px; background: var(--subtle); color: var(--text-primary); }
+.gh-copy { width: 32px; height: 32px; }
+.gh-copy.copied { color: var(--accent); }
+
+/* Dashboard frame: the page beside a full-height rail. */
+.gh-dash.with-rail {
+  display: grid; grid-template-columns: minmax(0, 1fr) 240px; grid-template-rows: auto 1fr; column-gap: 24px;
+  grid-template-areas: "head rail" "body rail";
+}
+.gh-dash > .gh-head { grid-area: head; min-width: 0; }
+.gh-dash > .gh-body { grid-area: body; min-width: 0; }
+.gh-dash > .gh-rail { grid-area: rail; align-self: start; }
+
+.gh-toolbar { display: flex; align-items: flex-end; gap: 12px; border-bottom: 1px solid var(--border); }
+.gh-tabs { display: flex; gap: 2px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.gh-tab {
+  height: 34px; padding: 0 10px; border: 0; background: transparent; color: var(--text-tab); font-size: 13px;
+  font-weight: 500; cursor: pointer; white-space: nowrap; border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.gh-tab:hover { color: var(--text-primary); }
+.gh-tab.selected { color: var(--text-primary); border-bottom-color: var(--text-primary); }
+.gh-search { flex: 0 1 260px; min-width: 120px; height: 32px; margin-bottom: 5px; }
+.gh-toolbar-spin { margin-bottom: 13px; }
+
+/* The rows box: a header per repo, its rows under it. */
+.gh-box { background: var(--card); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
+.gh-group-head {
+  display: flex; align-items: center; gap: 6px; padding: 8px 14px; background: var(--subtle); font-size: 13px;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--row-divider);
+}
+.gh-group-head:first-child { border-top: 0; }
+.gh-head-links { display: flex; gap: 8px; opacity: 0; transition: opacity .15s; }
+.gh-head-links a { color: var(--text-muted); display: inline-flex; }
+.gh-head-links a:hover { color: var(--text-primary); }
+.gh-group-head:hover .gh-head-links, .gh-head-links:focus-within { opacity: 1; }
+@media (hover: none) { .gh-head-links { opacity: 1; } }
+
+.gh-row {
+  display: flex; align-items: flex-start; gap: 12px; width: 100%; padding: 10px 14px; border: 0;
+  border-top: 1px solid var(--row-divider); background: transparent; color: inherit; text-decoration: none;
+  text-align: left; cursor: pointer; font: inherit;
+}
+.gh-surface > .gh-row:first-child { border-top: 0; }
+.gh-row:hover { background: var(--row-hover); }
+.gh-row.gh-center { align-items: center; }
+.gh-row-lead { display: inline-flex; padding-top: 1px; }
+.gh-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.gh-row-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.gh-title { font-size: 14px; font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.gh-row-title .badge { flex: none; }
+.gh-row-sub { font-size: 12px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gh-row-side { display: flex; align-items: center; gap: 6px; flex: none; }
+.gh-marks { display: flex; align-items: center; gap: 10px; flex: none; }
+.gh-state { padding: 10px 14px; }
+.gh-empty { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-secondary); padding: 4px 0; }
+.gh-error-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: space-between; }
+.gh-expand {
+  display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 36px; border: 0;
+  border-top: 1px solid var(--row-divider); background: transparent; color: var(--text-secondary); font-size: 13px; cursor: pointer;
+}
+.gh-expand:hover { background: var(--row-hover); color: var(--text-primary); }
+.gh-expand .gh-ico { width: 12px; height: 12px; }
+
+.gh-pages { display: flex; flex-direction: column; gap: 10px; padding: 14px 20px 18px; }
+.gh-pages-name { font-size: 13px; color: var(--text-secondary); }
+.gh-pages-link { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); font-size: 13px; text-decoration: none; }
+
+/* The focus page's scroll loader. */
+.gh-sentinel {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 14px; border: 0;
+  border-top: 1px solid var(--row-divider); background: transparent; cursor: pointer; text-align: left;
+}
+.gh-ring {
+  width: 14px; height: 14px; border-radius: 50%; flex: none;
+  background: conic-gradient(var(--accent) var(--gh-fill, 0%), var(--row-divider) 0);
+  -webkit-mask: radial-gradient(circle, transparent 4.5px, #000 5px); mask: radial-gradient(circle, transparent 4.5px, #000 5px);
+}
+@property --gh-fill { syntax: "<percentage>"; inherits: false; initial-value: 0%; }
+.gh-sentinel.filling .gh-ring { animation: gh-fill .6s linear forwards; }
+@keyframes gh-fill { to { --gh-fill: 100%; } }
+
+/* Rail */
+.gh-rail {
+  position: sticky; top: 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+  padding: 8px; display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 40px); overflow-y: auto;
+}
+.gh-rail-head { display: flex; align-items: center; gap: 4px; padding-left: 8px; }
+.gh-rail-btn {
+  width: 28px; height: 28px; border-radius: 8px; border: 0; background: transparent; color: var(--text-secondary);
+  display: grid; place-items: center; cursor: pointer;
+}
+.gh-rail-btn:hover { background: var(--hover); }
+.gh-rail-btn.spinning svg { animation: spin 1s linear infinite; }
+.gh-rail-list { display: flex; flex-direction: column; }
+.gh-rail-row {
+  display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--text-nav); font-size: 13px; cursor: pointer; text-align: left; width: 100%;
+}
+.gh-rail-row:hover { background: var(--hover); }
+.gh-rail-row.selected { background: var(--nav-active); color: var(--text-primary); }
+.gh-rail-row .gh-ico { width: 14px; height: 14px; }
+.gh-rail-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.gh-owner { font-size: 12px; color: var(--text-muted); padding: 14px 8px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gh-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--border-strong); }
+.gh-dot-failing { background: var(--danger); }
+.gh-dot-passing { background: var(--accent-fill); }
+.gh-dot-running { background: var(--warning); }
+.gh-quiet-toggle {
+  display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 0; background: transparent;
+  color: var(--text-muted); font-size: 13px; cursor: pointer; width: 100%; text-align: left;
+}
+.gh-quiet-toggle .gh-ico { width: 10px; height: 10px; transition: transform .15s; }
+.gh-quiet-toggle.open .gh-ico { transform: rotate(90deg); }
+.gh-quiet { display: none; flex-direction: column; }
+.gh-quiet.open { display: flex; }
+
+/* Narrow: the rail folds to a strip of repo chips under the title, with
+ * Refresh at its end. */
+@media (max-width: 960px) {
+  .gh-dash.with-rail { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; grid-template-areas: "head" "rail" "body"; }
+  .gh-dash.with-rail > .gh-rail { margin-bottom: 16px; }
+  .gh-rail { position: static; max-height: none; width: 100%; padding: 6px; flex-direction: row; align-items: center; }
+  .gh-rail-head { order: 2; padding-left: 0; }
+  .gh-rail-head .caption { display: none; }
+  .gh-rail-list { flex: 1; min-width: 0; flex-direction: row; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+  .gh-rail-row { width: auto; flex: none; max-width: 220px; }
+  .gh-owner, .gh-quiet-toggle { display: none; }
+  .gh-quiet, .gh-quiet.open { display: contents; }
+}
+@media (max-width: 720px) {
+  .gh-toolbar { flex-wrap: wrap; border-bottom: 0; }
+  .gh-tabs { flex-basis: 100%; border-bottom: 1px solid var(--border); }
+  .gh-search { flex: 1 1 100%; margin-bottom: 0; }
+  .gh-toolbar-spin { display: none; }
+  .gh-row-side .badge { display: none; }
+  /* Labels would squeeze the title to nothing; the title wins. */
+  .gh-row-title .badge { display: none; }
+  .gh-sheet-actions { flex-wrap: wrap; }
+  .gh-sheet-actions > .caption { flex-basis: 100%; white-space: normal; }
+  .gh-sheet-actions code { white-space: normal; word-break: break-all; }
+  /* A repo name is a long title: the header's buttons wrap under it. */
+  .gh-page .page-header { flex-wrap: wrap; }
+  .gh-page .page-header .titles { flex: 1 1 100%; }
+}
+
+/* PR sheet */
+dialog.gh-sheet { width: min(680px, calc(100vw - 32px)); }
+.gh-sheet-scroll { max-height: min(460px, 60vh); overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+.gh-pr-head { display: flex; align-items: flex-start; gap: 10px; }
+.gh-pr-icon { padding-top: 3px; }
+.gh-pr-headtext { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.gh-pr-title { font-size: 16px; font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.gh-facts { display: flex; flex-wrap: wrap; gap: 8px; }
+.gh-pr-marks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.gh-label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.gh-label .gh-ico { width: 14px; height: 14px; }
+.gh-section { display: flex; flex-direction: column; gap: 6px; }
+.gh-fold-btn { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; padding: 0; cursor: pointer; }
+.gh-fold-chevron { width: 10px; height: 10px; color: var(--text-muted); transition: transform .15s; }
+.gh-fold-btn.open .gh-fold-chevron, details[open] > summary .gh-fold-chevron { transform: rotate(90deg); }
+.gh-settings-card { background: var(--subtle); border: 1px solid var(--border); border-radius: 12px; padding: 4px 14px; }
+.gh-check-row { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-top: 1px solid var(--border); min-width: 0; }
+.gh-check-row:first-child { border-top: 0; }
+.gh-check-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; }
+.gh-sheet-actions { display: flex; align-items: center; gap: 10px; }
+.gh-sheet-actions .icon-button { width: 32px; height: 32px; }
+.gh-sheet-actions code { white-space: nowrap; }
+
+/* PR body markdown */
+.gh-md { font-size: 13px; color: var(--text-secondary); line-height: 1.5; padding: 10px 14px; overflow-wrap: anywhere; }
+.gh-md > :first-child { margin-top: 0; }
+.gh-md p { margin: 0 0 8px; }
+.gh-md a { color: var(--accent); }
+.gh-md-h { color: var(--text-primary); font-weight: 600; margin: 4px 0 8px; }
+.gh-md-h1 { font-size: 17px; } .gh-md-h2 { font-size: 15px; } .gh-md-h3 { font-size: 14px; } .gh-md-h4 { font-size: 13px; }
+.gh-md-code { background: var(--card); border-radius: 6px; padding: 8px; margin: 0 0 8px; overflow-x: auto; }
+.gh-md-code pre { margin: 0; font-size: 11px; color: var(--text-primary); font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+.gh-md blockquote { margin: 0 0 8px; padding-left: 10px; border-left: 3px solid var(--border-strong); }
+.gh-md hr { border: 0; border-top: 1px solid var(--border); margin: 8px 0; }
+.gh-md-list { display: flex; flex-direction: column; gap: 4px; margin: 0 0 8px; }
+.gh-md-item { display: flex; gap: 6px; color: var(--text-primary); }
+.gh-md-marker { color: var(--text-secondary); flex: none; font-variant-numeric: tabular-nums; }
+.gh-md-marker input { margin: 0; vertical-align: middle; }
+.gh-md-fold { margin: 0 0 8px; }
+.gh-md-fold > summary { display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text-primary); list-style: none; }
+.gh-md-fold > summary::-webkit-details-marker { display: none; }
+.gh-md-fold-body { padding: 6px 0 0 12px; }
+
+/* Inbox */
+.gh-switch { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; user-select: none; }
+.gh-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.gh-switch-track {
+  width: 32px; height: 18px; border-radius: 9px; background: var(--border-strong); position: relative; transition: background .15s;
+}
+.gh-switch-track::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); transition: transform .15s;
+}
+.gh-switch input:checked + .gh-switch-track { background: var(--accent-fill); }
+.gh-switch input:checked + .gh-switch-track::after { transform: translateX(14px); }
+.gh-switch input:focus-visible + .gh-switch-track { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+.card.gh-inbox { gap: 0; padding: 8px 14px 14px; }
+.gh-note {
+  display: flex; align-items: flex-start; gap: 12px; padding: 10px 6px; border-radius: 8px; color: inherit;
+  text-decoration: none; border-top: 1px solid var(--row-divider);
+}
+.gh-note:first-child { border-top: 0; }
+.gh-note:hover { background: var(--row-hover); }
+.gh-note-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex: none; }
+.gh-note.unread .gh-note-dot { background: var(--accent); }
+.gh-note-title {
+  font-size: 13px; color: var(--text-secondary);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.gh-note.unread .gh-note-title { font-size: 14px; font-weight: 500; color: var(--text-primary); }
+.gh-inbox > .caption { padding: 10px 6px 0; }
