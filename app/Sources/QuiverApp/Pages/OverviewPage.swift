@@ -54,6 +54,9 @@ private struct OverviewContent: View {
                     }
                 }
             }
+            if let progress = model.scanProgress, model.summary == nil || model.completedScans == 0 {
+                ScanProgressCard(progress: progress, partial: model.summary != nil)
+            }
             if let summary = model.summary {
                 let current = summary.period == model.period
                 Group {
@@ -74,7 +77,7 @@ private struct OverviewContent: View {
                 // Still the previous period's figures while the new ones load.
                 .opacity(current ? 1 : 0.45)
                 .animation(.easeOut(duration: Theme.fadeDuration), value: current)
-            } else {
+            } else if model.scanProgress == nil {
                 LoadingCard(text: "Reading your usage logs…")
             }
         }
@@ -94,6 +97,37 @@ private struct OverviewContent: View {
         VStack(spacing: Theme.gutter) {
             QuickFigures(summary: summary)
             ActivityCard(days: model.activity)
+        }
+    }
+}
+
+// MARK: - Scan progress
+
+/// The first scan's files done out of total. Above the figures once there
+/// are some, which until it finishes cover only the files read so far.
+private struct ScanProgressCard: View {
+    var progress: ScanProgress
+    var partial: Bool
+
+    var body: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Reading your usage logs")
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    Text("\(progress.filesDone.formatted()) of \(progress.filesTotal.formatted()) files")
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                        .monospacedDigit()
+                }
+                ProgressView(value: Double(min(progress.filesDone, progress.filesTotal)),
+                             total: Double(max(progress.filesTotal, 1)))
+                    .progressViewStyle(.linear)
+                if partial {
+                    Text("Figures below cover the files read so far.")
+                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                }
+            }
         }
     }
 }

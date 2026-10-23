@@ -60,6 +60,10 @@ actor FakeLedger: LedgerQuerying {
 
     func failScans(with error: Error) { scanError = error }
 
+    var progress: ScanProgress?
+    func set(progress: ScanProgress?) { self.progress = progress }
+    func scanProgress() async -> ScanProgress? { progress }
+
     func scan(roots: LedgerRoots?, recentLimit: Int?) async throws -> ScanReport {
         scans += 1
         if holdScans {
@@ -572,5 +576,77 @@ final class OverviewClock {
         // its figures were neither published nor cached.
         #expect(model.summary?.period == .today)
         #expect(model.cachedPeriods == [.month, .today])
+    }
+}
+
+/// The first scan's "files done of total" and the partial figures shown
+/// while it runs.
+@MainActor
+@Suite struct OverviewScanProgressTests {
+    var calendar: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "Asia/Singapore")!
+        return c
+    }
+    let now = Date(timeIntervalSince1970: 1_791_703_800)
+
+    func model(_ ledger: FakeLedger) -> OverviewModel {
+        OverviewModel(ledger: ledger, roots: { LedgerRoots() }, accountLabel: { $0 },
+                      scanWatchInterval: .milliseconds(10),
+                      now: { [now] in now }, calendar: calendar)
+    }
+
+    /// Yields until `done` holds, bounded so a broken wait fails instead of hanging.
+    func until(_ done: () async -> Bool) async {
+        for _ in 0..<500 where !(await done()) { try? await Task.sleep(for: .milliseconds(10)) }
+    }
+
+    @Test func theFirstScanShowsProgressAndPartialFigures() async {
+        let ledger = FakeLedger()
+        await ledger.set(harnesses: ["claude": totals(tokens: 100, cost: 1)])
+        await ledger.set(progress: ScanProgress(filesDone: 12, filesTotal: 40))
+        await ledger.holdNextScan()
+        let model = model(ledger)
+        let scan = Task { await model.load(scan: true) }
+        await until { model.scanProgress != nil && model.summary != nil }
+        #expect(model.scanProgress == ScanProgress(filesDone: 12, filesTotal: 40))
+        // Figures from what had committed, before the scan finished.
+        #expect(model.summary?.totals.totalTokens == 100)
+        #expect(model.completedScans == 0)
+        #expect(await ledger.scanWaiting)
+
+        await ledger.set(progress: nil)
+        await ledger.releaseScan()
+        await scan.value
+        #expect(model.scanProgress == nil)
+        #expect(model.completedScans == 1)
+    }
+
+    @Test func aCappedScanShowsNoProgress() async {
+        let ledger = FakeLedger()
+        await ledger.set(progress: ScanProgress(filesDone: 1, filesTotal: 2))
+        await ledger.holdNextScan()
+        let model = model(ledger)
+        let scan = Task { await model.load(scan: true, recentLimit: 12) }
+        await until { await ledger.scanWaiting }
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(model.scanProgress == nil)
+        #expect(model.summary == nil)
+        await ledger.releaseScan()
+        await scan.value
+    }
+
+    @Test func noWatchIntervalLeavesProgressOff() async {
+        let ledger = FakeLedger()
+        await ledger.set(progress: ScanProgress(filesDone: 1, filesTotal: 2))
+        await ledger.holdNextScan()
+        let model = OverviewModel(ledger: ledger, roots: { LedgerRoots() }, accountLabel: { $0 },
+                                  now: { [now] in now }, calendar: calendar)
+        let scan = Task { await model.load(scan: true) }
+        await until { await ledger.scanWaiting }
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(model.scanProgress == nil)
+        await ledger.releaseScan()
+        await scan.value
     }
 }

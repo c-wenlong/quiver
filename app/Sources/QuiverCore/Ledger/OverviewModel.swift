@@ -12,6 +12,8 @@ public protocol LedgerQuerying: Sendable {
     func harnessByAccount(in range: DateInterval) async -> [String: String]
     func daily(in range: DateInterval, calendar: Calendar) async -> [DailyUsage]
     func setPricing(_ catalog: PricingCatalog) async
+    /// How far the running full scan has got; nil when none is running.
+    func scanProgress() async -> ScanProgress?
 }
 
 extension Ledger: LedgerQuerying {}
@@ -143,6 +145,9 @@ public final class OverviewModel {
     /// says. For the widgets.
     public private(set) var recentModels: [ModelShare] = []
     public private(set) var isLoading = false
+    /// The running full scan's files done out of total, once it has run
+    /// longer than `scanWatchInterval`; nil otherwise.
+    public private(set) var scanProgress: ScanProgress?
     public private(set) var error: String?
     /// Sources the last scan skipped, e.g. a database its app had locked or
     /// was rebuilding. Shown as a note, not a failure: everything else read.
@@ -161,6 +166,8 @@ public final class OverviewModel {
     private let now: () -> Date
     private let calendar: Calendar
     private let refreshPricing: @Sendable () async -> PricingCatalog?
+    /// How often a running full scan's progress is read; nil never reads it.
+    private let scanWatchInterval: Duration?
     /// Bumped by every full load: only the newest writes spend and activity.
     private var loadGeneration = 0
     /// Bumped by every load and period reload: only the newest writes the summary.
@@ -214,12 +221,17 @@ public final class OverviewModel {
 
     /// - Parameter refreshPricing: a newer price list when one is due, else nil;
     ///   asked before every scan.
+    /// - Parameter scanWatchInterval: how often a full scan's progress is
+    ///   read while it runs, and the launch scan's partial figures rebuilt
+    ///   (every third read). Nil, the default, leaves both off.
     public init(ledger: LedgerQuerying, roots: @escaping @Sendable () async -> LedgerRoots,
                 accountLabel: @escaping (String) -> String,
                 refreshPricing: @escaping @Sendable () async -> PricingCatalog? = { nil },
+                scanWatchInterval: Duration? = nil,
                 now: @escaping () -> Date = Date.init, calendar: Calendar = .current) {
         self.ledger = ledger
         self.refreshPricing = refreshPricing
+        self.scanWatchInterval = scanWatchInterval
         self.roots = roots
         self.accountLabel = accountLabel
         self.now = now
@@ -260,6 +272,15 @@ public final class OverviewModel {
             if let catalog = await refreshPricing() {
                 await ledger.setPricing(catalog)
                 revision += 1
+            }
+            let watcher = recentLimit == nil ? watchScan() : nil
+            if watcher != nil { scanWatchers += 1 }
+            defer {
+                if let watcher {
+                    watcher.cancel()
+                    scanWatchers -= 1
+                    if scanWatchers == 0 { scanProgress = nil }
+                }
             }
             do {
                 let report = try await ledger.scan(roots: roots(), recentLimit: recentLimit)
@@ -315,6 +336,36 @@ public final class OverviewModel {
         self.recentModels = recentModels
         updatedAt = now
         warmCache()
+    }
+
+    /// Full-scan loads currently watching progress; the last to finish clears it.
+    private var scanWatchers = 0
+
+    /// While a load's full scan runs: reads its progress every
+    /// `scanWatchInterval` (the first read after one interval, so a quick
+    /// scan never shows any), and until the first scan has completed,
+    /// rebuilds the selected period from what has committed so far on the
+    /// first read and every third after it. The ledger commits per file, so
+    /// those figures only grow; they are never cached, and the scan's own
+    /// rebuild replaces them.
+    private func watchScan() -> Task<Void, Never>? {
+        guard let interval = scanWatchInterval else { return nil }
+        return Task { [weak self] in
+            var reads = 0
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: interval) } catch { return }
+                guard let self else { return }
+                let progress = await self.ledger.scanProgress()
+                guard !Task.isCancelled else { return }
+                self.scanProgress = progress
+                reads += 1
+                guard progress != nil, self.completedScans == 0, reads % 3 == 1 else { continue }
+                let generation = self.summaryGeneration
+                let partial = await self.summarize(self.period, now: self.now())
+                guard !Task.isCancelled, generation == self.summaryGeneration else { continue }
+                self.summary = partial
+            }
+        }
     }
 
     /// Fills the per-period cache in the background so a range switch later
