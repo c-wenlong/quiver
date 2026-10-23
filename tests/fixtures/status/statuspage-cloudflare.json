@@ -1,0 +1,535 @@
+{
+ "page": {
+  "id": "yh6f0r4529hb",
+  "name": "Cloudflare Status",
+  "url": "https://www.cloudflarestatus.com",
+  "time_zone": "Etc/UTC",
+  "updated_at": "2026-08-27T00:00:00.000Z"
+ },
+ "components": [
+  {
+   "id": "1km35smx8p41",
+   "name": "Cloudflare Sites and Services",
+   "status": "degraded_performance",
+   "created_at": "2014-10-27T21:59:30.000Z",
+   "updated_at": "2020-11-11T20:12:30.000Z",
+   "position": 1,
+   "description": "Sites and services that Cloudflare customers use to interact with the Cloudflare Network and its provided services",
+   "showcase": false,
+   "start_date": null,
+   "group_id": null,
+   "page_id": "yh6f0r4529hb",
+   "group": true,
+   "only_show_if_degraded": false,
+   "components": [
+    "0hs0rl6hzmvx",
+    "w4k8yvhfb3vp"
+   ]
+  },
+  {
+   "id": "00gpj4s37mz4",
+   "name": "Africa",
+   "status": "major_outage",
+   "created_at": "2014-12-04T20:39:28.000Z",
+   "updated_at": "2020-11-11T20:12:30.000Z",
+   "position": 2,
+   "description": null,
+   "showcase": false,
+   "start_date": null,
+   "group_id": null,
+   "page_id": "yh6f0r4529hb",
+   "group": true,
+   "only_show_if_degraded": false,
+   "components": [
+    "8h9sn12x310t",
+    "p2w5bf74rw6p",
+    "47440brmvtq2",
+    "fs644clrg00l",
+    "ljllh1921z0m"
+   ]
+  },
+  {
+   "id": "77867vxkttgw",
+   "name": "Asia",
+   "status": "major_outage",
+   "created_at": "2014-10-27T23:58:34.000Z",
+   "updated_at": "2022-04-26T20:02:50.000Z",
+   "position": 4,
+   "description": null,
+   "showcase": false,
+   "start_date": null,
+   "group_id": null,
+   "page_id": "yh6f0r4529hb",
+   "group": true,
+   "only_show_if_degraded": false,
+   "components": [
+    "xjfk3l4dykrs",
+    "vhpdc0y3qty9",
+    "hf1csyqv3x7s",
+    "mbmzgpc3s1xh",
+    "33b7rn1tln88"
+   ]
+  },
+  {
+   "id": "p2w5bf74rw6p",
+   "name": "Annaba, Algeria - (AAE)",
+   "status": "major_outage",
+   "created_at": "2023-06-19T16:40:57.000Z",
+   "updated_at": "2026-08-24T12:32:47.000Z",
+   "position": 3,
+   "description": null,
+   "showcase": false,
+   "start_date": "2023-06-19",
+   "group_id": "00gpj4s37mz4",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  },
+  {
+   "id": "vhpdc0y3qty9",
+   "name": "Bangalore, India - (BLR)",
+   "status": "degraded_performance",
+   "created_at": "2019-10-03T23:15:06.000Z",
+   "updated_at": "2026-10-03T12:13:33.000Z",
+   "position": 4,
+   "description": null,
+   "showcase": false,
+   "start_date": null,
+   "group_id": "77867vxkttgw",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  },
+  {
+   "id": "47440brmvtq2",
+   "name": "Gaborone, Botswana - (GBE)",
+   "status": "degraded_performance",
+   "created_at": "2022-06-01T10:45:54.000Z",
+   "updated_at": "2026-10-07T09:00:08.000Z",
+   "position": 11,
+   "description": null,
+   "showcase": false,
+   "start_date": "2022-06-01",
+   "group_id": "00gpj4s37mz4",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  },
+  {
+   "id": "fs644clrg00l",
+   "name": "Luanda, Angola - (LAD)",
+   "status": "degraded_performance",
+   "created_at": "2016-09-19T04:46:37.000Z",
+   "updated_at": "2026-10-07T04:14:19.000Z",
+   "position": 16,
+   "description": null,
+   "showcase": false,
+   "start_date": null,
+   "group_id": "00gpj4s37mz4",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  },
+  {
+   "id": "hf1csyqv3x7s",
+   "name": "Dhaka, Bangladesh - (DAC)",
+   "status": "degraded_performance",
+   "created_at": "2019-12-17T22:56:25.000Z",
+   "updated_at": "2026-10-10T22:29:59.000Z",
+   "position": 16,
+   "description": null,
+   "showcase": false,
+   "start_date": null,
+   "group_id": "77867vxkttgw",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  },
+  {
+   "id": "ljllh1921z0m",
+   "name": "Nairobi, Kenya - (NBO)",
+   "status": "degraded_performance",
+   "created_at": "2020-10-30T04:22:58.000Z",
+   "updated_at": "2026-10-09T20:07:25.000Z",
+   "position": 19,
+   "description": null,
+   "showcase": false,
+   "start_date": "2020-10-30",
+   "group_id": "00gpj4s37mz4",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  },
+  {
+   "id": "mbmzgpc3s1xh",
+   "name": "Fuzhou, China - (FOC)",
+   "status": "degraded_performance",
+   "created_at": "2022-01-13T16:09:40.000Z",
+   "updated_at": "2026-09-03T10:46:06.000Z",
+   "position": 19,
+   "description": null,
+   "showcase": false,
+   "start_date": "2022-01-13",
+   "group_id": "77867vxkttgw",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  },
+  {
+   "id": "33b7rn1tln88",
+   "name": "Haikou, China - (HAK)",
+   "status": "degraded_performance",
+   "created_at": "2022-01-13T16:10:12.000Z",
+   "updated_at": "2025-12-18T16:52:55.000Z",
+   "position": 21,
+   "description": null,
+   "showcase": false,
+   "start_date": "2022-01-13",
+   "group_id": "77867vxkttgw",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  },
+  {
+   "id": "8h9sn12x310t",
+   "name": "Accra, Ghana - (ACC)",
+   "status": "operational",
+   "created_at": "2022-02-11T11:46:37.000Z",
+   "updated_at": "2026-10-08T14:34:08.000Z",
+   "position": 1,
+   "description": null,
+   "showcase": false,
+   "start_date": "2022-02-11",
+   "group_id": "00gpj4s37mz4",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  },
+  {
+   "id": "xjfk3l4dykrs",
+   "name": "Ahmedabad, India - (AMD)",
+   "status": "operational",
+   "created_at": "2022-03-28T11:54:07.000Z",
+   "updated_at": "2026-10-05T10:29:01.000Z",
+   "position": 1,
+   "description": null,
+   "showcase": false,
+   "start_date": "2022-03-28",
+   "group_id": "77867vxkttgw",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  },
+  {
+   "id": "0hs0rl6hzmvx",
+   "name": "Abuse Reports",
+   "status": "operational",
+   "created_at": "2024-01-19T10:29:23.000Z",
+   "updated_at": "2025-12-11T10:14:18.000Z",
+   "position": 1,
+   "description": "Details of how to report abuse to Cloudflare can be found here: https://www.cloudflare.com/en-gb/trust-hub/reporting-abuse/",
+   "showcase": false,
+   "start_date": "2024-01-19",
+   "group_id": "1km35smx8p41",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  },
+  {
+   "id": "w4k8yvhfb3vp",
+   "name": "Access",
+   "status": "operational",
+   "created_at": "2018-02-09T21:46:39.000Z",
+   "updated_at": "2026-09-29T20:50:35.000Z",
+   "position": 2,
+   "description": "Cloudflare Access determines who can reach your application by applying the Access policies you configure",
+   "showcase": false,
+   "start_date": null,
+   "group_id": "1km35smx8p41",
+   "page_id": "yh6f0r4529hb",
+   "group": false,
+   "only_show_if_degraded": false
+  }
+ ],
+ "incidents": [
+  {
+   "id": "cyxclg7nnhjy",
+   "name": "Elevated Errors in China Network Colos",
+   "status": "identified",
+   "created_at": "2026-10-10T04:13:17.000Z",
+   "updated_at": "2026-10-10T05:48:24.704Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "minor",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/cyxclg7nnhjy",
+   "started_at": "2026-10-10T04:13:17.714Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "x8sfb788f16p",
+     "status": "identified",
+     "body": "The issue has been identified and a fix is being implemented.",
+     "incident_id": "cyxclg7nnhjy",
+     "created_at": "2026-10-10T05:48:24.702Z",
+     "updated_at": "2026-10-10T05:48:24.702Z",
+     "display_at": "2026-10-10T05:48:24.702Z",
+     "affected_components": [
+      {
+       "code": "zd5dlf64bwf8",
+       "name": "Cloudflare Sites and Services - China Network",
+       "old_status": "degraded_performance",
+       "new_status": "degraded_performance"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    },
+    {
+     "id": "r39gnqz2cfl9",
+     "status": "investigating",
+     "body": "We are investigating a spike in errors observed in our China colos.",
+     "incident_id": "cyxclg7nnhjy",
+     "created_at": "2026-10-10T04:13:17.834Z",
+     "updated_at": "2026-10-10T04:13:17.834Z",
+     "display_at": "2026-10-10T04:13:17.834Z",
+     "affected_components": [
+      {
+       "code": "zd5dlf64bwf8",
+       "name": "Cloudflare Sites and Services - China Network",
+       "old_status": "operational",
+       "new_status": "degraded_performance"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "zd5dlf64bwf8",
+     "name": "China Network",
+     "status": "degraded_performance",
+     "created_at": "2026-10-10T04:08:41.000Z",
+     "updated_at": "2026-10-10T04:13:17.000Z",
+     "position": 131,
+     "description": null,
+     "showcase": false,
+     "start_date": "2026-10-10",
+     "group_id": "1km35smx8p41",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "reminder_intervals": null
+  },
+  {
+   "id": "tl0vrgjy99r0",
+   "name": "Cloudflare One Clients are incorrectly challenged on some sites",
+   "status": "identified",
+   "created_at": "2026-09-22T19:23:17.000Z",
+   "updated_at": "2026-09-23T11:02:41.673Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "minor",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/tl0vrgjy99r0",
+   "started_at": "2026-09-22T19:23:17.252Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "73x1h0xgpbvv",
+     "status": "identified",
+     "body": "The issue has been identified and a fix is being implemented.",
+     "incident_id": "tl0vrgjy99r0",
+     "created_at": "2026-09-23T11:02:41.670Z",
+     "updated_at": "2026-09-23T11:02:41.670Z",
+     "display_at": "2026-09-23T11:02:41.670Z",
+     "affected_components": [
+      {
+       "code": "k04jkcpzxn94",
+       "name": "Cloudflare Sites and Services - Cloudflare One Client",
+       "old_status": "degraded_performance",
+       "new_status": "degraded_performance"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    },
+    {
+     "id": "qn17glmckh2h",
+     "status": "investigating",
+     "body": "Cloudflare is investigating an issue where Cloudflare One Client customers are incorrectly challenged while visiting some websites.",
+     "incident_id": "tl0vrgjy99r0",
+     "created_at": "2026-09-22T19:23:17.370Z",
+     "updated_at": "2026-09-22T19:23:17.370Z",
+     "display_at": "2026-09-22T19:23:17.370Z",
+     "affected_components": [
+      {
+       "code": "k04jkcpzxn94",
+       "name": "Cloudflare Sites and Services - Cloudflare One Client",
+       "old_status": "operational",
+       "new_status": "degraded_performance"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "k04jkcpzxn94",
+     "name": "Cloudflare One Client",
+     "status": "degraded_performance",
+     "created_at": "2019-09-30T09:25:38.000Z",
+     "updated_at": "2026-09-22T19:26:56.000Z",
+     "position": 32,
+     "description": null,
+     "showcase": false,
+     "start_date": null,
+     "group_id": "1km35smx8p41",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "reminder_intervals": null
+  },
+  {
+   "id": "9g65dxfbcjln",
+   "name": "Incorrect geo location for some Cloudflare WARP users",
+   "status": "identified",
+   "created_at": "2026-08-27T18:46:19.000Z",
+   "updated_at": "2026-09-01T08:29:56.953Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "minor",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/9g65dxfbcjln",
+   "started_at": "2026-08-27T18:46:19.015Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "jt9ms5c1pcps",
+     "status": "identified",
+     "body": "We are continuing to work on a fix for this issue.",
+     "incident_id": "9g65dxfbcjln",
+     "created_at": "2026-09-01T08:29:56.950Z",
+     "updated_at": "2026-09-01T08:29:56.950Z",
+     "display_at": "2026-09-01T08:29:56.950Z",
+     "affected_components": [
+      {
+       "code": "bjvy4v384csg",
+       "name": "Cloudflare Sites and Services - WARP",
+       "old_status": "degraded_performance",
+       "new_status": "degraded_performance"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    },
+    {
+     "id": "5yxztj7xrn7d",
+     "status": "identified",
+     "body": "We are continuing to work on a fix for this issue.",
+     "incident_id": "9g65dxfbcjln",
+     "created_at": "2026-08-31T15:15:03.346Z",
+     "updated_at": "2026-08-31T15:15:03.346Z",
+     "display_at": "2026-08-31T15:15:03.346Z",
+     "affected_components": [
+      {
+       "code": "bjvy4v384csg",
+       "name": "Cloudflare Sites and Services - WARP",
+       "old_status": "degraded_performance",
+       "new_status": "degraded_performance"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "bjvy4v384csg",
+     "name": "WARP",
+     "status": "degraded_performance",
+     "created_at": "2026-07-03T21:14:10.000Z",
+     "updated_at": "2026-09-22T19:25:49.000Z",
+     "position": 113,
+     "description": null,
+     "showcase": false,
+     "start_date": "2026-07-03",
+     "group_id": "1km35smx8p41",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "reminder_intervals": null
+  }
+ ],
+ "scheduled_maintenances": [
+  {
+   "id": "nhh07r442mt7",
+   "name": "ZRH (Zurich) on 2026-10-12",
+   "status": "scheduled",
+   "created_at": "2026-10-08T14:01:16.000Z",
+   "updated_at": "2026-10-08T14:01:17.114Z",
+   "monitoring_at": null,
+   "resolved_at": null,
+   "impact": "maintenance",
+   "shortlink": "https://www.cloudflarestatus.com/incidents/nhh07r442mt7",
+   "started_at": "2026-10-08T14:01:16.894Z",
+   "page_id": "yh6f0r4529hb",
+   "incident_updates": [
+    {
+     "id": "fpmwh77669b0",
+     "status": "scheduled",
+     "body": "We will be performing scheduled maintenance in ZRH (Zurich) datacenter on 2026-10-12 between 00:00 and 04:00 UTC.\n\nTraffic might be re-routed from this location, hence there is a possibility of a slight increase in latency during this maintenance window for end-users in the affected region. For PNI / CNI customers connecting with us in this location, please make sure you are expecting this traffic to fail over elsewhere during this maintenance window as network interfaces in this datacentre may become temporarily unavailable.\n\nYou can now subscribe to these notifications via Cloudflare dashboard and receive these updates directly via email, PagerDuty and webhooks (based on your plan): https://developers.cloudflare.com/notifications/notification-available/#cloudflare-status.",
+     "incident_id": "nhh07r442mt7",
+     "created_at": "2026-10-08T14:01:17.112Z",
+     "updated_at": "2026-10-08T14:01:17.112Z",
+     "display_at": "2026-10-08T14:01:17.112Z",
+     "affected_components": [
+      {
+       "code": "7f4lcm62x6x2",
+       "name": "Europe - Zurich, Switzerland - (ZRH)",
+       "old_status": "operational",
+       "new_status": "operational"
+      }
+     ],
+     "deliver_notifications": true,
+     "custom_tweet": null,
+     "tweet_id": null
+    }
+   ],
+   "components": [
+    {
+     "id": "7f4lcm62x6x2",
+     "name": "Zurich, Switzerland - (ZRH)",
+     "status": "operational",
+     "created_at": "2025-06-02T14:48:10.000Z",
+     "updated_at": "2026-03-16T04:26:21.000Z",
+     "position": 57,
+     "description": null,
+     "showcase": false,
+     "start_date": "2025-06-02",
+     "group_id": "zqxhg7y54vy8",
+     "page_id": "yh6f0r4529hb",
+     "group": false,
+     "only_show_if_degraded": false
+    }
+   ],
+   "scheduled_for": "2026-10-12T00:00:00.000Z",
+   "scheduled_until": "2026-10-12T04:00:00.000Z"
+  }
+ ],
+ "status": {
+  "indicator": "major",
+  "description": "Partial System Outage"
+ }
+}
