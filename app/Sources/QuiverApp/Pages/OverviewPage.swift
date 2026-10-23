@@ -55,31 +55,36 @@ private struct OverviewContent: View {
                 }
             }
             if let progress = model.scanProgress, model.summary == nil || !model.fullScanFinished {
-                ScanProgressCard(progress: progress, partial: model.summary != nil)
+                ScanStrip(progress: progress, partial: model.summary != nil)
             }
-            if let summary = model.summary {
-                let current = summary.period == model.period
-                Group {
-                    if width >= Self.twoColumnWidth {
-                        HStack(alignment: .top, spacing: Theme.gutter) {
-                            side(summary).frame(width: 300)
-                            main(summary)
-                        }
-                    } else {
-                        VStack(spacing: Theme.gutter) {
-                            main(summary)
-                            side(summary)
+            Group {
+                if let summary = model.summary {
+                    let current = summary.period == model.period
+                    Group {
+                        if width >= Self.twoColumnWidth {
+                            HStack(alignment: .top, spacing: Theme.gutter) {
+                                side(summary).frame(width: 300)
+                                main(summary)
+                            }
+                        } else {
+                            VStack(spacing: Theme.gutter) {
+                                main(summary)
+                                side(summary)
+                            }
                         }
                     }
+                    // Still the previous period's figures while the new ones load.
+                    .opacity(current ? 1 : 0.45)
+                    .animation(.easeOut(duration: Theme.fadeDuration), value: current)
+                    .transition(.opacity)
+                } else if model.error == nil {
+                    OverviewSkeleton(progress: model.scanProgress, twoColumns: width >= Self.twoColumnWidth)
+                        .transition(.opacity)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-                // Still the previous period's figures while the new ones load.
-                .opacity(current ? 1 : 0.45)
-                .animation(.easeOut(duration: Theme.fadeDuration), value: current)
-            } else if model.scanProgress == nil {
-                LoadingCard(text: "Reading your usage logs…")
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+            .animation(.easeOut(duration: 0.25), value: model.summary == nil)
         }
         .task(id: model.period) {
             if model.summary?.period != model.period { await model.reloadPeriod() }
@@ -101,34 +106,181 @@ private struct OverviewContent: View {
     }
 }
 
-// MARK: - Scan progress
+// MARK: - Loading
 
-/// The first scan's files done out of total. Above the figures once there
-/// are some, which until it finishes cover only the files read so far.
-private struct ScanProgressCard: View {
+/// The running scan's files done out of total, as a slim bar over the
+/// cards. Once there are figures, they cover only the files read so far.
+private struct ScanStrip: View {
     var progress: ScanProgress
     var partial: Bool
 
     var body: some View {
-        Card {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Reading your usage logs")
-                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                    Spacer()
-                    Text("\(progress.filesDone.formatted()) of \(progress.filesTotal.formatted()) files")
-                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                        .monospacedDigit()
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(partial ? "Figures cover the files read so far" : "Reading your usage logs")
+                Spacer()
+                Text("\(progress.filesDone.formatted()) of \(progress.filesTotal.formatted()) files")
+                    .monospacedDigit()
+            }
+            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            ProgressView(value: Double(min(progress.filesDone, progress.filesTotal)),
+                         total: Double(max(progress.filesTotal, 1)))
+                .progressViewStyle(.linear)
+                .controlSize(.small)
+                .tint(Theme.accentFill)
+        }
+    }
+}
+
+/// Before the period's first figures: the page's own cards as shimmering
+/// placeholders, so it reads as loaded at once. The heatmap lights up as
+/// the scan reads files, in a sweep while there is no count yet.
+private struct OverviewSkeleton: View {
+    var progress: ScanProgress?
+    var twoColumns: Bool
+
+    var body: some View {
+        if twoColumns {
+            HStack(alignment: .top, spacing: Theme.gutter) {
+                side.frame(width: 300)
+                main
+            }
+        } else {
+            VStack(spacing: Theme.gutter) {
+                main
+                side
+            }
+        }
+    }
+
+    private var main: some View {
+        VStack(spacing: Theme.gutter) {
+            Card {
+                VStack(spacing: 14) {
+                    SkeletonBlock(width: 280, height: 26, radius: Theme.controlRadius)
+                    Spacer().frame(height: 18)
+                    SkeletonBlock(width: 220, height: 52)
+                    SkeletonBlock(width: 110, height: 22)
+                    SkeletonBlock(width: 200, height: 12)
+                    HStack(spacing: 6) {
+                        ForEach(0..<4, id: \.self) { _ in SkeletonBlock(width: 30, height: 30, radius: 15) }
+                    }
+                    .padding(.top, 6)
                 }
-                ProgressView(value: Double(min(progress.filesDone, progress.filesTotal)),
-                             total: Double(max(progress.filesTotal, 1)))
-                    .progressViewStyle(.linear)
-                if partial {
-                    Text("Figures below cover the files read so far.")
-                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                .frame(maxWidth: .infinity, minHeight: TotalCard.minHeight - 2 * Theme.cardPadding, alignment: .top)
+            }
+            Card {
+                SkeletonBlock(width: 220, height: 24, radius: Theme.controlRadius)
+                ForEach(0..<5, id: \.self) { row in
+                    SkeletonBlock(height: 12).padding(.trailing, CGFloat(row % 3) * 40)
                 }
             }
         }
+    }
+
+    private var side: some View {
+        VStack(spacing: Theme.gutter) {
+            Card {
+                HStack(spacing: 8) {
+                    ForEach(0..<3, id: \.self) { _ in SkeletonBlock(height: 50, radius: Theme.blockRadius) }
+                }
+                ForEach(0..<5, id: \.self) { row in
+                    HStack(spacing: 10) {
+                        SkeletonBlock(width: 20, height: 20, radius: 10)
+                        SkeletonBlock(height: 12).padding(.trailing, CGFloat(row % 2) * 50 + 40)
+                    }
+                    .padding(.vertical, 5)
+                }
+            }
+            Card(title: "Activity", subtitle: "Tokens a day") {
+                SkeletonHeatmap(fraction: progress.map {
+                    Double(min($0.filesDone, $0.filesTotal)) / Double(max($0.filesTotal, 1))
+                })
+            }
+        }
+    }
+}
+
+/// A placeholder bar with a light band sweeping across it. The band is an
+/// offset, so the sweep never lays the page out again.
+private struct SkeletonBlock: View {
+    var width: CGFloat?
+    var height: CGFloat
+    var radius: CGFloat = 6
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var swept = false
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: radius)
+            .fill(Theme.border)
+            .overlay {
+                if !reduceMotion {
+                    GeometryReader { geometry in
+                        LinearGradient(colors: [.clear, Theme.borderStrong.opacity(0.7), .clear],
+                                       startPoint: .leading, endPoint: .trailing)
+                            .frame(width: 160)
+                            .offset(x: swept ? geometry.size.width : -160)
+                    }
+                }
+            }
+            .clipShape(.rect(cornerRadius: radius))
+            .frame(width: width, height: height)
+            .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
+            .onAppear {
+                withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) { swept = true }
+            }
+            .accessibilityHidden(true)
+    }
+}
+
+/// The Activity card's grid before there are days to show: cells light up
+/// oldest first as `fraction` of the scan is read, and sweep round while
+/// the scan has no count yet.
+private struct SkeletonHeatmap: View {
+    var fraction: Double?
+    @State private var width: CGFloat = 0
+    @State private var sweep = 0
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var weekCount: Int { min(26, max(8, Int((width - 24) / (Theme.heatmapCell + 3)))) }
+
+    var body: some View {
+        let cells = weekCount * 7
+        let lit = fraction.map { Int($0 * Double(cells)) } ?? (reduceMotion ? 0 : sweep % (cells + 1))
+        VStack(alignment: .leading, spacing: 3) {
+            // Measures the card's inner width without taking any height.
+            Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+            ForEach(0..<7, id: \.self) { weekday in
+                HStack(spacing: 3) {
+                    Color.clear.frame(width: 24, height: Theme.heatmapCell)
+                    ForEach(0..<weekCount, id: \.self) { week in
+                        let index = week * 7 + weekday
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(index < lit ? Theme.heatmap[Self.level(index)] : Theme.heatmap[0])
+                            .frame(width: Theme.heatmapCell, height: Theme.heatmapCell)
+                    }
+                }
+            }
+        }
+        .animation(.easeOut(duration: 0.3), value: lit)
+        // Restarts when either changes: a count arriving, or Reduce Motion
+        // switched mid-load.
+        .task(id: [fraction == nil, reduceMotion]) {
+            guard fraction == nil, !reduceMotion else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(90))
+                sweep += 7
+            }
+        }
+        .accessibilityLabel("Loading activity")
+    }
+
+    /// A fixed, uneven level per cell, so the lit grid looks like usage.
+    static func level(_ index: Int) -> Int {
+        [1, 1, 2, 2, 3, 4, 0, 1][((index &* 2_654_435_761) >> 7) & 7]
     }
 }
 
