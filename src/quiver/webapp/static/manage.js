@@ -182,7 +182,7 @@ function archiveForm(h, busy) {
       placeholder="Why? Like: too slow, or no MCP support" aria-label="Why are you archiving it?"
       value="${esc(p.reason)}"${busy ? " disabled" : ""}>
     <div class="harness-form-buttons">
-      <button type="button" class="harness-button" data-act="archive-cancel">Cancel</button>
+      <button type="button" class="harness-button" data-act="archive-cancel"${busy ? " disabled" : ""}>Cancel</button>
       <button type="submit" class="harness-button primary" id="harness-archive-go"${empty || busy ? " disabled" : ""}>${busy ? "Archiving…" : "Archive"}</button>
     </div>
   </form>`;
@@ -246,6 +246,9 @@ async function harnessWrite(action, name, extra = {}) {
   if (onHarnessesPage()) paintHarnesses();
   const { status, data } = await apiPost(`/v1/app/harness/${action}`, { name, ...extra });
   p.busy.delete(name);
+  // A list read still in flight may have read the registry before this
+  // write landed: drop it, so it can't paint the old state over the reply.
+  if (status === 200) p.gen++;
   if (status === 401) {
     if (onHarnessesPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
     return;
@@ -267,14 +270,36 @@ async function harnessWrite(action, name, extra = {}) {
     return;
   }
   if (!onHarnessesPage() || !p.data) return;
-  paintHarnesses();
-  // Keep keyboard focus on the row's star where it still shows: a repaint
-  // replaces every button, so focus would otherwise drop to the page.
   const ok = status === 200;
-  const next = { star: ok ? "unstar" : "star", unstar: ok ? "star" : "unstar" }[action];
-  const row = document.querySelector(`.harness-row[data-harness="${CSS.escape(name)}"]`);
-  const target = row && (next ? row.querySelector(`[data-act="${next}"]`)
-    : action === "archive" && !ok ? row.querySelector("#harness-reason") : null);
+  repaintHarnesses(() => {
+    // Nothing kept focus (the clicked button was disabled while it ran):
+    // put it back on the row's star, or on the reason after a failed archive.
+    const next = { star: ok ? "unstar" : "star", unstar: ok ? "star" : "unstar" }[action];
+    const row = document.querySelector(`.harness-row[data-harness="${CSS.escape(name)}"]`);
+    return row && (next ? row.querySelector(`[data-act="${next}"]`)
+      : action === "archive" && !ok ? row.querySelector("#harness-reason") : null);
+  });
+}
+
+/* Repaint without taking focus from where the user is now: a reply can
+ * land while they type in another row's reason or the search field. Only
+ * when focus had nowhere to stay does ``fallback()`` pick the element. */
+function repaintHarnesses(fallback) {
+  const el = document.activeElement;
+  const row = el && el.closest ? el.closest(".harness-row") : null;
+  const key = !el || el === document.body ? null
+    : el.id ? `#${CSS.escape(el.id)}`
+    : row && el.dataset.act ? `.harness-row[data-harness="${CSS.escape(row.dataset.harness)}"] [data-act="${el.dataset.act}"]`
+    : null;
+  const caret = key && typeof el.selectionStart === "number" ? [el.selectionStart, el.selectionEnd] : null;
+  paintHarnesses();
+  const again = key ? document.querySelector(key) : null;
+  if (again && !again.disabled) {
+    again.focus();
+    if (caret) { try { again.setSelectionRange(caret[0], caret[1]); } catch { /* not a text field */ } }
+    return;
+  }
+  const target = fallback && fallback();
   if (target) target.focus();
 }
 
