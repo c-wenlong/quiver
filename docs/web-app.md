@@ -100,6 +100,8 @@ The page goes live in the sidebar as soon as its script registers. The
 sidebar's order and icons are fixed in `app.js` and already list every
 Mac app page; Menu bar and Widgets are marked Mac only.
 
+A page that needs usage reads the shared ledger with `with ctx.state.webapp.ledger() as (store, catalog, scan_ok):`, never a store of its own.
+
 Read data the way the Mac app does: from the same `swe … --json`
 builders in process, not by shelling out, and never from the Mac app's
 own stores.

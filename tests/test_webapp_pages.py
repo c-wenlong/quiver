@@ -39,6 +39,17 @@ class TestLoad(unittest.TestCase):
             self.assertEqual(pages.bundle(".none"), b"")
 
 
+class TestLedgerAccess(HubBase):
+    def test_pages_share_the_ledger(self):
+        from quiver.webapp.api import WebApp
+        app = WebApp(self.srv.home, download_prices=False)
+        self.addCleanup(app.close)
+        with app.ledger() as (store, catalog, scan_ok):
+            self.assertTrue(scan_ok)
+            self.assertEqual(store.models(), [])
+            self.assertIsNotNone(catalog)
+
+
 class TestDispatch(HubBase):
     def test_get_passes_context_and_flat_args(self):
         seen = {}
