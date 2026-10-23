@@ -211,8 +211,12 @@ public final class SkillsModel {
     private var sweSource: String?
     private let gate = SerialGate()
     private let skills: SnapshotLoader<SkillInventory>
-    /// What `placement` was worked out from, so it is redone only on a change.
+    /// What `placement` was worked out from, or is being worked out from,
+    /// so it is redone only on a change.
     private var placedFrom: (inventory: SkillInventory, plugins: CatalogLookup)?
+    /// Places skills against a catalog off the main actor: that resolves
+    /// every skill folder on disk.
+    private let placing = LatestBuild<SkillPlacement>()
 
     /// - Parameters:
     ///   - snapshots: where the last skills are kept between launches.
@@ -236,6 +240,7 @@ public final class SkillsModel {
     public func restore() async {
         await skills.restore()
         place()
+        await placed()
     }
 
     /// Lists the skills unless this swe's list is fresh; joins a list in flight.
@@ -244,6 +249,7 @@ public final class SkillsModel {
         let swe = swe
         await skills.loadIfStale(from: source) { try await swe.skills() }
         place()
+        await placed()
     }
 
     /// Always lists. `source` nil keeps the last swe.
@@ -251,12 +257,23 @@ public final class SkillsModel {
         let swe = swe
         await skills.load(from: source) { try await swe.skills() }
         place()
+        await placed()
+    }
+
+    /// Returns once `placement` matches the latest inventory and catalog.
+    /// The loads wait for it themselves; this is for a caller that set
+    /// `plugins`.
+    public func placed() async {
+        await placing.settled()
     }
 
     /// Works out which skills this page lists, once the inventory and the
-    /// catalog are both known.
+    /// catalog are both known. Against a catalog that resolves every skill
+    /// folder on disk, so it runs off the main actor and the last
+    /// placement stays on show meanwhile.
     private func place() {
         guard case .loaded(let inventory) = inventory else {
+            placing.cancel()
             placement = nil
             placedFrom = nil
             return
@@ -267,15 +284,24 @@ public final class SkillsModel {
         }
         switch plugins {
         case .pending:
+            placing.cancel()
             placement = nil
             placedFrom = nil
-            return
-        // swe couldn't read the catalog: every skill stays here, so none is lost.
-        case .unavailable: placement = SkillPlacement(skills: inventory.skills, catalog: nil)
-        case .ready(let catalog): placement = SkillPlacement(skills: inventory.skills, catalog: catalog)
+        // swe couldn't read the catalog: every skill stays here, so none
+        // is lost. Nothing to resolve, so no need to leave the main actor.
+        case .unavailable:
+            placing.cancel()
+            placement = SkillPlacement(skills: inventory.skills, catalog: nil)
+            placedFrom = (inventory, plugins)
+            dropMissingFilters()
+        case .ready(let catalog):
+            placedFrom = (inventory, plugins)
+            let skills = inventory.skills
+            placing.start({ SkillPlacement(skills: skills, catalog: catalog) }) { [weak self] placement in
+                self?.placement = placement
+                self?.dropMissingFilters()
+            }
         }
-        placedFrom = (inventory, plugins)
-        dropMissingFilters()
     }
 
     /// Clears a harness or source filter the list on show no longer has,
@@ -288,12 +314,12 @@ public final class SkillsModel {
 
     public func link(_ root: SkillRoot) async {
         guard root.link == .notLinked else { return }
-        await change(root) { try await $0.link(root) }
+        _ = await change(root) { try await $0.link(root) }
     }
 
     public func unlink(_ root: SkillRoot) async {
         guard root.link == .linked else { return }
-        await change(root) { try await $0.unlink(root) }
+        _ = await change(root) { try await $0.unlink(root) }
     }
 
     /// What "Link all" can safely take on: loose folders that cost nothing
@@ -393,6 +419,7 @@ public final class SkillsModel {
         guard source == sweSource else { return }
         await skills.reload(from: source) { try await swe.skills() }
         place()
+        await placed()
     }
 
     public var roots: [SkillRoot] {

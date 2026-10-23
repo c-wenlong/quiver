@@ -52,18 +52,41 @@ final class SessionSearch {
         answered = q
     }
 
-    /// Metadata match over loaded rows: case-insensitive text, newest
-    /// first. Plain text, never a regex, so no typed pattern can stall it.
-    static func localMatches(_ rows: [SessionRow], query: String, limit: Int = 50) -> [SearchResult] {
+    /// Metadata match over loaded rows, ranked the way the hub ranks them
+    /// (`src/quiver/remote/search.py`): titles first, then the rest of the
+    /// details, each holding the whole query or every word of it; within
+    /// a tier, the whole query beats the words apart, scaled by
+    /// `recencyWeight`. Plain text, never a regex, so no typed pattern can
+    /// stall it.
+    static func localMatches(_ rows: [SessionRow], query: String, limit: Int = 50,
+                             now: Double = Date().timeIntervalSince1970) -> [SearchResult] {
         let needle = query.lowercased()
-        return rows
-            .filter { row in
-                [row.title, row.agent, row.harness, row.cwd, row.key].compactMap { $0 }
-                    .joined(separator: " ").lowercased().contains(needle)
-            }
-            .sorted { ($0.lastActiveAt ?? 0) > ($1.lastActiveAt ?? 0) }
+        let words = needle.split(whereSeparator: \.isWhitespace).map(String.init)
+        func match(_ text: String) -> Double {
+            if text.contains(needle) { return 1 }
+            if words.count > 1, words.allSatisfy(text.contains) { return 0.7 }
+            return 0
+        }
+        let ranked: [(row: SessionRow, tier: Int, score: Double)] = rows.compactMap { row in
+            let weight = recencyWeight(row.lastActiveAt, now: now)
+            let title = match((row.title ?? "").lowercased())
+            if title > 0 { return (row, 0, title * weight) }
+            let details = match([row.title, row.agent, row.harness, row.cwd, row.key].compactMap { $0 }
+                .joined(separator: " ").lowercased())
+            if details > 0 { return (row, 1, details * weight) }
+            return nil
+        }
+        return ranked
+            .sorted { $0.tier != $1.tier ? $0.tier < $1.tier : $0.score > $1.score }
             .prefix(limit)
-            .map { SearchResult(key: $0.key, source: "metadata", snippet: nil, markedSnippet: nil, role: nil, session: $0) }
+            .map { SearchResult(key: $0.row.key, source: "metadata", snippet: nil, markedSnippet: nil, role: nil, session: $0.row) }
+    }
+
+    /// 1 for a session active now, falling by half every 14 days toward a
+    /// floor of 0.3, the hub's `recency_weight`.
+    static func recencyWeight(_ lastActiveAt: Double?, now: Double) -> Double {
+        let age = max(0, now - (lastActiveAt ?? 0))
+        return 0.3 + 0.7 * pow(0.5, age / 86400 / 14)
     }
 
     /// The index marks matched words with U+E000 ... U+E001; split them

@@ -143,6 +143,7 @@ private struct TotalCard: View {
     @Binding var period: OverviewPeriod
 
     @Environment(AppModel.self) private var app
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The harness whose logo is under the pointer.
     @State private var focus: String?
     /// Clears `focus` a moment after the pointer leaves a logo, so sliding
@@ -151,18 +152,20 @@ private struct TotalCard: View {
     @State private var unfocus: Task<Void, Never>?
     @State private var size: CGSize = .zero
 
-    static let space = "total-card"
+    nonisolated static let space = "total-card"
     /// The width the marbles clear around the figures: the widest line
     /// (a total like "35.3B" at display size) with room either side.
     static let clearWidth: CGFloat = 380
     /// Tall enough that the pile has room under the figures.
     static let minHeight: CGFloat = 440
 
-    /// In the order and with the providers chosen in Settings.
+    /// The providers shown in Settings, biggest spender first, so the logo
+    /// row (and the pill that folds into it) reads as a ranking. Settings'
+    /// order breaks ties.
     var shares: [HarnessShare] {
         let shown = summary.harnesses.filter { $0.totals.totalTokens > 0 && !app.providers.isHidden($0.harness) }
         let order = app.providers.ordered(shown.map(\.harness))
-        return order.compactMap { id in shown.first { $0.harness == id } }
+        return order.compactMap { id in shown.first { $0.harness == id } }.sortedBySpend()
     }
 
     /// Marbles for about half the card. Rounded to tens so a window
@@ -218,8 +221,6 @@ private struct TotalCard: View {
         let up = focused == nil
         let cost = UsageFormat.dollars(totals.costUSD)
         return VStack(spacing: 6) {
-            RollingText(text: focused.map { "\(UsageFormat.harness($0.harness)) tokens" } ?? "Total tokens",
-                        font: Self.captionFont, color: NSColor(Theme.textSecondary), perCharacter: false, up: up)
             RollingText(text: UsageFormat.tokens(totals.totalTokens), font: Self.displayFont,
                         color: NSColor(Theme.textPrimary), kern: -1.8, up: up)
             RollingText(text: cost, font: Self.figureFont, color: NSColor(Theme.accent), up: up)
@@ -251,19 +252,27 @@ private struct TotalCard: View {
     }
 
     // The AppKit fonts behind `Theme.caption`, `.display` and `.figure`.
-    static let captionFont = NSFont.systemFont(ofSize: 12)
     static let captionDigitsFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
     static let displayFont = NSFont.monospacedDigitSystemFont(ofSize: 72, weight: .bold)
     static let figureFont = NSFont.monospacedDigitSystemFont(ofSize: 20, weight: .bold)
 
     /// One logo per harness: the pointer on one focuses it, and so does a
     /// click or Space for the keyboard. One centred row while they fit,
-    /// wrapping once there are too many for the card.
+    /// wrapping once there are too many for the card. While the marbles
+    /// pour in from empty, `PourBar` fills where the logos sit and folds
+    /// into their circles at the end; until then the logos are hidden and
+    /// take no pointer.
     private var logos: some View {
-        ViewThatFits(in: .horizontal) {
+        let pouring = MarbleScene.shared.pour.pouring && !reduceMotion
+        return ViewThatFits(in: .horizontal) {
             HStack(spacing: 6) { logoButtons }
             FlowLayout(spacing: 6, lineSpacing: 6) { logoButtons }
         }
+        .opacity(pouring ? 0 : 1)
+        .allowsHitTesting(!pouring)
+        .accessibilityHidden(pouring)
+        .animation(.easeOut(duration: 0.15), value: pouring)
+        .overlay { PourBar().allowsHitTesting(false).accessibilityHidden(true) }
     }
 
     private var logoButtons: some View {
@@ -300,14 +309,16 @@ private struct TotalCard: View {
         focus = harness
     }
 
-    /// A focused harness's share and models.
+    /// A focused harness's name, share and models.
     private func detail(_ share: HarnessShare) -> String {
         let total = summary.totals.costUSD
         let part = total > 0 ? share.totals.costUSD / total : share.share
         let percent = part > 0 && part < 0.001 ? "<0.1%"
             : part.formatted(.percent.precision(.fractionLength(part < 0.1 ? 1 : 0)))
         let models = share.modelCount == 1 ? "1 model" : "\(share.modelCount) models"
-        return "\(percent) of \(total > 0 ? "spend" : "tokens") · \(models)"
+        // The harness's name leads: with no label over the total, this is
+        // the only place a hover names it.
+        return "\(UsageFormat.harness(share.harness)) · \(percent) of \(total > 0 ? "spend" : "tokens") · \(models)"
     }
 
     private var summaryLine: String {

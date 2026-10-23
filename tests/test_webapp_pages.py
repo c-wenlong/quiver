@@ -38,6 +38,27 @@ class TestLoad(unittest.TestCase):
             self.assertIn("/* a.js */", body)
             self.assertEqual(pages.bundle(".none"), b"")
 
+    def test_each_script_gets_its_own_scope(self):
+        """Two pages reusing private names both register their own render."""
+        import shutil
+        import subprocess
+        folder = Path(tempfile.mkdtemp())
+        for page in ("one", "two"):
+            (folder / f"{page}.js").write_text(
+                '"use strict";\nconst label = "%s";\n'
+                "function render() { return label; }\n"
+                'registerPage("%s", render);\n' % (page, page))
+        with patch.object(pages, "STATIC", folder):
+            body = pages.bundle(".js").decode()
+            self.assertNotIn("(function", pages.bundle(".css").decode())
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node not installed")
+        script = ("const PAGES = {}; function registerPage(id, r) { PAGES[id] = r; }\n" + body
+                  + "\nprocess.stdout.write(PAGES.one() + ',' + PAGES.two());")
+        out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30)
+        self.assertEqual(out.stdout, "one,two", out.stderr)
+
 
 class TestLedgerAccess(HubBase):
     def test_pages_share_the_ledger(self):

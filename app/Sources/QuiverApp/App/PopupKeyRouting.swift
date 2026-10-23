@@ -1,6 +1,6 @@
 import AppKit
 
-/// Sheets, alerts and panels own key-window status while they're up, so
+/// System sheets, alerts and panels own key-window status while they're up, so
 /// ⌘W/⌘Q delivered to them never reaches the real window's Close or the
 /// app menu's Quit — a popup looked like it blocked both. The monitor
 /// answers the same way the menu would: ⌘W hands the popup a real Escape
@@ -22,20 +22,25 @@ import AppKit
             let act = MainActor.assumeIsolated {
                 action(chars: chars, flags: flags, key: NSApp.keyWindow)
             }
-            switch act {
-            case .passThrough:
-                return event
-            case .sendEscape:
-                MainActor.assumeIsolated {
-                    if let key = NSApp.keyWindow {
-                        NSApp.sendEvent(escapeEvent(onto: key))
-                    }
-                }
-                return nil
-            case .quit:
-                MainActor.assumeIsolated { NSApp.terminate(nil) }
-                return nil
-            }
+            let consumed = MainActor.assumeIsolated { perform(act, key: NSApp.keyWindow) }
+            return consumed ? nil : event
+        }
+    }
+
+    /// Carries out `action` for the key window `key`; true when the key
+    /// press is used up. Split out so a test can drive it with its own
+    /// window, since a test process has no key window.
+    @discardableResult
+    static func perform(_ action: Action, key: NSWindow?) -> Bool {
+        switch action {
+        case .passThrough:
+            return false
+        case .sendEscape:
+            if let key { NSApp.sendEvent(escapeEvent(onto: key)) }
+            return true
+        case .quit:
+            NSApp.terminate(nil)
+            return true
         }
     }
 
@@ -55,9 +60,12 @@ import AppKit
 
     /// Sheets have a `sheetParent`, popovers are child windows, and
     /// panels (menu-bar panel, app-modal alerts) are `NSPanel`s — the
-    /// only key-capable windows left are real ones.
+    /// only key-capable windows left are real ones. A real window with a
+    /// `quiverSheet` card up counts too: ⌘W closes the card, as it would
+    /// a system sheet, instead of the window under it.
     static func isPopupWindow(_ window: NSWindow) -> Bool {
         window.sheetParent != nil || window.parent != nil || window is NSPanel
+            || SheetOverlayRegistry.isCovered(window)
     }
 
     /// A physical Escape, window-numbered so it lands on the popup's own

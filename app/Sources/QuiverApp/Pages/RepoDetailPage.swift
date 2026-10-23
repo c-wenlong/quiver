@@ -110,7 +110,7 @@ struct RepoDetailPage: View {
                 await model.loadFocusTab(model.focusTab, repo: repo, swe: app.swe)
             }
         }
-        .sheet(item: $detail) { selection in
+        .quiverSheet(item: $detail) { selection in
             PrDetailSheet(selection: selection)
         }
         // Reselecting the Repositories sidebar item goes back, the same

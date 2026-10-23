@@ -127,7 +127,7 @@ private struct SessionsContent: View {
             await model.refreshUsage(afterScans: app.overview?.completedScans ?? 0,
                                      ledgerRevision: app.overview?.revision ?? 0)
         }
-        .sheet(item: $detail) { row in
+        .quiverSheet(item: $detail) { row in
             SessionDetail(row: row, resume: { resume(row) }, close: { detail = nil })
         }
     }
@@ -530,12 +530,14 @@ private struct SessionRow: View {
     /// "match: <snippet>" with each matched term in primary text on the
     /// muted line — subtle, and green stays reserved for money.
     private func snippet(_ parts: [SearchSnippetPart]) -> Text {
-        var text = Text("match: ").foregroundStyle(Theme.textMuted)
+        var text = AttributedString("match: ")
+        text.foregroundColor = Theme.textMuted
         for part in parts {
-            text = text + Text(part.text)
-                .foregroundStyle(part.matched ? Theme.textPrimary : Theme.textMuted)
+            var run = AttributedString(part.text)
+            run.foregroundColor = part.matched ? Theme.textPrimary : Theme.textMuted
+            text += run
         }
-        return text
+        return Text(text)
     }
 
     /// project · agent · location · models · time · duration

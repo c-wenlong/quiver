@@ -1,23 +1,32 @@
 """Session search for ``GET /v1/search``.
 
-Two sources, merged into one ranked list of catalog rows:
+Every catalog row that matches goes into the first tier it qualifies for:
 
-1. Transcript text, through the Quiver app's FTS5 index
-   (``quiver.sessions.search_index``), when that index exists on this
-   machine. Hits are BM25-ranked and carry a snippet of the best match.
-2. Session metadata (title, harness, folder, id), always, as a
-   case-insensitive substring: the match the Mac app's Sessions page and
-   ``swe session --search`` use. Plain text on purpose: a user-typed
-   regex can backtrack exponentially and Python's ``re`` has no timeout.
+1. Title: holds the whole query, or every word of it.
+2. Session details (title, harness, folder, id together): the same test.
+   Plain case-insensitive text, as the Mac app's Sessions page and
+   ``swe session --search`` match. Never a regex: a user-typed pattern can
+   backtrack exponentially and Python's ``re`` has no timeout.
+3. to 5. Transcript text, through the Quiver app's FTS5 index
+   (``quiver.sessions.search_index``) when it exists on this machine: the
+   exact phrase, then all the words, then any word. A one-word query has
+   only the first of these.
 
-Index hits come first in rank order, then metadata-only matches, newest
-first. Only sessions the catalog lists are returned, so every result can
-be opened with the usual ``/v1/sessions/{key}`` routes. The index covers
-this machine only; satellite sessions match on metadata.
+Within a tier, a result's relevance is multiplied by how recent its
+session is (``recency_weight``), so of two equal matches the newer one
+leads, and a strong old match still beats a weak new one. Transcript
+relevance is the BM25 score as a share of the best in that tier; a
+details match counts 1 for the whole query and 0.7 for the words apart.
+A result in any tier carries the snippet of its best transcript match.
+
+Only sessions the catalog lists are returned, so every result opens
+through the usual ``/v1/sessions/{key}`` routes. The index covers this
+machine only; satellite sessions match on their details.
 """
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from quiver.sessions import search_index
@@ -25,15 +34,51 @@ from quiver.sessions import search_index
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 MAX_QUERY_LEN = 200
-# The index ranks across every transcript it holds, including sessions the
-# catalog doesn't list (subagents, files past the catalog's scan). Asking
-# for this many hits leaves room to drop those and still fill ``limit``.
+# Hits per transcript pass. The index ranks across every transcript it
+# holds, including sessions the catalog doesn't list (subagents, files past
+# the catalog's scan), and recency can lift a hit BM25 put far down, so
+# take plenty. Cheap: the match query groups every matching message before
+# LIMIT applies, and snippets are fetched only for the results returned.
 INDEX_FETCH = 1000
+
+# A session last active this many days ago counts half as much as one
+# active now, on the part of the weight that decays.
+HALF_LIFE_DAYS = 14.0
+# The part that never decays, so an old session that matches well isn't
+# buried under every recent passing mention.
+RECENCY_FLOOR = 0.3
+
+# A details match with the words apart, against 1.0 for the whole query.
+_WORDS_APART = 0.7
+
+TIER_TITLE = 0
+TIER_DETAILS = 1
+TIER_TRANSCRIPT = 2  # + the pass: phrase, all words, any word
 
 _META_FIELDS = ("title", "agent", "harness", "cwd", "id", "key")
 
+
 def metadata_text(row: dict) -> str:
     return " ".join(str(row.get(field) or "") for field in _META_FIELDS).casefold()
+
+
+def recency_weight(last_active_at, now: float) -> float:
+    """1.0 for a session active now, falling to ``RECENCY_FLOOR``."""
+    try:
+        age = max(0.0, now - float(last_active_at or 0))
+    except (TypeError, ValueError):
+        age = float("inf")
+    decay = 0.5 ** (age / 86400 / HALF_LIFE_DAYS)
+    return RECENCY_FLOOR + (1 - RECENCY_FLOOR) * decay
+
+
+def _text_match(text: str, needle: str, words: list[str]) -> float:
+    """1.0 for the whole query, ``_WORDS_APART`` for every word apart, else 0."""
+    if needle in text:
+        return 1.0
+    if len(words) > 1 and all(w in text for w in words):
+        return _WORDS_APART
+    return 0.0
 
 
 def search(
@@ -42,70 +87,78 @@ def search(
     home: Path | None = None,
     limit: int = DEFAULT_LIMIT,
     use_index: bool = True,
+    now: float | None = None,
 ) -> dict:
     """``{"results": [...], "indexed": bool}`` for ``query`` over ``rows``.
 
     Each result is ``{"key", "source", "snippet", "marked_snippet",
     "role"}`` plus the catalog row itself under ``"session"``; ``source``
-    is ``"index"`` for a transcript hit and ``"metadata"`` otherwise.
+    is ``"index"`` when the transcript is what matched and ``"metadata"``
+    when the title or details did.
     """
     query = (query or "").strip()[:MAX_QUERY_LEN]
     limit = max(1, min(int(limit), MAX_LIMIT))
     if not query:
         return {"results": [], "indexed": False}
+    now = time.time() if now is None else now
+    needle = query.casefold()
+    words = needle.split()
 
-    results: list[dict] = []
-    taken: set[str] = set()
+    # key -> (tier, relevance)
+    best: dict[str, tuple[int, float]] = {}
+    by_key: dict[str, dict] = {}
+    for row in rows:
+        key = row.get("key")
+        if not key:
+            continue
+        by_key[key] = row
+        title = _text_match(str(row.get("title") or "").casefold(), needle, words)
+        if title:
+            best[key] = (TIER_TITLE, title)
+            continue
+        details = _text_match(metadata_text(row), needle, words)
+        if details:
+            best[key] = (TIER_DETAILS, details)
 
+    # key -> the session's hit from the strictest pass that has it
+    hit_for: dict[str, search_index.SearchHit] = {}
     indexed = bool(use_index) and search_index.available(home)
     if indexed:
-        by_id: dict[str, dict] = {}
+        by_id: dict[str, str] = {}
         for row in rows:
-            if row.get("remote"):
+            if row.get("remote") or not row.get("key"):
                 continue  # the index holds this machine's transcripts only
             for k in search_index.match_keys(str(row.get("id") or "")):
-                by_id.setdefault(k, row)
-        # Snippets cost a query per hit, so fetch a little first and go
-        # deeper only while hits outside the catalog leave ``limit`` unfilled.
-        fetch = min(limit * 2, INDEX_FETCH)
-        while True:
-            hits = search_index.search(home, query, limit=fetch)
-            results, taken = [], set()
+                by_id.setdefault(k, row["key"])
+        for rung, hits in enumerate(search_index.search_passes(home, query, limit=INDEX_FETCH)):
+            top = max((h.score for h in hits), default=0.0)
             for hit in hits:
-                row = next(
-                    (by_id[k] for k in search_index.match_keys(hit.session_id) if k in by_id),
-                    None,
-                )
-                if row is None or row["key"] in taken:
+                key = next((by_id[k] for k in search_index.match_keys(hit.session_id) if k in by_id), None)
+                if key is None or key in hit_for:
                     continue
-                taken.add(row["key"])
-                results.append({
-                    "key": row["key"],
-                    "source": "index",
-                    "snippet": hit.snippet,
-                    "marked_snippet": hit.marked_snippet,
-                    "role": hit.role,
-                    "session": row,
-                })
-                if len(results) >= limit:
-                    return {"results": results, "indexed": True}
-            if len(hits) < fetch or fetch >= INDEX_FETCH:
-                break
-            fetch = min(fetch * 4, INDEX_FETCH)
+                hit_for[key] = hit
+                if key not in best:
+                    best[key] = (TIER_TRANSCRIPT + rung, hit.score / top if top > 0 else 1.0)
 
-    needle = query.casefold()
-    meta = [
-        row for row in rows
-        if row.get("key") and row["key"] not in taken and needle in metadata_text(row)
-    ]
-    meta.sort(key=lambda r: float(r.get("last_active_at") or 0), reverse=True)
-    for row in meta[: limit - len(results)]:
+    ranked = sorted(
+        best,
+        key=lambda k: (best[k][0], -best[k][1] * recency_weight(by_key[k].get("last_active_at"), now)),
+    )[:limit]
+    snippets = {}
+    kept = [hit_for[k] for k in ranked if k in hit_for]
+    for hit in search_index.fill_snippets(home, kept) if kept else []:
+        snippets[hit.session_id] = hit
+
+    results = []
+    for key in ranked:
+        hit = hit_for.get(key)
+        hit = snippets.get(hit.session_id, hit) if hit else None
         results.append({
-            "key": row["key"],
-            "source": "metadata",
-            "snippet": None,
-            "marked_snippet": None,
-            "role": None,
-            "session": row,
+            "key": key,
+            "source": "index" if best[key][0] >= TIER_TRANSCRIPT else "metadata",
+            "snippet": hit.snippet if hit else None,
+            "marked_snippet": hit.marked_snippet if hit else None,
+            "role": hit.role if hit else None,
+            "session": by_key[key],
         })
     return {"results": results, "indexed": indexed}

@@ -64,6 +64,54 @@ func execute(_ sql: String, on url: URL) throws {
         try await ledger.scan(roots: LedgerRoots(openCodeDatabases: [db]))
         #expect(await ledger.events(in: allTime).count == 4)
     }
+
+    /// A build that read only the legacy tables saved a fingerprint for
+    /// the database as it stands; the 2.x reader must not take it as
+    /// "nothing moved" and skip the rows that build never read.
+    @Test func aFingerprintFromTheLegacyReaderDoesNotSkipTheScan() throws {
+        let temp = try TempDir()
+        let db = temp.path("opencode/opencode.db")
+        try makeDatabase("opencode.sql", at: db)
+        let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
+        let fingerprint = try #require(DatabaseSources.Fingerprint(db))
+        try store.setMeta("opencode:\(db.path):fingerprint", fingerprint.text)
+
+        #expect(try DatabaseSources.scanOpenCode(db, store: store))
+        #expect(try store.events(in: allTime).count == 2)
+    }
+
+    /// OpenCode 2.x writes new sessions only to `session_v2` and their
+    /// replies only to `session_message`; its migration copied old replies
+    /// there under their `message` ids, which must not count twice.
+    @Test func openCode2RepliesCountOnceAlongsideLegacyOnes() async throws {
+        let temp = try TempDir()
+        let db = temp.path("opencode/opencode.db")
+        try makeDatabase("opencode.sql", at: db)
+        try execute("""
+            CREATE TABLE `session_v2` (`id` text PRIMARY KEY, `directory` text NOT NULL, `time_updated` integer NOT NULL);
+            CREATE TABLE `session_message` (`id` text PRIMARY KEY, `session_id` text NOT NULL, `type` text NOT NULL,
+              `seq` integer NOT NULL, `time_created` integer NOT NULL, `time_updated` integer NOT NULL, `data` text NOT NULL);
+            INSERT INTO session_v2 VALUES ('ses_1', '/tmp/oc', 1791100000000), ('ses_v2', '/tmp/v2', 1791100020000);
+            INSERT INTO session_message VALUES ('msg_a1', 'ses_1', 'assistant', 1, 1791100001000, 1791100002000,
+              '{"model":{"id":"claude-sonnet-4-5"},"cost":0.01,"tokens":{"input":100,"output":300,"reasoning":200,"cache":{"read":1000,"write":0}}}');
+            INSERT INTO session_message VALUES ('msg_v1', 'ses_v2', 'user', 4, 1791100020000, 1791100020000, '{"text":"hello"}');
+            INSERT INTO session_message VALUES ('msg_v2', 'ses_v2', 'assistant', 7, 1791100021000, 1791100022000,
+              '{"model":{"id":"MiniMax-M3","providerID":"minimax"},"cost":0.002,"finish":"stop","tokens":{"input":8323,"output":10,"reasoning":4,"cache":{"read":479,"write":0}}}');
+            """, on: db)
+        let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
+        try await ledger.scan(roots: LedgerRoots(openCodeDatabases: [db]))
+
+        let events = await ledger.events(in: allTime)
+        #expect(events.count == 3)
+        let v2 = try #require(events.first { $0.sessionId == "ses_v2" })
+        #expect(v2.cwd == "/tmp/v2")
+        #expect(v2.model == "MiniMax-M3")
+        #expect(v2.outputTokens == 10)
+        #expect(v2.reasoningTokens == 4)
+        #expect(v2.totalTokens == 8_323 + 10 + 4 + 479)
+        #expect(v2.costUSD == 0.002)
+        #expect(await ledger.totals(in: allTime).totalTokens == 1_600 + 8_695 + 8_816)
+    }
 }
 
 @Suite struct LedgerDevinTests {
