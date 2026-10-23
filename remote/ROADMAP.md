@@ -106,9 +106,10 @@ are server changes in `src/quiver/remote/`.
 - [ ] Swipe to dismiss a row
 - [x] Tab badge counts only Waiting on you, not every row
 - [x] Empty state: "Nothing needs you"
-- [ ] Hub: an age cutoff on `catalog.inbox()`. Today it returns every follow-up, error and interrupted session ever seen, which is how the badge reached 278.
-- [ ] Hub: a dismiss route, stored per device, so a cleared item stays cleared
-- [ ] Hub: include finished sessions from today, marked as finished
+- [x] Hub: an age cutoff on `catalog.inbox()`: follow-ups, errors and interrupts older than 3 days drop out (it used to return every one ever seen, which is how the badge reached 278). Approvals never age out.
+- [x] Hub: a dismiss route, stored per device, so a cleared item stays cleared (`POST /v1/inbox/dismiss`; new activity brings it back)
+- [x] Hub: include finished sessions from today, marked as finished (`GET /v1/inbox?done=1`)
+- [ ] App: use the hub's cutoff, dismiss route and `?done=1` in place of `Staleness` and the on-phone `InboxDismissals`
 
 ### P8. Pair requests and devices
 - [x] Pending requests: device, Tailscale node, login, age, a code field, Approve and Deny
