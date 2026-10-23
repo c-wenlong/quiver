@@ -63,6 +63,11 @@ _REVOCATION_CHECK_S = 5.0
 # request arrives from one of these, with the real client in headers.
 _LOOPBACK = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
 
+# Behind serve the owner lookup needs this node's tailnet IP, which a hub
+# started at login can ask for before Tailscale is up; it retries on use
+# this often until it settles.
+_OWNER_RETRY_S = 30.0
+
 # Journal bucket for non-session events (machine.online, hub-level notify).
 GLOBAL_KEY = "_global"
 
@@ -151,6 +156,10 @@ class HubState:
         # The hub owner's tailnet login — set by serve() from whois of
         # the bind address; "" means owner-identity approval is off.
         self.owner_login = ""
+        # Set by configure() when that lookup could not run yet; owner()
+        # calls it again, at most every _OWNER_RETRY_S.
+        self.owner_retry = None
+        self._owner_tried_at = 0.0
         # Unauthenticated /v1/pair/request rate limit: ip → timestamps.
         self._pair_req_times: dict[str, list[float]] = {}
         self._pair_req_lock = threading.Lock()
@@ -208,6 +217,17 @@ class HubState:
                 and self.catalog.row_for(view["key"]) is None:
             view["state"] = "pending"
         return view
+
+    def owner(self) -> str:
+        """The hub owner's tailnet login, retrying a lookup that failed
+        at start-up (behind serve, before Tailscale was up)."""
+        if not self.owner_login and self.owner_retry is not None:
+            now = time.time()
+            if now - self._owner_tried_at >= _OWNER_RETRY_S:
+                self._owner_tried_at = now
+                if self.owner_retry():
+                    self.owner_retry = None
+        return self.owner_login
 
     def _journal_has(self, key: str) -> bool:
         return self.journal.last_seq(key) > 0
@@ -514,10 +534,11 @@ class _Handler(BaseHTTPRequestHandler):
     def _approver_node(self, peer: dict | None) -> str | None:
         """The peer's node id when it shares the hub owner's login —
         else None. Tagged nodes never qualify."""
+        owner = self._state.owner()
         if (
             peer is None or peer.get("tagged")
-            or not self._state.owner_login
-            or peer.get("login") != self._state.owner_login
+            or not owner
+            or peer.get("login") != owner
         ):
             return None
         return str(peer.get("node_id") or "") or None
@@ -1882,12 +1903,30 @@ def check_public_url(url: str) -> str:
     Raises ``ValueError`` unless it is an absolute http(s) URL.
     """
     parts = urlsplit((url or "").strip())
-    if parts.scheme not in {"http", "https"} or not parts.hostname:
+    try:
+        # Reading .port validates it: non-numeric or out of range raises.
+        bad = (parts.scheme not in {"http", "https"} or not parts.hostname
+               or parts.port == 0)
+    except ValueError:
+        bad = True
+    if bad:
         raise ValueError(
             "--public-url must be an http(s) URL, e.g. "
             "https://box.tailnet.ts.net:8477"
         )
     return f"{parts.scheme}://{parts.netloc}"
+
+
+def _public_hosts(public_url: str) -> set[str]:
+    """Host header values that name ``public_url``. A browser drops the
+    scheme's default port, so 443/80 are allowed with and without it."""
+    parts = urlsplit(public_url)
+    default = 443 if parts.scheme == "https" else 80
+    port = parts.port or default
+    hosts = {f"{parts.hostname}:{port}"}
+    if port == default:
+        hosts.add(parts.hostname or "")
+    return hosts
 
 
 def _hub_file(home: Path | None) -> Path:
@@ -1935,16 +1974,27 @@ def configure(state: HubState, host: str, port: int,
     # Owner identity for pair-request approval: the tailnet login that
     # owns this node. A plain loopback bind and tagged nodes get none;
     # behind serve the node is looked up by its own tailnet IP.
-    ident_host = host
     if public_url:
-        state.allowed_hosts = {urlsplit(public_url).netloc}
+        state.allowed_hosts = _public_hosts(public_url)
         if host in {"127.0.0.1", "::1", "localhost"}:
             state.trust_proxy = True
-            ident_host = catalog_mod.tailscale_ip()
-    if ident_host and ident_host not in {
-        "127.0.0.1", "::1", "localhost", "0.0.0.0"
-    }:
-        peer = state.whois(ident_host)
+
+            def lookup() -> bool:
+                """True once settled: an owner found, or a tagged node
+                that never has one. False means ask again later."""
+                ip = catalog_mod.tailscale_ip()
+                peer = state.whois(ip) if ip else None
+                if peer is None:
+                    return False
+                if not peer.get("tagged"):
+                    state.owner_login = str(peer.get("login") or "")
+                return True
+
+            if not lookup():
+                state.owner_retry = lookup
+            return
+    if host not in {"127.0.0.1", "::1", "localhost", "0.0.0.0"}:
+        peer = state.whois(host)
         if not public_url:
             state.allowed_hosts = {f"{host}:{port}"}
         if peer and not peer.get("tagged"):
@@ -1953,7 +2003,6 @@ def configure(state: HubState, host: str, port: int,
                 for name in (peer.get("node_name"), peer.get("node_short")):
                     if name:
                         state.allowed_hosts.add(f"{name}:{port}")
-    save_hub_config(state.home, host, port, public_url)
 
 
 def serve(state: HubState, host: str, port: int,
@@ -1962,6 +2011,9 @@ def serve(state: HubState, host: str, port: int,
     configure(state, host, port, public_url)
     state.start()
     server = make_server(state, host, port)
+    # Only a hub that owns the port may say where it is: a second copy
+    # that fails to bind must not overwrite the running one's address.
+    save_hub_config(state.home, host, port, public_url)
     # SIGTERM (launchd/systemd stop) must take the same shutdown path as
     # ^C — without it the process dies mid-write and queued sends drop
     # silently. shutdown() can't run on the serve_forever thread.

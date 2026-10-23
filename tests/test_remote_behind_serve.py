@@ -137,15 +137,76 @@ class TestConfigure(unittest.TestCase):
         # Owner identity comes from this node's own tailnet IP.
         self.state.whois.assert_called_once_with("100.64.0.1")
         self.assertEqual(self.state.owner_login, "kai@github")
+        self.assertIsNone(self.state.owner_retry)
+        # Saved by serve() once it holds the port, not here.
+        self.assertEqual(hub_mod.load_hub_config(self.home), {})
+
+    def test_default_https_port_matches_bare_host(self):
+        # Browsers drop :443 from Host, so both forms must pass.
+        for url in ("https://box.ts.net", "https://box.ts.net:443"):
+            hub_mod.configure(self.state, "100.64.0.1", 8477, url)
+            self.assertEqual(self.state.allowed_hosts,
+                             {"box.ts.net", "box.ts.net:443"})
+        hub_mod.configure(self.state, "100.64.0.1", 8477, "http://box:80")
+        self.assertEqual(self.state.allowed_hosts, {"box", "box:80"})
+
+    def test_owner_retried_until_tailscale_is_up(self):
+        ip = MagicMock(return_value="")
+        with patch.object(hub_mod.catalog_mod, "tailscale_ip", ip):
+            hub_mod.configure(self.state, "127.0.0.1", 8477,
+                              "https://box.ts.net:8477")
+            self.assertEqual(self.state.owner_login, "")
+            self.assertIsNotNone(self.state.owner_retry)
+            # Inside the retry window nothing is asked again.
+            with patch.object(hub_mod.time, "time", return_value=0.0):
+                self.state._owner_tried_at = 0.0
+                self.assertEqual(self.state.owner(), "")
+            self.assertEqual(ip.call_count, 1)
+            ip.return_value = "100.64.0.1"
+            self.assertEqual(self.state.owner(), "kai@github")
+        self.assertIsNone(self.state.owner_retry)
+        self.state.whois.assert_called_once_with("100.64.0.1")
+
+    def test_tagged_node_settles_without_owner(self):
+        self.state.whois.return_value = {"tagged": True}
+        with patch.object(hub_mod.catalog_mod, "tailscale_ip",
+                          return_value="100.64.0.1"):
+            hub_mod.configure(self.state, "127.0.0.1", 8477,
+                              "https://box.ts.net:8477")
+        self.assertEqual(self.state.owner_login, "")
+        self.assertIsNone(self.state.owner_retry)
+
+    def test_serve_saves_address_after_bind(self):
+        server = MagicMock()
+        server.serve_forever.side_effect = KeyboardInterrupt
+        self.state.start = MagicMock()
+        self.state.stop = MagicMock()
+        url = "https://box.ts.net:8477"
+        with patch.object(hub_mod, "make_server", return_value=server), \
+                patch.object(hub_mod.catalog_mod, "tailscale_ip",
+                             return_value="100.64.0.1"):
+            hub_mod.serve(self.state, "127.0.0.1", 8477, url)
         self.assertEqual(hub_mod.load_hub_config(self.home), {
             "host": "127.0.0.1", "port": 8477, "public_url": url,
         })
+
+    def test_failed_bind_keeps_running_hubs_address(self):
+        hub_mod.save_hub_config(self.home, "127.0.0.1", 8477,
+                                "https://box.ts.net:8477")
+        self.state.start = MagicMock()
+        with patch.object(hub_mod, "make_server",
+                          side_effect=OSError("in use")):
+            with self.assertRaises(OSError):
+                hub_mod.serve(self.state, "127.0.0.1", 8477)
+        self.assertEqual(hub_mod.load_hub_config(self.home)["public_url"],
+                         "https://box.ts.net:8477")
 
     def test_public_url_on_tailnet_bind_does_not_trust_headers(self):
         hub_mod.configure(self.state, "100.64.0.1", 8477,
                           "https://box.tailnet.ts.net")
         self.assertFalse(self.state.trust_proxy)
-        self.assertEqual(self.state.allowed_hosts, {"box.tailnet.ts.net"})
+        self.assertEqual(self.state.allowed_hosts,
+                         {"box.tailnet.ts.net", "box.tailnet.ts.net:443"})
 
     def test_plain_tailnet_bind_unchanged(self):
         hub_mod.configure(self.state, "100.64.0.1", 8477)
@@ -154,7 +215,6 @@ class TestConfigure(unittest.TestCase):
         self.assertEqual(self.state.allowed_hosts, {
             "100.64.0.1:8477", "box.tailnet.ts.net:8477", "box:8477",
         })
-        self.assertEqual(hub_mod.load_hub_config(self.home)["public_url"], "")
 
     def test_loopback_without_public_url_has_no_identity(self):
         hub_mod.configure(self.state, "127.0.0.1", 8477)
@@ -169,13 +229,16 @@ class TestConfigure(unittest.TestCase):
                               "https://box.tailnet.ts.net:8477")
         self.assertTrue(self.state.trust_proxy)
         self.state.whois.assert_not_called()
+        self.assertIsNotNone(self.state.owner_retry)
 
     def test_check_public_url(self):
         self.assertEqual(
             hub_mod.check_public_url(" https://box.ts.net:8477/x?y#z "),
             "https://box.ts.net:8477",
         )
-        for bad in ("", "box.ts.net:8477", "ftp://box", "https://"):
+        for bad in ("", "box.ts.net:8477", "ftp://box", "https://",
+                    "https://box.ts.net:abc", "https://box.ts.net:65536",
+                    "https://box.ts.net:0"):
             with self.assertRaises(ValueError):
                 hub_mod.check_public_url(bad)
 
@@ -244,6 +307,18 @@ class TestCommands(unittest.TestCase):
         probe.assert_called_once_with("127.0.0.1", 9001)
         self.assertEqual(json.loads(out)["data"]["public_url"],
                          "https://box.ts.net:9001")
+
+    def test_status_prints_public_url(self):
+        cfg = {"host": "127.0.0.1", "port": 9001,
+               "public_url": "https://box.ts.net:9001"}
+        with self._saved(cfg), \
+                patch.object(commands, "_probe", return_value={
+                    "ok": True, "machine": {"name": "box", "id": "m"},
+                }):
+            rc, out, _ = _run(["status"])
+        self.assertEqual(rc, 0)
+        self.assertIn("phones:", out)
+        self.assertIn("https://box.ts.net:9001", out)
 
     def test_status_wildcard_bind_probes_loopback(self):
         with self._saved({"host": "0.0.0.0", "port": 9001}), \
