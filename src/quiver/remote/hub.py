@@ -46,7 +46,7 @@ from quiver.remote import (
     usage as usage_mod,
 )
 from quiver.remote.journal import Journal
-from quiver.webapp import api as webapp_api, static as webapp_static
+from quiver.webapp import api as webapp_api, harnesses as webapp_harnesses, static as webapp_static
 
 DEFAULT_PORT = 8477
 _MAX_BODY = 4 << 20  # 4 MB JSON cap; attachments go through their own route
@@ -975,6 +975,19 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             body["machine"] = self._state.machine.get("name")
             self._send_json(200, body)
+            return
+
+        if path == "/v1/app/harnesses":
+            try:
+                harnesses = webapp_harnesses.rows()
+            except (OSError, ValueError) as exc:
+                self._send_error(503, "registry_unavailable", str(exc))
+                return
+            self._send_json(200, {
+                "harnesses": harnesses,
+                "window_days": usage_mod.WINDOW_DAYS,
+                "machine": self._state.machine.get("name"),
+            })
             return
 
         if path == "/v1/app/sessions":
