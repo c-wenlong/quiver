@@ -298,6 +298,31 @@ final class ChatModelTests: XCTestCase {
         XCTAssertEqual(orphans, ["t0": "b"])
     }
 
+    private func page(_ messages: String, nextBefore: Int?, hasMore: Bool) -> MessagesResponse {
+        let json = #"{"session":"claude:1","messages":["# + messages + #"],"next_before":"# + (nextBefore.map(String.init) ?? "null") + #","has_more":"# + (hasMore ? "true" : "false") + "}"
+        return try! Hub.decoder.decode(MessagesResponse.self, from: Data(json.utf8))
+    }
+
+    func testLiveResultFindsACallFromAnOlderPage() {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        chat.apply(env(#"{"type":"message.appended","seq":10,"data":{"kind":"assistant","text":"working"}}"#))
+        // The call is on an older page and still running.
+        XCTAssertTrue(chat.prepend(page(#"{"type":"message.appended","seq":5,"data":{"kind":"tool_use","text":"","tool":{"name":"Bash","call_id":"t1","args_summary":"Bash · sleep"}}}"#,
+                                        nextBefore: nil, hasMore: false)))
+        chat.apply(env(#"{"type":"message.appended","seq":11,"data":{"kind":"tool_result","text":"done","result_ref":"t1"}}"#))
+        guard case .tool(_, let result) = chat.items[0].kind else { return XCTFail("expected the call first") }
+        XCTAssertEqual(result, "done")
+    }
+
+    func testPageOfOnlyOrphanResultsShowsNothingButKeepsPaging() {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let added = chat.prepend(page(#"{"type":"message.appended","seq":7,"data":{"kind":"tool_result","text":"x","result_ref":"t9"}}"#,
+                                      nextBefore: 7, hasMore: true))
+        XCTAssertFalse(added)
+        XCTAssertTrue(chat.items.isEmpty)
+        XCTAssertTrue(chat.hasEarlier)
+    }
+
     func testReopeningAChatReusesItsModel() {
         let app = AppModel()
         let first = app.chat("claude:1")

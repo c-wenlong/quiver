@@ -136,6 +136,10 @@ final class ChatModel {
         } catch {
             loadError = (error as? HubError)?.message ?? error.localizedDescription
         }
+        // The newest page held nothing to show (only results of older
+        // calls): fetch back until something does, rather than "No
+        // messages yet" over a session that has them.
+        if items.isEmpty, hasEarlier { await loadEarlier() }
         loading = false
     }
 
@@ -143,28 +147,44 @@ final class ChatModel {
     /// page at a time; returns whether anything was added.
     @discardableResult
     func loadEarlier() async -> Bool {
-        guard hasEarlier, !loadingEarlier, let before = nextBefore, let client = app?.client else { return false }
+        guard hasEarlier, !loadingEarlier, nextBefore != nil, let client = app?.client else { return false }
         loadingEarlier = true
         defer { loadingEarlier = false }
-        do {
-            let body = try await client.messages(key, limit: Self.pageSize, before: before)
+        // A page of only tool results whose calls are further back adds
+        // nothing to show, and nothing on screen would ask again: keep
+        // going until a page shows something or history runs out.
+        while hasEarlier, let before = nextBefore {
+            let body: MessagesResponse
+            do {
+                body = try await client.messages(key, limit: Self.pageSize, before: before)
+            } catch {
+                // Leave hasEarlier set: the next scroll to the top tries again.
+                return false
+            }
             // A backfill (stream truncated) replaced the history meanwhile.
             guard nextBefore == before else { return false }
-            var older: [ChatItem] = []
-            var cards: [String: String] = [:]
-            for env in body.messages where env.type == "message.appended" {
-                guard let seq = env.seq, !seen.contains(seq), let msg = env.decode(MessageData.self) else { continue }
-                seen.insert(seq)
-                Self.add(msg, id: "m\(seq)", to: &older, cards: &cards, orphans: &orphanResults)
-            }
-            items.insert(contentsOf: older, at: 0)
-            hasEarlier = body.hasMore ?? false
-            nextBefore = body.nextBefore ?? body.messages.first?.seq
-            return !older.isEmpty
-        } catch {
-            // Leave hasEarlier set: the next scroll to the top tries again.
-            return false
+            if prepend(body) { return true }
         }
+        return false
+    }
+
+    /// Puts an older page in front of what's loaded; returns whether it
+    /// added anything to show.
+    func prepend(_ body: MessagesResponse) -> Bool {
+        var older: [ChatItem] = []
+        var cards: [String: String] = [:]
+        for env in body.messages where env.type == "message.appended" {
+            guard let seq = env.seq, !seen.contains(seq), let msg = env.decode(MessageData.self) else { continue }
+            seen.insert(seq)
+            Self.add(msg, id: "m\(seq)", to: &older, cards: &cards, orphans: &orphanResults)
+        }
+        // A call on this page may still be running; its live result has
+        // to find the card.
+        toolCards.merge(cards) { newer, _ in newer }
+        items.insert(contentsOf: older, at: 0)
+        hasEarlier = body.hasMore ?? false
+        nextBefore = body.nextBefore ?? body.messages.first?.seq
+        return !older.isEmpty
     }
 
     // MARK: Events

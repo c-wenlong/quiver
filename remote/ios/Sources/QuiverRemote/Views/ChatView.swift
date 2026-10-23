@@ -160,6 +160,9 @@ private struct LoadsEarlierAtRest: ViewModifier {
         @State private var idle = true
         /// The entries on screen, top first.
         @State private var visible: [String] = []
+        /// Bumped each time you start a scroll, so a page that lands after
+        /// you moved on doesn't pull you back.
+        @State private var drags = 0
 
         func body(content: Content) -> some View {
             content
@@ -167,6 +170,7 @@ private struct LoadsEarlierAtRest: ViewModifier {
                 .onScrollTargetVisibilityChange(idType: String.self) { visible = $0 }
                 .onScrollPhaseChange { _, phase in
                     idle = phase == .idle
+                    if phase == .interacting { drags += 1 }
                     load()
                 }
                 .onChange(of: model.wantsEarlier) { load() }
@@ -176,8 +180,9 @@ private struct LoadsEarlierAtRest: ViewModifier {
             guard idle, model.wantsEarlier, model.hasEarlier, !model.loadingEarlier else { return }
             model.wantsEarlier = false
             let keep = visible.first { $0 != oldest }
+            let dragsAtStart = drags
             Task {
-                if await model.loadEarlier(), let keep {
+                if await model.loadEarlier(), let keep, drags == dragsAtStart {
                     position.scrollTo(id: keep, anchor: .top)
                 }
             }
