@@ -432,6 +432,20 @@ def run_init(home: Path, *, check_only: bool = False, force: bool = False,
     return InitRun(scaffold, instructions, skills, inst_rows, skill_rows, hook_rows)
 
 
+def check_document(home: Path, run: InitRun | None = None) -> dict:
+    """The ``swe init --check --json`` document: where the shared AGENTS.md
+    is and each harness's link state. Writes nothing; ``run`` is a check
+    already made, else one is made here without printing. Raises
+    LinkIgnoreError when ~/.quiver/.linkignore can't be read."""
+    if run is None:
+        run = run_init(home, check_only=True, quiet=True)
+    return {
+        "agents_file": str(agents_file(home)),
+        "agents_file_exists": agents_file(home).exists(),
+        "harnesses": _link_json(run.instructions, run.skills),
+    }
+
+
 # Larger than any instruction file anyone writes by hand; a guard against
 # adopting a log or a binary by mistake.
 _ADOPT_LIMIT = 1_000_000
@@ -530,11 +544,7 @@ def cmd_init(args) -> int:
     if json_view:
         # Link state is data here, not a verdict: exit 0 even when a path
         # would be blocked, so the caller can tell "ran" from "failed".
-        return emit({
-            "agents_file": str(agents_file(home)),
-            "agents_file_exists": agents_file(home).exists(),
-            "harnesses": _link_json(instructions, skills),
-        })
+        return emit(check_document(home, result))
 
     header = "Quiver layout" + (c("dim", "  (check only, nothing written)") if check_only else "")
     print(f"\n{c('bold', header)}")
