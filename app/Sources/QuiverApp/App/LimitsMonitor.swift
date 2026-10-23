@@ -16,6 +16,7 @@ final class LimitsMonitor {
     /// Set when macOS has notifications for Quiver turned off.
     private(set) var notificationsBlocked = false
 
+    /// Off until the user turns it on: notifications are opt-in.
     var notifyEnabled: Bool {
         didSet { UserDefaults.standard.set(notifyEnabled, forKey: "limitNotifications") }
     }
@@ -40,7 +41,7 @@ final class LimitsMonitor {
     @ObservationIgnored private var lastWidgetSnapshot: WidgetSnapshot?
 
     init(quiver: URL) {
-        notifyEnabled = UserDefaults.standard.object(forKey: "limitNotifications") as? Bool ?? true
+        notifyEnabled = UserDefaults.standard.object(forKey: "limitNotifications") as? Bool ?? false
         refreshFreshMinutes = RefreshFreshWindow.minutes(
             UserDefaults.standard.object(forKey: "refreshFreshMinutes") as? Int
                 ?? RefreshFreshWindow.defaultMinutes)

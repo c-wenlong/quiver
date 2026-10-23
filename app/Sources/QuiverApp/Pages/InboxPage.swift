@@ -15,7 +15,7 @@ struct InboxPage: View {
 
     var body: some View {
         Page(title: "Inbox",
-             subtitle: "GitHub notifications across your repos, via swe gh inbox.") {
+             subtitle: "Your GitHub account's live notifications across every repo, via swe gh inbox.") {
             Toggle("Unread only", isOn: $unreadOnly)
                 .toggleStyle(GreenSwitchStyle())
             if model.unreadCount > 0 {
