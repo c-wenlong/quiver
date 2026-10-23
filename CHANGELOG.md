@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   difference. With Reduce motion on, marbles fade in on top of the pile
   instead of falling.
 
+- **Repositories: state as icons, search instead of chips.** A PR row's
+  conflicts, review and CI show as icons only, centred in the row, with
+  the meaning on hover ("Ready to merge", "Merge conflicts"); running CI
+  spins. The Failing CI, Drafts and Hide bots chips are gone: the search
+  field on the tab row (⌘K) matches state words such as "failing",
+  "draft", "conflict", "approved" or "bot". It replaces the jump dialog,
+  since Add repository already searches your repos and orgs. Repo headers
+  are flat strips, with only the first taking the box's rounded top.
+
 - **Repositories: the rail runs the full height and holds the controls.**
   The header buttons move into the page: the manage gear and Refresh (⌘R)
   sit beside the rail's filter, "Add repository" is the rail's last row,
@@ -219,7 +228,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside the popover no longer read as outside clicks that close the
   panel.
 
+### Changed
+
+- **Settings: a shorter sub-nav.** Preferences and Updates fold into
+  General as its Display and Updates cards, and GitHub and Remote move out
+  of App into a new Integrations group. The list goes from 12 items to 10.
+
 ### Fixed
+
+- **Quiver switches pages at once.** Clicking a sidebar row or pressing
+  ⌘1 to ⌘9 used to keep the old page up for 70 to 460 ms while the new
+  page's rows were laid out. The new page's header now draws in the first
+  frame (17 to 49 ms) and its content joins on the next run-loop turn.
 
 - **`swe session` lists OpenCode sessions again.** opencode 2.x turned its
   `workspace` table into provider bindings with no `directory` column, so

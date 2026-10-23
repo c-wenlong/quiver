@@ -7,6 +7,8 @@ import SwiftUI
 struct SearchField: View {
     var prompt: String
     @Binding var text: String
+    /// A shortcut that puts the cursor in the field (⌘K on Repositories).
+    var focusShortcut: KeyboardShortcut? = nil
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -33,6 +35,15 @@ struct SearchField: View {
         .overlay(RoundedRectangle(cornerRadius: Theme.fieldRadius)
             .strokeBorder(focused ? Theme.borderHover : Theme.border, lineWidth: 1))
         .focusRing(focused, cornerRadius: Theme.fieldRadius, afterPointer: true)
+        .background {
+            if let focusShortcut {
+                Button("Search") { focused = true }
+                    .keyboardShortcut(focusShortcut)
+                    .opacity(0)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
         .layoutPriority(1)
     }
 }
