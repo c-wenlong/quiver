@@ -74,14 +74,70 @@ final class ToolDiffTests: XCTestCase {
     }
 }
 
-final class MessageBlocksTests: XCTestCase {
-    func testSplitsFencedCode() {
-        let blocks = MessageBlocks.split("Run this:\n```bash\nls -la\n```\nDone.")
-        XCTAssertEqual(blocks, [.prose("Run this:"), .code("ls -la"), .prose("Done.")])
+final class MarkdownTests: XCTestCase {
+    func testTableFromACodexMessage() {
+        let text = """
+        Nothing changed yet.
+
+        | Resource | Action |
+        |---|---|
+        | Cloud Scheduler `toolbox-v2-db-sync` | Keep paused, then delete. |
+        | Secrets | Remove the `*-dsn` secrets \\| after revoking. |
+
+        **Keep both databases.**
+        """
+        let blocks = Markdown.parse(text)
+        XCTAssertEqual(blocks.count, 3)
+        XCTAssertEqual(blocks[0], .paragraph("Nothing changed yet."))
+        guard case .table(let t) = blocks[1] else { return XCTFail("expected a table") }
+        XCTAssertEqual(t.header, ["Resource", "Action"])
+        XCTAssertEqual(t.rows.count, 2)
+        XCTAssertEqual(t.rows[0][0], "Cloud Scheduler `toolbox-v2-db-sync`")
+        XCTAssertEqual(t.rows[1][1], "Remove the `*-dsn` secrets | after revoking.", "an escaped pipe stays in its cell")
+        XCTAssertEqual(blocks[2], .paragraph("**Keep both databases.**"))
+    }
+
+    func testAlignmentRow() {
+        XCTAssertEqual(Markdown.separatorAlignments("| :--- | :---: | ---: |"), [.leading, .center, .trailing])
+        XCTAssertNil(Markdown.separatorAlignments("---"), "a lone rule is not a table separator")
+        XCTAssertNil(Markdown.separatorAlignments("| a | b |"))
+    }
+
+    func testHeadingsListsQuotesRulesAndCode() {
+        let blocks = Markdown.parse("""
+        ## Plan
+        1. First
+        2. Second
+          continued
+        - nested parent
+          - child
+        > quoted
+        ---
+        ```swift
+        let x = 1
+        ```
+        #not a heading
+        """)
+        XCTAssertEqual(blocks, [
+            .heading(level: 2, text: "Plan"),
+            .listItem(indent: 0, marker: "1.", text: "First"),
+            .listItem(indent: 0, marker: "2.", text: "Second\ncontinued"),
+            .listItem(indent: 0, marker: "•", text: "nested parent"),
+            .listItem(indent: 1, marker: "•", text: "child"),
+            .quote("quoted"),
+            .rule,
+            .code(language: "swift", text: "let x = 1"),
+            .paragraph("#not a heading"),
+        ])
     }
 
     func testUnclosedFenceIsCode() {
-        XCTAssertEqual(MessageBlocks.split("```\nhalf"), [.code("half")])
+        XCTAssertEqual(Markdown.parse("```\nhalf"), [.code(language: nil, text: "half")])
+    }
+
+    func testRaggedRowsPadToTheWidestRow() {
+        guard case .table(let t)? = Markdown.parse("| a |\n|---|\n| 1 | 2 | 3 |").first else { return XCTFail() }
+        XCTAssertEqual(t.columnCount, 3)
     }
 }
 

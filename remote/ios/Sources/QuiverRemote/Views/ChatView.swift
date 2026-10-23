@@ -232,31 +232,140 @@ private struct UserBubble: View {
     }
 }
 
-/// Prose with inline markdown, and fenced code in mono blocks. Every
-/// line wraps: nothing in a chat scrolls sideways.
+/// Agent text as Markdown: headings, lists, quotes, rules, code blocks
+/// and tables, with inline styling inside each. Prose wraps to the screen;
+/// a table too wide for it scrolls sideways inside its own box, so the
+/// chat itself never does.
 struct RichText: View {
     let text: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(MessageBlocks.split(text).enumerated()), id: \.offset) { _, block in
-                switch block {
-                case .prose(let s):
-                    Text(Self.inline(s)).font(Theme.body).foregroundStyle(Theme.textPrimary)
-                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                case .code(let s):
-                    Text(s).font(Theme.mono).foregroundStyle(Theme.textLabel)
-                        .textSelection(.enabled)
-                        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Theme.code, in: .rect(cornerRadius: Theme.controlRadius))
-                        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.border, lineWidth: 1))
-                }
+            ForEach(Array(Markdown.parse(text).enumerated()), id: \.offset) { _, block in
+                BlockView(block: block)
             }
         }
     }
 
     static func inline(_ s: String) -> AttributedString {
         (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)
+    }
+}
+
+private struct BlockView: View {
+    let block: Markdown.Block
+
+    var body: some View {
+        switch block {
+        case .heading(let level, let text):
+            Text(RichText.inline(text))
+                .font(.system(size: level == 1 ? 20 : level == 2 ? 17 : 15, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, level <= 2 ? 6 : 2)
+        case .paragraph(let text):
+            prose(text)
+        case .listItem(let indent, let marker, let text):
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(marker)
+                    .font(marker == "•" ? Theme.body : Theme.body.monospacedDigit())
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(minWidth: 14, alignment: .trailing)
+                prose(text)
+            }
+            .padding(.leading, CGFloat(min(indent, 4)) * 18)
+        case .quote(let text):
+            HStack(alignment: .top, spacing: 10) {
+                RoundedRectangle(cornerRadius: 1).fill(Theme.borderStrong).frame(width: 3)
+                Text(RichText.inline(text)).font(Theme.body).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        case .code(_, let text):
+            Text(text).font(Theme.mono).foregroundStyle(Theme.textLabel)
+                .textSelection(.enabled)
+                .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.code, in: .rect(cornerRadius: Theme.controlRadius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.border, lineWidth: 1))
+        case .table(let table):
+            TableBlock(table: table)
+        case .rule:
+            Rectangle().fill(Theme.border).frame(height: 1).padding(.vertical, 4)
+        }
+    }
+
+    private func prose(_ text: String) -> some View {
+        Text(RichText.inline(text)).font(Theme.body).foregroundStyle(Theme.textPrimary)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A Markdown table in a hairline box. Columns size to their content up
+/// to a cap and wrap past it; when the table is wider than the screen it
+/// scrolls sideways inside the box, the way Codex shows it.
+struct TableBlock: View {
+    let table: Markdown.Table
+    static let maxColumnWidth: CGFloat = 240
+
+    var body: some View {
+        let columns = table.columnCount
+        ScrollView(.horizontal, showsIndicators: true) {
+            Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
+                GridRow {
+                    ForEach(0..<columns, id: \.self) { c in
+                        cell(c < table.header.count ? table.header[c] : "", column: c, header: true)
+                    }
+                }
+                ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
+                    Rectangle().fill(Theme.border).frame(height: 1).gridCellUnsizedAxes(.horizontal)
+                    GridRow {
+                        ForEach(0..<columns, id: \.self) { c in
+                            cell(c < row.count ? row[c] : "", column: c, header: false)
+                        }
+                    }
+                }
+            }
+        }
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        .background(Theme.card, in: .rect(cornerRadius: Theme.controlRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.border, lineWidth: 1))
+        .clipShape(.rect(cornerRadius: Theme.controlRadius))
+    }
+
+    private func cell(_ text: String, column: Int, header: Bool) -> some View {
+        let align = column < table.align.count ? table.align[column] : .leading
+        return CappedWidth(max: Self.maxColumnWidth) {
+            Text(RichText.inline(text))
+                .font(header ? Theme.control : Theme.caption)
+                .foregroundStyle(header ? Theme.textPrimary : Theme.textLabel)
+                .multilineTextAlignment(align == .trailing ? .trailing : align == .center ? .center : .leading)
+        }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            // Fill the column so the header shading spans the whole row.
+            .frame(maxWidth: .infinity, alignment: align == .trailing ? .trailing : align == .center ? .center : .leading)
+            .background(header ? Theme.subtle : .clear)
+            .gridColumnAlignment(align == .trailing ? .trailing : align == .center ? .center : .leading)
+    }
+}
+
+/// Its content at its natural width, up to `max`, wrapping past it. A
+/// horizontal ScrollView offers unlimited width, and a plain
+/// `.frame(maxWidth:)` would let a long cell run on one line forever.
+struct CappedWidth: Layout {
+    var max: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let child = subviews.first else { return .zero }
+        let ideal = child.sizeThatFits(.unspecified)
+        let width = min(ideal.width, max)
+        let size = child.sizeThatFits(ProposedViewSize(width: width, height: nil))
+        return CGSize(width: width, height: size.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
     }
 }
 
