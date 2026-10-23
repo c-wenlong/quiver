@@ -280,6 +280,71 @@ final class ChatModelTests: XCTestCase {
         chat.apply(env(#"{"type":"approval.resolved","seq":4,"data":{"request_id":"r1","decision":"allow"}}"#))
         XCTAssertEqual(chat.items.first?.kind, .approval(requestId: "r1", prompt: "Run npm test?", state: .resolved("allow")))
     }
+
+    func testResultOnNewerPageWaitsForItsCallOnAnOlderPage() {
+        var orphans: [String: String] = [:]
+        // The newest page starts with a result whose call is a page back.
+        var newer: [ChatItem] = []
+        var newerCards: [String: String] = [:]
+        ChatModel.add(MessageData(kind: "tool_result", text: "a.txt", ts: nil, tool: nil, resultRef: "t1"),
+                      id: "m5", to: &newer, cards: &newerCards, orphans: &orphans)
+        XCTAssertTrue(newer.isEmpty)
+        XCTAssertEqual(orphans, ["t1": "a.txt"])
+
+        // The older page holds that call, plus a result for an even older one.
+        var older: [ChatItem] = []
+        var olderCards: [String: String] = [:]
+        ChatModel.add(MessageData(kind: "tool_result", text: "b", ts: nil, tool: nil, resultRef: "t0"),
+                      id: "m3", to: &older, cards: &olderCards, orphans: &orphans)
+        ChatModel.add(MessageData(kind: "tool_use", text: "", ts: nil,
+                                  tool: ToolCall(name: "Bash", callId: "t1", argsSummary: "ls", argsFull: nil), resultRef: nil),
+                      id: "m4", to: &older, cards: &olderCards, orphans: &orphans)
+        XCTAssertEqual(older.count, 1)
+        guard case .tool(_, let result) = older[0].kind else { return XCTFail("expected a tool item") }
+        XCTAssertEqual(result, "a.txt")
+        XCTAssertEqual(orphans, ["t0": "b"])
+    }
+
+    private func page(_ messages: String, nextBefore: Int?, hasMore: Bool) -> MessagesResponse {
+        let json = #"{"session":"claude:1","messages":["# + messages + #"],"next_before":"# + (nextBefore.map(String.init) ?? "null") + #","has_more":"# + (hasMore ? "true" : "false") + "}"
+        return try! Hub.decoder.decode(MessagesResponse.self, from: Data(json.utf8))
+    }
+
+    func testLiveResultFindsACallFromAnOlderPage() {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        chat.apply(env(#"{"type":"message.appended","seq":10,"data":{"kind":"assistant","text":"working"}}"#))
+        // The call is on an older page and still running.
+        XCTAssertTrue(chat.prepend(page(#"{"type":"message.appended","seq":5,"data":{"kind":"tool_use","text":"","tool":{"name":"Bash","call_id":"t1","args_summary":"Bash · sleep"}}}"#,
+                                        nextBefore: nil, hasMore: false)))
+        chat.apply(env(#"{"type":"message.appended","seq":11,"data":{"kind":"tool_result","text":"done","result_ref":"t1"}}"#))
+        guard case .tool(_, let result) = chat.items[0].kind else { return XCTFail("expected the call first") }
+        XCTAssertEqual(result, "done")
+    }
+
+    func testPageOfOnlyOrphanResultsShowsNothingButKeepsPaging() {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let added = chat.prepend(page(#"{"type":"message.appended","seq":7,"data":{"kind":"tool_result","text":"x","result_ref":"t9"}}"#,
+                                      nextBefore: 7, hasMore: true))
+        XCTAssertFalse(added)
+        XCTAssertTrue(chat.items.isEmpty)
+        XCTAssertTrue(chat.hasEarlier)
+    }
+
+    func testReopeningAChatReusesItsModel() {
+        let app = AppModel()
+        let first = app.chat("claude:1")
+        first.apply(env(#"{"type":"message.appended","seq":1,"data":{"kind":"assistant","text":"hi"}}"#))
+        XCTAssertTrue(app.chat("claude:1") === first)
+        XCTAssertEqual(app.chat("claude:1").items.count, 1)
+        XCTAssertFalse(app.chat("claude:2") === first)
+    }
+
+    func testChatCacheDropsTheLeastRecentlyOpened() {
+        let app = AppModel()
+        let oldest = app.chat("claude:0")
+        for i in 1...AppModel.chatCacheSize { _ = app.chat("claude:\(i)") }
+        XCTAssertFalse(app.chat("claude:0") === oldest)
+    }
 }
 
 final class ToolPresentationTests: XCTestCase {
