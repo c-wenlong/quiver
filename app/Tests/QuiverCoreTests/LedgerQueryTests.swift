@@ -3,6 +3,9 @@ import Testing
 @testable import QuiverCore
 
 @Suite struct LedgerQueryTests {
+    /// Keep the `TempDir` for the whole test: dropping it deletes the
+    /// ledger's folder, and the off-actor queries open their own read
+    /// connections by path.
     func scannedFixture() async throws -> (TempDir, Ledger) {
         let temp = try TempDir()
         let claude = try temp.copyFixture("claude-home")
@@ -33,7 +36,8 @@ import Testing
     }
 
     @Test func dailyBucketsUseTheCallersCalendar() async throws {
-        let (_, ledger) = try await scannedFixture()
+        let (temp, ledger) = try await scannedFixture()
+        defer { withExtendedLifetime(temp) {} }
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try #require(TimeZone(identifier: "Asia/Singapore"))
         let start = try #require(calendar.date(from: DateComponents(year: 2026, month: 10, day: 1)))
@@ -59,7 +63,8 @@ import Testing
     }
 
     @Test func sessionsComeMostRecentFirstWithTheirSpan() async throws {
-        let (_, ledger) = try await scannedFixture()
+        let (temp, ledger) = try await scannedFixture()
+        defer { withExtendedLifetime(temp) {} }
         let sessions = await ledger.bySession(in: october2026)
         #expect(sessions.first?.sessionId == "rollout-2026-10-05T10-00-00-cccccccc-cccc-4ccc-8ccc-cccccccccccc")
         #expect(sessions.first?.cwd == "/tmp/codex-new")
@@ -71,7 +76,8 @@ import Testing
     }
 
     @Test func bySessionRestrictsToOneHarness() async throws {
-        let (_, ledger) = try await scannedFixture()
+        let (temp, ledger) = try await scannedFixture()
+        defer { withExtendedLifetime(temp) {} }
         let claude = await ledger.bySession(in: october2026, harness: "claude")
         #expect(!claude.isEmpty)
         #expect(claude.allSatisfy { $0.harness == "claude" })
@@ -82,14 +88,16 @@ import Testing
     }
 
     @Test func rangesIncludeTheirStartAndExcludeTheirEnd() async throws {
-        let (_, ledger) = try await scannedFixture()
+        let (temp, ledger) = try await scannedFixture()
+        defer { withExtendedLifetime(temp) {} }
         let atA2 = utc("2026-10-03T10:01:00Z")
         #expect(await ledger.totals(in: DateInterval(start: atA2, duration: 1)).totalTokens == 21_563)
         #expect(await ledger.totals(in: DateInterval(start: atA2.addingTimeInterval(-60), end: atA2)).totalTokens == 21_130)
     }
 
     @Test func harnessesAreSplitOut() async throws {
-        let (_, ledger) = try await scannedFixture()
+        let (temp, ledger) = try await scannedFixture()
+        defer { withExtendedLifetime(temp) {} }
         let byHarness = await ledger.byHarness(in: october2026)
         #expect(byHarness["claude"]?.totalTokens == 69_509)
         #expect(byHarness["codex"]?.totalTokens == 309_500)
