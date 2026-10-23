@@ -59,6 +59,20 @@ class TestLoad(unittest.TestCase):
         out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30)
         self.assertEqual(out.stdout, "a,d|2", out.stderr)
 
+    def test_js_string_round_trips(self):
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node not installed")
+        for text in ('say "hi"', "it's", "back\\slash", "two\nlines\r\n", "tab\t",
+                     "sep\u2028x\u2029", "`${template}`", "</script>"):
+            # Bytes, not text mode: text mode would fold the \r\n we test.
+            out = subprocess.run([node, "-e", "process.stdout.write(" + pages._js_string(text) + ")"],
+                                 capture_output=True, timeout=30)
+            self.assertEqual(out.stdout.decode("utf-8"), text)
+        self.assertIn('registerPage("x"', pages._js_string('registerPage("x", r)'))
+
     def test_each_script_gets_its_own_scope(self):
         """Two pages reusing private names both register their own render."""
         import shutil

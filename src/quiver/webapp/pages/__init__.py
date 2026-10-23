@@ -20,7 +20,6 @@ moment its script registers. See docs/web-app.md, "Adding a page".
 from __future__ import annotations
 
 import importlib
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,6 +64,15 @@ def load(name: str) -> ModuleType | None:
     return importlib.import_module(f"quiver.webapp.pages.{name}")
 
 
+def _js_string(text: str) -> str:
+    """``text`` as a single-quoted JavaScript string. Double quotes stay
+    as they are, so the bundle still reads (and greps) like the source."""
+    escaped = (text.replace("\\", "\\\\").replace("'", "\\'")
+               .replace("\n", "\\n").replace("\r", "\\r")
+               .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
+    return f"'{escaped}'"
+
+
 def bundle(suffix: str) -> bytes:
     """Every ``static/pages/*<suffix>`` file, in name order, as one body.
 
@@ -81,8 +89,8 @@ def bundle(suffix: str) -> bytes:
         if suffix == ".js":
             source = body.decode("utf-8") + f"\n//# sourceURL=/app/pages/{path.name}\n"
             body = (
-                f"try {{ new Function({json.dumps(source)})(); }}\n"
-                f"catch (err) {{ console.error({json.dumps('web app page ' + path.name + ' failed to load:')}, err); }}"
+                f"try {{ new Function({_js_string(source)})(); }}\n"
+                f"catch (err) {{ console.error({_js_string('web app page ' + path.name + ' failed to load:')}, err); }}"
             ).encode("utf-8")
         parts.append(f"/* {path.name} */\n".encode() + body)
     return b"\n".join(parts)
