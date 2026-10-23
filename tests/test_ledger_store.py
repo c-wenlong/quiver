@@ -1,0 +1,239 @@
+"""ledger/store.py and scan.py: dedup rules and incremental reads."""
+
+import json
+import os
+import tempfile
+import unittest
+from pathlib import Path
+
+from quiver.ledger.models import LedgerRecord, UsageEvent
+from quiver.ledger.scan import scan
+from quiver.ledger.store import LedgerStore, ledger_path_for
+
+
+def _rec(key, total, msg=None, sidechain=False, ts=1000.0):
+    ev = UsageEvent(harness="claude", account="/h", session="s", cwd=None,
+                    model="m", ts=ts, input=total)
+    return LedgerRecord(key=key, event=ev, msg=msg, sidechain=sidechain)
+
+
+def _inputs(store):
+    return dict(store.db.execute("SELECT key, input FROM events"))
+
+
+class TestUpsert(unittest.TestCase):
+    def setUp(self):
+        self.store = LedgerStore(Path(tempfile.mkdtemp()) / "l.sqlite")
+        self.addCleanup(self.store.close)
+
+    def test_larger_total_wins_and_tie_keeps_first(self):
+        self.store.upsert(_rec("k", 5))
+        self.store.upsert(_rec("k", 9))
+        self.store.upsert(_rec("k", 3))
+        self.assertEqual(_inputs(self.store), {"k": 9})
+        first = _rec("k2", 4)
+        first.event.session = "first"
+        self.store.upsert(first)
+        second = _rec("k2", 4)
+        second.event.session = "second"
+        self.store.upsert(second)
+        row = self.store.db.execute("SELECT session FROM events WHERE key='k2'").fetchone()
+        self.assertEqual(row[0], "first")
+
+    def test_main_copy_beats_sidechain_on_key_and_message_id(self):
+        self.store.upsert(_rec("a", 100, msg="m1", sidechain=True))
+        self.store.upsert(_rec("b", 10, msg="m1", sidechain=False))
+        self.assertEqual(_inputs(self.store), {"b": 10})
+        # A later sidechain replay of the same message never displaces it.
+        self.store.upsert(_rec("c", 500, msg="m1", sidechain=True))
+        self.assertEqual(_inputs(self.store), {"b": 10})
+
+    def test_two_main_copies_with_different_request_ids_both_count(self):
+        self.store.upsert(_rec("m1:r1", 10, msg="m1"))
+        self.store.upsert(_rec("m1:r2", 20, msg="m1"))
+        self.assertEqual(_inputs(self.store), {"m1:r1": 10, "m1:r2": 20})
+
+
+def _line(mid, req, inp, ts="2026-10-03T10:00:00Z"):
+    return json.dumps({
+        "timestamp": ts, "sessionId": "s", "requestId": req,
+        "message": {"id": mid, "model": "claude-opus-5",
+                    "usage": {"input_tokens": inp, "output_tokens": 1}},
+    }) + "\n"
+
+
+class TestScan(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.proj = self.home / ".claude" / "projects" / "p"
+        self.proj.mkdir(parents=True)
+        self.store = LedgerStore(ledger_path_for(self.home))
+        self.addCleanup(self.store.close)
+
+    def test_appends_are_read_on_and_partial_lines_wait(self):
+        f = self.proj / "a.jsonl"
+        f.write_text(_line("m1", "r1", 5) + '{"partial')
+        scan(self.store, self.home)
+        self.assertEqual(_inputs(self.store), {"claude:m1:r1": 5})
+        with open(f, "a") as fh:
+            fh.write('": 1}\n' + _line("m2", "r2", 7))
+        result = scan(self.store, self.home)
+        self.assertEqual(result.files_read, 1)
+        self.assertEqual(_inputs(self.store), {"claude:m1:r1": 5, "claude:m2:r2": 7})
+        self.assertEqual(scan(self.store, self.home).files_read, 0)
+
+    def test_rows_outlive_deleted_logs(self):
+        f = self.proj / "a.jsonl"
+        f.write_text(_line("m1", "r1", 5))
+        scan(self.store, self.home)
+        f.unlink()
+        scan(self.store, self.home)
+        self.assertEqual(_inputs(self.store), {"claude:m1:r1": 5})
+
+    def test_replaced_file_is_read_from_the_start(self):
+        f = self.proj / "a.jsonl"
+        f.write_text(_line("m1", "r1", 5) + _line("m2", "r2", 6))
+        scan(self.store, self.home)
+        f.unlink()
+        f.write_text(_line("m3", "r3", 1))
+        os.utime(f, (1, 1))
+        scan(self.store, self.home)
+        self.assertIn("claude:m3:r3", _inputs(self.store))
+
+    def test_rewrite_in_place_is_read_again(self):
+        f = self.proj / "a.jsonl"
+        f.write_text(_line("m1", "r1", 5))
+        scan(self.store, self.home)
+        # Same inode and length, different bytes: a restore from backup.
+        with open(f, "r+") as fh:
+            fh.write(_line("m7", "r1", 5))
+        os.utime(f, ns=(1, 1))
+        scan(self.store, self.home)
+        self.assertIn("claude:m7:r1", _inputs(self.store))
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads anything")
+    def test_unreadable_file_is_retried_once_readable(self):
+        f = self.proj / "a.jsonl"
+        f.write_text(_line("m1", "r1", 5))
+        f.chmod(0)
+        result = scan(self.store, self.home)
+        self.assertEqual(len(result.errors), 1)
+        self.assertEqual(_inputs(self.store), {})
+        f.chmod(0o644)
+        scan(self.store, self.home)
+        self.assertEqual(_inputs(self.store), {"claude:m1:r1": 5})
+
+    def test_profile_homes_and_codex(self):
+        prof = self.home / ".quiver" / "accounts" / "claude" / "p1" / "home" / "projects" / "x"
+        prof.mkdir(parents=True)
+        (prof / "b.jsonl").write_text(_line("m9", "r9", 3))
+        rollout = self.home / ".codex" / "sessions" / "2026" / "10" / "03"
+        rollout.mkdir(parents=True)
+        (rollout / "rollout-1.jsonl").write_text(json.dumps({
+            "timestamp": "2026-10-03T10:00:00Z", "type": "event_msg",
+            "payload": {"type": "token_count", "info": {
+                "total_token_usage": {"input_tokens": 4, "output_tokens": 2}}}}) + "\n")
+        scan(self.store, self.home)
+        keys = set(_inputs(self.store))
+        self.assertIn("claude:m9:r9", keys)
+        self.assertIn("codex:rollout-1:2026-10-03T10:00:00Z", keys)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class TestDatabaseSources(unittest.TestCase):
+    """OpenCode and Devin read through scan(), against minimal schemas."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.store = LedgerStore(ledger_path_for(self.home))
+        self.addCleanup(self.store.close)
+
+    def _db(self, rel, script):
+        import sqlite3
+        path = self.home / rel
+        path.parent.mkdir(parents=True)
+        conn = sqlite3.connect(path)
+        conn.executescript(script)
+        conn.commit()
+        conn.close()
+        return path
+
+    def _rows(self):
+        return {r[0]: r[1:] for r in self.store.db.execute(
+            "SELECT key, harness, model, input, output, reasoning, cache_read, cost, cwd FROM events")}
+
+    def test_opencode(self):
+        new = json.dumps({"role": "assistant", "modelID": "gpt-x", "cost": 0.5, "tokens": {
+            "input": 10, "output": 5, "reasoning": 2, "cache": {"read": 3, "write": 0}, "total": 20}})
+        # An older row folded reasoning into output (total excludes it).
+        old = json.dumps({"role": "assistant", "modelID": "gpt-x", "cost": 0, "tokens": {
+            "input": 1, "output": 5, "reasoning": 2, "cache": {"read": 0, "write": 0}, "total": 6}})
+        user = json.dumps({"role": "user", "tokens": {"input": 9}})
+        self._db(".local/share/opencode/opencode.db", f"""
+            CREATE TABLE session (id TEXT, directory TEXT);
+            CREATE TABLE message (id TEXT, session_id TEXT, time_created INT, time_updated INT, data TEXT);
+            INSERT INTO session VALUES ('s1', '/w');
+            INSERT INTO message VALUES ('m1', 's1', 1790000000000, 1, '{new}');
+            INSERT INTO message VALUES ('m2', 's1', 1790000000000, 2, '{old}');
+            INSERT INTO message VALUES ('m3', 's1', 1790000000000, 3, '{user}');
+        """)
+        scan(self.store, self.home)
+        rows = self._rows()
+        self.assertEqual(rows["opencode:m1"], ("opencode", "gpt-x", 10, 5, 2, 3, 0.5, "/w"))
+        self.assertEqual(rows["opencode:m2"][3:7], (3, 2, 0, None))
+        self.assertNotIn("opencode:m3", rows)
+        # Unchanged database: nothing read again.
+        self.assertEqual(scan(self.store, self.home).files_read, 0)
+
+    def test_devin(self):
+        def node(rid, metrics=True):
+            meta = {"request_id": rid, "generation_model": "swe-2",
+                    "created_at": "2026-10-03T10:00:00Z"}
+            if metrics:
+                meta["metrics"] = {"input_tokens": 7, "output_tokens": 2,
+                                   "cache_read_tokens": 4, "cache_creation_tokens": 1}
+            return json.dumps({"role": "assistant", "metadata": meta})
+        self._db(".local/share/devin/cli/sessions.db", f"""
+            CREATE TABLE sessions (id TEXT, working_directory TEXT);
+            CREATE TABLE message_nodes (row_id INTEGER, session_id TEXT, created_at REAL, chat_message TEXT);
+            INSERT INTO sessions VALUES ('d1', '/repo');
+            INSERT INTO message_nodes VALUES (1, 'd1', 0, '{node("r1")}');
+            INSERT INTO message_nodes VALUES (2, 'd1', 0, '{node("r1")}');
+            INSERT INTO message_nodes VALUES (3, 'd1', 0, '{node("r2", metrics=False)}');
+            INSERT INTO message_nodes VALUES (4, 'd1', 0, 'not json');
+        """)
+        scan(self.store, self.home)
+        rows = self._rows()
+        self.assertEqual(set(rows), {"devin:r1"})
+        self.assertEqual(rows["devin:r1"], ("devin", "swe-2", 7, 2, 0, 4, None, "/repo"))
+
+    def test_wal_only_update_is_picked_up(self):
+        import sqlite3
+
+        def msg(i):
+            return json.dumps({"role": "assistant", "modelID": "m", "tokens": {
+                "input": i, "output": 1, "cache": {"read": 0, "write": 0}}})
+        path = self._db(".local/share/opencode/opencode.db", f"""
+            PRAGMA journal_mode=WAL;
+            CREATE TABLE session (id TEXT, directory TEXT);
+            CREATE TABLE message (id TEXT, session_id TEXT, time_created INT, time_updated INT, data TEXT);
+            INSERT INTO message VALUES ('m1', 's', 1790000000000, 1, '{msg(1)}');
+        """)
+        scan(self.store, self.home)
+        writer = sqlite3.connect(path)
+        self.addCleanup(writer.close)
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute("INSERT INTO message VALUES ('m2', 's', 1790000000000, 2, ?)", (msg(2),))
+        writer.commit()
+        scan(self.store, self.home)
+        self.assertIn("opencode:m2", self._rows())
+
+    def test_unreadable_database_is_a_note_not_a_crash(self):
+        path = self.home / ".local/share/opencode/opencode.db"
+        path.parent.mkdir(parents=True)
+        path.write_text("not a database")
+        result = scan(self.store, self.home)
+        self.assertEqual(len(result.errors), 1)

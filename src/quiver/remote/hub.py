@@ -20,6 +20,7 @@ import queue
 import secrets
 import signal
 import socket
+import sqlite3
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -45,6 +46,7 @@ from quiver.remote import (
     usage as usage_mod,
 )
 from quiver.remote.journal import Journal
+from quiver.webapp import api as webapp_api, static as webapp_static
 
 DEFAULT_PORT = 8477
 _MAX_BODY = 4 << 20  # 4 MB JSON cap; attachments go through their own route
@@ -134,6 +136,9 @@ class HubState:
             home=self.home,
             journal_has=self._journal_has,
         )
+        # The web app's page data (/v1/app/*): its ledger opens on the
+        # first request, so a hub nobody browses never scans.
+        self.webapp = webapp_api.WebApp(self.home)
         self.started_at = time.time()
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
@@ -307,6 +312,7 @@ class HubState:
         self.sendq.close()
         for t in self._threads:
             t.join(timeout=2)
+        self.webapp.close()
 
     def _register_machine(self) -> None:
         catalog_mod.upsert_machine(
@@ -954,6 +960,20 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             body["machine"] = self._state.machine
             body["machines"] = self._usage_machines(body)
+            self._send_json(200, body)
+            return
+
+        if path == "/v1/app/overview":
+            try:
+                body = self._state.webapp.overview(
+                    period=str((args.get("period") or [""])[0]),
+                    tz_name=str((args.get("tz") or [""])[0]) or None,
+                    rescan=str((args.get("rescan") or [""])[0]) in {"1", "true"},
+                )
+            except (OSError, sqlite3.Error) as exc:
+                self._send_error(503, "ledger_unavailable", str(exc))
+                return
+            body["machine"] = self._state.machine.get("name")
             self._send_json(200, body)
             return
 
@@ -1843,6 +1863,9 @@ class _Handler(BaseHTTPRequestHandler):
     # -- static PWA --------------------------------------------------------
 
     def _serve_static(self, path: str) -> None:
+        if path == "/app" or path.startswith("/app/"):
+            self._serve_webapp(path)
+            return
         web = Path(__file__).resolve().parent / "web"
         name = {
             "/": "index.html",
@@ -1858,7 +1881,29 @@ class _Handler(BaseHTTPRequestHandler):
         if name is None:
             self._send_error(404, "not_found", "unknown route")
             return
-        target = web / name
+        self._send_asset(web / name)
+
+    def _serve_webapp(self, path: str) -> None:
+        """The web app (``quiver/webapp/static``) under ``/app/``.
+
+        Only a flat file name of a known type is served, so no request
+        can climb out of the folder. The pages fetch ``/v1/app/*`` with
+        the same device credential the PWA pairs, which this origin
+        shares.
+        """
+        if path == "/app":
+            self.send_response(301)
+            self.send_header("Location", "/app/")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        name = path[len("/app/"):] or "index.html"
+        if not webapp_static.is_asset_name(name):
+            self._send_error(404, "not_found", "unknown route")
+            return
+        self._send_asset(webapp_static.STATIC_DIR / name)
+
+    def _send_asset(self, target: Path) -> None:
         try:
             body = target.read_bytes()
         except OSError:
