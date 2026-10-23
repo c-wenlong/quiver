@@ -202,3 +202,32 @@ final class ReviewFixTests: XCTestCase {
         XCTAssertFalse(d.isDismissed("claude:old", at: monthAgo + 1), "new activity brings it back")
     }
 }
+
+@MainActor
+final class SessionSearchTests: XCTestCase {
+    private func row(_ key: String, _ title: String, cwd: String = "/w", ago: Double) -> SessionRow {
+        SessionRow(key: key, harness: "claude", agent: "Claude Code", cwd: cwd, title: title,
+                   lastActiveAt: Date().timeIntervalSince1970 - ago, status: "done", machineId: "m",
+                   ownership: nil, attachable: nil)
+    }
+
+    func testLocalMatchIsRegexThenLiteralNewestFirst() {
+        let rows = [row("a", "Fix ledger cursor", ago: 100), row("b", "ledger notes", ago: 5), row("c", "Dark mode", cwd: "/w/ledger(", ago: 1)]
+        XCTAssertEqual(SessionSearch.localMatches(rows, query: "LEDGER\\s+c").map(\.key), ["a"])
+        XCTAssertEqual(SessionSearch.localMatches(rows, query: "ledger").map(\.key), ["c", "b", "a"])
+        XCTAssertEqual(SessionSearch.localMatches(rows, query: "ledger(").map(\.key), ["c"], "an invalid pattern matches literally")
+    }
+
+    func testSnippetRunsSplitMarkers() {
+        let runs = SessionSearch.snippetRuns("the \u{E000}ledger\u{E001} cursor")
+        XCTAssertEqual(runs.map(\.text), ["the ", "ledger", " cursor"])
+        XCTAssertEqual(runs.map(\.hit), [false, true, false])
+    }
+
+    func testDecodesHubSearchResult() throws {
+        let json = #"{"results":[{"key":"claude:1","source":"index","snippet":"a b","marked_snippet":"a b","role":"user","session":{"key":"claude:1","title":"T"}}],"indexed":true}"#
+        let body = try Hub.decoder.decode(SearchResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(body.results.first?.session.displayTitle, "T")
+        XCTAssertEqual(body.indexed, true)
+    }
+}

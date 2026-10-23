@@ -177,6 +177,16 @@ send-keys), else degrades to queue with a UI hint. `SessionRow.to_json`
 is reused verbatim so phone and macOS app share semantics —
 `docs/json-contracts.md` gains a section rather than a parallel dialect.
 
+`GET /v1/search?q=&limit=` (`search.py`) answers from two sources. When
+the Quiver app's FTS5 index (`~/.quiver/data/search/search.sqlite`)
+exists on the hub machine, transcript hits come first, ranked the way
+`swe session --search` ranks them (phrase, then AND, then OR, BM25),
+each with its best snippet. Titles, harness and folder always match too,
+as a case-insensitive regex (an invalid or nested-quantifier pattern
+matches as literal text), newest first. Results are catalog rows, so each
+opens through the usual session routes; satellite sessions match on
+metadata only, since the index is per machine.
+
 `journal.py` is the reconnect story: seq-numbered per-session ring on
 disk; client resumes with `?last=seq`. "Open the app, catch up on 30 min
 of agent work" replays the journal instead of refetching a transcript —

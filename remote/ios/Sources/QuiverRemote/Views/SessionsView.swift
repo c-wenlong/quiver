@@ -6,13 +6,20 @@ struct SessionsView: View {
     @State private var filter: SessionFilter = .all
     @State private var showDevices = false
     @State private var confirmUnpair = false
+    @State private var search = SessionSearch()
 
     var body: some View {
         let rows = app.displaySessions.filter(filter.includes)
         let groups = SessionGrouping.groups(rows, machines: app.machines)
         PageScroll {
-            filterBar
-            if !app.loadedOnce {
+            if search.isActive {
+                searchResults
+            } else {
+                filterBar
+            }
+            if search.isActive {
+                EmptyView()
+            } else if !app.loadedOnce {
                 LoadingRow(text: "Loading sessions")
             } else if let error = app.loadError, app.sessions.isEmpty {
                 StateCard(icon: "wifi.exclamationmark", title: "Can't reach the hub", message: error, tone: .error,
@@ -31,6 +38,10 @@ struct SessionsView: View {
             }
         }
         .refreshable { await app.refresh() }
+        .searchable(text: $search.query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search sessions")
+        .textInputAutocapitalization(.never)
+        .autocorrectionDisabled()
+        .task(id: search.query) { await search.run(app: app) }
         .navigationTitle("Sessions")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -50,6 +61,30 @@ struct SessionsView: View {
             Button("Unpair", role: .destructive) { app.unpair() }
         } message: {
             Text("You'll need to pair again to see sessions.")
+        }
+    }
+
+    @ViewBuilder private var searchResults: some View {
+        let waiting = search.answered != search.query.trimmingCharacters(in: .whitespaces)
+        if search.results.isEmpty {
+            if waiting || search.searching {
+                LoadingRow(text: "Searching")
+            } else {
+                StateCard(icon: "magnifyingglass", title: "No matches",
+                          message: search.indexed
+                            ? "Nothing in titles, folders or transcripts matches that."
+                            : "Nothing in titles or folders matches that. Transcript search needs the Quiver app's search index on the hub machine.")
+            }
+        } else {
+            GroupLabel(text: "\(search.results.count) \(search.results.count == 1 ? "match" : "matches")",
+                       trailing: search.indexed ? "Transcripts and titles" : "Titles and folders")
+            CardList(data: search.results) { result in
+                NavigationLink(value: Route.chat(result.key)) { SearchResultRow(result: result) }
+                    .buttonStyle(RowButtonStyle())
+            }
+        }
+        if let error = search.error {
+            Text(error).font(Theme.caption).foregroundStyle(Theme.textMuted).padding(.horizontal, 4)
         }
     }
 
@@ -134,3 +169,36 @@ struct HubChip: View {
 }
 
 enum Route: Hashable { case chat(String) }
+
+/// A search hit: the session row, then the matching transcript line with
+/// the matched words in the primary colour.
+struct SearchResultRow: View {
+    var result: SearchResult
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SessionRowView(row: result.session)
+            if let marked = result.markedSnippet ?? result.snippet, !marked.isEmpty {
+                Text(Self.highlighted(marked))
+                    .font(Theme.caption)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, Theme.rowHorizontal + Theme.statusDot + 12)
+                    .padding(.trailing, Theme.rowHorizontal)
+                    .padding(.top, -6)
+                    .padding(.bottom, Theme.rowVertical)
+            }
+        }
+    }
+
+    static func highlighted(_ marked: String) -> AttributedString {
+        var out = AttributedString()
+        for run in SessionSearch.snippetRuns(marked) {
+            var piece = AttributedString(run.text.replacingOccurrences(of: "\n", with: " "))
+            piece.foregroundColor = run.hit ? Theme.textPrimary : Theme.textSecondary
+            if run.hit { piece.font = .system(size: 13, weight: .semibold) }
+            out += piece
+        }
+        return out
+    }
+}

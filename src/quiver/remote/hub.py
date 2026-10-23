@@ -33,6 +33,7 @@ from quiver.remote import (
     notify,
     pairing,
     protocol,
+    search as search_mod,
     sendq,
     supervise,
     tail,
@@ -755,6 +756,16 @@ class _Handler(BaseHTTPRequestHandler):
                     catalog_mod.load_machines(self._state.home).values()
                 )
             })
+            return
+
+        if path == "/v1/search":
+            query = (args.get("q") or [""])[0]
+            self._send_json(200, search_mod.search(
+                self._state.catalog.rows(),
+                query,
+                home=self._state.home,
+                limit=_int_arg(args.get("limit"), search_mod.DEFAULT_LIMIT),
+            ))
             return
 
         if path == "/v1/inbox":
