@@ -317,6 +317,12 @@ class TestMarkdown(unittest.TestCase):
         self.assertIn("<code>foo</code> &amp; retry", html)
         self.assertNotIn("undefined", html)
 
+    def test_code_spans_never_land_in_an_href(self):
+        html = self.render("[file](https://example.com/a`b`c) and https://x.io/p`q`")
+        self.assertNotIn("<code>b</code>c\"", html)
+        self.assertNotRegex(html, r'href="[^"]*<code>')
+        self.assertIn("<code>b</code>", html)
+
     def test_scripts_and_unsafe_links_never_render(self):
         html = self.render("<script>alert(1)</script>[x](javascript:alert(1)) <b onclick=x>hi</b>")
         self.assertNotIn("<script", html)

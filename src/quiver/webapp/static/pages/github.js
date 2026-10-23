@@ -342,15 +342,19 @@ const GhUI = (() => {
       return `\u0001${codes.length - 1}\u0001`;
     }));
     s = esc(s);
-    s = s.replace(new RegExp(`\\[([^\\]]*)\\]\\(${URL_PART}(?:\\s+&quot;.*?&quot;)?\\)`, "g"), (_m, label, url) =>
-      (safeUrl(url) ? `<a href="${url}" target="_blank" rel="noopener">${label || url}</a>` : label));
+    s = s.replace(new RegExp(`\\[([^\\]]*)\\]\\(${URL_PART}(?:\\s+&quot;.*?&quot;)?\\)`, "g"), (m, label, url) => {
+      // Code spans bind tighter than links (CommonMark): a target holding
+      // one is no link, just text with code in it.
+      if (url.includes("\u0001")) return m;
+      return safeUrl(url) ? `<a href="${url}" target="_blank" rel="noopener">${label || url}</a>` : label;
+    });
     // Emphasis and bare links only in text, never inside a tag.
     s = s.split(/(<a [^>]*>[\s\S]*?<\/a>|<[^>]+>)/).map((part, i) => {
       if (i % 2) return part;
       // Bare URLs are set aside first, so emphasis never reaches inside one.
       const urls = [];
       return part
-        .replace(/\bhttps?:\/\/[^\s<]+[^\s<.,;:!?)\]'"]/g, (url) => { urls.push(url); return `\u0002${urls.length - 1}\u0002`; })
+        .replace(/\bhttps?:\/\/[^\s<\u0001]+[^\s<\u0001.,;:!?)\]'"]/g, (url) => { urls.push(url); return `\u0002${urls.length - 1}\u0002`; })
         .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
         .replace(/(^|[^\w])__([^_]+)__(?!\w)/g, "$1<strong>$2</strong>")
         .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, "$1<em>$2</em>")
