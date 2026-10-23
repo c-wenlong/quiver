@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote: a Usage tab in the PWA.** The hub serves `GET /v1/usage`,
+  the same rows as `swe list --usage --json` for the hub machine: quota
+  bars per window for every starred harness (with reset times, credits,
+  extra usage and on-demand spend where the provider reports them) and
+  sessions per harness over the last 100 days. Refresh retries failed
+  readings and ones older than a minute, never more. Satellite machines
+  don't report usage yet.
+
 - **Overview: the totals sit over a pile of marbles.** The share bar and
   harness tiles give way to marbles that drop in from the top of the card
   on the first launch, one per round amount of spend ($1, $2, $5, $10 and
