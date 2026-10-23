@@ -266,7 +266,9 @@ private struct SkeletonHeatmap: View {
             }
         }
         .animation(.easeOut(duration: 0.3), value: lit)
-        .task(id: fraction == nil) {
+        // Restarts when either changes: a count arriving, or Reduce Motion
+        // switched mid-load.
+        .task(id: [fraction == nil, reduceMotion]) {
             guard fraction == nil, !reduceMotion else { return }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(90))
