@@ -82,11 +82,14 @@ struct ToolDiff: Hashable {
 /// Tool arguments worded for reading, not as escaped JSON.
 enum ToolArgs {
     /// The hub's `args_summary` is "Name · hint"; the card's icon already
-    /// says the name, so only the hint stays.
+    /// says the name, so only the hint stays. An MCP tool's icon is a
+    /// generic wrench, so its name stays in front of the hint.
     static func summary(_ call: ToolCall) -> String {
         guard let s = call.argsSummary, !s.isEmpty, s != call.name else { return displayName(call.name) }
         let prefix = "\(call.name) · "
-        return s.hasPrefix(prefix) ? String(s.dropFirst(prefix.count)) : s
+        guard s.hasPrefix(prefix) else { return s }
+        let hint = String(s.dropFirst(prefix.count))
+        return call.name.hasPrefix("mcp__") ? "\(displayName(call.name)) · \(hint)" : hint
     }
 
     /// `mcp__computer-use__app_batch` reads as `computer-use · app_batch`,
