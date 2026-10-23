@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Plugins.** The Mac app's Plugins page in the browser, read
+  only. Health lists, per harness, where Claude Code and Codex no longer
+  match `~/.quiver/plugins`, each finding with the fix swe would run and a
+  copy button. Explore lists every plugin in every marketplace under Local,
+  each harness and Not registered, with a harness filter, search across
+  names, descriptions and shipped skills, per-harness state chips, drift
+  badges and a detail sheet. The catalog is cached on the hub for a
+  minute; Refresh reads it again. Fixes, installs, enables and Add
+  marketplace stay in `swe` and the Mac app.
+
 - **Web app: pages as plugins.** A web app page is now one module in
   `quiver/webapp/pages/` (`GET /v1/app/<page>`, optional `POST
   /v1/app/<page>/<action>`) and one script in `static/pages/`, served
