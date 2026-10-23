@@ -145,9 +145,11 @@ private struct TotalCard: View {
     @Environment(AppModel.self) private var app
     /// The harness whose logo is under the pointer.
     @State private var focus: String?
+    /// Clears `focus` a moment after the pointer leaves a logo, so sliding
+    /// to the next logo goes straight from one harness to the other
+    /// instead of rolling back to the totals in between.
+    @State private var unfocus: Task<Void, Never>?
     @State private var size: CGSize = .zero
-    /// The figures' frame in the card, for the marbles to fade behind.
-    @State private var figuresFrame: CGRect = .zero
 
     static let space = "total-card"
     /// Tall enough that the pile has room under the figures.
@@ -177,7 +179,11 @@ private struct TotalCard: View {
                 Tabs(options: OverviewPeriod.allCases.map { ($0, $0.title) }, selection: $period, style: .period)
             }
             figures
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.space)) } action: { figuresFrame = $0 }
+                // Straight to the scene, not through state: the frame moves
+                // on every frame of the roll (see `MarblePile`).
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.space)) } action: {
+                    MarbleScene.shared.clearRect = $0
+                }
         }
         .padding(Theme.cardPadding)
         .frame(maxWidth: .infinity, minHeight: Self.minHeight, alignment: .top)
@@ -185,13 +191,14 @@ private struct TotalCard: View {
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
         .background {
             if !shares.isEmpty, size != .zero {
-                MarblePile(scale: scale, focus: focus, clearRect: figuresFrame)
+                MarblePile(scale: scale).equatable()
             }
         }
         .clipShape(.rect(cornerRadius: Theme.cardRadius))
         .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
         .onChange(of: summary.period) { focus = nil }
+        .onChange(of: focus, initial: true) { MarbleScene.shared.focus = focus }
     }
 
     private var figures: some View {
@@ -234,7 +241,7 @@ private struct TotalCard: View {
             }
         }
         .padding(.vertical, 12)
-        .animation(.snappy(duration: 0.35), value: focus)
+        .animation(.snappy(duration: 0.3), value: focus)
     }
 
     /// One logo per harness: the pointer on one focuses it, and so does a
@@ -250,7 +257,7 @@ private struct TotalCard: View {
     private var logoButtons: some View {
         ForEach(shares) { share in
             let on = focus == share.harness
-            Button { focus = on ? nil : share.harness } label: {
+            Button { setFocus(on ? nil : share.harness) } label: {
                 HarnessIcon(harness: share.harness, size: 16)
                     .padding(7)
                     .background(Theme.card.opacity(0.85), in: .circle)
@@ -260,12 +267,25 @@ private struct TotalCard: View {
             .buttonStyle(.plain)
             .opacity(focus == nil || on ? 1 : 0.45)
             .onHover { inside in
-                if inside { focus = share.harness } else if on { focus = nil }
+                if inside {
+                    setFocus(share.harness)
+                } else if on {
+                    unfocus = Task {
+                        try? await Task.sleep(for: .milliseconds(80))
+                        if !Task.isCancelled { focus = nil }
+                    }
+                }
             }
             .accessibilityLabel(UsageFormat.harness(share.harness))
             .accessibilityValue("\(UsageFormat.tokens(share.totals.totalTokens)) tokens, \(UsageFormat.dollars(share.totals.costUSD)), \(detail(share))")
             .accessibilityAddTraits(on ? .isSelected : [])
         }
+    }
+
+    private func setFocus(_ harness: String?) {
+        unfocus?.cancel()
+        unfocus = nil
+        focus = harness
     }
 
     /// A focused harness's share and models.

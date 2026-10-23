@@ -8,28 +8,26 @@ import SwiftUI
 /// dropped in from the top and piled up behind the figures. Marbles near
 /// the figures fade so the text stays readable; a focused harness fades out
 /// every other harness's marbles.
-struct MarblePile: View {
+///
+/// Only the scale goes through SwiftUI. The focused harness and the
+/// figures' frame change on every hover and on every frame of the figures'
+/// roll, so the card hands them to `MarbleScene.shared` directly: passing
+/// them in here would rebuild this view, and the card around it, about 60
+/// times a second while the numbers slide.
+struct MarblePile: View, @MainActor Equatable {
     var scale: MarbleScale
-    var focus: String?
-    /// The figures' frame in this view's coordinates.
-    var clearRect: CGRect
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        SpriteView(scene: MarbleScene.shared, options: [.allowsTransparency])
+        SpriteView(scene: MarbleScene.shared, preferredFramesPerSecond: 120, options: [.allowsTransparency])
             .allowsHitTesting(false)
             .accessibilityHidden(true)
-            .onAppear {
-                let scene = MarbleScene.shared
-                scene.focus = focus
-                scene.clearRect = clearRect
-                scene.show(scale, animated: !reduceMotion)
-            }
+            .onAppear { MarbleScene.shared.show(scale, animated: !reduceMotion) }
             .onChange(of: scale) { MarbleScene.shared.show(scale, animated: !reduceMotion) }
-            .onChange(of: focus) { MarbleScene.shared.focus = focus }
-            .onChange(of: clearRect) { MarbleScene.shared.clearRect = clearRect }
     }
+
+    static func == (lhs: MarblePile, rhs: MarblePile) -> Bool { lhs.scale == rhs.scale }
 }
 
 /// One scene for the app's life, so the pile pours once per launch and
@@ -47,6 +45,10 @@ final class MarbleScene: SKScene {
     static let fadeDistance: CGFloat = 56
     /// Seconds between two marbles of a pour.
     static let dropInterval: TimeInterval = 0.02
+    /// How fast a marble's opacity follows its target: the time constant of
+    /// an exponential ease, so a focus change is about 95% done in 150ms at
+    /// any frame rate.
+    static let fadeTime: TimeInterval = 0.05
 
     var focus: String? { didSet { if focus != oldValue { wake() } } }
     /// In SwiftUI's top-left coordinates.
@@ -56,6 +58,9 @@ final class MarbleScene: SKScene {
     /// Harnesses waiting to drop, popped from the end.
     private var queue: [String] = []
     private var lastDrop: TimeInterval = 0
+    private var lastUpdate: TimeInterval = 0
+    /// Set on wake, so the next update doesn't count the paused time.
+    private var resumed = true
     private var textures: [String: SKTexture] = [:]
     private lazy var shade = MarbleArt.shading(radius: Self.radius).map(SKTexture.init(cgImage:)) ?? SKTexture()
     /// Frames in a row with nothing moving or fading; the view pauses after
@@ -160,6 +165,12 @@ final class MarbleScene: SKScene {
             lastDrop = currentTime
             add(harness)
         }
+        // The first frame after a pause would count the whole pause, so it
+        // takes one 60fps frame; after that the real time, even under load.
+        let elapsed = resumed ? 1.0 / 60 : max(currentTime - lastUpdate, 0)
+        resumed = false
+        lastUpdate = currentTime
+        let ease = CGFloat(1 - exp(-elapsed / Self.fadeTime))
         let clear = CGRect(x: clearRect.minX, y: size.height - clearRect.maxY,
                            width: clearRect.width, height: clearRect.height)
         var busy = !queue.isEmpty
@@ -174,7 +185,7 @@ final class MarbleScene: SKScene {
             if let focus, focus != marble.harness { target = 0 }
             let step = target - marble.alpha
             if abs(step) > 0.005 {
-                marble.alpha += step * 0.18
+                marble.alpha += step * ease
                 busy = true
             } else {
                 marble.alpha = target
@@ -195,6 +206,7 @@ final class MarbleScene: SKScene {
 
     private func wake() {
         quietFrames = 0
+        if view?.isPaused ?? true { resumed = true }
         view?.isPaused = false
     }
 }
