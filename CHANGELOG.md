@@ -19,6 +19,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A non-Linux hub says the page needs Linux. docs/web-app/compute.md
   has the sources and the differences.
 
+- **Web app: Plugins.** The Mac app's Plugins page in the browser, read
+  only. Health lists, per harness, where Claude Code and Codex no longer
+  match `~/.quiver/plugins`, each finding with the fix swe would run and a
+  copy button. Explore lists every plugin in every marketplace under Local,
+  each harness and Not registered, with a harness filter, search across
+  names, descriptions and shipped skills, per-harness state chips, drift
+  badges and a detail sheet. The catalog is cached on the hub for a
+  minute; Refresh reads it again. Fixes, installs, enables and Add
+  marketplace stay in `swe` and the Mac app.
+- **Web app: Calendar.** When each harness was working on the hub
+  machine, as the Mac app draws it: blocks of activity per project (a
+  session's responses join until 30 minutes of silence, and sessions of
+  one repository merge under the same gap; every Grok Bot session is one
+  "Grok Bot" project) on a Day, Week, N-day or Month grid in the
+  browser's time zone, coloured by harness, with the mini month, the
+  harness and account legend with time totals, and the same keys (D, W,
+  M, 1 to 9, T, S, arrows). A block's hover card and session list add
+  its tokens and spend; a session opens the Sessions page's detail.
+  Read only, from the shared ledger.
+
 - **Web app: MCP servers.** The Mac app's MCP servers page in the
   browser, read only: every server the hub machine's harnesses configure
   as a server × harness grid, split into Local (run from a folder in
