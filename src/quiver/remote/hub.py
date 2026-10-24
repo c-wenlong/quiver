@@ -2085,6 +2085,9 @@ class _Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self._send_error(422, "bad_command", str(exc))
             return
+        except sessionmeta.TooManyEntries as exc:
+            self._send_error(409, "too_many_pins", str(exc))
+            return
         except OSError:
             self._send_error(500, "store_failed", "could not save the change")
             return

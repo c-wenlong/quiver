@@ -65,13 +65,27 @@ def _load(home: Path | str | None) -> dict[str, dict]:
     return out
 
 
-def _save(home: Path | str | None, rows: dict[str, dict]) -> None:
+class TooManyEntries(Exception):
+    """The store is full of pins, so there is no room for this write."""
+
+
+def _save(
+    home: Path | str | None, rows: dict[str, dict], writing: str,
+) -> None:
     # An entry with nothing set is dropped, so unpin + clear leaves no row.
     keep = {k: v for k, v in rows.items() if v["pinned"] or v["title"]}
     if len(keep) > MAX_ENTRIES:
-        # Drop the oldest renames first; pins always stay.
+        # Drop the oldest other renames; pins and the entry being
+        # written always stay.
         extra = len(keep) - MAX_ENTRIES
-        for k in [k for k, v in keep.items() if not v["pinned"]][:extra]:
+        victims = [
+            k for k, v in keep.items() if not v["pinned"] and k != writing
+        ]
+        if len(victims) < extra:
+            raise TooManyEntries(
+                "too many pinned sessions; unpin one first"
+            )
+        for k in victims[:extra]:
             del keep[k]
     atomic_write_text(
         meta_file(home), json.dumps({"sessions": keep}, indent=1),
@@ -117,7 +131,7 @@ def set_pinned(
         elif not pinned:
             entry["pinned"], entry["pinned_at"] = False, None
         rows[key] = entry
-        _save(home, rows)
+        _save(home, rows, key)
         return dict(entry)
 
 
@@ -128,7 +142,7 @@ def set_title(home: Path | str | None, key: str, title: str) -> dict:
         entry = rows.get(key) or _blank()
         entry["title"] = title
         rows[key] = entry
-        _save(home, rows)
+        _save(home, rows, key)
         return dict(entry)
 
 

@@ -380,6 +380,9 @@ class Catalog:
         self.max_rows = max_rows
         self._rows: list[tuple[str, Session | None, dict, str]] = []
         self._refreshed_at = 0.0
+        self._meta_lock = threading.Lock()
+        # Test seam: runs between refresh's metadata read and row swap.
+        self._after_meta_read: Callable[[], None] | None = None
 
     @property
     def refreshed_at(self) -> float:
@@ -409,10 +412,16 @@ class Catalog:
                 str(row.get("key") or ""), None, row,
                 str(row.get("status") or ""),
             ))
-        meta = sessionmeta.load(self.home)
-        for key, _s, row, _st in rows:
-            sessionmeta.apply(row, meta.get(key))
-        self._rows = rows
+        # Read the pins, overlay them and swap the rows under one lock:
+        # reapply_meta takes it too, so a pin saved meanwhile is applied
+        # to the new rows, never lost to this older read.
+        with self._meta_lock:
+            meta = sessionmeta.load(self.home)
+            if self._after_meta_read is not None:
+                self._after_meta_read()
+            for key, _s, row, _st in rows:
+                sessionmeta.apply(row, meta.get(key))
+            self._rows = rows
         self._refreshed_at = time.time()
         return [row for _key, _s, row, _st in rows]
 
@@ -421,10 +430,11 @@ class Catalog:
 
     def reapply_meta(self, key: str) -> dict | None:
         """Re-overlay one row's pin and title after a write; returns the row."""
-        row = self.row_for(key)
-        if row is not None:
-            sessionmeta.apply(row, sessionmeta.get(self.home, key))
-        return row
+        with self._meta_lock:
+            row = self.row_for(key)
+            if row is not None:
+                sessionmeta.apply(row, sessionmeta.get(self.home, key))
+            return row
 
     def tail_rows(self) -> list[tuple[str, Session, str]]:
         """``(key, Session, status)`` for the tail manager, newest first."""

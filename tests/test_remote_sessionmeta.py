@@ -3,7 +3,9 @@
 import json
 import tempfile
 import threading
+import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from quiver.remote import catalog as catalog_mod
@@ -89,6 +91,71 @@ class TestStore(unittest.TestCase):
         self.assertEqual(row["title"], "from harness")
         self.assertIs(row["pinned"], False)
         self.assertIsNone(row["pinned_at"])
+
+
+class TestLimitsAndRaces(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+
+    def test_full_store_evicts_other_rename_not_the_write(self):
+        with mock.patch.object(sessionmeta, "MAX_ENTRIES", 3):
+            sessionmeta.set_title(self.home, "k:old", "old")
+            sessionmeta.set_pinned(self.home, "k:p1", True)
+            sessionmeta.set_pinned(self.home, "k:p2", True)
+            sessionmeta.set_pinned(self.home, "k:new", True)
+            meta = sessionmeta.load(self.home)
+            self.assertEqual(sorted(meta), ["k:new", "k:p1", "k:p2"])
+
+    def test_full_of_pins_rejects_instead_of_dropping(self):
+        with mock.patch.object(sessionmeta, "MAX_ENTRIES", 2):
+            sessionmeta.set_pinned(self.home, "k:a", True)
+            sessionmeta.set_pinned(self.home, "k:b", True)
+            with self.assertRaises(sessionmeta.TooManyEntries):
+                sessionmeta.set_pinned(self.home, "k:c", True)
+            with self.assertRaises(sessionmeta.TooManyEntries):
+                sessionmeta.set_title(self.home, "k:c", "name")
+            self.assertEqual(sorted(sessionmeta.load(self.home)),
+                             ["k:a", "k:b"])
+
+    def test_route_answers_409_when_full(self):
+        srv = _Server(sessions=[_session(sid="a1"), _session(sid="b2")])
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        hdr = {"Authorization": f"Bearer {cred['credential']}"}
+        with mock.patch.object(sessionmeta, "MAX_ENTRIES", 1):
+            s1, _ = srv.request("POST", "/v1/sessions/claude:a1/pin",
+                                body={"pinned": True}, headers=hdr)
+            s2, data = srv.request("POST", "/v1/sessions/claude:b2/pin",
+                                   body={"pinned": True}, headers=hdr)
+        self.assertEqual(s1, 200)
+        self.assertEqual(s2, 409)
+        self.assertEqual(json.loads(data)["error"]["code"], "too_many_pins")
+
+    def test_pin_saved_during_refresh_is_not_lost(self):
+        cat = catalog_mod.Catalog(
+            self.home, "m1", fetch_sessions=lambda: [_session(sid="a1")],
+            status_of=lambda ss: ["idle"] * len(ss))
+        cat.refresh()
+        key = cat.rows()[0]["key"]
+
+        def save_midway():
+            cat._after_meta_read = None
+            # The request thread saves, then blocks on reapply until the
+            # refresh has swapped its rows.
+            def request():
+                sessionmeta.set_title(self.home, key, "Fresh")
+                cat.reapply_meta(key)
+            t = threading.Thread(target=request)
+            t.start()
+            self.addCleanup(t.join)
+            time.sleep(0.2)
+
+        cat._after_meta_read = save_midway
+        cat.refresh()
+        for t in threading.enumerate():
+            if t is not threading.current_thread() and t.name.startswith("Thread"):
+                t.join(timeout=3)
+        self.assertEqual(cat.row_for(key)["title"], "Fresh")
 
 
 class TestRoutes(unittest.TestCase):
