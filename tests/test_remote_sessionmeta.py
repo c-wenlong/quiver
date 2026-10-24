@@ -158,6 +158,73 @@ class TestLimitsAndRaces(unittest.TestCase):
         self.assertEqual(cat.row_for(key)["title"], "Fresh")
 
 
+    def test_probe_and_pin_during_one_refresh_both_survive(self):
+        verdict = {"probe": None}
+
+        def status_of(sessions):
+            # A tail probe lands after this refresh began reading.
+            if verdict["probe"]:
+                verdict["probe"]()
+            return ["done"] * len(sessions)
+
+        cat = catalog_mod.Catalog(
+            self.home, "m1", fetch_sessions=lambda: [_session(sid="a1")],
+            status_of=status_of)
+        cat.refresh()
+        key = cat.rows()[0]["key"]
+        verdict["probe"] = lambda: cat.note_status(
+            key, "active", time.time() + 1)
+
+        def save_midway():
+            cat._after_meta_read = None
+            # A title save and a second probe both wait for the swap.
+            def request():
+                sessionmeta.set_title(self.home, key, "Fresh")
+                cat.note_status(key, "followup", time.time() + 2)
+                cat.reapply_meta(key)
+            t = threading.Thread(target=request)
+            t.start()
+            self.addCleanup(t.join)
+            time.sleep(0.2)
+
+        cat._after_meta_read = save_midway
+        cat.refresh()
+        for t in threading.enumerate():
+            if t is not threading.current_thread() and t.name.startswith("Thread"):
+                t.join(timeout=3)
+        row = cat.row_for(key)
+        self.assertEqual(row["title"], "Fresh")
+        self.assertEqual(row["status"], "followup")
+        self.assertEqual(cat.tail_rows()[0][2], "followup")
+        # The probe-patched row kept its overlay, and the next refresh,
+        # started after both probes, takes its own read but keeps the pin
+        # metadata.
+        verdict["probe"] = None
+        with mock.patch.object(catalog_mod.time, "time",
+                               return_value=time.time() + 60):
+            cat.refresh()
+        row = cat.row_for(key)
+        self.assertEqual(row["status"], "done")
+        self.assertEqual(row["title"], "Fresh")
+
+    def test_probe_during_refresh_keeps_status_with_overlay(self):
+        cat = catalog_mod.Catalog(
+            self.home, "m1", fetch_sessions=lambda: [_session(sid="a1")],
+            status_of=lambda ss: ["done"] * len(ss))
+        cat.refresh()
+        key = cat.rows()[0]["key"]
+        sessionmeta.set_title(self.home, key, "Mine")
+
+        def probe_midway():
+            cat._after_meta_read = None
+            cat._fresh[key] = ("active", time.time() + 1)
+
+        cat._after_meta_read = probe_midway
+        cat.refresh()
+        row = cat.row_for(key)
+        self.assertEqual((row["status"], row["title"]), ("active", "Mine"))
+
+
 class TestRoutes(unittest.TestCase):
     def setUp(self):
         self.srv = _Server(sessions=[_session(sid="a1"), _session(sid="b2")])

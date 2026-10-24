@@ -121,6 +121,8 @@ remote/
   tail.py        # byte-offset transcript readers → events (read path)
   inject.py      # per-harness send/approval/interrupt registry (write path)
   supervise.py   # tmux lifecycle for attached sessions
+  detach.py      # detach when_idle: wait out the turn, cancellable
+  fork.py        # fork a session: per-harness fork command lines, the route
   journal.py     # per-session seq-numbered event log (replay on reconnect)
   hub.py         # http.server ThreadingHTTPServer: REST + SSE, device auth
   files.py       # @-mention paths under a session's folder (/v1/sessions/{id}/files)
@@ -170,7 +172,47 @@ Gemini, Cline, ...) re-read the whole window whenever their change token
 moves, which is the cost behind [#515](https://github.com/c-wenlong/quiver/issues/515), so
 `SnapshotSource.hot_poll_s` caps them at the active cadence: they get the
 immediate wake but never poll faster than an active session already
-does. The status column itself still updates on the catalog refresh.
+does.
+
+Status between catalog refreshes: a session that is hot, or whose
+source moved since its last probe, has its status re-probed by the tail
+thread at most once a second (`STATUS_PROBE_S`). "Moved" means the poll
+advanced the cursor, message or not, so a turn that ends on a record
+with nothing to show (Codex `task_complete`, Claude `turn_duration`)
+still gets its probe. Every session owed a probe in one tick goes
+through a single `sessions/status.py` call, so the live-pid registry,
+the bg-job table and the status tail cache are read once per tick, not
+once per session. Each session is probed with the session's last-activity time raised to the
+transcript's mtime (the catalog's copy can be minutes old, and a
+mid-turn transcript older than `ACTIVE_WINDOW_S` reads as
+interrupted). A probe that finds the session no longer active also nudges a pending
+`when_idle` detach (`PendingDetaches.nudge`) to check at once instead of
+at its next 2 s poll. Besides writes through the hub, a launch, a fork,
+and an attach the catalog loop notices (the CLI, a kept tmux session
+taken back) wake the session too. A change emits `session.status` and
+`notify` at once, so
+a send flips the phone to active within about a second and the end of
+the turn flips it back as fast. Sessions neither hot nor growing are
+never probed.
+
+Two readers now set a session's status, so each read carries the time
+it was taken and the newer read wins:
+
+| Who | Time of the read | Where the rule lives |
+|---|---|---|
+| Catalog refresh | when the refresh started (`Catalog.tail_snapshot`) | `TailManager.sync(rows, as_of=...)` skips keys probed later |
+| Tail probe | just before the probe reads, not the tick's start | `Catalog.note_status` patches the row; a refresh that started earlier keeps it |
+
+So a refresh that read "done" just before the send landed cannot flip
+the phone back to done, and the catalog's own rows (the session list,
+the inbox, a satellite's catalog push) agree with the events. A tie
+goes to the catalog. `TailManager` writes `statuses` and emits status
+events only under `_status_lock`, since the catalog thread (`sync`) and
+the tail thread (probes) both write them. The probe reads outside that
+lock and applies a result only if the session's tailer is still the
+same object, and `sync` drops tailers under the lock, so a session the
+catalog removed mid-read never comes back as a status event. Satellites probe the same way
+and their catalog push carries the result.
 
 Before a message leaves the hub, `injected.py` removes what a harness
 wrote into the transcript for itself rather than for you: Claude Code's
@@ -235,13 +277,14 @@ GET  /v1/sessions/{id}/events        SSE stream; ?last=seq replays journal
 GET  /v1/sessions/{id}/commands      the "/" menu: commands this session's harness will run
 POST /v1/sessions/{id}/message       {text, mode: queue|steer, attachments[]}
 GET  /v1/sessions/{id}/queue         queue-mode sends still waiting for idle
-POST /v1/sessions/{id}/queue         {client_id, op: steer|cancel} on one waiting send
+POST /v1/sessions/{id}/queue         {client_id, op: steer|cancel|edit, text?} on one waiting send
 POST /v1/sessions/{id}/attachments   multipart upload → staged file, returns ref
 POST /v1/sessions/{id}/approval      {request_id, decision}
 POST /v1/sessions/{id}/pin           {pinned: bool} → pin or unpin on the hub
 POST /v1/sessions/{id}/title         {title: string} → display name, "" clears it
-POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill
+POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill|detach {mode: now|when_idle|keep}
 POST /v1/sessions                    new session {machine, harness, cwd, prompt} → launch_id
+POST /v1/sessions/{id}/fork          {prompt?} new session from this one's history → launch_id
 GET  /v1/folders?path=                subfolders of one folder on the hub machine (new-session browser)
 GET  /v1/sessions/{id}/files?q=     paths under the session's folder for the prompt box's @ menu
 GET  /v1/launches/{launch_id}        pending|started|failed; started carries the session key
@@ -301,8 +344,65 @@ never both a send and a removal. An unknown `client_id` is `404
 unknown_send`; one that already left (sent, steered, removed, failed) is
 `409 not_waiting` while the hub remembers it (the last 256). Satellite
 sessions never park a queue-mode send on the hub (the satellite delivers
-on arrival or refuses a busy session), so their list is empty and both
-ops answer `409 queue_unsupported`.
+on arrival or refuses a busy session), so their list is empty and every
+op answers `409 queue_unsupported`.
+
+`edit` takes a `text` (checked like a message's: a string with more
+than spaces in it, else `422 bad_command`) and replaces the waiting
+send's text in place, keeping its place in the queue; it answers `200
+{ok, client_id, op, text}`. The send's job reads its command only after
+claiming it under the same lock, so an edit racing the injection either
+lands first, and the new text goes out, or answers `409 not_waiting`
+and the old text goes out. A `200` edit is never followed by the old
+text. Attachments stay as they were.
+
+`POST /v1/sessions/{id}/control {op: "detach", mode}` hands an attached
+session back to `observed`. The mode says what happens to the harness:
+
+| `mode` | Answer | What happens |
+|---|---|---|
+| `now` (the default, also when `mode` is missing) | `200` | The tmux session is closed, and the harness with it, even mid-turn. The transcript stays, so a later attach resumes it. Tier-A channels stop their headless run, `opencode serve` or `codex app-server`. |
+| `when_idle` | `202 {queued: true, mode, note}` | The hub polls the session's status every 2 s and detaches (as `now`) once it is no longer `active`. The outcome arrives as a `command.result` with `op: "detach"`, `mode: "when_idle"`, then the usual `session.ownership`. A second `when_idle` while one waits answers `202` with "already waiting". |
+| `keep` | `200` | The hub stops supervising but leaves the tmux session running, so `tmux attach -t qv-…` on the Mac still works. Only tmux-mode sessions can be kept (`409 control_failed` otherwise). Staged attachments stay, since the harness may still read them. |
+
+A `when_idle` detach is cancelled by a later attach (which answers
+`200` "already attached; the pending detach is cancelled"), by a `now`
+or `keep` detach, or by `kill`; each emits its `command.result` with
+`ok: false` and `cancelled: true`. The wait is capped at 30 minutes,
+like a queue-mode send: past it the result is `ok: false`, "session
+stayed busy for 30 min; it is still attached". It lives in the hub's
+memory (`detach.PendingDetaches`), so a hub restart reports it as not
+done and the session stays attached. The waiter and a cancel move the
+pending detach out of its waiting state under one lock, so exactly one
+of them acts; a cancel that arrives while the detach is already
+running waits for it to finish.
+
+A kept session is recorded in `data/remote/kept.json` with its tmux
+name, the pane's pid and `kept_at`. Attaching it again adopts that tmux
+session instead of launching a second run, when the tmux session still
+exists and its pane still runs the same process (same pane pid, same
+harness). Adoption starts nothing, so it is allowed mid-turn. A kept
+tmux session gone since is forgotten and attach launches as usual; one
+whose pane now runs a different process is refused, since a launch
+would reuse the name and bind to that pane. The hub's catalog loop (and
+each satellite's) closes a kept tmux session once no tmux client is
+attached to it and neither the keep nor its transcript has moved for
+`supervise.KEPT_IDLE_REAP_S` (12 hours). It forgets a record only once
+that tmux session is confirmed gone: a failed kill is retried on the
+next loop, and a record whose pane now runs another process stays (and
+is never killed), so attach keeps refusing it. `launch_tmux` never binds
+to a live tmux session it did not just start. Both moves between the
+registries (keep, adopt) write the destination before removing the
+source and fail the request on a write error; a key left in both by a
+crash is settled at start-up, and before each keep, adopt and reap, in
+favour of the supervised row.
+
+Satellites take the same modes: the hub forwards `mode` in the control
+command, and the satellite runs the wait, the keep, the adoption and
+the reaping against its own tmux and statuses. The forwarded command
+answers `202` as always; a `when_idle` detach later reports its own
+`command.result`, and the ownership change reaches the hub with the
+next catalog push.
 
 `POST /v1/sessions` starts a harness under tmux (`supervise.launch_new`)
 on the hub, or queues a `launch` command for the satellite named in
@@ -346,6 +446,61 @@ skip the transcript as history already sent). `GET /v1/launches/{launch_id}` the
 phone can open the chat straight away; a satellite's failed `launch`
 command (`command.result` echoing `launch_id`) turns it `failed` with the
 note. The hub keeps launches in memory for a day.
+
+`POST /v1/sessions/{id}/fork {prompt?}` (`fork.py`) starts a new run of
+the session's harness that continues from its history, in the session's
+folder under tmux, and leaves the original as it was. The source can be
+attached or only watched; the fork never writes to it, and attaching the
+source later never stops a fork (`_local_writer_pids` skips a process
+carrying a fork flag, unless it names the attached session as its own
+output with `--session-id`). The answer is the same `202 {launch_id, state:
+"pending", note}` as a new-session launch, followed through `GET
+/v1/launches/{launch_id}`. `prompt` is optional and typed in once the TUI
+is up; with none, the pane is still booted past the trust prompt, and the
+launch stays pending until the harness writes the fork's transcript.
+Session rows carry `can_fork`, so the app offers Fork only where it
+works. Errors: `404 unknown_session`, `409 fork_unsupported` (the harness
+has no fork command line, or its session has no id to pass), `422
+bad_cwd` (the session's folder is gone from the hub), `409 fork_pending`
+(see below), `422 not_installed`,
+`422 launch_failed` (tmux missing), `422 bad_command`, `429 backlog_full`.
+
+Each harness's fork command line, read off the installed binary's
+`--help` on 2026-10-24:
+
+| Harness | Version checked | Command line |
+|---|---|---|
+| Claude Code | 2.1.308 | `claude --resume <id> --fork-session --session-id <new uuid>` |
+| Codex | 0.163.0 | `codex fork <thread uuid>` |
+| Kilo | 7.8.15 | `kilo --session <id> --fork` |
+| Pi | 1.3.0 | `pi --fork <id>` |
+| Droid | 0.219.0 | `droid --fork <id>` |
+
+Everything else answers `409 fork_unsupported`. opencode 2.1.3 has
+`--fork` only on the one-shot `opencode run`, not the TUI; devin,
+cursor-agent and cline have no fork option.
+
+Adoption must claim the fork, never its source. Claude Code takes the
+new session's id on the command line, so the pending marker carries it
+as `expect_id` and adoption waits for exactly that id. The other
+harnesses pick their own id: the marker excludes the source's id along
+with every same-folder session that existed at the fork, and `fork_of`
+also keeps out a codex resume of the source (a new rollout file under
+the same thread uuid). That leaves only the folder and creation time, so
+two such forks waiting in one folder could take each other's
+transcripts: a fork of these harnesses is refused with `409
+fork_pending` while another launch of that harness is still waiting for
+adoption in the folder (its marker is under a minute old or its pane is
+alive). The marker is written under the registry lock before the pane
+starts, so two requests at once can't both pass. An id a Claude fork
+named is never claimed by any other pending launch. A satellite's session gets a `fork` command in
+its journal, like `launch`; the satellite runs it on its own thread, so
+booting the pane never delays the commands behind it. It checks its own
+folder, its
+failed `command.result` (echoing `launch_id`) turns the launch `failed`,
+and its `session.launched` names the new key. The hub refuses a
+satellite row without `can_fork`, which covers satellites too old to
+send the field or run the op.
 
 `GET /v1/folders?path=` lists one folder's subfolders on the hub machine
 for the phone's folder browser: `{path, parent, folders: [{name, path}],
