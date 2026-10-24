@@ -17,6 +17,9 @@ struct HubError: LocalizedError, Equatable {
     let status: Int
     let code: String
     let message: String
+    /// The hub's own wording, kept when `message` replaces it with a
+    /// friendlier one (`not_waiting` says why the send left the queue).
+    var reason: String? = nil
 
     var errorDescription: String? { message }
     var isUnauthorized: Bool { status == 401 }
@@ -93,12 +96,16 @@ struct HubClient: Sendable {
             throw HubError.network(error)
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200..<300).contains(status) else {
-            let body = try? Hub.decoder.decode(HubErrorBody.self, from: data)
-            throw HubError(status: status, code: body?.error.code ?? "http_\(status)",
-                           message: Self.friendly(code: body?.error.code, fallback: body?.error.message, status: status))
-        }
+        guard (200..<300).contains(status) else { throw Self.error(status: status, body: data) }
         return (data, status)
+    }
+
+    /// A non-2xx answer as the error the phone shows.
+    static func error(status: Int, body data: Data) -> HubError {
+        let body = try? Hub.decoder.decode(HubErrorBody.self, from: data)
+        return HubError(status: status, code: body?.error.code ?? "http_\(status)",
+                        message: friendly(code: body?.error.code, fallback: body?.error.message, status: status),
+                        reason: body?.error.message)
     }
 
     static func friendly(code: String?, fallback: String?, status: Int) -> String {
@@ -119,6 +126,10 @@ struct HubClient: Sendable {
         case "unknown_launch": "The hub lost track of this launch. Check Sessions in a moment."
         case "browse_unavailable": "Browsing works on the hub machine only for now. Pick a recent folder instead."
         case "not_readable": "The hub can't read that folder."
+        case "duplicate_client_id": "That message is already queued."
+        case "not_waiting": "That message already left the queue."
+        case "unknown_send": "The hub doesn't know that message."
+        case "queue_unsupported": "Queued messages can't be changed on this machine."
         default: fallback ?? "The hub answered with an error (\(status))."
         }
     }
@@ -158,6 +169,20 @@ struct HubClient: Sendable {
     func sendMessage(_ key: String, text: String, mode: String, clientId: String) async throws -> SendAccepted {
         try await send(request("POST", "/v1/sessions/\(Self.encodeKey(key))/message",
                                body: ["text": text, "mode": mode, "client_id": clientId]))
+    }
+
+    /// Queue-mode sends still waiting for the session to go idle, oldest first.
+    func queue(_ key: String) async throws -> QueueResponse {
+        try await send(request("GET", "/v1/sessions/\(Self.encodeKey(key))/queue"))
+    }
+
+    /// Acts on one waiting send: `steer` sends it now, `cancel` drops it,
+    /// `edit` replaces its text in place. The outcome of a steer arrives
+    /// later as its `command.result`.
+    func queueAction(_ key: String, clientId: String, op: String, text: String? = nil) async throws {
+        var body: [String: Any] = ["client_id": clientId, "op": op]
+        if let text { body["text"] = text }
+        _ = try await raw(request("POST", "/v1/sessions/\(Self.encodeKey(key))/queue", body: body))
     }
 
     /// Returns true when the hub queued it for a satellite (202), so the
