@@ -110,16 +110,21 @@ public struct RemoteSetupReport: Decodable, Sendable, Equatable {
     /// The first step that isn't done: the one the sheet points at.
     public var current: Step? { steps.first { $0.state != .ok } }
 
-    /// Quiver has steps it can do itself (`--apply`). Each step waits for
-    /// the ones before it, so a `todo` is always the first one not done.
-    public var canApply: Bool { steps.contains { $0.state == .todo } }
+    /// Quiver has steps it can do itself (`--apply`): a `todo`, or a
+    /// failed step that still offers an apply ("Restart hub" for a hub
+    /// that keeps stopping, which `--apply` retries once).
+    public var canApply: Bool { steps.contains(where: Self.applies) }
 
     /// What `--apply` would do, in order, as the steps' own labels.
     public var applyLabels: [String] {
-        steps.filter { $0.state == .todo }.compactMap { step in
+        steps.filter(Self.applies).compactMap { step in
             guard let action = step.action, action.kind == .apply, !action.label.isEmpty else { return nil }
             return action.label
         }
+    }
+
+    static func applies(_ step: Step) -> Bool {
+        step.state == .todo || (step.state == .failed && step.action?.kind == .apply)
     }
 }
 

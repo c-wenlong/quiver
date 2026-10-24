@@ -9,10 +9,13 @@ import SwiftUI
 struct RemoteSection: View {
     @Environment(AppModel.self) private var app
     @State private var model: RemoteModel?
-    /// `swe remote setup`: whether the Hub card offers the checklist.
-    @State private var setup: RemoteSetupModel?
     @State private var showsSetup = false
     @State private var target: PairTarget = .web
+
+    /// `swe remote setup`: whether the Hub card offers the checklist. The
+    /// app keeps it, so an `--apply` still running from an earlier visit
+    /// shows as running, and can't be started twice.
+    private var setup: RemoteSetupModel { app.remoteSetup }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -21,11 +24,9 @@ struct RemoteSection: View {
         }
         .task(id: app.swePath) {
             let remote = RemoteModel(swe: app.swe)
-            let checklist = RemoteSetupModel(swe: { [app] in app.swe })
             model = remote
-            setup = checklist
             async let status: Void = remote.load()
-            async let report: Void = checklist.load()
+            async let report: Void = setup.load()
             _ = await (status, report)
         }
         // The first-run wizard's "Set up now" lands here once it closes.
@@ -38,13 +39,13 @@ struct RemoteSection: View {
             if let model { PairSheet(model: model, target: $target) }
         }
         .quiverSheet(isPresented: showSetupSheet, onDismiss: reload) {
-            if let model, let setup { RemoteSetupSheet(setup: setup, remote: model) }
+            if let model { RemoteSetupSheet(setup: setup, remote: model) }
         }
     }
 
-    /// Waits for the models, which the wizard's hand-off can beat.
+    /// Waits for the pairing model, which the wizard's hand-off can beat.
     private var showSetupSheet: Binding<Bool> {
-        Binding(get: { showsSetup && model != nil && setup != nil },
+        Binding(get: { showsSetup && model != nil },
                 set: { showsSetup = $0 })
     }
 
@@ -57,7 +58,7 @@ struct RemoteSection: View {
     /// The report says remote control isn't finished: the Hub card offers
     /// the checklist. Nil until it loads, and when this swe has no
     /// `remote setup` (an older one), so the card falls back to the hint.
-    private var setupReport: RemoteSetupReport? { setup?.report }
+    private var setupReport: RemoteSetupReport? { setup.report }
 
     @ViewBuilder private var setupRow: some View {
         if let report = setupReport, !report.ready {
@@ -183,7 +184,7 @@ struct RemoteSection: View {
     private func reload() {
         Task {
             async let status: Void? = model?.load()
-            async let report: Void? = setup?.load()
+            async let report: Void = setup.load()
             _ = await (status, report)
         }
     }

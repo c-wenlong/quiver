@@ -50,6 +50,13 @@ struct RemoteSetupSheet: View {
     @ViewBuilder private var content: some View {
         if let report = setup.report {
             if let error = setup.applyError { ErrorCard(message: error) }
+            // The list below is the last check that worked; say why the
+            // newest one didn't, so steps that stopped updating aren't a mystery.
+            if let error = setup.loadError {
+                ErrorCard(message: "Couldn't check again: \(error)", actionTitle: "Try again") {
+                    Task { await setup.load() }
+                }
+            }
             if report.ready { readyCard(report) }
             stepList(report)
             if let pairError = remote.pairError {
@@ -121,7 +128,7 @@ struct RemoteSetupSheet: View {
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             } else if setup.loading && setup.report == nil {
                 EmptyView()
-            } else if let report = setup.report, !report.ready, report.current?.state != .todo {
+            } else if let report = setup.report, !report.ready, !report.canApply, setup.loadError == nil {
                 Text("Waiting for you. This list checks again every few seconds.")
                     .font(Theme.caption).foregroundStyle(Theme.textMuted)
             }

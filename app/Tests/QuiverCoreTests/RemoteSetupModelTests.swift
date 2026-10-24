@@ -262,6 +262,25 @@ final class Ticker: @unchecked Sendable {
         #expect(report.steps[2].action?.kind == .pair)
     }
 
+    /// A hub that keeps stopping is `failed` with "Restart hub", which
+    /// `--apply` retries: Set up must still be offered.
+    @Test func aFailedStepWithAnApplyCanStillBeApplied() {
+        let report = RemoteSetupReport(ready: false, platform: "darwin", url: "https://x", steps: [
+            .init(id: "tailscale.installed", title: "Tailscale installed", state: .ok),
+            .init(id: "hub.service", title: "Hub running in the background", state: .failed,
+                  detail: "The hub keeps stopping.", action: .init(kind: .apply, label: "Restart hub")),
+            .init(id: "hub.reachable", title: "Reachable", state: .blocked),
+        ])
+        #expect(report.canApply)
+        #expect(report.applyLabels == ["Restart hub"])
+        // A failure with only a page to open is the person's to fix.
+        let certFailed = RemoteSetupReport(ready: false, platform: "darwin", url: "", steps: [
+            .init(id: "tailscale.cert", title: "Certificate", state: .failed, detail: "lookup timeout",
+                  action: .init(kind: .open, label: "Open admin console", url: "https://login.tailscale.com/admin/dns")),
+        ])
+        #expect(certFailed.canApply == false)
+    }
+
     // MARK: commands
 
     @Test func applyAsksForApplyWithALongerDeadline() async throws {

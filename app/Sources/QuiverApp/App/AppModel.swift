@@ -396,6 +396,11 @@ final class AppModel {
     let models: ModelsModel?
     /// The Settings > Services section's keys and probe results.
     let services: ServicesModel
+    /// Settings › Integrations › Remote's setup checklist. Kept for the
+    /// app's life, not the page's: a `--apply` keeps running after the
+    /// sheet or page closes, and its `applying` guard must still stop a
+    /// second one from a reopened page. Asks for the current swe per call.
+    let remoteSetup = RemoteSetupModel(swe: { AppModel.shared.swe })
     /// The Settings > Experimental section's session-search switch: it hands
     /// the ledger a `SearchIndexer` while on, and keeps the index current.
     let search: SearchIndexModel
