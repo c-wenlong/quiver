@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Remote iPhone app: stop lives in the send button.** The separate Stop
+  button above the prompt box is gone. With nothing typed while the agent
+  works, the round button beside the box turns red with a white square
+  and interrupts the turn; once you type it sends again.
+
 - **Remote iPhone app: chats stream in instead of landing in blocks.**
   Messages that reach the phone together are shown one at a time with a
   short gap (a replay after reconnecting still lands at once), new

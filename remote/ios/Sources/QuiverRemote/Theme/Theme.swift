@@ -34,6 +34,8 @@ enum Theme {
     static let warning = Color(light: "#f59e0b", dark: "#fbbf24")
     static let warningText = Color(light: "#b45309", dark: "#fbbf24")
     static let danger = Color(light: "#ef4444", dark: "#f87171")
+    /// Solid fill behind white, such as the stop button; `danger` is for red text and marks.
+    static let dangerFill = Color(light: "#ef4444", dark: "#dc2626")
     static let dangerText = Color(light: "#dc2626", dark: "#f87171")
     static let diffAdded = Color(light: "#10b98126", dark: "#10b98126")
     static let diffRemoved = Color(light: "#ef444426", dark: "#ef444426")

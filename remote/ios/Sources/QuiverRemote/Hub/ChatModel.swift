@@ -116,6 +116,18 @@ final class ChatModel {
         live = false
     }
 
+    /// The agent is mid-turn, or about to start on a send: worth a stop.
+    var canInterrupt: Bool { row?.sessionStatus == .active || awaitingReply }
+
+    enum ComposerAction { case send, stop, disabled }
+
+    /// What the button beside the prompt box does: send whatever is typed,
+    /// stop the agent when nothing is typed and it's working, else nothing.
+    static func composerAction(draft: String, agentWorking: Bool) -> ComposerAction {
+        if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .send }
+        return agentWorking ? .stop : .disabled
+    }
+
     /// The agent is mid-turn, a send waits for its reply, or messages
     /// that already arrived are still being revealed.
     var working: Bool {

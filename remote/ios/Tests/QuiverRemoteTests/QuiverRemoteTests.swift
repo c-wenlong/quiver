@@ -371,6 +371,13 @@ final class ChatModelTests: XCTestCase {
         XCTAssertFalse(chat.working)
     }
 
+    func testSendButtonStopsTheAgentOnlyWithNothingTyped() {
+        XCTAssertEqual(ChatModel.composerAction(draft: "hi", agentWorking: true), .send)
+        XCTAssertEqual(ChatModel.composerAction(draft: "hi", agentWorking: false), .send)
+        XCTAssertEqual(ChatModel.composerAction(draft: " \n", agentWorking: true), .stop)
+        XCTAssertEqual(ChatModel.composerAction(draft: "", agentWorking: false), .disabled)
+    }
+
     func testReopeningAChatReusesItsModel() {
         let app = AppModel()
         let first = app.chat("claude:1")
