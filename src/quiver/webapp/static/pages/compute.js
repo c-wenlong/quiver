@@ -389,10 +389,8 @@ function trendBody(d) {
     if (tr.last_tick == null) return placeholder(collecting);
     return placeholder("Temperature sensors aren't available on this machine.");
   }
-  if (p.tab === "gpu") {
-    if (!tr.gpu_available) return placeholder("GPU readings aren't available on this machine. They need an NVIDIA GPU and nvidia-smi.");
-    if (!tr.gpus.some((g) => g.points.length)) return placeholder(collecting);
-    return chartBox();
+  if (p.tab === "gpu" && !tr.gpu_available) {
+    return placeholder("GPU readings aren't available on this machine. They need an NVIDIA GPU and nvidia-smi.");
   }
   if (!Object.keys(tr.harnesses).length && !Object.keys(tr.peaks).length) return placeholder(collecting);
   if (!shownHarnesses(tr).length) {
@@ -472,23 +470,14 @@ function chartSpec() {
     return { series, x: [end - span, end], y: [low, top], format: CFmt.celsius, axis: (v) => `${Math.round(v)} °C`,
       spans: fanSpans(tr.temperatures), fans: tr.temperatures, empty: shown.length ? "" : "Every line is off. Pick one above." };
   }
-  if (p.tab === "gpu") {
-    const series = tr.gpus.filter((g) => g.points.length).map((g, i) => ({
-      key: `gpu${g.index}`, label: g.name, color: `var(--series-${COMPUTE_COMPONENTS[i % 7][0]})`,
-      endLabel: tr.gpus.length > 1 ? `GPU ${g.index}` : "", points: g.points,
-    }));
-    const values = series.flatMap((s) => s.points.map((pt) => pt[1]));
-    // Whole-machine readings: the window ends at the newest tick, so
-    // readings that stopped coming slide off the left.
-    const end = tr.last_tick;
-    return { series, x: [end - span, end], y: [0, scaleTop(values, 25, 100)],
-      format: (v) => `${CFmt.percent(v)}%`, axis: (v) => `${Math.round(v)}%` };
-  }
   const harnesses = shownHarnesses(tr);
-  const ram = p.tab === "ram";
+  const ram = p.tab === "ram", gpu = p.tab === "gpu";
+  // TrendMetric.reads: a GPU point without a reading is left out, so the
+  // line does not dip to zero for "no reading".
   const series = harnesses.filter((h) => tr.harnesses[h]).map((h) => ({
     key: h, label: Fmt.harnessName(h), color: Fmt.harnessColor(h), logo: h,
-    points: tr.harnesses[h].map(([at, mem, cpu]) => [at, ram ? mem / GB : cpu]),
+    points: tr.harnesses[h].filter((pt) => !gpu || pt[3] != null)
+      .map(([at, mem, cpu, g]) => [at, ram ? mem / GB : gpu ? g : cpu]),
   }));
   // ComputeHistory.latest: the window ends at the newest point of any
   // harness, drawn or not, so a stopped harness's line slides off the
@@ -501,7 +490,7 @@ function chartSpec() {
     ? { series, x: [end - span, end], y: [0, scaleTop(values, 2, limitGB + 2)],
       format: (v) => CFmt.bytes(Math.max(0, v) * GB), axis: (v) => `${v.toFixed(1)} GB`,
       flag: { value: limitGB, label: `Flag above ${CFmt.bytes(limitGB * GB)}` } }
-    : { series, x: [end - span, end], y: [0, scaleTop(values, 25, 25)],
+    : { series, x: [end - span, end], y: [0, scaleTop(values, 25, gpu ? 100 : 25)],
       format: (v) => `${CFmt.percent(v)}%`, axis: (v) => `${Math.round(v)}%` };
 }
 

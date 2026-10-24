@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: the Compute GPU tab draws a line per harness.** Like RAM
+  and CPU, it plots each harness that went above the flag with its logo
+  at the line's end, instead of one line per GPU device. The hub reads
+  each process's GPU use from `nvidia-smi pmon` and adds it up per
+  harness; the machine line still shows each device's total.
+
 - **Remote: `swe remote serve --install` on Linux.** It writes a
   systemd user unit (`~/.config/systemd/user/quiver-remote-hub.service`)
   that starts the hub at boot and restarts it 15 s after it exits, the
