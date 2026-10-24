@@ -445,7 +445,7 @@ class TestSync(_SyncHome, unittest.TestCase):
             ("preview", {"server": "", "source": "claude", "targets": ["codex"]}, 422, "bad_server"),
             ("preview", {"server": "linear", "source": 3, "targets": ["codex"]}, 422, "bad_source"),
             ("sync", {"server": "linear", "source": "claude", "targets": ["codex"]}, 422, "no_fingerprint"),
-            ("remove", {"server": "linear"}, 404, "unknown_action"),
+            ("add", {"server": "linear"}, 404, "unknown_action"),
         ]
         before = self.snapshot()
         for action, body, status, code in cases:
@@ -543,6 +543,49 @@ class TestSync(_SyncHome, unittest.TestCase):
                          (["codex"], ["claude", "cursor"]))
 
 
+class TestRemove(_SyncHome, unittest.TestCase):
+    """Remove: swe mcp remove for the places the sheet's confirm listed."""
+
+    def remove(self, **body):
+        return mcp.post(_ctx(), "remove", body)
+
+    def refused(self, **body):
+        before = self.snapshot()
+        with self.assertRaises(PageError) as caught:
+            self.remove(**body)
+        self.assertEqual(self.snapshot(), before, "a refusal must write nothing")
+        return caught.exception
+
+    def test_removes_from_every_place_named_and_keeps_the_rest(self):
+        reply = self.remove(server="linear", **{"from": ["claude", "cursor"]})
+        self.assertEqual((reply["removed"], reply["absent"]), (["claude", "cursor"], []))
+        claude = json.loads(self.claude.read_text())
+        self.assertNotIn("linear", claude["mcpServers"])
+        self.assertEqual(claude["numStartups"], 7)
+        self.assertEqual(list(json.loads(self.cursor.read_text())["mcpServers"]), ["keep"])
+        self.assertNotIn("linear", [s["name"] for s in reply["page"]["servers"]])
+
+    def test_the_hub_is_quiver(self):
+        reply = self.remove(server="notion", **{"from": ["quiver"]})
+        self.assertEqual(reply["removed"], ["quiver"])
+        self.assertEqual(json.loads(self.hub.read_text())["mcpServers"], {})
+
+    def test_a_place_left_off_the_confirm_keeps_it(self):
+        self.remove(server="linear", **{"from": ["cursor"]})
+        self.assertIn("linear", json.loads(self.claude.read_text())["mcpServers"])
+
+    def test_refusals(self):
+        cases = [({"server": "nope", "from": ["claude"]}, (404, "unknown_server")),
+                 ({"server": "linear", "from": ["codex"]}, (409, "state_changed")),
+                 ({"server": "linear", "from": ["quiver"]}, (409, "state_changed")),
+                 ({"server": "linear", "from": []}, (422, "bad_from")),
+                 ({"server": "linear", "from": "claude"}, (422, "bad_from")),
+                 ({"server": "", "from": ["claude"]}, (422, "bad_server"))]
+        for body, want in cases:
+            error = self.refused(**body)
+            self.assertEqual((error.status, error.code), want, body)
+
+
 class TestSyncRoute(_SyncHome, HubBase):
     def origin(self):
         return f"http://127.0.0.1:{self.srv.port}"
@@ -569,6 +612,18 @@ class TestSyncRoute(_SyncHome, HubBase):
                                         body={**LINEAR, "fingerprint": fingerprint}, headers=auth)
         self.assertEqual(status, 409, data)  # the plan it described has happened
         self.assertIn("target_changed", data.decode())
+
+    def test_remove_over_the_route(self):
+        before = self.snapshot()
+        status, _ = self.srv.request("POST", "/v1/app/mcp/remove", body={"server": "linear", "from": ["claude"]},
+                                     headers={**self.auth(), "Origin": "https://evil.example"})
+        self.assertEqual(status, 403)
+        self.assertEqual(self.snapshot(), before)
+        status, data = self.srv.request("POST", "/v1/app/mcp/remove", body={"server": "linear", "from": ["claude"]},
+                                        headers={**self.auth(), "Origin": self.origin()})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(json.loads(data)["removed"], ["claude"])
+        self.assertNotIn(LINEAR_TOKEN.encode(), data)
 
     def test_a_cross_site_post_is_refused(self):
         before = self.snapshot()

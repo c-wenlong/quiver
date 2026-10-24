@@ -1668,6 +1668,69 @@ def cmd_add(args):
     return 0
 
 
+class RemoveRefused(ValueError):
+    """A --from place swe can't remove from; ``alarming`` prints in red."""
+
+    def __init__(self, message: str, alarming: bool = False):
+        super().__init__(message)
+        self.alarming = alarming
+
+
+def remove_places(registry: dict, name: str, from_names: list[str]) -> list[str]:
+    """Where ``swe mcp remove <name> --from=…`` removes from: "quiver" for
+    the hub, else harness names, in order and once each. ``all`` is the hub
+    plus every harness whose config names the server. Raises RemoveRefused
+    for a place it can't touch."""
+    places: list[str] = []
+    if any(p.lower() == "all" for p in from_names):
+        # The hub plus every harness whose config names the server.
+        places.append("quiver")
+        for tool in get_mcp_tools(registry):
+            if name in get_tool_servers(tool):
+                places.append(tool)
+        return places
+    for place in from_names:
+        if is_hub(place):
+            resolved = "quiver"
+        else:
+            resolved = resolve_tool_arg(registry, place)
+            if _unsafe_registry_name(resolved):
+                raise RemoveRefused(f"Unsafe harness name in registry: {place}", alarming=True)
+            if not resolved:
+                raise RemoveRefused(f"Unknown place: {place}")
+            if resolved != "quiver" and get_tool_saver(resolved) is None:
+                raise RemoveRefused(f"No MCP backend registered for {resolved}", alarming=True)
+        if resolved not in places:
+            places.append(resolved)
+    return places
+
+
+def remove_server(name: str, places: list[str]) -> tuple[list[str], list[str]]:
+    """Delete ``name`` from each place's config; the body of ``swe mcp
+    remove``. Returns (removed, absent): where it was taken out, and where
+    it wasn't to begin with."""
+    removed: list[str] = []
+    absent: list[str] = []
+    for place in places:
+        if place == "quiver":
+            hub = get_hub_servers()
+            if name in hub:
+                del hub[name]
+                save_hub_servers(hub)
+                removed.append("quiver")
+            else:
+                absent.append("quiver")
+            continue
+        servers = get_tool_servers(place)
+        if name not in servers:
+            absent.append(place)
+            continue
+        del servers[name]
+        get_tool_saver(place)(servers, get_tool_config(place)["path"])
+        removed.append(place)
+    return removed, absent
+
+
 def cmd_remove(args):
     args, json_view = take_json_flag(list(args))
     if args and args[0] in ("-h", "--help", "help"):
@@ -1703,53 +1766,12 @@ def cmd_remove(args):
         return 1
     name = positional[0]
 
-    registry = load_registry()
-    places: list[str] = []
-    if any(p.lower() == "all" for p in from_names):
-        # The hub plus every harness whose config names the server.
-        places.append("quiver")
-        for tool in get_mcp_tools(registry):
-            if name in get_tool_servers(tool):
-                places.append(tool)
-    else:
-        for place in from_names:
-            if is_hub(place):
-                resolved = "quiver"
-            else:
-                resolved = resolve_tool_arg(registry, place)
-                if _unsafe_registry_name(resolved):
-                    print(c("red", f"Unsafe harness name in registry: {place}"),
-                          file=refusal)
-                    return 1
-                if not resolved:
-                    print(f"Unknown place: {place}", file=refusal)
-                    return 1
-                if resolved != "quiver" and get_tool_saver(resolved) is None:
-                    print(c("red", f"No MCP backend registered for {resolved}"),
-                          file=refusal)
-                    return 1
-            if resolved not in places:
-                places.append(resolved)
-
-    removed: list[str] = []
-    absent: list[str] = []
-    for place in places:
-        if place == "quiver":
-            hub = get_hub_servers()
-            if name in hub:
-                del hub[name]
-                save_hub_servers(hub)
-                removed.append("quiver")
-            else:
-                absent.append("quiver")
-            continue
-        servers = get_tool_servers(place)
-        if name not in servers:
-            absent.append(place)
-            continue
-        del servers[name]
-        get_tool_saver(place)(servers, get_tool_config(place)["path"])
-        removed.append(place)
+    try:
+        places = remove_places(load_registry(), name, from_names)
+    except RemoveRefused as exc:
+        print(c("red", str(exc)) if exc.alarming else str(exc), file=refusal)
+        return 1
+    removed, absent = remove_server(name, places)
 
     if json_view:
         code = emit({"name": name, "removed": removed, "absent": absent})

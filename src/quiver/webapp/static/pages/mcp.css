@@ -192,3 +192,8 @@
   .mcp-sheet .mcp-target { flex-wrap: wrap; }
   .mcp-sheet .mcp-sync-actions .warn { flex-basis: 100%; }
 }
+/* Remove: the footer's button and its confirm. */
+.mcp-sheet .mcp-sheet-button.mcp-remove { color: var(--danger-text); }
+.mcp-sheet .mcp-remove-confirm p { margin: 0; font-size: 13px; }
+.mcp-notice p { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.mcp-notice svg { width: 14px; height: 14px; color: var(--accent); flex: none; }
