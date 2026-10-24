@@ -196,6 +196,9 @@
     inbox.confirmAll = false;
     inbox.actionError = null;
     render(id);
-    GhUI.poll("inbox", () => { if (!inbox.loading && !inbox.busy.size && !inbox.confirmAll) render("inbox"); });
+    GhUI.poll("inbox", () => {
+      if (inbox.loading || inbox.busy.size || inbox.confirmAll) return false;
+      render("inbox");
+    });
   });
 })();
