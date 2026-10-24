@@ -117,6 +117,7 @@ private struct ChatTranscript: View {
                 Spacer()
             } else if model.loadError == nil {
                 log
+                Composer(model: model)
             } else {
                 Spacer()
             }
@@ -180,15 +181,24 @@ private struct ChatEntry: View {
 
     var body: some View {
         switch item.kind {
-        case .user(let text):
+        case .user(let text, let send):
             HStack {
                 Spacer(minLength: 120)
-                MarkdownBlocks(blocks: GitHubMarkdown.blocks(text))
-                    .font(Theme.bodySmall)
-                    .foregroundStyle(Theme.textPrimary)
-                    .padding(.horizontal, 14).padding(.vertical, 10)
-                    .background(Theme.subtle, in: .rect(cornerRadius: Theme.blockRadius))
-                    .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
+                VStack(alignment: .trailing, spacing: 4) {
+                    MarkdownBlocks(blocks: GitHubMarkdown.blocks(text))
+                        .font(Theme.bodySmall)
+                        .foregroundStyle(Theme.textPrimary)
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(Theme.subtle, in: .rect(cornerRadius: Theme.blockRadius))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius)
+                            .strokeBorder(send.map(Self.failed) == true ? Theme.danger : Theme.border, lineWidth: 1))
+                        .opacity(send?.inFlight == true ? 0.7 : 1)
+                    if let send, !send.note.isEmpty {
+                        Text(send.note)
+                            .font(Theme.caption)
+                            .foregroundStyle(Self.failed(send) ? Theme.dangerText : Theme.textSecondary)
+                    }
+                }
             }
         case .assistant(let text):
             MarkdownBlocks(blocks: GitHubMarkdown.blocks(text))
@@ -220,6 +230,65 @@ private struct ChatEntry: View {
                     .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
             }
         }
+    }
+}
+
+extension ChatEntry {
+    static func failed(_ send: HubSendState) -> Bool {
+        if case .failed = send { return true }
+        return false
+    }
+}
+
+/// The prompt box under the transcript: Queue or Steer, the message,
+/// Stop and Send. Disabled with the reason as its placeholder while the
+/// session is observed, as in the web app.
+private struct Composer: View {
+    var model: SessionChatModel
+    @State private var draft = ""
+    /// Queue waits for the agent's turn to end; Steer writes now.
+    @AppStorage("sessionChatSendMode") private var mode = "queue"
+
+    var body: some View {
+        let observed = !model.canSend
+        HStack(alignment: .bottom, spacing: 8) {
+            if !observed {
+                SelectMenu(options: [(value: "queue", title: "Queue"), (value: "steer", title: "Steer")],
+                           selection: $mode, width: 96)
+                    .hoverTip("Queue waits for the agent to finish its turn; Steer writes now.", title: "Send mode")
+            }
+            TextField(observed ? "Read-only until this session is attached" : "Message the session",
+                      text: $draft, axis: .vertical)
+                .lineLimit(1...8)
+                .quiverField(multiline: true)
+                .disabled(observed)
+                // Return sends; Shift-Return starts a new line.
+                .onKeyPress(.return, phases: .down) { press in
+                    if press.modifiers.contains(.shift) {
+                        draft += "\n"
+                    } else {
+                        submit()
+                    }
+                    return .handled
+                }
+            Button { Task { await model.interrupt() } } label: {
+                Image(systemName: "stop.fill")
+            }
+            .iconButton()
+            .disabled(observed || model.stopping)
+            .hoverTip("Stop the agent's turn")
+            .accessibilityLabel("Stop")
+            Button("Send", action: submit)
+                .primaryButton()
+                .disabled(observed || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+
+    private func submit() {
+        let text = draft
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, model.canSend else { return }
+        draft = ""
+        Task { await model.send(text, mode: mode) }
     }
 }
 

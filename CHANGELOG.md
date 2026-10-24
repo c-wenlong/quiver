@@ -59,8 +59,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opens for cloud sessions, ones the hub doesn't list, and any while the
   hub is down. The first chat pairs the app with the hub on its own: it
   lists as "Quiver for Mac" in Settings › Remote and keeps its
-  credential in `~/.quiver/secrets/remote/app-device.json`. Sending and
-  attaching follow in their own changes.
+  credential in `~/.quiver/secrets/remote/app-device.json`. An attached
+  session takes messages from the box under the transcript: Queue waits
+  for the agent's turn to end, Steer writes now, Return sends and
+  Shift-Return starts a new line, and Stop ends the turn. Each message
+  shows at once and says where it stands (Sending…, Queued until the
+  agent is idle, or why it failed) until the transcript echoes it.
+  Attaching follows in its own change.
 
 - **Mac app: a setup checklist for remote control.** Settings ›
   Integrations › Remote now offers "Set up remote control" until the
