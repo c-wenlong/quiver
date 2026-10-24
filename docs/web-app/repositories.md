@@ -34,8 +34,12 @@ a failed one), per hub home and per key: the env probe, each pin's
 board, each focus surface and window, each PR, the inbox. Only one fetch
 per key runs at a time; a second caller waits for its reply. The pages
 poll every minute while open, like the app, so a poll costs at most one
-round of `gh` calls whoever is looking. Refresh sends `refresh=1`, which
-skips the cache unless the reply is under 5 seconds old.
+round of `gh` calls whoever is looking. A tab in the background skips
+its ticks; when it comes back a minute or more after the last read, it
+reads at once rather than waiting for the next tick, as the app reloads
+a page it shows again. The poll also waits while a sheet is open.
+Refresh sends `refresh=1`, which skips the cache unless the reply is
+under 5 seconds old.
 
 A write drops what it changed: a merge forgets the repo's board, focus
 surfaces and PR details; a mark-read forgets the inbox. A read that was
