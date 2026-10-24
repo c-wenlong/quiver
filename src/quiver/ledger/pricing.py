@@ -182,6 +182,13 @@ def forms(key: str, strip_dates: bool, strip_effort: bool = False) -> list[str]:
     return out
 
 
+def base_name(model: str) -> str:
+    """``PricingCatalog.baseName``: the name a price is saved under by
+    default, with its provider, date and effort stripped."""
+    found = forms(model, True, True)
+    return found[-1] if found else model
+
+
 def alias_target(model: str, aliases: dict[str, str]) -> str | None:
     """The real name the supplement's ``aliases`` table gives ``model``
     (``MODEL_PRIVATE_11`` is ``claude-haiku-4-5``), chains followed and
@@ -275,6 +282,25 @@ class PricingCatalog:
             return "free", None, None
         return "unpriced", None, None
 
+    def user_keys(self, model: str) -> list[str]:
+        """``PricingCatalog.userKeys(matching:)``: every saved key that
+        prices ``model``. Several can (``gpt-4.1`` and ``gpt-4-1`` both
+        cover ``gpt-4.1``), so removing a price takes them all."""
+        lowered = model.strip().lower()
+        lookup = {lowered, *forms(lowered, True, True)}
+        if lowered.endswith("-fast"):
+            lookup |= {lowered[:-5], *forms(lowered[:-5], True, True)}
+        # A saved key keeps its effort suffix, as in ``override_index``.
+        found = {k for k in self.overrides
+                 if k.lower() in lookup or any(f in lookup for f in forms(k, True))}
+        # The key the name resolves to, aliases followed (``MODEL_PRIVATE_11``
+        # priced by a saved ``claude-haiku-4-5``): the price the row shows.
+        for name in ([model, model.strip()[:-5]] if lowered.endswith("-fast") else [model]):
+            key = self._key(name)
+            if key in self.overrides:
+                found.add(key)
+        return sorted(found)
+
     def source(self, key: str) -> str:
         """Where an entry's price came from: ``"yours"`` (the user's
         ``config/pricing.json``), ``"quiver"`` (the bundled supplement)
@@ -334,7 +360,7 @@ def _overrides(home: Path | None) -> dict[str, ModelRates]:
     cache_read, cache_write}}}`` in USD per million tokens, read as the
     app's ``PricingOverrides`` reads it: input and output required, a
     missing cache price is $0, and each becomes a LiteLLM-shaped entry."""
-    raw = _read_json(quiver_dir_for(home) / "config" / "pricing.json").get("models") or {}
+    raw = _read_json(_overrides_path(home)).get("models") or {}
     if not isinstance(raw, dict):
         return {}  # an unsupported shape, ignored as the app ignores it
     out = {}
@@ -358,6 +384,57 @@ def _overrides(home: Path | None) -> dict[str, ModelRates]:
         if rates is not None:
             out[name] = rates
     return out
+
+
+def _overrides_path(home: Path | None) -> Path:
+    return quiver_dir_for(home) / "config" / "pricing.json"
+
+
+def _write_overrides(home: Path | None, edit) -> None:
+    """Read ``config/pricing.json``'s ``models``, let ``edit`` change them,
+    and write the file back atomically in the app's shape (``{"schema": 1,
+    "models": ...}``, sorted keys). Entries the reader skips are kept as
+    they are. Raises ValueError when the file is there but isn't JSON, so
+    a hand-edited file is never overwritten."""
+    path = _overrides_path(home)
+    with _LOCK:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            text = ""
+        doc = {}
+        if text.strip():
+            try:
+                doc = json.loads(text)
+            except ValueError as exc:
+                raise ValueError(f"{path} isn't valid JSON; fix or remove it first") from exc
+            if not isinstance(doc, dict):
+                raise ValueError(f"{path} isn't a JSON object; fix or remove it first")
+        models = doc.get("models")
+        models = dict(models) if isinstance(models, dict) else {}
+        edit(models)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(path, json.dumps({**doc, "schema": 1, "models": models},
+                                           indent=2, sort_keys=True) + "\n")
+
+
+def save_override(home: Path | None, key: str, prices: dict, replacing: str | None = None) -> None:
+    """``PricingOverrides.set``: ``key``'s price in USD per million tokens
+    (``input``, ``output``, ``cache_read``, ``cache_write``). ``replacing``
+    is the entry being renamed; it leaves in the same write."""
+    def edit(models: dict) -> None:
+        if replacing and replacing != key:
+            models.pop(replacing, None)
+        models[key] = {k: float(prices.get(k) or 0) for k in ("input", "output", "cache_read", "cache_write")}
+    _write_overrides(home, edit)
+
+
+def remove_overrides(home: Path | None, keys: list[str]) -> None:
+    """``PricingOverrides.remove``: drop every key in one write."""
+    def edit(models: dict) -> None:
+        for key in keys:
+            models.pop(key, None)
+    _write_overrides(home, edit)
 
 
 def load_catalog(home: Path | None = None, download: bool = True) -> PricingCatalog:

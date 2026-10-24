@@ -2,17 +2,20 @@
 in the period, grouped by provider, with the price its name resolves to
 and where that price came from. Ports ``PricingModel.swift``.
 
-Read only. The Mac app's price form, which saves or resets a price in
-``~/.quiver/config/pricing.json``, is a write and is not ported; the web
-ledger reads that file, so a price saved there shows here as "yours".
+Writes: the Mac app's price form (``PricingEditSheet``), which saves a
+price in ``~/.quiver/config/pricing.json`` or removes the saved ones for a
+model (``post``). The web ledger reads that file, so a saved price shows
+here as "yours" and reprices past usage, as in the app.
 """
 
 from __future__ import annotations
 
 import time
 
+import math
+
 from quiver.ledger import overview
-from quiver.ledger.pricing import PricingCatalog
+from quiver.ledger.pricing import PricingCatalog, base_name
 from quiver.ledger.store import LedgerStore
 from quiver.webapp.pages._brands import brand_for, resolved_name
 
@@ -132,6 +135,9 @@ def rows(all_slices: list[dict], catalog: PricingCatalog, picked: list[str]) -> 
                                                    if rates and t not in rates.tiers else None)}
                         for t in sorted(row.pop("tier_names"))]
         row["rates"] = _per_million(rates)
+        # The form's "Price applies to": the saved entry when it is yours,
+        # else the base name, which covers every dated or tiered form.
+        row["key"] = row["entry"] if row["source"] == "yours" else base_name(model)
         row["spend_source"] = _spend_source(row)
         # Most tokens first, as the Swift doc promises.
         row["harnesses"] = [h for h, _ in sorted(by_harness[model].items(),
@@ -187,3 +193,75 @@ def get(ctx, args: dict) -> dict:
     body["notes"] = [] if scan_ok else [SCAN_NOTE]
     body["machine"] = ctx.machine.get("name")
     return body
+
+
+# ---------------------------------------------------------------- writes
+# ``save`` {"model", "key", "input", "output", "cache_read"?, "cache_write"?,
+# "replacing"?}: PricingModel.save, USD per million tokens; a blank cache
+# price is 0. ``replacing`` is the saved key the form opened on, dropped in
+# the same write when the key changed. ``remove`` {"model"}: every saved
+# key that prices the model (PricingModel.remove(matching:)). Each answers
+# the page read again with the query the page sends (period, tz, harness).
+
+NAME_MAX = 200
+RATE_MAX = 1_000_000.0
+
+
+def post(ctx, action: str, body: dict) -> dict:
+    from quiver.ledger.pricing import remove_overrides, save_override
+    from quiver.webapp.pages import PageError
+
+    if action not in ("save", "remove"):
+        raise PageError(404, "unknown_action", f"unknown pricing action: {action}")
+    if not isinstance(body, dict):
+        raise PageError(422, "bad_body", "expected a JSON object")
+    model = body.get("model")
+    if not isinstance(model, str) or not model.strip() or len(model) > NAME_MAX:
+        raise PageError(422, "bad_model", "model must be a model name the page lists")
+    # The home the shared price list is read from, so it reads this write.
+    home = ctx.state.webapp.home
+    try:
+        if action == "save":
+            key = body.get("key")
+            if not isinstance(key, str) or not key.strip() or len(key) > NAME_MAX or "\n" in key:
+                raise PageError(422, "bad_key", "Price applies to must be one model name.")
+            prices = {
+                "input": _rate(body.get("input"), "input", required=True),
+                "output": _rate(body.get("output"), "output", required=True),
+                "cache_read": _rate(body.get("cache_read"), "cache read"),
+                "cache_write": _rate(body.get("cache_write"), "cache write"),
+            }
+            replacing = body.get("replacing")
+            with ctx.state.webapp.ledger() as (_, catalog, _ok):
+                # Only a key that is yours now can be renamed away.
+                replacing = replacing if isinstance(replacing, str) and replacing in catalog.overrides else None
+            save_override(home, key.strip(), prices, replacing)
+        else:
+            with ctx.state.webapp.ledger() as (_, catalog, _ok):
+                keys = catalog.user_keys(model)
+            if not keys:
+                raise PageError(404, "no_saved_price", f"You have no saved price for {model}. Refresh to see the current one.")
+            remove_overrides(home, keys)
+    except ValueError as exc:
+        raise PageError(409, "pricing_unwritable", str(exc)) from exc
+    ctx.state.webapp.prices_changed()
+    args = {k: body.get(k) for k in ("period", "tz", "harness") if isinstance(body.get(k), str)}
+    return {"action": action, "page": get(ctx, args)}
+
+
+def _rate(value, label: str, required: bool = False) -> float:
+    from quiver.webapp.pages import PageError
+
+    if value is None or value == "":
+        if required:
+            raise PageError(422, "bad_rate", f"Give an {label} price." if label[0] in "aeiou" else f"Give a {label} price.")
+        return 0.0
+    if isinstance(value, str):
+        try:
+            value = float(value.strip())
+        except ValueError:
+            value = None
+    if (not isinstance(value, (int, float)) or isinstance(value, bool)
+            or not math.isfinite(value) or value < 0 or value > RATE_MAX):
+        raise PageError(422, "bad_rate", f"The {label} price must be a number of dollars per 1M tokens, 0 or more.")
+    return float(value)

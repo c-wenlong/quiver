@@ -81,6 +81,12 @@ class WebApp:
                 "notes": self._notes(),
             }
 
+    def prices_changed(self) -> None:
+        """``config/pricing.json`` was written: the next read builds the
+        price list again, so every page prices with the new rates."""
+        with self._lock:
+            self._catalog = None
+
     @contextmanager
     def ledger(self, rescan: bool = False):
         """``(store, catalog, scan_ok)`` for a page plugin, fresh as the
