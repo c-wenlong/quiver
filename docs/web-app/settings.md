@@ -42,7 +42,9 @@ badge where its control would be.
   Quiver does itself are not run from here, since moving the hub can cut
   off the page it serves: the card's last row points to the Mac app's
   Set up remote control or `swe remote setup --apply` on the hub, with
-  Check again. The card is gone once every step is done.
+  Check again. The card is gone once every step is done. Each visit to
+  Settings checks again, as do a revoke and closing the pair sheet, so a
+  step that came undone (the last phone revoked) brings the card back.
 - **Hub**: "Hub running", the machine name, the public URL (or the
   listen address), uptime, and an Online badge. The page is served by
   the hub, so the app's "No hub reachable" state can't occur here.
