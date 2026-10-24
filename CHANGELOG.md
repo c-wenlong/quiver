@@ -31,6 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bad_command`, and only a missing, null or empty `mode` defaults to
   `queue`.
 
+- **Remote: a send from the phone shows up within a second.** The hub
+  used to poll an idle session's transcript only every 8 seconds, so the
+  message, the agent starting and its first reply could lag that long
+  after the send had already reached the session. Now every message,
+  approval answer, interrupt or attach wakes that session's tailer at
+  once and polls it every quarter second for the next 15 seconds, on the
+  hub and on satellites alike. Devin and other stores that are re-read
+  whole stay at once a second.
+
 - **Remote web app: chats stream in instead of landing in blocks.** The
   browser client gets the iPhone app's treatment: messages that arrive
   together show one at a time with a short gap (a replay after
