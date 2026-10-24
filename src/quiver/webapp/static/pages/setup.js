@@ -5,8 +5,9 @@
  * AGENTS.md, skills folder and MCP list for all of them, and the look
  * (kept per browser, under the key Settings › General uses). The
  * notifications step is the Mac's own and is left out.
- * Data: GET /v1/app/setup (swe setup --json in process); the one write
- * is POST /v1/app/setup/apply (swe setup --apply --json). */
+ * Data: GET /v1/app/setup (swe setup --json in process); the writes are
+ * POST /v1/app/setup/apply (swe setup --apply --json) and, from a missing
+ * agent's Install sheet, POST /v1/app/setup/install (swe install --via). */
 "use strict";
 
 const STEPS = ["agents", "links", "look"];
@@ -25,6 +26,8 @@ const page = {
   wizard: false, step: 0, selected: new Set(), start: "seed",
   applying: false, outcome: null, applyError: null, appliedSelection: null, adopted: false,
   showingMore: false, installing: null, copied: null, finished: false,
+  // The install in flight ("<id>:<via>") and each agent's last failure.
+  installRun: null, installErrors: {},
 };
 
 /* HarnessMark.accountName: a Claude account is "Claude". */
@@ -96,7 +99,7 @@ function startWizard() {
     wizard: true, step: 0, selected: new Set(d.agents.starred || []),
     start: defaultStart(d.preview.instructions), applying: false, outcome: null,
     applyError: null, appliedSelection: null, adopted: false, showingMore: false,
-    installing: null, finished: false,
+    installing: null, finished: false, installRun: null, installErrors: {},
   });
 }
 
@@ -380,21 +383,60 @@ function missingBanner(p) {
   const methods = p.install || [];
   let panel = "";
   if (open) {
+    const error = page.installErrors[p.id];
     panel = methods.length
-      ? `<p class="caption">Install commands for each package manager. Run one in a terminal on ${esc(machineName())}.</p>
+      ? `<p class="caption">Install it on ${esc(machineName())} with one of these, or copy a command to run in a terminal there.</p>
         <div class="setup-methods">${methods.map((m, i) => `<div class="setup-method${m.available ? "" : " off"}">
           <span class="setup-via">${esc(m.via)}</span>
           <code title="${esc(m.command)}">${esc(m.command)}</code>
+          ${installButton(p, m)}
           <button class="setup-button small" data-copy="${i}" data-agent="${esc(p.id)}">${
-            page.copied === `${p.id}:${i}` ? "Copied" : "Copy"}</button></div>`).join("")}</div>`
+            page.copied === `${p.id}:${i}` ? "Copied" : "Copy"}</button></div>`).join("")}</div>
+        ${error ? `<p class="error setup-pre setup-install-error" role="alert">${esc(error)}</p>` : ""}
+        <p class="caption">A cask or install script that asks for a password can't finish here. Copy it into a terminal instead.</p>`
       : `<p class="caption">swe doesn't know an installer for ${esc(agentName(p.id))}. Get it from its own website.</p>`;
   }
   return `<div class="setup-missing">
     <div class="setup-missing-row">
       <p class="setup-text"><span class="strong">${esc(agentName(p.id))}</span> isn't installed yet. Quiver will list it anyway, and you can install it any time.</p>
       <button class="setup-button" data-install="${esc(p.id)}" aria-expanded="${open}"
-        title="Show the install commands for ${esc(agentName(p.id))}">Install…</button>
+        title="Install ${esc(agentName(p.id))} on ${esc(machineName())}">Install…</button>
     </div>${panel}</div>`;
+}
+
+/* Runs swe install <id> --via=<via> on the hub; off when its tool isn't
+ * on PATH there, and every one waits while an install runs. */
+function installButton(p, m) {
+  const key = `${p.id}:${m.via}`;
+  if (page.installRun === key) {
+    return `<span class="setup-installing" role="status"><span class="setup-spinner" aria-hidden="true"></span>Installing…</span>`;
+  }
+  if (!m.available) return `<span class="caption setup-off-path">${esc(m.via === "cask" ? "brew" : m.via === "script" ? "curl" : m.via)} not on PATH</span>`;
+  return `<button class="setup-button small primary" data-run-install="${esc(m.via)}" data-agent="${esc(p.id)}"${
+    page.installRun ? " disabled" : ""} title="Run ${esc(m.command)} on ${esc(machineName())}">Install</button>`;
+}
+
+async function runInstall(id, via) {
+  if (page.installRun) return;
+  const gen = routeGen;
+  page.installRun = `${id}:${via}`;
+  delete page.installErrors[id];
+  paint();
+  const { status, data } = await apiPost("/v1/app/setup/install", { id, via });
+  page.installRun = null;
+  if (gen !== routeGen) return;
+  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 200 && data && data.setup) {
+    page.data = data.setup;
+    if (data.error) page.installErrors[id] = data.error;
+  } else {
+    page.installErrors[id] = (data && data.error && data.error.message)
+      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+  }
+  paint();
+  const again = document.querySelector(`[data-run-install="${CSS.escape(via)}"][data-agent="${CSS.escape(id)}"]`)
+    || document.querySelector(".setup-tile");
+  if (again) again.focus();
 }
 
 /* -------------------------------------- step 2: AGENTS.md, skills, MCP */
@@ -552,6 +594,9 @@ function bindWizard() {
       const again = document.querySelector(`[data-install="${CSS.escape(id)}"]`);
       if (again) again.focus();
     };
+  }
+  for (const btn of document.querySelectorAll("[data-run-install]")) {
+    btn.onclick = () => runInstall(btn.dataset.agent, btn.dataset.runInstall);
   }
   for (const btn of document.querySelectorAll("[data-copy]")) {
     btn.onclick = async () => {

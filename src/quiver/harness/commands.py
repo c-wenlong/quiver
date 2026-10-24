@@ -1878,8 +1878,6 @@ def cmd_install(args):
     """Show or run a harness's install command per package manager."""
     from quiver.harness.catalog import HARNESS_CATALOG
     from quiver.harness.installers import INSTALLERS, METHODS, METHOD_TOOL, Installer, installers_for
-    from quiver.harness.path_health import preferred_npm_bin
-    from quiver.harness.tools import live_version
 
     args, json_view = take_json_flag(list(args or []))
     err = error_stream(json_view)
@@ -2014,18 +2012,11 @@ def cmd_install(args):
         print(c("dim", f"  Run one: swe install {reg_name} --via=<method>"))
         return 0
 
-    npm = preferred_npm_bin() if installer.via == "npm" else None
-    if installer.via == "npm" and not npm:
-        print(c("red", "  No npm found on PATH. Install Node or fix PATH first (see swe doctor)."),
-              file=err)
+    try:
+        npm, argv = install_argv(installer)
+    except InstallError as exc:
+        print(c("red", f"  {exc}"), file=err)
         return 1
-    tool = METHOD_TOOL[installer.via]
-    if installer.via != "npm" and not shutil.which(tool):
-        print(c("red", f"  '{tool}' is needed for --via={installer.via} but is not on PATH."),
-              file=err)
-        return 1
-
-    argv = installer.argv(npm or "npm")
     shown = " ".join(argv) if installer.via == "npm" else installer.display()
 
     print(f"\n{c('bold', 'swe install')}\n")
@@ -2039,41 +2030,102 @@ def cmd_install(args):
         print(c("dim", f"  dry-run: would run  {shown}"))
         return 0
 
+    print(c("dim", f"  → {shown}\n"))
+    result = run_install(reg_name, cmd_name, installer, argv, npm)
+    if result.action is None:
+        print(c("red", f"  {result.error}"))
+        if result.exited and installer.via == "npm":
+            print(c("dim", "  Tip: if the package name differs, try --package=<npm-name>"))
+        return result.code
+
+    if not result.path:
+        print(c("yellow", f"  install finished, but '{cmd_name}' is still not on PATH."))
+        print(c("dim", "  Run: swe doctor"))
+    else:
+        print(f"  {c('green', '✓')} on PATH: {result.path}")
+    status = c("green", "installed") if result.path else c("yellow", "registered (not on PATH yet)")
+    print(f"  {c('green', '✓')} {result.action} '{reg_name}' → '{cmd_name}' ({status})"
+          + (f"  v{result.version}" if result.version else ""))
+    print(c("dim", f"  Try: swe info {reg_name}  ·  swe use {reg_name}\n"))
+    return result.code
+
+
+class InstallError(Exception):
+    """An install that can't start: an unknown method, or its tool off PATH."""
+
+
+class InstallResult(SimpleNamespace):
+    """What ``run_install`` did. ``action`` is "Added" or "Updated" once the
+    install ran and the registry was written, None when it failed (``error``
+    says why). ``code`` is ``swe install``'s exit status: 0 only when the
+    command is on PATH afterwards. ``output`` is the tail of what the
+    installer printed, when it was captured. ``exited`` is False when the
+    installer never finished (a timeout, or it couldn't start)."""
+
+
+def install_argv(installer) -> tuple[str | None, list[str]]:
+    """The resolved npm (npm only) and the argv ``installer`` runs.
+    Raises InstallError when the tool it needs is not on PATH."""
+    from quiver.harness.installers import METHOD_TOOL
+    from quiver.harness.path_health import preferred_npm_bin
+
+    npm = preferred_npm_bin() if installer.via == "npm" else None
+    if installer.via == "npm" and not npm:
+        raise InstallError("No npm found on PATH. Install Node or fix PATH first (see swe doctor).")
+    tool = METHOD_TOOL[installer.via]
+    if installer.via != "npm" and not shutil.which(tool):
+        raise InstallError(f"'{tool}' is needed for --via={installer.via} but is not on PATH.")
+    return npm, installer.argv(npm or "npm")
+
+
+# How much of a captured installer's output a caller gets back.
+INSTALL_OUTPUT_TAIL = 4000
+
+
+def run_install(reg_name: str, cmd_name: str, installer, argv: list[str],
+                npm: str | None, *, capture: bool = False) -> InstallResult:
+    """Run ``argv`` (from ``install_argv``) and register the harness: the
+    body of ``swe install --via``. ``capture`` collects the installer's
+    output with nothing on stdin, for a caller with no terminal (a cask or
+    script that asks for a password then fails instead of waiting)."""
+    from quiver.harness.catalog import HARNESS_CATALOG
+    from quiver.harness.tools import live_version
+
     # Installing writes the registry afterwards, so this is where the
     # creating load belongs: listing and --json never reach it.
     tools = load_registry()
     catalog = HARNESS_CATALOG.get(reg_name, {})
     entry = tools.get(reg_name) or {}
 
-    print(c("dim", f"  → {shown}\n"))
+    timeout = 300 if installer.via == "npm" else 600
+    output = ""
     try:
-        result = subprocess.run(
-            argv,
-            capture_output=False,
-            text=True,
-            timeout=300 if installer.via == "npm" else 600,
-        )
+        if capture:
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
+                                    stdin=subprocess.DEVNULL)
+            output = ((result.stdout or "") + (result.stderr or ""))[-INSTALL_OUTPUT_TAIL:]
+        else:
+            result = subprocess.run(
+                argv,
+                capture_output=False,
+                text=True,
+                timeout=timeout,
+            )
     except subprocess.TimeoutExpired:
-        print(c("red", f"  {installer.via} install timed out."))
-        return 1
+        return InstallResult(code=1, action=None, path=None, version=None, output=output,
+                             exited=False, error=f"{installer.via} install timed out.")
     except Exception as exc:
-        print(c("red", f"  {installer.via} install failed: {exc}"))
-        return 1
+        return InstallResult(code=1, action=None, path=None, version=None, output=output,
+                             exited=False, error=f"{installer.via} install failed: {exc}")
 
     if result.returncode != 0:
-        print(c("red", f"  {installer.via} install exited with code {result.returncode}"))
-        if installer.via == "npm":
-            print(c("dim", "  Tip: if the package name differs, try --package=<npm-name>"))
-        return result.returncode
+        return InstallResult(code=result.returncode, action=None, path=None, version=None,
+                             output=output, exited=True,
+                             error=f"{installer.via} install exited with code {result.returncode}")
 
-    # Re-hash PATH resolution
+    # Re-hash PATH resolution. A command still off PATH is registered all
+    # the same, so it can be fixed later.
     installed_path = shutil.which(cmd_name)
-    if not installed_path:
-        print(c("yellow", f"  install finished, but '{cmd_name}' is still not on PATH."))
-        print(c("dim", "  Run: swe doctor"))
-        # Still register so user can fix path later
-    else:
-        print(f"  {c('green', '✓')} on PATH: {installed_path}")
 
     ver = live_version(cmd_name) if installed_path else None
     # Fallback: read package.json next to npm global module
@@ -2126,11 +2178,24 @@ def cmd_install(args):
 
     tools[reg_name] = entry
     save_registry(tools)
-    status = c("green", "installed") if installed_path else c("yellow", "registered (not on PATH yet)")
-    print(f"  {c('green', '✓')} {action} '{reg_name}' → '{cmd_name}' ({status})"
-          + (f"  v{ver}" if ver else ""))
-    print(c("dim", f"  Try: swe info {reg_name}  ·  swe use {reg_name}\n"))
-    return 0 if installed_path else 1
+    return InstallResult(code=0 if installed_path else 1, action=action, path=installed_path,
+                         version=ver, output=output, exited=True, error=None)
+
+
+def install_harness(name: str, via: str) -> InstallResult:
+    """``swe install <name> --via=<via>`` with no terminal: the harness's
+    own installer for that method, its output captured. Raises
+    InstallError when there is none or its tool is off PATH."""
+    from quiver.harness.installers import installers_for
+
+    tools = load_registry_readonly()
+    reg_name = resolve(tools, name) or name
+    installer = next((inst for inst in installers_for(reg_name) if inst.via == via), None)
+    if installer is None:
+        raise InstallError(f"'{reg_name}' has no {via} installer.")
+    cmd_name = _install_command_name(reg_name, tools)
+    npm, argv = install_argv(installer)
+    return run_install(reg_name, cmd_name, installer, argv, npm, capture=True)
 
 
 EDITABLE_FIELDS = (

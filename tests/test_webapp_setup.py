@@ -278,6 +278,57 @@ class TestRerun(_Home, unittest.TestCase):
         return setup_page.post(self.ctx(), "apply", body)
 
 
+class TestInstall(_Home, unittest.TestCase):
+    """Install on a missing agent's sheet: swe install --via, output captured."""
+
+    def setUp(self):
+        self.make_home(Path(tempfile.mkdtemp()))
+
+    def install(self, body, *, returncode=0, which=None):
+        """POST install with the installer and PATH stubbed; returns (reply, run)."""
+        from subprocess import CompletedProcess
+
+        def where(cmd):
+            return which.get(cmd) if which else ("/opt/homebrew/bin/brew" if cmd == "brew" else None)
+
+        done = CompletedProcess([], returncode, stdout="==> Pouring gemini-cli\n", stderr="")
+        with patch("quiver.harness.commands.shutil.which", side_effect=where), \
+                patch("quiver.harness.commands.subprocess.run", return_value=done) as run, \
+                patch("quiver.harness.tools.live_version", return_value="1.0.0"):
+            reply = setup_page.post(self.ctx(), "install", body)
+        return reply, run
+
+    def test_runs_the_agents_own_installer_and_registers_it(self):
+        reply, run = self.install({"id": "gemini", "via": "brew"},
+                                  which={"brew": "/opt/homebrew/bin/brew", "gemini": "/opt/homebrew/bin/gemini"})
+        self.assertIsNone(reply["error"])
+        self.assertEqual(run.call_args.args[0], ["brew", "install", "gemini-cli"])
+        # No terminal: nothing on stdin, the output captured.
+        self.assertTrue(run.call_args.kwargs["capture_output"])
+        self.assertIsNotNone(run.call_args.kwargs["stdin"])
+        self.assertEqual(self.registry()["gemini"]["command"], "gemini")
+        self.assertIn("agents", reply["setup"])
+
+    def test_a_failed_install_says_why_with_its_output(self):
+        reply, _ = self.install({"id": "gemini", "via": "brew"}, returncode=1)
+        self.assertIn("brew install exited with code 1", reply["error"])
+        self.assertIn("Pouring gemini-cli", reply["error"])
+        self.assertNotIn("gemini", self.registry())
+
+    def test_a_tool_off_path_is_the_error(self):
+        reply, run = self.install({"id": "gemini", "via": "nix"}, which={})
+        self.assertIn("'nix' is needed", reply["error"])
+        run.assert_not_called()
+
+    def test_only_a_listed_agent_and_its_own_methods(self):
+        cases = [("nosuch", "brew", 404), (["gemini"], "brew", 404),
+                 ("gemini", "cask", 422), ("gemini", "rm -rf /", 422), ("gemini", None, 422)]
+        for pid, via, status in cases:
+            with self.assertRaises(PageError) as refused:
+                self.install({"id": pid, "via": via})
+            self.assertEqual(refused.exception.status, status, (pid, via))
+
+
 class TestRoute(_Home, HubBase):
     def setUp(self):
         super().setUp()
@@ -307,6 +358,15 @@ class TestRoute(_Home, HubBase):
         self.assertEqual(self.agents_md().read_text(), "my own rules\n")
         _, data = self.srv.request("GET", "/v1/app/setup", headers=self.auth())
         self.assertFalse(json.loads(data)["first_run"])
+
+    def test_install_through_the_hub(self):
+        with patch("quiver.webapp.pages.doctor._run_install", return_value=None) as ran:
+            status, data = self.srv.request(
+                "POST", "/v1/app/setup/install", body={"id": "gemini", "via": "npm"},
+                headers={**self.auth(), "Origin": self.origin()})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(ran.call_args.kwargs, {"name": "gemini", "via": "npm"})
+        self.assertIsNone(json.loads(data)["error"])
 
     def test_a_cross_site_origin_is_refused(self):
         status, data = self.srv.request(
