@@ -114,6 +114,10 @@ const settingsIcon = (name) =>
 
 const settingsPage = {
   data: null, gen: 0, github: null, githubBusy: false,
+  // `swe remote setup`'s steps for this machine, and a load in flight.
+  // Stale once Settings is opened again: a step can come undone (the
+  // last phone revoked, the hub stopped), so each visit checks again.
+  setup: null, setupBusy: false, setupCopied: null, setupStale: false,
   query: "", status: "all",
   // Remote writes: the minted ticket and which code it shows, the device
   // whose revoke is being confirmed, rows waiting on the hub, errors.
@@ -140,6 +144,7 @@ async function renderSettings() {
   settingsStopClock();
   p.ticket = null;
   p.confirming = null;
+  p.setupStale = true;
   if (p.data) paintSettings();
   else {
     document.getElementById("panel").innerHTML = `<div class="page">${settingsHeader()}
@@ -468,7 +473,89 @@ function remoteCards() {
       [q.node_name, q.login, q.peer_ip, `expires in ${Math.max(0, Math.round(q.expires_in_s / 60))} min`].filter(Boolean).join(" · "))),
     setRow("Approve or deny", "Phones that asked to pair through Tailscale wait here. Decide on the hub's remote page, where you type the code the phone shows.",
       '<a class="set-button" href="/#approve">Open approvals</a>')], "Waiting for approval") : "";
-  return `<div class="set-stack">${hub}${devices}${requests}</div>${pairSheet()}`;
+  return `<div class="set-stack">${setupCard()}${hub}${devices}${requests}</div>${pairSheet()}`;
+}
+
+/* `swe remote setup`'s steps, while any is left: each with its state and
+ * what to do. Steps only a person can do link to the page; the ones Quiver
+ * does itself are run from the Mac app or the CLI, never from here, since
+ * moving the hub could cut off this very page. */
+const SETUP_BADGE = {
+  ok: '<span class="badge set-online">Done</span>',
+  todo: '<span class="badge">Quiver does this</span>',
+  needs_you: '<span class="badge set-needs">Needs you</span>',
+  failed: '<span class="badge set-failed">Failed</span>',
+  blocked: '<span class="badge set-waiting">Waiting</span>',
+};
+
+function setupCard() {
+  const p = settingsPage;
+  const s = p.setup;
+  if (!s) return p.setupBusy ? `<div class="set-card">${setRow("Checking setup…", "Tailscale, the certificate, the hub and tailscale serve")}</div>` : "";
+  if (s.error) {
+    return setCard([setRow("Couldn't check setup", s.error, '<button class="set-button" id="set-setup-recheck">Check again</button>', { warning: s.error, danger: true })], "Set up remote control");
+  }
+  if (s.ready) return "";
+  const rows = s.steps.map(setupRow);
+  // A failed step Quiver retries (a hub that stopped) is fixed the same
+  // way as one it hasn't done yet.
+  const quiverSteps = s.steps.some((x) => x.state === "todo"
+    || (x.state === "failed" && x.action && x.action.kind === "apply"));
+  const foot = quiverSteps
+    ? setRow("Steps Quiver does itself", "Open Settings › Remote › Set up remote control in the Quiver Mac app, or run swe remote setup --apply on the hub machine.",
+        '<button class="set-button" id="set-setup-recheck">Check again</button>')
+    : setRow("Done one of these?", "Steps you finish in a browser show here when you check again.",
+        '<button class="set-button" id="set-setup-recheck">Check again</button>');
+  return setCard([...rows, foot], "Set up remote control");
+}
+
+function setupRow(step) {
+  const a = step.action || {};
+  let control = SETUP_BADGE[step.state] || "";
+  const live = step.state === "needs_you" || step.state === "failed";
+  if (live && a.kind === "open" && a.url) {
+    control += ` <a class="set-button" href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.label || "Open")}</a>`;
+  } else if (live && a.kind === "command" && a.command) {
+    const copied = settingsPage.setupCopied === step.id;
+    control += ` <button class="set-button" data-setup-copy="${esc(step.id)}">${copied ? "Copied" : esc(a.label || "Copy command")}</button>`;
+  } else if (live && a.kind === "pair") {
+    control += ` <button class="set-button primary" data-setup-pair>${esc(a.label || "Pair a phone")}</button>`;
+  }
+  let detail = step.detail || "";
+  if (live && a.kind === "command" && a.command) detail = detail ? `${detail} (${a.command})` : a.command;
+  if (live && a.kind === "launch") detail = detail || `Open ${a.app || "the app"} on the hub machine.`;
+  return setRow(step.title, detail, control,
+    step.state === "failed" ? { warning: detail, danger: true } : { cls: step.state === "blocked" ? "set-step-waiting" : "" });
+}
+
+async function settingsLoadSetup() {
+  const p = settingsPage;
+  const gen = routeGen;
+  p.setupBusy = true;
+  p.setupStale = false;
+  if (onSettingsPage() && settingsSection() === "integrations") settingsRepaintRemote();
+  let status = 0, data = null;
+  try { ({ status, data } = await api("/v1/app/settings?part=remote_setup")); } catch { status = 0; }
+  p.setupBusy = false;
+  p.setup = status === 200 && data
+    ? data.remote_setup
+    : { error: (data && data.error && data.error.message) || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.") };
+  if (gen === routeGen && onSettingsPage() && settingsSection() === "integrations") settingsRepaintRemote();
+}
+
+async function settingsCopySetup(id) {
+  const p = settingsPage;
+  const step = p.setup && p.setup.steps && p.setup.steps.find((x) => x.id === id);
+  const cmd = step && step.action && step.action.command;
+  if (!cmd) return;
+  try {
+    await navigator.clipboard.writeText(cmd);
+    p.setupCopied = id;
+  } catch {
+    // Plain http has no clipboard API; the command is in the row to copy by hand.
+    p.setupCopied = null;
+  }
+  settingsRepaintRemote(`[data-setup-copy="${CSS.escape(id)}"]`);
 }
 
 function deviceRow(dev) {
@@ -642,6 +729,11 @@ function bindSettings(section) {
 function bindRemote() {
   const p = settingsPage;
   if (!p.github && !p.githubBusy) settingsLoadGithub(false);
+  if ((!p.setup || p.setupStale) && !p.setupBusy) settingsLoadSetup();
+  const recheck = document.getElementById("set-setup-recheck");
+  if (recheck) recheck.onclick = () => settingsLoadSetup();
+  for (const btn of document.querySelectorAll("[data-setup-copy]")) btn.onclick = () => settingsCopySetup(btn.dataset.setupCopy);
+  for (const btn of document.querySelectorAll("[data-setup-pair]")) btn.onclick = () => settingsMint();
   const gh = document.getElementById("set-gh-refresh");
   if (gh) gh.onclick = () => settingsLoadGithub(true);
   const pair = document.getElementById("set-pair");
@@ -741,6 +833,7 @@ function settingsDismissTicket() {
   if (sheet && sheet.open) sheet.close();
   // A phone may have paired while the code was up: list it.
   settingsRefreshRemote("#set-pair");
+  if (p.setup && !p.setup.ready && !p.setupBusy) settingsLoadSetup();
 }
 
 async function settingsRefreshRemote(focus) {
@@ -805,6 +898,8 @@ async function settingsRevoke(id) {
     p.confirming = null;
     p.data.remote.devices = data.devices;
     settingsRepaintRemote("#set-pair");
+    // Revoking the last phone undoes "Pair a phone".
+    if (!p.setupBusy) settingsLoadSetup();
     return;
   }
   p.confirming = null;

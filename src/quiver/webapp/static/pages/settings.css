@@ -62,6 +62,10 @@
 .set-mac-only .set-text { opacity: .5; }
 .badge.set-mac { color: var(--text-muted); font-weight: 400; }
 .badge.set-online { color: var(--accent); }
+.badge.set-needs { color: var(--warning-text); }
+.badge.set-failed { color: var(--danger-text); }
+.badge.set-waiting { color: var(--text-muted); font-weight: 400; }
+.set-step-waiting .set-text { opacity: .55; }
 .badge.set-this { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .set-note { margin: 8px 0 0; }
 .set-empty { margin: 14px 0 10px; }

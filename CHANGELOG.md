@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   system won't let a user do that. `swe remote setup --apply` installs
   it too, and the setup list shows a Linux hub that stops at logout.
 
+- **Web app: the remote setup checklist on Settings › Remote.** Until
+  every step `swe remote setup` checks is done, Integrations › Remote
+  lists them with a badge each (Done, Needs you, Quiver does this,
+  Failed, Waiting) and a way forward: a link to the page a person needs
+  (download, sign in, the Tailscale admin console), a command to copy,
+  or Pair a phone. The steps Quiver does itself point to the Mac app or
+  `swe remote setup --apply`, since running them from a page the hub
+  serves could cut that page off. Check again re-reads the list.
+
 - **`swe remote setup`: every step from nothing to a paired phone.**
   Remote control needs Tailscale installed and signed in, MagicDNS and
   HTTPS certificates on in the tailnet, a certificate this machine can
@@ -259,6 +268,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   harness's share. Pull to refresh asks the hub for new readings.
 
 ### Fixed
+
+- **Remote iPhone app: the welcome screen says where a pair code comes
+  from.** It told new users to run `swe remote pair --app` in a
+  terminal on the hub. It now points to Quiver › Settings › Remote ›
+  Pair a device on the hub machine (the Mac app or the hub's web app),
+  with `swe remote setup` and `swe remote pair --app` as the fallback
+  for a server with neither. The QR scanner's hint says the same.
 
 - **`swe setup --apply` run twice no longer invents harnesses.** The
   second run linked skills into every harness in the `HARNESS_ROOTS`
