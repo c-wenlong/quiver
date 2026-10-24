@@ -1,8 +1,8 @@
 # Plugins
 
 The Mac app's Plugins page (`PluginsPage.swift`, `PluginExplorer.swift`)
-at `/app/#/plugins`: both tabs, with Health's Fix and Fix all. Explore is
-read only. Module `quiver/webapp/pages/plugins.py`,
+at `/app/#/plugins`: both tabs, with Health's Fix and Fix all, and the
+plugin sheet's Install, Enable, Disable and Uninstall per harness. Module `quiver/webapp/pages/plugins.py`,
 script and styles `static/pages/plugins.js` and `plugins.css`.
 
 ## What it shows
@@ -39,7 +39,17 @@ Same title and subtitle as the app, and its two tabs.
   filter rows as the app does, and the count reads "N of M plugins".
   What swe could not read is listed above the sources. A plugin's name
   opens a sheet with its marketplace, per-harness state, components,
-  category, author, homepage, tags, folders and skills.
+  category, author, homepage, tags, folders and skills, then "In each
+  harness": a row per harness that has it or could, with its state and
+  the app's menu items as buttons (Install where its marketplace is
+  listed; Enable or Disable and Uninstall once installed; for Cursor,
+  "swe can't change Cursor plugins"). A button opens a confirm under its
+  row with the app's question and the command or config edit it makes
+  ("Disable tool@mk in Codex on box?", `set [plugins."tool@mk"] enabled =
+  false in ~/.codex/config.toml`); Uninstall's button is red. While it
+  runs the row reads "Disabling…" and every other button waits; then the
+  sheet repaints from the answer with the app's summary ("Disabled
+  tool@mk in Codex") or the error.
 
 Like the app, the page opens on Health, and on Explore when Health has
 nothing to show (no hub plugins and no drift) until a tab is picked.
@@ -55,8 +65,9 @@ Both carry `view`, `built_at` (epoch seconds the view was read) and
 - `explore`: `harnesses`, `actions`, `errors` and `total` from the
   catalog; `plugins`, each catalog plugin once keyed by ref, slimmed to
   what the page shows (`title` is the display name, `harnesses` maps each
-  harness to `{status, version, scopes, path, copies}` with `copies` a
-  count, `skills` are `{name, description}`, `drift` is the worst gap as
+  harness to `{status, actions, version, scopes, path, copies}` with
+  `actions` the verbs `PluginCatalog.actions(for:in:)` offers there and
+  `copies` a count, `skills` are `{name, description}`, `drift` is the worst gap as
   `{state, title, harnesses}` or null); and `sources`, each
   `{id, kind, harness, title, note, marketplaces}`, each marketplace
   `{id, name, title, tag, plugins}` and each row `{ref, harnesses}`, the
@@ -100,13 +111,28 @@ or `not-run` (after a failure). `fixed` is the finding as `FixedDrift`
 or is missing from the hub's `PATH` is a `failed` result, not an HTTP
 error, so the page still gets the fresh findings.
 
+### Install, enable, disable, uninstall
+
+`POST /v1/app/plugins/plugin` with `{"verb", "ref", "harness"}` runs
+`quiver.plugins.actions.plugin_action`, the code behind `swe plugins
+<verb> <ref> --harness=<h> --json`, in process: the harness's own CLI
+(`claude plugin install|uninstall|enable|disable`, `codex plugin
+add|remove`) with `HOME` pinned to the hub's, or for Codex enable and
+disable swe's proven one-line `config.toml` edit. Only a verb Explore
+offers that plugin in that harness right now (409 `not_offered`; 404
+`unknown_plugin` for a ref the catalog doesn't have; 422 `bad_action` for
+a malformed body). It shares the fixes' one-at-a-time lock (409 `busy`).
+Both cached views are dropped and the answer is `{"action": "plugin",
+"result", "error", "explore"}`: `result` is the `ActionResult` `--json`
+shape (`changed`, `detail` when nothing needed doing, `ran`, `edited`,
+`state`) or null when the command failed, and `error` says why.
+
 ## Differences from the Mac app
 
-Explore's writes are left out; they stay in `swe` and the Mac app:
+Explore's other writes are left out; they stay in `swe` and the Mac app:
 
-- Explore's per-harness **Install**, **Uninstall**, **Enable** and
-  **Disable** menus (`swe plugins <verb> <ref> --harness=<h>`). The chips
-  show the state only.
+- The actions live in the plugin sheet, not in a menu on each row's
+  chip; the chips show the state only.
 - **Add marketplace** (`swe plugins marketplace add`).
 - **Rename** of a marketplace or plugin display name. The names the app
   saved in `~/.quiver/config/plugin-display-names.json` are read (never
