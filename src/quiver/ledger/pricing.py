@@ -182,6 +182,22 @@ def forms(key: str, strip_dates: bool, strip_effort: bool = False) -> list[str]:
     return out
 
 
+def alias_target(model: str, aliases: dict[str, str]) -> str | None:
+    """The real name the supplement's ``aliases`` table gives ``model``
+    (``MODEL_PRIVATE_11`` is ``claude-haiku-4-5``), chains followed and
+    forms tried as ``PricingCatalog._key`` tries them; ``None`` when no
+    alias applies. Pages name and brand a model by it."""
+    target = None
+    name = model.strip().lower()
+    for _ in range(5):
+        hit = next((aliases[f] for f in [name] + forms(name, True, True)
+                    if f in aliases and aliases[f].lower() != f), None)
+        if hit is None:
+            break
+        target, name = hit, hit.lower()
+    return target
+
+
 def is_free(model: str) -> bool:
     bare = bare_name(model)
     return bare == "free" or bare.endswith(":free") or bare.endswith("-free")

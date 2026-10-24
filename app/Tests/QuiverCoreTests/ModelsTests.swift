@@ -553,6 +553,22 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(model.unmatched == [ModelsModel.Unmatched(model: "swe-2-medium", tokens: 400)])
     }
 
+    /// Devin's "MODEL_PRIVATE_11" matches by the real name the bundled
+    /// price supplement aliases it to.
+    @Test func anOpaqueIDMatchesThroughItsAlias() async throws {
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("haiku", "Claude 4.5 Haiku", "claude-4-5-haiku", creator: "anthropic", intelligence: 40),
+        ])
+        let model = makeModel(dir: dir, slices: [slice("MODEL_PRIVATE_11", "devin", tokens: 100)])
+        await model.load()
+        let row = try #require(model.rows.first { $0.used })
+        #expect(row.aa?.id == "haiku")
+        #expect(row.logged == "MODEL_PRIVATE_11")
+        #expect(row.alias == "claude-haiku-4-5")
+        #expect(model.unmatched.isEmpty)
+    }
+
     @Test func loggedAliasesOfOneAAModelMergeIntoOneRow() async throws {
         let dir = try TempDir()
         try writeLLMs(dir, [
@@ -1302,6 +1318,39 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(model.rows.map(\.logged) == ["wisp-9"])
         #expect(model.rows[0].tokens == 60)
         #expect(model.rows[0].listPrice?.key == "wisp-9")
+        #expect(model.searchOverflow == 0)
+    }
+
+    @Test func aQueryFindsAnUnmatchedIDByItsAliasOnce() async throws {
+        // No AA entry covers Haiku: "haiku" still finds the used
+        // MODEL_PRIVATE_11 row, and its price key doesn't show again.
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("opus", "Claude Opus 5.5", "claude-opus-5-5",
+                  creator: "anthropic", intelligence: 70),
+        ])
+        let store = ArtificialAnalysisStore(directory: dir.path("aa"))
+        let priceEntry: [String: Any] = ["input_cost_per_token": 1e-06,
+                                         "output_cost_per_token": 5e-06]
+        try store.database.recordPrices(["claude-haiku-4-5": priceEntry], at: Date(), url: nil, sha: nil)
+        store.database.rebuildAliases()
+        let used = [slice("MODEL_PRIVATE_11", "devin", tokens: 60)]
+        let model = ModelsModel(store: store, keyReader: { "key" }, transport: StubHTTP(),
+                                linksURL: dir.path("config/model-links.json"),
+                                slices: { _ in used },
+                                pricing: {
+                                    PricingCatalog(liteLLMEntries: ["claude-haiku-4-5":
+                                        ["input_cost_per_token": 1e-06,
+                                         "output_cost_per_token": 5e-06]],
+                                                   overrides: [:])
+                                },
+                                now: { Date(timeIntervalSince1970: 1_800_000_000) },
+                                calendar: Calendar(identifier: .gregorian),
+                                searchDelay: .zero)
+        await model.load(allowRefresh: false)
+        model.query = "haiku"
+        #expect(model.rows.map(\.logged) == ["MODEL_PRIVATE_11"])
+        #expect(model.rows[0].displayName == "claude-haiku-4-5")
         #expect(model.searchOverflow == 0)
     }
 

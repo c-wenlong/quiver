@@ -14,7 +14,7 @@ import time
 from quiver.ledger import overview
 from quiver.ledger.pricing import PricingCatalog
 from quiver.ledger.store import LedgerStore
-from quiver.webapp.pages._brands import brand_for
+from quiver.webapp.pages._brands import brand_for, resolved_name
 
 SCAN_NOTE = "Some usage logs couldn't be read, so these figures may be incomplete."
 
@@ -137,6 +137,8 @@ def rows(all_slices: list[dict], catalog: PricingCatalog, picked: list[str]) -> 
         row["harnesses"] = [h for h, _ in sorted(by_harness[model].items(),
                                                  key=lambda kv: (-kv[1], kv[0]))]
         row["brand"] = brand_for(model)
+        # The real name an alias gives an opaque id, shown with the id under it.
+        row["alias"] = resolved_name(model)
         out.append(row)
     out.sort(key=lambda r: (r["tokens"], r["model"]), reverse=True)
     return out
@@ -173,7 +175,7 @@ def build(store: LedgerStore, catalog: PricingCatalog, period: str, tz_name: str
         "harness_options": options,
         "harness_filter": live,
         "groups": groups(model_rows),
-        "unpriced": [{"model": r["model"], "unpriced_tokens": r["unpriced_tokens"],
+        "unpriced": [{"model": r["model"], "alias": r["alias"], "unpriced_tokens": r["unpriced_tokens"],
                       "harnesses": r["harnesses"], "brand": r["brand"]} for r in unpriced],
     }
 

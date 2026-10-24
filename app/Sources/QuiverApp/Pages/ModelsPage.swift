@@ -493,7 +493,7 @@ private struct BarColumn: View {
     /// The name cut at `labelRun` (head ellipsis), so the end under the
     /// bar always shows. Measured at the label font.
     static func label(_ row: ModelsModel.Row) -> String {
-        let name = row.aa.map(ModelMatcher.displayName) ?? row.logged
+        let name = row.displayName
         var cut = Substring(name)
         while !cut.isEmpty, width(of: "…" + cut) > ChartCard.labelRun {
             cut = cut.dropFirst()
@@ -749,8 +749,8 @@ private struct TableRow: View {
             // draws under the bar; an empty slot keeps names aligned.
             HStack(spacing: 8) {
                 BrandLogo(vendor: vendor, size: 16)
-                ModelName(name: row.aa.map(ModelMatcher.displayName) ?? row.logged,
-                          qualifier: row.qualifier)
+                ModelName(name: row.displayName, qualifier: row.qualifier,
+                          rawID: row.alias == nil ? nil : row.logged)
             }
             .frame(width: columns.model, alignment: .leading)
             HStack(spacing: 4) {

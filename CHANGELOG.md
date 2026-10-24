@@ -304,6 +304,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   range starting there and re-centres on it, keeping the hour. Keys and
   chevrons scroll the same grid one step at a time.
 
+- **Models and Pricing: Devin's `MODEL_PRIVATE_11` shows as Claude
+  Haiku 4.5.** Devin CLI logs that opaque id for Claude Haiku 4.5, so
+  both apps listed it under "Other" with no logo or price. The price
+  supplement now aliases it to `claude-haiku-4-5`, brand lookup follows
+  the supplement's aliases before matching a name, and the Models and
+  Pricing rows (web and Mac) show the real name with the logged id
+  muted beside it. On the Mac, the id also matches its Artificial
+  Analysis model through the alias.
+
 - **Web app: Menu bar and Widgets say "Mac app only" and stay put.** The
   two sidebar items wear the same "Mac app only" pill as Settings' Mac-only
   rows and are no longer links, so neither a click nor Tab reaches them. A

@@ -47,9 +47,17 @@ class TestRows(_Store):
         self.assertAlmostEqual(top["list_price"]["output"], 25.0)
         self.assertEqual(rows[2]["list_price"]["source"], "yours")
         self.assertIsNone(rows[1]["list_price"])
+        self.assertEqual([r["alias"] for r in rows], [None, None, None])
         filtered = self.build(["codex"])
         self.assertEqual([r["model"] for r in filtered["rows"]], ["gpt-x"])
         self.assertEqual(filtered["harness_options"], ["devin", "claude", "codex"])
+
+
+    def test_an_aliased_name_shows_its_real_name_and_brand(self):
+        self.add("MODEL_PRIVATE_11", 100, harness="devin")
+        row = self.build()["rows"][0]
+        self.assertEqual((row["model"], row["alias"]), ("MODEL_PRIVATE_11", "claude-haiku-4-5"))
+        self.assertEqual(row["brand"]["id"], "anthropic")
 
 
 class TestSearch(unittest.TestCase):

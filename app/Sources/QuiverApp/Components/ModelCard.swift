@@ -21,7 +21,8 @@ struct ModelCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     BrandLogo(vendor: row.vendor, size: 18)
-                    ModelName(name: title, qualifier: row.qualifier, font: Theme.font(size: 15))
+                    ModelName(name: title, qualifier: row.qualifier,
+                              rawID: row.alias == nil ? nil : row.logged, font: Theme.font(size: 15))
                 }
                 Text(subtitle)
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -61,10 +62,9 @@ struct ModelCard: View {
     }
 
     /// The foundation model's name, without AA's "(Max, Default
-    /// Fallback)" tail: the effort shown is the one the user ran.
-    private var title: String {
-        row.aa.map(ModelMatcher.displayName) ?? row.logged
-    }
+    /// Fallback)" tail: the effort shown is the one the user ran. An
+    /// aliased id shows its real name, the id muted after it.
+    private var title: String { row.displayName }
 
     /// "Anthropic · Claude Code, Devin": the vendor, then the harnesses
     /// that ran the model in the period.
@@ -193,11 +193,14 @@ struct CostDotScale: View {
 struct ModelName: View {
     var name: String
     var qualifier: String?
+    /// The logged id an alias renamed ("MODEL_PRIVATE_11"), shown muted.
+    var rawID: String? = nil
     var font: Font = Theme.bodySmall
 
     var body: some View {
         let tail = Text(qualifier.map { " \($0)" } ?? "").foregroundStyle(Theme.textSecondary)
-        Text("\(Text(name).foregroundStyle(Theme.textPrimary))\(tail)")
+        let raw = Text(rawID.map { " \($0)" } ?? "").foregroundStyle(Theme.textMuted)
+        Text("\(Text(name).foregroundStyle(Theme.textPrimary))\(tail)\(raw)")
             .font(font)
             .lineLimit(1).truncationMode(.middle)
     }
