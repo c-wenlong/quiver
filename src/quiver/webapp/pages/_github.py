@@ -3,8 +3,11 @@ short cache, the hub's pinned repos, and the env payload.
 
 Every read goes through the builders behind ``swe gh … --json``
 (``quiver.github.cli``), in process, with the hub machine's own ``gh``
-login. The page modules never write: merging, re-running, marking
-notifications read and pinning stay in ``swe`` and the Mac app.
+login. The two writes (merging a PR, marking notifications read) call
+the same functions ``swe gh pr merge`` and ``swe gh inbox read`` do,
+one at a time under ``WRITE_LOCK``, and drop what they changed from the
+cache. Re-running, pinning and PR worktrees stay in ``swe`` and the Mac
+app.
 
 A leading underscore keeps this module off ``/v1/app/<page>``: the
 plugin loader refuses private names.
@@ -51,6 +54,10 @@ class TtlCache:
         # dropped when nobody uses it, so two callers never end up on
         # different locks for one key.
         self._users: dict[Any, int] = {}
+        # Bumped by every ``drop``: a fetch that began before a write
+        # may have read the old state, so its reply is returned to its
+        # caller but not kept.
+        self._epoch = 0
 
     def get(self, key, fetch: Callable[[], Any], *, refresh: bool = False,
             ok: Callable[[Any], bool] = lambda _v: True) -> tuple[Any, float]:
@@ -68,6 +75,10 @@ class TtlCache:
                     self._users[key] = left
                 else:
                     self._users.pop(key, None)
+                    # Nothing kept for the key (a dropped entry, or a
+                    # reply a write made stale): nothing needs its lock.
+                    if key not in self._entries:
+                        self._key_locks.pop(key, None)
 
     def _get_locked(self, key, fetch, refresh, ok) -> tuple[Any, float]:
         now = self._clock()
@@ -77,13 +88,26 @@ class TtlCache:
             age = now - at
             if age < ttl and not (refresh and age >= REFRESH_FLOOR):
                 return value, wall
+        with self._lock:
+            epoch = self._epoch
         value = fetch()
         wall = time.time()
         ttl = TTL if ok(value) else FAIL_TTL
         with self._lock:
-            self._entries[key] = (self._clock(), ttl, wall, value)
+            if self._epoch == epoch:
+                self._entries[key] = (self._clock(), ttl, wall, value)
             self._prune()
         return value, wall
+
+    def drop(self, match: Callable[[Any], bool]) -> None:
+        """Forget every entry whose key ``match``es, after a write, and
+        keep no reply from a fetch still in flight."""
+        with self._lock:
+            self._epoch += 1
+            for key in [k for k in self._entries if match(k)]:
+                self._entries.pop(key, None)
+                if not self._users.get(key):
+                    self._key_locks.pop(key, None)
 
     def clear(self) -> None:
         with self._lock:
@@ -100,6 +124,12 @@ class TtlCache:
 
 
 CACHE = TtlCache()
+
+# The hub answers each request on its own thread. Writes to GitHub run
+# one at a time, so a double click or two tabs can't merge twice or race
+# a state check against another write; the Mac app keys its actionBusy
+# set for the same reason.
+WRITE_LOCK = threading.Lock()
 
 
 def flag(args: dict, name: str) -> bool:

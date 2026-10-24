@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a look. The page opens on a "Set up this machine" card while the hub
   has no shared AGENTS.md. The notifications step stays in the Mac app.
 
+- **Web app: remote control on the Sessions page.** Clicking a session
+  opens its chat: the transcript with thinking, tool cards, diffs and
+  compaction, live as the agent works, and for an attached session the
+  composer (Queue or Steer, Stop), approval cards with Allow, Always and
+  Deny, and Attach (after a confirm) for an observed one. It is the
+  phone's chat on the hub's same routes, so the web app at the hub's
+  address is the whole app; the old details sheet is the chat's Details
+  button, and attached sessions carry an Attached badge in the list.
+
 - **Web app: Doctor, and the Harnesses page's editor, Detect and Add.**
   `#/doctor` shows the `swe doctor` report as the Mac app's Settings ›
   Doctor does: each finding with its fix command, a copy button, and Run
@@ -198,6 +207,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and skipped; the pages around it still load.
 
 ### Added
+
+- **Web app: merge a PR and mark notifications read.** The PR sheet on
+  Repositories now has the Mac app's strategy menu, Merge and
+  Auto-merge; either asks an inline confirm naming the PR, its repo, the
+  base branch and the strategy before it posts. The hub reads the PR
+  again first and refuses what the app would not offer (not open, draft,
+  conflicts, auto-merge already armed) in the app's words. Inbox gets a
+  Mark as read button per unread row and the header's mark-all envelope,
+  behind an inline confirm. Both call the same code as `swe gh pr merge`
+  and `swe gh inbox read`, through the hub machine's `gh` login, and
+  drop the page's cached replies after the write.
 
 - **Web app: link and unlink harness skills folders.** The Skills page's
   Harness links popover now does what the Mac app's does: a folder opens
