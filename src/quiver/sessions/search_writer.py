@@ -39,6 +39,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import tempfile
 import time
@@ -662,13 +663,16 @@ class Indexer:
         self.prints = {} if prints is None else prints
 
     def index_file(self, path: str, harness: str, *, document: bool = False,
-                   session_id: str | None = None, meta_path: str | None = None) -> str:
+                   session_id: str | None = None, meta_path: str | None = None,
+                   pair: str | None = None) -> str:
         """Read one transcript into the index. Returns what happened:
         ``skip``, ``current``, ``indexed``, ``moved`` (another writer won the
         fence) or ``failed``. ``document`` reads the file as one JSON value
         (``indexWholeFile``) instead of JSONL lines. ``meta_path`` is a
         Cursor chat's ``meta.json``: its mtime blends into the stat and its
-        fields fill what the transcript never records."""
+        fields fill what the transcript never records. ``pair`` is a
+        manifest's streamed sidecar (Kiro's ``<uuid>.jsonl``, Grok's
+        ``chat_history.jsonl``): the two read as one, their stat combined."""
         if not should_index(path):
             return SKIP
         stat = file_stat(path)
@@ -677,6 +681,12 @@ class Indexer:
         meta_stat = file_stat(meta_path) if meta_path else None
         if meta_stat is not None:
             stat = replace(stat, mtime_ms=max(stat.mtime_ms, meta_stat.mtime_ms))
+        pair_stat = file_stat(pair) if pair else None
+        if pair_stat is not None:
+            # The pair fingerprint: size covers both files, so a sidecar
+            # rewrite or delete can't hide behind an unchanged manifest.
+            stat = replace(stat, mtime_ms=max(stat.mtime_ms, pair_stat.mtime_ms),
+                           size=stat.size + pair_stat.size)
         row = self.store.file_row(path)
         need = read_need(row, stat)
         if need in (SKIP, CURRENT):
@@ -685,11 +695,13 @@ class Indexer:
         # where mid-read flushes bound the memory it takes. Only the
         # harnesses whose decoders keep no state past the head append; the
         # Swift side reads every other source whole too.
-        appending = (need == APPEND and not document and harness in APPENDABLE
+        appending = (need == APPEND and not document and not pair and harness in APPENDABLE
                      and stat.size - row.byte_offset <= self.buffer_budget)
         try:
             overlay = cursor_meta_fields(meta_path) if meta_stat is not None else None
-            if document:
+            if pair:
+                committed = self._read_pair(path, harness, stat, row, session_id, pair)
+            elif document:
                 committed = self._read_document(path, harness, stat, row, session_id)
             else:
                 committed = self._read(path, harness, stat, row, appending, session_id, overlay)
@@ -717,6 +729,44 @@ class Indexer:
         with open(path, "rb") as handle:
             data = handle.read()
         self._record(pending, *decoder.decode_line(data), stat)
+        return self._finish(pending, stat, stat.size)
+
+    # The manifest stamps each pair folds into the session's time range
+    # (``consumeTimeline``), in Swift's order.
+    _PAIR_TIMELINE = {
+        "kiro": ("created_at", "updated_at"),
+        "grok": ("created_at", "updated_at", "last_active_at"),
+    }
+
+    def _read_pair(self, path: str, harness: str, stat: FileStat, row: FileRow | None,
+                   session_id: str | None, sidecar: str) -> bool:
+        """``Ledger.indexKiroFile`` / ``indexGrokFile``: the manifest as one
+        object, then the sidecar's lines. A malformed manifest (or a Kiro
+        child session's, ``parent_session_id``) commits no session at all,
+        as Orca returns before reading the transcript."""
+        try:
+            with open(path, "rb") as handle:
+                manifest = json.loads(handle.read())
+        except (OSError, ValueError, RecursionError):
+            manifest = None
+        if not isinstance(manifest, dict):
+            manifest = None
+        listed = manifest is not None and not (
+            harness == "kiro" and decode.json_string(manifest.get("parent_session_id")))
+        decoder = decode.Decoder(harness)
+        pending = _Pending(path=path, harness=harness, appending=False, row=row,
+                           decoder=decoder, session_id_hint=session_id if listed else None)
+        if listed:
+            self._record(pending, *decoder.decode_object(manifest), stat)
+            for key in self._PAIR_TIMELINE[harness]:
+                ts = decode.stamp_iso(manifest.get(key))
+                if ts is not None:
+                    pending.fold_ts(ts)
+            if os.path.exists(sidecar):
+                with open(sidecar, "rb") as handle:
+                    for line, _ in _lines(handle, 0):
+                        if line:
+                            self._record(pending, *decoder.decode_line(line), stat)
         return self._finish(pending, stat, stat.size)
 
     def index_session(self, path: str, stat: FileStat, read) -> str:
@@ -965,6 +1015,23 @@ class Source:
     document: bool = False
     session_id: str | None = None
     meta_path: str | None = None
+    pair: str | None = None
+
+
+# Kiro session files are `<uuid>.json` (Orca's KIRO_SESSION_FILE_PATTERN).
+_KIRO_FILE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$", re.IGNORECASE)
+
+
+def _files_in(directory: Path) -> list[str]:
+    """Resolved regular files directly in ``directory``, hidden ones left
+    out."""
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError:
+        return []
+    return [os.path.realpath(directory / name) for name in names
+            if not name.startswith(".") and (directory / name).is_file()]
 
 
 DEVIN_DB = ".local/share/devin/cli/sessions.db"
@@ -976,12 +1043,15 @@ def sources(home: Path) -> list[Source]:
     out: list[Source] = []
     seen: set[str] = set()
 
-    def add(found: list[str], harness: str, document: bool = False, meta=None) -> None:
+    def add(found: list[str], harness: str, document: bool = False, meta=None,
+            pair=None, session_id=None) -> None:
         for path in found:
             if path not in seen:
                 seen.add(path)
                 out.append(Source(path, harness, document,
-                                  meta_path=meta(path) if meta else None))
+                                  session_id=session_id(path) if session_id else None,
+                                  meta_path=meta(path) if meta else None,
+                                  pair=pair(path) if pair else None))
 
     for claude_home in _homes(home, "claude", ".claude"):
         add(_walk(claude_home / "projects"), "claude")
@@ -1002,6 +1072,17 @@ def sources(home: Path) -> list[Source]:
         "cursor", meta=lambda p: metas.get(cursor_chat_id(p) or ""))
     add(_walk(home / ".qoder/projects"), "qoder")
     add(_walk(home / ".codebuddy/projects"), "codebuddy")
+    add([p for p in _walk(home / ".hermes/sessions", ".json")
+         if os.path.basename(p).startswith("session_")], "hermes", document=True)
+    # Kiro: `<uuid>.json` directly under the root (subdirectories hold task
+    # state), its turns in the `<uuid>.jsonl` beside it, the UUID its id.
+    add([p for p in _files_in(home / ".kiro/sessions/cli") if _KIRO_FILE.match(os.path.basename(p))],
+        "kiro", pair=lambda p: p + "l", session_id=lambda p: Path(p).stem)
+    # Grok: `<session dir>/summary.json`, turns in `chat_history.jsonl`, the
+    # directory its id when `info.id` is absent.
+    add([p for p in _walk(home / ".grok/sessions", ".json") if os.path.basename(p) == "summary.json"],
+        "grok", pair=lambda p: os.path.join(os.path.dirname(p), "chat_history.jsonl"),
+        session_id=lambda p: os.path.basename(os.path.dirname(p)))
     return out
 
 
@@ -1189,7 +1270,8 @@ def _pass(home: Path, path: Path, should_stop) -> PassResult:
             result.count(indexer.index_file(source.path, source.harness,
                                             document=source.document,
                                             session_id=source.session_id,
-                                            meta_path=source.meta_path))
+                                            meta_path=source.meta_path,
+                                            pair=source.pair))
         for db, entries in ((DEVIN_DB, _devin_entries), (OPENCODE_DB, _opencode_entries)):
             if should_stop is not None and should_stop():
                 break
