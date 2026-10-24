@@ -443,6 +443,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that fails to parse or throws while loading is logged in the console
   and skipped; the pages around it still load.
 
+- **Accounts: "Not signed in" and "Couldn't fetch" instead of "No reading
+  yet".** A starred harness with no usage reading now says why. swe
+  checks for the credential its fetcher reads after an empty fetch, and
+  `swe list --usage --json` and `/v1/usage` rows carry it as
+  `no_reading` (`signed_out` or `error`). The web app's Accounts page
+  names the machine and the login command (`codex login`, `cursor-agent
+  login`, ...), and the Mac app's swe-fed cards say "Not signed in" or
+  "Couldn't fetch usage" too, extra accounts included.
+- **Cursor usage on Linux.** swe now reads the session `cursor-agent`
+  keeps in `~/.config/cursor/auth.json`, so a machine signed in only
+  through the CLI shows Cursor's limits.
+
 ### Added
 
 - **Web app: merge a PR and mark notifications read.** The PR sheet on

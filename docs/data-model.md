@@ -196,7 +196,7 @@ resumes) and left in place.
 | `session_parse_cache.json` | `{version: "<format>:<package version>:<source hash>", entries}` | per-file stat signature; a version mismatch, unreadable file or wrong-shaped entry reads as a miss |
 | `session_status_cache.json` | `{version: "<format>:<package version>:<source hash>", entries}` | per-file stat signature; a version mismatch, unreadable file or wrong-shaped entry reads as a miss |
 | `session_counts.json` | `{windows: {<days>: {cached_at, counts, broken}}}` | 24h |
-| `rate_limits_cache.json` | `{<provider>: {info, updated_at}}` | 300s, per-provider |
+| `rate_limits_cache.json` | `{cached_at, limits, updated_at, no_data: {<provider>: ts}, no_data_status: {<provider>: "signed_out" \| "error"}}` | 300s, per-provider; a `signed_out` entry is refetched every call |
 | `claude_usage_cache.json` | `{info, retry_at, credential_fingerprint, fetched_at}` | cooldown + last good reading |
 | `harness.json` | `{<name>: {state, ...}}` | the registry; only `registry.py` writes it |
 

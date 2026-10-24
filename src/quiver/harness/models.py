@@ -49,10 +49,13 @@ class HarnessRow:
     rate_limit: "RateLimitInfo | None"
     installed: bool
     archived: dict | None
+    # Why ``rate_limit`` is null: "signed_out", "error", or None when there
+    # is a reading or no reason is known (see ``get_all_rate_limits``).
+    no_reading: str | None = None
 
     @classmethod
     def of(cls, name: str, info: dict, starred, archived: dict,
-           counts: dict, rate) -> "HarnessRow":
+           counts: dict, rate, no_reading: str | None = None) -> "HarnessRow":
         from quiver.harness.tools import is_installed
 
         if name in archived:
@@ -76,6 +79,7 @@ class HarnessRow:
             rate_limit=rate,
             installed=is_installed(info.get("command") or name),
             archived=archived.get(name),
+            no_reading=None if rate is not None else no_reading,
         )
 
     def to_json(self) -> dict:
@@ -94,6 +98,7 @@ class HarnessRow:
             "rate_limit": self.rate_limit.to_json() if self.rate_limit is not None else None,
             "installed": self.installed,
             "archived": self.archived,
+            "no_reading": self.no_reading,
         }
 
 
