@@ -14,6 +14,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -315,6 +316,126 @@ class CodexTests(_Home):
         self.assertEqual(conn.execute("SELECT title FROM sessions").fetchone()[0], "Dark mode")
 
 
+class MoreCodexTests(_Home):
+    def test_legacy_events_tool_calls_and_forks(self):
+        self.write(self.codex / "rollout-2026-10-01T10-00-00-ghi.jsonl", "".join([
+            codex_line("session_meta", {"session_id": "thread-3"}),
+            codex_line("session_meta", {"id": "parent-thread", "cwd": "/parent"}),
+            codex_line("turn_context", {"cwd": "/work/turn"}),
+            codex_line("event_msg", {"type": "user_message", "message": "legacy prompt"}),
+            codex_line("event_msg", {"type": "agent_message", "message": "legacy reply"}),
+            codex_line("event_msg", {"type": "item_completed", "item": {"type": "UserMessage"}}),
+            codex_line("event_msg", {"type": "token_count"}),
+            codex_line("response_item", {"type": "function_call", "name": "exec_command",
+                                         "arguments": '{"cmd": "ls"}'}),
+            codex_line("response_item", {"type": "custom_tool_call_output",
+                                         "output": {"content": [{"text": "a"}, "b", {"x": 1}]}}),
+            codex_line("response_item", {"type": "reasoning"}),
+            codex_line("compacted", {}),
+            "not json\n",
+            "[1, 2]\n",
+        ]))
+        self.run_pass()
+        conn = self.db()
+        self.assertEqual(conn.execute("SELECT session_id, cwd, title FROM sessions").fetchone(),
+                         ("thread-3", "/work/turn", "legacy prompt"))
+        texts = [r[0] for r in conn.execute(
+            "SELECT user_text || assistant_text || tool_text FROM messages_fts ORDER BY rowid")]
+        self.assertEqual(texts, ["legacy prompt", "legacy reply",
+                                 'exec_command: {"cmd": "ls"}', "a\nb"])
+
+    def test_paginated_items_of_every_kind(self):
+        self.write(self.codex / "rollout-2026-10-01T10-00-00-jkl.jsonl", "".join([
+            codex_line("session_meta", {"id": "thread-4", "history_mode": "paginated"}),
+            codex_line("event_msg", {"type": "item_completed", "item": {
+                "type": "AgentMessage", "content": [{"type": "output_text", "text": "done"}]}}),
+            codex_line("event_msg", {"type": "item_completed", "item": {
+                "type": "FileChange", "changes": {"src/a.py": {"unified_diff": "+x"}, "b.py": "bad"}}}),
+            codex_line("event_msg", {"type": "item_completed", "item": {"type": "Reasoning"}}),
+            codex_line("event_msg", {"type": "item_completed", "item": "bad"}),
+        ]))
+        self.run_pass()
+        texts = [r[0] for r in self.db().execute(
+            "SELECT user_text || assistant_text || tool_text FROM messages_fts ORDER BY rowid")]
+        self.assertEqual(texts, ["done", "apply_patch: src/a.py", "+x", "apply_patch: b.py"])
+
+
+class WriterEdgeTests(_Home):
+    def test_status_reads_an_index_without_writing(self):
+        self.write(self.projects / "a.jsonl", claude_line("user", "hello"))
+        self.run_pass()
+        body = writer.status(self.home)
+        self.assertEqual((body["exists"], body["schema_version"], body["sessions"], body["messages"]),
+                         (True, "1", 1, 1))
+        self.assertEqual(body["files"], {"current": 1})
+        self.assertEqual(body["sessions_by_agent"], {"claude": 1})
+        self.assertEqual(body["last_pass"]["indexed"], 1)
+
+    def test_a_broken_state_file_reads_as_off(self):
+        path = search_index.index_path(self.home).parent / writer.STATE_FILE
+        path.parent.mkdir(parents=True)
+        path.write_text("[1]")
+        self.assertEqual(writer.load_state(self.home), {"enabled": False})
+        path.write_text("{")
+        self.assertFalse(writer.is_enabled(self.home))
+
+    def test_read_need_rules(self):
+        stat = writer.FileStat(ino=5, mtime_ms=10.0, size=100)
+        row = writer.FileRow("/p", 5, 50, 9.0, 50, 1, "current", 0, None)
+        self.assertEqual(writer.read_need(row, stat), writer.APPEND)
+        self.assertEqual(writer.read_need(replace(row, ino=6), stat), writer.WHOLE)
+        self.assertEqual(writer.read_need(replace(row, state="due"), stat), writer.WHOLE)
+        self.assertEqual(writer.read_need(replace(row, byte_offset=-1), stat), writer.WHOLE)
+        self.assertEqual(writer.read_need(replace(row, byte_offset=200), stat), writer.WHOLE)
+        self.assertEqual(writer.read_need(replace(row, state="failed", fail_count=1), stat), writer.WHOLE)
+
+    def test_a_rewrite_under_the_same_inode_is_read_whole(self):
+        path = self.projects / "a.jsonl"
+        self.write(path, claude_line("user", "alpha version"))
+        self.run_pass()
+        with open(path, "r+") as handle:  # same inode, longer, no newline at the old offset
+            handle.write(claude_line("user", "second version, much longer than before"))
+        self.run_pass()
+        conn = self.db()
+        self.assertEqual(search_index.search(self.home, "alpha"), [])
+        self.assertEqual(conn.execute("SELECT count(*) FROM messages_fts").fetchone()[0], 1)
+
+    def test_vanished_and_unreadable_files(self):
+        conn = writer.open_index(search_index.index_path(self.home))
+        self.addCleanup(conn.close)
+        indexer = writer.Indexer(writer.Store(conn))
+        self.assertEqual(indexer.index_file(str(self.projects / "gone.jsonl"), "claude"), writer.SKIP)
+        path = self.write(self.projects / "locked.jsonl", claude_line("user", "secret"))
+        os.chmod(path, 0)
+        self.addCleanup(os.chmod, path, 0o600)
+        if os.access(path, os.R_OK):  # root reads anything
+            self.skipTest("running as root")
+        self.assertEqual(indexer.index_file(path, "claude"), "failed")
+        self.assertEqual(conn.execute("SELECT state, fail_count FROM files").fetchone(), ("failed", 1))
+
+    def test_a_flush_that_loses_its_fence_stops_the_read(self):
+        path = self.write(self.projects / "a.jsonl", "".join(
+            claude_line("user", f"prompt {i} " + "x" * 50) for i in range(10)))
+        conn = writer.open_index(search_index.index_path(self.home))
+        self.addCleanup(conn.close)
+        store = writer.Store(conn)
+        indexer = writer.Indexer(store, buffer_budget=100)
+        real = store.commit_file
+        store.commit_file = lambda *a, **k: False
+        self.assertEqual(indexer.index_file(path, "claude"), "moved")
+        store.commit_file = real
+        self.assertIsNone(store.file_row(path))
+
+    def test_drain_skips_its_probe_when_nothing_was_orphaned(self):
+        conn = writer.open_index(search_index.index_path(self.home))
+        self.addCleanup(conn.close)
+        store = writer.Store(conn)
+        self.assertEqual(store.drain_orphans(), 0)
+        self.assertEqual(conn.execute(
+            "SELECT value FROM meta WHERE key = 'orphans_pending'").fetchone()[0], "0")
+        self.assertEqual(store.drain_orphans(), 0)
+
+
 class DecodeTests(unittest.TestCase):
     """Expectations copied from the Swift suites, so both writers agree."""
 
@@ -363,6 +484,26 @@ class DecodeTests(unittest.TestCase):
         self.assertTrue(decode.is_injected_turn("[Request interrupted by user]"))
         self.assertFalse(decode.is_injected_turn("<div> is a tag"))
         self.assertFalse(decode.is_injected_turn("please fix"))
+
+    def test_stamps_and_content_shapes(self):
+        self.assertEqual(decode.stamp_ms("1970-01-01T00:00:01Z"), 1000.0)
+        self.assertIsNone(decode.stamp_ms("2026-10-01T10:00:00"))
+        self.assertIsNone(decode.stamp_ms("yesterday"))
+        self.assertIsNone(decode.stamp_ms(5))
+        single = decode.content_messages("assistant", {"type": "text", "text": "one block"}, None)
+        self.assertEqual([(m.role, m.text) for m in single], [("assistant", "one block")])
+        mixed = decode.content_messages("user", [
+            "plain", {"content": "untyped"}, {"type": "image", "text": "skip"}, 7,
+            {"type": "tool_result", "output": [{"text": "out"}]},
+            {"type": "function_call", "name": "f", "arguments": {"path": "/x"}},
+        ], "t")
+        self.assertEqual([(m.role, m.text) for m in mixed],
+                         [("user", "plain\nuntyped"), ("tool", "out"), ("tool", "f: /x")])
+        self.assertEqual(decode.content_messages(None, "dev text", None), [])
+        self.assertEqual(decode.content_messages("user", None, None), [])
+        self.assertIsNone(decode.tool_result_text(5))
+        self.assertEqual(decode.truncate("a\U0001F600b", 2), "a")
+        self.assertEqual(decode.truncate("abc", 2), "ab")
 
     def test_tool_call_text(self):
         self.assertEqual(decode.tool_call_text("Read", {"file_path": "/a", "command": " "}), "Read: /a")

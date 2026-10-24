@@ -295,17 +295,6 @@ def _claude(obj: dict) -> tuple[list[Message], Hints]:
     return [], hints
 
 
-def _codex_non_user_origin(payload: dict) -> bool:
-    source = json_string(payload.get("thread_source")) or json_string(payload.get("threadSource"))
-    if source is not None:
-        return source.lower() != "user"
-    value = payload.get("source")
-    tag = json_string(value)
-    if tag is None and isinstance(value, dict) and len(value) == 1:
-        tag = json_string(next(iter(value)))
-    return tag in ("subagent", "internal")
-
-
 @dataclass
 class _CodexState:
     saw_session_meta: bool = False
