@@ -25,11 +25,16 @@ from tests.test_remote_hub import HubBase
 OK_ENV = gh.GhEnv(installed=True, authenticated=True, login="octo")
 
 _FAKE_GH = r"""#!PYTHON
-import json, os, sys
+import fcntl, json, os, sys
 args = sys.argv[1:]
+path = os.environ["FAKE_GH_STATE"]
+# One call at a time: mark_threads_read runs several at once, and each
+# reads, changes and writes the whole state file. The lock is released
+# when the process exits.
+lock = open(path + ".lock", "w")
+fcntl.flock(lock, fcntl.LOCK_EX)
 with open(os.environ["FAKE_GH_LOG"], "a") as log:
     log.write(json.dumps(args) + "\n")
-path = os.environ["FAKE_GH_STATE"]
 with open(path) as f:
     state = json.load(f)
 
@@ -388,6 +393,18 @@ class TestCacheDrop(_Base):
         self.assertEqual(G.CACHE.get(("c", 1), stale)[0], "stale")
         self.assertEqual(G.CACHE.get(("c", 1), lambda: "fresh")[0], "fresh")
 
+    def test_dropped_keys_leave_no_locks_behind(self):
+        G.CACHE.get(("pr", 1), lambda: "x")
+        G.CACHE.drop(lambda k: k[0] == "pr")
+        self.assertNotIn(("pr", 1), G.CACHE._key_locks)
+
+        def stale():
+            G.CACHE.drop(lambda k: False)  # a write lands mid-fetch
+            return "stale"
+        G.CACHE.get(("pr", 2), stale)
+        self.assertNotIn(("pr", 2), G.CACHE._key_locks)
+        self.assertEqual(G.CACHE._users, {})
+
 
 class TestMerge(_Base):
     """``post(ctx, "merge", ...)`` against a temp HOME's pins and a fake
@@ -488,6 +505,7 @@ class TestMerge(_Base):
                            ({"number": "abc"}, "bad_pr"), ({"number": 0}, "bad_pr"),
                            ({"number": -3}, "bad_pr"), ({"number": True}, "bad_pr"),
                            ({"number": "\u0667"}, "bad_pr"), ({"number": None}, "bad_pr"),
+                           ({"number": "9" * 5000}, "bad_pr"), ({"number": "1234567890"}, "bad_pr"),
                            ({"method": "yolo"}, "bad_method"), ({"method": None}, "bad_method"),
                            ({"auto": "yes"}, "bad_auto")):
             with self.subTest(body=body):

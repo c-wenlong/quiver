@@ -27,7 +27,7 @@
     data: null, error: null, loading: false,
     tab: "pulls", shown: null, filter: "",
     expanded: new Set(), openQuiet: new Set(),
-    focus: null, sheet: null, observer: null,
+    focus: null, sheet: null, observer: null, seq: 0,
   };
 
   const BATCH = 10; // rows each scroll fill reveals on the focus page
@@ -324,10 +324,13 @@
 
   async function renderDashboard(refresh = false) {
     const gen = routeGen;
+    // Only the newest read paints: one begun before a merge must not put
+    // the merged row back over the read the merge started.
+    const seq = ++page.seq;
     page.loading = true;
     GhUI.keepFocus("gh-search", paintDashboard);
     const { status, data } = await api(`/v1/app/repositories${refresh ? "?refresh=1" : ""}`);
-    if (gen !== routeGen) return;
+    if (gen !== routeGen || seq !== page.seq) return;
     page.loading = false;
     if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
     if (status !== 200 || !data) {
@@ -485,7 +488,7 @@
   /* ---------------------------------------------------------- focus page */
 
   function newFocus(repo) {
-    return { repo, data: null, error: null, loading: false, tab: "pulls", filter: "",
+    return { repo, seq: 0, data: null, error: null, loading: false, tab: "pulls", filter: "",
       shown: {}, limits: {}, defaults: {}, exhausted: new Set(), fetching: new Set(), stalled: new Set(), maxLimit: 200 };
   }
 
@@ -506,11 +509,12 @@
     const gen = routeGen;
     if (!page.focus || page.focus.repo !== repo) page.focus = newFocus(repo);
     const f = page.focus;
+    const seq = ++f.seq; // newest read wins, as on the dashboard
     f.loading = true;
     paintFocus();
     const q = `repo=${encodeURIComponent(repo)}`;
     const { status, data } = await api(`/v1/app/repositories?${q}${refresh ? "&refresh=1" : ""}`);
-    if (gen !== routeGen || page.focus !== f) return;
+    if (gen !== routeGen || page.focus !== f || seq !== f.seq) return;
     f.loading = false;
     if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
     if (status !== 200 || !data) {
@@ -650,7 +654,7 @@
 
   function openPr(repo, number) {
     page.sheet = { repo, number: String(number), data: null, status: 0, checksOpen: false,
-      method: "squash", confirm: null, merging: false, mergeError: null };
+      method: "squash", confirm: null, merging: false, mergeError: null, seq: 0 };
     const dlg = sheetEl();
     paintSheet();
     if (!dlg.open) dlg.showModal();
@@ -660,12 +664,13 @@
   async function loadPr(refresh) {
     const s = page.sheet;
     if (!s) return;
+    const seq = ++s.seq; // a merge's answer or a newer read supersedes this one
     s.busy = true;
     paintSheet();
     const q = new URLSearchParams({ repo: s.repo, pr: s.number });
     if (refresh) q.set("refresh", "1");
     const { status, data } = await api(`/v1/app/repositories?${q}`);
-    if (page.sheet !== s) return;
+    if (page.sheet !== s || seq !== s.seq) return;
     s.busy = false;
     s.status = status;
     s.data = data;
@@ -819,6 +824,9 @@
     } else {
       s.confirm = null;
       if (data.pr) {
+        // Reads begun before the merge answered are older than this.
+        s.seq++;
+        s.busy = false;
         s.data = { github: data.github, repo: data.repo, status: "ok", pr: data.pr,
           fetched_at: data.fetched_at, machine: data.machine };
         s.status = 200;

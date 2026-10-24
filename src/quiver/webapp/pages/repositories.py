@@ -187,7 +187,10 @@ def _merge_args(home, body: dict) -> tuple[str, str, str, bool]:
     if isinstance(number, bool) or not isinstance(number, (int, str)):
         raise PageError(422, "bad_pr", "number must be a pull request number")
     number = str(number).strip()
-    if not number.isdigit() or not number.isascii() or int(number) < 1:
+    # Nine digits is far past any real PR, and keeps int() off strings
+    # long enough to trip Python's digit limit.
+    if (not number.isdigit() or not number.isascii() or len(number) > 9
+            or int(number) < 1):
         raise PageError(422, "bad_pr", "number must be a pull request number")
     number = str(int(number))
     method = body.get("method", "squash")

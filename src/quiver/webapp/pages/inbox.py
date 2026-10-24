@@ -119,7 +119,7 @@ def _read_args(body: dict) -> tuple[bool, list[str]]:
         if isinstance(item, bool) or not isinstance(item, (str, int)):
             raise PageError(422, "bad_ids", "ids must be notification ids")
         text = str(item).strip()
-        if not (text.isascii() and text.isdigit()):
+        if not (text.isascii() and text.isdigit()) or len(text) > 20:
             raise PageError(422, "bad_ids", f"Not a notification id: {text[:40]}")
         if text not in ids:
             ids.append(text)

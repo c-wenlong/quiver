@@ -57,9 +57,21 @@
     if (all) inbox.confirmAll = false;
     if (status === 200 && data) {
       inbox.writes++;
-      if (inbox.data && !inbox.data.transport) {
-        inbox.data.notifications = data.notifications || [];
+      if (inbox.data && !inbox.data.transport && inbox.data.status === "ok") {
+        // Flip only what this answer marked, on the rows as they are now:
+        // two marks in flight can answer in either order, and a whole
+        // listing from the earlier one would bring the later one's row back.
+        const done = new Set((data.marked || []).map(String));
+        const every = done.has("*");
+        inbox.data.notifications = (inbox.data.notifications || []).map((n) =>
+          (every || done.has(String(n.id)) ? { ...n, unread: false } : n));
         inbox.data.github = data.github || inbox.data.github;
+      } else {
+        // The last read failed (or none landed): the answer carries the
+        // whole listing, so it becomes the page's rows.
+        inbox.status = 200;
+        inbox.data = { github: data.github, status: "ok", notifications: data.notifications || [],
+          fetched_at: Date.now() / 1000, machine: data.machine };
       }
       const failed = data.failed || [];
       if (failed.length) inbox.actionError = failed.map((f) => `${f.id}: ${f.error}`).join(" · ");

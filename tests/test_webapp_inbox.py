@@ -127,6 +127,12 @@ class TestMarkRead(unittest.TestCase):
         self.assertEqual((unread["1"], unread["2"]), (False, True))
         self.assertEqual(len(self.gh.writes()), 2)  # the repeated id is sent once
 
+    def test_several_rows_at_once_all_stay_read(self):
+        body = inbox.post(self.ctx, "read", {"ids": ["1", "2"]})
+        self.assertEqual(sorted(body["marked"]), ["1", "2"])
+        again = inbox.get(self.ctx, {})
+        self.assertEqual([n["unread"] for n in again["notifications"]], [False, False, False])
+
     def test_ids_must_be_ones_the_inbox_lists(self):
         err = self.refused(404, "unknown_notification", {"ids": ["1", "999"]})
         self.assertIn("999", err.message)
@@ -137,6 +143,7 @@ class TestMarkRead(unittest.TestCase):
                            ({"ids": ["../threads"]}, "bad_ids"), ({"ids": [True]}, "bad_ids"),
                            ({"ids": [{"id": 1}]}, "bad_ids"), ({"all": "yes"}, "bad_all"),
                            ({"ids": ["1"], "all": True}, "ids_and_all"),
+                           ({"ids": ["9" * 5000]}, "bad_ids"),
                            ({"ids": [str(i) for i in range(51)]}, "too_many_ids")):
             with self.subTest(body=body):
                 self.refused(422, code, body)

@@ -75,6 +75,10 @@ class TtlCache:
                     self._users[key] = left
                 else:
                     self._users.pop(key, None)
+                    # Nothing kept for the key (a dropped entry, or a
+                    # reply a write made stale): nothing needs its lock.
+                    if key not in self._entries:
+                        self._key_locks.pop(key, None)
 
     def _get_locked(self, key, fetch, refresh, ok) -> tuple[Any, float]:
         now = self._clock()
@@ -102,6 +106,8 @@ class TtlCache:
             self._epoch += 1
             for key in [k for k in self._entries if match(k)]:
                 self._entries.pop(key, None)
+                if not self._users.get(key):
+                    self._key_locks.pop(key, None)
 
     def clear(self) -> None:
         with self._lock:
