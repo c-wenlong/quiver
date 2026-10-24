@@ -521,6 +521,9 @@ def _stop_local_writers(
             continue
 
 
+_FORK_FLAGS = frozenset({"--fork-session", "--fork"})
+
+
 def _local_writer_pids(session: Session) -> list[int]:
     """Harness processes that still own ``session``.
 
@@ -567,6 +570,10 @@ def _local_writer_pids(session: Session) -> list[int]:
         except ValueError:
             continue
         if not argv or os.path.basename(argv[0]) != binary:
+            continue
+        # A fork of this session names it too, but writes elsewhere:
+        # attaching the source must not stop the fork.
+        if argv[1:2] == ["fork"] or _FORK_FLAGS.intersection(argv[1:]):
             continue
         if not any(t in argv[1:] for t in targets):
             continue
@@ -649,6 +656,70 @@ def launch_new(
             "delivered — attach from a terminal or retry"
         ), name
     return True, "launched under tmux; the session appears on refresh", name
+
+
+def launch_fork(
+    home: Path | None,
+    source: Session,
+    argv: list[str],
+    prompt: str,
+    *,
+    known_ids: list[str] | None = None,
+    launch_id: str = "",
+    expect_id: str = "",
+) -> tuple[bool, str, str | None]:
+    """``POST /v1/sessions/{key}/fork``: run ``argv`` (``fork.fork_argv``)
+    under tmux in the source's folder, tracked like ``launch_new``.
+
+    The source is never written to or stopped. Its id joins ``known_ids``
+    in the marker's exclude list, and ``fork_of`` keeps a codex resume of
+    the source (a new rollout under the same thread) out of adoption too.
+    ``expect_id`` is the new session's id when the command line set it
+    (claude ``--session-id``): adoption then waits for exactly that id.
+    Returns ``(ok, note, tmux_name)``.
+    """
+    binary = argv[0] if argv else ""
+    if not binary or not shutil.which(binary):
+        return False, f"{source.tool_name} is not installed on this machine", None
+    cwd = source.path or ""
+    if not cwd or not os.path.isdir(cwd):
+        return False, f"no such folder on this machine: {cwd}", None
+    key = (f"fork:{source.tool_name}:{int(time.time())}-{os.getpid()}-"
+           f"{secrets.token_hex(3)}")
+    name = launch_tmux(key, argv, cwd)
+    if name is None:
+        return False, (
+            f"tmux is not available, or {binary} exited right after launch"
+        ), None
+    exclude = set(known_ids or [])
+    if source.session_id:
+        exclude.add(source.session_id)
+    try:
+        folder = _pending_dir(home)
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"{name}.json").write_text(json.dumps({
+            "tmux": name,
+            "tool_name": source.tool_name,
+            "cwd": cwd,
+            "exclude": sorted(exclude),
+            "fork_of": source.session_id or "",
+            "expect_id": expect_id,
+            "launched_at": time.time(),
+            "launch_id": launch_id,
+        }))
+    except OSError:
+        pass
+    if prompt:
+        if not prime_pane(name, prompt):
+            return True, (
+                "forked under tmux, but the prompt could not be "
+                "delivered; attach from a terminal or retry"
+            ), name
+    elif boot_pane(name) is None:
+        # No prompt to type, but the pane must still get past a trust
+        # gate before the phone's first Enter can land on "No, exit".
+        return True, "forked under tmux; it has not finished starting", name
+    return True, "forked under tmux; the session appears on refresh", name
 
 
 def prime_pane(name: str, prompt: str, *, timeout: float = 30.0) -> bool:
@@ -794,6 +865,19 @@ def adopt_pending(
     return adopted
 
 
+def _same_thread(tool: str, session_id: str, other: str) -> bool:
+    """Whether two session ids are one conversation: a codex resume
+    writes a new rollout under the same thread uuid."""
+    if session_id == other:
+        return True
+    if tool != "codex":
+        return False
+    from quiver.sessions.parsers import codex_thread_id
+
+    thread = codex_thread_id(session_id)
+    return bool(thread) and thread == codex_thread_id(other)
+
+
 def _pending_match(
     home: Path | None, pending: dict, rows: list[tuple[str, Session, str]]
 ) -> str | None:
@@ -806,13 +890,22 @@ def _pending_match(
     # one the catalog did NOT have, so these never qualify regardless of
     # what the filesystem timestamps say.
     exclude = {str(s) for s in pending.get("exclude") or ()}
+    # A fork whose command line named the new id: that id and no other.
+    expect = str(pending.get("expect_id") or "")
+    fork_of = str(pending.get("fork_of") or "")
     candidates: list[tuple[str, float]] = []
     for key, session, _status in rows:
         if key in _load_registry(home):
             continue
         if session.tool_name != tool:
             continue
+        if expect:
+            if session.session_id == expect:
+                candidates.append((key, launched))
+            continue
         if session.session_id in exclude:
+            continue
+        if fork_of and _same_thread(tool, session.session_id, fork_of):
             continue
         if os.path.realpath(session.path or "") != cwd:
             continue

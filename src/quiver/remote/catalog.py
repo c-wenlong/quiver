@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Callable
 
 from quiver.paths import atomic_write_text, remote_dir_for
-from quiver.remote import protocol
+from quiver.remote import fork as fork_mod, protocol
 from quiver.sessions.models import Session, SessionRow
 from quiver.sessions.resume import resume_json
 
@@ -351,6 +351,8 @@ def session_to_row(
     )
     # Whether Attach is even possible: a resumable harness on this machine.
     row["attachable"] = row["resume"] is not None
+    # Whether Fork is: the harness's CLI has a fork command line.
+    row["can_fork"] = fork_mod.can_fork(session)
     return key, row
 
 

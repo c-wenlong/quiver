@@ -68,7 +68,7 @@ replays the journal.
 | `GET /v1/pair/requests` | `{requests: [{request_id, name, node_name, login, peer_ip, created_at, expires_in_s}]}`; a paired bearer OR a peer whose tailnet login matches the hub owner's |
 | `POST /v1/pair/requests/approve` | `{code, request_id?}` → `200 {ok, device_id, name}`; `401`, `403 self_approval` (a device can't approve itself), `404 no_match`; 5 wrong codes deny the request |
 | `POST /v1/pair/requests/deny` | `{code, request_id?}` → `200 {ok}` or `404` |
-| `GET /v1/sessions` | `{sessions: [SessionRow + key, machine_id, ownership, attachable], machines, server_time}` — the SessionRow fields are identical to `swe session --json` |
+| `GET /v1/sessions` | `{sessions: [SessionRow + key, machine_id, ownership, attachable, can_fork], machines, server_time}` — the SessionRow fields are identical to `swe session --json` |
 | `GET /v1/sessions/{key}/events` | SSE of `message.appended`, `session.status`, `notify`, `compaction`; `?last=seq` replays |
 | `GET /v1/sessions/{key}/messages` | `{messages: [events], next_before, has_more}` journal backfill |
 | `GET /v1/sessions/{key}/queue` | `{sends: [{client_id, text, attachments, queued_at}]}`: queue-mode sends with a `client_id` still waiting for idle, oldest first; always empty for a satellite session. `404 unknown_session` |

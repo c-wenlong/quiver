@@ -22,7 +22,7 @@ from pathlib import Path
 from quiver.paths import remote_dir_for
 from quiver.remote import attachments, catalog as catalog_mod, slash
 from quiver.remote import inject, journal, protocol, supervise, tail
-from quiver.remote import usage as usage_mod
+from quiver.remote import fork as fork_mod, usage as usage_mod
 
 AGENT_FILE = "agent.json"          # satellite's stored hub credential
 PUSH_BATCH = 50                    # events per /v1/agent/events POST
@@ -487,6 +487,15 @@ class RemoteAgent:
                 return payload is not None, (err or "staged"), False
             if session is None:
                 return False, "unknown session on this machine", False
+            if op == "fork":
+                # Tracked like launch: the result and the adopted
+                # session both carry the hub's launch id.
+                ok, note = fork_mod.start(
+                    self.home, session, self.catalog.tail_rows(),
+                    str(data.get("prompt") or ""),
+                    str(data.get("launch_id") or ""),
+                )
+                return ok, note, False
             if op == "attach":
                 ok, note = supervise.attach(
                     self.home, key, session,
