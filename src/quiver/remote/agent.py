@@ -465,6 +465,8 @@ class RemoteAgent:
                     status=str(data.get("status") or ""),
                     mode=str(data.get("mode") or "auto"),
                 )
+                if ok:
+                    self.tail_manager.wake(key)
                 return ok, note, False
             if op == "tail":
                 # The hub is asking us to stream an older session a
@@ -472,10 +474,13 @@ class RemoteAgent:
                 self.tail_manager.ensure(
                     key, session, str(data.get("status") or ""))
                 return True, "tailing", False
-            injector = inject.injector_for(
+            # Same wake-on-write as the hub: the satellite tails its
+            # own sessions, so a command it runs here starts the hot
+            # window here.
+            injector = self.tail_manager.waking(key, inject.injector_for(
                 self.home, key, supervise.meta_for(self.home, key),
                 emit=self._capture, machine=self.machine_id,
-            )
+            ))
             if op == "message":
                 # Resolve attachment refs to the paths the attachment
                 # op staged locally, same as the hub's send path.
@@ -553,7 +558,7 @@ class RemoteAgent:
                 self.tail_manager.tick()
             except Exception:
                 pass
-            self._stop.wait(0.25)
+            self.tail_manager.wait(0.25)
 
     def _downlink_loop(self) -> None:
         while not self._stop.is_set():
@@ -596,6 +601,7 @@ class RemoteAgent:
         except KeyboardInterrupt:
             pass
         self._stop.set()
+        self.tail_manager.interrupt()
         for t in threads:
             t.join(timeout=2)
         return 0
