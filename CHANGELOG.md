@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: first-run setup for the hub machine.** `#/setup` ports the
+  Mac app's setup sheet: pick the agents found on the hub machine (and
+  star them), then link one AGENTS.md, skills folder and MCP list into
+  each, through the same code as `swe setup --apply --json`. The page
+  opens on a "Set up this machine" card while the hub has no shared
+  AGENTS.md. The look and notifications steps stay in the Mac app.
+
 - **Remote iPhone app: links in replies get a preview card.** A reply
   that links to a web page shows a card under the text with the page's
   host, its path and an Open button (up to three per reply). Tapping the

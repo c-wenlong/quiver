@@ -188,59 +188,14 @@ def cmd_setup(args):
         return 1
 
     home = Path.home()
-    try:
-        harness_findings = discover_harnesses()
-        new_harness = [f for f in harness_findings if f.status == "new" and f.confidence == "high"]
-        mcp_findings = discover_mcp_servers()
-        new_mcp = [f for f in mcp_findings if f.status == "new"]
-        skill_hints = skills_symlink_hints(home=home)
-    except (EOFError, KeyboardInterrupt):
-        raise
-    except Exception as exc:
-        if not json_out:
-            raise
-        # The app's decoder contract holds on failed runs too: emit a
-        # well-formed envelope with the error as data rather than a bare
-        # traceback on stdout.
-        print(c("red", f"  setup failed: {exc}"), file=sys.stderr)
-        data = {"harness": [], "mcp": [], "skills": []}
-        if apply:
-            data["applied"] = {
-                "harness": [],
-                "mcp": [],
-                "skills": [],
-                "errors": [str(exc)],
-                "links": {"adopted": None},
-            }
-        else:
-            data["instructions"] = {
-                "agents_file": str(agents_file(home)),
-                "agents_file_exists": False,
-                "agents_file_customised": False,
-                "rows": [],
-                "adopt_candidates": [],
-                "error": str(exc),
-            }
-        emit(data)
-        return 1
-    actionable_skills = [h for h in skill_hints if h.action in ("create_shared", "symlink")]
-
     if json_out:
         # One document per --json invocation: --apply results ride inside
         # the same envelope instead of printing a second document.
-        data = {
-            "harness": [HarnessPreview.of(f).to_json() for f in new_harness],
-            "mcp": [McpPreview.of(f).to_json() for f in new_mcp],
-            "skills": [
-                SkillsPreview.of(h).to_json()
-                for h in skill_hints
-                if h.action != "ok"
-            ],
-        }
-        if apply:
-            data["applied"] = _apply_all(new_harness, new_mcp, actionable_skills, home, adopt, starred)
-        else:
-            data["instructions"] = _instructions_preview(home)
+        data, discovery_error = _setup_data(home, apply, adopt, starred)
+        if discovery_error is not None:
+            print(c("red", f"  setup failed: {discovery_error}"), file=sys.stderr)
+            emit(data)
+            return 1
         emit(data)
         # An apply step, a linking pass or the preview that stopped part
         # way is not a finished setup, even though what came before it
@@ -252,6 +207,9 @@ def cmd_setup(args):
         failed = (applied.get("errors") or applied.get("links", {}).get("error")
                   or preview_error)
         return 1 if failed else 0
+
+    new_harness, new_mcp, skill_hints = _discover(home)
+    actionable_skills = _actionable(skill_hints)
 
     print(f"\n{c('bold', 'quiver setup')}\n")
 
@@ -357,6 +315,83 @@ def cmd_setup(args):
 
     print(c("dim", "  Dry-run only. Run: swe setup --apply\n"))
     return 0
+
+
+def _discover(home: Path):
+    """What setup would register, import and link: high-confidence new
+    harnesses, MCP servers outside the hub, and every skills-root hint."""
+    harness_findings = discover_harnesses()
+    new_harness = [f for f in harness_findings if f.status == "new" and f.confidence == "high"]
+    mcp_findings = discover_mcp_servers()
+    new_mcp = [f for f in mcp_findings if f.status == "new"]
+    skill_hints = skills_symlink_hints(home=home)
+    return new_harness, new_mcp, skill_hints
+
+
+def _actionable(skill_hints) -> list:
+    return [h for h in skill_hints if h.action in ("create_shared", "symlink")]
+
+
+def _setup_data(home: Path, apply: bool, adopt: Path | None = None,
+                starred: list[str] | None = None) -> tuple[dict, str | None]:
+    """The ``swe setup --json`` document's ``data``, and the discovery
+    error when discovery itself failed (the document then carries it as
+    data, so the caller still gets a well-formed reply)."""
+    try:
+        new_harness, new_mcp, skill_hints = _discover(home)
+    except (EOFError, KeyboardInterrupt):
+        raise
+    except Exception as exc:
+        data = {"harness": [], "mcp": [], "skills": []}
+        if apply:
+            data["applied"] = {
+                "harness": [],
+                "mcp": [],
+                "skills": [],
+                "errors": [str(exc)],
+                "links": {"adopted": None},
+            }
+        else:
+            data["instructions"] = {
+                "agents_file": str(agents_file(home)),
+                "agents_file_exists": False,
+                "agents_file_customised": False,
+                "rows": [],
+                "adopt_candidates": [],
+                "error": str(exc),
+            }
+        return data, str(exc)
+    data = {
+        "harness": [HarnessPreview.of(f).to_json() for f in new_harness],
+        "mcp": [McpPreview.of(f).to_json() for f in new_mcp],
+        "skills": [
+            SkillsPreview.of(h).to_json()
+            for h in skill_hints
+            if h.action != "ok"
+        ],
+    }
+    if apply:
+        data["applied"] = _apply_all(new_harness, new_mcp, _actionable(skill_hints),
+                                     home, adopt, starred)
+    else:
+        data["instructions"] = _instructions_preview(home)
+    return data, None
+
+
+def setup_preview(home: Path) -> dict:
+    """``swe setup --json``'s data, built in process: what setup would
+    register, import and link. Writes nothing. The web app's setup page
+    reads this."""
+    return _setup_data(home, apply=False)[0]
+
+
+def setup_apply(home: Path, adopt: Path | None = None,
+                starred: list[str] | None = None) -> dict:
+    """``swe setup --apply --json [--adopt=<file>] [--starred=a,b]``, in
+    process: its ``applied`` envelope. Refusals (an ``adopt`` file
+    ``check_adoptable`` turns down) are the caller's to check first, as
+    ``cmd_setup`` does."""
+    return _setup_data(home, apply=True, adopt=adopt, starred=starred)[0]["applied"]
 
 
 def _apply_all(new_harness, new_mcp, actionable_skills, home: Path,

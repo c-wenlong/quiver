@@ -1,0 +1,116 @@
+/* First-run setup (pages/setup.js): the Mac app's setup sheet as a card.
+ * Every rule is scoped to setup-* classes, since this file loads on
+ * every page. */
+.setup-page .setup-text { margin: 0; font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
+.setup-page .strong { color: var(--text-primary); }
+.setup-entry { max-width: 820px; }
+.setup-entry a { color: var(--text-primary); }
+
+.setup-button {
+  height: 32px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border-strong);
+  background: var(--panel); color: var(--text-primary); font-size: 13px; cursor: pointer; white-space: nowrap;
+}
+.setup-button:hover:not(:disabled) { background: var(--hover); }
+.setup-button.primary { background: var(--text-primary); color: var(--card); border-color: var(--text-primary); }
+.setup-button.primary:hover:not(:disabled) { background: var(--text-primary); opacity: .9; }
+.setup-button.small { height: 26px; padding: 0 10px; font-size: 12px; }
+.setup-button:disabled, .setup-link:disabled { cursor: default; opacity: .45; }
+.setup-link {
+  background: none; border: 0; padding: 0; cursor: pointer; font-size: 13px;
+  color: var(--text-secondary); align-self: flex-start;
+}
+.setup-link.underline { text-decoration: underline; }
+.setup-link:hover:not(:disabled) { color: var(--text-primary); }
+
+/* The sheet: header, scrolling body, footer. */
+.setup-sheet { max-width: 820px; padding: 0; gap: 0; background: var(--panel); }
+.setup-head { padding: 32px 40px 0; display: flex; flex-direction: column; gap: 24px; }
+.setup-brand { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; }
+.setup-brand img { width: 28px; height: 28px; border-radius: 7px; }
+.setup-steps { display: flex; align-items: center; gap: 6px; }
+.setup-steps .caption { margin-left: 8px; }
+.setup-dot { width: 22px; height: 3px; border-radius: 2px; background: var(--border-strong); }
+.setup-dot.on { width: 36px; background: var(--text-primary); }
+.setup-body { padding: 24px 40px; display: flex; flex-direction: column; gap: 20px; }
+.setup-titles { display: flex; flex-direction: column; gap: 8px; }
+.setup-title { font-size: 28px; font-weight: 600; letter-spacing: -0.8px; margin: 0; }
+.setup-title:focus { outline: none; }
+.setup-subtitle { font-size: 13px; color: var(--text-secondary); margin: 0; line-height: 1.5; }
+.setup-foot {
+  display: flex; align-items: center; gap: 10px; padding: 18px 40px;
+  border-top: 1px solid var(--border);
+}
+.setup-spacer { flex: 1; }
+.setup-step { display: flex; flex-direction: column; gap: 14px; }
+.setup-error { padding: 14px 16px; }
+.setup-error .error { margin: 0; }
+.setup-pre { white-space: pre-wrap; }
+
+/* Step 1: agents */
+.setup-found { display: flex; gap: 6px; font-size: 13px; color: var(--text-secondary); }
+.setup-count { color: var(--text-muted); }
+.setup-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.setup-tile {
+  display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 12px; min-width: 0;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--card);
+  cursor: pointer; text-align: left; font-size: 13px; color: var(--text-primary);
+}
+.setup-tile:hover { border-color: var(--border-strong); }
+.setup-tile.on { background: var(--hover); border-color: var(--text-secondary); }
+.setup-tile-logo {
+  width: 30px; height: 30px; flex: none; display: grid; place-items: center;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+}
+.setup-logo { width: 18px; height: 18px; display: block; }
+.setup-logo.mono { filter: var(--logo-filter); }
+.setup-monogram {
+  width: auto; height: auto; font-size: 13px; font-weight: 600; color: var(--text-secondary); line-height: 1;
+}
+.setup-tile-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.setup-check { width: 16px; height: 16px; flex: none; color: var(--text-primary); }
+.setup-missing {
+  display: flex; flex-direction: column; gap: 10px; padding: 12px 20px; border-radius: 16px;
+  background: var(--card); border: 1px solid color-mix(in srgb, var(--warning) 60%, transparent);
+}
+.setup-missing-row { display: flex; align-items: center; gap: 12px; }
+.setup-missing-row .setup-text { flex: 1; }
+.setup-missing .caption { margin: 0; }
+.setup-methods { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 12px; }
+.setup-method { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--border); }
+.setup-method:first-child { border-top: 0; }
+.setup-method.off { opacity: .55; }
+.setup-via { width: 44px; flex: none; font-size: 12px; color: var(--text-secondary); }
+.setup-method code {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: none; padding: 0; color: var(--text-secondary);
+}
+
+/* Step 2: AGENTS.md, skills and MCP servers */
+.setup-rows { padding: 0 20px; gap: 0; }
+.setup-row { display: flex; gap: 12px; padding: 14px 0; border-top: 1px solid var(--border); }
+.setup-row:first-child { border-top: 0; }
+.setup-row-icon { width: 20px; flex: none; padding-top: 2px; color: var(--text-secondary); }
+.setup-row-icon svg { width: 16px; height: 16px; }
+.setup-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.setup-row-main .caption { margin: 0; }
+.setup-row-main .note { font-size: 12px; color: var(--warning-text); }
+.setup-start { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary); }
+.setup-start select.field { max-width: 360px; }
+.setup-done { gap: 8px; }
+.setup-done .caption { margin: 0; }
+.setup-done-title { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.setup-alone { display: flex; flex-direction: column; gap: 2px; }
+.setup-alone code { align-self: flex-start; overflow-wrap: anywhere; }
+
+@media (max-width: 720px) {
+  .setup-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .setup-head { padding: 24px 20px 0; }
+  .setup-body { padding: 20px; }
+  .setup-foot { padding: 14px 20px; flex-wrap: wrap; }
+  .setup-title { font-size: 24px; }
+  .setup-missing-row { flex-direction: column; align-items: flex-start; }
+  .setup-start { flex-direction: column; align-items: flex-start; }
+}
+@media (max-width: 440px) {
+  .setup-grid { grid-template-columns: minmax(0, 1fr); }
+}
