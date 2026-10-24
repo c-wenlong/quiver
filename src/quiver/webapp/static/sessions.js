@@ -146,8 +146,11 @@ function searchNote(kept) {
   }
   const said = kept.filter((r) => transcriptHit(r.key)).length;
   if (!said) return "";
-  return `<p class="caption search-note">${kept.length.toLocaleString("en-US")} session${kept.length === 1 ? "" : "s"} match, ${
-    said === kept.length ? (said === 1 ? "on" : "all on") : `${said.toLocaleString("en-US")} of them on`} what was said.</p>`;
+  const n = kept.length.toLocaleString("en-US");
+  const text = kept.length === 1 ? "1 session matches on what was said."
+    : said === kept.length ? `${n} sessions match, all on what was said.`
+      : `${n} sessions match, ${said.toLocaleString("en-US")} of them on what was said.`;
+  return `<p class="caption search-note">${text}</p>`;
 }
 
 /* The rows the filters keep, and how many of them are accidental. */
