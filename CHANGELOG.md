@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Remote iPhone app: links in replies get a preview card.** A reply
+  that links to a web page shows a card under the text with the page's
+  host, its path and an Open button (up to three per reply). Tapping the
+  card, or the link in the text, opens the page in an in-app browser, so
+  closing it brings you back to the chat.
+
 ### Fixed
 
 - **Remote web app: chats stream in instead of landing in blocks.** The
