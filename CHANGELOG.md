@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each, through the same code as `swe setup --apply --json`, then pick
   a look. The page opens on a "Set up this machine" card while the hub
   has no shared AGENTS.md. The notifications step stays in the Mac app.
+  Until then, Overview shows a Set up card, and opening a bare `/app/`
+  goes to `#/setup` once per browser, as the Mac app offers its sheet
+  once at launch.
 
 - **Web app: remote control on the Sessions page.** Clicking a session
   opens its chat: the transcript with thinking, tool cards, diffs and

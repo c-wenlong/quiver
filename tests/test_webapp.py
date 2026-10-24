@@ -56,6 +56,14 @@ class TestWebAppRoutes(HubBase):
         self.assertEqual(body["harnesses"][0]["harness"], "claude")
         self.assertEqual(body["machine"], self.srv.state.machine["name"])
         self.assertEqual(body["notes"], [])
+        # No shared AGENTS.md yet: Overview offers setup until there is one.
+        self.assertTrue(body["first_run"])
+        agents = self.srv.home / ".quiver/AGENTS.md"
+        agents.parent.mkdir(parents=True, exist_ok=True)
+        agents.write_text("# shared\n")
+        body = json.loads(self.srv.request(
+            "GET", "/v1/app/overview?period=all&tz=UTC", headers=self.auth())[1])
+        self.assertFalse(body["first_run"])
         # The store is the web app's own, never the Mac app's.
         self.assertTrue((self.srv.home / ".quiver/data/web-ledger/ledger.sqlite").exists())
         self.assertFalse((self.srv.home / ".quiver/data/ledger").exists())
