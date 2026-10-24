@@ -13,6 +13,7 @@ devices.
 | Folder | What |
 |---|---|
 | `Sources/QuiverRemote/Hub/` | Wire types, `HubClient` (one method per route), the SSE reader, `AppModel` (pairing, sessions, inbox), `ChatModel` (one open chat), `UsageModel` and `UsageFormat` (the Usage tab's data and number formatting), `PromptCompletion` (the prompt box's `@` and `/` menus), and the diff and markdown helpers |
+| `Sources/QuiverRemote/Hub/SSH*.swift`, `ConsoleModel.swift` | The console: this phone's SSH key (`SSHIdentity`), the hub's `/v1/ssh` answer and the saved targets (`SSHTarget`), the SwiftNIO SSH shell with pinned host keys (`SSHShell`), and the console's state (`ConsoleModel`) |
 | `Sources/QuiverRemote/Theme/` | The Mac app's theme ported to iOS: the same hex values and roles, cards, list rows, badges, buttons |
 | `Sources/QuiverRemote/Views/` | Welcome and pairing, Sessions, Chat, Inbox, Usage (limits and spend), Pair requests, the QR scanner |
 | `Tests/QuiverRemoteTests/` | Unit tests for parsing, pairing links, diffs, grouping and chat event handling |
@@ -46,6 +47,31 @@ paired before this keeps its hub: the app moves the old single pairing
 into the list on first launch, and a phone paired under the old webview
 shell keeps its pairing the same way.
 
+## Console
+
+Console, in the hub menu on Sessions, is a shell on the hub's machine
+for debugging when chat can't help, including when the hub itself is
+down: it dials the machine's own sshd over the tailnet, not the hub.
+
+- **Key:** one per phone, a Secure Enclave P-256 key (the private half
+  never leaves the chip; a software key in the Keychain on the
+  simulator). The first console sends its public half to the hub
+  (`POST /v1/ssh/key`).
+- **On the hub:** `swe remote ssh --on` writes paired phones' keys into
+  `~/.ssh/authorized_keys`; until then the console says so and shows
+  the command. A Mac also needs Remote Login (System Settings, General,
+  Sharing).
+- **Host keys:** the phone trusts only the host keys `GET /v1/ssh`
+  listed, and saves them with the login user per hub. When the hub
+  doesn't answer, the console dials with that saved target and says it
+  did. A phone that never opened a console on a hub can't, since it
+  has nothing to pin.
+- **Libraries:** SwiftNIO SSH (Apple) for SSH and SwiftTerm 1.11.2 for
+  the terminal, pinned to exact versions in `project.yml`. SwiftTerm
+  1.12 and later add a Metal renderer that needs Xcode's separate Metal
+  Toolchain download, so the pin stays below it. Citadel was passed over:
+  its 0.12 releases take `swift-nio-ssh` from a third-party fork.
+
 ## Building
 
 Xcode projects aren't checked in (they churn); `project.yml` generates
@@ -70,6 +96,13 @@ xcodebuild -project QuiverRemote.xcodeproj -scheme QuiverRemote \
   -derivedDataPath build-sim test
 ```
 
+The console's SSH tests need a server and skip without one.
+`script/console-sshd.sh` starts a throwaway sshd on 127.0.0.1:2222 (its
+own host key, config and authorized_keys in a temp folder; nothing in
+`~/.ssh` or `/etc/ssh` changes) that trusts a key made fresh for that
+run, and prints the `TEST_RUNNER_QUIVER_SSH_*` variables, the key
+included, to run the tests with.
+
 `project.yml` carries the pieces that matter: bundle id
 `com.quiver.remote`, the `quiver` URL scheme so pair QRs open the app,
 `NSAllowsArbitraryLoads` (the hub is plain HTTP on the tailnet), the
@@ -85,3 +118,7 @@ Developer Mode).
   approve and deny buttons. APNs is on the roadmap.
 - Listing and removing paired devices needs a hub route (roadmap P8).
 - Decoding stays on the hub; the app only reads protocol DTOs.
+- The console reaches the hub's own machine only; satellites don't
+  install phone keys or report host keys yet.
+- iOS closes the console's connection soon after the app leaves the
+  screen. Run long work in tmux on the machine and attach again.

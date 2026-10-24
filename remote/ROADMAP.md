@@ -176,6 +176,6 @@ are server changes in `src/quiver/remote/`.
 - [ ] iPad layout: sessions list and chat side by side
 - [ ] Protocol version check, with a "hub is newer, update the app" message
 - [ ] PWA restyle to the same look, for browsers and Android
-- [ ] SSH console: a terminal on any machine for when the hub is down, dialling sshd over the tailnet with a Secure Enclave key (Citadel + SwiftTerm)
+- [x] SSH console: a terminal on the hub's machine for when the hub is down, dialling sshd over the tailnet with a Secure Enclave key (SwiftNIO SSH + SwiftTerm), in the hub menu on Sessions
 - [x] Hub: `GET /v1/ssh` (host keys to pin, login user) and `POST /v1/ssh/key`; `swe remote ssh --on` writes paired phones' keys into `authorized_keys`, and a revoke removes them
 - [ ] Hub: satellites install the same keys and report their host keys, so the console reaches every machine
