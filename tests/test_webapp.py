@@ -141,5 +141,63 @@ class TestSetupOffer(unittest.TestCase):
         self.assertEqual(out[1], "")
 
 
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestMacOnlySidebar(unittest.TestCase):
+    """app.js's sidebar and router for the Mac-only pages (Menu bar,
+    Widgets), run under node with a two-element DOM stubbed."""
+
+    def run_route(self, hash_):
+        prelude = (
+            "globalThis.window = { addEventListener() {} };\n"
+            "globalThis.document = { addEventListener() {}, getElementById(id) { return els[id]; } };\n"
+            "const els = { sidebar: { innerHTML: '', querySelector: () => ({ outerHTML: '<div class=\"brand\"></div>' }) },"
+            " panel: { innerHTML: '' } };\n"
+            "globalThis.location = { hash: " + json.dumps(hash_) + " };\n"
+            "const replaced = [];\n"
+            "globalThis.history = { replaceState(_s, _t, url) { replaced.push(url); location.hash = url; } };\n"
+            "globalThis.localStorage = { getItem() { return null; }, setItem() {} };\n"
+            "function renderSessions() {} function renderHarnesses() {} function renderAccounts() {}\n"
+            "const sessionsPage = { gen: 0 }, harnessesPage = { gen: 0 }, accountsPage = { gen: 0 };\n")
+        body = ("const rendered = []; PAGES.overview = (id) => rendered.push(id);"
+                " route(); return { rendered, replaced, hash: location.hash,"
+                " sidebar: els.sidebar.innerHTML, panel: els.panel.innerHTML };")
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(prelude + APP_JS.read_text(encoding="utf-8")
+                    + "\nprocess.stdout.write(JSON.stringify((() => {" + body + "})()));\n")
+        self.addCleanup(Path(f.name).unlink)
+        done = subprocess.run(["node", f.name], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_mac_only_items_wear_the_pill_and_are_not_links(self):
+        sidebar = self.run_route("#/overview")["sidebar"]
+        for page, label in (("menubar", "Menu bar"), ("widgets", "Widgets")):
+            item = sidebar[sidebar.rindex('<span class="nav-item', 0, sidebar.index(f"<span>{label}</span>")):]
+            item = item[:item.index("Mac app only</span></span>")]
+            self.assertTrue(item.startswith('<span class="nav-item soon mac-only" data-page="%s" aria-disabled="true">' % page), item)
+            self.assertNotIn("href", item)
+            self.assertIn('<span class="badge mac-only">', item)
+        self.assertNotIn('href="#/menubar"', sidebar)
+        self.assertNotIn('href="#/widgets"', sidebar)
+        # A page that isn't ported yet is still a link. Every row carries
+        # data-page, which Settings' hide switches select on.
+        self.assertIn('data-page="status" href="#/status"', sidebar)
+        self.assertEqual(sidebar.count("data-page="), sidebar.count('class="nav-item'))
+
+    def test_a_mac_only_hash_opens_overview(self):
+        for hash_ in ("#/menubar", "#/widgets", "#widgets", "#/menubar?x=1"):
+            out = self.run_route(hash_)
+            self.assertEqual(out["rendered"], ["overview"], hash_)
+            self.assertEqual(out["replaced"], ["#/overview"], hash_)
+            self.assertIn('aria-current="page"', out["sidebar"])
+            self.assertIn('class="nav-item active " data-page="overview" href="#/overview"', out["sidebar"])
+            self.assertNotIn("part of the Mac app", out["panel"])
+
+    def test_other_hashes_are_left_alone(self):
+        for hash_ in ("", "#/overview"):
+            out = self.run_route(hash_)
+            self.assertEqual((out["rendered"], out["replaced"]), (["overview"], []), hash_)
+
+
 if __name__ == "__main__":
     unittest.main()
