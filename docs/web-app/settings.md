@@ -84,8 +84,8 @@ plans, stay in the Mac app.
 
 The switch is the hub's own setting, `enabled` in
 `~/.quiver/data/search/indexer.json`: while it is on, the hub's
-`remote-search-index` thread runs a pass over Claude Code and Codex
-transcripts every two minutes (`sessions/search_writer.py`). Turning it
+`remote-search-index` thread runs a pass over every transcript swe can
+decode (the list is in [data-model.md](../data-model.md)) every two minutes (`sessions/search_writer.py`). Turning it
 on also starts a pass at once, so the line under the switch reads
 "Indexing: the first pass reads every transcript and can take a few
 minutes." and the page re-reads the status every 3 seconds until

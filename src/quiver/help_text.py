@@ -203,7 +203,7 @@ HELP = {
   {c('cyan', 'swe session <N>')}              Show last N sessions
   {c('cyan', 'swe session use <N>')}          Resume session #N
   {c('cyan', 'swe session -i')}               Pick with arrow keys; space reads a transcript, Enter resumes
-  {c('cyan', 'swe session index')}            Index Claude Code and Codex transcripts for --search
+  {c('cyan', 'swe session index')}            Index agent transcripts for --search
   {c('cyan', 'swe session index --on|--off')} Whether the remote hub keeps the index current
   {c('cyan', 'swe session index --status')}   What the index holds, without a pass
 

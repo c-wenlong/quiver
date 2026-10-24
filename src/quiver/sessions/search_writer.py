@@ -27,9 +27,10 @@ Sharing one file with the Swift writer rests on four rules:
 - One Python writer at a time, through an ``flock`` on ``index.lock``
   beside the database. The Swift app doesn't take it and doesn't need to.
 
-The pass covers Claude Code and Codex transcripts (the ``HARNESSES`` of
-:mod:`quiver.sessions.search_decode`). Rows for other harnesses, written by
-the app, are never touched.
+The pass covers the sources :func:`sources` lists (Claude Code and Codex
+transcripts, Devin's ATIF exports) plus the sessions inside Devin's
+``sessions.db`` (:mod:`quiver.sessions.search_containers`). Rows for other
+harnesses, written by the app, are never touched.
 """
 
 from __future__ import annotations
@@ -46,6 +47,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from quiver.paths import quiver_dir_for, search_index_for
+from quiver.sessions import search_containers as containers
 from quiver.sessions import search_decode as decode
 
 try:  # POSIX only; without it a second Python pass is not excluded.
@@ -277,7 +279,9 @@ def open_index(path: Path) -> sqlite3.Connection:
 
 @dataclass(frozen=True)
 class FileStat:
-    ino: int
+    # None for a session inside a container: its row proves nothing about
+    # the database file's inode.
+    ino: int | None
     mtime_ms: float
     size: int
 
@@ -441,6 +445,28 @@ class Store:
             (path, mtime_ms, mtime_ms),
         )
 
+    def files_with_prefix(self, prefix: str) -> list[str]:
+        """``files(withPrefix:)``: a range seek, not a ``substr`` scan."""
+        return [row[0] for row in self.conn.execute(
+            "SELECT path FROM files WHERE path >= ? AND path < ? || char(1114111)"
+            " ORDER BY path", (prefix, prefix))]
+
+    def remove_file(self, path: str) -> None:
+        """``removeFile``: the row and the session it points at, for a
+        container session the database no longer lists."""
+        conn = self.conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            fence = self.fence(path)
+            if fence is not None and fence[0] is not None:
+                self._delete_session(fence[0])
+            conn.execute("DELETE FROM files WHERE path = ?", (path,))
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+
     def drain_orphans(self, limit: int = DRAIN_BATCH_ROWS) -> int:
         """``drainOrphanedMessages``: delete up to ``limit`` messages of one
         session that no longer exists. Call until it returns 0."""
@@ -481,6 +507,9 @@ class Store:
 # -- reading one transcript ----------------------------------------------
 
 SKIP, CURRENT, APPEND, WHOLE = "skip", "current", "append", "whole"
+# Harnesses whose transcripts may be read from the last offset. The rest
+# are read whole whenever they change, as the Swift writer reads them.
+APPENDABLE = frozenset({"claude", "codex"})
 
 
 def should_index(path: str) -> bool:
@@ -544,6 +573,9 @@ class _Pending:
     appending: bool
     row: FileRow | None
     decoder: decode.Decoder
+    # The session id the records never carry (``sessionIDFromPath``); a
+    # record's own id still wins.
+    session_id_hint: str | None = None
     messages: list = field(default_factory=list)
     hints: decode.Hints = field(default_factory=decode.Hints)
     first_ts: str | None = None
@@ -576,7 +608,7 @@ class _Pending:
     def fields(self) -> SessionFields:
         return SessionFields(
             agent=self.harness,
-            session_id=self.hints.session_id or Path(self.path).stem,
+            session_id=self.hints.session_id or self.session_id_hint or Path(self.path).stem,
             file_path=self.path,
             title=self.hints.title or "",
             cwd=self.hints.cwd,
@@ -613,10 +645,12 @@ class Indexer:
         self.buffer_budget = buffer_budget
         self.prints = {} if prints is None else prints
 
-    def index_file(self, path: str, harness: str) -> str:
+    def index_file(self, path: str, harness: str, *, document: bool = False,
+                   session_id: str | None = None) -> str:
         """Read one transcript into the index. Returns what happened:
         ``skip``, ``current``, ``indexed``, ``moved`` (another writer won the
-        fence) or ``failed``."""
+        fence) or ``failed``. ``document`` reads the file as one JSON value
+        (``indexWholeFile``) instead of JSONL lines."""
         if not should_index(path):
             return SKIP
         stat = file_stat(path)
@@ -627,10 +661,16 @@ class Indexer:
         if need in (SKIP, CURRENT):
             return need
         # An appended span bigger than the buffer is read whole instead,
-        # where mid-read flushes bound the memory it takes.
-        appending = need == APPEND and stat.size - row.byte_offset <= self.buffer_budget
+        # where mid-read flushes bound the memory it takes. Only the
+        # harnesses whose decoders keep no state past the head append; the
+        # Swift side reads every other source whole too.
+        appending = (need == APPEND and not document and harness in APPENDABLE
+                     and stat.size - row.byte_offset <= self.buffer_budget)
         try:
-            committed = self._read(path, harness, stat, row, appending)
+            if document:
+                committed = self._read_document(path, harness, stat, row, session_id)
+            else:
+                committed = self._read(path, harness, stat, row, appending, session_id)
         except _Moved:
             return "moved"
         except (OSError, sqlite3.Error, ValueError, RecursionError):
@@ -645,8 +685,42 @@ class Indexer:
             return "failed"
         return "indexed" if committed else "moved"
 
+    def _read_document(self, path: str, harness: str, stat: FileStat,
+                       row: FileRow | None, session_id: str | None) -> bool:
+        """One whole JSON document, fed to the decoder as one "line"; the
+        cursor lands on the file's size."""
+        decoder = decode.Decoder(harness)
+        pending = _Pending(path=path, harness=harness, appending=False, row=row,
+                           decoder=decoder, session_id_hint=session_id)
+        with open(path, "rb") as handle:
+            data = handle.read()
+        self._record(pending, *decoder.decode_line(data), stat)
+        return self._finish(pending, stat, stat.size)
+
+    def index_session(self, path: str, stat: FileStat, read) -> str:
+        """``finishSession``: one session out of a container, read whole
+        whenever its synthetic stat moves. ``read()`` returns its
+        ``(SessionFields, messages)`` and runs only when a read is owed."""
+        row = self.store.file_row(path)
+        need = read_need(row, stat)
+        if need in (SKIP, CURRENT):
+            return need
+        try:
+            fields, messages = read()
+            fence = None if row is None else (row.session_row_id, row.byte_offset)
+            kind = REPLACE if row is not None and row.session_row_id is not None else FRESH
+            committed = self.store.commit_file(path, fence, stat, stat.size, kind, fields,
+                                               decode.message_rows(messages))
+        except (sqlite3.Error, ValueError, RecursionError):
+            try:
+                self.store.mark_failed(path, stat.mtime_ms)
+            except sqlite3.Error:
+                pass
+            return "failed"
+        return "indexed" if committed else "moved"
+
     def _read(self, path: str, harness: str, stat: FileStat,
-              row: FileRow | None, appending: bool) -> bool:
+              row: FileRow | None, appending: bool, session_id: str | None = None) -> bool:
         decoder = decode.Decoder(harness)
         with open(path, "rb") as handle:
             start = 0
@@ -673,7 +747,7 @@ class Indexer:
                         if end >= start:
                             break
             pending = _Pending(path=path, harness=harness, appending=appending,
-                               row=row, decoder=decoder)
+                               row=row, decoder=decoder, session_id_hint=session_id)
             end_offset = start
             for line, end_offset in _lines(handle, start):
                 if not line or not decoder.wants(line):
@@ -729,7 +803,8 @@ class Indexer:
         store = self.store
         rows = decode.message_rows(pending.messages)
         fields = pending.fields()
-        has_session = pending.hints.session_id is not None or pending.decoded > 0
+        has_session = (pending.hints.session_id is not None
+                       or pending.session_id_hint is not None or pending.decoded > 0)
         fence = pending.fence()
         old = pending.row
         if pending.appending and old is not None:
@@ -794,32 +869,105 @@ def _homes(home: Path, vendor: str, default: str) -> list[Path]:
     return [p for p in out if p.is_dir()]
 
 
-def _walk(root: Path) -> list[str]:
-    """Resolved ``*.jsonl`` paths under ``root``: hidden entries and
+def _walk(root: Path, suffix: str = ".jsonl") -> list[str]:
+    """Resolved ``*<suffix>`` paths under ``root``: hidden entries and
     ``subagents`` directories pruned, as the Swift source table does."""
     found = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(d for d in dirnames
                              if not d.startswith(".") and d != "subagents")
         for name in sorted(filenames):
-            if name.endswith(".jsonl") and not name.startswith("."):
+            if name.endswith(suffix) and not name.startswith("."):
                 found.append(os.path.realpath(os.path.join(dirpath, name)))
     return found
 
 
-def sources(home: Path) -> list[tuple[str, str]]:
-    """``(path, harness)`` for every transcript this pass reads."""
-    out: list[tuple[str, str]] = []
+@dataclass(frozen=True)
+class Source:
+    """One file a pass reads: its harness, and whether it is one JSON
+    document rather than JSONL."""
+
+    path: str
+    harness: str
+    document: bool = False
+    session_id: str | None = None
+
+
+DEVIN_DB = ".local/share/devin/cli/sessions.db"
+
+
+def sources(home: Path) -> list[Source]:
+    """Every transcript file this pass reads."""
+    out: list[Source] = []
     seen: set[str] = set()
-    roots = [("claude", h / "projects") for h in _homes(home, "claude", ".claude")]
-    for codex_home in _homes(home, "codex", ".codex"):
-        roots += [("codex", codex_home / "sessions"), ("codex", codex_home / "archived_sessions")]
-    for harness, root in roots:
-        for path in _walk(root):
+
+    def add(found: list[str], harness: str, document: bool = False) -> None:
+        for path in found:
             if path not in seen:
                 seen.add(path)
-                out.append((path, harness))
+                out.append(Source(path, harness, document))
+
+    for claude_home in _homes(home, "claude", ".claude"):
+        add(_walk(claude_home / "projects"), "claude")
+    for codex_home in _homes(home, "codex", ".codex"):
+        add(_walk(codex_home / "sessions"), "codex")
+        add(_walk(codex_home / "archived_sessions"), "codex")
+    # Devin's ATIF exports beside sessions.db (`Ledger`'s devinTranscripts).
+    # The database holds the same sessions and more; both are read, and
+    # search shows one hit per session.
+    add(_walk((home / DEVIN_DB).parent / "transcripts", ".json"), "devin", document=True)
     return out
+
+
+def _index_devin(indexer: "Indexer", db_path: Path, result: "PassResult", should_stop) -> None:
+    """``Ledger.indexDevinSessions``: each visible session in
+    ``sessions.db`` under ``<db>#<id>``, then rows for sessions the database
+    no longer lists removed. A database that will not open or enumerate is
+    skipped whole."""
+    if not db_path.is_file():
+        return
+    resolved = os.path.realpath(db_path)
+    try:
+        conn = containers.open_read_only(resolved)
+    except sqlite3.Error:
+        return
+    try:
+        # Retirement candidates come from before the listing: a row the app
+        # adds for a session created after it is no candidate.
+        candidates = indexer.store.files_with_prefix(resolved + "#")
+        try:
+            sessions = containers.devin_sessions(conn)
+        except sqlite3.Error:
+            return
+        live: set[str] = set()
+        for session in sessions:
+            if should_stop is not None and should_stop():
+                return
+            path = containers.synthetic_path(resolved, session.id)
+            live.add(path)
+            stat = FileStat(ino=None, mtime_ms=session.stat_mtime_ms, size=session.nodes)
+
+            def read(session=session, path=path):
+                messages, prompt_title = containers.devin_messages(conn, session)
+                fields = SessionFields(
+                    agent="devin", session_id=session.id, file_path=path,
+                    title=containers.devin_title(session, prompt_title),
+                    cwd=session.directory,
+                    created_at=decode.iso_seconds(session.created_ms / 1000),
+                    updated_at=decode.iso_seconds(session.stat_mtime_ms / 1000),
+                    message_count=len(messages))
+                return fields, messages
+
+            result.files += 1
+            result.count(indexer.index_session(path, stat, read))
+        # Only a complete, non-empty listing retires anything: an empty one
+        # proves nothing about the ids the index holds.
+        if live:
+            for path in candidates:
+                if path not in live:
+                    indexer.store.remove_file(path)
+    finally:
+        conn.close()
 
 
 @dataclass
@@ -831,6 +979,16 @@ class PassResult:
     moved: int = 0
     drained: int = 0
     seconds: float = 0.0
+
+    def count(self, outcome: str) -> None:
+        if outcome == "indexed":
+            self.indexed += 1
+        elif outcome == CURRENT:
+            self.current += 1
+        elif outcome == "failed":
+            self.failed += 1
+        elif outcome == "moved":
+            self.moved += 1
 
     def as_dict(self) -> dict:
         return {k: getattr(self, k) for k in
@@ -882,7 +1040,7 @@ def is_running(home: Path | None = None) -> bool:
 
 
 def run_pass(home: Path | None = None, *, should_stop=None) -> PassResult:
-    """Index every Claude Code and Codex transcript under ``home`` once.
+    """Index every source under ``home`` once.
 
     Raises :class:`IndexBusy` when another Python pass holds the lock and
     :class:`IndexUnavailable` when the file can't be written here. Either
@@ -915,19 +1073,15 @@ def _pass(home: Path, path: Path, should_stop) -> PassResult:
     prints = _load_prints(prints_path)
     try:
         indexer = Indexer(Store(conn), prints=prints)
-        for source, harness in sources(home):
+        for source in sources(home):
             if should_stop is not None and should_stop():
                 break
             result.files += 1
-            outcome = indexer.index_file(source, harness)
-            if outcome == "indexed":
-                result.indexed += 1
-            elif outcome == CURRENT:
-                result.current += 1
-            elif outcome == "failed":
-                result.failed += 1
-            elif outcome == "moved":
-                result.moved += 1
+            result.count(indexer.index_file(source.path, source.harness,
+                                            document=source.document,
+                                            session_id=source.session_id))
+        if should_stop is None or not should_stop():
+            _index_devin(indexer, home / DEVIN_DB, result, should_stop)
         # A failed drain leaves the orphans for the next pass's.
         try:
             result.drained = indexer.drain()
