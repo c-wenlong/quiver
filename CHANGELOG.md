@@ -15,6 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `swe mcp remove`'s body is now `remove_places` and `remove_server`,
   which the CLI and the web app share.
 
+- **Web app: install, enable, disable and uninstall plugins.** A plugin's
+  sheet on Explore lists each harness with its state and the Mac app's
+  actions as buttons, where it used to say to use `swe plugins`. Each asks
+  first, naming the command (or Codex's config edit) and the machine, then
+  runs `swe plugins <verb> <ref> --harness=<h>` on the hub.
+
+- **Web app: New skill.** The Skills page has a New skill button (and one
+  in the empty list, which used to name `swe skills new <name>`). It opens
+  the Mac app's form, name and description, and writes
+  `~/.quiver/skills/<name>/SKILL.md` on the hub, then offers to open it.
+
 - **Web app: Install buttons for missing agents.** Setup's Install sheet
   for an agent that isn't on the hub has an Install button beside each
   package manager's command, which runs `swe install <name> --via=<method>`

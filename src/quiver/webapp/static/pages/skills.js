@@ -11,6 +11,7 @@ const skillsPage = {
   // Writes: folders waiting on the hub, the confirm on show ({kind, path}
   // or {kind: "link_all", paths}), the last failure and Link all's summary.
   busy: new Set(), confirm: null, actionError: null, summary: null,
+  newToken: 0,            // the New skill form on show; older replies are stale
   detail: {},             // folder -> detail payload
   fmShowsAll: false, treeShowsAll: false, open: new Set(),
 };
@@ -204,8 +205,10 @@ function skillsHeader(busy) {
       ${skillsPage.links !== null ? skillsLinksPanel(d) : ""}
     </div>`;
   }
+  const add = p.onDetail ? "" : `<button class="sk-button primary sk-new-button" id="sk-new" type="button"
+      title="Write a new SKILL.md into ~/.quiver/skills on ${esc(where)}">${SKILLS_PLUS}New skill</button>`;
   return pageHeader("Skills", `Every skill on ${where} outside a plugin, and which harnesses load it.`,
-    `${links}<button class="icon-button${busy ? " spinning" : ""}" id="page-refresh" aria-label="Refresh" title="Refresh">${icon("rescan")}</button>`);
+    `${links}${add}<button class="icon-button${busy ? " spinning" : ""}" id="page-refresh" aria-label="Refresh" title="Refresh">${icon("rescan")}</button>`);
 }
 
 /* HarnessLinksPanel, and RootDetail in its place once a chip is picked. */
@@ -275,6 +278,8 @@ function skillsConfirm(c, d, go, busy) {
 
 function bindSkillsHeader() {
   const p = skillsPage;
+  const add = document.getElementById("sk-new");
+  if (add) add.onclick = (e) => { e.stopPropagation(); openNewSkill(); };
   bindRefresh(renderSkills, () => { p.data = null; p.detail = {}; });
   const repaintHeader = () => {
     const head = document.querySelector("#panel .page-header");
@@ -316,6 +321,102 @@ function bindSkillsHeader() {
     document.addEventListener("click", () => { if (document.querySelector(".sk-links-wrap")) close(); });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape" && document.querySelector(".sk-popover")) close(); });
   }
+}
+
+/* ------------------------------------------------------------- new skill */
+
+const SKILLS_PLUS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+
+/* NewSkillSheet.nameProblem: the Agent Skills name rule. */
+function newSkillProblem(name) {
+  if (!name) return "Lowercase, digits and single hyphens: my-skill";
+  if (name.length > 64) return "At most 64 characters";
+  return /^[a-z0-9]+(-[a-z0-9]+)*$/.test(name) ? null : "Lowercase letters, digits, and single hyphens between them";
+}
+
+/* NewSkillSheet: swe skills new <name> on the hub, POST
+ * /v1/app/skills/new. The sheet stays open on "Created …" with Open it. */
+function openNewSkill() {
+  const sheet = document.getElementById("sk-new-sheet");
+  if (!sheet) return;
+  const where = (skillsPage.data && skillsPage.data.machine) || "the hub";
+  sheet.innerHTML = `<form class="sheet-body" id="sk-new-form" novalidate>
+    <div class="sheet-title">New skill</div>
+    <label class="sk-new-field"><span class="sk-new-label">Name</span>
+      <input class="field sk-new-name" id="sk-new-name" type="text" placeholder="my-skill" autocomplete="off" spellcheck="false" maxlength="200">
+      <span class="caption" id="sk-new-hint"></span></label>
+    <label class="sk-new-field"><span class="sk-new-label">Description</span>
+      <input class="field" id="sk-new-desc" type="text" placeholder="When should an agent use this skill?" autocomplete="off" maxlength="1024"></label>
+    <p class="caption" id="sk-new-where"></p>
+    <p class="error" id="sk-new-error" role="alert" hidden></p>
+    <div class="sheet-actions" id="sk-new-actions">
+      <button class="sk-button" type="button" id="sk-new-close">Cancel</button>
+      <button class="sk-button primary" type="submit" id="sk-new-create" disabled>Create</button>
+    </div></form>`;
+  const $ = (id) => document.getElementById(id);
+  const sync = () => {
+    const name = $("sk-new-name").value.trim(), problem = newSkillProblem(name);
+    $("sk-new-hint").textContent = problem || "";
+    $("sk-new-where").textContent = `Writes ~/.quiver/skills/${problem ? "<name>" : name}/SKILL.md on ${where}.`;
+    $("sk-new-create").disabled = !!problem || sheet.dataset.working === "1";
+    $("sk-new-error").hidden = true;
+  };
+  $("sk-new-name").oninput = sync;
+  $("sk-new-desc").oninput = () => { $("sk-new-error").hidden = true; };
+  $("sk-new-close").onclick = () => sheet.close();
+  $("sk-new-form").onsubmit = (e) => { e.preventDefault(); createSkill(sheet); };
+  // A reply to a form closed and opened again since must not touch this one.
+  sheet.dataset.token = String(++skillsPage.newToken);
+  sheet.dataset.working = "";
+  sync();
+  if (!sheet.open) sheet.showModal();
+  $("sk-new-name").focus();
+}
+
+async function createSkill(sheet) {
+  const p = skillsPage, $ = (id) => document.getElementById(id);
+  const name = $("sk-new-name").value.trim(), description = $("sk-new-desc").value.trim();
+  if (newSkillProblem(name) || sheet.dataset.working === "1") return;
+  const token = sheet.dataset.token;
+  sheet.dataset.working = "1";
+  $("sk-new-create").disabled = true;
+  $("sk-new-create").textContent = "Creating…";
+  const { status, data } = await apiPost("/v1/app/skills/new", { name, description });
+  const current = sheet.dataset.token === token && sheet.open && !!document.getElementById("sk-new-form");
+  if (current) sheet.dataset.working = "";
+  if (status === 401) {
+    if (current) sheet.close();
+    if (skillsOnRoute()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    return;
+  }
+  // The skill exists whatever happened to the form: show it in the list.
+  if (status === 200 && data) {
+    p.data = data;
+    p.detail = {};
+    if (document.getElementById("sk-list")) {
+      const menus = skillFilterOptions();
+      document.getElementById("sk-harness").innerHTML = menus.harness;
+      document.getElementById("sk-source").innerHTML = menus.source;
+      paintSkillRows();
+    }
+  }
+  if (!current) return;
+  if (status !== 200 || !data) {
+    $("sk-new-create").textContent = "Create";
+    $("sk-new-create").disabled = false;
+    const err = $("sk-new-error");
+    err.textContent = (data && data.error && data.error.message)
+      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    err.hidden = false;
+    return;
+  }
+  const open = data.skill ? `<a class="sk-button" href="#/skills?skill=${esc(encodeURIComponent(data.skill.path))}" id="sk-new-open">Open it</a>` : "";
+  $("sk-new-form").innerHTML = `<div class="sheet-title">New skill</div>
+    <p class="caption">Created ${esc(skillsPath(data.created))}</p>
+    <div class="sheet-actions">${open}<button class="sk-button primary" type="button" id="sk-new-done">Done</button></div>`;
+  $("sk-new-done").onclick = () => sheet.close();
+  if ($("sk-new-open")) $("sk-new-open").onclick = () => sheet.close();
+  $("sk-new-done").focus();
 }
 
 /* ---------------------------------------------------------------- writes */
@@ -463,13 +564,22 @@ function visibleSkills() {
     .map(([s]) => s);
 }
 
-function paintSkills() {
-  const p = skillsPage, d = p.data, listed = listedSkills(d), moved = movedSkillCount(d);
+/* The harness and source menus, from what the list holds now. */
+function skillFilterOptions() {
+  const p = skillsPage, listed = listedSkills(p.data);
   // dropMissingFilters: a filter the list no longer offers would hide every row.
   if (p.harness && !listed.some((s) => s.harnesses.includes(p.harness))) p.harness = "";
   if (p.source && !listed.some((s) => s.source === p.source)) p.source = "";
   const harnesses = [...new Set(listed.flatMap((s) => s.harnesses))].sort();
   const sources = SKILL_SOURCES.filter(([id]) => listed.some((s) => s.source === id));
+  return {
+    harness: options([["", "All harnesses"], ...harnesses.map((h) => [h, Fmt.harnessName(h)])], p.harness),
+    source: options([["", "All sources"], ...sources], p.source),
+  };
+}
+
+function paintSkills() {
+  const p = skillsPage, d = p.data, moved = movedSkillCount(d), menus = skillFilterOptions();
   const note = moved > 0 ? `<a class="sk-plugin-note" href="#/plugins"
       title="Open Plugins, where each plugin lists the skills it ships">${icon("plugins")}
       <span class="num">${moved === 1 ? "1 skill ships inside a plugin;" : `${moved} skills ship inside plugins;`}</span>
@@ -478,9 +588,8 @@ function paintSkills() {
     <div class="stack">
       ${skillsActionCard()}
       <div class="filters">
-        <select class="field" id="sk-harness" aria-label="Harness">${options(
-          [["", "All harnesses"], ...harnesses.map((h) => [h, Fmt.harnessName(h)])], p.harness)}</select>
-        <select class="field" id="sk-source" aria-label="Source">${options([["", "All sources"], ...sources], p.source)}</select>
+        <select class="field" id="sk-harness" aria-label="Harness">${menus.harness}</select>
+        <select class="field" id="sk-source" aria-label="Source">${menus.source}</select>
         <input class="field search" id="sk-search" type="search" placeholder="Filter skills"
           value="${esc(p.query)}" autocomplete="off" spellcheck="false">
         <span class="caption count num" id="sk-count"></span>
@@ -488,7 +597,8 @@ function paintSkills() {
       ${d.catalog_error ? `<p class="caption">Couldn't read the plugin catalog, so plugin skills stay listed here: ${esc(d.catalog_error)}</p>` : ""}
       ${note}
       <div id="sk-list"></div>
-    </div></div>`;
+    </div>
+    <dialog class="sheet sk-new-sheet" id="sk-new-sheet" aria-label="New skill"></dialog></div>`;
   bindSkillsHeader();
   document.getElementById("sk-harness").onchange = (e) => { p.harness = e.target.value; paintSkillRows(); };
   document.getElementById("sk-source").onchange = (e) => { p.source = e.target.value; paintSkillRows(); };
@@ -505,8 +615,10 @@ function paintSkillRows() {
     const empty = !d.skills.length;
     const text = empty ? `No skills on ${where} yet.`
       : !listed.length ? `Every skill on ${where} ships inside a plugin.` : "No skills match.";
-    list.innerHTML = `<div class="card"><p class="empty">${esc(text)}</p>${empty
-      ? '<p class="caption">Create one with <code>swe skills new &lt;name&gt;</code> on the hub.</p>' : ""}</div>`;
+    list.innerHTML = `<div class="card sk-empty"><p class="empty">${esc(text)}</p>${empty
+      ? '<div><button class="sk-button primary" id="sk-new-empty" type="button">New skill</button></div>' : ""}</div>`;
+    const add = document.getElementById("sk-new-empty");
+    if (add) add.onclick = () => openNewSkill();
     return;
   }
   const hidden = p.showsAll ? 0 : Math.max(0, skills.length - SKILL_FOLD);

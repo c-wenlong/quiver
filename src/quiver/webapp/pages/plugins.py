@@ -13,10 +13,11 @@ Two views, as the app's two tabs:
 Reading every marketplace can take a while on a machine with many, so each
 view is kept here for ``CACHE_TTL_S``; ``?refresh=1`` reads it again.
 
-The one write is Health's Fix and Fix all (``post``), which run a finding's
-harness CLI commands the way ``swe find plugins --fix=<id>`` does. Installs,
-enables and Add marketplace stay in ``swe`` and the Mac app (see
-docs/web-app/plugins.md).
+The writes (``post``) are Health's Fix and Fix all, which run a finding's
+harness CLI commands the way ``swe find plugins --fix=<id>`` does, and the
+detail sheet's Install, Enable, Disable and Uninstall per harness, which
+run ``swe plugins <action> <ref> --harness=<h>`` (``plugin_action``). Add
+marketplace stays in ``swe`` and the Mac app (see docs/web-app/plugins.md).
 """
 
 from __future__ import annotations
@@ -112,7 +113,7 @@ def health(home: Path) -> dict:
 
 # ---------------------------------------------------------------- Fixes
 
-ACTIONS = ("fix", "fix_all")
+ACTIONS = ("fix", "fix_all", "plugin")
 # A fix id is ``<harness>:<kind>:<ref or marketplace dir>``; a path can be
 # long, but not this long.
 ID_MAX = 4096
@@ -143,6 +144,8 @@ def post(ctx, action: str, body: dict) -> dict:
         raise PageError(404, "unknown_action", f"unknown plugins action: {action}")
     if not isinstance(body, dict):
         raise PageError(422, "bad_body", "the body must be a JSON object")
+    if action == "plugin":
+        return _plugin_action(ctx, body)
     ids = [_fix_id(body.get("id"))] if action == "fix" else _fix_ids(body.get("ids"))
     home = ctx.home or Path.home()
     if not _WRITE_LOCK.acquire(blocking=False):
@@ -173,6 +176,49 @@ def post(ctx, action: str, body: dict) -> dict:
         "ran": sum(1 for r in results if r["status"] == "fixed"),
         "health": {**view, "view": "health", "built_at": built_at,
                    "machine": (ctx.machine or {}).get("name")},
+    }
+
+
+def _plugin_action(ctx, body: dict) -> dict:
+    """``plugin`` (``{"verb", "ref", "harness"}``): the detail sheet's
+    Install, Enable, Disable or Uninstall, ``swe plugins <verb> <ref>
+    --harness=<h> --json`` in process. Only a verb Explore offers that
+    plugin in that harness right now (``harness_actions``); the command is
+    the one ``plugin_action`` builds. The answer is its ``ActionResult``
+    and the Explore view read again."""
+    from quiver.plugins.actions import ActionError, plugin_action
+
+    verb, ref, harness = body.get("verb"), body.get("ref"), body.get("harness")
+    for value in (verb, ref, harness):
+        if not isinstance(value, str) or not value or len(value) > ID_MAX:
+            raise PageError(422, "bad_action", "verb, ref and harness must name an action the page shows")
+    home = ctx.home or Path.home()
+    if not _WRITE_LOCK.acquire(blocking=False):
+        raise PageError(409, "busy", "A plugin change is already running. Wait for it, then refresh.")
+    try:
+        view, _ = cached("explore", home)
+        plugin = view["plugins"].get(ref)
+        if plugin is None:
+            raise PageError(404, "unknown_plugin", f"No plugin {ref} in the catalog. Refresh and try again.")
+        state = plugin["harnesses"].get(harness) or {}
+        if verb not in state.get("actions", []):
+            raise PageError(409, "not_offered",
+                            f"Can't {verb} {ref} in {harness} now. Refresh to see what it offers.")
+        try:
+            result, error = plugin_action(home, verb, ref, harness, run=_run), None
+        except ActionError as exc:
+            result, error = None, str(exc)
+        finally:
+            _invalidate(home)
+        view, built_at = cached("explore", home)
+    finally:
+        _WRITE_LOCK.release()
+    return {
+        "action": "plugin",
+        "result": result,
+        "error": error,
+        "explore": {**view, "view": "explore", "built_at": built_at,
+                    "machine": (ctx.machine or {}).get("name")},
     }
 
 
@@ -293,13 +339,30 @@ def _tag(source_type) -> str | None:
     return "local" if source_type == "directory" else source_type
 
 
-def _plugin(plugin: dict, names: dict) -> dict:
-    """One plugin as the page needs it: each harness's status, its worst
-    drift, and the skills it ships (name and description)."""
+def harness_actions(state: dict | None, actionable: bool) -> list[str]:
+    """PluginCatalog.actions(for:in:): what can be done to a plugin in one
+    harness now, in menu order. None where swe can't act (Cursor), and an
+    install only from a marketplace that harness lists."""
+    if not actionable or not state:
+        return []
+    installed, enabled = state.get("installed"), state.get("enabled")
+    if installed is True:
+        return ["disable", "uninstall"] if enabled is True else (
+            ["enable", "uninstall"] if enabled is False else ["uninstall"])
+    if installed is False and state.get("available"):
+        return ["install"]
+    return []
+
+
+def _plugin(plugin: dict, names: dict, actionable=()) -> dict:
+    """One plugin as the page needs it: each harness's status and the
+    actions it offers there, its worst drift, and the skills it ships
+    (name and description)."""
     states = {}
     for harness, state in (plugin.get("harnesses") or {}).items():
         states[harness] = {
             "status": status(state),
+            "actions": harness_actions(state, harness in actionable),
             "version": state.get("version"),
             "scopes": state.get("scopes") or [],
             "path": state.get("path"),
@@ -338,7 +401,7 @@ def explore(home: Path) -> dict:
     plugins: dict = {}
     for market in catalog["marketplaces"]:
         for plugin in market["plugins"]:
-            row = _plugin(plugin, names)
+            row = _plugin(plugin, names, catalog["actions"])
             plugins.setdefault(row["ref"], row)
     return {
         "harnesses": catalog["harnesses"],

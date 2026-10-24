@@ -126,3 +126,14 @@ dialog.sk-sheet { width: min(1100px, calc(100vw - 32px)); max-height: 88vh; }
   .sk-fields { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .sk-fields .value { margin-bottom: 8px; }
 }
+
+/* New skill: header button, empty state and the sheet (NewSkillSheet). */
+.sk-new-button { gap: 6px; }
+.sk-new-button svg { width: 13px; height: 13px; }
+.sk-empty { align-items: center; text-align: center; }
+dialog.sk-new-sheet { width: min(440px, calc(100vw - 32px)); }
+.sk-new-field { display: flex; flex-direction: column; gap: 4px; }
+.sk-new-label { font-size: 12px; color: var(--text-secondary); }
+.sk-new-field .field { height: 32px; }
+.sk-new-name { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.sk-new-sheet .caption, .sk-new-sheet .error { margin: 0; overflow-wrap: anywhere; }
