@@ -766,6 +766,9 @@ class TestAttachMtime(unittest.TestCase):
              patch.object(supervise, "launch_tmux",
                           side_effect=lambda *a, **k: order.append(
                               "launch") or "qv-new"), \
+             patch.object(supervise, "boot_pane",
+                          side_effect=lambda *a, **k: order.append("boot")), \
+             patch.object(supervise, "tmux_alive", return_value=True), \
              patch.object(supervise, "_stop_local_writers",
                           side_effect=lambda *a, **k: order.append("stop")):
             ok, note = supervise.attach(
@@ -773,10 +776,34 @@ class TestAttachMtime(unittest.TestCase):
                 last_append_at=None, status="done", mode="tmux",
             )
         self.assertTrue(ok)
-        self.assertEqual(order, ["launch", "stop"])
+        self.assertEqual(order, ["launch", "boot", "stop"])
         meta = supervise.meta_for(self.home, self.key)
         self.assertEqual(meta["tmux"], "qv-new")
         self.assertEqual(meta["mode"], "tmux")
+
+    def test_tmux_handoff_fails_when_boot_kills_the_pane(self):
+        # Claude quitting at its trust gate (or any boot screen) must
+        # fail the attach and leave the original writer running.
+        old = Path(tempfile.mkdtemp()) / "old.jsonl"
+        old.write_text("{}\n")
+        import os
+        stale = time.time() - 3600
+        os.utime(old, (stale, stale))
+        with patch("quiver.remote.tail.resolve_jsonl_path",
+                   return_value=old), \
+             patch.object(supervise, "launch_tmux", return_value="qv-new"), \
+             patch.object(supervise, "boot_pane") as boot, \
+             patch.object(supervise, "tmux_alive", return_value=False), \
+             patch.object(supervise, "_stop_local_writers") as stop:
+            ok, note = supervise.attach(
+                self.home, self.key, self.session,
+                last_append_at=None, status="done", mode="tmux",
+            )
+        self.assertFalse(ok)
+        self.assertIn("exited", note)
+        boot.assert_called_once()
+        stop.assert_not_called()
+        self.assertIsNone(supervise.meta_for(self.home, self.key))
 
     def test_tmux_handoff_spares_the_replacement(self):
         # The replacement runs the same `claude --resume <id>` argv, so
@@ -794,6 +821,8 @@ class TestAttachMtime(unittest.TestCase):
              patch.object(supervise, "launch_tmux",
                           side_effect=lambda *a, **k: live.append(222)
                           or "qv-new"), \
+             patch.object(supervise, "boot_pane"), \
+             patch.object(supervise, "tmux_alive", return_value=True), \
              patch.object(supervise.os, "kill") as kill:
             ok, _ = supervise.attach(
                 self.home, self.key, self.session,

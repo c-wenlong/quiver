@@ -51,6 +51,10 @@ ATTACH_IDLE_S = 5.0
 # How long a fresh tmux pane must survive before launch_tmux trusts it.
 LAUNCH_SETTLE_S = 1.0
 
+# How long attach waits for a resumed TUI to boot past its trust gate.
+# The registry lock is held throughout, so keep it short.
+ATTACH_BOOT_S = 15.0
+
 # Harness -> tier-A channel mode for ``attach(mode="auto")``. Harnesses
 # not listed keep the tmux channel.
 _AUTO_MODE = {"opencode": "serve", "codex": "appserver"}
@@ -476,6 +480,13 @@ def attach(
                 f"tmux is not available, or {binary} exited right "
                 "after launch"
             )
+        # A resume in a folder claude has not trusted opens on the trust
+        # gate with "No, exit" selected: the tailer read it as an
+        # approval and the phone's next Enter quit claude. Get past it
+        # before anyone can write to the pane.
+        boot_pane(name, timeout=ATTACH_BOOT_S)
+        if not tmux_alive(name):
+            return False, f"{binary} exited while starting under tmux"
         meta["tmux"] = name
         _stop_local_writers(session, writers)
         _mark_locked(home, session_key, meta)
@@ -640,10 +651,21 @@ def launch_new(
 def prime_pane(name: str, prompt: str, *, timeout: float = 30.0) -> bool:
     """Boot the TUI past its trust dialog, then type ``prompt``.
 
-    Polls the pane until a usable screen is up — a fresh launch can sit
-    on a blank frame, a trust gate, or a confirm prompt for a while.
     Sends nothing into an unknown screen; returns False on the deadline
     so the caller can tell the phone the prompt never landed.
+    """
+    settled = boot_pane(name, timeout=timeout)
+    if settled is None:
+        return False
+    return _deliver(name, prompt, before=settled)
+
+
+def boot_pane(name: str, *, timeout: float = 30.0) -> str | None:
+    """Wait for a usable screen, confirming the trust gate on the way.
+
+    Polls the pane until a usable screen is up — a fresh launch can sit
+    on a blank frame, a trust gate, or a confirm prompt for a while.
+    Returns the settled frame, or None at the deadline.
     """
     deadline = time.time() + timeout
     confirmed = False
@@ -675,8 +697,8 @@ def prime_pane(name: str, prompt: str, *, timeout: float = 30.0) -> bool:
             last = raw
             time.sleep(1.0)
             continue
-        return _deliver(name, prompt, before=raw)
-    return False
+        return raw
+    return None
 
 
 def _deliver(name: str, prompt: str, *, before: str) -> bool:
