@@ -183,6 +183,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`swe setup --apply` run twice no longer invents harnesses.** The
+  second run linked skills into every harness in the `HARNESS_ROOTS`
+  table, making `~/.augment`, `~/.kiro`, `~/.pi` and the rest to hold the
+  links, and the linking pass then read those new folders as proof the
+  harness was installed and registered and linked each one. The skills
+  step now links only into a harness folder that already exists, the
+  rule `swe init` follows. Folders an earlier run made are left in place;
+  `rm` the ones for harnesses you don't use and archive their entries
+  with `swe harness archive <name>`.
+
 - **Remote: a session's status follows a send within a second.** The
   hub re-read every session's status only on its 10 second catalog
   refresh, so after a send the phone could show the session idle while
