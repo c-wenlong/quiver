@@ -229,28 +229,39 @@ def _providers(ctx, home: Path) -> dict:
     out = {"path": _display(keys, home), "exists": keys.exists(), "rows": [], "error": None}
     try:
         registry = _provider_registry(ctx)
-    except ValueError as exc:  # CorruptConfigurationError
-        out["error"] = str(exc)
+        found = discover_provider_keys(registry, keys)
+    except (ValueError, TypeError, AttributeError, OSError) as exc:
+        # A corrupt providers.json, or an entry whose fields have the
+        # wrong types (key_filename: 123): say so in this card and keep
+        # the rest of Settings, pairing included, working.
+        out["error"] = f"Can't read the providers: {exc}"
         return out
     rows = []
-    for r in discover_provider_keys(registry, keys):
+    for r in found:
         info = r["info"]
-        env_vars = [str(e) for e in (r.get("env_vars") or [])]
+        env_vars = [str(e) for e in (r.get("env_vars") or []) if isinstance(e, str)]
         has_key = bool(r.get("raw_key"))
         rows.append({
             "id": r["name"],
-            "name": info.get("name") or r["name"],
+            "name": str(info.get("name") or r["name"]),
             "env_var": r.get("matched_env") or (env_vars[0] if env_vars else None),
             "env_vars": env_vars,
             "has_key": has_key,
             # mask_key's form, never the value: first 8, last 4 and the length.
             "masked": r["masked"] if has_key else None,
-            "url": info.get("url") or None,
-            "description": info.get("description") or None,
+            # Only a web link: the page puts it in an href.
+            "url": _web_url(info.get("url")),
+            "description": info.get("description") if isinstance(info.get("description"), str) else None,
         })
     rows.sort(key=lambda r: (r["name"] or r["id"]).lower())
     out["rows"] = rows
     return out
+
+
+def _web_url(value) -> str | None:
+    if isinstance(value, str) and value.lower().startswith(("https://", "http://")):
+        return value
+    return None
 
 
 def _provider_registry(ctx) -> dict:

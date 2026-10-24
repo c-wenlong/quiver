@@ -667,19 +667,25 @@ function bindRemote() {
     sheet.querySelector('[data-act="copy"]').onclick = settingsCopyLink;
     bindRemint(sheet);
     if (!p.timer) {
+      // Looks the sheet up on every tick: a repaint (the Browser / Quiver
+      // app switch, a new code) draws a new one. The countdown is only
+      // rewritten when its text changes, and the button it may turn into
+      // is bound each time it is drawn.
       p.timer = setInterval(() => {
         const el = document.getElementById("set-countdown");
         if (!el || !p.ticket) return settingsStopClock();
-        const before = el.querySelector("[data-act]");
-        el.innerHTML = settingsCountdown();
-        if (!before) bindRemint(sheet);
+        const html = settingsCountdown();
+        if (el.dataset.drawn === html) return;
+        el.innerHTML = html;
+        el.dataset.drawn = html;
+        bindRemint(document.getElementById("set-pair-sheet"));
       }, 1000);
     }
   }
 }
 
 function bindRemint(sheet) {
-  const btn = sheet.querySelector('[data-act="remint"]');
+  const btn = sheet && sheet.querySelector('[data-act="remint"]');
   if (btn) btn.onclick = () => settingsMint();
 }
 

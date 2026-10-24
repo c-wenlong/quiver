@@ -112,8 +112,9 @@ device.
 
 The providers are read the way `load_registry` merges providers.json
 with the defaults, without saving, so a page view never seeds or
-rewrites the file. A corrupt providers.json fills `error` and leaves the
-rest of the page working.
+rewrites the file. A corrupt providers.json, or an entry whose fields
+have the wrong types, fills `error` and leaves the rest of the page
+working. `url` is only ever an http(s) link.
 
 `GET /v1/app/settings?part=github[&refresh=1]` answers `{"github": {"env":
 {"status", "login", "error"}, "catalog": {"repos", "synced_at", "owners"}
@@ -153,10 +154,12 @@ tailnet IP.
 generator (MIT, notice kept in the file): versions 1 to 40, every error
 correction level, automatic mask choice, SVG output with a 4-module
 quiet zone. Pair codes use level M as the app's `CIQRCodeGenerator`
-does, raised while the code stays the same size. The tests read codes
-back with an independent decoder (format bits, Reed-Solomon syndromes,
-the byte segment) and, when `zbarimg` is installed, decode a PNG drawn
-from the SVG.
+does, raised while the code stays the same size. The tests check the
+alignment positions, masks and byte capacities against the standard's
+tables, read codes back with a decoder that shares nothing with the
+encoder (its own module layout, masks and Galois field, checking each
+block's Reed-Solomon syndromes), and, when `zbarimg` is installed,
+decode a PNG drawn from the SVG.
 
 ## Not ported
 

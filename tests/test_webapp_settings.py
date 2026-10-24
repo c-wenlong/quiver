@@ -67,6 +67,77 @@ def _format_word(ecl, mask):
     return ((data << 10) | rem) ^ 0x5412
 
 
+# Alignment pattern centres per version, ISO/IEC 18004 Annex E, typed
+# in from the standard rather than computed.
+ALIGNMENT = {
+    1: [], 2: [6, 18], 3: [6, 22], 4: [6, 26], 5: [6, 30], 6: [6, 34],
+    7: [6, 22, 38], 8: [6, 24, 42], 9: [6, 26, 46], 10: [6, 28, 50],
+    11: [6, 30, 54], 12: [6, 32, 58], 13: [6, 34, 62], 14: [6, 26, 46, 66],
+    15: [6, 26, 48, 70], 16: [6, 26, 50, 74], 17: [6, 30, 54, 78], 18: [6, 30, 56, 82],
+    19: [6, 30, 58, 86], 20: [6, 34, 62, 90], 21: [6, 28, 50, 72, 94],
+    22: [6, 26, 50, 74, 98], 23: [6, 30, 54, 78, 102], 24: [6, 28, 54, 80, 106],
+    25: [6, 32, 58, 84, 110], 26: [6, 30, 58, 86, 114], 27: [6, 34, 62, 90, 118],
+    28: [6, 26, 50, 74, 98, 122], 29: [6, 30, 54, 78, 102, 126],
+    30: [6, 26, 52, 78, 104, 130], 31: [6, 30, 56, 82, 108, 134],
+    32: [6, 34, 60, 86, 112, 138], 33: [6, 30, 58, 86, 114, 142],
+    34: [6, 34, 62, 90, 118, 146], 35: [6, 30, 54, 78, 102, 126, 150],
+    36: [6, 24, 50, 76, 102, 128, 154], 37: [6, 28, 54, 80, 106, 132, 158],
+    38: [6, 32, 58, 84, 110, 136, 162], 39: [6, 26, 54, 82, 110, 138, 166],
+    40: [6, 30, 58, 86, 114, 142, 170],
+}
+
+# The eight data masks in the standard's own terms, i the row and j the
+# column (table 10), written apart from the encoder's (x, y) lambdas.
+MASKS = {
+    0: lambda i, j: (i + j) % 2 == 0,
+    1: lambda i, j: i % 2 == 0,
+    2: lambda i, j: j % 3 == 0,
+    3: lambda i, j: (i + j) % 3 == 0,
+    4: lambda i, j: (i // 2 + j // 3) % 2 == 0,
+    5: lambda i, j: (i * j) % 2 + (i * j) % 3 == 0,
+    6: lambda i, j: ((i * j) % 2 + (i * j) % 3) % 2 == 0,
+    7: lambda i, j: ((i * j) % 3 + (i + j) % 2) % 2 == 0,
+}
+
+# Byte-mode capacity (characters) from the standard's table 7, a sample
+# that spans every block layout the tables hold.
+BYTE_CAPACITY = {
+    (1, "L"): 17, (1, "M"): 14, (1, "Q"): 11, (1, "H"): 7,
+    (2, "M"): 26, (3, "M"): 42, (4, "M"): 62, (5, "Q"): 60, (7, "H"): 64,
+    (10, "M"): 213, (15, "L"): 520, (20, "L"): 858, (20, "M"): 666, (20, "Q"): 482,
+    (20, "H"): 382, (40, "L"): 2953, (40, "M"): 2331, (40, "Q"): 1663, (40, "H"): 1273,
+}
+
+
+def _function_map(version):
+    """Which modules are function patterns, from the standard's layout:
+    finders with their separators and format areas, timing, alignment
+    patterns, the dark module and the version blocks."""
+    size = version * 4 + 17
+    func = [[False] * size for _ in range(size)]
+
+    def mark(r0, r1, c0, c1):
+        for r in range(max(r0, 0), min(r1, size)):
+            for c in range(max(c0, 0), min(c1, size)):
+                func[r][c] = True
+
+    mark(0, 9, 0, 9)              # top-left finder, separator, format bits
+    mark(0, 9, size - 8, size)    # top-right
+    mark(size - 8, size, 0, 9)    # bottom-left (with the dark module)
+    mark(6, 7, 0, size)           # timing row
+    mark(0, size, 6, 7)           # timing column
+    centres = ALIGNMENT[version]
+    corners = {(centres[0], centres[0]), (centres[0], centres[-1]), (centres[-1], centres[0])} if centres else set()
+    for r in centres:
+        for c in centres:
+            if (r, c) not in corners:  # those three sit on the finders
+                mark(r - 2, r + 3, c - 2, c + 3)
+    if version >= 7:
+        mark(0, 6, size - 11, size - 8)
+        mark(size - 11, size - 8, 0, 6)
+    return func
+
+
 # GF(256) tables built here, apart from the encoder's multiply routine.
 _EXP = [0] * 512
 _LOG = [0] * 256
@@ -93,7 +164,8 @@ def _syndromes(block, nsym):
 
 
 def _decode(modules):
-    """A small reader, independent of the encoder's drawing code: read the
+    """A small reader, apart from the encoder's drawing code (its layout,
+    masks and Galois field are this file's own): read the
     format bits, unmask, collect codewords, de-interleave the blocks,
     check every block's Reed-Solomon syndromes and return the bytes of a
     single byte-mode segment, with the level and mask it found."""
@@ -114,15 +186,7 @@ def _decode(modules):
         bits2 |= int(modules[y][x]) << i
     assert bits2 == bits, "the two format copies differ"
 
-    # Which modules are function patterns: build them on an empty code.
-    probe = _qr.QrCode.__new__(_qr.QrCode)
-    probe.version, probe.size, probe.ecl = version, size, ecl
-    probe.modules = [[False] * size for _ in range(size)]
-    probe._isfunction = [[False] * size for _ in range(size)]
-    probe._draw_function_patterns()
-    func = probe._isfunction
-
-    masks = _qr._MASK_PATTERNS
+    func = _function_map(version)
     raw = []
     for right in range(size - 1, 0, -2):
         if right <= 6:
@@ -132,7 +196,7 @@ def _decode(modules):
                 x = right - j
                 y = (size - 1 - vert) if ((right + 1) & 2) == 0 else vert
                 if not func[y][x]:
-                    raw.append(int(modules[y][x]) ^ int(masks[mask](x, y)))
+                    raw.append(int(modules[y][x]) ^ int(MASKS[mask](y, x)))
     codewords = [int("".join(map(str, raw[i:i + 8])), 2) for i in range(0, len(raw) // 8 * 8, 8)]
 
     nblocks = _qr._NUM_ERROR_CORRECTION_BLOCKS[ecl][version]
@@ -207,6 +271,43 @@ class TestQrEncoder(unittest.TestCase):
         self.assertEqual((q.version, q.mask), (1, 4))
         drawn = ["".join("#" if m else "." for m in row) for row in q.modules]
         self.assertEqual(drawn, HELLO_M)
+
+    def test_alignment_positions_match_the_standard(self):
+        for version, want in ALIGNMENT.items():
+            q = _qr.QrCode.__new__(_qr.QrCode)
+            q.version, q.size = version, version * 4 + 17
+            self.assertEqual(q._get_alignment_pattern_positions(), want, version)
+
+    def test_masks_match_the_standard(self):
+        for mask, rule in MASKS.items():
+            for i in range(30):
+                for j in range(30):
+                    self.assertEqual(_qr._MASK_PATTERNS[mask](j, i), rule(i, j), (mask, i, j))
+
+    def test_byte_capacity_matches_the_standard(self):
+        for (version, level), chars in BYTE_CAPACITY.items():
+            ecl = _qr.LEVELS[level]
+            q = _qr.encode_bytes(b"a" * chars, ecl, boost_ecl=False, min_version=version, max_version=version)
+            self.assertEqual((q.version, q.ecl), (version, ecl))
+            with self.assertRaises(_qr.DataTooLong, msg=(version, level)):
+                _qr.encode_bytes(b"a" * (chars + 1), ecl, boost_ecl=False,
+                                 min_version=version, max_version=version)
+
+    def test_function_patterns_are_where_the_standard_puts_them(self):
+        for version in (1, 2, 7, 14, 25, 40):
+            q = _qr.QrCode.__new__(_qr.QrCode)
+            q.version, q.size, q.ecl = version, version * 4 + 17, _qr.MEDIUM
+            q.modules = [[False] * q.size for _ in range(q.size)]
+            q._isfunction = [[False] * q.size for _ in range(q.size)]
+            q._draw_function_patterns()
+            self.assertEqual(q._isfunction, _function_map(version), version)
+            for r in ALIGNMENT[version]:
+                for c in ALIGNMENT[version]:
+                    if (r, c) in ((6, 6), (6, q.size - 7), (q.size - 7, 6)):
+                        continue
+                    self.assertTrue(q.modules[r][c])           # centre dark
+                    self.assertFalse(q.modules[r - 1][c])      # light ring
+                    self.assertTrue(q.modules[r - 2][c - 2])   # dark border
 
     def test_finders_timing_and_dark_module(self):
         q = _qr.encode_text(PAIR_URL)
@@ -382,6 +483,27 @@ class TestGet(_Settings):
         prov = settings_page.get(self.ctx(), {})["providers"]
         self.assertEqual(prov["rows"], [])
         self.assertTrue(prov["error"])
+
+    def test_a_provider_with_bad_field_types_is_reported_not_raised(self):
+        config = self.home / ".quiver" / "config"
+        config.mkdir(parents=True)
+        (config / "providers.json").write_text(json.dumps({
+            "acme": {"env_vars": ["ACME_API_KEY"], "key_filename": 123},
+        }))
+        body = settings_page.get(self.ctx(), {})
+        self.assertEqual(body["providers"]["rows"], [])
+        self.assertIn("Can't read the providers", body["providers"]["error"])
+        self.assertTrue(body["remote"]["hub"]["ok"])
+
+    def test_provider_links_are_web_links_only(self):
+        config = self.home / ".quiver" / "config"
+        config.mkdir(parents=True)
+        (config / "providers.json").write_text(json.dumps({
+            "acme": {"env_vars": ["ACME_API_KEY"], "url": "javascript:alert(1)"},
+        }))
+        rows = {r["id"]: r for r in settings_page.get(self.ctx(), {})["providers"]["rows"]}
+        self.assertIsNone(rows["acme"]["url"])
+        self.assertTrue(rows["openai"]["url"].startswith("https://"))
 
     def test_github_part(self):
         env = gh.GhEnv(installed=True, authenticated=True, login="octo")
