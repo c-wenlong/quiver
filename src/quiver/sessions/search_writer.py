@@ -842,65 +842,102 @@ class _Lock:
         self.path = path
         self.handle = None
 
+    # ``is_running`` holds the lock for microseconds to probe it; a pass
+    # that starts in that instant waits it out instead of giving up.
+    RETRIES = 50
+    RETRY_S = 0.01
+
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.handle = open(self.path, "a+")
-        if fcntl is not None:
+        if fcntl is None:
+            return self
+        for attempt in range(self.RETRIES):
             try:
                 fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return self
             except OSError:
-                self.handle.close()
-                raise IndexBusy("another swe index pass is running") from None
-        return self
+                if attempt + 1 < self.RETRIES:
+                    time.sleep(self.RETRY_S)
+        self.handle.close()
+        raise IndexBusy("another swe index pass is running")
 
     def __exit__(self, *exc):
         self.handle.close()
+
+
+def is_running(home: Path | None = None) -> bool:
+    """Whether a Python pass holds ``index.lock`` right now (the hub's
+    loop, a ``swe session index``, or a pass Settings started)."""
+    path = search_index_for(home).parent / LOCK_FILE
+    if fcntl is None or not path.exists():
+        return False
+    with open(path, "a+") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return True
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return False
 
 
 def run_pass(home: Path | None = None, *, should_stop=None) -> PassResult:
     """Index every Claude Code and Codex transcript under ``home`` once.
 
     Raises :class:`IndexBusy` when another Python pass holds the lock and
-    :class:`IndexUnavailable` when the file can't be written here."""
+    :class:`IndexUnavailable` when the file can't be written here. Either
+    way out, ``indexer.json`` holds the outcome (``last_pass``, or
+    ``last_error``) before the lock is released, so a reader that sees no
+    pass running also sees how the last one ended."""
     home = Path(home) if home is not None else Path.home()
     path = search_index_for(home)
+    with _Lock(path.parent / LOCK_FILE):
+        try:
+            result = _pass(home, path, should_stop)
+        except Exception as exc:
+            with contextlib.suppress(OSError):
+                record_error(home, str(exc) or type(exc).__name__)
+            raise
+
+        def record(data: dict) -> None:
+            data["last_pass"] = {**result.as_dict(), "finished_at": time.time()}
+            data.pop("last_error", None)
+
+        _update_state(home, record)
+    return result
+
+
+def _pass(home: Path, path: Path, should_stop) -> PassResult:
     started = time.monotonic()
     result = PassResult()
-    with _Lock(path.parent / LOCK_FILE):
-        conn = open_index(path)
-        prints_path = path.parent / PRINTS_FILE
-        prints = _load_prints(prints_path)
+    conn = open_index(path)
+    prints_path = path.parent / PRINTS_FILE
+    prints = _load_prints(prints_path)
+    try:
+        indexer = Indexer(Store(conn), prints=prints)
+        for source, harness in sources(home):
+            if should_stop is not None and should_stop():
+                break
+            result.files += 1
+            outcome = indexer.index_file(source, harness)
+            if outcome == "indexed":
+                result.indexed += 1
+            elif outcome == CURRENT:
+                result.current += 1
+            elif outcome == "failed":
+                result.failed += 1
+            elif outcome == "moved":
+                result.moved += 1
+        # A failed drain leaves the orphans for the next pass's.
         try:
-            indexer = Indexer(Store(conn), prints=prints)
-            for source, harness in sources(home):
-                if should_stop is not None and should_stop():
-                    break
-                result.files += 1
-                outcome = indexer.index_file(source, harness)
-                if outcome == "indexed":
-                    result.indexed += 1
-                elif outcome == CURRENT:
-                    result.current += 1
-                elif outcome == "failed":
-                    result.failed += 1
-                elif outcome == "moved":
-                    result.moved += 1
-            # A failed drain leaves the orphans for the next pass's.
-            try:
-                result.drained = indexer.drain()
-            except sqlite3.Error:
-                pass
-        finally:
-            conn.close()
-            # Transcripts that are gone need no print.
-            _write_json(prints_path, {p: v for p, v in prints.items() if os.path.exists(p)})
+            result.drained = indexer.drain()
+        except sqlite3.Error:
+            pass
+    finally:
+        conn.close()
+        # Transcripts that are gone need no print.
+        _write_json(prints_path, {p: v for p, v in prints.items() if os.path.exists(p)})
     result.seconds = round(time.monotonic() - started, 3)
-
-    def record(data: dict) -> None:
-        data["last_pass"] = {**result.as_dict(), "finished_at": time.time()}
-        data.pop("last_error", None)
-
-    _update_state(home, record)
     return result
 
 
@@ -910,6 +947,7 @@ def status(home: Path | None = None) -> dict:
     state = load_state(home)
     body: dict = {
         "enabled": state.get("enabled") is True,
+        "running": is_running(home),
         "last_pass": state.get("last_pass"),
         "last_error": state.get("last_error"),
         "exists": False,

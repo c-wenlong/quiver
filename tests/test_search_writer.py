@@ -455,6 +455,28 @@ class ReviewFixTests(_Home):
                      if p.name.endswith(".tmp")]
         self.assertEqual(leftovers, [])
 
+    def test_a_pass_waits_out_a_brief_status_probe(self):
+        import fcntl
+
+        lock_path = search_index.index_path(self.home).parent / writer.LOCK_FILE
+        lock_path.parent.mkdir(parents=True)
+        holder = open(lock_path, "a+")
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+        threading.Timer(0.05, holder.close).start()
+        self.assertEqual(self.run_pass().files, 0)
+
+    def test_the_outcome_is_saved_before_the_lock_is_released(self):
+        seen = []
+        real = writer._update_state
+
+        def spy(home, change):
+            seen.append(writer.is_running(home))
+            return real(home, change)
+
+        with mock.patch.object(writer, "_update_state", spy):
+            self.run_pass()
+        self.assertEqual(seen, [True])
+
     def test_a_same_length_edit_before_an_append_is_read_whole(self):
         path = self.projects / "a.jsonl"
         self.write(path, claude_line("user", "alpha words"))
