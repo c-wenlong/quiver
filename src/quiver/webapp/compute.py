@@ -11,8 +11,9 @@ stdlib only:
   ``/proc/meminfo``, ``/proc/loadavg``;
 - temperatures and fans: ``/sys/class/hwmon``, then
   ``/sys/class/thermal`` for what hwmon left out;
-- the GPU: ``nvidia-smi --query-gpu`` when it is installed, with a
-  timeout.
+- the GPU: ``nvidia-smi --query-gpu`` for each device and
+  ``nvidia-smi pmon`` for each process's share, when it is installed,
+  with a timeout.
 
 Memory per process is private memory (``RssAnon`` plus ``VmSwap``), the
 nearest Linux figure to the Mac's physical footprint: shared library
@@ -546,6 +547,46 @@ def parse_nvidia(text: str) -> list[dict]:
     return gpus
 
 
+def parse_nvidia_pmon(text: str) -> dict[int, float]:
+    """``nvidia-smi pmon -c 1 -s u`` rows to each pid's SM (compute)
+    utilisation, summed over its GPUs like CPU % over cores. The columns
+    come from the header, since drivers add some (``jpg``, ``ofa``); a
+    ``-`` is a process the driver saw no work from in its last sample."""
+    pid_at, sm_at = 1, 3
+    out: dict[int, float] = {}
+    for line in text.splitlines():
+        cols = line.split()
+        if not cols:
+            continue
+        if cols[0].startswith("#"):
+            names = line.lstrip("#").split()
+            if "pid" in names and "sm" in names:
+                pid_at, sm_at = names.index("pid"), names.index("sm")
+            continue
+        if len(cols) <= max(pid_at, sm_at) or not cols[pid_at].isdigit():
+            continue  # "-" where a GPU runs nothing
+        pid = int(cols[pid_at])
+        out[pid] = out.get(pid, 0.0) + (_number(cols[sm_at]) or 0.0)
+    return out
+
+
+def read_nvidia_processes() -> dict[int, float] | None:
+    """Each pid's GPU utilisation from ``nvidia-smi pmon``, or ``None``
+    when there is no ``nvidia-smi``, it fails (a GPU without process
+    monitoring) or does not answer within ``NVIDIA_TIMEOUT``."""
+    exe = shutil.which("nvidia-smi")
+    if not exe:
+        return None
+    try:
+        done = subprocess.run([exe, "pmon", "-c", "1", "-s", "u"],
+                              capture_output=True, text=True, timeout=NVIDIA_TIMEOUT, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    return parse_nvidia_pmon(done.stdout)
+
+
 def read_nvidia() -> list[dict] | None:
     """Every NVIDIA GPU's figures, or ``None`` when there is no
     ``nvidia-smi`` or it does not answer within ``NVIDIA_TIMEOUT``."""
@@ -568,12 +609,12 @@ def read_nvidia() -> list[dict] | None:
 
 @dataclass
 class Tick:
-    """One sample's trend point: per harness (memory, CPU %), per GPU
-    utilisation, the machine's temperatures and fans."""
+    """One sample's trend point: per harness (memory, CPU %, GPU %), the
+    machine's temperatures and fans. GPU is ``None`` when ``nvidia-smi
+    pmon`` gave no reading, so the line skips it rather than dip to 0."""
 
     at: float
-    harnesses: dict[str, tuple[int, float]]
-    gpus: dict[int, float]
+    harnesses: dict[str, tuple[int, float, float | None]]
     temperatures: dict[str, float]
     fans: dict | None
 
@@ -620,7 +661,7 @@ class History:
         out: dict[str, int] = {}
         for ring in (self.fine, self.coarse):
             for tick in ring:
-                for harness, (memory, _cpu) in tick.harnesses.items():
+                for harness, (memory, _cpu, _gpu) in tick.harnesses.items():
                     out[harness] = max(out.get(harness, 0), memory)
         return out
 
@@ -633,8 +674,10 @@ class ComputeModel:
     the history, behind one lock (the hub serves requests on threads)."""
 
     def __init__(self, proc: Path = Path("/proc"), sys_root: Path = Path("/sys"),
-                 nvidia=read_nvidia, clock=time.time, self_pid: int | None = None) -> None:
+                 nvidia=read_nvidia, nvidia_processes=read_nvidia_processes,
+                 clock=time.time, self_pid: int | None = None) -> None:
         self.proc, self.sys_root, self.nvidia, self.clock = proc, sys_root, nvidia, clock
+        self.nvidia_processes = nvidia_processes
         self.self_pid = os.getpid() if self_pid is None else self_pid
         self.lock = threading.Lock()
         self.meter = CPUMeter()
@@ -649,6 +692,7 @@ class ComputeModel:
         self.attribution = Attribution({}, [])
         self.system: dict = {}
         self.gpus: list[dict] | None = None
+        self.gpu_by_pid: dict[int, float] | None = None
         self.gpu_available = False
         self.temperature_available = False
         self.temperatures: dict[str, float] = {}
@@ -697,7 +741,10 @@ class ComputeModel:
             "load": read_load(self.proc),
         }
         self.gpus = self.nvidia()
-        if self.gpus:
+        # The GPU tab plots harnesses, so only per-process readings make
+        # it available; the device totals feed the machine line.
+        self.gpu_by_pid = self.nvidia_processes()
+        if self.gpu_by_pid is not None:
             self.gpu_available = True
         self.temperatures, self.fans = read_temperatures(self.sys_root)
         gpu_temps = [g["temperature_c"] for g in self.gpus or [] if g.get("temperature_c") is not None]
@@ -709,13 +756,13 @@ class ComputeModel:
             self.temperature_available = True
 
     def _record(self, at: float) -> None:
+        gpu = self.gpu_by_pid
         harnesses = {
-            harness: (sum(p.memory_bytes for p in procs), sum(self.cpu.get(p.pid, 0.0) for p in procs))
+            harness: (sum(p.memory_bytes for p in procs), sum(self.cpu.get(p.pid, 0.0) for p in procs),
+                      None if gpu is None else sum(gpu.get(p.pid, 0.0) for p in procs))
             for harness, procs in self.attribution.by_harness.items() if procs
         }
-        gpus = {g["index"]: g["utilization_percent"] for g in self.gpus or []
-                if g.get("utilization_percent") is not None}
-        self.history.record(Tick(at, harnesses, gpus, dict(self.temperatures),
+        self.history.record(Tick(at, harnesses, dict(self.temperatures),
                                  dict(self.fans) if self.fans else None))
 
     # ------------------------------------------------------------ payload
@@ -794,26 +841,21 @@ class ComputeModel:
     def _trend(self, interval: int) -> dict:
         ticks = self.history.window(interval)
         series: dict[str, list] = {}
-        gpus: dict[int, list] = {}
         temperatures = []
         for t in ticks:
-            for harness, (memory, cpu) in t.harnesses.items():
-                series.setdefault(harness, []).append([round(t.at, 3), memory, round(cpu, 2)])
-            for index, util in t.gpus.items():
-                gpus.setdefault(index, []).append([round(t.at, 3), util])
+            for harness, (memory, cpu, gpu) in t.harnesses.items():
+                series.setdefault(harness, []).append(
+                    [round(t.at, 3), memory, round(cpu, 2), None if gpu is None else round(gpu, 2)])
             if t.temperatures or t.fans:
                 temperatures.append({"at": round(t.at, 3),
                                      "values": {k: round(v, 1) for k, v in t.temperatures.items()},
                                      "fans": t.fans})
-        names = {g["index"]: g["name"] for g in self.gpus or []}
         return {
             "interval": interval,
             "window": WINDOW,
             "last_tick": self.history.last_tick,
             "harnesses": series,
             "peaks": self.history.peaks(),
-            "gpus": [{"index": i, "name": names.get(i, f"GPU {i}"), "points": pts}
-                     for i, pts in sorted(gpus.items())],
             "gpu_available": self.gpu_available,
             "temperatures": temperatures,
             "temperature_available": self.temperature_available,
