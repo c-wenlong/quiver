@@ -4,9 +4,10 @@ The Swift app and :mod:`quiver.sessions.search_writer` write the same
 index file, so the rows they produce for one transcript have to agree. This
 module is the Python side of ``SearchMessage.swift`` (text caps),
 ``SearchContent.swift`` (content blocks), ``SearchChunker.swift`` (FTS row
-sizes), ``SearchIdentifiers.swift`` (identifier shadow text) and the Claude,
-Codex and Devin decoders in ``SearchLineDecoders.swift``. Keep the rules in
-step with those files.
+sizes), ``SearchIdentifiers.swift`` (identifier shadow text) and the
+per-harness decoders in ``SearchLineDecoders.swift``,
+``SearchMoreLineDecoders.swift`` and ``SearchPlainLineDecoders.swift``.
+Keep the rules in step with those files.
 
 Every cap counts UTF-16 code units, the unit the Swift caps count. Swift
 cuts on ``Character`` (grapheme) boundaries; the stdlib has no grapheme
@@ -546,11 +547,161 @@ def _devin_chat_message(state: _DevinState, record: dict) -> list[Message]:
     return []
 
 
+def _role(value) -> str | None:
+    """``SearchRole(rawValue:)``."""
+    return value if value in (USER, ASSISTANT, TOOL) else None
+
+
+def _pi(obj: dict) -> tuple[list[Message], Hints]:
+    """``SearchPiDecoder``: ``session`` and ``session_info`` records carry
+    the id, cwd and ``/name`` title; ``toolResult`` is a role of its own
+    that names the call it answers."""
+    hints = Hints()
+    kind = obj.get("type")
+    if kind == "session":
+        hints.session_id = json_string(obj.get("id"))
+        hints.cwd = json_string(obj.get("cwd")) or json_string(obj.get("workspace"))
+    elif kind == "session_info":
+        hints.title = json_string(obj.get("name"))
+    elif kind == "message":
+        message = obj.get("message")
+        if not isinstance(message, dict):
+            return [], hints
+        ts = obj.get("timestamp") if isinstance(obj.get("timestamp"), str) else None
+        if message.get("role") == "toolResult":
+            text = tool_result_text(message.get("content"))
+            if text is None:
+                return [], hints
+            name = json_string(message.get("toolName"))
+            messages: list[Message] = []
+            append_tool(messages, f"{name}: {text}" if name else text, ts)
+            return messages, hints
+        return content_messages(_role(message.get("role")), message.get("content"), ts), hints
+    return [], hints
+
+
+def _cursor(obj: dict) -> tuple[list[Message], Hints]:
+    """``SearchCursorDecoder``: Claude-shaped content blocks under
+    ``message.content``. Id, title, cwd and times come from the chat's
+    ``meta.json`` (``cursor_meta_fields``)."""
+    role = json_string(obj.get("role"))
+    if role not in (USER, ASSISTANT):
+        return [], Hints()
+    message = obj.get("message")
+    if isinstance(message, dict) and "content" in message:
+        content = message["content"]
+    else:
+        content = obj.get("content")
+    ts = obj.get("timestamp") if isinstance(obj.get("timestamp"), str) else None
+    return content_messages(role, content, ts), Hints()
+
+
+@dataclass
+class _QoderState:
+    # The first cwd wins (``updateLatestLocation``), so it emits once.
+    cwd_emitted: bool = False
+
+
+def _qoder(state: _QoderState, obj: dict) -> tuple[list[Message], Hints]:
+    """``SearchQoderDecoder``: Claude's records with ``message.content``
+    cut to its ``text`` blocks, and ``workspace-directories`` as the cwd
+    when nothing earlier gave one."""
+    filtered = obj
+    message = obj.get("message")
+    if isinstance(message, dict) and isinstance(message.get("content"), list):
+        trimmed = {**message, "content": [
+            block for block in message["content"]
+            if isinstance(block, dict) and block.get("type") == "text"]}
+        filtered = {**obj, "message": trimmed}
+    messages, hints = _claude(filtered)
+    if hints.cwd is not None:
+        if state.cwd_emitted:
+            hints.cwd = None
+        else:
+            state.cwd_emitted = True
+    directories = obj.get("directories")
+    if (obj.get("type") == "workspace-directories" and not state.cwd_emitted
+            and isinstance(directories, list) and directories):
+        cwd = json_string(directories[0])
+        if cwd is not None:
+            hints.cwd = cwd
+            state.cwd_emitted = True
+    return messages, hints
+
+
+@dataclass
+class _CodebuddyState:
+    cwd_emitted: bool = False
+    # A `summary` outranks `ai-title` for good.
+    saw_summary_title: bool = False
+
+
+def _codebuddy_text(content) -> str | None:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return None
+    parts = []
+    for block in content:
+        if (isinstance(block, dict)
+                and json_string(block.get("type")) in ("input_text", "output_text", "text")):
+            text = json_string(block.get("text"))
+            if text is not None:
+                parts.append(text)
+    return "\n\n".join(parts) if parts else None
+
+
+def _codebuddy(state: _CodebuddyState, obj: dict) -> tuple[list[Message], Hints]:
+    """``SearchCodebuddyDecoder``: flat ``sessionId``/``cwd``; ``summary``
+    then ``ai-title`` are the titles; ``message`` records hold a top-level
+    ``role`` and text blocks."""
+    hints = Hints(session_id=json_string(obj.get("sessionId")))
+    if not state.cwd_emitted:
+        cwd = json_string(obj.get("cwd"))
+        if cwd is not None:
+            hints.cwd = cwd
+            state.cwd_emitted = True
+    ts = stamp_iso(obj.get("timestamp"))
+    kind = obj.get("type")
+    if kind == "summary":
+        summary = json_string(obj.get("summary"))
+        title = title_candidate(summary, 96) if summary else None
+        if title is not None:
+            hints.title = title
+            state.saw_summary_title = True
+    elif kind == "ai-title":
+        ai_title = json_string(obj.get("aiTitle"))
+        if not state.saw_summary_title and ai_title:
+            hints.title = title_candidate(ai_title, 96)
+    elif kind == "message":
+        role = json_string(obj.get("role"))
+        text = bounded(_codebuddy_text(obj.get("content")) or "")
+        if text is None:
+            return [], hints
+        if role == USER:
+            provider = obj.get("providerData")
+            hints.injected_user_turn = (
+                isinstance(provider, dict) and provider.get("skipRun") is True
+            ) or is_injected_turn(text)
+            return [Message(USER, text, ts)], hints
+        if role == ASSISTANT:
+            return [Message(ASSISTANT, text, ts)], hints
+    return [], hints
+
+
 # The cheap byte gates (`markers`) run before json.loads.
 _MARKERS = {
     "claude": (b'"type":"user"', b'"type":"assistant"', b'"custom-title"', b'"ai-title"'),
     "codex": (b'"response_item"', b'"event_msg"', b'"session_meta"', b'"turn_context"'),
     "devin": (b'"steps"', b'"role"', b'"source"', b'"step_id"'),
+    # Pi writes `"type": "x"` with a space; `"session` covers both
+    # `"session"` and `"session_info"`.
+    "pi": (b'"message"', b'"session'),
+    "cursor": (b'"role":"user"', b'"role":"assistant"'),
+    "qoder": (b'"type":"user"', b'"type":"assistant"', b'"type": "user"', b'"type": "assistant"',
+              b'"custom-title"', b'"ai-title"', b'"workspace-directories"'),
+    "codebuddy": (b'"message"', b'"summary"', b'"ai-title"', b'"sessionId"', b'"cwd"',
+                  b'"gitBranch"'),
 }
 
 HARNESSES = tuple(_MARKERS)
@@ -566,6 +717,8 @@ class Decoder:
     explicit_title_seen: bool = False
     _codex: _CodexState = field(default_factory=_CodexState)
     _devin: _DevinState = field(default_factory=_DevinState)
+    _qoder: _QoderState = field(default_factory=_QoderState)
+    _codebuddy: _CodebuddyState = field(default_factory=_CodebuddyState)
 
     def wants(self, line: bytes) -> bool:
         return any(marker in line for marker in _MARKERS[self.harness])
@@ -589,8 +742,16 @@ class Decoder:
             messages, hints = _claude(obj)
         elif self.harness == "codex":
             messages, hints = _codex(self._codex, obj)
-        else:
+        elif self.harness == "devin":
             messages, hints = _devin(self._devin, obj)
+        elif self.harness == "pi":
+            messages, hints = _pi(obj)
+        elif self.harness == "cursor":
+            messages, hints = _cursor(obj)
+        elif self.harness == "qoder":
+            messages, hints = _qoder(self._qoder, obj)
+        else:
+            messages, hints = _codebuddy(self._codebuddy, obj)
         if hints.title is not None:
             self.explicit_title_seen = True
         elif not (self.prompt_title_sent or self.explicit_title_seen
