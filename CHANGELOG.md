@@ -22,6 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: link and unlink harness skills folders.** The Skills page's
+  Harness links popover now does what the Mac app's does: a folder opens
+  with Link to shared skills or Unlink, and Link all (N) links every loose
+  folder at once, through the same functions as `swe skills link|unlink`.
+  Each asks first and says exactly what will happen (a folder of shared
+  copies is backed up before it is replaced). A folder holding skills that
+  exist nowhere else, a file in the way, or one that changed since the
+  page read it is refused with the reason; Link all leaves archived
+  harnesses alone.
+
 - **Web app: Repositories and Inbox.** Repositories shows the hub's pinned
   repos as the Mac app does: pull requests, issues and Actions across
   every pin, all seven surfaces (Pages, releases, tags, branches too) for

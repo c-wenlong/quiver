@@ -2,8 +2,10 @@
 
 The Mac app's Skills page (`SkillsPage.swift`, `SkillDetailView` in
 `PrimitiveDetail.swift`, `SkillsModel` in `QuiverCore/Primitives/Skills.swift`)
-as a web page, read only. Module `quiver/webapp/pages/skills.py`, script
-`static/pages/skills.js`, styles `static/pages/skills.css`.
+as a web page. It links and unlinks harness skills folders as the app's
+Harness links popover does; everything else is read only. Module
+`quiver/webapp/pages/skills.py`, script `static/pages/skills.js`, styles
+`static/pages/skills.css`.
 
 ## What it shows
 
@@ -21,8 +23,11 @@ as a web page, read only. Module `quiver/webapp/pages/skills.py`, script
   Built in, then inventory order) and its fold at 15 rows.
 - **Harness links** in the header: "8 of 10 linked" with an amber dot when a
   folder is blocked. It opens the chips per harness skills folder (Linked,
-  Not linked, Blocked) and, per chip, the folder path and the app's
-  `SkillRoot.explanation` sentence.
+  Not linked, Blocked), "Link all (N)" when any folder is free to link, and
+  per chip the folder path, the app's `SkillRoot.explanation` sentence and
+  its action: **Unlink** for a Linked folder, **Link to shared skills** for
+  a Not linked one, nothing for a Blocked one. The header and popover are on
+  the detail page too, as in the app. See "Writes" below.
 - **Detail** (`#/skills?skill=<folder>`): the lock note, the header card
   (name, source badge, path, description, the app's per-source note and the
   link chips: every folder for a shared skill, the loading harnesses
@@ -30,6 +35,54 @@ as a web page, read only. Module `quiver/webapp/pages/skills.py`, script
   as `MarkdownFrontmatter` reads them, folded to 3), the SKILL.md text, and
   the Contents card (`PrimitiveTree`'s sections, folded to 3). A file opens
   read only in a sheet.
+
+## Writes
+
+quiver links whole skills folders, never single skills, so every write
+names a harness skills folder from the payload's `harnesses`. Each action
+asks first, inline in the popover: a panel says exactly what will happen
+(which folder, linked to what, whether it is backed up first) with Cancel
+and the action's button. While the hub works the chip spins and the
+buttons are disabled; the page repaints only from the hub's answer. A
+refusal shows in the popover and in an error card on the page, and the
+list is read again, since a failed change may still have moved something
+(the app reloads either way too).
+
+`POST /v1/app/skills/<action>`, behind the device bearer and the Origin
+check, serialised by a lock (the app's `SerialGate`, since every link
+rewrites `skill_links.json`):
+
+| Action | Body | Does |
+|---|---|---|
+| `link` | `{"harness": "<folder path>", "expect": "create", "skill"?: "<skill folder>"}` | `link_skill_root(path, force=…)`, as `swe skills link <path> [--force] --json`. Only a Not linked folder (`create`, `relink`, `absorb`); `--force` only for `absorb` holding copies of shared skills, which is backed up to `~/.quiver/backups` first. |
+| `unlink` | `{"harness": "<folder path>", "expect": "linked", "skill"?: …}` | `unlink_skill_root(path)`, as `swe skills unlink <path> --json`. Only a Linked folder; the folder is left absent, not recreated. |
+| `link_all` | `{"harnesses"?: ["<folder path>", …], "skill"?: …}` | `SkillsModel.linkAll`: each folder `linkAllTargets` clears (Not linked, not archived, no `--force` needed), one at a time; a failure is reported and the rest go on. `harnesses` limits it to the folders the confirm named; one named that is no longer free is reported, not linked. |
+
+`harness` is a folder's path (a registry name works when only one folder
+has it); it must be one the inventory lists (404). `expect` is the state
+the page showed; when the folder has changed since, nothing is written and
+the 409 `state_changed` says what it is now. `skill` must be a listed skill
+folder (404). Other refusals: 409 with the folder's state as the code for
+`keep` (holds skills that exist nowhere else: never overwritten),
+`conflict` (a file in the way), `ignored` and `skipped`; 409
+`already_linked`, `not_linked`, `link_failed`/`unlink_failed` (swe's own
+error, such as an unreadable `skill_links.json`, which stops the write
+before the folder moves); 422 for a malformed body; 404 for an unknown
+action.
+
+An archived harness's folder can be linked or unlinked with its own
+button, as in the app (its explanation says swe init leaves it alone);
+Link all never touches it.
+
+The reply is the list payload read after the write (below), plus
+`action`, `harness` (the folder's new row, or null for `link_all`),
+`skill` (the asked-for skill's new row, so the detail's chips repaint, or
+null) and `result`: the `LinkReply`/`UnlinkReply` `--json` shape
+(`{"action": "link", "harness", "source", "target"}`,
+`{"action": "unlink", "harness", "path", "mkdir": false}`), or for
+`link_all` `{"linked": [{name, path}], "failed": [{name, path, message}],
+"skipped": [<root rows>]}`, from which the page writes the app's summary
+caption ("Linked 2 harnesses. 1 needs a look: claude (…)").
 
 ## Payload
 
@@ -67,10 +120,8 @@ NUL byte in the first 8 KB, as `PrimitiveTree.isTextFile` decides.
 
 ## Differences from the Mac app
 
-Writes are left out; they stay in `swe skills` and the Mac app:
+These writes are left out; they stay in `swe skills` and the Mac app:
 
-- Link to shared skills, Unlink, and Link all in the Harness links popover
-  (the popover says to use `swe skills link`).
 - New skill (`swe skills new`); the empty state names the command instead.
 - Editing the frontmatter form and the files in Contents (Raw/Rich editor,
   Save, Revert, New part, Move to Trash).
@@ -78,6 +129,12 @@ Writes are left out; they stay in `swe skills` and the Mac app:
 
 Also:
 
+- Link, Unlink and Link all ask first, in place, naming what will happen;
+  the app's buttons act on the first click. The hub refuses a folder whose
+  state changed since the page read it, where the app acts on its last
+  list.
+- A failed write also shows its error card on the detail page; the app
+  shows it over the list and in the popover only.
 - The skills come from the hub machine, so the subtitle names it rather
   than "this Mac".
 - Project skills (`<cwd>/.cursor/skills`) are read with `/` as the working

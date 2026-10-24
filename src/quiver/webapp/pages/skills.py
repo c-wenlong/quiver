@@ -2,8 +2,10 @@
 that ship inside a plugin (the Plugins page lists those), and one skill's
 detail: its frontmatter, its SKILL.md and its folder's files.
 
-Read only. Linking, unlinking, New skill and frontmatter edits stay in
-``swe skills`` and the Mac app; see docs/web-app/skills.md.
+Writes: Link to shared skills, Unlink and Link all, per harness skills
+folder, as the Mac app's Harness links popover offers them (``post``
+below). New skill and frontmatter edits stay in ``swe skills`` and the
+Mac app; see docs/web-app/skills.md.
 
 ``GET /v1/app/skills`` is the list. ``?skill=<path>`` is one skill's
 detail, and ``?skill=<path>&file=<name>`` one file inside its folder. The
@@ -14,6 +16,7 @@ skill's folder once symlinks resolve, so no request reads anything else.
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 
 from quiver.webapp.pages import PageError
@@ -35,6 +38,11 @@ def get(ctx, args: dict) -> dict:
             return file_view(skill, args["file"])
         return {**detail(skill, home), "machine": ctx.machine.get("name"),
                 "shared_dir": inventory["shared_dir"], "harnesses": inventory["harnesses"]}
+    return listing(ctx, home, inventory)
+
+
+def listing(ctx, home: Path, inventory: dict) -> dict:
+    """The list payload, ``GET /v1/app/skills`` with no arguments."""
     skills, in_plugins, catalog_error = placement(inventory["skills"], home)
     return {
         "machine": ctx.machine.get("name"),
@@ -266,3 +274,240 @@ def file_view(skill: dict, name: str) -> dict:
         "outside": outside,
         "text": None if outside else read_text(target),
     }
+
+
+# -- writes: POST /v1/app/skills/<action> --------------------------------------
+#
+# quiver links whole skills folders, not single skills, so every write
+# names a harness skills folder from the inventory's ``harnesses``:
+#
+# - ``link`` ``{"harness", "expect"?, "skill"?}``: point the folder at
+#   ~/.quiver/skills, as the Mac app's "Link to shared skills" does
+#   (``swe skills link <path> [--force] --json``). Only a Not linked folder
+#   (create, relink, absorb) is linked; ``--force`` is passed only for an
+#   absorb folder holding copies of shared skills, which link_skill_root
+#   backs up first. keep, conflict, ignored and skipped are refused with
+#   the reason, so a folder holding the only copy of a skill is never
+#   replaced. An archived folder can be linked here, as in the app.
+# - ``unlink`` ``{"harness", "expect"?, "skill"?}``: remove a Linked
+#   folder's symlink (``swe skills unlink <path> --json``).
+# - ``link_all`` ``{"harnesses"?, "skill"?}``: link every folder
+#   ``link_all_targets`` clears (never archived, never one needing
+#   ``--force``), one at a time; a failure is reported and the rest go on.
+#   ``harnesses`` limits it to the folders the page's confirm named.
+#
+# ``harness`` is a folder's path (a name works when one folder has it).
+# ``expect`` is the state the page showed: when the folder has changed
+# since, nothing is written and the refusal says what it is now. ``skill``
+# is the skill whose detail is open; the reply carries its row again.
+#
+# The reply is the list payload (``listing``) read after the write, plus
+# ``action``, ``harness`` (the folder's new row), ``result`` (the
+# LinkReply/UnlinkReply ``--json`` shape, or for link_all
+# ``{"linked", "failed", "skipped"}``) and ``skill``.
+
+ACTIONS = ("link", "unlink", "link_all")
+REF_MAX = 4096
+
+# The hub answers each request on its own thread, and every link rewrites
+# skill_links.json; the Mac app runs its swe calls one at a time for the
+# same reason (SkillsModel's SerialGate). Reading the states, checking and
+# writing all happen under it.
+_WRITE_LOCK = threading.Lock()
+
+
+def link_state(root: dict) -> str:
+    """SkillRoot.link: linked, notLinked or blocked."""
+    if root["state"] == "linked":
+        return "linked"
+    return "notLinked" if root["state"] in ("create", "relink", "absorb") else "blocked"
+
+
+def needs_force(root: dict) -> bool:
+    """SkillRoot.linkNeedsForce: a folder holding copies of shared skills."""
+    return root["state"] == "absorb" and root.get("detail") != "empty"
+
+
+def explanation(root: dict) -> str:
+    """SkillRoot.explanation: one sentence on why the folder is in its state."""
+    state, detail, archived = root["state"], root.get("detail") or "", root.get("archived")
+    if state == "linked":
+        return ("Reads the shared skills. Archived in swe, so swe init won't relink it if you unlink it, but you can link it here."
+                if archived else "Reads the shared skills in ~/.quiver/skills.")
+    if state == "create":
+        return ("No skills folder yet. Archived in swe, so swe init leaves it alone; linking here creates it."
+                if archived else "No skills folder yet. Linking creates it.")
+    if state == "relink":
+        return f"Points somewhere else: {detail.replace('points at ', '')}." if detail else "Points somewhere else."
+    if state == "absorb":
+        return ("An empty folder. Linking replaces it." if detail == "empty"
+                else f"Holds only copies of shared skills ({detail}). Linking backs it up and replaces it.")
+    if state == "keep":
+        return f"Holds skills that exist nowhere else ({detail}). Move them into ~/.quiver/skills before linking."
+    if state == "ignored":
+        return f"Ignored: {detail}." if detail else "Ignored by swe init."
+    if state == "skipped":
+        return "The harness isn't installed."
+    return f"{state}: {detail}" if detail else state
+
+
+def link_all_targets(roots: list[dict]) -> tuple[list[dict], list[dict]]:
+    """SkillsModel.linkAllTargets: the loose folders that cost nothing to
+    point at the shared root, and the ones a person should look at."""
+    link, skipped = [], []
+    for root in roots:
+        state, archived = link_state(root), bool(root.get("archived"))
+        if state == "notLinked" and not archived and not needs_force(root):
+            link.append(root)
+        elif state == "notLinked" and not archived:
+            skipped.append(root)
+        elif state == "blocked" and root["state"] in ("keep", "conflict"):
+            skipped.append(root)
+    return link, skipped
+
+
+def post(ctx, action: str, body: dict) -> dict:
+    if action not in ACTIONS:
+        raise PageError(404, "unknown_action", f"unknown skills action: {action}")
+    if not isinstance(body, dict):
+        raise PageError(422, "bad_body", "Send a JSON object.")
+    home = Path(ctx.home) if ctx.home is not None else Path.home()
+    skill_ref = _ref(body, "skill", required=False)
+    with _WRITE_LOCK:
+        inventory = _inventory(home)
+        if skill_ref is not None:
+            _find(inventory, skill_ref)
+        if action == "link_all":
+            root = None
+            result = _link_all(inventory["harnesses"], home, _named(body))
+        else:
+            root = _root(inventory["harnesses"], _ref(body, "harness"))
+            _expect(root, body.get("expect"))
+            result = _link(root, home) if action == "link" else _unlink(root, home)
+        after = _inventory(home)
+    reply = listing(ctx, home, after)
+    reply.update({
+        "action": action,
+        "harness": next((r for r in after["harnesses"] if root and r["path"] == root["path"]), None),
+        "result": result,
+        "skill": next((s for s in after["skills"] if s["path"] == skill_ref), None),
+    })
+    return reply
+
+
+def _ref(body: dict, key: str, required: bool = True) -> str | None:
+    value = body.get(key)
+    if value is None and not required:
+        return None
+    if not isinstance(value, str) or not value.strip() or len(value) > REF_MAX or "\0" in value:
+        raise PageError(422, f"bad_{key}", f"{key} must be a {key} the page lists.")
+    return value
+
+
+def _named(body: dict) -> set[str] | None:
+    value = body.get("harnesses")
+    if value is None:
+        return None
+    if (not isinstance(value, list) or len(value) > 200
+            or not all(isinstance(v, str) and v and len(v) <= REF_MAX for v in value)):
+        raise PageError(422, "bad_harnesses", "harnesses must be the folder paths the page lists.")
+    return set(value)
+
+
+def _root(roots: list[dict], ref: str) -> dict:
+    """The harness skills folder ``ref`` names: its path, or a name only
+    one folder has. Nothing outside the inventory's list is accepted."""
+    for root in roots:
+        if root["path"] == ref:
+            return root
+    named = [r for r in roots if r["name"] == ref]
+    if len(named) == 1:
+        return named[0]
+    if named:
+        raise PageError(422, "ambiguous_harness", f"{ref} has {len(named)} skills folders; name one by its path.")
+    raise PageError(404, "unknown_harness", "No harness skills folder like that on the hub.")
+
+
+def _expect(root: dict, expect) -> None:
+    if expect is None:
+        return
+    if not isinstance(expect, str):
+        raise PageError(422, "bad_expect", "expect must be the state the page showed.")
+    if expect != root["state"]:
+        raise PageError(409, "state_changed",
+                        f"{root['name']}'s skills folder changed since the page read it. "
+                        f"{explanation(root)} Look again before you change it.")
+
+
+def _same_folder(root: dict, home: Path) -> None:
+    """swe resolves a folder path to a root of its own; refuse unless it
+    lands on the very folder the inventory listed."""
+    from quiver.skills.layout import SkillLayoutError, resolve_root_ref
+
+    try:
+        _label, path = resolve_root_ref(root["path"], home=home, cwd=Path(os.sep))
+    except SkillLayoutError as exc:
+        raise PageError(409, "link_failed", str(exc)) from exc
+    if str(path) != root["path"]:
+        raise PageError(409, "link_failed", f"swe reads {root['path']} as {path}; change it with swe skills.")
+
+
+def _link(root: dict, home: Path) -> dict:
+    from quiver.configuration import ConfigurationError
+    from quiver.skills.link_ops import SkillLayoutError, link_skill_root
+    from quiver.skills.models import LinkReply
+
+    state = link_state(root)
+    if state == "linked":
+        raise PageError(409, "already_linked", f"{root['name']} already reads the shared skills.")
+    if state == "blocked":
+        # keep marks the only copy of something; conflict is a file in the
+        # way. Neither is ever replaced from here.
+        raise PageError(409, root["state"], f"Quiver won't link {root['name']}. {explanation(root)}")
+    _same_folder(root, home)
+    try:
+        label, src, tgt = link_skill_root(root["path"], home=home, cwd=Path(os.sep), force=needs_force(root))
+    except (SkillLayoutError, ConfigurationError) as exc:
+        raise PageError(409, "link_failed", str(exc)) from exc
+    return LinkReply(label, str(src), str(tgt)).to_json()
+
+
+def _unlink(root: dict, home: Path) -> dict:
+    from quiver.configuration import ConfigurationError
+    from quiver.skills.link_ops import SkillLayoutError, unlink_skill_root
+    from quiver.skills.models import UnlinkReply
+
+    if root["state"] != "linked":
+        raise PageError(409, "not_linked", f"{root['name']}'s folder isn't linked to the shared skills.")
+    _same_folder(root, home)
+    try:
+        label, path = unlink_skill_root(root["path"], home=home, cwd=Path(os.sep))
+    except (SkillLayoutError, ConfigurationError) as exc:
+        raise PageError(409, "unlink_failed", str(exc)) from exc
+    return UnlinkReply(label, str(path), False).to_json()
+
+
+def _link_all(roots: list[dict], home: Path, named: set[str] | None) -> dict:
+    """SkillsModel.linkAll: each target in turn; a failure lands in
+    ``failed`` and the rest go on. With ``named``, only those folders,
+    and one named that is no longer a target is reported, not linked."""
+    targets, skipped = link_all_targets(roots)
+    failed = []
+    if named is not None:
+        target_paths = {r["path"] for r in targets}
+        for root in roots:
+            if root["path"] in named and root["path"] not in target_paths:
+                failed.append({"name": root["name"], "path": root["path"],
+                               "message": f"changed since the page read it. {explanation(root)}"})
+        targets = [r for r in targets if r["path"] in named]
+    linked = []
+    for root in targets:
+        try:
+            _link(root, home)
+        except PageError as exc:
+            failed.append({"name": root["name"], "path": root["path"], "message": exc.message})
+        except OSError as exc:
+            failed.append({"name": root["name"], "path": root["path"], "message": str(exc)})
+        else:
+            linked.append({"name": root["name"], "path": root["path"]})
+    return {"linked": linked, "failed": failed, "skipped": skipped}

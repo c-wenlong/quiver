@@ -217,5 +217,268 @@ class TestRoute(HubBase):
         self.assertIn(b".sk-row", self.srv.request("GET", "/app/pages.css")[1])
 
 
+
+# -- writes ------------------------------------------------------------------
+
+
+def _skills_home(home: Path) -> Path:
+    """A home with one shared skill and a folder in each link state:
+    codex has none yet (create), claude holds a skill found nowhere else
+    (keep), cursor holds a copy of the shared one (absorb, needs --force)
+    and kilo an empty folder (absorb, empty)."""
+    shared = home / ".quiver" / "skills" / "tdd"
+    shared.mkdir(parents=True)
+    (shared / "SKILL.md").write_text("---\nname: tdd\ndescription: Test first\n---\n")
+    (home / ".codex").mkdir()
+    (home / ".claude" / "skills" / "mine").mkdir(parents=True)
+    (home / ".claude" / "skills" / "mine" / "SKILL.md").write_text("---\nname: mine\n---\n")
+    (home / ".cursor" / "skills" / "tdd").mkdir(parents=True)
+    (home / ".cursor" / "skills" / "tdd" / "SKILL.md").write_text((shared / "SKILL.md").read_text())
+    (home / ".kilo" / "skills").mkdir(parents=True)
+    (home / ".config" / "kilo").mkdir(parents=True)
+    return shared
+
+
+class _WriteHome:
+    """A real temp home, with skill_links.json (a path fixed at import,
+    from the test runner's HOME) moved into it."""
+
+    def make_home(self, home: Path):
+        self.home = home
+        self.shared = _skills_home(home)
+        self.records = home / ".quiver" / "config" / "skill_links.json"
+        for target, value in (("quiver.skills.layout.SKILL_LINKS_FILE", self.records),
+                              ("quiver.skills.layout.CONFIG_DIR", self.records.parent)):
+            patcher = patch(target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        catalog = patch("quiver.plugins.catalog.build_catalog", return_value={"marketplaces": []})
+        catalog.start()
+        self.addCleanup(catalog.stop)
+
+    def path(self, name):
+        return str({"codex": self.home / ".codex" / "skills", "claude": self.home / ".claude" / "skills",
+                    "cursor": self.home / ".cursor" / "skills", "kilo": self.home / ".kilo" / "skills"}[name])
+
+    def states(self, reply):
+        return {r["name"]: r["state"] for r in reply["harnesses"]}
+
+    def links(self):
+        return {r["label"] for r in json.loads(self.records.read_text())["links"]}
+
+
+class TestWrites(_WriteHome, unittest.TestCase):
+    def setUp(self):
+        self.make_home(Path(tempfile.mkdtemp()))
+        self.ctx = SimpleNamespace(home=self.home, machine={"name": "box"})
+
+    def post(self, action, body):
+        return page.post(self.ctx, action, body)
+
+    def refused(self, action, body):
+        with self.assertRaises(PageError) as caught:
+            self.post(action, body)
+        return caught.exception
+
+    def test_link_creates_the_symlink_and_returns_the_new_states(self):
+        reply = self.post("link", {"harness": self.path("codex"), "expect": "create", "skill": str(self.shared)})
+        codex = Path(self.path("codex"))
+        self.assertTrue(codex.is_symlink())
+        self.assertEqual(codex.resolve(), self.shared.parent.resolve())
+        self.assertEqual(reply["result"], {"action": "link", "harness": "codex", "source": str(codex),
+                                           "target": str(self.shared.parent)})
+        self.assertEqual(reply["harness"]["state"], "linked")
+        self.assertEqual(self.states(reply)["codex"], "linked")
+        self.assertEqual(reply["skill"]["path"], str(self.shared))
+        self.assertIn("codex", reply["skill"]["harnesses"])
+        self.assertEqual(reply["machine"], "box")
+        self.assertIn("codex", self.links())
+
+    def test_a_name_works_when_one_folder_has_it(self):
+        reply = self.post("link", {"harness": "codex"})
+        self.assertEqual(reply["harness"]["path"], self.path("codex"))
+        self.assertIsNone(reply["skill"])
+
+    def test_keep_is_never_overwritten(self):
+        err = self.refused("link", {"harness": self.path("claude")})
+        self.assertEqual((err.status, err.code), (409, "keep"))
+        self.assertIn("exist nowhere else", err.message)
+        claude = Path(self.path("claude"))
+        self.assertFalse(claude.is_symlink())
+        self.assertTrue((claude / "mine" / "SKILL.md").is_file())
+
+    def test_conflict_is_refused_with_the_reason(self):
+        kilo = Path(self.path("kilo"))
+        kilo.rmdir()
+        kilo.write_text("not a folder")
+        err = self.refused("link", {"harness": str(kilo)})
+        self.assertEqual((err.status, err.code), (409, "conflict"))
+        self.assertIn("real file", err.message)
+        self.assertEqual(kilo.read_text(), "not a folder")
+
+    def test_copies_of_shared_skills_are_backed_up_then_linked(self):
+        reply = self.post("link", {"harness": self.path("cursor"), "expect": "absorb"})
+        self.assertEqual(self.states(reply)["cursor"], "linked")
+        backups = list((self.home / ".quiver" / "backups").iterdir())
+        self.assertEqual(len(backups), 1)
+        self.assertTrue((backups[0] / "tdd" / "SKILL.md").is_file())
+
+    def test_a_folder_that_changed_since_the_page_read_it_is_left_alone(self):
+        err = self.refused("link", {"harness": self.path("codex"), "expect": "absorb"})
+        self.assertEqual((err.status, err.code), (409, "state_changed"))
+        self.assertIn("No skills folder yet", err.message)
+        self.assertFalse(os.path.lexists(self.path("codex")))
+
+    def test_unlink_removes_only_the_link(self):
+        self.post("link", {"harness": self.path("codex")})
+        reply = self.post("unlink", {"harness": self.path("codex"), "expect": "linked", "skill": str(self.shared)})
+        self.assertFalse(os.path.lexists(self.path("codex")))
+        self.assertTrue((self.shared / "SKILL.md").is_file())
+        self.assertEqual(reply["result"], {"action": "unlink", "harness": "codex", "path": self.path("codex"),
+                                           "mkdir": False})
+        self.assertEqual(self.states(reply)["codex"], "create")
+        self.assertNotIn("codex", reply["skill"]["harnesses"])
+        self.assertNotIn("codex", self.links())
+
+    def test_unlink_refuses_a_folder_that_is_not_linked(self):
+        err = self.refused("unlink", {"harness": self.path("claude")})
+        self.assertEqual((err.status, err.code), (409, "not_linked"))
+        self.assertTrue(Path(self.path("claude"), "mine", "SKILL.md").is_file())
+
+    def test_link_refuses_a_folder_already_linked(self):
+        self.post("link", {"harness": self.path("codex")})
+        self.assertEqual(self.refused("link", {"harness": self.path("codex")}).code, "already_linked")
+
+    def test_link_all_takes_only_the_free_folders(self):
+        reply = self.post("link_all", {"skill": str(self.shared)})
+        linked = {r["name"] for r in reply["result"]["linked"]}
+        self.assertIn("codex", linked)
+        self.assertIn("kilo", linked)
+        self.assertNotIn("cursor", linked)
+        self.assertNotIn("claude", linked)
+        self.assertEqual(reply["result"]["failed"], [])
+        self.assertEqual({r["name"] for r in reply["result"]["skipped"]}, {"claude", "cursor"})
+        states = self.states(reply)
+        self.assertEqual((states["codex"], states["kilo"], states["claude"], states["cursor"]),
+                         ("linked", "linked", "keep", "absorb"))
+        self.assertFalse((self.home / ".quiver" / "backups").exists())
+        self.assertIn("kilo", reply["skill"]["harnesses"])
+
+    def test_link_all_only_links_the_folders_the_confirm_named(self):
+        reply = self.post("link_all", {"harnesses": [self.path("kilo"), self.path("claude")]})
+        self.assertEqual([r["name"] for r in reply["result"]["linked"]], ["kilo"])
+        self.assertEqual([f["name"] for f in reply["result"]["failed"]], ["claude"])
+        self.assertIn("changed since", reply["result"]["failed"][0]["message"])
+        self.assertFalse(os.path.lexists(self.path("codex")))
+
+    def test_archived_folders_are_left_out_of_link_all_but_link_on_a_click(self):
+        config = self.home / ".quiver" / "config"
+        config.mkdir(parents=True, exist_ok=True)
+        (config / "harness.json").write_text(json.dumps({"codex": {"state": "archived"}}))
+        reply = self.post("link_all", {})
+        self.assertNotIn("codex", {r["name"] for r in reply["result"]["linked"]})
+        self.assertFalse(os.path.lexists(self.path("codex")))
+        codex = next(r for r in reply["harnesses"] if r["name"] == "codex")
+        self.assertEqual((codex["state"], codex["archived"]), ("create", True))
+        reply = self.post("link", {"harness": self.path("codex"), "expect": "create"})
+        self.assertEqual(reply["harness"]["state"], "linked")
+
+    def test_refusals_for_bad_input(self):
+        for action, body, status, code in (
+            ("link", {"harness": "/etc"}, 404, "unknown_harness"),
+            ("link", {"harness": str(self.home / ".quiver" / "skills")}, 404, "unknown_harness"),
+            ("link", {}, 422, "bad_harness"),
+            ("link", {"harness": 3}, 422, "bad_harness"),
+            ("link", {"harness": self.path("codex"), "expect": 1}, 422, "bad_expect"),
+            ("link", {"harness": self.path("codex"), "skill": "/etc"}, 404, "unknown_skill"),
+            ("link_all", {"harnesses": "codex"}, 422, "bad_harnesses"),
+            ("relink", {"harness": self.path("codex")}, 404, "unknown_action"),
+        ):
+            err = self.refused(action, body)
+            self.assertEqual((err.status, err.code), (status, code), (action, body))
+        self.assertFalse(os.path.lexists(self.path("codex")))
+
+    def test_an_unreadable_records_file_stops_the_link_before_it_moves(self):
+        self.records.parent.mkdir(parents=True, exist_ok=True)
+        self.records.write_text("{not json")
+        err = self.refused("link", {"harness": self.path("codex")})
+        self.assertEqual((err.status, err.code), (409, "link_failed"))
+        self.assertFalse(os.path.lexists(self.path("codex")))
+        self.assertEqual(self.records.read_text(), "{not json")
+
+
+class TestExplanation(unittest.TestCase):
+    def test_matches_the_app_and_link_all_targets(self):
+        roots = [{"name": n, "path": f"/{n}", "state": st, "detail": dt, "archived": ar}
+                 for n, st, dt, ar in (("a", "create", "", False), ("b", "absorb", "empty", False),
+                                       ("c", "absorb", "2 skills, all already shared", False),
+                                       ("d", "keep", "1 of 1 skills exist nowhere else", False),
+                                       ("e", "conflict", "real file, needs --force", False),
+                                       ("f", "create", "", True), ("g", "ignored", "linkignore", False),
+                                       ("h", "linked", "", False))]
+        link, skipped = page.link_all_targets(roots)
+        self.assertEqual([r["name"] for r in link], ["a", "b"])
+        self.assertEqual([r["name"] for r in skipped], ["c", "d", "e"])
+        self.assertEqual(page.explanation(roots[5]),
+                         "No skills folder yet. Archived in swe, so swe init leaves it alone; linking here creates it.")
+        self.assertEqual(page.explanation(roots[2]),
+                         "Holds only copies of shared skills (2 skills, all already shared). Linking backs it up and replaces it.")
+        self.assertEqual(page.explanation(roots[4]), "conflict: real file, needs --force")
+
+
+class TestWriteRoute(_WriteHome, HubBase):
+    def setUp(self):
+        super().setUp()
+        self.make_home(self.srv.home)
+
+    def origin(self):
+        return f"http://127.0.0.1:{self.srv.port}"
+
+    def test_needs_a_device(self):
+        status, _ = self.srv.request("POST", "/v1/app/skills/link", body={"harness": self.path("codex")})
+        self.assertEqual(status, 401)
+        self.assertFalse(os.path.lexists(self.path("codex")))
+
+    def test_link_and_unlink_through_the_hub(self):
+        auth = {**self.auth(), "Origin": self.origin()}
+        status, data = self.srv.request("POST", "/v1/app/skills/link",
+                                        body={"harness": self.path("codex"), "expect": "create"}, headers=auth)
+        self.assertEqual(status, 200, data)
+        self.assertEqual(json.loads(data)["harness"]["state"], "linked")
+        self.assertTrue(Path(self.path("codex")).is_symlink())
+        _, data = self.srv.request("GET", "/v1/app/skills", headers=auth)
+        self.assertEqual(self.states(json.loads(data))["codex"], "linked")
+        status, data = self.srv.request("POST", "/v1/app/skills/unlink",
+                                        body={"harness": self.path("codex")}, headers=auth)
+        self.assertEqual(status, 200, data)
+        self.assertFalse(os.path.lexists(self.path("codex")))
+
+    def test_a_cross_site_origin_is_refused(self):
+        status, data = self.srv.request("POST", "/v1/app/skills/link_all", body={},
+                                        headers={**self.auth(), "Origin": "https://evil.example"})
+        self.assertEqual(status, 403)
+        self.assertIn("bad_origin", data.decode())
+        self.assertFalse(os.path.lexists(self.path("codex")))
+
+    def test_refusals_carry_their_status(self):
+        auth = self.auth()
+        for action, body, want in (
+            ("link", {"harness": self.path("claude")}, 409),
+            ("link", {"harness": "/nope"}, 404),
+            ("link", {"harness": ""}, 422),
+            ("nuke", {}, 404),
+        ):
+            status, data = self.srv.request("POST", f"/v1/app/skills/{action}", body=body, headers=auth)
+            self.assertEqual(status, want, (action, data))
+            self.assertIn("message", json.loads(data)["error"])
+        self.assertEqual(self.srv.request("POST", "/v1/app/skills/link", body=["codex"], headers=auth)[0], 400)
+
+    def test_page_script_carries_the_writes(self):
+        status, data = self.srv.request("GET", "/app/pages.js")
+        self.assertEqual(status, 200)
+        for needle in (b"/v1/app/skills/", b"Link to shared skills", b"Link all (", b"sk-confirm-go"):
+            self.assertIn(needle, data)
+
+
 if __name__ == "__main__":
     unittest.main()
