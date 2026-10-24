@@ -1414,6 +1414,16 @@ _MERGE_METHODS = {"squash": "--squash", "merge": "--merge",
                   "rebase": "--rebase"}
 
 
+def merge_pr(repo: str, ref: str, method: str, auto: bool) -> gh.GhResult:
+    """``gh pr merge <ref> --repo <repo> --<method> [--auto]``: the one
+    merge call, shared by ``swe gh pr merge`` and the web app's PR
+    sheet. ``method`` must be a ``_MERGE_METHODS`` key."""
+    args = ["pr", "merge", ref, "--repo", repo, _MERGE_METHODS[method]]
+    if auto:
+        args.append("--auto")
+    return gh.run_gh(args, timeout=60)
+
+
 def _cmd_pr_merge(ref: str, opts: dict, json_view: bool) -> int:
     err = error_stream(json_view)
     method = (opts["method"] or "squash").lower()
@@ -1437,10 +1447,7 @@ def _cmd_pr_merge(ref: str, opts: dict, json_view: bool) -> int:
                   "method": method, "auto": bool(opts["auto"]),
                   "merged": False, "error": res_err})
         return 1
-    args = ["pr", "merge", ref, "--repo", repo, _MERGE_METHODS[method]]
-    if opts["auto"]:
-        args.append("--auto")
-    result = gh.run_gh(args, timeout=60)
+    result = merge_pr(repo, ref, method, bool(opts["auto"]))
     if result.status != "ok":
         msg = result.error or result.status
         if json_view:
@@ -1642,6 +1649,29 @@ def _cmd_run_rerun(run_id: str, opts: dict, json_view: bool) -> int:
     return 0
 
 
+def mark_all_read() -> gh.GhResult:
+    """Every notification read: one ``PUT notifications`` with
+    ``last_read_at`` now. Shared by ``swe gh inbox read --all`` and the
+    web app's Inbox."""
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return gh.run_gh(
+        ["api", "--method", "PUT", "notifications",
+         "-f", f"last_read_at={stamp}"], timeout=30)
+
+
+def mark_threads_read(ids: list[str]) -> list[dict]:
+    """``PATCH notifications/threads/<id>`` per id, overlapped:
+    ``[{"id", "status", "error"}]`` in ``ids`` order. Callers pass only
+    digit ids. Shared by ``swe gh inbox read`` and the web app."""
+    def mark(thread: str) -> dict:
+        r = gh.run_gh(["api", "--method", "PATCH",
+                       f"notifications/threads/{thread}"], timeout=30)
+        return {"id": thread, "status": r.status,
+                "error": r.error or r.status}
+
+    return _fan(ids, mark)
+
+
 def _cmd_inbox_read(ids: list[str], opts: dict, json_view: bool) -> int:
     """Mark notification threads read: `gh api PATCH threads/<id>` per
     id, or one PUT notifications with last_read_at for --all."""
@@ -1666,10 +1696,7 @@ def _cmd_inbox_read(ids: list[str], opts: dict, json_view: bool) -> int:
                   "marked": [], "error": msg})
         return 1
     if opts["all"]:
-        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        result = gh.run_gh(
-            ["api", "--method", "PUT", "notifications",
-             "-f", f"last_read_at={stamp}"], timeout=30)
+        result = mark_all_read()
         if result.status != "ok":
             msg = result.error or result.status
             if json_view:
@@ -1683,13 +1710,7 @@ def _cmd_inbox_read(ids: list[str], opts: dict, json_view: bool) -> int:
         print(c("green", "  All notifications marked read.\n"))
         return 0
 
-    def mark(thread: str) -> dict:
-        r = gh.run_gh(["api", "--method", "PATCH",
-                       f"notifications/threads/{thread}"], timeout=30)
-        return {"id": thread, "status": r.status,
-                "error": r.error or r.status}
-
-    entries = _fan(ids, mark)
+    entries = mark_threads_read(ids)
     marked = [e["id"] for e in entries if e["status"] == "ok"]
     failed = [{"id": e["id"], "error": e["error"]}
               for e in entries if e["status"] != "ok"]

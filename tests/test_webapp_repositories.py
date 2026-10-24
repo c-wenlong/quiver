@@ -1,8 +1,11 @@
 """The Repositories page's data: dashboard boards, the focus page, PR
-detail, the gh cache, and the route with auth. No real ``gh`` runs."""
+detail, the gh cache, the merge write, and the routes with auth. No real
+``gh`` runs: reads patch ``gh``, writes run a fake ``gh`` on PATH."""
 
 import json
+import os
 import shutil
+import sys
 import subprocess
 import tempfile
 import threading
@@ -20,6 +23,124 @@ from quiver.webapp.pages import repositories as R
 from tests.test_remote_hub import HubBase
 
 OK_ENV = gh.GhEnv(installed=True, authenticated=True, login="octo")
+
+_FAKE_GH = r"""#!PYTHON
+import json, os, sys
+args = sys.argv[1:]
+with open(os.environ["FAKE_GH_LOG"], "a") as log:
+    log.write(json.dumps(args) + "\n")
+path = os.environ["FAKE_GH_STATE"]
+with open(path) as f:
+    state = json.load(f)
+
+def save():
+    with open(path, "w") as f:
+        json.dump(state, f)
+
+def fail(msg, code=1):
+    sys.stderr.write(msg)
+    sys.exit(code)
+
+if args[:2] == ["auth", "status"]:
+    if state.get("signed_out"):
+        fail("You are not logged into any GitHub hosts.")
+    sys.stderr.write("Logged in to github.com account octo (keyring)\n")
+    sys.exit(0)
+if args[:2] == ["pr", "view"]:
+    pr = state["prs"].get(args[2])
+    if pr is None:
+        fail("GraphQL: Could not resolve to a PullRequest with the number of " + args[2])
+    print(json.dumps(pr))
+    sys.exit(0)
+if args[:2] == ["pr", "merge"]:
+    if state.get("merge_error"):
+        fail(state["merge_error"])
+    pr = state["prs"][args[2]]
+    method = [a for a in args if a in ("--squash", "--merge", "--rebase")][0][2:]
+    if "--auto" in args:
+        pr["autoMergeRequest"] = {"mergeMethod": method.upper(), "enabledAt": "2026-10-24T00:00:00Z"}
+    else:
+        pr["state"], pr["mergedAt"] = "MERGED", "2026-10-24T00:00:00Z"
+    save()
+    sys.exit(0)
+if args[:1] == ["api"] and "--method" in args:
+    at = args.index("--method")
+    verb, target = args[at + 1], args[at + 2]
+    if state.get("api_error"):
+        fail(state["api_error"])
+    if verb == "PATCH":
+        thread = target.rsplit("/", 1)[1]
+        if thread in state.get("fail_ids", []):
+            fail("HTTP 500: Server Error")
+        for note in state["notes"]:
+            if note["id"] == thread:
+                note["unread"] = False
+        save()
+        sys.exit(0)
+    if verb == "PUT" and target == "notifications":
+        for note in state["notes"]:
+            note["unread"] = False
+        save()
+        sys.exit(0)
+if args[:1] == ["api"] and args[1].startswith("notifications"):
+    print(json.dumps(state["notes"]))
+    sys.exit(0)
+fail("fake gh: unexpected " + " ".join(args), 2)
+"""
+
+
+class FakeGh:
+    """A ``gh`` executable on PATH that logs each call and answers from
+    a JSON state file: PRs by number, notifications, failure switches.
+    The real ``gh.run_gh`` subprocess path runs against it, so a test
+    sees the exact argv a write would send, and nothing leaves the box."""
+
+    def __init__(self, case: unittest.TestCase, **state):
+        tmp = Path(tempfile.mkdtemp())
+        case.addCleanup(shutil.rmtree, tmp, True)
+        self.bin = tmp / "bin"
+        self.bin.mkdir()
+        script = self.bin / "gh"
+        script.write_text(_FAKE_GH.replace("PYTHON", sys.executable, 1))
+        script.chmod(0o755)
+        self.state_file, self.log_file = tmp / "state.json", tmp / "calls.log"
+        self.log_file.write_text("")
+        self.write({"prs": {}, "notes": [], **state})
+        env = patch.dict(os.environ, {
+            "PATH": f"{self.bin}{os.pathsep}{os.environ.get('PATH', '')}",
+            "FAKE_GH_STATE": str(self.state_file), "FAKE_GH_LOG": str(self.log_file)})
+        env.start()
+        case.addCleanup(env.stop)
+
+    def read(self) -> dict:
+        return json.loads(self.state_file.read_text())
+
+    def write(self, state: dict) -> None:
+        self.state_file.write_text(json.dumps(state))
+
+    def update(self, **changes) -> None:
+        self.write({**self.read(), **changes})
+
+    def calls(self) -> list[list[str]]:
+        return [json.loads(line) for line in self.log_file.read_text().splitlines()]
+
+    def writes(self) -> list[list[str]]:
+        """The calls that change GitHub: merges and non-GET api calls."""
+        return [c for c in self.calls()
+                if c[:2] == ["pr", "merge"] or (c[:1] == ["api"] and "--method" in c)]
+
+
+def gh_pr(number=7, **over) -> dict:
+    """A ``gh pr view --json`` reply, open and mergeable unless told."""
+    return {"number": number, "title": "Fix the thing", "state": "OPEN", "isDraft": False,
+            "author": {"login": "me"}, "headRefName": "fix", "baseRefName": "main",
+            "body": "", "url": f"https://github.com/o/a/pull/{number}",
+            "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+            "reviewDecision": "APPROVED", "statusCheckRollup": [], "latestReviews": [],
+            "reviewRequests": [], "labels": [], "additions": 1, "deletions": 0,
+            "changedFiles": 1, "createdAt": "2026-10-23T00:00:00Z",
+            "updatedAt": "2026-10-23T00:00:00Z", "mergedAt": None,
+            "autoMergeRequest": None, **over}
 
 
 def _board(name, failed=()):
@@ -251,6 +372,158 @@ class TestPullRequest(_Base):
         self.assertEqual((body["status"], body["github"]["status"]), ("unavailable", "unavailable"))
 
 
+class TestCacheDrop(_Base):
+    def test_drop_forgets_matches_and_a_reply_in_flight(self):
+        G.CACHE.get(("a", 1), lambda: "old")
+        G.CACHE.get(("b", 1), lambda: "keep")
+        G.CACHE.drop(lambda k: k[0] == "a")
+        self.assertEqual(G.CACHE.get(("a", 1), lambda: "new")[0], "new")
+        self.assertEqual(G.CACHE.get(("b", 1), lambda: "other")[0], "keep")
+
+        # A fetch that began before the write returns its reply to its
+        # own caller, but the next caller reads again.
+        def stale():
+            G.CACHE.drop(lambda k: k[0] == "c")
+            return "stale"
+        self.assertEqual(G.CACHE.get(("c", 1), stale)[0], "stale")
+        self.assertEqual(G.CACHE.get(("c", 1), lambda: "fresh")[0], "fresh")
+
+
+class TestMerge(_Base):
+    """``post(ctx, "merge", ...)`` against a temp HOME's pins and a fake
+    ``gh``: the success paths, then every refusal, none of which may
+    reach ``gh pr merge``."""
+
+    def setUp(self):
+        super().setUp()
+        _pin(self.home, "o/a")
+        self.gh = FakeGh(self, prs={"7": gh_pr(7)})
+
+    def merge(self, **body):
+        return R.post(self.ctx, "merge", {"repo": "o/a", "number": 7, **body})
+
+    def refused(self, status, code, **body):
+        with self.assertRaises(PageError) as caught:
+            self.merge(**body)
+        self.assertEqual((caught.exception.status, caught.exception.code), (status, code),
+                         caught.exception.message)
+        self.assertEqual(self.gh.writes(), [])
+        return caught.exception
+
+    def test_squash_merges_and_answers_with_the_pr_read_again(self):
+        body = self.merge()
+        self.assertEqual(self.gh.writes(), [["pr", "merge", "7", "--repo", "o/a", "--squash"]])
+        self.assertEqual((body["repo"], body["number"], body["method"], body["auto"], body["merged"]),
+                         ("o/a", 7, "squash", False, True))
+        self.assertEqual(body["pr"]["state"], "merged")
+        self.assertEqual(body["github"]["status"], "ok")
+        self.assertEqual(body["machine"], "hub-box")
+        # Read fresh before the write, and again after it.
+        views = [c for c in self.gh.calls() if c[:2] == ["pr", "view"]]
+        self.assertEqual(len(views), 2)
+
+    def test_auto_merge_arms_with_the_chosen_method(self):
+        body = self.merge(method="rebase", auto=True)
+        self.assertEqual(self.gh.writes(), [["pr", "merge", "7", "--repo", "o/a", "--rebase", "--auto"]])
+        self.assertFalse(body["merged"])
+        self.assertEqual(body["pr"]["state"], "open")
+        self.assertEqual(body["pr"]["auto_merge"]["method"], "rebase")
+
+    def test_the_pin_is_matched_as_pinned_and_number_as_text(self):
+        body = R.post(self.ctx, "merge", {"repo": "O/A", "number": "7", "method": "merge"})
+        self.assertEqual(body["repo"], "o/a")
+        self.assertEqual(self.gh.writes(), [["pr", "merge", "7", "--repo", "o/a", "--merge"]])
+
+    def test_a_merge_drops_the_repos_cached_views(self):
+        hk = G.home_key(self.home)
+        for key in (("board", hk, "o/a"), ("focus", hk, "o/a", "pull_requests", 50),
+                    ("pr", hk, "o/a", "7"), ("board", hk, "o/b")):
+            G.CACHE.get(key, lambda: {"status": "ok", "cached": True})
+        self.merge()
+        again = lambda: {"status": "ok", "cached": False}
+        self.assertFalse(G.CACHE.get(("board", hk, "o/a"), again)[0]["cached"])
+        self.assertFalse(G.CACHE.get(("focus", hk, "o/a", "pull_requests", 50), again)[0]["cached"])
+        self.assertTrue(G.CACHE.get(("board", hk, "o/b"), again)[0]["cached"])
+
+    def test_a_stale_open_view_cannot_merge_a_pr_merged_since(self):
+        # The sheet's cached read says open; GitHub says merged now.
+        R.get(self.ctx, {"repo": "o/a", "pr": "7"})
+        self.gh.update(prs={"7": gh_pr(7, state="MERGED")})
+        err = self.refused(409, "not_open")
+        self.assertIn("merged", err.message)
+
+    def test_the_apps_blocks(self):
+        self.gh.update(prs={"7": gh_pr(7, state="CLOSED")})
+        self.refused(409, "not_open")
+        self.gh.update(prs={"7": gh_pr(7, isDraft=True)})
+        self.assertEqual(self.refused(409, "draft").message, "Draft PRs can't merge")
+        self.assertEqual(self.refused(409, "draft", auto=True).message, "Draft PRs can't merge")
+        self.gh.update(prs={"7": gh_pr(7, mergeable="CONFLICTING")})
+        self.assertEqual(self.refused(409, "conflicting").message, "Resolve the conflicts first")
+        armed = {"mergeMethod": "SQUASH", "enabledAt": "2026-10-24T00:00:00Z"}
+        self.gh.update(prs={"7": gh_pr(7, autoMergeRequest=armed)})
+        self.assertEqual(self.refused(409, "auto_merge_armed", auto=True).message,
+                         "Auto-merge is already armed")
+
+    def test_conflicts_still_allow_arming_auto_merge_as_the_app_does(self):
+        self.gh.update(prs={"7": gh_pr(7, mergeable="CONFLICTING")})
+        self.assertFalse(self.merge(auto=True)["merged"])
+
+    def test_failing_checks_are_left_to_github(self):
+        failing = [{"__typename": "CheckRun", "name": "ci", "status": "COMPLETED", "conclusion": "FAILURE"}]
+        self.gh.update(prs={"7": gh_pr(7, statusCheckRollup=failing)},
+                       merge_error="GraphQL: Required status check \"ci\" is failing")
+        err = self.refused_after_gh(502, "merge_failed")
+        self.assertIn("Required status check", err.message)
+
+    def refused_after_gh(self, status, code, **body):
+        with self.assertRaises(PageError) as caught:
+            self.merge(**body)
+        self.assertEqual((caught.exception.status, caught.exception.code), (status, code))
+        return caught.exception
+
+    def test_bad_input_is_refused_before_any_gh_call(self):
+        for body, code in (({"repo": ""}, "bad_repo"), ({"repo": 5}, "bad_repo"),
+                           ({"repo": "not a repo"}, "bad_repo"),
+                           ({"number": "abc"}, "bad_pr"), ({"number": 0}, "bad_pr"),
+                           ({"number": -3}, "bad_pr"), ({"number": True}, "bad_pr"),
+                           ({"number": "\u0667"}, "bad_pr"), ({"number": None}, "bad_pr"),
+                           ({"method": "yolo"}, "bad_method"), ({"method": None}, "bad_method"),
+                           ({"auto": "yes"}, "bad_auto")):
+            with self.subTest(body=body):
+                self.refused(422, code, **body)
+        self.assertEqual(self.gh.calls(), [])
+
+    def test_unpinned_repos_unknown_prs_and_actions(self):
+        self.refused(404, "not_pinned", repo="o/elsewhere")
+        self.refused(404, "unknown_pr", number=99)
+        with self.assertRaises(PageError) as caught:
+            R.post(self.ctx, "rerun", {"repo": "o/a", "number": 7})
+        self.assertEqual(caught.exception.status, 404)
+        self.assertEqual(self.gh.writes(), [])
+
+    def test_a_signed_out_gh_is_refused_with_the_setup_words(self):
+        self.gh.update(signed_out=True)
+        err = self.refused(409, "gh_auth_required")
+        self.assertIn("gh auth login", err.message)
+
+    def test_two_merges_at_once_merge_once(self):
+        results = []
+
+        def one():
+            try:
+                results.append(self.merge()["merged"])
+            except PageError as exc:
+                results.append(exc.code)
+        threads = [threading.Thread(target=one) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+        self.assertEqual(sorted(map(str, results)), ["True", "not_open"])
+        self.assertEqual(len(self.gh.writes()), 1)
+
+
 STATIC = Path(R.__file__).resolve().parent.parent / "static" / "pages"
 
 
@@ -377,6 +650,34 @@ class TestRoute(HubBase):
         status, data = self.srv.request("GET", "/v1/app/repositories?repo=x/y", headers=self.auth())
         self.assertEqual(status, 404)
         self.assertIn("not pinned", data.decode())
+
+    def origin(self):
+        return f"http://127.0.0.1:{self.srv.port}"
+
+    def test_merge_needs_a_device_and_a_same_site_origin(self):
+        _pin(self.srv.home, "o/a")
+        fake = FakeGh(self, prs={"7": gh_pr(7)})
+        body = {"repo": "o/a", "number": 7, "method": "squash"}
+        self.assertEqual(self.srv.request("POST", "/v1/app/repositories/merge", body=body)[0], 401)
+        auth = self.auth()
+        status, data = self.srv.request("POST", "/v1/app/repositories/merge", body=body,
+                                        headers={**auth, "Origin": "https://evil.example"})
+        self.assertEqual(status, 403)
+        self.assertIn("bad_origin", data.decode())
+        self.assertEqual(fake.writes(), [])
+        status, data = self.srv.request("POST", "/v1/app/repositories/merge", body=body,
+                                        headers={**auth, "Origin": self.origin()})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(json.loads(data)["pr"]["state"], "merged")
+        self.assertEqual(fake.writes(), [["pr", "merge", "7", "--repo", "o/a", "--squash"]])
+        # A refusal carries its status and the app's words.
+        status, data = self.srv.request("POST", "/v1/app/repositories/merge", body=body, headers=auth)
+        self.assertEqual(status, 409)
+        self.assertIn("not_open", data.decode())
+        status, _ = self.srv.request("POST", "/v1/app/repositories/merge",
+                                     body={**body, "method": "octopus"}, headers=auth)
+        self.assertEqual(status, 422)
+        self.assertEqual(len(fake.writes()), 1)
 
     def test_page_scripts_are_bundled(self):
         _, js = self.srv.request("GET", "/app/pages.js")

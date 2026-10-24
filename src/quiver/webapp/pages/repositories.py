@@ -1,5 +1,5 @@
 """The Repositories page: the Mac app's RepositoriesPage, RepoDetailPage
-and PrDetailSheet, read only.
+and PrDetailSheet.
 
 ``GET /v1/app/repositories`` answers three views:
 
@@ -13,6 +13,10 @@ and PrDetailSheet, read only.
   --json``.
 
 Only pinned repos are read. ``refresh=1`` skips the cache.
+
+``POST /v1/app/repositories/merge`` is the sheet's one write, ``swe gh
+pr merge --json`` in process: ``{"repo", "number", "method", "auto"}``.
+See ``merge`` for what it refuses.
 """
 
 from __future__ import annotations
@@ -151,3 +155,115 @@ def pull_request(home, repo: str, ref: str, refresh: bool = False) -> dict:
                             refresh=refresh,
                             ok=lambda v: v["status"] == "ok")
     return {"github": G.env_payload(env), **value, "fetched_at": at}
+
+
+# ---------------------------------------------------------------- merge
+
+METHODS = ("squash", "rebase", "merge")  # PrDetailSheet's menu, in order
+METHOD_TITLES = {"squash": "Squash and merge", "rebase": "Rebase and merge",
+                 "merge": "Create a merge commit"}
+
+
+def post(ctx, action: str, body: dict) -> dict:
+    if action != "merge":
+        raise PageError(404, "unknown_action",
+                        f"unknown repositories action: {action}")
+    repo, number, method, auto = _merge_args(ctx.home, body)
+    with G.WRITE_LOCK:
+        return merge(ctx, repo, number, method, auto)
+
+
+def _merge_args(home, body: dict) -> tuple[str, str, str, bool]:
+    raw = body.get("repo")
+    if not isinstance(raw, str) or not raw.strip():
+        raise PageError(422, "bad_repo", "repo must be owner/name")
+    try:
+        repo = G.pinned_name(home, raw)
+    except PageError as exc:
+        if exc.status == 400:  # malformed, as opposed to not pinned
+            raise PageError(422, exc.code, exc.message) from exc
+        raise
+    number = body.get("number")
+    if isinstance(number, bool) or not isinstance(number, (int, str)):
+        raise PageError(422, "bad_pr", "number must be a pull request number")
+    number = str(number).strip()
+    if not number.isdigit() or not number.isascii() or int(number) < 1:
+        raise PageError(422, "bad_pr", "number must be a pull request number")
+    number = str(int(number))
+    method = body.get("method", "squash")
+    if method not in METHODS:
+        raise PageError(422, "bad_method",
+                        "method must be squash, rebase or merge")
+    auto = body.get("auto", False)
+    if not isinstance(auto, bool):
+        raise PageError(422, "bad_auto", "auto must be true or false")
+    return repo, number, method, auto
+
+
+def blocked(pr: dict, auto: bool) -> tuple[str, str] | None:
+    """Why PrDetailSheet would not offer this merge, as ``(code,
+    message)`` in the app's own words, or ``None``. The sheet shows
+    Merge and Auto-merge only on an open PR; both are off for a draft;
+    Merge is off on conflicts; Auto-merge is off once armed. The app
+    does not gate on checks, so neither does this: GitHub's own rules
+    (required checks, reviews) refuse through ``gh`` instead."""
+    number = pr.get("number")
+    if pr.get("state") != "open":
+        return "not_open", f"#{number} is {pr.get('state') or 'not open'}, so it can't merge."
+    if pr.get("draft"):
+        return "draft", "Draft PRs can't merge"
+    if auto and pr.get("auto_merge"):
+        return "auto_merge_armed", "Auto-merge is already armed"
+    if not auto and pr.get("mergeable") == "conflicting":
+        return "conflicting", "Resolve the conflicts first"
+    return None
+
+
+def _drop_repo(home, repo: str) -> None:
+    """Forget the repo's board, focus surfaces and PR details, so every
+    view of it reads GitHub again after a merge."""
+    hk = G.home_key(home)
+    G.CACHE.drop(lambda k: isinstance(k, tuple) and len(k) > 2
+                 and k[0] in ("board", "focus", "pr")
+                 and k[1] == hk and k[2] == repo)
+
+
+def merge(ctx, repo: str, number: str, method: str, auto: bool) -> dict:
+    """Merge, or arm auto-merge, after a fresh read of the PR: the
+    state the user saw may be a minute old, and a PR merged or turned
+    draft since then must not be merged on the old picture. Callers
+    hold ``G.WRITE_LOCK``.
+
+    Answers ``{"github", "repo", "number", "method", "auto", "merged",
+    "pr", "fetched_at", "machine"}``, where ``pr`` is the PR as read
+    again after the write (``null`` if that read failed) and ``merged``
+    is false under ``auto``, as in ``swe gh pr merge --json``."""
+    home = ctx.home
+    env = G.probe(home, refresh=True)
+    if env.status != "ok":
+        raise PageError(409, "gh_" + env.status.replace("-", "_"),
+                        ghcli._env_error(env))
+    _drop_repo(home, repo)
+    before = pull_request(home, repo, number)
+    if before.get("status") == "not-found":
+        raise PageError(404, "unknown_pr", f"No pull request #{number} in {repo}.")
+    if before.get("status") != "ok" or not before.get("pr"):
+        raise PageError(502, "pr_unreadable",
+                        before.get("error") or "GitHub returned "
+                        + str(before.get("status")))
+    reason = blocked(before["pr"], auto)
+    if reason:
+        raise PageError(409, *reason)
+    result = ghcli.merge_pr(repo, number, method, auto)
+    _drop_repo(home, repo)
+    if result.status != "ok":
+        raise PageError(502, "merge_failed", result.error or result.status)
+    after = pull_request(home, repo, number)
+    return {
+        "github": after.get("github") or G.env_payload(env),
+        "repo": repo, "number": int(number), "method": method, "auto": auto,
+        "merged": not auto,
+        "pr": after.get("pr") if after.get("status") == "ok" else None,
+        "fetched_at": after.get("fetched_at"),
+        "machine": (ctx.machine or {}).get("name"),
+    }

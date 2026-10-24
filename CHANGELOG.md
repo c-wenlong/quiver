@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: merge a PR and mark notifications read.** The PR sheet on
+  Repositories now has the Mac app's strategy menu, Merge and
+  Auto-merge; either asks an inline confirm naming the PR, its repo, the
+  base branch and the strategy before it posts. The hub reads the PR
+  again first and refuses what the app would not offer (not open, draft,
+  conflicts, auto-merge already armed) in the app's words. Inbox gets a
+  Mark as read button per unread row and the header's mark-all envelope,
+  behind an inline confirm. Both call the same code as `swe gh pr merge`
+  and `swe gh inbox read`, through the hub machine's `gh` login, and
+  drop the page's cached replies after the write.
+
 - **Web app: Repositories and Inbox.** Repositories shows the hub's pinned
   repos as the Mac app does: pull requests, issues and Actions across
   every pin, all seven surfaces (Pages, releases, tags, branches too) for
