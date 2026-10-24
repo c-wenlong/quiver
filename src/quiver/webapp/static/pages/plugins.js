@@ -360,7 +360,13 @@ async function runFix(action, ids) {
     page.busy.health = false;
     page.data.health = data.health;
     page.error.health = null;
+    // Explore changes with a fix too. A read of it in flight began before
+    // the fix landed: drop it, and read again now if Explore is on show
+    // (the hub dropped its cached copy), else when it next opens.
+    page.seq.explore++;
+    page.busy.explore = false;
     page.exploreStale = true;
+    if (page.tab === "explore" && onPage()) load("explore");
     const failed = data.results.find((r) => r.status === "failed");
     if (failed) {
       page.fixError = data.ran ? `Ran ${count(data.ran, "fix", "fixes")}, then stopped. ${failed.error}` : failed.error;
