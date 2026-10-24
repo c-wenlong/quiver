@@ -423,6 +423,22 @@ final class ChatModelTests: XCTestCase {
         XCTAssertEqual(ChatModel.composerAction(draft: "", agentWorking: false), .disabled)
     }
 
+    func testStopIsOfferedWhileTheAgentWorksOrAReplyIsDue() {
+        XCTAssertTrue(ChatModel.canInterrupt(status: .active, awaitingReply: false))
+        XCTAssertTrue(ChatModel.canInterrupt(status: .idle, awaitingReply: true))
+        XCTAssertFalse(ChatModel.canInterrupt(status: .idle, awaitingReply: false))
+        XCTAssertFalse(ChatModel.canInterrupt(status: nil, awaitingReply: false))
+        XCTAssertFalse(ChatModel.canInterrupt(status: .done, awaitingReply: false))
+    }
+
+    func testMessagesStillBeingRevealedDontOfferStop() {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        for seq in 1...3 { chat.enqueue(say(seq)) }
+        XCTAssertTrue(chat.working)
+        XCTAssertFalse(chat.canInterrupt)
+        XCTAssertEqual(ChatModel.composerAction(draft: "", agentWorking: chat.canInterrupt), .disabled)
+    }
+
     func testReopeningAChatReusesItsModel() {
         let app = AppModel()
         let first = app.chat("claude:1")

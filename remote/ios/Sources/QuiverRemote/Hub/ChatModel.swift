@@ -121,7 +121,13 @@ final class ChatModel {
     }
 
     /// The agent is mid-turn, or about to start on a send: worth a stop.
-    var canInterrupt: Bool { row?.sessionStatus == .active || awaitingReply }
+    var canInterrupt: Bool { Self.canInterrupt(status: row?.sessionStatus, awaitingReply: awaitingReply) }
+
+    /// Messages still being revealed after the turn ended don't count:
+    /// there's nothing left to stop.
+    static func canInterrupt(status: SessionStatus?, awaitingReply: Bool) -> Bool {
+        status == .active || awaitingReply
+    }
 
     enum ComposerAction { case send, stop, disabled }
 

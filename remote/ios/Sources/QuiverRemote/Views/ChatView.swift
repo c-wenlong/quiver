@@ -793,6 +793,10 @@ struct SendOrStopButton: View {
     let action: ChatModel.ComposerAction
     var onSend: () -> Void = {}
     var onStop: () -> Void = {}
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The icons swap with a small scale, or a plain fade under Reduce Motion.
+    private var swap: AnyTransition { reduceMotion ? .opacity : .scale.combined(with: .opacity) }
 
     var body: some View {
         Button {
@@ -806,11 +810,11 @@ struct SendOrStopButton: View {
                 Circle().fill(action == .stop ? Theme.dangerFill : Theme.primaryBackground)
                 if action == .stop {
                     RoundedRectangle(cornerRadius: 3).fill(.white).frame(width: 13, height: 13)
-                        .transition(.scale.combined(with: .opacity))
+                        .transition(swap)
                 } else {
                     Image(systemName: "arrow.up").font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(Theme.primaryForeground)
-                        .transition(.scale.combined(with: .opacity))
+                        .transition(swap)
                 }
             }
             .frame(width: 40, height: 40)
