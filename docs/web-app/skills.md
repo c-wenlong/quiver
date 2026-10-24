@@ -3,7 +3,8 @@
 The Mac app's Skills page (`SkillsPage.swift`, `SkillDetailView` in
 `PrimitiveDetail.swift`, `SkillsModel` in `QuiverCore/Primitives/Skills.swift`)
 as a web page. It links and unlinks harness skills folders as the app's
-Harness links popover does; everything else is read only. Module
+Harness links popover does, and writes a new skill as the app's New skill
+sheet does; everything else is read only. Module
 `quiver/webapp/pages/skills.py`, script `static/pages/skills.js`, styles
 `static/pages/skills.css`.
 
@@ -86,6 +87,27 @@ null) and `result`: the `LinkReply`/`UnlinkReply` `--json` shape
 "skipped": [<root rows>]}`, from which the page writes the app's summary
 caption ("Linked 2 harnesses. 1 needs a look: claude (…)").
 
+### New skill
+
+"New skill" in the header (and in the empty list's card) opens the app's
+`NewSkillSheet` as a dialog: Name (monospaced, with the app's hint until it
+is a valid Agent Skills name: lowercase letters, digits and single hyphens,
+at most 64), Description, a line saying which file it writes on which
+machine, Cancel and Create. Create stays off until the name is valid. On
+success the list repaints behind the sheet, which turns into "Created
+~/.quiver/skills/<name>/SKILL.md" with Open it (the skill's detail) and
+Done.
+
+`POST /v1/app/skills/new` with `{"name", "description"?}` runs
+`skills.create.create`, the code `swe skills new <name>
+[--description=…]` runs: `~/.quiver/skills/<name>/SKILL.md` from its
+template, written atomically, under the same lock as the links. A blank
+description takes the template's default. Whatever `create` refuses (a bad
+name, a name already taken, a multi-line or over-long description, no
+`~/.quiver` yet) is a 422 `bad_skill` with its reason. The reply is the list
+payload plus `action: "new"`, `created` (the SKILL.md's path) and `skill`
+(its row, or null if the inventory doesn't list it).
+
 ## Payload
 
 `GET /v1/app/skills`:
@@ -124,10 +146,10 @@ NUL byte in the first 8 KB, as `PrimitiveTree.isTextFile` decides.
 
 These writes are left out; they stay in `swe skills` and the Mac app:
 
-- New skill (`swe skills new`); the empty state names the command instead.
 - Editing the frontmatter form and the files in Contents (Raw/Rich editor,
   Save, Revert, New part, Move to Trash).
-- Show in Finder.
+- Show in Finder, and the sheet's "Open in <editor>" after New skill;
+  Open it shows the skill's detail instead.
 
 Also:
 

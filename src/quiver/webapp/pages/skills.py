@@ -3,9 +3,9 @@ that ship inside a plugin (the Plugins page lists those), and one skill's
 detail: its frontmatter, its SKILL.md and its folder's files.
 
 Writes: Link to shared skills, Unlink and Link all, per harness skills
-folder, as the Mac app's Harness links popover offers them (``post``
-below). New skill and frontmatter edits stay in ``swe skills`` and the
-Mac app; see docs/web-app/skills.md.
+folder, as the Mac app's Harness links popover offers them, and New skill
+(``post`` below). Frontmatter edits stay in ``swe skills`` and the Mac
+app; see docs/web-app/skills.md.
 
 ``GET /v1/app/skills`` is the list. ``?skill=<path>`` is one skill's
 detail, and ``?skill=<path>&file=<name>`` one file inside its folder. The
@@ -314,8 +314,16 @@ def file_view(skill: dict, name: str) -> dict:
 # ``action``, ``harness`` (the folder's new row), ``result`` (the
 # LinkReply/UnlinkReply ``--json`` shape, or for link_all
 # ``{"linked", "failed", "skipped"}``) and ``skill``.
+#
+# - ``new`` ``{"name", "description"?}``: ``swe skills new <name>
+#   [--description=...]`` (``skills.create.create``), which writes
+#   ``~/.quiver/skills/<name>/SKILL.md``. A name or description it refuses
+#   is a 422 ``bad_skill`` with its reason. The reply is the list payload
+#   plus ``action`` and ``created``: the new SKILL.md's path and its row
+#   (``skill``) when the inventory lists it.
 
-ACTIONS = ("link", "unlink", "link_all")
+ACTIONS = ("link", "unlink", "link_all", "new")
+TEXT_MAX = 2048
 REF_MAX = 4096
 
 # The hub answers each request on its own thread, and every link rewrites
@@ -381,6 +389,8 @@ def post(ctx, action: str, body: dict) -> dict:
     if not isinstance(body, dict):
         raise PageError(422, "bad_body", "Send a JSON object.")
     home = Path(ctx.home) if ctx.home is not None else Path.home()
+    if action == "new":
+        return _new(ctx, home, body)
     skill_ref = _ref(body, "skill", required=False)
     with _WRITE_LOCK:
         inventory = _inventory(home)
@@ -400,6 +410,31 @@ def post(ctx, action: str, body: dict) -> dict:
         "harness": next((r for r in after["harnesses"] if root and r["path"] == root["path"]), None),
         "result": result,
         "skill": next((s for s in after["skills"] if s["path"] == skill_ref), None),
+    })
+    return reply
+
+
+def _new(ctx, home: Path, body: dict) -> dict:
+    from quiver.skills.create import create
+
+    name, description = body.get("name"), body.get("description")
+    if not isinstance(name, str) or len(name) > TEXT_MAX:
+        raise PageError(422, "bad_skill", "name must be the new skill's name")
+    if description is not None and (not isinstance(description, str) or len(description) > TEXT_MAX):
+        raise PageError(422, "bad_skill", "description must be one line of text")
+    with _WRITE_LOCK:
+        try:
+            target, _ = create(name.strip(), (description or "").strip() or None, home)
+        except (ValueError, OSError) as exc:
+            raise PageError(422, "bad_skill", str(exc)) from exc
+        after = _inventory(home)
+    # The inventory lists real paths (macOS's /var is /private/var).
+    mine = {_real(target), _real(target.parent)}
+    reply = listing(ctx, home, after)
+    reply.update({
+        "action": "new",
+        "created": str(target),
+        "skill": next((s for s in after["skills"] if _real(s["path"]) in mine), None),
     })
     return reply
 

@@ -462,6 +462,43 @@ class TestWrites(_WriteHome, unittest.TestCase):
         self.assertEqual(self.records.read_text(), "{not json")
 
 
+class TestNewSkill(_WriteHome, unittest.TestCase):
+    """New skill: swe skills new, writing ~/.quiver/skills/<name>/SKILL.md."""
+
+    def setUp(self):
+        self.make_home(Path(tempfile.mkdtemp()))
+        self.ctx = SimpleNamespace(home=self.home, machine={"name": "box"})
+
+    def test_writes_the_skeleton_and_lists_it(self):
+        reply = page.post(self.ctx, "new", {"name": "review-pr", "description": "When a PR needs review"})
+        target = self.home / ".quiver" / "skills" / "review-pr" / "SKILL.md"
+        self.assertEqual(reply["created"], str(target))
+        text = target.read_text()
+        self.assertIn("name: 'review-pr'", text)
+        self.assertIn("description: 'When a PR needs review'", text)
+        self.assertEqual(reply["skill"]["name"], "review-pr")
+        self.assertIn("review-pr", [s["name"] for s in reply["skills"]])
+        self.assertEqual(reply["action"], "new")
+
+    def test_a_blank_description_takes_the_default(self):
+        page.post(self.ctx, "new", {"name": "plain", "description": "  "})
+        text = (self.home / ".quiver" / "skills" / "plain" / "SKILL.md").read_text()
+        self.assertIn("Describe when an agent should use this skill.", text)
+
+    def test_refusals_say_why(self):
+        page.post(self.ctx, "new", {"name": "taken"})
+        for body, words in (({"name": "Bad Name"}, "isn't a valid skill name"),
+                            ({"name": "taken"}, "already exists"),
+                            ({"name": "x", "description": "two\nlines"}, "one line"),
+                            ({"name": 3}, "name must be"),
+                            ({"name": "y", "description": ["no"]}, "description must be")):
+            with self.assertRaises(PageError) as refused:
+                page.post(self.ctx, "new", body)
+            self.assertEqual((refused.exception.status, refused.exception.code), (422, "bad_skill"), body)
+            self.assertIn(words, refused.exception.message, body)
+        self.assertFalse((self.home / ".quiver" / "skills" / "x").exists())
+
+
 class TestExplanation(unittest.TestCase):
     def test_matches_the_app_and_link_all_targets(self):
         roots = [{"name": n, "path": f"/{n}", "state": st, "detail": dt, "archived": ar}
@@ -507,6 +544,16 @@ class TestWriteRoute(_WriteHome, HubBase):
                                         body={"harness": self.path("codex")}, headers=auth)
         self.assertEqual(status, 200, data)
         self.assertFalse(os.path.lexists(self.path("codex")))
+
+    def test_new_skill_through_the_hub(self):
+        status, data = self.srv.request("POST", "/v1/app/skills/new", body={"name": "hub-skill"},
+                                        headers={**self.auth(), "Origin": self.origin()})
+        self.assertEqual(status, 200, data)
+        self.assertTrue((self.srv.home / ".quiver" / "skills" / "hub-skill" / "SKILL.md").is_file())
+        status, _ = self.srv.request("POST", "/v1/app/skills/new", body={"name": "evil"},
+                                     headers={**self.auth(), "Origin": "https://evil.example"})
+        self.assertEqual(status, 403)
+        self.assertFalse((self.srv.home / ".quiver" / "skills" / "evil").exists())
 
     def test_a_cross_site_origin_is_refused(self):
         status, data = self.srv.request("POST", "/v1/app/skills/link_all", body={},
