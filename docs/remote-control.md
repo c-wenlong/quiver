@@ -237,7 +237,7 @@ GET  /v1/sessions/{id}/events        SSE stream; ?last=seq replays journal
 GET  /v1/sessions/{id}/commands      the "/" menu: commands this session's harness will run
 POST /v1/sessions/{id}/message       {text, mode: queue|steer, attachments[]}
 GET  /v1/sessions/{id}/queue         queue-mode sends still waiting for idle
-POST /v1/sessions/{id}/queue         {client_id, op: steer|cancel} on one waiting send
+POST /v1/sessions/{id}/queue         {client_id, op: steer|cancel|edit, text?} on one waiting send
 POST /v1/sessions/{id}/attachments   multipart upload → staged file, returns ref
 POST /v1/sessions/{id}/approval      {request_id, decision}
 POST /v1/sessions/{id}/pin           {pinned: bool} → pin or unpin on the hub
@@ -304,8 +304,17 @@ never both a send and a removal. An unknown `client_id` is `404
 unknown_send`; one that already left (sent, steered, removed, failed) is
 `409 not_waiting` while the hub remembers it (the last 256). Satellite
 sessions never park a queue-mode send on the hub (the satellite delivers
-on arrival or refuses a busy session), so their list is empty and both
-ops answer `409 queue_unsupported`.
+on arrival or refuses a busy session), so their list is empty and every
+op answers `409 queue_unsupported`.
+
+`edit` takes a `text` (checked like a message's: a string with more
+than spaces in it, else `422 bad_command`) and replaces the waiting
+send's text in place, keeping its place in the queue; it answers `200
+{ok, client_id, op, text}`. The send's job reads its command only after
+claiming it under the same lock, so an edit racing the injection either
+lands first, and the new text goes out, or answers `409 not_waiting`
+and the old text goes out. A `200` edit is never followed by the old
+text. Attachments stay as they were.
 
 `POST /v1/sessions/{id}/control {op: "detach", mode}` hands an attached
 session back to `observed`. The mode says what happens to the harness:
