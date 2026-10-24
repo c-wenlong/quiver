@@ -42,7 +42,14 @@ badge where its control would be.
   (`ctx.device_id`). Revoke opens an inline confirm in the row that says
   what will happen. On the browser's own row the confirm says the page
   stops working until it is paired again, and the request carries
-  `confirm_this_device`; after it the page shows the pair gate.
+  `confirm_this_device`. After it the page reloads: a browser that
+  only had that pairing gets the pair gate, while the hub owner's own
+  tailnet device keeps working through its Tailscale sign-in.
+- **Signed in through Tailscale**: the hub lets the owner's own tailnet
+  devices in without pairing (`ctx.device_id` is `tailnet:<node id>`).
+  Such a browser has no row in the list, so no row says "This device";
+  a line in the card says it is signed in through Tailscale and has
+  nothing to revoke. The hub refuses a revoke of a `tailnet:` id.
 - **Pair a device** mints a token and opens a sheet like the app's: the
   QR code, a Browser / Quiver app switch (the PWA link or the
   `quiver://pair` deep link), the app's instructions, the link, Copy
@@ -79,6 +86,7 @@ app loads, not only when Settings is open, so `app.js` needs no change.
   "machine": "kai-home-server",
   "version": "1.0.0",
   "remote": {
+    "caller": {"kind": "device", "device_id": "1fc1…"},
     "hub": {"ok": true, "version": "1.0.0", "uptime_s": 340, "machine": {"id": "...", "name": "..."}},
     "hub_addr": "127.0.0.1:8477",
     "public_url": "https://box.tailnet.ts.net:8477",
@@ -97,6 +105,10 @@ app loads, not only when Settings is open, so `app.js` needs no change.
             "mcp_servers": "~/.quiver/mcp/servers"}
 }
 ```
+
+`remote.caller` is `{"kind": "device", "device_id"}` for a paired
+browser, or `{"kind": "tailnet", "node"}` for the owner's own tailnet
+device.
 
 The providers are read the way `load_registry` merges providers.json
 with the defaults, without saving, so a page view never seeds or
@@ -127,12 +139,13 @@ tailnet IP.
 | Status | Code | When |
 |---|---|---|
 | 400 | `bad_device` | `device_id` missing, not a string, or over 64 characters |
+| 400 | `not_paired` | a `tailnet:` id: a Tailscale sign-in, not a pairing |
 | 404 | `unknown_device` | no paired device has that id |
 | 409 | `already_revoked` | the device is already signed out |
 | 409 | `confirm_this_device` | revoking the sender's own device without `confirm_this_device: true` |
 | 404 | `unknown_action` | any action but `pair` and `revoke` |
 | 403 | `bad_origin` | a cross-site POST |
-| 401 | `unauthorized` | no paired device credential |
+| 401 | `unauthorized` | neither a paired device nor the owner's tailnet device |
 
 ## QR codes
 

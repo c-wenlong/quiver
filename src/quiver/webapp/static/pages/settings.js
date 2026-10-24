@@ -147,7 +147,12 @@ async function renderSettings() {
   }
   const { status, data } = await api("/v1/app/settings");
   if (gen !== routeGen || mine !== p.gen) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  const signedOut = p.signedOut;
+  p.signedOut = false;
+  if (status === 401) {
+    return renderGate(signedOut ? "This browser was signed out of the hub. Pair it again to come back."
+      : "The hub doesn't know this browser's credential. It may have been revoked.");
+  }
   if (status !== 200 || !data) {
     if (!p.data) return pageError(settingsHeader(), status, data, renderSettings);
   } else {
@@ -451,9 +456,14 @@ function remoteCards() {
       <button class="set-button primary" id="set-pair"${p.minting ? " disabled" : ""}>${settingsIcon("qr")}${p.minting ? "Pairing…" : "Pair a device"}</button>
       ${p.pairError ? `<span class="caption set-danger">${esc(p.pairError)}</span>` : ""}
     </div>`;
+  // The hub owner's own tailnet device gets in without pairing, so it
+  // has no row here and nothing of its own to revoke.
+  const viaTailnet = r.caller && r.caller.kind === "tailnet"
+    ? `<p class="caption set-caller">This browser is signed in through Tailscale as the hub's owner, so it isn't a paired device: it isn't listed here and has nothing to revoke.</p>`
+    : "";
   const devices = live.length
-    ? `<div class="set-card"><div class="set-card-title">Paired devices</div>${live.map(deviceRow).join('<div class="set-divider"></div>')}<div class="set-divider"></div>${pair}</div>`
-    : `<div class="set-card"><div class="set-card-title">Paired devices</div><p class="caption set-empty">No devices paired yet.</p>${pair}</div>`;
+    ? `<div class="set-card"><div class="set-card-title">Paired devices</div>${viaTailnet}${live.map(deviceRow).join('<div class="set-divider"></div>')}<div class="set-divider"></div>${pair}</div>`
+    : `<div class="set-card"><div class="set-card-title">Paired devices</div>${viaTailnet}<p class="caption set-empty">No devices paired yet.</p>${pair}</div>`;
   const requests = (r.requests || []).length ? setCard([...r.requests.map((q) => setRow(q.name || "device",
       [q.node_name, q.login, q.peer_ip, `expires in ${Math.max(0, Math.round(q.expires_in_s / 60))} min`].filter(Boolean).join(" · "))),
     setRow("Approve or deny", "Phones that asked to pair through Tailscale wait here. Decide on the hub's remote page, where you type the code the phone shows.",
@@ -472,7 +482,7 @@ function deviceRow(dev) {
   const attrs = ` data-device="${esc(dev.id)}"`;
   if (p.confirming === dev.id) {
     const what = dev.this_device
-      ? "This is the browser you're using. Revoking signs it out of the hub now: every page here stops working until you pair it again with a new code."
+      ? "This is the browser you're using. Revoking signs its pairing out of the hub now. Unless this device also signs in through Tailscale as the hub's owner, every page here stops working until you pair it again with a new code."
       : `Sign ${name} out of the hub? It stops working at once and needs a new pair code to come back.`;
     return `<div class="set-row set-confirm"${attrs}>
       <div class="set-text"><div class="set-title">${title}</div><div class="set-detail">${esc(what)}</div></div>
@@ -776,10 +786,12 @@ async function settingsRevoke(id) {
     { device_id: id, confirm_this_device: dev.this_device === true });
   p.revoking.delete(id);
   if (status === 200 && data && data.this_device) {
-    // This browser's credential is gone: every page now answers 401.
+    // This browser's credential is gone. The owner's own tailnet device
+    // still gets in without it; anything else now answers 401.
     p.data = null;
     p.confirming = null;
-    if (onSettingsPage()) renderGate("This browser was signed out of the hub. Pair it again to come back.");
+    p.signedOut = true;
+    if (onSettingsPage()) renderSettings();
     return;
   }
   if (status === 401) { if (onSettingsPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked."); return; }

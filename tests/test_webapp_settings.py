@@ -521,5 +521,63 @@ class TestRevoke(_Settings):
         self.assertFalse(pairing.load_devices(self.home)[phone["device_id"]]["revoked_at"])
 
 
+class TestOwnerTailnetCaller(_Settings):
+    """The hub owner's own tailnet device, let in without pairing: its
+    ``device_id`` is ``tailnet:<node>``, which no devices.json row has."""
+
+    OWNER_IP = "100.64.0.9"
+
+    def setUp(self):
+        super().setUp()
+        state = self.srv.state
+        state.trust_proxy = True
+        state.owner_login = "kai@github"
+        state.whois = lambda ip: ({"node_id": "n-laptop", "login": "kai@github", "tagged": False}
+                                  if ip == self.OWNER_IP else None)
+
+    def headers(self, post=False):
+        h = {"X-Forwarded-For": self.OWNER_IP, "X-Forwarded-Proto": "https", "X-Quiver-Pair": "1"}
+        if post:
+            h.update({"Origin": f"https://127.0.0.1:{self.srv.port}", "Content-Type": "application/json"})
+        return h
+
+    def owner_post(self, action, body):
+        status, data = self.srv.request("POST", f"/v1/app/settings/{action}", body=body,
+                                        headers=self.headers(post=True))
+        return status, json.loads(data)
+
+    def test_get_says_tailnet_and_marks_no_device(self):
+        self.device("phone")
+        status, data = self.srv.request("GET", "/v1/app/settings", headers=self.headers())
+        self.assertEqual(status, 200, data)
+        remote = json.loads(data)["remote"]
+        self.assertEqual(remote["caller"], {"kind": "tailnet", "node": "n-laptop"})
+        self.assertFalse(any(d["this_device"] for d in remote["devices"]))
+
+    def test_paired_caller_is_a_device(self):
+        me = self.device("laptop")
+        caller = settings_page.get(self.ctx(me["device_id"]), {})["remote"]["caller"]
+        self.assertEqual(caller, {"kind": "device", "device_id": me["device_id"]})
+
+    def test_cannot_revoke_its_tailnet_identity(self):
+        for body in ({"device_id": "tailnet:n-laptop"},
+                     {"device_id": "tailnet:n-laptop", "confirm_this_device": True}):
+            status, reply = self.owner_post("revoke", body)
+            self.assertEqual((status, reply["error"]["code"]), (400, "not_paired"))
+        with self.assertRaises(PageError) as caught:
+            settings_page.post(self.ctx("tailnet:n-laptop"), "revoke",
+                               {"device_id": "tailnet:n-laptop", "confirm_this_device": True})
+        self.assertEqual(caught.exception.code, "not_paired")
+
+    def test_owner_can_pair_and_revoke_other_devices(self):
+        phone = self.device("phone")
+        status, reply = self.owner_post("revoke", {"device_id": phone["device_id"]})
+        self.assertEqual(status, 200, reply)
+        self.assertFalse(reply["this_device"])
+        status, reply = self.owner_post("pair", {})
+        self.assertEqual(status, 200, reply)
+        self.assertTrue(reply["ticket"]["token"])
+
+
 if __name__ == "__main__":
     unittest.main()

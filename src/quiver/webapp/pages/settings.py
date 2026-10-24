@@ -28,6 +28,12 @@ Writes, both behind the device bearer and the Origin check:
   lists. Revoking the device that sent the request also needs
   ``"confirm_this_device": true``: without it the answer is 409, so a
   stray click can't lock this browser out.
+
+The caller is either a paired device (``ctx.device_id`` is its id in
+devices.json) or the hub owner's own tailnet device, let in without
+pairing (``ctx.device_id`` is ``"tailnet:<node id>"``). ``remote.caller``
+says which; a tailnet caller has no row in the device list and nothing
+of its own to revoke, and an id of that form is refused outright.
 """
 
 from __future__ import annotations
@@ -43,6 +49,8 @@ from quiver.webapp.pages import PageError
 
 ACTIONS = ("pair", "revoke")
 DEVICE_ID_MAX = 64
+# The hub's id for the owner's own tailnet device (hub._owner_device).
+TAILNET_PREFIX = "tailnet:"
 
 # Pairing's own file lock already makes each change atomic; this one runs
 # the page's writes in turn so a revoke and a list never interleave and
@@ -95,12 +103,22 @@ def _remote(ctx) -> dict:
             "uptime_s": round(time.time() - state.started_at),
             "machine": state.machine,
         },
+        "caller": _caller(ctx),
         "hub_addr": hub_addr,
         "public_url": public_url,
         "devices": _devices(ctx, pairing.load_devices(ctx.home)),
         "requests": pairing.list_requests(ctx.home),
         "token_ttl_s": int(pairing.TOKEN_TTL_S),
     }
+
+
+def _caller(ctx) -> dict:
+    """How this browser got in: a paired device, or the hub owner's own
+    tailnet device, which has no pairing to show or revoke."""
+    did = ctx.device_id or ""
+    if did.startswith(TAILNET_PREFIX):
+        return {"kind": "tailnet", "node": did[len(TAILNET_PREFIX):]}
+    return {"kind": "device" if did else "none", "device_id": did or None}
 
 
 def _devices(ctx, devices: dict) -> list[dict]:
@@ -176,6 +194,11 @@ def _revoke(ctx, body: dict) -> dict:
     device_id = body.get("device_id")
     if not isinstance(device_id, str) or not device_id or len(device_id) > DEVICE_ID_MAX:
         raise PageError(400, "bad_device", "device_id must be a paired device's id")
+    if device_id.startswith(TAILNET_PREFIX):
+        # The owner's tailnet sign-in isn't a pairing: there is no row to
+        # revoke, and this must never read as signing anything out.
+        raise PageError(400, "not_paired",
+                        "That's a Tailscale sign-in, not a paired device. There is nothing to revoke.")
     devices = pairing.load_devices(ctx.home)
     row = devices.get(device_id)
     if row is None:

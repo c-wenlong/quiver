@@ -167,3 +167,4 @@ dialog.set-pair-sheet { width: min(520px, calc(100vw - 32px)); }
 .set-footer a:hover { color: var(--text-primary); }
 .set-footer svg { width: 12px; height: 12px; }
 .set-card-title { font-size: 14px; font-weight: 500; color: var(--text-primary); padding: 16px 0 2px; }
+.set-caller { margin: 4px 0 6px; }
