@@ -634,8 +634,11 @@ answer a request yet.
 the first tier it qualifies for: its title holds the query (whole, or
 every word of it); then its details (title, harness, folder, id
 together) do; then its transcript holds the exact phrase, all the words,
-or any word. The transcript tiers come from the Quiver app's FTS5 index
-(`~/.quiver/data/search/search.sqlite`) when it exists on the hub machine.
+or any word. The transcript tiers come from the FTS5 index at
+`~/.quiver/data/search/search.sqlite` when it exists on the hub machine.
+The Quiver app writes it on a Mac; anywhere else, `swe session index --on`
+makes the hub index Claude Code and Codex transcripts every two minutes
+(`sessions/search_writer.py`).
 Details match as case-insensitive text (the Mac app's Sessions match;
 never a regex, which could backtrack without bound). Within a tier,
 relevance (BM25 as a share of the tier's best, or 1 for the whole query

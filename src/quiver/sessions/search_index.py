@@ -1,8 +1,9 @@
 """Read side of the app's FTS5 session-search index.
 
 The Quiver app writes ``~/.quiver/data/search/search.sqlite`` (WAL) as it
-scans transcripts; this module queries it read-only and never creates or
-writes the file. The schema, shared with the Swift writer:
+scans transcripts, and :mod:`quiver.sessions.search_writer` writes the same
+file where the app doesn't run; this module queries it read-only and never
+creates or writes the file. The schema, shared with the Swift writer:
 
 ::
 
