@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Session search reads Devin CLI sessions.** Both index writers (the
+  Quiver app and `swe session index`) now read every Devin session from
+  `~/.local/share/devin/cli/sessions.db`, along the chain that holds each
+  message's final version, so a search matches what was said in any
+  Devin session, not only the few exported to `transcripts/*.json`. swe
+  also reads those exports, as the app already did. Each session indexes
+  under `<sessions.db>#<id>` and is read again only when its activity
+  time or node count moves; a session Devin hides or deletes leaves the
+  index.
+
 - **Web app: Settings › Experimental › Session search is a real switch.**
   It was greyed out as Mac app only. It now turns the hub's transcript
   index on and off (the same setting as `swe session index --on`/`--off`),
