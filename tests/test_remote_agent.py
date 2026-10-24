@@ -164,7 +164,7 @@ class TestRemoteCatalog(unittest.TestCase):
     def test_agent_tail_manager_probes_and_reports_to_catalog(self):
         ag = agent_mod.RemoteAgent("http://h:1", "c", self.home)
         self.assertIsNotNone(ag.tail_manager._status_of)
-        self.assertEqual(ag.tail_manager._on_status, ag.catalog.note_status)
+        self.assertEqual(ag.tail_manager._on_status, ag._on_probed_status)
 
     def test_machine_upsert_round_trip(self):
         catalog_mod.upsert_machine(
@@ -1254,12 +1254,14 @@ class TestAgentRouteValidation(unittest.TestCase):
             "GET", f"/v1/sessions/{key}/queue", headers=self.srv.auth)
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(data), {"sends": []})
-        status, data = self.srv.request(
-            "POST", f"/v1/sessions/{key}/queue",
-            {"client_id": "q-1", "op": "cancel"}, headers=self.srv.auth)
-        self.assertEqual(status, 409)
-        self.assertEqual(
-            json.loads(data)["error"]["code"], "queue_unsupported")
+        for body in ({"client_id": "q-1", "op": "cancel"},
+                     {"client_id": "q-1", "op": "edit", "text": "new"}):
+            status, data = self.srv.request(
+                "POST", f"/v1/sessions/{key}/queue", body,
+                headers=self.srv.auth)
+            self.assertEqual(status, 409, body)
+            self.assertEqual(
+                json.loads(data)["error"]["code"], "queue_unsupported")
         replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
         self.assertEqual(replay, [])
 

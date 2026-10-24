@@ -1600,6 +1600,116 @@ class TestQueuedSends(unittest.TestCase):
         self.assertEqual(status, 409)
         self.assertIn("already sent now", body["error"]["message"])
 
+    def _edit(self, cid, text):
+        status, data = self.srv.request(
+            "POST", f"/v1/sessions/{self.key}/queue",
+            body={"client_id": cid, "op": "edit", "text": text},
+            headers=self.hdr,
+        )
+        return status, json.loads(data)
+
+    def test_edit_changes_listed_and_injected_text_in_place(self):
+        self.assertEqual(self._send("frist", "q-1")[0], 202)
+        self.assertEqual(self._send("second", "q-2")[0], 202)
+        status, body = self._edit("q-1", "first, fixed")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body, {"ok": True, "client_id": "q-1",
+                                "op": "edit", "text": "first, fixed"})
+        sends = self._list()
+        # Same place in the queue, new text.
+        self.assertEqual([s["client_id"] for s in sends], ["q-1", "q-2"])
+        self.assertEqual(sends[0]["text"], "first, fixed")
+        self.live = ["done"]
+        self.assertEqual(self._result()["client_id"], "q-1")
+        self.assertEqual(self._result()["client_id"], "q-2")
+        self.assertEqual(
+            [c[0][1]["text"] for c in self.fake.send.call_args_list],
+            ["first, fixed", "second"],
+        )
+
+    def test_edit_then_steer_sends_the_edited_text(self):
+        self.assertEqual(self._send("old", "q-1")[0], 202)
+        self.assertEqual(self._edit("q-1", "new")[0], 200)
+        self.assertEqual(self._act("q-1", "steer")[0], 200)
+        self.assertTrue(self._result()["ok"])
+        _s, cmd, _live = self.fake.send.call_args[0]
+        self.assertEqual((cmd["text"], cmd["mode"]), ("new", "steer"))
+
+    def test_edit_after_send_out_or_unknown_fails_cleanly(self):
+        status, body = self._edit("nope", "x")
+        self.assertEqual(status, 404)
+        self.assertEqual(body["error"]["code"], "unknown_send")
+        self.live = ["done"]
+        self.assertEqual(self._send("hi", "q-1")[0], 202)
+        self.assertTrue(self._result()["ok"])
+        status, body = self._edit("q-1", "too late")
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"]["code"], "not_waiting")
+        self.assertEqual(self.fake.send.call_args[0][1]["text"], "hi")
+
+    def test_edit_needs_real_text(self):
+        self.assertEqual(self._send("hi", "q-1")[0], 202)
+        for body in (
+            {"client_id": "q-1", "op": "edit"},
+            {"client_id": "q-1", "op": "edit", "text": "   "},
+            {"client_id": "q-1", "op": "edit", "text": ["a"]},
+            {"client_id": "q-1", "op": "edit", "text": {}},
+        ):
+            status, data = self.srv.request(
+                "POST", f"/v1/sessions/{self.key}/queue",
+                body=body, headers=self.hdr,
+            )
+            self.assertEqual(status, 422, body)
+            self.assertEqual(
+                json.loads(data)["error"]["code"], "bad_command"
+            )
+        self.assertEqual(self._list()[0]["text"], "hi")
+
+    def test_edit_after_job_claims_is_409_and_old_text_goes(self):
+        # The job wins: it claimed the send and is injecting.
+        from quiver.remote import inject
+        in_send = threading.Event()
+        release = threading.Event()
+
+        def send(session, cmd, status):
+            in_send.set()
+            release.wait(5)
+            return inject.InjectResult(True, "sent")
+
+        self.fake.send.side_effect = send
+        self.assertEqual(self._send("old", "q-1")[0], 202)
+        self.live = ["done"]
+        self.assertTrue(in_send.wait(2))
+        status, body = self._edit("q-1", "new")
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"]["code"], "not_waiting")
+        release.set()
+        self.assertTrue(self._result()["ok"])
+        self.assertEqual(self.fake.send.call_args[0][1]["text"], "old")
+
+    def test_edit_just_before_job_claims_injects_new_text(self):
+        # The edit wins: the job saw the session go idle but has not
+        # claimed the send yet, so it must inject the edited text.
+        at_final_read = threading.Event()
+        edited = threading.Event()
+
+        def status_of(sessions):
+            if self.live == ["done"]:
+                at_final_read.set()
+                edited.wait(5)
+            return list(self.live)
+
+        self.assertEqual(self._send("old", "q-1")[0], 202)
+        self.srv.state.status_of = status_of
+        self.live = ["done"]
+        self.assertTrue(at_final_read.wait(2))
+        self.assertEqual(self._edit("q-1", "new")[0], 200)
+        edited.set()
+        self.assertTrue(self._result()["ok"])
+        self._no_more_results()
+        self.fake.send.assert_called_once()
+        self.assertEqual(self.fake.send.call_args[0][1]["text"], "new")
+
     def test_bad_action_bodies_422(self):
         for body in (
             {"client_id": "q-1", "op": "explode"},
@@ -1716,6 +1826,43 @@ class TestQueuedSends(unittest.TestCase):
 
 class TestWaitingRegistry(unittest.TestCase):
     """sendq.Waiting: a send leaves ``waiting`` exactly once."""
+
+    def test_edit_that_succeeds_is_always_what_gets_sent(self):
+        from quiver.remote import sendq
+        for _ in range(50):
+            reg = sendq.Waiting()
+            send = sendq.QueuedSend("c1", "old", [], {"cmd": {"text": "old"}})
+            reg.add("k", send)
+            barrier = threading.Barrier(2)
+            out = {}
+
+            def job():
+                barrier.wait()
+                if reg.claim("k", send, "sending"):
+                    out["sent"] = send.payload["cmd"]["text"]
+
+            def phone():
+                barrier.wait()
+
+                def change(s):
+                    s.text = "new"
+                    s.payload["cmd"]["text"] = "new"
+
+                got, why = reg.update("k", "c1", change)
+                out["edited"] = got is not None
+                out["why"] = why
+
+            threads = [threading.Thread(target=job),
+                       threading.Thread(target=phone)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(5)
+            if out["edited"]:
+                self.assertEqual(out["sent"], "new")
+            else:
+                self.assertEqual(out["why"], "sending")
+                self.assertEqual(out["sent"], "old")
 
     def test_claim_is_exclusive_under_contention(self):
         from quiver.remote import sendq
@@ -2062,13 +2209,33 @@ class TestServeEntry(unittest.TestCase):
         finally:
             signal.signal(signal.SIGTERM, prev)
 
+    def test_attach_seen_by_the_catalog_loop_wakes_the_tailer(self):
+        # Attached outside HTTP (CLI attach, a kept tmux session taken
+        # back): the catalog loop's ownership check starts it hot.
+        state = HubState(Path(tempfile.mkdtemp()))
+        seen = iter([
+            [{"key": "claude:a", "ownership": "observed"},
+             {"key": "claude:b", "ownership": "observed"}],
+            [{"key": "claude:a", "ownership": "attached"},
+             {"key": "claude:b", "ownership": "observed"}],
+        ])
+        state.catalog.rows = lambda: next(seen)
+        state.catalog.refresh = lambda: []
+        state._adopt_launches = lambda: None
+        state._refresh_launchable = lambda: None
+        state.tail_manager.sync = lambda rows, **kw: state._stop.set()
+        with patch("quiver.remote.supervise.reap_kept"):
+            state._catalog_loop()
+        self.assertTrue(state.tail_manager.is_hot("claude:a"))
+        self.assertFalse(state.tail_manager.is_hot("claude:b"))
+
     def test_tail_manager_probes_through_state_status_of(self):
         state = HubState(Path(tempfile.mkdtemp()))
         state.status_of = lambda sessions: ["active"] * len(sessions)
         self.assertEqual(state.tail_manager._status_of([object()]),
                          ["active"])
         self.assertEqual(state.tail_manager._on_status,
-                         state.catalog.note_status)
+                         state._on_probed_status)
 
     def test_state_start_stop(self):
         state = HubState(Path(tempfile.mkdtemp()))
