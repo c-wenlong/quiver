@@ -618,7 +618,9 @@ function sheetFailure(status, data) {
 }
 
 /* The sheet's request: working while it runs, the error in the sheet. A
- * 401 closes it for the pairing card. Returns the reply, or null. */
+ * 401 closes it for the pairing card. Returns the reply, or null; a 401
+ * also sets ``gated``, and the caller then leaves the page alone so the
+ * pairing card stays up. */
 async function sheetPost(s, action, body) {
   s.working = true;
   s.error = null;
@@ -626,6 +628,7 @@ async function sheetPost(s, action, body) {
   const { status, data } = await apiPost(`/v1/app/harness/${action}`, body);
   s.working = false;
   if (status === 401) {
+    s.gated = true;
     closeHarnessSheet(true);
     if (onHarnessesPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
     return null;
@@ -648,6 +651,7 @@ async function editSave(s) {
   if (onHarnessesPage() && p.data) repaintHarnesses();
   const data = await sheetPost(s, "edit", { name, fields });
   p.busy.delete(name);
+  if (s.gated) return;
   if (data && p.data) {
     const at = p.data.harnesses.findIndex((h) => h.name === data.name);
     if (at >= 0 && data.harness) p.data.harnesses[at] = data.harness;
