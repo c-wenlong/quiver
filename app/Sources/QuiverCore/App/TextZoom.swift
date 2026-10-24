@@ -2,8 +2,9 @@ import Foundation
 
 /// The app's text size, as a multiple of the designed point sizes: View ›
 /// Zoom In / Zoom Out / Actual Size (⌘+ / ⌘− / ⌘0), in browser-like steps.
-/// Zooming out stops at `steps.first`, and no text drawn smaller than
-/// `minimumPointSize` unless it was designed smaller than that already.
+/// Zooming out stops at `steps.first` and never takes text under
+/// `minimumPointSize`; text designed under it keeps its size when zooming
+/// out. Zooming in grows every size, small ones included.
 public enum TextZoom {
     public static let standard = 1.0
     public static let steps: [Double] = [0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5]

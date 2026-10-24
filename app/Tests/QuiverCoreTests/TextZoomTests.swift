@@ -36,6 +36,8 @@ import Testing
         // Text designed under the floor keeps its size rather than growing.
         #expect(TextZoom.pointSize(8, at: 0.75) == 8)
         #expect(TextZoom.pointSize(8, at: 1) == 8)
+        // Zooming in grows it like everything else.
+        #expect(TextZoom.pointSize(8, at: 1.5) == 12)
         // An out-of-range zoom is clamped first.
         #expect(TextZoom.pointSize(20, at: 0.1) == 15)
     }

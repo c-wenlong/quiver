@@ -12,8 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mac app: View › Zoom In / Zoom Out / Actual Size (⌘+ / ⌘− / ⌘0).**
   Text on every page grows or shrinks in steps from 75% to 150%, like a
   browser's zoom, so a smaller window still shows a whole page. ⌘= works
-  without Shift. Zooming out stops at 75% and never draws text under
-  9pt (text designed smaller keeps its size). The zoom is kept across
+  without Shift. Zooming out stops at 75% and never takes text under
+  9pt (text designed smaller keeps its size until you zoom in). The zoom is kept across
   launches and also applies to the menu bar panel.
 
 - **Remote iPhone app: paired with more than one hub.** Pairing the

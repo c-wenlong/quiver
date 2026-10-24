@@ -742,6 +742,9 @@ private struct DayColumn: View, Equatable {
     var cardRows: (ActivityBlock)
         -> (shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)], more: Int)
     var open: (ActivityBlock) -> Void
+    /// The canvas reads its fonts at draw time, not in `body`, so a zoom
+    /// change reaches the column only through this and `==`.
+    var zoom = TextZoomModel.shared.zoom
 
     /// Redraw only when the column's own inputs move. The closures are
     /// rebuilt on every page render and would otherwise redraw (and
@@ -752,7 +755,7 @@ private struct DayColumn: View, Equatable {
     /// tick only matters to the column holding the now-line.
     nonisolated static func == (lhs: DayColumn, rhs: DayColumn) -> Bool {
         lhs.model === rhs.model && lhs.cards === rhs.cards
-            && lhs.day == rhs.day && lhs.multiAccount == rhs.multiAccount
+            && lhs.day == rhs.day && lhs.zoom == rhs.zoom && lhs.multiAccount == rhs.multiAccount
             && (lhs.now == rhs.now
                 || !(lhs.day.contains(lhs.now) || rhs.day.contains(rhs.now)))
     }
@@ -882,18 +885,20 @@ private struct DayColumn: View, Equatable {
                                    color: nil, width: textWidth, in: context) {
             lines.append(title)
         }
+        let unbounded = CGSize(width: CGFloat.greatestFiniteMagnitude,
+                               height: .greatestFiniteMagnitude)
         if segment.end.timeIntervalSince(segment.start) >= 30 * 60 {
             let block = segment.block
             let range = CalendarFormat.range(start: block.start, end: block.end)
                 + (multiAccount.contains(block.harness)
                    ? " · \(model.accountName(for: block.accountHome))" : "")
+            // Zoomed in, a short block may hold the title only.
             if let detail = Self.fitted(range, font: Theme.font(size: 9), color: Theme.textSecondary,
-                                        width: textWidth, in: context) {
+                                        width: textWidth, in: context),
+               (lines + [detail]).map({ $0.measure(in: unbounded).height }).reduce(0, +) <= frame.height {
                 lines.append(detail)
             }
         }
-        let unbounded = CGSize(width: CGFloat.greatestFiniteMagnitude,
-                               height: .greatestFiniteMagnitude)
         let heights = lines.map { $0.measure(in: unbounded).height }
         var y = frame.midY - heights.reduce(0, +) / 2
         var clipped = context
