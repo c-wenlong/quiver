@@ -433,22 +433,9 @@ function mcpRequest(s, st) {
   return { server: s.name, source: st.source, targets, replace: replacing };
 }
 
-/* app.js's api() only reads; a write sends JSON with the same credential. */
-async function mcpPost(action, body) {
-  let resp;
-  try {
-    resp = await fetch(`/v1/app/mcp/${action}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${credential()}`, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  } catch {
-    return { status: 0, data: null };
-  }
-  let data = null;
-  try { data = await resp.json(); } catch { /* empty body */ }
-  return { status: resp.status, data };
-}
+/* manage.js's apiPost: JSON with app.js's authHeaders (the bearer when one
+ * is stored, and the pair header an owner's tailnet device signs in with). */
+const mcpPost = (action, body) => apiPost(`/v1/app/mcp/${action}`, body);
 
 const mcpFailure = (status, data) => (data && data.error && data.error.message)
   || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");

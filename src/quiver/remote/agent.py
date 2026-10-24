@@ -12,6 +12,7 @@ import json
 import os
 import queue as queue_mod
 import ssl
+import sys
 import threading
 import time
 import urllib.error
@@ -19,7 +20,7 @@ import urllib.request
 from pathlib import Path
 
 from quiver.paths import remote_dir_for
-from quiver.remote import attachments, catalog as catalog_mod
+from quiver.remote import attachments, catalog as catalog_mod, slash
 from quiver.remote import inject, journal, protocol, supervise, tail
 from quiver.remote import usage as usage_mod
 
@@ -27,6 +28,9 @@ AGENT_FILE = "agent.json"          # satellite's stored hub credential
 PUSH_BATCH = 50                    # events per /v1/agent/events POST
 RECONNECT_S = 5.0
 CATALOG_PUSH_S = 10.0
+# The hub refuses JSON bodies over 4 MiB (hub._MAX_BODY); a catalog push
+# stays under it with room to spare.
+CATALOG_BODY_MAX = (4 << 20) - (64 << 10)
 OUTBOX_KEY = "_outbox"             # journal key for unsent uplink events
 
 
@@ -150,6 +154,9 @@ class RemoteAgent:
         self.machine = catalog_mod.local_machine(self.home)
         self.machine_id = self.machine["id"]
         self.catalog = catalog_mod.Catalog(self.home, self.machine_id)
+        # Last "/" menu payload the hub accepted; see _push_catalog.
+        self._slash_digest: str | None = None
+        self._slash_skipped: str | None = None
         self.outbox: "list[dict]" = []
         self._outbox_lock = threading.Lock()
         self._stop = threading.Event()
@@ -285,10 +292,32 @@ class RemoteAgent:
                     "session.launched", key, self.machine_id,
                     {"launch_id": lid},
                 ))
-        status, _ = _post(
-            self.hub, "/v1/agent/catalog", self.cred,
-            {"machine_id": self.machine_id, "rows": rows},
-        )
+        body = {"machine_id": self.machine_id, "rows": rows}
+        # The "/" menu's custom commands live on this machine's disk; send
+        # them only when they changed, so the 10 s push stays small.
+        try:
+            commands = slash.satellite_payload(rows, self.home)
+        except Exception:
+            commands = None
+        digest = slash.payload_digest(commands) if commands else None
+        if digest and digest != self._slash_digest:
+            body["slash"] = commands
+            # Never let the menu cost the rows: a body the hub would
+            # refuse goes without it.
+            if len(json.dumps(body, ensure_ascii=False).encode("utf-8")) \
+                    > CATALOG_BODY_MAX:
+                del body["slash"]
+                if digest != self._slash_skipped:
+                    self._slash_skipped = digest
+                    print("swe remote agent: slash command list too large "
+                          "for the catalog push; sending rows without it",
+                          file=sys.stderr)
+        status, reply = _post(self.hub, "/v1/agent/catalog", self.cred, body)
+        # An older hub ignores the field and doesn't echo it: keep sending
+        # until one says it stored the list.
+        if status == 200 and "slash" in body and \
+                isinstance(reply, dict) and reply.get("slash"):
+            self._slash_digest = digest
         if self._refresh_launchable():
             self._register()
         return status == 200
