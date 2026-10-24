@@ -37,6 +37,8 @@ enum Theme {
     /// Solid fill behind white, such as the stop button; `danger` is for red text and marks.
     static let dangerFill = Color(light: "#ef4444", dark: "#dc2626")
     static let dangerText = Color(light: "#dc2626", dark: "#f87171")
+    /// The quiet track under a limit bar, as the Mac app's `usageTrack`.
+    static let usageTrack = Color(light: "#f5f5f5", dark: "#40404080")
     static let diffAdded = Color(light: "#10b98126", dark: "#10b98126")
     static let diffRemoved = Color(light: "#ef444426", dark: "#ef444426")
 
@@ -68,6 +70,7 @@ enum Theme {
     static let controlHeight: CGFloat = 32
     static let buttonHeight: CGFloat = 44
     static let fieldHeight: CGFloat = 44
+    static let usageTrackHeight: CGFloat = 6
 
     /// Each harness's colour, the same hand-picked palette as the Mac app
     /// (`QuiverCore/Swe/HarnessColor.swift`); others hash into `palette`.

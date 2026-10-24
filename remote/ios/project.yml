@@ -33,6 +33,10 @@ targets:
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "5.0"
+        # Members come only from modules a file imports itself. Without it,
+        # Charts (imported by the Usage chart) leaks its overloads into
+        # every file and ChatView's arithmetic stops type-checking in time.
+        SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY: YES
   QuiverRemoteTests:
     type: bundle.unit-test
     platform: iOS

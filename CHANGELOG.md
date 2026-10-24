@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   card, or the link in the text, opens the page in an in-app browser, so
   closing it brings you back to the chat.
 
+- **Remote iPhone app: a Usage tab with limits and spend.** Each harness
+  that reports a quota gets a card with its logo and a bar per window
+  (5 h, weekly and so on) showing the percent used and when it resets,
+  amber past 80% and red at 100%, with a quiet note when the reading is
+  stale; satellites' harnesses group under their machine. Below it, cost
+  and tokens for today, 7 or 30 days, a daily cost chart and each
+  harness's share. Pull to refresh asks the hub for new readings.
+
 ### Fixed
 
 - **Remote web app: chats stream in instead of landing in blocks.** The
