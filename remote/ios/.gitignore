@@ -2,3 +2,4 @@
 QuiverRemote.xcodeproj/
 QuiverRemote-Info.plist
 build-sim/
+build-sim-*/

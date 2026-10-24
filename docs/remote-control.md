@@ -203,6 +203,8 @@ events upstream and receive command envelopes downstream):
 GET  /v1/sessions                    catalog: SessionRow shape + machine + ownership
 GET  /v1/sessions/{id}/events        SSE stream; ?last=seq replays journal
 POST /v1/sessions/{id}/message       {text, mode: queue|steer, attachments[]}
+GET  /v1/sessions/{id}/queue         queue-mode sends still waiting for idle
+POST /v1/sessions/{id}/queue         {client_id, op: steer|cancel} on one waiting send
 POST /v1/sessions/{id}/attachments   multipart upload → staged file, returns ref
 POST /v1/sessions/{id}/approval      {request_id, decision}
 POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill
@@ -229,6 +231,36 @@ steer injects mid-turn where the channel allows (codex turn input, tmux
 send-keys), else degrades to queue with a UI hint. `SessionRow.to_json`
 is reused verbatim so phone and macOS app share semantics —
 `docs/json-contracts.md` gains a section rather than a parallel dialect.
+
+The phone shows queue-mode sends that are still waiting in a tray above
+the prompt box. `GET /v1/sessions/{id}/queue` lists them, oldest first:
+`{sends: [{client_id, text, attachments, queued_at}]}` (attachment refs
+as sent, `queued_at` in epoch seconds). Only sends that carried a
+`client_id` are listed, and a send leaves the list the moment its job
+starts handing it to the injector. The list lives in the hub's memory
+(`sendq.Waiting`), so it survives the app closing but not a hub restart,
+which fails every waiting send with "hub restarted; message not sent".
+While a send waits, a second send under the same `client_id` is `409
+duplicate_client_id`.
+
+`POST /v1/sessions/{id}/queue {client_id, op}` acts on one waiting send.
+`steer` stops its wait and submits it as a steer-mode send, behind the
+steers already queued for that session; it then degrades and reports
+exactly like a steer message, and needs the session attached (`409
+not_attached`). `cancel` drops it and emits its `command.result` with
+`ok: false`, `note: "removed before sending"` and `cancelled: true`.
+Both answer `200 {ok, client_id, op}`. Either frees the send's slot in the
+session's 20-send backlog at once. A send leaves the waiting state
+exactly once, under a lock, and whoever moves it reports it: the job
+(to inject, or to fail it on timeout or restart) or this route. So a
+cancel racing the job's start either wins, and nothing is sent, or
+loses with `409 not_waiting` ("that message already went out"); there is
+never both a send and a removal. An unknown `client_id` is `404
+unknown_send`; one that already left (sent, steered, removed, failed) is
+`409 not_waiting` while the hub remembers it (the last 256). Satellite
+sessions never park a queue-mode send on the hub (the satellite delivers
+on arrival or refuses a busy session), so their list is empty and both
+ops answer `409 queue_unsupported`.
 
 `POST /v1/sessions` starts a harness under tmux (`supervise.launch_new`)
 on the hub, or queues a `launch` command for the satellite named in
