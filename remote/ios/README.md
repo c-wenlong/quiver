@@ -32,9 +32,11 @@ copies the Mac app's `harness-*.svg` into `Assets.xcassets/Harnesses`.
   app shows a 6-digit code; approve it from a paired device (Pair
   requests, in the hub menu on Sessions), from the hub with
   `swe remote devices --approve=<code>`, or from the `#approve` page.
-- **QR:** run `swe remote pair --app` on the hub and scan its QR, either
-  in the app or with the Camera app (the `quiver://pair` link opens the
-  app).
+- **QR:** on the hub machine, open Quiver › Settings › Remote › Pair a
+  device (the Mac app, or the hub's web app), choose Quiver app, and
+  scan its code, either in the app or with the Camera app (the
+  `quiver://pair` link opens the app). A server with neither runs
+  `swe remote setup` and then `swe remote pair --app`.
 - **Token:** paste the token `swe remote pair` prints.
 
 The app can be paired with several hubs at once, say a Mac and a home

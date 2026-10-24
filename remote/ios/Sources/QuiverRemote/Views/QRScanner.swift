@@ -22,7 +22,7 @@ struct QRScannerSheet: View {
                     }
                     .ignoresSafeArea(edges: .bottom)
                     .overlay(alignment: .bottom) {
-                        Text(rejected ? "That QR isn't a Quiver pair code." : "Point at the QR from swe remote pair --app")
+                        Text(rejected ? "That QR isn't a Quiver pair code." : "Point at the pair code from Quiver › Settings › Remote")
                             .font(Theme.caption)
                             .foregroundStyle(.white)
                             .padding(.horizontal, 14).padding(.vertical, 8)
