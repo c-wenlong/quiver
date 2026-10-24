@@ -36,6 +36,10 @@ const state = {
   lastRevealAt: 0,
   // A send went through and nothing from the agent has come back yet.
   awaitingReply: false,
+  // session.status / session.ownership events by session key, stamped
+  // with a clock: a session list requested before one arrived must not
+  // undo it (overlayRowEvents).
+  rowEvents: { clock: 0, seen: new Map() },
   // The Queued tray: sends the hub holds until the agent goes idle,
   // oldest first, as {cid, text, phase, note}. phase is posting (the
   // POST is out), waiting, sendingNow, removing (hidden while the hub
@@ -371,11 +375,12 @@ async function loadSessions() {
   // newest answer draws, so an older list never replaces a newer one.
   const gen = ++acts.listGen;
   const mark = acts.pins.clock;
+  const evMark = state.rowEvents.clock;
   const { status, data } = await api("/v1/sessions");
   if (gen !== acts.listGen) return;
   if (status === 401) { store.cred = null; boot(); return; }
   if (status !== 200 || !data) { setConn("err"); return; }
-  state.sessions = overlayPins(data.sessions || [], mark);
+  state.sessions = overlayRowEvents(overlayPins(data.sessions || [], mark), evMark);
   state.machines = data.machines || [];
   settleDetaches();
   setConn(true);
@@ -609,6 +614,27 @@ function pinRefused(key, version) {
 /* A list fetched from `mark` on: rows whose latest choice was not yet
  * answered when the fetch started keep that choice. Choices the fetch
  * already reflects are forgotten. */
+/* Status and ownership from events that arrived after the list was
+ * requested win over the list; older ones the list already reflects. */
+function stampRowEvent(key, field, value) {
+  const ev = state.rowEvents;
+  const seen = ev.seen.get(key) || {};
+  seen[field] = value;
+  seen.at = ++ev.clock;
+  ev.seen.set(key, seen);
+}
+
+function overlayRowEvents(rows, mark) {
+  for (const [key, seen] of state.rowEvents.seen) {
+    if (seen.at <= mark) { state.rowEvents.seen.delete(key); continue; }
+    const row = rows.find((r) => r.key === key);
+    if (!row) continue;
+    if ("status" in seen) row.status = seen.status;
+    if ("ownership" in seen) row.ownership = seen.ownership;
+  }
+  return rows;
+}
+
 function overlayPins(rows, mark) {
   for (const [key, c] of acts.pins.choices) {
     if (c.answeredAt !== null && c.answeredAt <= mark) { acts.pins.choices.delete(key); continue; }
@@ -1263,6 +1289,7 @@ function appendEvent(ev, live = true) {
   } else if (ev.type === "session.status") {
     const row = state.sessions.find((r) => r.key === ev.session);
     const status = (ev.data || {}).status || "";
+    stampRowEvent(ev.session, "status", status);
     // The turn ended (or stopped to ask) without a message to show.
     if (ev.session === state.currentKey && status && status !== "active") {
       state.awaitingReply = false;
@@ -1275,6 +1302,7 @@ function appendEvent(ev, live = true) {
     }
   } else if (ev.type === "session.ownership") {
     const row = state.sessions.find((r) => r.key === ev.session);
+    if ((ev.data || {}).ownership) stampRowEvent(ev.session, "ownership", ev.data.ownership);
     if (row) {
       row.ownership = (ev.data || {}).ownership || row.ownership;
       updateOwnership(row);
