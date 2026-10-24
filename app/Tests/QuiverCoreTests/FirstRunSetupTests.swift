@@ -86,6 +86,18 @@ private func applied(leftAlone: Bool) -> String {
         #expect(setup.starredList(order: ["codex", "cursor", "claude"]) == ["codex", "claude", "zed"])
     }
 
+    @Test func phoneAccessIsTheLastStepAndContinueStopsThere() async {
+        let runner = SetupRunner(preview: previewJSON, applied: applied(leftAlone: false))
+        let setup = model(runner, starred: ["claude"])
+        await setup.load()
+        for _ in 0..<6 { await setup.next(order: ["claude"]) }
+        #expect(setup.step == .phone)
+        #expect(FirstRunSetupModel.Step.allCases.last == .phone)
+        #expect(setup.step.number == 5)
+        // Phone access runs nothing: the only swe calls are setup's own.
+        #expect(runner.calls.allSatisfy { $0.first == "setup" })
+    }
+
     @Test func leavingTheLinksStepRunsSetupOnceWithStarsAndAdopt() async {
         let runner = SetupRunner(preview: previewJSON, applied: applied(leftAlone: false))
         let setup = model(runner, starred: ["claude", "codex"])

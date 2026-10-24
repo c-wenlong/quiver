@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "data": {
+    "ready": false,
+    "platform": "darwin",
+    "url": "https://mac.tail1234.ts.net:8477",
+    "steps": [
+      {
+        "id": "tailscale.installed",
+        "title": "Tailscale installed",
+        "state": "ok",
+        "detail": "Tailscale 1.102.4",
+        "action": null
+      },
+      {
+        "id": "tailscale.signed_in",
+        "title": "Signed in to Tailscale",
+        "state": "ok",
+        "detail": "devbox as mac",
+        "action": null
+      },
+      {
+        "id": "tailscale.magicdns",
+        "title": "MagicDNS on",
+        "state": "ok",
+        "detail": "Names end in tail1234.ts.net",
+        "action": null
+      },
+      {
+        "id": "tailscale.https",
+        "title": "HTTPS certificates on",
+        "state": "ok",
+        "detail": "",
+        "action": null
+      },
+      {
+        "id": "tailscale.cert",
+        "title": "Certificate for mac",
+        "state": "todo",
+        "detail": "Not fetched yet",
+        "action": {
+          "kind": "apply",
+          "label": "Fetch certificate"
+        }
+      },
+      {
+        "id": "hub.service",
+        "title": "Hub running in the background",
+        "state": "blocked",
+        "detail": "Waits for: Certificate for mac",
+        "action": null
+      },
+      {
+        "id": "hub.reachable",
+        "title": "Reachable at https://mac.tail1234.ts.net:8477",
+        "state": "blocked",
+        "detail": "Waits for: Hub running in the background",
+        "action": null
+      },
+      {
+        "id": "phone.paired",
+        "title": "A phone paired",
+        "state": "blocked",
+        "detail": "Waits for: Reachable at https://mac.tail1234.ts.net:8477",
+        "action": null
+      }
+    ]
+  }
+}

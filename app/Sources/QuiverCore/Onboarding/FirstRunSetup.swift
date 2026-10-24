@@ -151,14 +151,15 @@ public enum FirstRun {
     }
 }
 
-/// The first-run setup window's state: four steps, the agents you use,
+/// The first-run setup window's state: five steps, the agents you use,
 /// which instruction file starts the shared AGENTS.md, and the one swe
-/// call that applies it all.
+/// call that applies it all. The last, phone access, is optional: it only
+/// offers the remote-control checklist for after the window closes.
 @MainActor
 @Observable
 public final class FirstRunSetupModel {
     public enum Step: Int, CaseIterable, Sendable {
-        case agents, links, look, notifications
+        case agents, links, look, notifications, phone
 
         public var number: Int { rawValue + 1 }
     }
