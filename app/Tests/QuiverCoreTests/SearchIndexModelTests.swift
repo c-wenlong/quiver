@@ -95,7 +95,17 @@ private func withinDeadline(_ wait: @escaping @MainActor @Sendable () async -> B
         let s = try stack(enabled: true)
 
         s.model.start()
-        await s.model.apply()
+        // Waits on start's own apply. Calling apply() here as well raced
+        // it: whichever resumed second attached again, and its scan could
+        // still be running when the status was read ("Indexing").
+        let settled = await withinDeadline {
+            while s.model.indexer == nil || s.overview.completedScans == 0 || s.overview.isLoading {
+                guard !Task.isCancelled else { return false }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            return true
+        }
+        #expect(settled)
 
         #expect(s.model.indexer != nil)
         #expect(s.model.store?.fts5Available == true)
