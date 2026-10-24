@@ -90,7 +90,7 @@ struct SessionsView: View {
                     Section("Hubs") {
                         ForEach(app.hubs.hubs) { hub in
                             Button { app.switchHub(to: hub.id) } label: {
-                                HubMenuLabel(name: app.hubs.name(of: hub), host: hub.baseURL.host, current: hub.id == app.hub?.id)
+                                HubMenuLabel(name: app.hubs.name(of: hub), address: hub.address, current: hub.id == app.hub?.id)
                             }
                         }
                         Button {
@@ -98,7 +98,7 @@ struct SessionsView: View {
                             pairingAnother = true
                         } label: { Label("Pair another hub", systemImage: "plus") }
                     }
-                    Section(app.hub?.baseURL.host ?? "") {
+                    Section(app.hub?.address ?? "") {
                         Button { showDevices = true } label: { Label("Pair requests and devices", systemImage: "iphone.and.arrow.forward") }
                         Button { Task { await app.refresh() } } label: { Label("Refresh", systemImage: "arrow.clockwise") }
                     }
@@ -109,7 +109,7 @@ struct SessionsView: View {
             }
         }
         .sheet(isPresented: $showDevices) { NavigationStack { DevicesView() } }
-        .sheet(isPresented: $pairingAnother) { WelcomeView(addingHub: true) }
+        .sheet(isPresented: $pairingAnother, onDismiss: { app.cancelPairing() }) { WelcomeView(addingHub: true) }
         // The chat opens after the sheet is gone, so the push isn't lost
         // under the dismiss animation.
         .sheet(isPresented: $showNewSession, onDismiss: {
@@ -324,13 +324,13 @@ struct RowButtonStyle: ButtonStyle {
 /// and the second text as its subtitle.
 struct HubMenuLabel: View {
     var name: String
-    var host: String?
+    var address: String
     var current: Bool
 
     var body: some View {
         if current { Image(systemName: "checkmark") }
         Text(name)
-        if let host, host != name { Text(host) }
+        if address != name { Text(address) }
     }
 }
 

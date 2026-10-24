@@ -7,6 +7,14 @@ struct PairedHub: Equatable, Identifiable {
     var credential: Credential
 
     var id: String { baseURL.absoluteString }
+
+    /// The host, with the port when it isn't the hub's default, so two
+    /// hubs on one machine read apart.
+    var address: String {
+        let host = baseURL.host ?? id
+        guard let port = baseURL.port, port != Hub.defaultPort else { return host }
+        return "\(host):\(port)"
+    }
 }
 
 /// Every hub this phone is paired with, oldest first, and the one it
@@ -40,7 +48,7 @@ struct HubList: Equatable {
 
     /// How menus name a hub: its machine name, else its host.
     func name(of hub: PairedHub) -> String {
-        names[hub.id] ?? hub.baseURL.host ?? hub.id
+        names[hub.id] ?? hub.address
     }
 }
 
@@ -78,7 +86,10 @@ struct KeychainHubStore: HubStore {
     /// The WKWebView shell kept the `/v1/pair` JSON here; read once so a
     /// phone paired under the old shell stays paired.
     private static let legacyCredentialKey = "quiver.credentialJSON"
-    private static let service = "com.quiver.remote"
+
+    /// Tests pass their own Keychain service and defaults suite.
+    var service = "com.quiver.remote"
+    var defaults = UserDefaults.standard
 
     private struct IndexEntry: Codable {
         let url: String
@@ -86,16 +97,13 @@ struct KeychainHubStore: HubStore {
     }
 
     func load() -> HubList {
-        let defaults = UserDefaults.standard
         guard let data = defaults.data(forKey: Self.hubsKey),
               let entries = try? JSONDecoder().decode([IndexEntry].self, from: data) else {
             return migrate()
         }
         var list = HubList()
         for entry in entries {
-            guard let url = URL(string: entry.url),
-                  let raw = Self.keychainRead(account: Self.account(for: entry.url)),
-                  let cred = try? Hub.decoder.decode(Credential.self, from: raw) else { continue }
+            guard let url = URL(string: entry.url), let cred = credential(for: entry.url) else { continue }
             list.hubs.append(PairedHub(baseURL: url, credential: cred))
             if let name = entry.name { list.names[entry.url] = name }
         }
@@ -104,8 +112,21 @@ struct KeychainHubStore: HubStore {
         return list
     }
 
+    /// A hub's stored credential. The hub a migration moved but couldn't
+    /// store again still has its old copy, which is read (and moved, once
+    /// that works) instead of losing the pairing.
+    private func credential(for id: String) -> Credential? {
+        if let raw = keychainRead(account: Self.account(for: id)),
+           let cred = try? Hub.decoder.decode(Credential.self, from: raw) {
+            return cred
+        }
+        guard defaults.string(forKey: Self.legacyHubKey) == id, let cred = legacyCredential(),
+              let url = URL(string: id) else { return nil }
+        if saveCredential(PairedHub(baseURL: url, credential: cred)) { dropLegacy() }
+        return cred
+    }
+
     func saveIndex(_ list: HubList) {
-        let defaults = UserDefaults.standard
         let entries = list.hubs.map { IndexEntry(url: $0.id, name: list.names[$0.id]) }
         if let data = try? JSONEncoder().encode(entries) { defaults.set(data, forKey: Self.hubsKey) }
         defaults.set(list.activeId, forKey: Self.activeKey)
@@ -117,11 +138,11 @@ struct KeychainHubStore: HubStore {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         guard let data = try? encoder.encode(hub.credential) else { return false }
-        return Self.keychainWrite(data, account: Self.account(for: hub.id))
+        return keychainWrite(data, account: Self.account(for: hub.id))
     }
 
     func deleteCredential(_ id: String) {
-        SecItemDelete(Self.query(account: Self.account(for: id)) as CFDictionary)
+        SecItemDelete(query(account: Self.account(for: id)) as CFDictionary)
     }
 
     /// Last hub address paired, kept after an unpair so pairing again
@@ -132,41 +153,46 @@ struct KeychainHubStore: HubStore {
             ?? defaults.string(forKey: legacyHubKey).flatMap { URL(string: $0)?.host }
     }
 
-    /// The one hub a phone paired before this list existed, from its old
-    /// Keychain item (or the WKWebView shell's copy), moved into the list.
-    /// The old copies go only once the new ones are stored.
+    /// The one hub a phone paired before this list existed, moved into
+    /// the list. The old copies go only once the new one is stored; until
+    /// then `credential(for:)` keeps reading them.
     private func migrate() -> HubList {
-        let defaults = UserDefaults.standard
-        guard let raw = defaults.string(forKey: Self.legacyHubKey), let url = URL(string: raw) else { return HubList() }
-        let cred: Credential
-        if let data = Self.keychainRead(account: Self.legacyAccount),
-           let c = try? Hub.decoder.decode(Credential.self, from: data) {
-            cred = c
-        } else if let legacy = defaults.string(forKey: Self.legacyCredentialKey),
-                  let c = try? Hub.decoder.decode(Credential.self, from: Data(legacy.utf8)) {
-            cred = c
-        } else {
-            return HubList()
-        }
+        guard let raw = defaults.string(forKey: Self.legacyHubKey), let url = URL(string: raw),
+              let cred = legacyCredential() else { return HubList() }
         var list = HubList()
         list.adopt(PairedHub(baseURL: url, credential: cred))
-        guard saveCredential(list.hubs[0]) else { return list }
         saveIndex(list)
-        SecItemDelete(Self.query(account: Self.legacyAccount) as CFDictionary)
+        if saveCredential(list.hubs[0]) { dropLegacy() }
+        return list
+    }
+
+    private func legacyCredential() -> Credential? {
+        if let data = keychainRead(account: Self.legacyAccount),
+           let cred = try? Hub.decoder.decode(Credential.self, from: data) {
+            return cred
+        }
+        if let legacy = defaults.string(forKey: Self.legacyCredentialKey),
+           let cred = try? Hub.decoder.decode(Credential.self, from: Data(legacy.utf8)) {
+            return cred
+        }
+        return nil
+    }
+
+    private func dropLegacy() {
+        SecItemDelete(query(account: Self.legacyAccount) as CFDictionary)
         defaults.removeObject(forKey: Self.legacyCredentialKey)
         defaults.removeObject(forKey: Self.legacyHubKey)
-        return list
     }
 
     private static func account(for id: String) -> String { "device-credential \(id)" }
 
-    private static func query(account: String) -> [String: Any] {
+    private func query(account: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
          kSecAttrService as String: service,
          kSecAttrAccount as String: account]
     }
 
-    private static func keychainRead(account: String) -> Data? {
+    private func keychainRead(account: String) -> Data? {
         var q = query(account: account)
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -175,12 +201,32 @@ struct KeychainHubStore: HubStore {
         return out as? Data
     }
 
-    private static func keychainWrite(_ data: Data, account: String) -> Bool {
+    private func keychainWrite(_ data: Data, account: String) -> Bool {
         SecItemDelete(query(account: account) as CFDictionary)
         var q = query(account: account)
         q[kSecValueData as String] = data
         q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         return SecItemAdd(q as CFDictionary, nil) == errSecSuccess
+    }
+
+    /// Writes a pairing the way the app stored one before the hub list,
+    /// for the migration tests.
+    func writeLegacyPairing(_ hub: PairedHub) {
+        defaults.set(hub.id, forKey: Self.legacyHubKey)
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        if let data = try? encoder.encode(hub.credential) { _ = keychainWrite(data, account: Self.legacyAccount) }
+    }
+
+    /// Forgets everything this store holds (tests).
+    func wipe() {
+        for entry in (defaults.data(forKey: Self.hubsKey).flatMap { try? JSONDecoder().decode([IndexEntry].self, from: $0) } ?? []) {
+            deleteCredential(entry.url)
+        }
+        SecItemDelete(query(account: Self.legacyAccount) as CFDictionary)
+        for key in [Self.hubsKey, Self.activeKey, Self.lastHostKey, Self.legacyHubKey, Self.legacyCredentialKey] {
+            defaults.removeObject(forKey: key)
+        }
     }
 }
 

@@ -46,6 +46,16 @@ final class HubListTests: XCTestCase {
         XCTAssertEqual(list.name(of: h), "kais-macbook-pro.local")
     }
 
+    func testAnAddressShowsItsPortOnlyWhenItIsntTheDefault() {
+        XCTAssertEqual(hub("mac").address, "mac")
+        let other = PairedHub(baseURL: URL(string: "https://mac.tail.ts.net:9443")!,
+                              credential: Credential(deviceId: "d", credential: "c", name: nil))
+        XCTAssertEqual(other.address, "mac.tail.ts.net:9443")
+        var list = HubList()
+        list.adopt(other)
+        XCTAssertEqual(list.name(of: other), "mac.tail.ts.net:9443", "unnamed hubs on one machine read apart")
+    }
+
     @MainActor
     func testSwitchingHubsKeepsBothAndClearsWhatWasShown() {
         var start = HubList()

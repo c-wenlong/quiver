@@ -19,6 +19,8 @@ final class AppModel {
     /// When the lists last loaded; an open search reruns when it moves.
     private(set) var refreshedAt: Date?
     var pairing = PairingFlow()
+    /// Bumped by cancelPairing(); a pairing reply from before it is dropped.
+    private var pairingGen = 0
 
     private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private let store: HubStore
@@ -356,14 +358,18 @@ final class AppModel {
     }
 
     func pair(with link: PairLink) async {
+        let gen = pairingGen
         pairing.busy = true
         pairing.error = nil
-        defer { pairing.busy = false }
         let client = HubClient(baseURL: link.baseURL, credential: nil)
         do {
             let cred = try await client.pair(token: link.token, name: link.name ?? pairing.deviceName)
+            guard gen == pairingGen else { return }
+            pairing.busy = false
             adopt(PairedHub(baseURL: link.baseURL, credential: cred))
         } catch {
+            guard gen == pairingGen else { return }
+            pairing.busy = false
             pairing.error = (error as? HubError)?.message ?? error.localizedDescription
         }
     }
@@ -373,14 +379,18 @@ final class AppModel {
             pairing.error = "Enter the hub's Tailscale name or address."
             return
         }
+        let gen = pairingGen
         pairing.busy = true
         pairing.error = nil
-        defer { pairing.busy = false }
         do {
             let cred = try await HubClient(baseURL: base, credential: nil)
                 .pair(token: token.trimmingCharacters(in: .whitespaces), name: pairing.deviceName)
+            guard gen == pairingGen else { return }
+            pairing.busy = false
             adopt(PairedHub(baseURL: base, credential: cred))
         } catch {
+            guard gen == pairingGen else { return }
+            pairing.busy = false
             pairing.error = (error as? HubError)?.message ?? error.localizedDescription
         }
     }
@@ -392,16 +402,19 @@ final class AppModel {
             pairing.error = "Enter the hub's Tailscale name or address."
             return
         }
+        let gen = pairingGen
         pairing.busy = true
         pairing.error = nil
         let client = HubClient(baseURL: base, credential: nil)
         do {
             let started = try await client.startPairRequest(name: pairing.deviceName)
+            guard gen == pairingGen else { return }
             pairing.busy = false
             pairing.pending = PendingPairing(baseURL: base, started: started,
                                              expiresAt: Date().addingTimeInterval(TimeInterval(started.expiresInS ?? 300)))
             await pollPairing(client: client, started: started)
         } catch {
+            guard gen == pairingGen else { return }
             pairing.busy = false
             pairing.error = (error as? HubError)?.message ?? error.localizedDescription
         }
@@ -438,8 +451,13 @@ final class AppModel {
         }
     }
 
+    /// Abandons whatever pairing is under way (Cancel, or the pair sheet
+    /// swiped away): its request still out, or its approval still being
+    /// polled, can no longer add a hub.
     func cancelPairing() {
+        pairingGen += 1
         pairing.pending = nil
+        pairing.busy = false
     }
 }
 
