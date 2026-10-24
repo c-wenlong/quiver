@@ -1,8 +1,10 @@
 /* Plugins: a port of the Mac app's PluginsPage (Health and Explore tabs).
  * Data from /v1/app/plugins?view=health|explore (quiver/webapp/pages/
  * plugins.py). Health's Fix and Fix all POST /v1/app/plugins/fix|fix_all,
- * each after an inline confirm naming the commands. Installs, enables,
- * renames and Add marketplace stay in swe and the Mac app.
+ * each after an inline confirm naming the commands. The plugin sheet's
+ * Install, Enable, Disable and Uninstall per harness POST
+ * /v1/app/plugins/plugin, after the same kind of confirm. Renames and Add
+ * marketplace stay in swe and the Mac app.
  */
 "use strict";
 // The bundle runs this file in its own function scope.
@@ -29,6 +31,9 @@ const page = {
   fixing: null,               // a finding id, or "all"
   fixingCount: 0,
   fixError: null, lastFixed: null,
+  // The sheet's actions (PluginAction): the one asking to confirm and the
+  // one running ({verb, ref, harness}), and the last outcome per plugin.
+  actConfirm: null, actRunning: null, actOutcome: null,
 };
 
 const SVG = {
@@ -639,10 +644,121 @@ function openPlugin(ref) {
       ${copies}
     </div>
     ${skills}
-    <p class="caption">Read only here. Install, enable and edit it with <code>swe plugins</code> or in the Mac app.</p>
+    ${actionsSection(p, d)}
     <div class="sheet-actions"><button class="tab selected" value="close">Close</button></div>
   </form>`;
-  sheet.showModal();
+  bindActions(sheet);
+  if (!sheet.open) sheet.showModal();
+}
+
+/* ------------------------------------------------- install, enable… */
+
+const VERB = {
+  install: ["Install", "Installed", "Installing…"], uninstall: ["Uninstall", "Uninstalled", "Uninstalling…"],
+  enable: ["Enable", "Enabled", "Enabling…"], disable: ["Disable", "Disabled", "Disabling…"],
+};
+const sameAct = (a, b) => !!a && !!b && a.verb === b.verb && a.ref === b.ref && a.harness === b.harness;
+
+/* PluginAction.command: what swe will run, or the edit it will make. */
+function actionCommand(a) {
+  if (a.harness === "codex" && a.verb === "install") return `codex plugin add ${a.ref}`;
+  if (a.harness === "codex" && a.verb === "uninstall") return `codex plugin remove ${a.ref}`;
+  if (a.harness === "codex") return `set [plugins."${a.ref}"] enabled = ${a.verb === "enable"} in ~/.codex/config.toml`;
+  return `${a.harness} plugin ${a.verb} ${a.ref}`;
+}
+
+const actionWhere = (a) => `${a.verb === "uninstall" ? "from" : "in"} ${Fmt.harnessName(a.harness)}`;
+
+/* One row per harness that has the plugin or could: its state, and the
+ * buttons PluginCatalog.actions(for:in:) offers there. */
+function actionsSection(p, d) {
+  const where = (page.data.explore && page.data.explore.machine) || "the hub";
+  const harnesses = Object.keys(p.harnesses).filter((h) => p.harnesses[h].status !== "absent" || p.harnesses[h].actions.length);
+  if (!harnesses.length) return "";
+  const busy = !!page.actRunning || page.fixing != null;
+  const rows = harnesses.map((h) => {
+    const st = p.harnesses[h], acts = st.actions || [];
+    const running = page.actRunning && page.actRunning.ref === p.ref && page.actRunning.harness === h;
+    let side;
+    if (running) side = `<span class="pl-act-running" role="status"><span class="pl-spinner" aria-hidden="true"></span>${esc(VERB[page.actRunning.verb][2])}</span>`;
+    else if (!(d.actions || []).includes(h)) side = `<span class="caption">swe can't change ${esc(Fmt.harnessName(h))} plugins</span>`;
+    else side = acts.map((verb, i) => `<button type="button" class="pl-act${i === 0 && verb === "install" ? " primary" : ""}"
+        data-pl-act="${esc(verb)}" data-pl-harness="${esc(h)}"${busy ? " disabled" : ""}>${esc(VERB[verb][0])}</button>`).join("");
+    const a = page.actConfirm;
+    const confirm = a && a.ref === p.ref && a.harness === h && !running ? `<div class="pl-act-confirm" role="group" aria-label="${esc(VERB[a.verb][0])} ${esc(a.ref)}?">
+        <span>${esc(VERB[a.verb][0])} ${esc(a.ref)} ${esc(actionWhere(a))} on ${esc(where)}?</span>
+        <code class="pl-path">${esc(actionCommand(a))}</code>
+        <div class="pl-act-buttons"><button type="button" class="pl-act" data-pl-act-cancel>Cancel</button>
+          <button type="button" class="pl-act primary${a.verb === "uninstall" ? " danger" : ""}" data-pl-act-go>${esc(VERB[a.verb][0])}</button></div></div>` : "";
+    return `<div class="pl-act-row"><span class="pl-act-name">${Fmt.logo(h, "logo logo-sm")}${esc(Fmt.harnessName(h))}
+      <span class="caption">· ${esc(STATUS_TITLE[st.status] || st.status)}</span></span>${side}</div>${confirm}`;
+  }).join("");
+  const o = page.actOutcome && page.actOutcome.ref === p.ref ? page.actOutcome : null;
+  const outcome = o ? `<p class="${o.error ? "error pl-pre" : "caption pl-act-done"}" role="${o.error ? "alert" : "status"}">${esc(o.text)}</p>` : "";
+  return `<div class="pl-acts"><div class="caption">In each harness</div>${rows}${outcome}</div>`;
+}
+
+function bindActions(sheet) {
+  const ref = page.sheet;
+  for (const btn of sheet.querySelectorAll("[data-pl-act]")) {
+    btn.onclick = () => {
+      const next = { verb: btn.dataset.plAct, ref, harness: btn.dataset.plHarness };
+      page.actConfirm = sameAct(page.actConfirm, next) ? null : next;
+      openPlugin(ref);
+      const go = document.querySelector("[data-pl-act-go]");
+      if (go) go.focus();
+    };
+  }
+  const cancel = sheet.querySelector("[data-pl-act-cancel]");
+  if (cancel) cancel.onclick = () => {
+    const a = page.actConfirm;
+    page.actConfirm = null;
+    openPlugin(ref);
+    const back = a && document.querySelector(`[data-pl-act="${CSS.escape(a.verb)}"][data-pl-harness="${CSS.escape(a.harness)}"]`);
+    if (back) back.focus();
+  };
+  const go = sheet.querySelector("[data-pl-act-go]");
+  if (go) go.onclick = () => runAction(page.actConfirm);
+}
+
+/* swe plugins <verb> <ref> --harness=<h> on the hub. Explore comes back in
+ * the answer; Health may have changed too, so it reads again next time. */
+async function runAction(a) {
+  if (!a || page.actRunning) return;
+  page.actRunning = a;
+  page.actConfirm = null;
+  page.actOutcome = null;
+  if (onPage()) paint();
+  const { status, data } = await apiPost("/v1/app/plugins/plugin", a);
+  page.actRunning = null;
+  if (status === 401) {
+    if (onPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    return;
+  }
+  if (status === 200 && data && data.explore) {
+    page.seq.explore++;
+    page.busy.explore = false;
+    page.data.explore = data.explore;
+    page.error.explore = null;
+    page.exploreStale = false;
+    page.seq.health++;
+    page.busy.health = false;
+    page.data.health = null;
+    if (page.tab === "health" && onPage()) load("health");
+    const r = data.result;
+    let text;
+    if (data.error) text = data.error;
+    else if (r.changed) text = `${VERB[a.verb][1]} ${a.ref} ${actionWhere(a)}`;
+    else text = `${a.ref} in ${Fmt.harnessName(a.harness)}: ${r.detail || "nothing changed"}`;
+    page.actOutcome = { ref: a.ref, text, error: !!data.error };
+  } else {
+    page.actOutcome = { ref: a.ref, error: true, text: (data && data.error && data.error.message)
+      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.") };
+  }
+  if (!onPage()) return;
+  paint();
+  const back = document.querySelector(`[data-pl-harness="${CSS.escape(a.harness)}"]`) || document.querySelector("#plugin-sheet .tab");
+  if (back) back.focus();
 }
 
 registerPage("plugins", render);

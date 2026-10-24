@@ -426,6 +426,90 @@ class TestFix(_FakeHome, unittest.TestCase):
         self.assertEqual(self.run_with(_Runner(self), "fix", {"id": fid})["ran"], 1)
 
 
+class TestPluginAction(_FakeHome, unittest.TestCase):
+    """The detail sheet's per-harness buttons: post("plugin", ...) against
+    _FakeHome's ``tool@mk``, installed and enabled in claude and codex."""
+
+    def setUp(self):
+        super().setUp()
+        page.clear_cache()
+        self.addCleanup(page.clear_cache)
+        self.ctx = PageContext(home=self.home, state=_Ctx())
+
+    def act(self, verb, harness, runner=None, ref="tool@mk"):
+        runner = runner or _Runner(self)
+        with patch.object(page, "_run", runner):
+            return page.post(self.ctx, "plugin", {"verb": verb, "ref": ref, "harness": harness}), runner
+
+    def refused(self, body):
+        runner = _Runner(self)
+        with patch.object(page, "_run", runner), self.assertRaises(PageError) as raised:
+            page.post(self.ctx, "plugin", body)
+        self.assertEqual(runner.calls, [], "a refusal must run nothing")
+        return raised.exception
+
+    def test_explore_offers_each_harness_its_actions(self):
+        tool = page.explore(self.home)["plugins"]["tool@mk"]
+        self.assertEqual(tool["harnesses"]["claude"]["actions"], ["disable", "uninstall"])
+        self.assertEqual(tool["harnesses"]["codex"]["actions"], ["disable", "uninstall"])
+
+    def test_install_runs_the_harness_cli_and_answers_the_fresh_view(self):
+        self.installed["plugins"] = {}
+        self._write_claude()
+        page.explore(self.home)
+        body, runner = self.act("install", "claude")
+        self.assertEqual(runner.calls, [["claude", "plugin", "install", "tool@mk"]])
+        self.assertEqual(runner.homes, [str(self.home)])
+        self.assertIsNone(body["error"])
+        self.assertTrue(body["result"]["changed"])
+        self.assertIn(body["explore"]["plugins"]["tool@mk"]["harnesses"]["claude"]["status"],
+                      ("enabled", "installed"))
+
+    def test_codex_disable_is_swes_own_config_edit(self):
+        body, runner = self.act("disable", "codex")
+        self.assertEqual(runner.calls, [])
+        self.assertTrue(body["result"]["changed"])
+        self.assertTrue(body["result"]["edited"].endswith("config.toml"))
+        codex = body["explore"]["plugins"]["tool@mk"]["harnesses"]["codex"]
+        self.assertEqual((codex["status"], codex["actions"]), ("disabled", ["enable", "uninstall"]))
+
+    def test_a_failed_command_is_the_error_with_the_fresh_view(self):
+        self.installed["plugins"] = {}
+        self._write_claude()
+        body, _ = self.act("install", "claude", runner=_Runner(self, fail=("claude", "plugin", "install")))
+        self.assertIsNone(body["result"])
+        self.assertIn("marketplace is busy", body["error"])
+        self.assertIn("tool@mk", body["explore"]["plugins"])
+
+    def test_only_what_the_sheet_offers(self):
+        for body, want in (({"verb": "install", "ref": "tool@mk", "harness": "claude"}, (409, "not_offered")),
+                           ({"verb": "enable", "ref": "tool@mk", "harness": "cursor"}, (409, "not_offered")),
+                           ({"verb": "install", "ref": "nope@mk", "harness": "claude"}, (404, "unknown_plugin")),
+                           ({"verb": "install", "ref": "tool@mk"}, (422, "bad_action")),
+                           ({"verb": ["x"], "ref": "tool@mk", "harness": "claude"}, (422, "bad_action"))):
+            error = self.refused(body)
+            self.assertEqual((error.status, error.code), want, body)
+
+    def test_one_change_at_a_time(self):
+        page._WRITE_LOCK.acquire()
+        try:
+            error = self.refused({"verb": "disable", "ref": "tool@mk", "harness": "claude"})
+        finally:
+            page._WRITE_LOCK.release()
+        self.assertEqual((error.status, error.code), (409, "busy"))
+
+
+class TestHarnessActions(unittest.TestCase):
+    def test_matches_the_apps_menu(self):
+        self.assertEqual(page.harness_actions(_state(installed=True, enabled=True), True), ["disable", "uninstall"])
+        self.assertEqual(page.harness_actions(_state(installed=True, enabled=False), True), ["enable", "uninstall"])
+        self.assertEqual(page.harness_actions(_state(installed=True), True), ["uninstall"])
+        self.assertEqual(page.harness_actions(_state(available=True), True), ["install"])
+        self.assertEqual(page.harness_actions(_state(), True), [])
+        self.assertEqual(page.harness_actions(_state(installed=None, available=True), True), [])
+        self.assertEqual(page.harness_actions(_state(installed=True, enabled=True), False), [])
+
+
 class _Fixture(_FakeHome, unittest.TestCase):
     def runTest(self):
         pass
@@ -480,6 +564,14 @@ class TestFixRoute(HubBase):
         # The read route sees the change at once, cache or not.
         _, data = self.srv.request("GET", "/v1/app/plugins", headers=auth)
         self.assertEqual(json.loads(data)["drift"], [])
+
+    def test_plugin_action_through_the_hub(self):
+        status, data = self.srv.request("POST", "/v1/app/plugins/plugin",
+                                        body={"verb": "install", "ref": "tool@mk", "harness": "claude"},
+                                        headers={**self.auth(), "Origin": self.origin()})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(self.runner.calls, [["claude", "plugin", "install", "tool@mk"]])
+        self.assertTrue(json.loads(data)["result"]["changed"])
 
     def test_fix_all_through_the_hub(self):
         status, data = self.srv.request("POST", "/v1/app/plugins/fix_all", body={"ids": [self.fid]},
