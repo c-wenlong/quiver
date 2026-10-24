@@ -981,6 +981,22 @@ class TestTailWake(unittest.TestCase):
         self.mgr.tick(self.t0 + 1 + tail.POLL_HOT_S)
         self.assertIn("reply", self._texts())
 
+    def test_unchanged_hot_poll_writes_no_cursor(self):
+        self.mgr.statuses[self.KEY] = "active"
+        self.mgr.wake(self.KEY, now=self.t0)
+        with patch.object(self.tailer, "save_cursor",
+                          wraps=self.tailer.save_cursor) as save:
+            for i in range(8):
+                self.mgr.tick(self.t0 + i * tail.POLL_HOT_S)
+            save.assert_not_called()
+            # A real append moves the cursor and is saved once.
+            self._append("hi")
+            self.mgr.tick(self.t0 + 8 * tail.POLL_HOT_S)
+            self.assertEqual(save.call_count, 1)
+            self.mgr.tick(self.t0 + 9 * tail.POLL_HOT_S)
+            self.assertEqual(save.call_count, 1)
+        self.assertIn("hi", self._texts())
+
     def test_window_expires_back_to_normal_cadence(self):
         self.mgr.wake(self.KEY, now=self.t0)
         self.mgr.tick(self.t0)

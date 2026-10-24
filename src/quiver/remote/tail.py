@@ -959,6 +959,10 @@ class Tailer:
             source.start_near_end()
         self.next_poll_at = 0.0
         self._pending_save = False
+        # What the cursor file holds now. A poll that leaves the source
+        # here writes nothing, so the 0.25 s hot cadence and the 1 s
+        # active one cost a read, not a file write, while nothing moves.
+        self._saved: dict | None = state or None
 
     def _load_cursor(self) -> dict:
         try:
@@ -968,15 +972,15 @@ class Tailer:
             return {}
 
     def save_cursor(self) -> None:
+        state = self.source.state()
         try:
             self._cursor_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._cursor_path.with_suffix(".tmp")
-            tmp.write_text(
-                json.dumps(self.source.state()), encoding="utf-8"
-            )
+            tmp.write_text(json.dumps(state), encoding="utf-8")
             os.replace(tmp, self._cursor_path)
         except OSError:
-            pass
+            return
+        self._saved = state
 
     def due(self, now: float) -> bool:
         return now >= self.next_poll_at
@@ -997,7 +1001,10 @@ class Tailer:
         """
         self.next_poll_at = now + self.interval(active, hot)
         out = self.source.poll()
-        if out or active:
+        # A source can move without emitting (records that decode to
+        # nothing, an opencode row still streaming), so compare the
+        # state rather than trusting ``out`` alone.
+        if out or self.source.state() != self._saved:
             self._pending_save = True
         return out
 
