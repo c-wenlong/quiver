@@ -159,6 +159,9 @@ class HubState:
         # Message sends run here — a headless turn or a queue-until-idle
         # wait must not hold the phone's POST open.
         self.sendq = sendq.SendQueue()
+        # queue-mode sends not yet handed to an injector, by session
+        # and client_id: GET/POST /v1/sessions/{key}/queue read it.
+        self.waiting = sendq.Waiting()
         # Fresh per-session status for queued sends; tests stub it.
         from quiver.sessions.status import session_statuses
         self.status_of = session_statuses
@@ -314,6 +317,7 @@ class HubState:
         self._stop.set()
         # Fail every accepted-but-not-yet-started send honestly; the
         # in-flight one sees _stop and reports the same note.
+        self.waiting.wake_all()
         self.sendq.close()
         for t in self._threads:
             t.join(timeout=2)
@@ -1081,6 +1085,18 @@ class _Handler(BaseHTTPRequestHandler):
             if sep and action == "messages":
                 self._messages(key, args)
                 return
+            if sep and action == "queue":
+                if self._state.catalog.row_for(key) is None:
+                    self._send_error(
+                        404, "unknown_session", "no such session"
+                    )
+                    return
+                # A satellite session's sends never wait on the hub, so
+                # its list is honestly empty.
+                self._send_json(200, {
+                    "sends": self._state.waiting.list(key),
+                })
+                return
             self._send_error(404, "not_found", "unknown route")
             return
 
@@ -1263,6 +1279,9 @@ class _Handler(BaseHTTPRequestHandler):
             if action == "control":
                 self._control(key, row)
                 return
+            if action == "queue":
+                self._queue_action(key, row)
+                return
             if action in {"message", "approval"}:
                 if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
                     self._send_error(
@@ -1431,6 +1450,16 @@ class _Handler(BaseHTTPRequestHandler):
         journal, so the phone gets 202 whether the satellite is live or
         asleep — results arrive later as ``command.result`` events.
         """
+        if action == "queue":
+            # A satellite never parks a queue-mode send: it delivers on
+            # arrival or refuses a busy session, so there is nothing
+            # waiting here to steer or remove.
+            self._send_error(
+                409, "queue_unsupported",
+                "sends to another machine's session don't wait on the "
+                "hub; there is nothing queued to steer or remove",
+            )
+            return
         if action != "attach" and action != "control":
             if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
                 self._send_error(
@@ -1564,8 +1593,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(422, "bad_command", str(exc))
             return
         # Resolve attachment refs to staged paths before injection.
+        refs = list(cmd["attachments"])
         paths = []
-        for ref in cmd["attachments"]:
+        for ref in refs:
             path = attachments.resolve(self._state.home, key, ref)
             if path is None:
                 self._send_error(
@@ -1581,55 +1611,31 @@ class _Handler(BaseHTTPRequestHandler):
         client_id = cmd["client_id"]
         state = self._state
         waiting = cmd["mode"] == "queue" and status == "active"
-
-        def job() -> None:
-            # Re-read at run time: the submit-time status predates any
-            # wait behind earlier jobs on this key — a send that started
-            # a turn since then must still be waited out. The Session
-            # object itself can go stale mid-wait (the status classifier
-            # times out against session.timestamp), so re-fetch it too.
-            current = state.catalog.session_for(key) or session
-            live = self._fresh_status(current, status)
-            if cmd["mode"] == "queue":
-                deadline = time.monotonic() + QUEUE_WAIT_MAX_S
-                while live == "active" and time.monotonic() < deadline:
-                    if state._stop.wait(QUEUE_POLL_S):
-                        self._send_result(
-                            key, client_id, False,
-                            "hub restarted; message not sent", False,
-                        )
-                        return
-                    current = state.catalog.session_for(key) or session
-                    live = self._fresh_status(current, status)
-                if live == "active":
-                    self._send_result(
-                        key, client_id, False,
-                        "session stayed busy for 30 min; message not sent",
-                        False,
-                    )
-                    return
-            try:
-                result = self._injector(key).send(current, cmd, live)
-                ok, note, degraded = (
-                    result.ok, result.note, result.degraded
-                )
-            except Exception as exc:
-                ok, note, degraded = False, str(exc), False
-            self._send_result(key, client_id, ok, note, degraded)
-
-        def cancel() -> None:
-            self._send_result(
-                key, client_id, False,
-                "hub restarted; message not sent", False,
-            )
-
-        # steer jobs get their own key: ordered among themselves but
-        # never stuck behind a queue-mode job waiting out a turn.
-        qkey = key if cmd["mode"] == "queue" else f"{key}\x00steer"
+        qkey = self._send_key(key, cmd["mode"])
         if state.sendq.pending(qkey) >= MAX_SEND_BACKLOG:
             self._send_error(
                 429, "backlog_full",
                 "too many messages waiting for this session",
+            )
+            return
+        if cmd["mode"] == "queue":
+            send = sendq.QueuedSend(
+                client_id, cmd["text"], refs,
+                {"cmd": cmd, "session": session, "status": status},
+            )
+            added = state.waiting.add(key, send)
+            if added:
+                job, cancel = self._queue_job(key, send)
+        else:
+            added = not state.waiting.has(key, client_id)
+            if added:
+                job, cancel = self._steer_job(key, cmd, session, status)
+        if not added:
+            # Two sends under one client_id would make the tray's
+            # actions and the command.result ambiguous.
+            self._send_error(
+                409, "duplicate_client_id",
+                "a send with this client_id is still queued",
             )
             return
         state.sendq.submit(qkey, job, cancel)
@@ -1637,6 +1643,158 @@ class _Handler(BaseHTTPRequestHandler):
             "ok": True, "queued": True, "client_id": client_id,
             "waiting": waiting,
         })
+
+    @staticmethod
+    def _send_key(key: str, mode: str) -> str:
+        # steer jobs get their own key: ordered among themselves but
+        # never stuck behind a queue-mode job waiting out a turn.
+        return key if mode == "queue" else f"{key}\x00steer"
+
+    def _queue_job(self, key: str, send: "sendq.QueuedSend"):
+        """A queue-mode send's (job, cancel): wait for idle, then inject.
+
+        Every exit that reports goes through ``waiting.claim`` first; a
+        send the phone already steered or removed exits silently, since
+        that action reported it.
+        """
+        state = self._state
+        cmd = send.payload["cmd"]
+        session = send.payload["session"]
+        status = send.payload["status"]
+        client_id = send.client_id
+
+        def fail(note: str) -> None:
+            if state.waiting.claim(key, send, "failed"):
+                self._send_result(key, client_id, False, note, False)
+
+        def job() -> None:
+            if send.state != "waiting":
+                return
+            # Re-read at run time: the submit-time status predates any
+            # wait behind earlier jobs on this key — a send that started
+            # a turn since then must still be waited out. The Session
+            # object itself can go stale mid-wait (the status classifier
+            # times out against session.timestamp), so re-fetch it too.
+            current = state.catalog.session_for(key) or session
+            live = self._fresh_status(current, status)
+            deadline = time.monotonic() + QUEUE_WAIT_MAX_S
+            while live == "active" and time.monotonic() < deadline:
+                send.wake.wait(QUEUE_POLL_S)
+                if send.state != "waiting":
+                    return
+                if state._stop.is_set():
+                    fail("hub restarted; message not sent")
+                    return
+                current = state.catalog.session_for(key) or session
+                live = self._fresh_status(current, status)
+            if live == "active":
+                fail("session stayed busy for 30 min; message not sent")
+                return
+            if not state.waiting.claim(key, send, "sending"):
+                return
+            self._deliver(key, client_id, current, cmd, live)
+
+        def cancel() -> None:
+            fail("hub restarted; message not sent")
+
+        return job, cancel
+
+    def _steer_job(self, key: str, cmd: dict, session, status: str):
+        """A steer-mode send's (job, cancel): inject as soon as it runs."""
+        state = self._state
+
+        def job() -> None:
+            current = state.catalog.session_for(key) or session
+            live = self._fresh_status(current, status)
+            self._deliver(key, cmd["client_id"], current, cmd, live)
+
+        def cancel() -> None:
+            self._send_result(
+                key, cmd["client_id"], False,
+                "hub restarted; message not sent", False,
+            )
+
+        return job, cancel
+
+    def _deliver(
+        self, key: str, client_id: str, session, cmd: dict, live: str
+    ) -> None:
+        try:
+            result = self._injector(key).send(session, cmd, live)
+            ok, note, degraded = result.ok, result.note, result.degraded
+        except Exception as exc:
+            ok, note, degraded = False, str(exc), False
+        self._send_result(key, client_id, ok, note, degraded)
+
+    # Why a client_id is no longer waiting, for the 409 on a late action.
+    _GONE_NOTES = {
+        "sending": "that message already went out",
+        "steered": "that message was already sent now",
+        "removed": "that message was already removed",
+        "failed": "that message already failed",
+    }
+
+    def _queue_action(self, key: str, row: dict) -> None:
+        """``POST /v1/sessions/{key}/queue {client_id, op}``.
+
+        ``steer`` takes one waiting queue-mode send off the idle wait and
+        submits it as a steer (after the steers already queued);
+        ``cancel`` drops it and reports ``command.result`` with
+        ``cancelled: true``. Both claim the send under the ``Waiting``
+        lock, so they race the send's own job safely.
+        """
+        body = self._read_body()
+        if body is None:
+            self._send_error(400, "bad_body", "unreadable JSON body")
+            return
+        try:
+            act = protocol.parse_queue_action(body)
+        except ValueError as exc:
+            self._send_error(422, "bad_command", str(exc))
+            return
+        client_id, op = act["client_id"], act["op"]
+        state = self._state
+        steer_key = self._send_key(key, "steer")
+        if op == "steer":
+            # Sending now is a write: the same rules as a steer message.
+            if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
+                self._send_error(
+                    409, "not_attached",
+                    "session is observed: read-only until attached",
+                )
+                return
+            if state.sendq.pending(steer_key) >= MAX_SEND_BACKLOG:
+                self._send_error(
+                    429, "backlog_full",
+                    "too many messages waiting for this session",
+                )
+                return
+        send, gone = state.waiting.take(
+            key, client_id, "steered" if op == "steer" else "removed"
+        )
+        if send is None:
+            if gone == "unknown":
+                self._send_error(
+                    404, "unknown_send",
+                    "no queued message with that client_id",
+                )
+            else:
+                self._send_error(409, "not_waiting", self._GONE_NOTES.get(
+                    gone, "that message is no longer queued"))
+            return
+        if op == "cancel":
+            self._send_result(
+                key, client_id, False, "removed before sending", False,
+                cancelled=True,
+            )
+        else:
+            payload = send.payload
+            job, cancel = self._steer_job(
+                key, dict(payload["cmd"], mode="steer"),
+                payload["session"], payload["status"],
+            )
+            state.sendq.submit(steer_key, job, cancel)
+        self._send_json(200, {"ok": True, "client_id": client_id, "op": op})
 
     def _fresh_status(self, session, fallback: str) -> str:
         """Reclassify one session now; the catalog row can be stale."""
@@ -1653,17 +1811,24 @@ class _Handler(BaseHTTPRequestHandler):
         ok: bool,
         note: str,
         degraded: bool,
+        cancelled: bool = False,
     ) -> None:
-        """Report a queued send the way a satellite would."""
+        """Report a queued send the way a satellite would.
+
+        ``cancelled`` is set (and true) only on a send the phone removed
+        from the queue, so a client can tell it from a failure.
+        """
+        fields = {
+            "command_id": "", "op": "message", "ok": ok,
+            "note": note, "degraded": degraded,
+            "client_id": client_id,
+        }
+        if cancelled:
+            fields["cancelled"] = True
         self._state.emit(
             key,
             protocol.event(
-                "command.result", key, self._state.machine_id,
-                {
-                    "command_id": "", "op": "message", "ok": ok,
-                    "note": note, "degraded": degraded,
-                    "client_id": client_id,
-                },
+                "command.result", key, self._state.machine_id, fields,
             ),
         )
 

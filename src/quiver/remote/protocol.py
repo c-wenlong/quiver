@@ -214,6 +214,27 @@ def parse_message_command(body: dict) -> dict:
     }
 
 
+# What ``POST .../queue`` can do to one waiting queue-mode send.
+QUEUE_OPS = frozenset({"steer", "cancel"})
+
+
+def parse_queue_action(body: dict) -> dict:
+    """Validate a ``POST .../queue`` body: ``{client_id, op}``."""
+    if not isinstance(body, dict):
+        raise ValueError("body must be a JSON object")
+    client_id = body.get("client_id")
+    if (
+        not isinstance(client_id, str)
+        or not 1 <= len(client_id) <= 64
+        or not _CLIENT_ID_RE.fullmatch(client_id)
+    ):
+        raise ValueError("queue.client_id must be 1-64 chars of [A-Za-z0-9_-]")
+    op = body.get("op")
+    if op not in QUEUE_OPS:
+        raise ValueError(f"queue.op must be one of {sorted(QUEUE_OPS)}")
+    return {"client_id": client_id, "op": op}
+
+
 def parse_approval_command(body: dict) -> dict:
     """Validate a ``POST .../approval`` body."""
     if not isinstance(body, dict):
