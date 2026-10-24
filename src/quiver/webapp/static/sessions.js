@@ -152,7 +152,7 @@ function searchNote(kept) {
     return `<p class="caption search-note">Couldn't reach transcript search, so this matches titles and details only.</p>`;
   }
   if (s.search.indexed === false) {
-    return `<p class="caption search-note">Searching titles and details only. Run <code>swe session index --on</code> on the hub to search what was said.</p>`;
+    return `<p class="caption search-note">Searching titles and details only. Turn on <a href="#/settings?section=experimental">Session search</a> in Settings › Experimental to search what was said.</p>`;
   }
   const said = kept.filter((r) => transcriptHit(r.key)).length;
   if (!said) return "";
