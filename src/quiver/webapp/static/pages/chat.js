@@ -829,6 +829,9 @@ const SessionChat = (() => {
     chat.awaitingReply = false;
     chat.seq = 0;
     chat.history = null;
+    // Set once the opening reads are done and the stream is started; a
+    // reconnect before that would replay what the backfill is drawing.
+    chat.opened = false;
     chat.toolCards.clear();
     chat.confirmAttach = false;
     chat.attaching = false;
@@ -836,7 +839,13 @@ const SessionChat = (() => {
     chat.connState = "connecting";
     paintShell();
     updateOwnership();
-    const [rowStatus, logStatus, waiting] = await Promise.all([loadRow(gen), backfill(gen), pendingApproval(gen)]);
+    // The catalog is read after the backfill, never before: an attach or a
+    // status change journaled before the backfill's last message is then
+    // already in the row, and one after it comes with the stream.
+    const logStatus = await backfill(gen);
+    if (gen !== chat.gen) return;
+    const [rowStatus, waiting] = logStatus === 401 ? [401, ""]
+      : await Promise.all([loadRow(gen), pendingApproval(gen)]);
     if (gen !== chat.gen) return;
     if (rowStatus === 401 || logStatus === 401) {
       close();
@@ -849,6 +858,7 @@ const SessionChat = (() => {
     // waiting approval may be older than that message: then the stream
     // replays from the start, and only that ask is taken from the part
     // the backfill already showed.
+    chat.opened = true;
     const shown = waiting && $("chat-log").querySelector(`.msg.approval[data-req="${CSS.escape(waiting)}"]`);
     if (waiting && !shown && chat.seq) {
       chat.history = { until: chat.seq, rid: waiting, prompt: "", seq: 0, resolved: false };
@@ -987,7 +997,7 @@ const SessionChat = (() => {
     if (chat.key && keyFromHash() !== chat.key) close();
   });
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && chat.key && chat.rowKnown && !chat.stream) {
+    if (document.visibilityState === "visible" && chat.key && chat.opened && !chat.stream) {
       openStream(chat.gen, resumeSeq());
     }
   });

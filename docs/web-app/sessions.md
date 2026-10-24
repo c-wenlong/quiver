@@ -29,13 +29,17 @@ sheet as before.
 
 ## How it talks to the hub
 
-1. `GET /v1/sessions` for the catalog row: `ownership`, `attachable` and
-   `status` as the hub has them now (the list's copy can be minutes old),
-   and the machine's name.
-2. `GET /v1/sessions/{key}/messages?limit=500`, the backfill.
-3. `GET /v1/inbox`, for an approval of this session the hub still waits
-   on (its `request_id`).
-4. `GET /v1/sessions/{key}/events?last=<seq of the last message shown>`,
+1. `GET /v1/sessions/{key}/messages?limit=500`, the backfill.
+2. Then, together: `GET /v1/sessions` for the catalog row (`ownership`,
+   `attachable` and `status` as the hub has them now, since the list's
+   copy can be minutes old, and the machine's name), and `GET /v1/inbox`
+   for an approval of this session the hub still waits on (its
+   `request_id`). The row is read after the backfill so an attach or
+   status change journaled before its last message is already in it;
+   one after it comes with the stream. The composer stays off until the
+   row is in, and a tab coming back to view doesn't reconnect before
+   the stream has started.
+3. `GET /v1/sessions/{key}/events?last=<seq of the last message shown>`,
    read with a fetch stream (EventSource can't send the bearer). Events
    are revealed one at a time with a short gap, as in the PWA; a replay of
    more than 24 lands at once. A dropped stream reconnects after 2 s from

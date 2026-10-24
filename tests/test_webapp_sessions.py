@@ -229,7 +229,7 @@ class TestSessionsRoute(HubBase):
 
 class TestChatContract(unittest.TestCase):
     """The hub answers the chat (pages/chat.js) relies on, in the order it
-    makes the calls: catalog row, backfill, stream from the backfill's
+    makes the calls: backfill, catalog row, stream from the backfill's
     last seq, then the writes, against a session attached to a stub."""
 
     def setUp(self):
@@ -266,12 +266,12 @@ class TestChatContract(unittest.TestCase):
         self.emit("message.appended", protocol.message("user", "fix it"))
         self.emit("message.appended", protocol.message("assistant", "on it"))
         self.emit("approval.requested", {"request_id": "r1", "prompt": "Run tests?"})
-        status, data = self.srv.request("GET", "/v1/sessions", headers=self.hdr)
-        row = next(r for r in json.loads(data)["sessions"] if r["key"] == self.key)
-        self.assertEqual((row["ownership"], row["attachable"]), ("attached", True))
         status, data = self.srv.request(
             "GET", "/v1/sessions/claude%3As1/messages?limit=500", headers=self.hdr)
         messages = json.loads(data)["messages"]
+        status, data = self.srv.request("GET", "/v1/sessions", headers=self.hdr)
+        row = next(r for r in json.loads(data)["sessions"] if r["key"] == self.key)
+        self.assertEqual((row["ownership"], row["attachable"]), ("attached", True))
         self.assertEqual([m["data"]["kind"] for m in messages], ["user", "assistant"])
         # The stream opens after the last message shown, so the approval
         # asked since then reaches the page.
