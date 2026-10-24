@@ -2,7 +2,7 @@
 
 The Mac app's MCP servers page (`McpServersPage`, `McpModel`,
 `McpServerRepoModel`) in the web app, for the machine the hub runs on.
-Its one write is a server's Sync, with its Preview.
+Its writes are a server's Sync, with its Preview, and its Remove.
 
 ## What it shows
 
@@ -172,6 +172,25 @@ How it runs:
   `not_run`); if nothing was saved it is a 409 `sync_refused`. The page reads the list again after
   any failed sync.
 
+### Remove
+
+The sheet's footer has **Remove…** (red text) on the left, as the app's
+does. It opens a confirm above the footer: "Remove demo? It goes from
+Claude Code, Quiver hub on box." with the command, `swe mcp remove demo
+--from=claude,quiver`, and a red Remove. On success the sheet closes and
+the list repaints from the answer, with "Removed demo from Claude Code,
+Quiver hub." above it until the list is read again; a refusal stays in
+the sheet and the list is read again.
+
+`POST /v1/app/mcp/remove` with `{"server", "from": [places]}` (`quiver`
+is the hub) runs `mcp/cli.py`'s `remove_places` and `remove_server`, the
+two halves of `swe mcp remove <name> --from=<places>`, under the sync
+lock. `from` is what the confirm listed: every place must still hold the
+server (409 `state_changed` otherwise), and a place it has reached since
+is left alone, because the confirm didn't name it. 404 `unknown_server`,
+422 `bad_server` / `bad_from` for bad shapes. The answer is `{"server",
+"removed", "absent", "page"}`, `page` being the list after the write.
+
 ## Security
 
 - Env and header values are never in the payload; swe sends only their
@@ -193,10 +212,12 @@ How it runs:
 
 ## Differences from the Mac app
 
-- **Sync is the only write.** Add server, Remove, and pasting a secret
-  value stay in `swe mcp add|remove|secret set` and the Mac app; the sheet
-  shows the names that need values with the `swe mcp secret set` hint
-  instead of paste fields.
+- **Sync and Remove are the writes.** Add server and pasting a secret
+  value stay in `swe mcp add|secret set` and the Mac app; the sheet shows
+  the names that need values with the `swe mcp secret set` hint instead of
+  paste fields.
+- **Remove's confirm is inline** and names the command; the app's is a
+  dialog. The web page also says what it removed after the sheet closes.
 - **Preview says more.** The Mac app's Preview is swe's one sentence; the
   web page adds the per-harness plan (files, command line, key names
   gained, lost or changed), since the confirm has to name the files.

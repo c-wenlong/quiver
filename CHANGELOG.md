@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Remove an MCP server.** The MCP server sheet has the Mac
+  app's Remove…, which asks first, names `swe mcp remove <name>
+  --from=…` and the places it goes from, and runs it on the hub.
+  `swe mcp remove`'s body is now `remove_places` and `remove_server`,
+  which the CLI and the web app share.
+
 - **Web app: install, enable, disable and uninstall plugins.** A plugin's
   sheet on Explore lists each harness with its state and the Mac app's
   actions as buttons, where it used to say to use `swe plugins`. Each asks
