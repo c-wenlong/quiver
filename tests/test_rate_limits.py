@@ -5206,6 +5206,51 @@ class NoReadingReasonTest(unittest.TestCase):
         self.run_all(refresh_failed=True)
         self.assertEqual(fetcher.call_count, 2)
 
+    def test_a_cached_failure_survives_a_save_by_another_refetch(self):
+        broken = MagicMock(return_value=None)
+        register("broken", broken, signed_in=lambda: True)
+        register("out", MagicMock(return_value=None), signed_in=lambda: False)
+        self.run_all(use_cache=False)
+        first = json.loads(self.cache.read_text())["no_data"]["broken"]
+        for _ in range(3):
+            # "out" is refetched (signed out) and the file saved each time.
+            _result, reasons = self.run_all()
+        self.assertEqual(broken.call_count, 1)
+        self.assertEqual(reasons, {"broken": "error", "out": "signed_out"})
+        saved = json.loads(self.cache.read_text())
+        self.assertEqual(saved["no_data"]["broken"], first)
+        self.assertEqual(saved["no_data_status"]["broken"], "error")
+
+    def test_a_slow_credential_lookup_is_unknown_not_signed_out(self):
+        from quiver.harness import rate_limits
+        with patch.object(rate_limits.shutil, "which", return_value="/usr/bin/x"), \
+             patch.object(rate_limits.subprocess, "run",
+                          side_effect=subprocess.TimeoutExpired("security", 1)):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                rate_limits._keychain_item_exists("-l", "x")
+            with self.assertRaises(subprocess.TimeoutExpired):
+                rate_limits._gh_signed_in()
+        register("tool", MagicMock(return_value=None),
+                 signed_in=MagicMock(side_effect=subprocess.TimeoutExpired("gh", 1)))
+        _result, reasons = self.run_all(use_cache=False)
+        self.assertEqual(reasons, {})
+
+    def test_probes_never_read_a_secret(self):
+        from quiver.harness import rate_limits
+        calls = []
+
+        def run(args, **kw):
+            calls.append(args)
+            return _CompletedProc(returncode=0, stdout="tok\n")
+        with patch.object(rate_limits.shutil, "which", return_value="/usr/bin/x"), \
+             patch.object(rate_limits.subprocess, "run", side_effect=run):
+            self.assertTrue(rate_limits._keychain_item_exists("-s", "a", "-a", "b"))
+            self.assertTrue(rate_limits._gh_signed_in())
+        self.assertNotIn("-w", calls[0])
+        with patch.object(rate_limits.shutil, "which", return_value=None):
+            self.assertFalse(rate_limits._keychain_item_exists("-l", "x"))
+            self.assertFalse(rate_limits._gh_signed_in())
+
     def test_signed_out_is_rechecked_every_call(self):
         signed_in = [False]
         info = RateLimitInfo(tool_name="tool", used_percent=7, limit_reached=False,
