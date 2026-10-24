@@ -45,7 +45,7 @@ struct MainTabs: View {
     @State private var sessionsPath: [Route] = []
     @State private var inboxPath: [Route] = []
 
-    enum Tab { case sessions, inbox }
+    enum Tab { case sessions, inbox, usage }
 
     var body: some View {
         TabView(selection: $tab) {
@@ -61,6 +61,12 @@ struct MainTabs: View {
             .tabItem { Label("Inbox", systemImage: "tray") }
             .badge(app.inboxBadge)
             .tag(Tab.inbox)
+
+            NavigationStack {
+                UsageView()
+            }
+            .tabItem { Label("Usage", systemImage: "gauge.with.dots.needle.33percent") }
+            .tag(Tab.usage)
         }
         .onAppear { app.startRefreshing() }
     }

@@ -135,6 +135,18 @@ struct HubClient: Sendable {
         try await send(request("GET", "/v1/search", query: ["q": query, "limit": "\(limit)"]))
     }
 
+    /// Limits and 100-day session counts for the hub and each satellite.
+    /// `refresh` refetches readings older than a minute, and failed ones.
+    func usage(refresh: Bool = false) async throws -> UsageResponse {
+        try await send(request("GET", "/v1/usage", query: refresh ? ["refresh": "1"] : [:]))
+    }
+
+    /// Token and cost totals for `period`, with days cut at midnight in
+    /// the phone's time zone.
+    func overview(period: UsagePeriod, timeZone: TimeZone = .current) async throws -> OverviewResponse {
+        try await send(request("GET", "/v1/app/overview", query: ["period": period.rawValue, "tz": timeZone.identifier]))
+    }
+
     /// The newest `limit` messages, or with `before` the `limit` just
     /// older than that seq: how the chat pages back through history.
     func messages(_ key: String, limit: Int, before: Int? = nil) async throws -> MessagesResponse {

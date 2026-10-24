@@ -416,6 +416,48 @@ final class ChatModelTests: XCTestCase {
         XCTAssertFalse(chat.working)
     }
 
+    private func result(_ json: String) -> CommandResult {
+        try! Hub.decoder.decode(CommandResult.self, from: Data(json.utf8))
+    }
+
+    func testADeliveredSendStopsSayingSending() {
+        let ok = result(#"{"op":"message","ok":true,"note":"sent to tmux pane","client_id":"c1"}"#)
+        // A slash command like /rename never comes back as a user message,
+        // so the result alone has to settle the bubble.
+        XCTAssertEqual(SendState.settled(ok, current: .sending, agentActive: false), .delivered(nil))
+        XCTAssertEqual(SendState.settled(ok, current: .sending, agentActive: true),
+                       .delivered("Delivered. The agent reads it at its next step"))
+        let failed = result(#"{"op":"message","ok":false,"note":"pane unreachable","client_id":"c1"}"#)
+        XCTAssertEqual(SendState.settled(failed, current: .queued("Queued until the agent is idle"), agentActive: false),
+                       .failed("pane unreachable"))
+        // Once settled, a late result doesn't reopen it.
+        XCTAssertNil(SendState.settled(failed, current: .delivered(nil), agentActive: false))
+        XCTAssertNil(SendState.settled(ok, current: .failed("x"), agentActive: false))
+    }
+
+    func testSendButtonStopsTheAgentOnlyWithNothingTyped() {
+        XCTAssertEqual(ChatModel.composerAction(draft: "hi", agentWorking: true), .send)
+        XCTAssertEqual(ChatModel.composerAction(draft: "hi", agentWorking: false), .send)
+        XCTAssertEqual(ChatModel.composerAction(draft: " \n", agentWorking: true), .stop)
+        XCTAssertEqual(ChatModel.composerAction(draft: "", agentWorking: false), .disabled)
+    }
+
+    func testStopIsOfferedWhileTheAgentWorksOrAReplyIsDue() {
+        XCTAssertTrue(ChatModel.canInterrupt(status: .active, awaitingReply: false))
+        XCTAssertTrue(ChatModel.canInterrupt(status: .idle, awaitingReply: true))
+        XCTAssertFalse(ChatModel.canInterrupt(status: .idle, awaitingReply: false))
+        XCTAssertFalse(ChatModel.canInterrupt(status: nil, awaitingReply: false))
+        XCTAssertFalse(ChatModel.canInterrupt(status: .done, awaitingReply: false))
+    }
+
+    func testMessagesStillBeingRevealedDontOfferStop() {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        for seq in 1...3 { chat.enqueue(say(seq)) }
+        XCTAssertTrue(chat.working)
+        XCTAssertFalse(chat.canInterrupt)
+        XCTAssertEqual(ChatModel.composerAction(draft: "", agentWorking: chat.canInterrupt), .disabled)
+    }
+
     func testReopeningAChatReusesItsModel() {
         let app = AppModel()
         let first = app.chat("claude:1")
@@ -677,5 +719,48 @@ final class LaunchFlowTests: XCTestCase {
         XCTAssertEqual(fetches, 3)
         guard case .unconfirmed(let message) = flow.phase else { return XCTFail("expected unconfirmed") }
         XCTAssertTrue(message.hasPrefix("Queued."))
+    }
+
+    func testLinkCardsCollectDistinctWebLinksInOrder() {
+        let text = """
+        See [the page](https://claude.ai/code/artifact/abc) and https://example.com/a.
+        Again <https://claude.ai/code/artifact/abc> plus [docs](http://docs.example.org/x).
+        """
+        XCTAssertEqual(LinkCards.urls(in: text).map(\.absoluteString), [
+            "https://claude.ai/code/artifact/abc", "https://example.com/a", "http://docs.example.org/x",
+        ])
+    }
+
+    func testLinkCardsSkipCodeAndNonWebSchemes() {
+        let text = """
+        Use `https://inline.example.com` or [file](/Users/me/x.py), [mail](mailto:a@b.com), [call](tel:123).
+
+        ```
+        curl https://block.example.com
+        ```
+
+        [ftp](ftp://old.example.com) [real](https://real.example.com/p)
+        """
+        XCTAssertEqual(LinkCards.urls(in: text).map(\.absoluteString), ["https://real.example.com/p"])
+    }
+
+    func testLinkCardsHostAndPath() {
+        let url = URL(string: "https://www.claude.ai/code/artifact/abc?x=1")!
+        XCTAssertEqual(LinkCards.host(url), "claude.ai")
+        XCTAssertEqual(LinkCards.path(url), "/code/artifact/abc?x=1")
+        XCTAssertNil(LinkCards.path(URL(string: "https://claude.ai/")!))
+        XCTAssertTrue(LinkCards.isWeb(url))
+        XCTAssertFalse(LinkCards.isWeb(URL(string: "mailto:a@b.com")!))
+    }
+
+    func testLinkCardsReadTableCellsInOrder() {
+        let text = """
+        | Page | Link |
+        |---|---|
+        | a | [one](https://one.example.com) |
+        | b | https://two.example.com/x |
+        """
+        XCTAssertEqual(LinkCards.urls(in: text).map(\.absoluteString),
+                       ["https://one.example.com", "https://two.example.com/x"])
     }
 }
