@@ -467,6 +467,170 @@ final class ChatModelTests: XCTestCase {
         XCTAssertFalse(app.chat("claude:2") === first)
     }
 
+    // MARK: Queued tray
+
+    private func user(_ seq: Int, _ text: String) -> Envelope {
+        env(#"{"type":"message.appended","seq":"# + String(seq) + #","data":{"kind":"user","text":""# + text + #""}}"#)
+    }
+
+    private func commandResult(_ json: String) -> Envelope {
+        env(#"{"type":"command.result","seq":50,"data":"# + json + "}")
+    }
+
+    func testASendWhileTheAgentWorksWaitsInTheTrayNotTheTranscript() {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        chat.stage("run the tests", clientId: "c1", toTray: true)
+        XCTAssertTrue(chat.items.isEmpty)
+        XCTAssertEqual(chat.tray.map(\.clientId), ["c1"])
+        XCTAssertEqual(chat.tray.first?.phase, .posting)
+        chat.posted("c1", waiting: true)
+        XCTAssertEqual(chat.tray.first?.phase, .waiting)
+        XCTAssertTrue(chat.items.isEmpty)
+        XCTAssertFalse(chat.awaitingReply)
+    }
+
+    func testAnIdleSendGoesStraightToTheTranscript() {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        chat.stage("hello", clientId: "c1", toTray: false)
+        XCTAssertTrue(chat.queued.isEmpty)
+        XCTAssertEqual(chat.items.map(\.id), ["send-c1"])
+        XCTAssertTrue(chat.awaitingReply)
+    }
+
+    func testTheHubDecidesWhetherASendWaits() {
+        // The phone thought the agent was busy; the hub sent it at once.
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        chat.stage("one", clientId: "c1", toTray: true)
+        chat.posted("c1", waiting: false)
+        XCTAssertTrue(chat.queued.isEmpty)
+        XCTAssertEqual(chat.items.first?.kind, .user(text: "one", send: .sending))
+        // The phone thought it idle; the hub holds it.
+        chat.stage("two", clientId: "c2", toTray: false)
+        chat.posted("c2", waiting: true)
+        XCTAssertEqual(chat.tray.map(\.clientId), ["c2"])
+        XCTAssertEqual(chat.items.map(\.id), ["send-c1"])
+    }
+
+    func testTheEchoMovesAQueuedSendIntoTheTranscript() {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        chat.apply(env(#"{"type":"message.appended","seq":1,"data":{"kind":"assistant","text":"working on it"}}"#))
+        chat.stage("and update the docs", clientId: "c1", toTray: true)
+        chat.posted("c1", waiting: true)
+        chat.apply(user(2, "and update the docs"))
+        XCTAssertTrue(chat.queued.isEmpty)
+        XCTAssertEqual(chat.items.map(\.id), ["m1", "m2"])
+        XCTAssertEqual(chat.items.last?.kind, .user(text: "and update the docs", send: nil))
+        // Its result after the echo shows nothing more.
+        chat.apply(commandResult(#"{"op":"message","ok":true,"client_id":"c1"}"#))
+        XCTAssertEqual(chat.items.count, 2)
+    }
+
+    func testItsResultMovesAQueuedSendIntoTheTranscript() {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        chat.stage("/rename tray", clientId: "c1", toTray: true)
+        chat.posted("c1", waiting: true)
+        chat.apply(commandResult(#"{"op":"message","ok":true,"note":"sent to tmux pane","client_id":"c1"}"#))
+        XCTAssertTrue(chat.queued.isEmpty)
+        XCTAssertEqual(chat.items.first?.kind, .user(text: "/rename tray", send: .delivered(nil)))
+    }
+
+    func testAnOlderPageIsNotTakenForAnEcho() {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        chat.stage("continue", clientId: "c1", toTray: true)
+        chat.posted("c1", waiting: true)
+        XCTAssertTrue(chat.prepend(page(#"{"type":"message.appended","seq":3,"data":{"kind":"user","text":"continue"}}"#,
+                                        nextBefore: nil, hasMore: false)))
+        XCTAssertEqual(chat.tray.map(\.clientId), ["c1"])
+    }
+
+    func testARemovedSendLeavesWithoutAFailure() {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        chat.stage("never mind", clientId: "c1", toTray: true)
+        chat.posted("c1", waiting: true)
+        chat.markRemoving("c1")
+        XCTAssertTrue(chat.tray.isEmpty)
+        chat.apply(commandResult(#"{"op":"message","ok":false,"note":"removed before sending","client_id":"c1","cancelled":true}"#))
+        XCTAssertTrue(chat.queued.isEmpty)
+        XCTAssertTrue(chat.items.isEmpty)
+        // Removed from another device: same.
+        chat.apply(commandResult(#"{"op":"message","ok":false,"note":"removed before sending","client_id":"c9","cancelled":true}"#))
+        XCTAssertTrue(chat.items.isEmpty)
+        XCTAssertEqual(result(#"{"op":"message","ok":false,"cancelled":true}"#).cancelled, true)
+    }
+
+    func testARefusedRemoveComesBackWithANote() {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        chat.stage("one", clientId: "c1", toTray: true)
+        chat.stage("two", clientId: "c2", toTray: true)
+        chat.posted("c1", waiting: true)
+        chat.posted("c2", waiting: true)
+        chat.markRemoving("c1")
+        chat.removeFailed("c1", HubError(status: 0, code: "network", message: "x"))
+        XCTAssertEqual(chat.tray.first, QueuedSend(clientId: "c1", text: "one", phase: .waiting, note: "Can't reach the hub"))
+        // Already went out: it waits for its echo, with nothing to send now.
+        chat.markRemoving("c2")
+        chat.removeFailed("c2", HubError(status: 409, code: "not_waiting", message: "that message already went out"))
+        XCTAssertEqual(chat.tray.last?.phase, .left)
+        XCTAssertEqual(chat.tray.last?.note, "Already sent")
+        // Unknown to the hub: nothing to remove, so it goes.
+        chat.markRemoving("c1")
+        chat.removeFailed("c1", HubError(status: 404, code: "unknown_send", message: "x"))
+        XCTAssertEqual(chat.tray.map(\.clientId), ["c2"])
+    }
+
+    func testSendNowShowsSendingAndRefusalsBecomeShortNotes() {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        chat.stage("ship it", clientId: "c1", toTray: true)
+        XCTAssertFalse(chat.markSendingNow("c1"), "the hub can't act on it before it answers the POST")
+        chat.posted("c1", waiting: true)
+        XCTAssertTrue(chat.markSendingNow("c1"))
+        XCTAssertEqual(chat.tray.first?.phase, .sendingNow)
+        chat.steerFailed("c1", HubError(status: 409, code: "not_attached", message: "x"))
+        XCTAssertEqual(chat.tray.first?.phase, .waiting)
+        XCTAssertEqual(chat.tray.first?.note, "Attach to send now")
+        XCTAssertTrue(chat.markSendingNow("c1"))
+        XCTAssertNil(chat.tray.first?.note)
+        chat.steerFailed("c1", HubError(status: 409, code: "not_waiting", message: "that message already went out"))
+        XCTAssertEqual(chat.tray.first?.phase, .left)
+
+        func note(_ code: String, _ message: String = "") -> String {
+            ChatModel.queueNote(HubError(status: 409, code: code, message: message))
+        }
+        XCTAssertEqual(note("not_waiting", "that message already went out"), "Already sent")
+        XCTAssertEqual(note("not_waiting", "that message was already sent now"), "Already sent")
+        XCTAssertEqual(note("not_waiting", "that message was already removed"), "Already removed")
+        XCTAssertEqual(note("not_waiting", "that message already failed"), "Already failed")
+        XCTAssertEqual(note("not_attached"), "Attach to send now")
+        XCTAssertEqual(note("queue_unsupported"), "Not available on this machine")
+        XCTAssertEqual(note("backlog_full"), "Too many waiting. Try again shortly")
+        XCTAssertEqual(note("unknown_send"), "The hub lost this message")
+    }
+
+    func testTheHubsQueueListMergesByClientId() throws {
+        let body = try Hub.decoder.decode(QueueResponse.self, from: Data(#"""
+            {"sends":[{"client_id":"a","text":"from before","attachments":[],"queued_at":1.5},
+                      {"client_id":"b","text":"mine","attachments":["r1"],"queued_at":2}]}
+            """#.utf8))
+        XCTAssertEqual(body.sends.map(\.clientId), ["a", "b"])
+        let local = [
+            QueuedSend(clientId: "b", text: "mine", phase: .sendingNow),
+            QueuedSend(clientId: "gone", text: "went out while away", phase: .waiting),
+            QueuedSend(clientId: "new", text: "posting", phase: .posting),
+        ]
+        let merged = ChatModel.mergeQueue(local: local, hub: body.sends, settled: [])
+        XCTAssertEqual(merged.map(\.clientId), ["a", "b", "new"])
+        XCTAssertEqual(merged[0], QueuedSend(clientId: "a", text: "from before", phase: .waiting))
+        XCTAssertEqual(merged[1].phase, .sendingNow)
+        // A list fetched before a send settled can't bring it back.
+        XCTAssertEqual(ChatModel.mergeQueue(local: [], hub: body.sends, settled: ["a"]).map(\.clientId), ["b"])
+
+        // On the model: a send already in the transcript isn't added twice.
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        chat.stage("mine", clientId: "b", toTray: false)
+        chat.mergeQueue(body.sends)
+        XCTAssertEqual(chat.tray.map(\.clientId), ["a"])
+    }
+
     func testChatCacheDropsTheLeastRecentlyOpened() {
         let app = AppModel()
         let oldest = app.chat("claude:0")

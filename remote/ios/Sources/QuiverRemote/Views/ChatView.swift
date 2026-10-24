@@ -844,17 +844,16 @@ struct SendOrStopButton: View {
 private struct Composer: View {
     @Bindable var model: ChatModel
     @FocusState private var focused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        let tray = model.tray
         VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                Picker("Mode", selection: $model.mode) {
-                    Text("Queue").tag(ChatModel.SendMode.queue)
-                    Text("Steer").tag(ChatModel.SendMode.steer)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 150)
-                Spacer()
+            if !tray.isEmpty {
+                QueuedTray(sends: tray,
+                           onSendNow: { cid in Task { await model.sendNow(cid) } },
+                           onRemove: { cid in Task { await model.remove(cid) } })
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8)))
             }
             HStack(alignment: .bottom, spacing: 8) {
                 TextField("Message the session", text: $model.draft, axis: .vertical)
@@ -869,8 +868,126 @@ private struct Composer: View {
                                  onStop: { Task { await model.interrupt() } })
             }
         }
+        .animation(.easeOut(duration: 0.2), value: tray.isEmpty)
         .padding(.horizontal, Theme.gutter)
         .padding(.top, 10)
         .padding(.bottom, 8)
+    }
+}
+
+/// Sends made while the agent works, pinned above the prompt box until
+/// they go out: each can be sent now (written into the running turn) or
+/// removed before the agent sees it.
+struct QueuedTray: View {
+    let sends: [QueuedSend]
+    var onSendNow: (String) -> Void = { _ in }
+    var onRemove: (String) -> Void = { _ in }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    static let rowHeight: CGFloat = 44
+    /// Rows shown before the card scrolls.
+    static let visibleRows = 3
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 0) {
+                Text("Queued").foregroundStyle(Theme.textPrimary).fontWeight(.medium)
+                Text(" · \(sends.count) · sends when the agent finishes").foregroundStyle(Theme.textSecondary)
+            }
+            .font(.system(size: 12))
+            .lineLimit(1)
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+            .accessibilityElement(children: .combine)
+            if sends.count > Self.visibleRows {
+                ScrollView(.vertical) { rows }
+                    // The chat anchors its scroll views at the bottom; the
+                    // tray starts at its oldest send.
+                    .defaultScrollAnchor(.top)
+                    .frame(height: CGFloat(Self.visibleRows) * Self.rowHeight)
+            } else {
+                rows
+            }
+        }
+        .background(Theme.card, in: .rect(cornerRadius: Theme.blockRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
+        .clipShape(.rect(cornerRadius: Theme.blockRadius))
+        .animation(.easeOut(duration: 0.2), value: sends.map(\.id))
+    }
+
+    private var rows: some View {
+        VStack(spacing: 0) {
+            ForEach(sends) { send in
+                QueuedRow(send: send, onSendNow: { onSendNow(send.clientId) }, onRemove: { onRemove(send.clientId) })
+                    .overlay(alignment: .top) {
+                        if send.id != sends.first?.id { Rectangle().fill(Theme.border).frame(height: 1) }
+                    }
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+    }
+}
+
+private struct QueuedRow: View {
+    let send: QueuedSend
+    let onSendNow: () -> Void
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(send.text.replacingOccurrences(of: "\n", with: " "))
+                    .font(Theme.body).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1).truncationMode(.tail)
+                if let note = send.note {
+                    Text(note).font(.system(size: 11))
+                        .foregroundStyle(send.phase == .left ? Theme.textMuted : Theme.dangerText)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .opacity(send.phase == .posting ? 0.6 : 1)
+            switch send.phase {
+            case .sendingNow:
+                Text("Sending now").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+            case .waiting, .posting:
+                Button("Send now", action: onSendNow)
+                    .buttonStyle(SendNowStyle())
+                    .disabled(send.phase == .posting)
+            case .left, .removing:
+                EmptyView()
+            }
+            if send.phase != .sendingNow {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark").font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(width: 32, height: QueuedTray.rowHeight)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .disabled(send.phase == .posting)
+                .accessibilityLabel("Remove")
+            }
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, send.phase == .sendingNow ? 12 : 2)
+        .frame(height: QueuedTray.rowHeight)
+    }
+}
+
+/// A small primary pill, shorter than the compact primary button so it
+/// sits inside a tray row.
+private struct SendNowStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Theme.primaryForeground)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(Theme.primaryBackground, in: .capsule)
+            .opacity(configuration.isPressed ? 0.85 : enabled ? 1 : 0.45)
     }
 }

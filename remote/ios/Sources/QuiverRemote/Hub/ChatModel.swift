@@ -45,6 +45,32 @@ enum SendState: Equatable {
     }
 }
 
+/// A send waiting in the Queued tray above the prompt box: made while the
+/// agent worked, held by the hub until the session goes idle. It stays out
+/// of the transcript until it goes out.
+struct QueuedSend: Identifiable, Equatable {
+    enum Phase: Equatable {
+        /// The POST is on its way; the hub can't act on it yet.
+        case posting
+        case waiting
+        /// Send now was tapped; its result or echo moves it to the transcript.
+        case sendingNow
+        /// Remove was tapped; hidden while the hub confirms.
+        case removing
+        /// The hub says it's no longer waiting (409 not_waiting); its
+        /// result or echo is still to come.
+        case left
+    }
+
+    let clientId: String
+    let text: String
+    var phase: Phase
+    /// Why the last action on it didn't go through, shown under the text.
+    var note: String?
+
+    var id: String { clientId }
+}
+
 enum ApprovalState: Equatable {
     case pending, submitting, queued, resolved(String?), failed(String)
 }
@@ -66,7 +92,16 @@ final class ChatModel {
     /// page once scrolling comes to rest.
     var wantsEarlier = false
     var draft = ""
-    var mode: SendMode = .queue
+    /// Sends the hub holds until the agent goes idle, oldest first. Ones
+    /// being removed stay here, hidden, until the hub confirms; the tray
+    /// shows `tray`.
+    private(set) var queued: [QueuedSend] = []
+    /// Client ids of sends that left the tray (went out, failed or were
+    /// removed): a queue list fetched before that can't bring them back.
+    private var settledSends = Set<String>()
+    /// History is being reloaded: its user messages are old, not echoes
+    /// of what's in the tray now.
+    private var replayingHistory = false
 
     private weak var app: AppModel?
     private var seen = Set<Int>()
@@ -94,8 +129,6 @@ final class ChatModel {
     /// history doesn't open a stream after the chat was left.
     private var generation = 0
 
-    enum SendMode: String, CaseIterable { case queue, steer }
-
     /// Messages per `/messages` page. A long session's 500-message page
     /// was ~850 KB and took seconds to lay out on the phone.
     static let pageSize = 100
@@ -115,8 +148,12 @@ final class ChatModel {
         let gen = generation
         streamTask?.cancel()
         streamTask = nil
+        // The tray survives the app closing: the hub holds the sends.
+        async let waiting = try? client.queue(key)
         if items.isEmpty || loadError != nil { await backfill(client) }
+        let sends = await waiting
         guard gen == generation else { return }
+        if let sends { mergeQueue(sends.sends) }
         streamTask = Task { [weak self, cursor] in
             for await event in EventStream.events(client: client, key: self?.key ?? "", last: cursor) {
                 guard let self else { return }
@@ -254,7 +291,9 @@ final class ChatModel {
             seen = []
             toolCards = [:]
             orphanResults = [:]
+            replayingHistory = true
             for env in body.messages { apply(env) }
+            replayingHistory = false
             hasEarlier = body.hasMore ?? false
             nextBefore = body.nextBefore ?? body.messages.first?.seq
             for item in keep where !items.contains(where: { $0.id == item.id }) { items.append(item) }
@@ -364,7 +403,7 @@ final class ChatModel {
             // The hub echoes a queued send back as a user message: drop the
             // optimistic bubble it replaces (attachments prefix "@path ").
             if let i = items.firstIndex(where: {
-                if case .user(let t, let s) = $0.kind, s != nil, !Self.isFailed(s) { return text == t || text.hasSuffix(t) }
+                if case .user(let t, let s) = $0.kind, s != nil, !Self.isFailed(s) { return Self.echoes(text, t) }
                 return false
             }) {
                 // Still the newest entry: settle the bubble where it is, so
@@ -374,6 +413,11 @@ final class ChatModel {
                     return
                 }
                 items.remove(at: i)
+            } else if !replayingHistory, let j = queued.firstIndex(where: { Self.echoes(text, $0.text) }) {
+                // A queued send went out: it leaves the tray and the echo
+                // lands in the transcript where it really is.
+                settledSends.insert(queued[j].clientId)
+                queued.remove(at: j)
             }
         } else if msg.kind != "tool_result" {
             awaitingReply = false
@@ -421,6 +465,12 @@ final class ChatModel {
         }
     }
 
+    /// The transcript's user message `echo` is the send `sent` coming back
+    /// (attachments prefix "@path ").
+    static func echoes(_ echo: String, _ sent: String) -> Bool {
+        echo == sent || echo.hasSuffix(sent)
+    }
+
     private func hasApproval(_ rid: String) -> Bool {
         items.contains { if case .approval(rid, _, _) = $0.kind { true } else { false } }
     }
@@ -431,6 +481,26 @@ final class ChatModel {
     }
 
     private func settle(_ r: CommandResult) {
+        if r.op == "message", let cid = r.clientId, let i = queued.firstIndex(where: { $0.clientId == cid }) {
+            let entry = queued.remove(at: i)
+            settledSends.insert(cid)
+            // Removed before it went out: gone, and not a failure.
+            if r.cancelled == true { return }
+            // It went out (or failed): show it in the transcript as any
+            // send, settled by the existing rules.
+            let next = SendState.settled(r, current: .sending, agentActive: row?.sessionStatus == .active)
+            items.append(ChatItem(id: "send-\(cid)", kind: .user(text: entry.text, send: next ?? .delivered(nil))))
+            return
+        }
+        if r.op == "message", r.cancelled == true {
+            // Removed from another device, or after this one stopped
+            // showing it: never a failure.
+            if let cid = r.clientId {
+                settledSends.insert(cid)
+                items.removeAll { $0.id == "send-\(cid)" }
+            }
+            return
+        }
         if r.op == "message", let cid = r.clientId, let i = items.firstIndex(where: { $0.id == "send-\(cid)" }),
            case .user(let text, let send?) = items[i].kind {
             // An echo already settled it if `send` is nil.
@@ -480,24 +550,197 @@ final class ChatModel {
         await send(text)
     }
 
+    /// Every send is queue mode: it goes out at once when the agent is
+    /// idle, else the hub holds it and the tray shows it. Send now on a
+    /// tray row is the steer.
     private func send(_ text: String) async {
         guard let client = app?.client else { return }
         let cid = UUID().uuidString
-        let id = "send-\(cid)"
-        withAnimation(.easeOut(duration: 0.25)) {
-            items.append(ChatItem(id: id, kind: .user(text: text, send: .sending)))
-        }
-        awaitingReply = true
+        stage(text, clientId: cid, toTray: row?.sessionStatus == .active)
         do {
-            let accepted = try await client.sendMessage(key, text: text, mode: mode.rawValue, clientId: cid)
-            if accepted.waiting == true, let i = pendingSend(id) {
-                items[i].kind = .user(text: text, send: .queued("Queued until the agent is idle"))
-            }
+            let accepted = try await client.sendMessage(key, text: text, mode: "queue", clientId: cid)
+            posted(cid, waiting: accepted.waiting == true)
         } catch {
-            if let i = pendingSend(id) {
-                awaitingReply = false
-                items[i].kind = .user(text: text, send: .failed((error as? HubError)?.message ?? "Send failed"))
+            postFailed(cid, error)
+        }
+    }
+
+    /// Shows a send before the hub answers: in the tray while the agent
+    /// works, else as a bubble in the transcript.
+    func stage(_ text: String, clientId cid: String, toTray: Bool) {
+        withAnimation(.easeOut(duration: 0.25)) {
+            if toTray {
+                queued.append(QueuedSend(clientId: cid, text: text, phase: .posting))
+            } else {
+                items.append(ChatItem(id: "send-\(cid)", kind: .user(text: text, send: .sending)))
             }
+        }
+        if !toTray { awaitingReply = true }
+    }
+
+    /// The hub took the send; `waiting` says whether it holds it for idle.
+    /// Where it shows follows the hub, not the status the phone last saw.
+    func posted(_ cid: String, waiting: Bool) {
+        if let i = queued.firstIndex(where: { $0.clientId == cid }) {
+            guard queued[i].phase == .posting else { return }
+            if waiting {
+                queued[i].phase = .waiting
+            } else {
+                // The agent was idle after all: it goes out now.
+                let entry = queued.remove(at: i)
+                withAnimation(.easeOut(duration: 0.25)) {
+                    items.append(ChatItem(id: "send-\(cid)", kind: .user(text: entry.text, send: .sending)))
+                }
+                awaitingReply = true
+            }
+        } else if waiting, !settledSends.contains(cid), let i = items.firstIndex(where: { $0.id == "send-\(cid)" }),
+                  case .user(let text, .sending?) = items[i].kind {
+            // The agent was busy after all: it waits in the tray.
+            withAnimation(.easeOut(duration: 0.25)) {
+                items.remove(at: i)
+                queued.append(QueuedSend(clientId: cid, text: text, phase: .waiting))
+            }
+            awaitingReply = false
+        }
+    }
+
+    /// The POST failed: a failed bubble in the transcript, to retry.
+    func postFailed(_ cid: String, _ error: Error) {
+        let note = (error as? HubError)?.message ?? "Send failed"
+        if let i = queued.firstIndex(where: { $0.clientId == cid }) {
+            let entry = queued.remove(at: i)
+            settledSends.insert(cid)
+            withAnimation(.easeOut(duration: 0.25)) {
+                items.append(ChatItem(id: "send-\(cid)", kind: .user(text: entry.text, send: .failed(note))))
+            }
+        } else if let i = pendingSend("send-\(cid)"), case .user(let text, _) = items[i].kind {
+            awaitingReply = false
+            items[i].kind = .user(text: text, send: .failed(note))
+        }
+    }
+
+    // MARK: Queued tray
+
+    /// What the tray shows: everything queued but what's being removed.
+    var tray: [QueuedSend] { queued.filter { $0.phase != .removing } }
+
+    /// Takes the hub's list of waiting sends after (re)opening the chat.
+    func mergeQueue(_ sends: [WaitingSend]) {
+        var known = settledSends
+        for item in items where item.id.hasPrefix("send-") { known.insert(String(item.id.dropFirst(5))) }
+        let merged = Self.mergeQueue(local: queued, hub: sends, settled: known)
+        guard merged != queued else { return }
+        withAnimation(.easeOut(duration: 0.25)) { queued = merged }
+    }
+
+    /// The hub's list wins: what it holds shows in its order (keeping what
+    /// this phone knows about each), and what it no longer holds leaves,
+    /// except a send whose POST hasn't been answered yet. `settled` are
+    /// sends already shown elsewhere or gone, which an older list can't
+    /// bring back.
+    static func mergeQueue(local: [QueuedSend], hub: [WaitingSend], settled: Set<String>) -> [QueuedSend] {
+        var out: [QueuedSend] = []
+        for send in hub where !settled.contains(send.clientId) && !out.contains(where: { $0.clientId == send.clientId }) {
+            if let mine = local.first(where: { $0.clientId == send.clientId }) {
+                out.append(mine.phase == .posting ? QueuedSend(clientId: mine.clientId, text: mine.text, phase: .waiting) : mine)
+            } else {
+                out.append(QueuedSend(clientId: send.clientId, text: send.text ?? "", phase: .waiting))
+            }
+        }
+        for mine in local where mine.phase == .posting && !out.contains(where: { $0.clientId == mine.clientId }) {
+            out.append(mine)
+        }
+        return out
+    }
+
+    /// Send now: the hub stops holding it and writes it into the running
+    /// turn. It shows "Sending now" until its result or echo arrives.
+    func sendNow(_ cid: String) async {
+        guard let client = app?.client, markSendingNow(cid) else { return }
+        do {
+            try await client.queueAction(key, clientId: cid, op: "steer")
+        } catch {
+            steerFailed(cid, error)
+        }
+    }
+
+    func markSendingNow(_ cid: String) -> Bool {
+        guard let i = queued.firstIndex(where: { $0.clientId == cid }), queued[i].phase == .waiting else { return false }
+        queued[i].phase = .sendingNow
+        queued[i].note = nil
+        return true
+    }
+
+    func steerFailed(_ cid: String, _ error: Error) {
+        guard let i = queued.firstIndex(where: { $0.clientId == cid }), queued[i].phase == .sendingNow else { return }
+        queued[i].phase = (error as? HubError)?.code == "not_waiting" ? .left : .waiting
+        queued[i].note = Self.queueNote(error)
+    }
+
+    /// Remove: gone from the tray at once, back with a note if the hub
+    /// refuses. Its `command.result` says `cancelled`, never a failure.
+    func remove(_ cid: String) async {
+        guard let i = queued.firstIndex(where: { $0.clientId == cid }) else { return }
+        switch queued[i].phase {
+        case .posting, .sendingNow, .removing:
+            return
+        case .left:
+            // The hub no longer holds it: nothing to ask.
+            dropQueued(cid)
+            return
+        case .waiting:
+            break
+        }
+        guard let client = app?.client else { return }
+        markRemoving(cid)
+        do {
+            try await client.queueAction(key, clientId: cid, op: "cancel")
+            dropQueued(cid)
+        } catch {
+            removeFailed(cid, error)
+        }
+    }
+
+    func markRemoving(_ cid: String) {
+        guard let i = queued.firstIndex(where: { $0.clientId == cid }) else { return }
+        withAnimation(.easeOut(duration: 0.2)) {
+            queued[i].phase = .removing
+            queued[i].note = nil
+        }
+    }
+
+    func removeFailed(_ cid: String, _ error: Error) {
+        guard let i = queued.firstIndex(where: { $0.clientId == cid }), queued[i].phase == .removing else { return }
+        let code = (error as? HubError)?.code
+        // The hub never held it, or forgot it: there's nothing to remove.
+        if code == "unknown_send" { return dropQueued(cid) }
+        withAnimation(.easeOut(duration: 0.2)) {
+            queued[i].phase = code == "not_waiting" ? .left : .waiting
+            queued[i].note = Self.queueNote(error)
+        }
+    }
+
+    private func dropQueued(_ cid: String) {
+        settledSends.insert(cid)
+        withAnimation(.easeOut(duration: 0.2)) { queued.removeAll { $0.clientId == cid } }
+    }
+
+    /// The short note a tray row shows when the hub refuses Send now or
+    /// Remove.
+    static func queueNote(_ error: Error) -> String {
+        guard let e = error as? HubError else { return "Something went wrong" }
+        switch e.code {
+        case "not_waiting":
+            let why = e.message.lowercased()
+            if why.contains("removed") { return "Already removed" }
+            if why.contains("failed") { return "Already failed" }
+            return "Already sent"
+        case "not_attached": return "Attach to send now"
+        case "queue_unsupported": return "Not available on this machine"
+        case "backlog_full": return "Too many waiting. Try again shortly"
+        case "unknown_send": return "The hub lost this message"
+        case "network": return "Can't reach the hub"
+        default: return e.message
         }
     }
 

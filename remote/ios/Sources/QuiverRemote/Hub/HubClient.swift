@@ -119,6 +119,10 @@ struct HubClient: Sendable {
         case "unknown_launch": "The hub lost track of this launch. Check Sessions in a moment."
         case "browse_unavailable": "Browsing works on the hub machine only for now. Pick a recent folder instead."
         case "not_readable": "The hub can't read that folder."
+        case "duplicate_client_id": "That message is already queued."
+        case "not_waiting": "That message already left the queue."
+        case "unknown_send": "The hub doesn't know that message."
+        case "queue_unsupported": "Queued messages can't be changed on this machine."
         default: fallback ?? "The hub answered with an error (\(status))."
         }
     }
@@ -146,6 +150,18 @@ struct HubClient: Sendable {
     func sendMessage(_ key: String, text: String, mode: String, clientId: String) async throws -> SendAccepted {
         try await send(request("POST", "/v1/sessions/\(Self.encodeKey(key))/message",
                                body: ["text": text, "mode": mode, "client_id": clientId]))
+    }
+
+    /// Queue-mode sends still waiting for the session to go idle, oldest first.
+    func queue(_ key: String) async throws -> QueueResponse {
+        try await send(request("GET", "/v1/sessions/\(Self.encodeKey(key))/queue"))
+    }
+
+    /// Acts on one waiting send: `steer` sends it now, `cancel` drops it.
+    /// The outcome of a steer arrives later as its `command.result`.
+    func queueAction(_ key: String, clientId: String, op: String) async throws {
+        _ = try await raw(request("POST", "/v1/sessions/\(Self.encodeKey(key))/queue",
+                                  body: ["client_id": clientId, "op": op]))
     }
 
     /// Returns true when the hub queued it for a satellite (202), so the

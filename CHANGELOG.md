@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote iPhone app: queued messages wait in a tray above the prompt
+  box.** A message sent while the agent works no longer sits in the
+  transcript, where new output pushed it off screen: it joins a Queued
+  tray pinned above the prompt box. Each row has Send now, which writes
+  it into the running turn, and a remove button, which drops it before
+  the agent sees it. A message leaves the tray and lands in the
+  transcript once it goes out. The tray reloads from the hub when you
+  reopen the chat, and the Queue/Steer picker is gone.
+
 - **Remote iPhone app: links in replies get a preview card.** A reply
   that links to a web page shows a card under the text with the page's
   host, its path and an Open button (up to three per reply). Tapping the
