@@ -1,7 +1,8 @@
-/* Plugins: a port of the Mac app's PluginsPage (Health and Explore tabs),
- * read only. Data from /v1/app/plugins?view=health|explore (quiver/webapp/
- * pages/plugins.py). Fixes, installs, enables, renames and Add marketplace
- * stay in swe and the Mac app.
+/* Plugins: a port of the Mac app's PluginsPage (Health and Explore tabs).
+ * Data from /v1/app/plugins?view=health|explore (quiver/webapp/pages/
+ * plugins.py). Health's Fix and Fix all POST /v1/app/plugins/fix|fix_all,
+ * each after an inline confirm naming the commands. Installs, enables,
+ * renames and Add marketplace stay in swe and the Mac app.
  */
 "use strict";
 // The bundle runs this file in its own function scope.
@@ -21,6 +22,13 @@ const page = {
   expanded: new Set(),        // Explore marketplaces opened this session
   closedInSearch: new Set(),  // closed during the current search
   needle: "",
+  exploreStale: false,        // a fix ran since Explore was read
+  // Fix and Fix all (PluginsModel): the confirm on show (a finding id, or
+  // "all" with the ids it listed), what is running, and the last outcome.
+  confirming: null, confirmAll: [],
+  fixing: null,               // a finding id, or "all"
+  fixingCount: 0,
+  fixError: null, lastFixed: null,
 };
 
 const SVG = {
@@ -33,6 +41,7 @@ const SVG = {
   down: '<path d="m6 9 6 6 6-6"/>',
   up: '<path d="m6 15 6-6 6 6"/>',
   copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>',
+  check: '<circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/>',
 };
 const svg = (name, cls = "") =>
   `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${SVG[name]}</svg>`;
@@ -72,6 +81,7 @@ async function load(view, refresh = false) {
   } else {
     page.error[view] = null;
     page.data[view] = data;
+    if (view === "explore") page.exploreStale = false;
     // An empty hub gives Health an empty page: open Explore once, never
     // over a tab the user picked (PluginsFirstTab). Whichever call read
     // Health (the first visit or a Refresh), Explore is read from here.
@@ -93,9 +103,19 @@ function header() {
   const busy = page.busy[page.tab];
   const updated = d && d.built_at ? `<span class="caption">Updated ${Fmt.ago(d.built_at)}</span>` : "";
   const help = page.tab === "health" ? "Check again" : "Read the marketplaces again";
+  const fixing = page.fixing != null;
+  let fixAll = "";
+  if (page.tab === "health" && (fixAllIds().length || page.fixing === "all")) {
+    const label = page.fixing === "all"
+      ? `Fixing ${count(page.fixingCount, "finding", "findings")}…` : "Fix all";
+    fixAll = `<button class="pl-button primary" id="pl-fix-all" title="Run every fix swe can run, one at a time"${
+      fixing ? " disabled" : ""}${page.confirming === "all" ? ' aria-expanded="true"' : ""}>${label}</button>`;
+  }
+  const off = page.tab === "health" && fixing;
   return pageHeader("Plugins",
     "Every plugin in every marketplace, and where Claude Code and Codex no longer match ~/.quiver/plugins.",
-    `${updated}<button class="icon-button${busy ? " spinning" : ""}" id="page-refresh" aria-label="Refresh" title="${help}">${icon("rescan")}</button>`);
+    `${updated}${fixAll}<button class="icon-button${busy ? " spinning" : ""}" id="page-refresh" aria-label="Refresh" title="${help}"${
+      off ? " disabled" : ""}>${icon("rescan")}</button>`);
 }
 
 function paintHeader() {
@@ -107,7 +127,23 @@ function paintHeader() {
 
 function bindHeader() {
   const btn = document.getElementById("page-refresh");
-  if (btn) btn.onclick = () => { if (!page.busy[page.tab]) load(page.tab, true); };
+  if (btn) {
+    btn.onclick = () => {
+      if (page.busy[page.tab] || (page.tab === "health" && page.fixing != null)) return;
+      load(page.tab, true);
+    };
+  }
+  const all = document.getElementById("pl-fix-all");
+  if (all) {
+    all.onclick = () => {
+      if (page.fixing != null) return;
+      // Only what this confirm lists runs, even if Health changes under it.
+      page.confirming = "all";
+      page.confirmAll = fixAllIds();
+      paint();
+      focusConfirm();
+    };
+  }
 }
 
 function paint() {
@@ -129,7 +165,7 @@ function paint() {
       paint();
       // A fresh read when the view has none or its cache has aged.
       const d = page.data[next];
-      if (!d || Date.now() / 1000 - (d.built_at || 0) > 60) load(next);
+      if (!d || Date.now() / 1000 - (d.built_at || 0) > 60 || (next === "explore" && page.exploreStale)) load(next);
     };
   }
   if (page.tab === "health") bindHealth(); else bindExplore();
@@ -149,7 +185,7 @@ const iconCard = (name, text, cls = "") =>
 
 function healthBody() {
   const d = page.data.health;
-  const err = page.error.health ? errorCard(page.error.health) : "";
+  const err = (page.error.health ? errorCard(page.error.health) : "") + fixOutcome() + confirmAllCard();
   if (!d) return err || loadingCard("Checking plugin drift…");
   if (d.sources === 0) {
     return err + iconCard("puzzle", "No plugins in ~/.quiver/plugins, so there is nothing to keep in step.", "muted-label");
@@ -171,15 +207,72 @@ function healthBody() {
       <div class="pl-drift-rows">${shown.map(driftRow).join("")}</div>${fold}
     </div>`;
   }).join("");
-  return `${err}${cards}<p class="caption footer">The web app only reads. Run a fix on the hub with
-    <code>swe find plugins --fix=&lt;id&gt;</code>, or with Fix in the Mac app.</p>`;
+  return `${err}${cards}`;
+}
+
+/* The last fix's outcome, above the cards, as the app's banner. */
+function fixOutcome() {
+  if (page.fixError) return errorCard(page.fixError);
+  if (page.lastFixed) {
+    return `<div class="card"><p class="pl-label">${svg("check")}<span>Ran ${esc(page.lastFixed)}</span></p></div>`;
+  }
+  return "";
+}
+
+/* PluginsModel.fixAllIDs: the findings swe can fix itself, in report order. */
+function fixAllIds() {
+  const d = page.data.health;
+  return d && d.drift ? d.drift.filter((f) => f.runnable).map((f) => f.id) : [];
+}
+
+const findingOf = (id) => (page.data.health && page.data.health.drift || []).find((f) => f.id === id);
+
+/* Fix all's confirm: every finding it will fix, with its commands. */
+function confirmAllCard() {
+  if (page.confirming !== "all") return "";
+  const rows = page.confirmAll.map(findingOf).filter(Boolean);
+  const n = rows.length;
+  const busy = page.fixing != null;
+  return `<div class="card pl-confirm" role="group" aria-labelledby="pl-confirm-title" data-pl-confirm>
+    <div class="card-title" id="pl-confirm-title">${n === 1 ? "Run 1 fix?" : `Run ${n} fixes?`}</div>
+    <p class="caption">One at a time, stopping at the first that fails. swe checks each still applies before it runs:</p>
+    <ol class="pl-confirm-list">${rows.map((f) => `<li>
+      <div class="pl-line">${Fmt.logo(f.harness, "logo logo-sm")}<span class="pl-name">${esc(f.ref)}</span>
+        <span class="badge">${esc(f.kind_title)}</span></div>
+      <pre class="pl-code">${esc(f.fix)}</pre></li>`).join("")}</ol>
+    <div class="pl-confirm-buttons">
+      <button class="pl-button" data-pl-cancel${busy ? " disabled" : ""}>Cancel</button>
+      <button class="pl-button primary" data-pl-run-all${busy || !n ? " disabled" : ""}>${
+        page.fixing === "all" ? "Running…" : "Run all"}</button>
+    </div>
+  </div>`;
+}
+
+/* One finding's confirm, under its row: the exact command it runs. */
+function confirmRow(f) {
+  const busy = page.fixing != null;
+  return `<div class="pl-confirm inline" role="group" aria-label="Run this fix?" data-pl-confirm>
+    <div class="pl-confirm-title">Run this fix?</div>
+    <p class="caption">swe will check the finding still applies, then run:</p>
+    <pre class="pl-code">${esc(f.fix)}</pre>
+    <div class="pl-confirm-buttons">
+      <button class="pl-button" data-pl-cancel${busy ? " disabled" : ""}>Cancel</button>
+      <button class="pl-button primary" data-pl-run="${esc(f.id)}"${busy ? " disabled" : ""}>${
+        page.fixing === f.id ? "Running…" : "Run"}</button>
+    </div>
+  </div>`;
 }
 
 function driftRow(f) {
   const paths = f.paths || [];
   const pathsLine = paths.length
     ? paths.slice(0, 3).join(", ") + (paths.length > 3 ? ` and ${paths.length - 3} more` : "") : "";
-  return `<div class="pl-drift">
+  const running = page.fixing === f.id;
+  const fixBtn = !f.runnable ? "" : running
+    ? '<span class="pl-running" role="status" aria-label="Fixing"><span class="pl-spinner"></span></span>'
+    : `<button class="pl-button" data-pl-fix="${esc(f.id)}" aria-label="Fix ${esc(f.ref)}"${
+      page.confirming === f.id ? ' aria-expanded="true"' : ""}${page.fixing != null ? " disabled" : ""}>Fix</button>`;
+  return `<div class="pl-drift${f.runnable ? " runnable" : ""}">
     <span class="pl-dot ${f.severe ? "danger" : "warning"}"></span>
     <div class="pl-drift-main">
       <div class="pl-line"><span class="pl-name">${esc(f.ref)}</span><span class="badge">${esc(f.kind_title)}</span></div>
@@ -188,8 +281,9 @@ function driftRow(f) {
       <div class="pl-fix"><pre class="pl-code">${esc(f.fix)}</pre>
         <button class="pl-copy" data-pl-copy="${esc(f.fix)}" title="Copy" aria-label="Copy">${svg("copy")}</button></div>
       ${f.runnable ? "" : '<div class="caption muted">No command does this, so make the edit by hand.</div>'}
-      ${f.runnable ? `<div class="caption muted">Fix id <code>${esc(f.id)}</code></div>` : ""}
+      ${page.confirming === f.id ? confirmRow(f) : ""}
     </div>
+    ${fixBtn ? `<div class="pl-drift-action">${fixBtn}</div>` : ""}
   </div>`;
 }
 
@@ -204,6 +298,94 @@ function bindHealth() {
   for (const btn of document.querySelectorAll("[data-pl-copy]")) {
     btn.onclick = () => copy(btn.dataset.plCopy, btn);
   }
+  for (const btn of document.querySelectorAll("[data-pl-fix]")) {
+    btn.onclick = () => {
+      if (page.fixing != null) return;
+      const id = btn.dataset.plFix;
+      page.confirming = page.confirming === id ? null : id;
+      paint();
+      if (page.confirming) focusConfirm();
+    };
+  }
+  for (const btn of document.querySelectorAll("[data-pl-cancel]")) btn.onclick = () => closeConfirm();
+  for (const el of document.querySelectorAll("[data-pl-confirm]")) {
+    el.onkeydown = (e) => { if (e.key === "Escape" && page.fixing == null) { e.preventDefault(); closeConfirm(); } };
+  }
+  for (const btn of document.querySelectorAll("[data-pl-run]")) {
+    btn.onclick = () => runFix("fix", [btn.dataset.plRun]);
+  }
+  const all = document.querySelector("[data-pl-run-all]");
+  if (all) all.onclick = () => runFix("fix_all", page.confirmAll.slice());
+}
+
+/* The confirm's Run button takes focus, so Enter runs and Escape cancels. */
+function focusConfirm() {
+  const btn = document.querySelector("[data-pl-run], [data-pl-run-all]");
+  if (btn && !btn.disabled) btn.focus();
+}
+
+function closeConfirm() {
+  const was = page.confirming;
+  page.confirming = null;
+  page.confirmAll = [];
+  paint();
+  const back = was === "all" ? document.getElementById("pl-fix-all")
+    : was && document.querySelector(`[data-pl-fix="${CSS.escape(was)}"]`);
+  if (back) back.focus();
+}
+
+/* POST a confirmed fix. The hub checks each id is a finding it lists now
+ * and runs only the commands it builds itself; the cards repaint from
+ * the fresh Health view it answers with. */
+async function runFix(action, ids) {
+  if (page.fixing != null || !ids.length) return;
+  const one = action === "fix";
+  page.fixing = one ? ids[0] : "all";
+  page.fixingCount = ids.length;
+  page.fixError = null;
+  page.lastFixed = null;
+  if (onPage()) paint();
+  const { status, data } = await apiPost(`/v1/app/plugins/${action}`, one ? { id: ids[0] } : { ids });
+  page.fixing = null;
+  page.fixingCount = 0;
+  page.confirming = null;
+  page.confirmAll = [];
+  if (status === 401) {
+    if (onPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    return;
+  }
+  if (status === 200 && data && data.health) {
+    // A Health read still in flight began before the fix: drop it.
+    page.seq.health++;
+    page.busy.health = false;
+    page.data.health = data.health;
+    page.error.health = null;
+    page.exploreStale = true;
+    const failed = data.results.find((r) => r.status === "failed");
+    if (failed) {
+      page.fixError = data.ran ? `Ran ${count(data.ran, "fix", "fixes")}, then stopped. ${failed.error}` : failed.error;
+    } else if (one) {
+      page.lastFixed = data.results[0].fixed ? data.results[0].fixed.fix : null;
+    } else {
+      page.lastFixed = data.ran ? count(data.ran, "fix", "fixes") : null;
+    }
+    if (onPage()) {
+      paint();
+      // The clicked button was disabled while it ran; put focus back on
+      // it, or on Fix all, so the keyboard keeps its place.
+      const back = (one && document.querySelector(`[data-pl-fix="${CSS.escape(ids[0])}"]`))
+        || document.getElementById("pl-fix-all") || document.getElementById("page-refresh");
+      if (back) back.focus();
+    }
+    return;
+  }
+  page.fixError = (data && data.error && data.error.message)
+    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+  if (!onPage()) return;
+  paint();
+  // A refusal most likely means Health moved on (a finding gone, or
+  // another fix running): read it again.
+  if (status) load("health", true);
 }
 
 /* navigator.clipboard needs https or localhost; plain http falls back
