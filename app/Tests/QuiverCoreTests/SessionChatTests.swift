@@ -294,3 +294,152 @@ extension HubStubbed {
     }
 }
 }
+
+extension HubStubbed {
+@MainActor
+@Suite struct SessionChatSendTests {
+    let dir = FileManager.default.temporaryDirectory.appending(path: "hub-\(UUID().uuidString)")
+
+    /// A chat opened on an attached (or observed) session whose `POST
+    /// .../message` answers `send`.
+    func opened(ownership: String = "attached", send: (Int, String) = (202, #"{"ok": true, "waiting": false}"#))
+        async throws -> SessionChatModel {
+        let store = HubDeviceStore(url: dir.appending(path: "app-device.json"))
+        try store.save(HubCredential(deviceId: "d1", credential: "secret"), for: "127.0.0.1:8477")
+        HubStub.requests = []
+        HubStub.handler = { req in
+            switch req.url?.path {
+            case "/v1/sessions":
+                return (200, Data(#"{"sessions": [{"key": "claude:s1", "status": "done", "ownership": "\#(ownership)"}]}"#.utf8))
+            case "/v1/sessions/claude:s1/messages":
+                return (200, Data(#"{"messages": [], "has_more": false}"#.utf8))
+            case "/v1/sessions/claude:s1/message":
+                return (send.0, Data(send.1.utf8))
+            case "/v1/sessions/claude:s1/control":
+                return (200, Data(#"{"ok": true}"#.utf8))
+            default:
+                return (404, Data())
+            }
+        }
+        let hub = LocalHub(locator: FakeLocator(address: "127.0.0.1:8477"), store: store) {
+            HubClient(baseURL: $0, credential: $1, session: HubStub.session(), streamSession: HubStub.session())
+        }
+        let chat = SessionChatModel(key: "claude:s1", hub: hub)
+        await chat.start()
+        chat.stop()
+        return chat
+    }
+
+    func event(_ type: String, seq: Int? = nil, _ data: String) -> HubEnvelope {
+        HubEnvelope(type: type, session: "claude:s1", seq: seq,
+                    data: try! HubWire.decoder.decode(HubJSON.self, from: Data(data.utf8)))
+    }
+
+    @Test func aSendShowsAtOnceAndItsEchoSettlesIt() async throws {
+        let chat = try await opened()
+        await chat.send("  run the tests ", mode: "steer")
+        #expect(chat.items.map(\.kind) == [.user("run the tests", send: .accepted(waiting: false))])
+        #expect(chat.working)
+        let post = try #require(HubStub.requests.last { $0.httpMethod == "POST" })
+        let body = HubStub.body(post)
+        #expect(body["text"] == "run the tests")
+        #expect(body["mode"] == "steer")
+        #expect(chat.items.first?.id == "send-\(body["client_id"] ?? "")")
+
+        // The result usually beats the echo: the bubble waits for it.
+        let cid = body["client_id"] ?? ""
+        chat.apply(event("command.result", #"{"op": "message", "client_id": "\#(cid)", "ok": true}"#))
+        #expect(chat.items.map(\.kind) == [.user("run the tests", send: .delivered)])
+        chat.apply(event("message.appended", seq: 5, #"{"kind": "user", "text": "run the tests"}"#))
+        #expect(chat.items.map(\.kind) == [.user("run the tests", send: nil)])
+        chat.apply(event("message.appended", seq: 6, #"{"kind": "assistant", "text": "On it."}"#))
+        #expect(!chat.working)
+    }
+
+    @Test func aFailedResultMarksTheBubble() async throws {
+        let chat = try await opened(send: (202, #"{"ok": true, "waiting": true}"#))
+        await chat.send("later", mode: "queue")
+        #expect(chat.items.first?.kind == .user("later", send: .accepted(waiting: true)))
+        let cid = String(try #require(chat.items.first?.id).dropFirst("send-".count))
+        chat.apply(event("command.result", #"{"op": "message", "client_id": "\#(cid)", "ok": false, "note": "tmux gone"}"#))
+        #expect(chat.items.first?.kind == .user("later", send: .failed("tmux gone")))
+        #expect(!chat.working)
+        // A late echo of other text doesn't touch it.
+        chat.apply(event("message.appended", seq: 9, #"{"kind": "user", "text": "something else"}"#))
+        #expect(chat.items.count == 2)
+    }
+
+    @Test func aDegradedSendKeepsItsNoteThroughTheEcho() async throws {
+        let chat = try await opened()
+        await chat.send("now please", mode: "steer")
+        let cid = String(try #require(chat.items.first?.id).dropFirst("send-".count))
+        chat.apply(event("command.result", #"{"op": "message", "client_id": "\#(cid)", "ok": true, "degraded": true, "note": "Queued instead"}"#))
+        chat.apply(event("message.appended", seq: 3, #"{"kind": "assistant", "text": "working"}"#))
+        chat.apply(event("message.appended", seq: 4, #"{"kind": "user", "text": "@shot.png now please"}"#))
+        #expect(chat.items.map(\.kind) == [.assistant("working"), .user("@shot.png now please", send: .degraded("Queued instead"))])
+    }
+
+    @Test func aRefusalSaysObservedAndAnObservedChatSendsNothing() async throws {
+        let chat = try await opened(send: (409, #"{"error": {"code": "not_attached", "message": "observed"}}"#))
+        await chat.send("hello", mode: "queue")
+        #expect(chat.items.first?.kind == .user("hello", send: .failed("This session is read-only until you attach it.")))
+        #expect(chat.row?.isAttached == false)
+        #expect(!chat.canSend)
+        let posts = { HubStub.requests.filter { $0.httpMethod == "POST" }.count }
+        let before = posts()
+        await chat.send("again", mode: "queue")
+        await chat.interrupt()
+        #expect(posts() == before)
+    }
+
+    @Test func stopPostsAnInterrupt() async throws {
+        let chat = try await opened()
+        await chat.interrupt()
+        let post = try #require(HubStub.requests.last { $0.httpMethod == "POST" })
+        #expect(post.url?.path == "/v1/sessions/claude:s1/control")
+        #expect(HubStub.body(post) == ["op": "interrupt"])
+        #expect(!chat.stopping)
+    }
+
+    @Test func aResultAfterTheEchoStillSettlesIt() async throws {
+        let chat = try await opened()
+        await chat.send("steer this", mode: "steer")
+        let cid = String(try #require(chat.items.first?.id).dropFirst("send-".count))
+        chat.apply(event("message.appended", seq: 2, #"{"kind": "assistant", "text": "hm"}"#))
+        chat.apply(event("message.appended", seq: 3, #"{"kind": "user", "text": "steer this"}"#))
+        #expect(chat.items.map(\.id) == ["m2", "m3"])
+        // Headless injection reports after the whole turn.
+        chat.apply(event("command.result", #"{"op": "message", "client_id": "\#(cid)", "ok": true, "degraded": true, "note": "Ran as Queue"}"#))
+        #expect(chat.items.last?.kind == .user("steer this", send: .degraded("Ran as Queue")))
+    }
+
+    @Test func aReloadTakesTheEchoFromHistory() async throws {
+        let chat = try await opened()
+        await chat.send("while offline", mode: "queue")
+        let now = Date().timeIntervalSince1970
+        chat.load(HubMessagesPage(messages: [
+            event("message.appended", seq: 1, #"{"kind": "user", "text": "while offline", "ts": 1}"#),
+            event("message.appended", seq: 7, #"{"kind": "user", "text": "while offline", "ts": \#(now)}"#),
+        ], nextBefore: nil, hasMore: false))
+        // The old identical message isn't taken for it; the new one is.
+        #expect(chat.items.map(\.id) == ["m1", "m7"])
+    }
+
+    @Test func dotsWaitForEverySend() async throws {
+        let chat = try await opened()
+        await chat.send("one", mode: "queue")
+        await chat.send("two", mode: "queue")
+        let second = String(try #require(chat.items.last?.id).dropFirst("send-".count))
+        chat.apply(event("command.result", #"{"op": "message", "client_id": "\#(second)", "ok": false, "note": "x"}"#))
+        #expect(chat.working)
+        chat.apply(event("message.appended", seq: 4, #"{"kind": "assistant", "text": "reply"}"#))
+        #expect(!chat.working)
+    }
+
+    @Test func echoesAllowOnlyAnAttachmentPrefix() {
+        #expect(SessionChatModel.echoes("run", "run"))
+        #expect(SessionChatModel.echoes("@a.png @b.txt run", "run"))
+        #expect(!SessionChatModel.echoes("please run", "run"))
+    }
+}
+}

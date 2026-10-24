@@ -112,6 +112,23 @@ public struct HubClient: Sendable {
         return try await send(request("GET", Self.sessionPath(key, "messages"), query: query))
     }
 
+    /// Sends `text` to the session. `queue` waits for the agent's turn to
+    /// end, `steer` writes it now. Returns true when the hub holds it
+    /// until then; the outcome arrives as a `command.result` event.
+    public func sendMessage(_ key: String, text: String, mode: String, clientId: String) async throws -> Bool {
+        try await send(request("POST", Self.sessionPath(key, "message"),
+                               body: ["text": text, "mode": mode, "client_id": clientId]),
+                       as: HubSendAccepted.self).waiting == true
+    }
+
+    /// `interrupt` stops the agent's turn. Returns true when the hub
+    /// queued it for a satellite (202), whose `command.result` follows.
+    @discardableResult
+    public func control(_ key: String, op: String) async throws -> Bool {
+        let (_, status) = try await raw(request("POST", Self.sessionPath(key, "control"), body: ["op": op]))
+        return status == 202
+    }
+
     /// Trades a one-time token from `swe remote pair` for a credential.
     public func pair(token: String, name: String) async throws -> HubCredential {
         try await send(request("POST", "/v1/pair", body: ["token": token, "name": name]))
