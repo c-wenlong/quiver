@@ -186,6 +186,11 @@ def build(rows: list[dict], usage: dict[tuple[str, str], dict], hub_machine_id: 
             "machine": machine.get("name") or row.get("machine_id"),
             "remote": not here,
             "resume": row.get("resume"),
+            # Remote control: whether the hub can write to it now
+            # (attached) or could take it over (attachable). The chat
+            # re-reads both from /v1/sessions when it opens.
+            "ownership": row.get("ownership") or "observed",
+            "attachable": bool(row.get("attachable")),
             "usage": u and {k: v for k, v in u.items() if k != "cwd"},
             "duration_s": (u["last_ts"] - u["first_ts"]) if u else None,
             "trivial": is_trivial(harness, u, scanned) if here else False,

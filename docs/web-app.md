@@ -73,6 +73,8 @@ already do, through satellites; that is a later step.
    app's daily rows, and usage joins only for sessions on the hub machine
    (a satellite's rows list without tokens). Sessions only in a Quiver
    account profile's home, and Devin cloud sessions, are not listed yet.
+   A row opens the session's chat, the remote PWA's remote control
+   (docs/web-app/sessions.md); its Details button is the old sheet.
 3. Harnesses and Accounts limits. Shipped, read only. Harnesses lists
    `/v1/app/harnesses` (every registered harness, archived included, as
    `swe list --scope=all`) with the app's In use / Archived scopes, search,
