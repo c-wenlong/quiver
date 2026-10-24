@@ -23,7 +23,7 @@ from quiver.ledger.pricing import BUNDLED, SUPPLEMENT, PricingCatalog, load_cata
 from quiver.ledger.store import LedgerStore
 from quiver.paths import cache_dir_for, quiver_dir_for
 from quiver.webapp.pages import pricing as pricing_page
-from quiver.webapp.pages._brands import brand_for
+from quiver.webapp.pages._brands import brand_for, resolved_name
 
 # A search lists this many price-list keys; the rest count as overflow.
 SEARCH_LIMIT = 60
@@ -120,6 +120,7 @@ def rows(all_slices: list[dict], catalog: PricingCatalog, picked: list[str]) -> 
     for model, by_harness in by_model.items():
         out.append({
             "model": model,
+            "alias": resolved_name(model),
             "qualifier": qualifier(model),
             "brand": brand_for(model),
             "harnesses": [h for h, _ in sorted(by_harness.items(), key=lambda kv: (kv[1], kv[0]),
@@ -157,7 +158,7 @@ def search(catalog: PricingCatalog, query: str, limit: int = SEARCH_LIMIT,
     hits.sort()
     matches = []
     for _g, _n, key in hits[:limit]:
-        matches.append({"model": key, "qualifier": None, "brand": brand_for(key),
+        matches.append({"model": key, "alias": None, "qualifier": None, "brand": brand_for(key),
                         "harnesses": [], "tokens": 0, "list_price": list_price(catalog, key)})
     return {"query": query, "matches": matches, "total": len(hits)}
 

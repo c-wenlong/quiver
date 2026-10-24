@@ -553,6 +553,22 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(model.unmatched == [ModelsModel.Unmatched(model: "swe-2-medium", tokens: 400)])
     }
 
+    /// Devin's "MODEL_PRIVATE_11" matches by the real name the bundled
+    /// price supplement aliases it to.
+    @Test func anOpaqueIDMatchesThroughItsAlias() async throws {
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("haiku", "Claude 4.5 Haiku", "claude-4-5-haiku", creator: "anthropic", intelligence: 40),
+        ])
+        let model = makeModel(dir: dir, slices: [slice("MODEL_PRIVATE_11", "devin", tokens: 100)])
+        await model.load()
+        let row = try #require(model.rows.first { $0.used })
+        #expect(row.aa?.id == "haiku")
+        #expect(row.logged == "MODEL_PRIVATE_11")
+        #expect(row.alias == "claude-haiku-4-5")
+        #expect(model.unmatched.isEmpty)
+    }
+
     @Test func loggedAliasesOfOneAAModelMergeIntoOneRow() async throws {
         let dir = try TempDir()
         try writeLLMs(dir, [

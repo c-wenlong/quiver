@@ -154,10 +154,21 @@ public enum ModelBrands {
         byKeyword[word.lowercased()]
     }
 
+    /// The bundled price supplement, for its aliases.
+    private static let supplement = (try? PricingSupplement.bundled()) ?? PricingSupplement()
+
+    /// The real name the bundled price supplement aliases a logged id to,
+    /// such as "claude-haiku-4-5" for Devin's "MODEL_PRIVATE_11"; nil when
+    /// the name is its own.
+    public static func resolvedName(_ model: String) -> String? {
+        supplement.aliasTarget(of: model)
+    }
+
     /// The brand of a logged model name such as "claude-opus-5-5" or
-    /// "openrouter/qwen3-coder"; `other` when nothing matches.
+    /// "openrouter/qwen3-coder", through any alias first; `other` when
+    /// nothing matches.
     public static func forModel(_ model: String) -> ModelBrand {
-        var name = model.lowercased()
+        var name = (resolvedName(model) ?? model).lowercased()
         if let slash = name.lastIndex(of: "/") { name = String(name[name.index(after: slash)...]) }
         let range = NSRange(name.startIndex..., in: name)
         return patterns.first { $0.0.firstMatch(in: name, range: range) != nil }?.1 ?? other

@@ -119,7 +119,8 @@
   }
 
   function usedHits(needle) {
-    return state.data.rows.filter((r) => normalized(r.model).includes(needle));
+    return state.data.rows.filter((r) => normalized(r.model).includes(needle)
+      || (r.alias && normalized(r.alias).includes(needle)));
   }
 
   /* The used names a search excluded, one per line (no model name holds a newline). */
@@ -170,8 +171,9 @@
   function tableRow(r) {
     const more = r.harnesses.length > 3 ? `<span class="caption">+${r.harnesses.length - 3}</span>` : "";
     return `<tr>
-      <td><div class="qm-model">${kit().brandLogo(r.brand)}<span class="ellipsis" title="${esc(r.model)}">${esc(r.model)}${
-        r.qualifier ? `<span class="caption"> ${esc(r.qualifier)}</span>` : ""}</span></div></td>
+      <td><div class="qm-model">${kit().brandLogo(r.brand)}<span class="ellipsis" title="${esc(r.model)}">${esc(r.alias || r.model)}${
+        r.qualifier ? `<span class="caption"> ${esc(r.qualifier)}</span>` : ""}${
+        r.alias ? `<span class="caption muted"> ${esc(r.model)}</span>` : ""}</span></div></td>
       <td><div class="qm-ran">${r.harnesses.slice(0, 3).map((h) =>
         `<span title="${esc(Fmt.harnessName(h))}">${Fmt.logo(h)}</span>`).join("")}${more}</div></td>
       <td class="qm-price num">${priceCell(r.list_price)}</td>

@@ -8,7 +8,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from quiver.ledger.models import LedgerRecord, UsageEvent
-from quiver.ledger.pricing import PricingCatalog, load_catalog, rates_from_entry
+from quiver.ledger.pricing import PricingCatalog, alias_target, load_catalog, rates_from_entry
 from quiver.ledger.store import LedgerStore
 from quiver.webapp.api import WebApp
 from quiver.webapp.pages import _brands, pricing
@@ -145,6 +145,15 @@ class TestRows(_Store):
         # The options still list every harness in the period.
         self.assertEqual(body["harness_options"], ["codex", "claude"])
 
+    def test_an_aliased_row_carries_its_real_name(self):
+        self.add("MODEL_PRIVATE_11", 100, harness="devin")
+        self.add("claude-opus-5", 10)
+        body = self.build()
+        self.assertEqual([g["id"] for g in body["groups"]], ["anthropic"])
+        rows = {r["model"]: r for r in body["groups"][0]["models"]}
+        self.assertEqual(rows["MODEL_PRIVATE_11"]["alias"], "claude-haiku-4-5")
+        self.assertIsNone(rows["claude-opus-5"]["alias"])
+
     def test_period_bounds_the_rows(self):
         self.add("claude-opus-5", 100, ts=datetime(2026, 9, 1, tzinfo=SG).timestamp())
         self.assertEqual(self.build()["groups"], [])
@@ -159,9 +168,21 @@ class TestBrands(unittest.TestCase):
         self.assertEqual(ids, {
             "claude-opus-5": "anthropic", "openrouter/qwen3-coder": "alibaba", "gpt-5.6": "openai",
             "o3": "openai", "grok-4.20": "xai", "grok-bot": "grok-bot", "swe-2-max": "cognition",
-            "glm-4.6": "zai", "MODEL_PRIVATE_11": "other"})
+            "glm-4.6": "zai", "MODEL_PRIVATE_11": "anthropic"})
         other = _brands.brand_for("mystery")
         self.assertEqual((other["color"], other["logo"]), ("#45454b", None))
+
+    def test_an_alias_names_and_brands_an_opaque_id(self):
+        # Devin logs Claude Haiku 4.5 as MODEL_PRIVATE_11; the bundled
+        # supplement aliases it, so the row takes Anthropic's brand.
+        self.assertEqual(_brands.resolved_name("MODEL_PRIVATE_11"), "claude-haiku-4-5")
+        self.assertEqual(_brands.resolved_name("model_private_11"), "claude-haiku-4-5")
+        self.assertIsNone(_brands.resolved_name("claude-opus-5"))
+        self.assertIsNone(_brands.resolved_name("MODEL_PRIVATE_99"))
+        self.assertEqual(_brands.brand_for("MODEL_PRIVATE_99")["id"], "other")
+        self.assertEqual(alias_target("a", {"a": "b", "b": "c"}), "c")
+        self.assertEqual(alias_target("openrouter/a-20260101", {"a": "b"}), "b")
+        self.assertIsNone(alias_target("a", {"a": "A"}))
 
     def test_every_lab_logo_ships(self):
         for bid, _name, _color, icon, _kw, models in _brands.BRANDS:

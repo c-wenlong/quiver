@@ -128,7 +128,7 @@
     const help = list.length === 1 ? "1 model has no price" : `${list.length} models have no price`;
     return `<details class="qp-pop"><summary class="icon-button qp-warn" title="${help}" aria-label="${help}">${WARN}</summary>
       <div class="qp-menu-list qp-unpriced">${list.map((r) => `<button type="button" class="qp-menu-row" data-goto="${esc(r.model)}">
-        ${brandLogo(r.brand, "logo qp-logo-14")}<span class="ellipsis qp-grow" title="${esc(r.model)}">${esc(r.model)}</span>
+        ${brandLogo(r.brand, "logo qp-logo-14")}<span class="ellipsis qp-grow" title="${esc(r.model)}">${esc(r.alias || r.model)}</span>
         ${r.harnesses.slice(0, 3).map((h) => Fmt.logo(h, "logo logo-sm")).join("")}
         <span class="caption num">${Fmt.tokens(r.unpriced_tokens)}</span></button>`).join("")}</div></details>`;
   }
@@ -198,7 +198,8 @@
     const note = tierNote(r);
     return `<div class="qp-grid qp-row" data-model="${esc(r.model)}">
       <div class="qp-model">${brandLogo(r.brand)}
-        <div class="qp-name"><div class="qp-line"><span class="ellipsis" title="${esc(r.model)}">${esc(r.model)}</span>
+        <div class="qp-name"><div class="qp-line"><span class="ellipsis" title="${esc(r.model)}">${esc(r.alias || r.model)}</span>
+          ${r.alias ? `<span class="caption muted qp-raw">${esc(r.model)}</span>` : ""}
           <span class="qp-harnesses">${r.harnesses.slice(0, 3).map((h) => Fmt.logo(h, "logo logo-sm")).join("")}</span>
           ${note ? `<span class="caption muted qp-tier">${esc(note)}</span>` : ""}</div>
           <div class="caption qp-src-caption${r.spend_source === "unpriced" ? " warn" : ""}" title="${esc(help)}">${esc(sourceName(r))}</div>

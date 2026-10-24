@@ -66,6 +66,25 @@ import Testing
         }
     }
 
+    /// Devin logs Claude Haiku 4.5 as "MODEL_PRIVATE_11"; the bundled
+    /// supplement aliases it, so the row takes Anthropic's brand.
+    @Test func anAliasNamesAndBrandsAnOpaqueID() {
+        #expect(ModelBrands.resolvedName("MODEL_PRIVATE_11") == "claude-haiku-4-5")
+        #expect(ModelBrands.resolvedName("model_private_11") == "claude-haiku-4-5")
+        #expect(ModelBrands.resolvedName("claude-opus-5") == nil)
+        #expect(ModelBrands.forModel("MODEL_PRIVATE_11").id == "anthropic")
+        #expect(ModelBrands.forModel("MODEL_PRIVATE_99").id == "other")
+        let row = ModelsModel.Row(logged: "MODEL_PRIVATE_11")
+        #expect((row.alias, row.displayName, row.vendor.id) == ("claude-haiku-4-5", "claude-haiku-4-5", "anthropic"))
+    }
+
+    @Test func aliasTargetsFollowChainsAndForms() {
+        let supplement = PricingSupplement(aliases: ["a": "b", "b": "c", "x": "X"])
+        #expect(supplement.aliasTarget(of: "a") == "c")
+        #expect(supplement.aliasTarget(of: "openrouter/b-20260101") == "c")
+        #expect(supplement.aliasTarget(of: "x") == nil)
+    }
+
     @Test func vendorsCarryTheNewLogos() {
         #expect(ModelVendor.of(logged: "muse-wonder").icon == "meta")
         #expect(ModelVendor.of(logged: "mimo-v2.6-pro").icon == "xiaomimimo")

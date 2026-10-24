@@ -622,7 +622,10 @@ public final class ModelsModel {
     private func cachedMatch(_ name: String) -> (model: AALanguageModel, linked: Bool)? {
         if let cached = matchCache[name] { return cached }
         matcherMisses += 1
+        // An opaque id ("MODEL_PRIVATE_11") matches by the real name the
+        // price supplement aliases it to, unless the user linked it.
         let result = matcherIndex?.match(name)
+            ?? ModelBrands.resolvedName(name).flatMap { matcherIndex?.match($0) }
         matchCache[name] = result
         return result
     }
@@ -960,5 +963,15 @@ extension ModelsModel.Row {
     /// matched, else the logged name.
     public var vendor: ModelVendor {
         aa.map { ModelVendor.of($0) } ?? ModelVendor.of(logged: logged)
+    }
+
+    /// The real name the price supplement aliases an opaque logged id to
+    /// ("claude-haiku-4-5" for "MODEL_PRIVATE_11"); nil for a real name.
+    public var alias: String? { ModelBrands.resolvedName(logged) }
+
+    /// The name a row shows: the AA model once matched, else the alias's
+    /// real name, else the logged name.
+    public var displayName: String {
+        aa.map(ModelMatcher.displayName) ?? alias ?? logged
     }
 }

@@ -259,7 +259,15 @@ private struct PricingRow: View {
             BrandLogo(model: row.model, size: 16)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
-                    Text(row.model).lineLimit(1).truncationMode(.middle)
+                    // An opaque id shows the real name its alias gives it,
+                    // the id muted after it.
+                    if let alias = ModelBrands.resolvedName(row.model) {
+                        Text(alias).lineLimit(1).truncationMode(.middle)
+                        Text(row.model).font(Theme.caption).foregroundStyle(Theme.textMuted)
+                            .lineLimit(1).fixedSize()
+                    } else {
+                        Text(row.model).lineLimit(1).truncationMode(.middle)
+                    }
                     HStack(spacing: 2) {
                         ForEach(row.harnesses.prefix(3), id: \.self) { harness in
                             HarnessIcon(harness: harness, size: 12)

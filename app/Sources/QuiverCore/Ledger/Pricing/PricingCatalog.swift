@@ -521,6 +521,24 @@ public struct PricingSupplement {
         self.prices = [:]
     }
 
+    /// The real name `aliases` gives `model` ("MODEL_PRIVATE_11" is
+    /// "claude-haiku-4-5"), chains followed and forms tried as
+    /// `resolvedKey` tries them; nil when no alias applies. Pages name and
+    /// brand a model by it.
+    public func aliasTarget(of model: String) -> String? {
+        var target: String?
+        var name = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        for _ in 0..<5 {
+            let candidates = [name] + PricingCatalog.forms(of: name, stripDates: true, stripEffort: true)
+            guard let hit = candidates.lazy.compactMap({ form in
+                self.aliases[form].flatMap { $0.lowercased() != form ? $0 : nil }
+            }).first else { break }
+            target = hit
+            name = hit.lowercased()
+        }
+        return target
+    }
+
     public static func bundled() throws -> PricingSupplement {
         guard let url = CoreResources.url("pricing-supplement", "json") else {
             throw PricingError.missingResource

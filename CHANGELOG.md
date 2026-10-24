@@ -281,6 +281,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Models and Pricing: Devin's `MODEL_PRIVATE_11` shows as Claude
+  Haiku 4.5.** Devin CLI logs that opaque id for Claude Haiku 4.5, so
+  both apps listed it under "Other" with no logo or price. The price
+  supplement now aliases it to `claude-haiku-4-5`, brand lookup follows
+  the supplement's aliases before matching a name, and the Models and
+  Pricing rows (web and Mac) show the real name with the logged id
+  muted beside it. On the Mac, the id also matches its Artificial
+  Analysis model through the alias.
+
 - **Remote iPhone app: the welcome screen says where a pair code comes
   from.** It told new users to run `swe remote pair --app` in a
   terminal on the hub. It now points to Quiver › Settings › Remote ›
