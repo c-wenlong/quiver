@@ -297,7 +297,7 @@ class TestWrites(_WriteHome, unittest.TestCase):
     def test_a_skill_named_through_a_symlink_is_the_listed_one(self):
         """The inventory lists realpaths; a path through a symlinked home
         (macOS's /var -> /private/var) still names the skill."""
-        alias = Path(tempfile.mkdtemp()) / "home"
+        alias = Path(self.enterContext(tempfile.TemporaryDirectory())) / "home"
         alias.symlink_to(self.home)
         reply = self.post("link", {"harness": self.path("codex"), "skill": str(alias / ".quiver" / "skills" / "tdd")})
         self.assertEqual(reply["skill"]["path"], os.path.realpath(self.shared))
@@ -305,7 +305,7 @@ class TestWrites(_WriteHome, unittest.TestCase):
         self.assertEqual(detail["skill"]["path"], os.path.realpath(self.shared))
 
     def test_a_symlink_to_a_folder_off_the_list_is_still_unknown(self):
-        stray = Path(tempfile.mkdtemp()) / "stray"
+        stray = Path(self.enterContext(tempfile.TemporaryDirectory())) / "stray"
         stray.mkdir()
         (stray / "SKILL.md").write_text("---\nname: stray\n---\n")
         (self.home / "via").symlink_to(stray)
