@@ -22,6 +22,10 @@ Writes, ``POST /v1/app/repositories/<action>``, in process:
   "number", "method", "auto"}``. See ``merge`` for what it refuses.
 - ``add``: the Add repository sheet's ``swe gh repo add --json``,
   ``{"repo"}`` as ``owner/name`` or a GitHub URL. See ``add``.
+- ``remove``: the gear popover's Unpin, ``swe gh repo remove --json``,
+  ``{"repo"}``. See ``remove``.
+- ``reorder``: the rail's drag, ``swe gh repo reorder --json``,
+  ``{"order": [names]}``. See ``reorder``.
 """
 
 from __future__ import annotations
@@ -229,6 +233,45 @@ def add(ctx, body: dict) -> dict:
             "machine": (ctx.machine or {}).get("name")}
 
 
+def remove(ctx, body: dict) -> dict:
+    """Unpin a repo, as ``swe gh repo remove``. No ``gh`` call: the pin
+    list is the hub's own file. The repo's cached board, focus surfaces
+    and PR details go with it, so a re-pin starts from a fetch. Callers
+    hold ``G.WRITE_LOCK``. Answers ``{"repo", "repos", "machine"}``; a
+    repo that is not pinned is a 404 ``not_pinned``."""
+    raw = body.get("repo")
+    if not isinstance(raw, str) or not raw.strip() or len(raw) > SEARCH_MAX:
+        raise PageError(422, "bad_repo", "repo must be owner/name")
+    try:
+        name = G.pinned_name(ctx.home, raw)
+    except PageError as exc:
+        if exc.status == 400:
+            raise PageError(422, exc.code, exc.message) from exc
+        raise
+    kept, _removed = repos.remove_pinned(name, manage.pins_file(ctx.home))
+    _drop_repo(ctx.home, name)
+    return {"repo": name, "repos": kept, "machine": (ctx.machine or {}).get("name")}
+
+
+REORDER_MAX = 500  # far past any real pin list
+
+
+def reorder(ctx, body: dict) -> dict:
+    """Rewrite the pin order, as ``swe gh repo reorder``: the names in
+    ``order`` take the first slots in that order, any pin not named keeps
+    its place after them, and a name that is not pinned is ignored. So a
+    drag can send the whole list it shows, and a pin added from another
+    tab meanwhile is never lost. Callers hold ``G.WRITE_LOCK``. Answers
+    ``{"repos", "machine"}``, the order as stored."""
+    order = body.get("order")
+    if (not isinstance(order, list) or len(order) > REORDER_MAX
+            or not all(isinstance(n, str) and 0 < len(n) <= SEARCH_MAX for n in order)):
+        raise PageError(422, "bad_order", "order must be a list of owner/name")
+    names = [repos.normalize_repo_input(n) or n for n in order]
+    pinned = repos.reorder_pinned(names, manage.pins_file(ctx.home))
+    return {"repos": pinned, "machine": (ctx.machine or {}).get("name")}
+
+
 # ---------------------------------------------------------------- merge
 
 METHODS = ("squash", "rebase", "merge")  # PrDetailSheet's menu, in order
@@ -236,10 +279,15 @@ METHOD_TITLES = {"squash": "Squash and merge", "rebase": "Rebase and merge",
                  "merge": "Create a merge commit"}
 
 
+PIN_WRITES = {"add": lambda ctx, body: add(ctx, body),
+              "remove": lambda ctx, body: remove(ctx, body),
+              "reorder": lambda ctx, body: reorder(ctx, body)}
+
+
 def post(ctx, action: str, body: dict) -> dict:
-    if action == "add":
+    if action in PIN_WRITES:
         with G.WRITE_LOCK:
-            return add(ctx, body)
+            return PIN_WRITES[action](ctx, body)
     if action != "merge":
         raise PageError(404, "unknown_action",
                         f"unknown repositories action: {action}")
