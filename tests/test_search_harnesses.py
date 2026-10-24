@@ -538,5 +538,164 @@ class JsonlHarnessTests(_Home):
                          .fetchone()[0], 1)
 
 
+class PairedDecodeTests(unittest.TestCase):
+    """The Swift ``SearchNewHarnessDecoderTests`` Grok, Hermes and Kiro
+    cases."""
+
+    def test_grok(self):
+        _, hints = decode.Decoder("grok").decode_line(
+            b'{"info":{"id":"gk-1","cwd":"/repo/g"},"generated_title":"Ship it",'
+            b'"session_summary":"fallback","head_branch":"feat/x"}')
+        self.assertEqual((hints.session_id, hints.cwd, hints.title), ("gk-1", "/repo/g", "Ship it"))
+        _, hints = decode.Decoder("grok").decode_line(
+            b'{"info":{"id":"gk-2"},"session_summary":"The summary"}')
+        self.assertEqual(hints.title, "The summary")
+        out, hints = decode.Decoder("grok").decode_line(
+            b'{"type":"user","timestamp":"t1","content":"<user_info>who am i</user_info>\\n'
+            b'<user_query>how do I deploy?</user_query>"}')
+        self.assertEqual((out, hints.title), (_msgs([("user", "how do I deploy?", "t1")]), "how do I deploy?"))
+        out, hints = decode.Decoder("grok").decode_line(
+            b'{"type":"user","timestamp":"t0","content":"<user_info>ctx</user_info>"}')
+        self.assertEqual((out, hints.title), ([], None))
+        out, _ = decode.Decoder("grok").decode_line(
+            b'{"type":"user","content":"<user_info>ctx</user_info><git_status>clean</git_status>"}')
+        self.assertEqual(out, [])
+        out, _ = decode.Decoder("grok").decode_line(
+            b'{"type":"assistant","timestamp":"t2","content":"the answer"}')
+        self.assertEqual(out, _msgs([("assistant", "the answer", "t2")]))
+        out, _ = decode.Decoder("grok").decode_line(
+            b'{"type":"assistant","content":[{"type":"text","text":"block one"},'
+            b'{"type":"text","text":"block two"}]}')
+        self.assertEqual(out, _msgs([("assistant", "block one\nblock two", None)]))
+        self.assertEqual(decode.grok_strip_query("x <USER_QUERY> tail"), "tail")
+
+    def test_hermes(self):
+        out, hints = decode.Decoder("hermes").decode_line(json.dumps({
+            "session_id": "h-1", "model": "opus", "cwd": "/repo/h",
+            "session_start": "2026-09-01T08:00:00Z", "messages": [
+                {"role": "user", "content": "where is the config?"},
+                {"role": "assistant", "content": [{"type": "text", "text": "In settings.json."}]},
+                {"role": "system", "content": "skip me"}]}, indent=1).encode())
+        self.assertEqual((hints.session_id, hints.cwd, hints.title),
+                         ("h-1", "/repo/h", "where is the config?"))
+        self.assertEqual(out, _msgs([("user", "where is the config?", None),
+                                     ("assistant", "In settings.json.", None)]))
+
+    def test_kiro(self):
+        decoder = decode.Decoder("kiro")
+        _, manifest = decoder.decode_line(
+            b'{"cwd":"/repo/kiro","title":"Named chat","session_state":{},"created_at":"t0"}')
+        self.assertEqual((manifest.cwd, manifest.title), ("/repo/kiro", "Named chat"))
+        prompt, _ = decoder.decode_line(
+            b'{"kind":"Prompt","data":{"content":[{"kind":"text","data":"run the suite"}],'
+            b'"meta":{"timestamp":1789471031}}}')
+        self.assertEqual(prompt, _msgs([("user", "run the suite", "2026-09-15T11:17:11.000Z")]))
+        assistant, _ = decoder.decode_line(
+            b'{"kind":"AssistantMessage","data":{"content":[{"kind":"text","data":"running"},'
+            b'{"kind":"toolUse","data":{"name":"Bash","input":{"command":"swift test"}}}]}}')
+        self.assertEqual([(m.role, m.text) for m in assistant],
+                         [("assistant", "running"), ("tool", "Bash: swift test")])
+        results, _ = decoder.decode_line(
+            b'{"kind":"ToolResults","data":{"content":[{"kind":"toolResult","data":'
+            b'{"content":[{"kind":"text","data":"ok"}]}}]}}')
+        self.assertEqual([m.role for m in results], ["tool"])
+        blob, _ = decoder.decode_line(b'{"kind":"Prompt","data":{"content":[{"kind":"json","data":{"a":1}}]}}')
+        self.assertEqual(blob[0].text, '{"a":1}')
+
+
+KIRO_ID = "0f0e0d0c-1111-4222-8333-444455556666"
+
+
+def build_paired_home(home: Path) -> None:
+    """Hermes, Kiro and Grok sessions under ``home``."""
+    hermes = home / ".hermes/sessions"
+    hermes.mkdir(parents=True)
+    (hermes / "session_20261001_h1.json").write_text(json.dumps({
+        "session_id": "h-1", "cwd": "/repo/h", "messages": [
+            {"role": "user", "content": "where does the heron config live"},
+            {"role": "assistant", "content": [{"type": "text", "text": "In heron.toml."}]}]}, indent=2))
+    (hermes / "request_dump_1.json").write_text(json.dumps({"session_id": "dump", "messages": [
+        {"role": "user", "content": "not a session"}]}))
+    kiro = home / ".kiro/sessions/cli"
+    (kiro / KIRO_ID).mkdir(parents=True)
+    (kiro / f"{KIRO_ID}.json").write_text(json.dumps({
+        "cwd": "/repo/kiro", "title": "Kestrel  suite", "created_at": "2026-09-15T11:00:00Z",
+        "updated_at": "2026-09-15T12:00:00Z"}))
+    (kiro / f"{KIRO_ID}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in [
+        {"kind": "Prompt", "data": {"content": [{"kind": "text", "data": "run the kestrel suite"}],
+                                    "meta": {"timestamp": 1789471031}}},
+        {"kind": "AssistantMessage", "data": {"content": [
+            {"kind": "text", "data": "running"},
+            {"kind": "toolUse", "data": {"name": "Bash", "input": {"command": "make kestrel"}}}]}},
+        {"kind": "ToolResults", "data": {"content": [
+            {"kind": "toolResult", "data": {"content": [{"kind": "text", "data": "12 passed"}]}}]}},
+    ]))
+    child = "aaaaaaaa-1111-4222-8333-444455556666"
+    (kiro / f"{child}.json").write_text(json.dumps({"parent_session_id": KIRO_ID, "cwd": "/x"}))
+    (kiro / f"{child}.jsonl").write_text(json.dumps(
+        {"kind": "Prompt", "data": {"content": [{"kind": "text", "data": "child turn"}]}}) + "\n")
+    (kiro / KIRO_ID / "task.json").write_text("{}")
+    grok = home / ".grok/sessions/ws-1/gk-dir"
+    grok.mkdir(parents=True)
+    (grok / "summary.json").write_text(json.dumps({
+        "info": {"cwd": "/repo/g"}, "generated_title": "Gannet deploy",
+        "created_at": 1791300000, "last_active_at": "2026-10-06T16:00:00Z"}))
+    (grok / "chat_history.jsonl").write_text("".join(json.dumps(r) + "\n" for r in [
+        {"type": "user", "timestamp": "2026-10-06T15:30:00Z",
+         "content": "<user_info>ctx</user_info>\n<user_query>deploy the gannet</user_query>"},
+        {"type": "assistant", "content": "Deploying the gannet."},
+    ]) + '{"type": "user", "content": "half a li')
+    broken = home / ".grok/sessions/ws-1/broken"
+    broken.mkdir()
+    (broken / "summary.json").write_text("{not json")
+    (broken / "chat_history.jsonl").write_text(json.dumps({"type": "assistant", "content": "x"}) + "\n")
+
+
+class PairedHarnessTests(_Home):
+    def setUp(self):
+        super().setUp()
+        build_paired_home(self.home)
+
+    def sessions(self):
+        return {row[0]: row[1:] for row in self.db().execute(
+            "SELECT session_id, agent, title, cwd, created_at, updated_at, message_count"
+            " FROM sessions")}
+
+    def test_every_harness_indexes(self):
+        result = self.run_pass()
+        self.assertEqual((result.failed, result.moved), (0, 0))
+        got = self.sessions()
+        self.assertEqual(got["h-1"], ("hermes", "where does the heron config live", "/repo/h",
+                                      None, None, 2))
+        self.assertNotIn("dump", got)
+        self.assertEqual(got[KIRO_ID], ("kiro", "Kestrel suite", "/repo/kiro",
+                                        "2026-09-15T11:00:00Z", "2026-09-15T12:00:00Z", 4))
+        self.assertEqual(len(got), 3, got)
+        self.assertEqual(got["gk-dir"], ("grok", "Gannet deploy", "/repo/g",
+                                         "2026-10-06T15:20:00.000Z", "2026-10-06T16:00:00Z", 2))
+        conn = self.db()
+        kiro_path = os.path.realpath(self.home / f".kiro/sessions/cli/{KIRO_ID}.json")
+        size = sum(os.path.getsize(kiro_path + suffix) for suffix in ("", "l"))
+        self.assertEqual(conn.execute("SELECT byte_offset, size_bytes FROM files WHERE path = ?",
+                                      (kiro_path,)).fetchone(), (size, size))
+        # The child session and the malformed summary commit no session.
+        states = conn.execute("SELECT count(*) FROM files WHERE session_row_id IS NULL").fetchone()[0]
+        self.assertEqual(states, 2)
+        for phrase in ("heron config", "kestrel suite", "12 passed", "gannet"):
+            self.assertTrue(search_index.search(self.home, phrase), phrase)
+        again = self.run_pass()
+        self.assertEqual((again.indexed, again.current), (0, again.files))
+
+    def test_a_sidecar_only_change_reads_the_pair_again(self):
+        self.run_pass()
+        transcript = self.home / f".kiro/sessions/cli/{KIRO_ID}.jsonl"
+        with open(transcript, "a") as handle:
+            handle.write(json.dumps({"kind": "Prompt", "data": {"content": [
+                {"kind": "text", "data": "and the kakapo"}]}}) + "\n")
+        self.assertEqual(self.run_pass().indexed, 1)
+        self.assertEqual(self.sessions()[KIRO_ID][5], 5)
+        self.assertEqual(len(search_index.search(self.home, "kakapo")), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
