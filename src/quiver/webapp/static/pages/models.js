@@ -123,9 +123,11 @@
       || (r.alias && normalized(r.alias).includes(needle)));
   }
 
-  /* The used names a search excluded, one per line (no model name holds a newline). */
+  /* The used names a search excluded, one per line (no model name holds a
+   * newline). An aliased row's real name goes too, so its price key doesn't
+   * show again below it as a model nobody ran. */
   function hitKey(hits) {
-    return hits.map((r) => r.model).join("\n");
+    return hits.flatMap((r) => (r.alias ? [r.model, r.alias] : [r.model])).join("\n");
   }
 
   async function runSearch(gen) {
@@ -171,7 +173,7 @@
   function tableRow(r) {
     const more = r.harnesses.length > 3 ? `<span class="caption">+${r.harnesses.length - 3}</span>` : "";
     return `<tr>
-      <td><div class="qm-model">${kit().brandLogo(r.brand)}<span class="ellipsis" title="${esc(r.model)}">${esc(r.alias || r.model)}${
+      <td><div class="qm-model">${kit().brandLogo(r.brand)}<span class="ellipsis" title="${esc(kit().fullName(r))}">${esc(r.alias || r.model)}${
         r.qualifier ? `<span class="caption"> ${esc(r.qualifier)}</span>` : ""}${
         r.alias ? `<span class="caption muted"> ${esc(r.model)}</span>` : ""}</span></div></td>
       <td><div class="qm-ran">${r.harnesses.slice(0, 3).map((h) =>

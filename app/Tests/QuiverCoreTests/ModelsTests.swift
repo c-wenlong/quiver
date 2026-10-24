@@ -1321,6 +1321,39 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(model.searchOverflow == 0)
     }
 
+    @Test func aQueryFindsAnUnmatchedIDByItsAliasOnce() async throws {
+        // No AA entry covers Haiku: "haiku" still finds the used
+        // MODEL_PRIVATE_11 row, and its price key doesn't show again.
+        let dir = try TempDir()
+        try writeLLMs(dir, [
+            entry("opus", "Claude Opus 5.5", "claude-opus-5-5",
+                  creator: "anthropic", intelligence: 70),
+        ])
+        let store = ArtificialAnalysisStore(directory: dir.path("aa"))
+        let priceEntry: [String: Any] = ["input_cost_per_token": 1e-06,
+                                         "output_cost_per_token": 5e-06]
+        try store.database.recordPrices(["claude-haiku-4-5": priceEntry], at: Date(), url: nil, sha: nil)
+        store.database.rebuildAliases()
+        let used = [slice("MODEL_PRIVATE_11", "devin", tokens: 60)]
+        let model = ModelsModel(store: store, keyReader: { "key" }, transport: StubHTTP(),
+                                linksURL: dir.path("config/model-links.json"),
+                                slices: { _ in used },
+                                pricing: {
+                                    PricingCatalog(liteLLMEntries: ["claude-haiku-4-5":
+                                        ["input_cost_per_token": 1e-06,
+                                         "output_cost_per_token": 5e-06]],
+                                                   overrides: [:])
+                                },
+                                now: { Date(timeIntervalSince1970: 1_800_000_000) },
+                                calendar: Calendar(identifier: .gregorian),
+                                searchDelay: .zero)
+        await model.load(allowRefresh: false)
+        model.query = "haiku"
+        #expect(model.rows.map(\.logged) == ["MODEL_PRIVATE_11"])
+        #expect(model.rows[0].displayName == "claude-haiku-4-5")
+        #expect(model.searchOverflow == 0)
+    }
+
     @Test func aQueryCapsTheLiteLLMTailAndCountsTheRest() async throws {
         let dir = try TempDir()
         try writeLLMs(dir, [

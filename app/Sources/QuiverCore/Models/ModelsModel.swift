@@ -812,9 +812,14 @@ public final class ModelsModel {
                 pool.append(used[merged])
             }
             var result = Self.sort(pool, by: metric)
-            // Used names no AA entry covers are rows too when they match.
-            for un in unmatched where Self.matches(needle, un.model) {
-                guard seen.insert("unmatched:\(un.model)").inserted else { continue }
+            // Used names no AA entry covers are rows too when they match,
+            // by the logged id or the real name an alias gives it.
+            var aliasShown: Set<String> = []
+            for un in unmatched {
+                let alias = ModelBrands.resolvedName(un.model)
+                guard Self.matches(needle, un.model) || alias.map({ Self.matches(needle, $0) }) == true,
+                      seen.insert("unmatched:\(un.model)").inserted else { continue }
+                if let alias { aliasShown.insert(alias.lowercased()) }
                 result.append(Row(logged: un.model, aa: nil,
                                   harnesses: byModel[un.model]?.harnesses ?? [],
                                   tokens: un.tokens,
@@ -826,6 +831,7 @@ public final class ModelsModel {
             let lite = liteHay
                 .filter { $0.hay.contains(needle) }
                 .filter { !seen.contains("unmatched:\($0.row.key)")
+                          && !aliasShown.contains($0.row.key.lowercased())
                           && cachedMatch($0.row.key) == nil }
                 .sorted { Self.liteRank(needle, $0) < Self.liteRank(needle, $1) }
             for hit in lite.prefix(Self.searchLimit) {
