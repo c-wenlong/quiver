@@ -73,7 +73,7 @@ Required steps for any feature that adds files or changes `cmd_*` handlers:
 
 1. **Write tests** and run `python -m unittest discover -s tests -p 'test_*.py'`.
 2. **Reinstall the package** with `pip install -e .` (or `pipx install --force git+...` for pipx installs). With an editable install new files are picked up automatically, but a stale non-editable install won't see them until you reinstall.
-3. **Verify e2e** by running the actual `swe <command>` against a temp HOME, not just `PYTHONPATH=src python -m quiver.cli <command>`. CI does the same in three separate jobs — a built wheel installed into a clean venv, the Nix derivation's output, and a macOS run — each exercising the installed binary against a `mktemp -d` home. Read `.github/workflows/ci.yml` for the exact commands rather than assuming; that list gets trimmed from time to time.
+3. **Verify e2e** by running the actual `swe <command>` against a temp HOME, not just `PYTHONPATH=src python -m quiver.cli <command>`. CI does the same on every PR (the editable install on Linux and on macOS), and `release.yml` repeats it on a tag for a built wheel in a clean venv, the Nix derivation's output and the bundled app, each against a `mktemp -d` home. Read `.github/workflows/ci.yml` and `release.yml` for the exact commands rather than assuming; that list gets trimmed from time to time.
 4. **Open a PR**, one concern per PR, with a clear description of what changed and why.
 
 Common pitfall: if a feature works with `PYTHONPATH=src python -m quiver.cli` but not with the installed `swe` command, the installed copy is stale (likely a non-editable install). Re-run `pip install -e .` to switch to editable mode and sync with the source tree.
