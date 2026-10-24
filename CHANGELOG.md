@@ -35,6 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   up the Mac app itself (Dock, login item, terminal, notifications,
   updates, Keychain services) are greyed out as "Mac app only".
 
+- **Remote iPhone app: type @ to mention a file.** Typing `@` in the
+  prompt box opens a list of files and folders from the session's
+  working folder just above it, filtered as you type. Tapping a file
+  puts `@path ` in the message; tapping a folder puts `@folder/` and
+  lists what's inside. A space, a tap in the transcript, or deleting the
+  `@` closes it. Sessions on a satellite say file search isn't available
+  for that machine yet. A path with spaces goes in quoted,
+  `@"My Documents/notes.txt"`, as Claude Code writes it. On iOS 17 the
+  menu follows the end of the text rather than the caret.
+
 - **Web app: your own devices open it without pairing.** A browser on a
   device signed in to the hub owner's Tailscale account loads `/app/`
   straight away; the hub knows it from `tailscale whois` (cached a
