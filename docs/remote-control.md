@@ -574,6 +574,11 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   LAN/WAN port ever opens. Tailscale's OAuth
   login is how a device joins the tailnet; this feature does not
   re-implement it.
+- Owner devices: a request without a bearer is still let in when its
+  tailnet node belongs to the hub owner's login (not tagged), it sends
+  `X-Quiver-Pair: 1` from an allowed Host, and its `Origin` is the hub's
+  own; the web app at `/app/` relies on this. The `whois` answer is
+  cached per IP (60 s, a miss 10 s). Satellite routes stay bearer-only.
 - Pairing: the phone posts `POST /v1/pair/request`; the hub resolves
   its Tailscale node with `tailscale whois <peer ip>` and hands back a
   6-digit code + a poll secret. A second device — or the hub's own
