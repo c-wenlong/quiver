@@ -22,7 +22,6 @@ tailnet IP, was working.
 from __future__ import annotations
 
 import json
-import os
 import plistlib
 import subprocess
 import sys
@@ -80,9 +79,14 @@ class Facts:
     serve: dict = field(default_factory=dict)
     # (ok, error) of a certificate fetch, or None when not checked.
     cert: tuple[bool, str] | None = None
-    # The hub LaunchAgent: its ProgramArguments, and whether it runs.
+    # The hub's background service (LaunchAgent on a Mac, systemd user
+    # unit on Linux): its command line, and whether it runs.
     agent_args: list[str] | None = None
     agent_running: bool = False
+    # Linux: a systemd user manager to install into, and whether user
+    # services outlive logout (None when loginctl can't say).
+    service_available: bool = False
+    linger: bool | None = None
     hub_config: dict = field(default_factory=dict)
     loopback_ok: bool = False
     https_ok: bool = False
@@ -224,19 +228,29 @@ def evaluate(f: Facts) -> dict:
     want = f.public_url
     if not cert_ok:
         steps.append(_step("hub.service", t_hub, BLOCKED, blocked_by(t_cert)))
-    elif darwin and f.loopback_ok and not f.agent_running:
+    elif (darwin or f.service_available) and f.loopback_ok and not f.agent_running:
         # Something else answers on the port, most likely a hub started
         # from a shell: the background one would fail to bind.
         steps.append(_step(
             "hub.service", t_hub, NEEDS_YOU,
-            f"A hub started outside launchd answers on 127.0.0.1:{f.port}, so the "
-            "background one can't start. Stop it, then check again.",
+            f"A hub started outside the background service answers on 127.0.0.1:{f.port}, "
+            "so the background one can't start. Stop it, then check again.",
             {"kind": "command", "label": "Copy command", "command": "pkill -f 'swe remote serve'"}))
-    elif darwin:
+    elif darwin or f.service_available:
         args = f.agent_args or []
         right = f"--public-url={want}" in args and "--host=127.0.0.1" in args
         if right and f.agent_running and f.loopback_ok:
-            steps.append(_step("hub.service", t_hub, OK, "Starts at login and restarts if it stops"))
+            if darwin:
+                detail = "Starts at login and restarts if it stops"
+            elif f.linger is False:
+                detail = ("Runs only while you're logged in. To keep it after "
+                          "logout, run `sudo loginctl enable-linger $USER`.")
+            elif f.linger is None:
+                detail = ("Restarts if it stops. loginctl couldn't say whether it outlives "
+                          "logout; to be sure, run `sudo loginctl enable-linger $USER`.")
+            else:
+                detail = "Starts at boot and restarts if it stops"
+            steps.append(_step("hub.service", t_hub, OK, detail))
         elif right and f.agent_running:
             steps.append(_step(
                 "hub.service", t_hub, FAILED,
@@ -253,7 +267,8 @@ def evaluate(f: Facts) -> dict:
         cmd = f"swe remote serve {port_flag}--public-url={want}"
         steps.append(_step(
             "hub.service", t_hub, NEEDS_YOU,
-            f"Run `{cmd}` under a systemd user unit so it starts at boot.",
+            f"No systemd user manager here. Run `{cmd}` under this machine's "
+            "init system so it starts at boot.",
             {"kind": "command", "label": "Copy command", "command": cmd}))
     hub_ok = steps[-1]["state"] == OK
 
@@ -455,6 +470,13 @@ def gather(home: Path | None = None, port: int | None = None, run: Runner = subp
             f.serve = _run_json(run, [f.exe, "serve", "status", "--json"])[0] or {}
     if f.platform == "darwin":
         f.agent_args, f.agent_running = _agent(home, run)
+    elif f.platform.startswith("linux"):
+        from quiver.remote import systemd
+
+        f.service_available = systemd.available(run)
+        if f.service_available:
+            f.agent_args, f.agent_running = systemd.status(home, run)
+            f.linger = systemd.lingering(run)
     f.loopback_ok = get(f"http://127.0.0.1:{f.port}/v1/status", 2)[0]
     if f.public_url:
         f.https_ok, f.https_error = get(f"{f.public_url}/v1/status", 5)
@@ -563,16 +585,15 @@ def serve_fix(err: str) -> dict | None:
 
 def default_actions(home: Path | None = None, run: Runner = subprocess.run) -> Actions:
     def install_hub(public_url: str, port: int) -> str | None:
-        from quiver.remote.commands import hub_program
+        from quiver.remote.commands import hub_program, install_service
 
         program, err = hub_program("127.0.0.1", port, public_url)
         if err:
             return err
-        log_path = remote_dir_for(home) / "serve.log"
         try:
-            launchd.install(program, log_path, os.environ.get("PATH", ""), home=home, run=run)
+            install_service(program, remote_dir_for(home) / "serve.log", home=home, run=run)
         except RuntimeError as exc:
-            return f"launchctl could not load the hub: {exc}"
+            return str(exc)
         return None
 
     def start_serve(exe: str, port: int) -> str | None:
