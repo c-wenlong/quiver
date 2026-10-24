@@ -246,6 +246,8 @@ extension ChatEntry {
 private struct Composer: View {
     var model: SessionChatModel
     @State private var draft = ""
+    /// The caret or selection, so Shift-Return breaks the line there.
+    @State private var selection: TextSelection?
     /// Queue waits for the agent's turn to end; Steer writes now.
     @AppStorage("sessionChatSendMode") private var mode = "queue"
 
@@ -258,14 +260,14 @@ private struct Composer: View {
                     .hoverTip("Queue waits for the agent to finish its turn; Steer writes now.", title: "Send mode")
             }
             TextField(observed ? "Read-only until this session is attached" : "Message the session",
-                      text: $draft, axis: .vertical)
+                      text: $draft, selection: $selection, axis: .vertical)
                 .lineLimit(1...8)
                 .quiverField(multiline: true)
                 .disabled(observed)
                 // Return sends; Shift-Return starts a new line.
                 .onKeyPress(.return, phases: .down) { press in
                     if press.modifiers.contains(.shift) {
-                        draft += "\n"
+                        newline()
                     } else {
                         submit()
                     }
@@ -282,6 +284,18 @@ private struct Composer: View {
                 .primaryButton()
                 .disabled(observed || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
+    }
+
+    /// A line break in place of the selection, or at the end when the
+    /// field reports none.
+    private func newline() {
+        guard case .selection(let range) = selection?.indices, range.upperBound <= draft.endIndex else {
+            draft += "\n"
+            return
+        }
+        let at = draft.distance(from: draft.startIndex, to: range.lowerBound)
+        draft.replaceSubrange(range, with: "\n")
+        selection = TextSelection(insertionPoint: draft.index(draft.startIndex, offsetBy: at + 1))
     }
 
     private func submit() {

@@ -82,7 +82,7 @@ public final class SessionChatModel {
     /// read): the page opens its details instead.
     public private(set) var missing = false
     /// A send went out and nothing from the agent has come back yet.
-    public private(set) var awaitingReply = false
+    public var awaitingReply: Bool { !awaiting.isEmpty }
     /// A Stop is on its way to the hub.
     public private(set) var stopping = false
 
@@ -108,6 +108,16 @@ public final class SessionChatModel {
     /// History is being loaded: its user messages are old, never the
     /// echo of a send.
     private var replaying = false
+    /// Sends still waiting for the agent's first reply, by client id.
+    private var awaiting = Set<String>()
+    /// The entry each send became once the transcript echoed it, by client
+    /// id: its result can land after the echo.
+    private var echoed: [String: String] = [:]
+    /// When each send was typed, so a reload takes only a history message
+    /// from after it as its echo.
+    private var sentAt: [String: Double] = [:]
+    /// The user messages a history load added: echoes of sends it carries.
+    private var loadedUsers: [(id: String, text: String, ts: Double?)] = []
 
     struct Orphan: Equatable {
         var seq: Int
@@ -210,7 +220,9 @@ public final class SessionChatModel {
     /// Replaces what's shown with the newest page of history.
     func load(_ page: HubMessagesPage) {
         // Sends not yet echoed aren't in history: they carry over.
-        let unsent = items.filter { if case .user(_, let send?) = $0.kind { send.inFlight } else { false } }
+        let unsent = items.filter {
+            if case .user(_, let send?) = $0.kind { send.inFlight || send == .delivered } else { false }
+        }
         items = []
         seen = []
         toolCards = [:]
@@ -219,10 +231,11 @@ public final class SessionChatModel {
         // Before the messages: whether a result without its call can still
         // find it on an older page.
         hasEarlier = page.hasMore ?? false
+        loadedUsers = []
         replaying = true
         for env in page.messages { apply(env) }
         replaying = false
-        items += unsent
+        items += unsent.filter { !echoedInHistory($0) }
         nextBefore = page.nextBefore ?? page.messages.first?.seq
         showOrphans()
     }
@@ -313,7 +326,7 @@ public final class SessionChatModel {
             let status = env.decode(HubStatusData.self)?.status ?? ""
             row?.status = status
             // The turn ended (or stopped to ask) without a message to show.
-            if !replaying, !status.isEmpty, status != "active" { awaitingReply = false }
+            if !replaying, !status.isEmpty, status != "active" { awaiting.removeAll() }
         case "command.result":
             if let result = env.decode(HubCommandResult.self) { settle(result) }
         case "session.ownership":
@@ -368,29 +381,53 @@ public final class SessionChatModel {
     }
 
     private func append(_ msg: HubMessage, seq: Int) {
-        var carried: String?
+        if replaying, msg.kind == "user", let text = msg.text { loadedUsers.append(("m\(seq)", text, msg.ts)) }
+        var echoOf: String?
+        var carried: HubSendState?
         if !replaying, msg.kind == "user", let text = msg.text,
            let i = items.lastIndex(where: {
-               if case .user(let sent, let send?) = $0.kind, !Self.isFailed(send) { return Self.echoes(text, sent) }
-               return false
+               guard $0.id.hasPrefix("send-"), case .user(let sent, let send?) = $0.kind, !Self.isFailed(send)
+               else { return false }
+               return Self.echoes(text, sent)
            }), case .user(_, let send?) = items[i].kind {
             // The hub echoes a send back as a user message: it replaces the
             // bubble drawn when it was typed. A degraded send keeps its note.
-            if case .degraded(let note) = send { carried = note }
+            let cid = String(items[i].id.dropFirst("send-".count))
+            echoOf = cid
+            if case .degraded = send { carried = send }
             if i == items.count - 1 {
                 // Still the newest entry: settle it where it is.
-                items[i].kind = .user(text, send: carried.map { .degraded($0) })
+                items[i].kind = .user(text, send: carried)
+                echoed[cid] = items[i].id
                 return
             }
             items.remove(at: i)
         } else if !replaying, msg.kind != "user", msg.kind != "tool_result" {
-            awaitingReply = false
+            awaiting.removeAll()
         }
         let before = items.count
         Self.add(msg, seq: seq, to: &items, cards: &toolCards, orphans: &orphanResults)
-        if let carried, items.count > before, case .user(let text, _) = items[items.count - 1].kind {
-            items[items.count - 1].kind = .user(text, send: .degraded(carried))
+        if let cid = echoOf, items.count > before, case .user(let text, _) = items[items.count - 1].kind {
+            echoed[cid] = items[items.count - 1].id
+            items[items.count - 1].kind = .user(text, send: carried)
         }
+    }
+
+    /// A send carried over a history reload whose echo is in that history
+    /// (it landed while the stream was down): the echo stands for it.
+    private func echoedInHistory(_ item: HubChatItem) -> Bool {
+        guard case .user(let text, let send?) = item.kind else { return false }
+        let cid = String(item.id.dropFirst("send-".count))
+        let typed = sentAt[cid] ?? 0
+        let claimed = Set(echoed.values)
+        guard let hit = loadedUsers.last(where: {
+            !claimed.contains($0.id) && Self.echoes($0.text, text) && ($0.ts ?? .infinity) >= typed - 5
+        }) else { return false }
+        echoed[cid] = hit.id
+        if case .degraded = send, let i = items.firstIndex(where: { $0.id == hit.id }) {
+            items[i].kind = .user(hit.text, send: send)
+        }
+        return true
     }
 
     /// The transcript's user message `echo` is the send `sent` coming
@@ -411,16 +448,19 @@ public final class SessionChatModel {
     /// A command's outcome: a send's bubble settles; any other failure, or
     /// a degraded result, gets a line of its own.
     private func settle(_ r: HubCommandResult) {
-        if r.op == "message", let cid = r.clientId, let i = items.firstIndex(where: { $0.id == "send-\(cid)" }),
-           case .user(let text, let send?) = items[i].kind {
-            guard send.inFlight else { return }
+        if r.op == "message", let cid = r.clientId {
+            // Its bubble, or the entry the echo turned it into.
+            guard let i = items.firstIndex(where: { $0.id == (echoed[cid] ?? "send-\(cid)") }),
+                  case .user(let text, let send) = items[i].kind else { return }
+            // Failed or degraded already: that outcome stands.
+            if let send, !send.inFlight, send != .delivered { return }
             if r.ok == false {
                 items[i].kind = .user(text, send: .failed(r.cancelled == true ? "Removed before sending"
                                                           : r.note ?? "Send failed"))
-                awaitingReply = false
+                awaiting.remove(cid)
             } else if r.degraded == true {
                 items[i].kind = .user(text, send: .degraded(r.note ?? "Sent (queued: mid-turn input isn't supported here)"))
-            } else {
+            } else if echoed[cid] == nil {
                 // Kept as a send, so its echo still replaces it.
                 items[i].kind = .user(text, send: .delivered)
             }
@@ -443,7 +483,8 @@ public final class SessionChatModel {
         let cid = UUID().uuidString
         let id = "send-\(cid)"
         items.append(HubChatItem(id: id, kind: .user(text, send: .sending)))
-        awaitingReply = true
+        awaiting.insert(cid)
+        sentAt[cid] = Date().timeIntervalSince1970
         do {
             let waiting = try await hub.withClient { [key] in
                 try await $0.sendMessage(key, text: text, mode: mode, clientId: cid)
@@ -454,7 +495,7 @@ public final class SessionChatModel {
             }
         } catch {
             refusal(error)
-            awaitingReply = false
+            awaiting.remove(cid)
             if let i = items.firstIndex(where: { $0.id == id }), case .user(_, let send?) = items[i].kind, send.inFlight {
                 items[i].kind = .user(text, send: .failed(error.localizedDescription))
             }

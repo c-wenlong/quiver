@@ -401,6 +401,41 @@ extension HubStubbed {
         #expect(!chat.stopping)
     }
 
+    @Test func aResultAfterTheEchoStillSettlesIt() async throws {
+        let chat = try await opened()
+        await chat.send("steer this", mode: "steer")
+        let cid = String(try #require(chat.items.first?.id).dropFirst("send-".count))
+        chat.apply(event("message.appended", seq: 2, #"{"kind": "assistant", "text": "hm"}"#))
+        chat.apply(event("message.appended", seq: 3, #"{"kind": "user", "text": "steer this"}"#))
+        #expect(chat.items.map(\.id) == ["m2", "m3"])
+        // Headless injection reports after the whole turn.
+        chat.apply(event("command.result", #"{"op": "message", "client_id": "\#(cid)", "ok": true, "degraded": true, "note": "Ran as Queue"}"#))
+        #expect(chat.items.last?.kind == .user("steer this", send: .degraded("Ran as Queue")))
+    }
+
+    @Test func aReloadTakesTheEchoFromHistory() async throws {
+        let chat = try await opened()
+        await chat.send("while offline", mode: "queue")
+        let now = Date().timeIntervalSince1970
+        chat.load(HubMessagesPage(messages: [
+            event("message.appended", seq: 1, #"{"kind": "user", "text": "while offline", "ts": 1}"#),
+            event("message.appended", seq: 7, #"{"kind": "user", "text": "while offline", "ts": \#(now)}"#),
+        ], nextBefore: nil, hasMore: false))
+        // The old identical message isn't taken for it; the new one is.
+        #expect(chat.items.map(\.id) == ["m1", "m7"])
+    }
+
+    @Test func dotsWaitForEverySend() async throws {
+        let chat = try await opened()
+        await chat.send("one", mode: "queue")
+        await chat.send("two", mode: "queue")
+        let second = String(try #require(chat.items.last?.id).dropFirst("send-".count))
+        chat.apply(event("command.result", #"{"op": "message", "client_id": "\#(second)", "ok": false, "note": "x"}"#))
+        #expect(chat.working)
+        chat.apply(event("message.appended", seq: 4, #"{"kind": "assistant", "text": "reply"}"#))
+        #expect(!chat.working)
+    }
+
     @Test func echoesAllowOnlyAnAttachmentPrefix() {
         #expect(SessionChatModel.echoes("run", "run"))
         #expect(SessionChatModel.echoes("@a.png @b.txt run", "run"))
