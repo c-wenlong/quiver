@@ -26,10 +26,22 @@ final class ConsoleModel {
     /// True when the hub didn't answer and the console runs on a saved target.
     private(set) var offlineTarget = false
 
-    @ObservationIgnored weak var screen: ConsoleScreen?
+    /// The terminal view, once it exists. Output that arrived before it
+    /// (a fast login's banner and prompt) is fed to it then, in order.
+    @ObservationIgnored weak var screen: ConsoleScreen? {
+        didSet {
+            guard let screen, !unshown.isEmpty else { return }
+            screen.feed(unshown)
+            unshown = []
+        }
+    }
+    @ObservationIgnored private var unshown: [UInt8] = []
     @ObservationIgnored private var shell: SSHShell?
-    /// Bumped on every connect, so a dying shell's events can't touch the next one.
+    /// One per attempt (start, reconnect, stop): anything an older attempt
+    /// finishes later, a shell or its events, is dropped.
     @ObservationIgnored private var generation = 0
+    /// The shell of this generation ended before `open` handed it over.
+    @ObservationIgnored private var endedEarly: (generation: Int, error: SSHConsoleError?)?
     @ObservationIgnored private var size = (cols: 80, rows: 24)
     @ObservationIgnored private let store: SSHTargetStore
     @ObservationIgnored private let loadIdentity: () throws -> SSHIdentity
@@ -44,6 +56,7 @@ final class ConsoleModel {
 
     /// Registers this phone's key with the hub and opens the shell.
     func start(hub: PairedHub, client: HubClient) async {
+        let gen = begin()
         phase = .preparing
         let identity: SSHIdentity
         do {
@@ -57,6 +70,7 @@ final class ConsoleModel {
             if info.device.publicKey != identity.publicKey {
                 info = try await client.registerSSHKey(identity.publicKey)
             }
+            guard gen == generation else { return }
             let readiness = SSHReadiness.of(info)
             guard readiness == .ready else {
                 phase = .needsSetup(readiness)
@@ -67,6 +81,7 @@ final class ConsoleModel {
             target = fresh
             offlineTarget = false
         } catch let error as HubError where error.status == 0 {
+            guard gen == generation else { return }
             // The hub is down: exactly when the console matters, so dial
             // the machine with what the hub said last time.
             guard let saved = store.target(for: hub.id) else {
@@ -76,28 +91,40 @@ final class ConsoleModel {
             target = saved
             offlineTarget = true
         } catch {
+            guard gen == generation else { return }
             phase = .failed((error as? HubError)?.message ?? error.localizedDescription)
             return
         }
-        await connect(identity: identity)
+        await connect(identity: identity, generation: gen)
     }
 
     /// Dials the target again after a logout or a dropped connection.
     func reconnect() async {
         guard target != nil else { return }
+        let gen = begin()
         do {
-            await connect(identity: try loadIdentity())
+            await connect(identity: try loadIdentity(), generation: gen)
         } catch {
             phase = .failed(error.localizedDescription)
         }
     }
 
-    private func connect(identity: SSHIdentity) async {
-        guard let target else { return }
+    /// Ends the shell, and any attempt still on its way to one.
+    func stop() {
+        _ = begin()
+    }
+
+    /// A new attempt: whatever an older one was doing is dropped.
+    private func begin() -> Int {
+        generation += 1
         shell?.close()
         shell = nil
-        generation += 1
-        let gen = generation
+        endedEarly = nil
+        return generation
+    }
+
+    private func connect(identity: SSHIdentity, generation gen: Int) async {
+        guard let target, gen == generation else { return }
         phase = .connecting
         do {
             let opened = try await SSHShell.open(target: target, key: identity.privateKey,
@@ -107,6 +134,13 @@ final class ConsoleModel {
             }
             guard gen == generation else {
                 opened.close()
+                return
+            }
+            if let early = endedEarly, early.generation == gen {
+                // It ended while open() was returning: never call it open.
+                endedEarly = nil
+                opened.close()
+                phase = .closed(early.error?.localizedDescription)
                 return
             }
             shell = opened
@@ -123,12 +157,24 @@ final class ConsoleModel {
         guard gen == generation else { return }
         switch event {
         case .output(let bytes):
-            screen?.feed(bytes)
+            if let screen {
+                screen.feed(bytes)
+            } else if unshown.count < 1 << 20 {
+                unshown += bytes
+            }
         case .closed(let error):
-            guard phase == .open else { return }
+            guard phase == .open else {
+                endedEarly = (gen, error)
+                return
+            }
             shell = nil
             phase = .closed(error?.localizedDescription)
         }
+    }
+
+    /// Feeds an event as the current shell would (tests).
+    func receiveForTesting(_ event: SSHShell.Event) {
+        handle(event, generation: generation)
     }
 
     func send(_ bytes: [UInt8]) {
@@ -139,11 +185,5 @@ final class ConsoleModel {
         guard cols > 0, rows > 0, (cols, rows) != size else { return }
         size = (cols, rows)
         shell?.resize(cols: cols, rows: rows)
-    }
-
-    func stop() {
-        generation += 1
-        shell?.close()
-        shell = nil
     }
 }

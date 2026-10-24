@@ -16,9 +16,11 @@ struct SSHIdentity {
 
     enum Failure: LocalizedError {
         case keychain(OSStatus)
+        case enclave(String)
         var errorDescription: String? {
             switch self {
-            case .keychain(let status): "Couldn't keep this phone's SSH key in the Keychain (error \(status))."
+            case .keychain(let status): "Couldn't read or keep this phone's SSH key in the Keychain (error \(status))."
+            case .enclave(let detail): "The Secure Enclave couldn't make this phone's SSH key: \(detail)"
             }
         }
     }
@@ -31,7 +33,18 @@ struct SSHIdentity {
     /// The stored key, or a new one when there is none (or it no longer
     /// opens, as after restoring the Keychain to another phone).
     static func loadOrCreate(service: String = "com.quiver.remote") throws -> SSHIdentity {
-        if let data = keychainRead(service: service), let identity = decode(data) { return identity }
+        switch keychainRead(service: service) {
+        case .found(let data):
+            if let identity = decode(data) { return identity }
+            // Stored but unusable: an enclave handle restored onto another
+            // phone opens nothing. Only then is the old item replaced.
+        case .missing:
+            break
+        case .failed(let status):
+            // Locked or busy is not "no key": making one now would replace
+            // a key the machines still trust.
+            throw Failure.keychain(status)
+        }
         let (identity, data) = try make()
         let status = keychainWrite(data, service: service)
         guard status == errSecSuccess else { throw Failure.keychain(status) }
@@ -50,20 +63,27 @@ struct SSHIdentity {
     }
 
     private static func make() throws -> (SSHIdentity, Data) {
-        if SecureEnclave.isAvailable {
-            // Usable only while the phone is unlocked, and never copied
-            // to another device by a backup.
-            var error: Unmanaged<CFError>?
-            if let access = SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-                                                            .privateKeyUsage, &error),
-               let key = try? SecureEnclave.P256.Signing.PrivateKey(accessControl: access) {
-                return (SSHIdentity(privateKey: NIOSSHPrivateKey(secureEnclaveP256Key: key), inSecureEnclave: true),
-                        Data([enclaveTag]) + key.dataRepresentation)
-            }
+        guard SecureEnclave.isAvailable else {
+            // The simulator: no enclave, so a software key is all there is.
+            let key = P256.Signing.PrivateKey()
+            return (SSHIdentity(privateKey: NIOSSHPrivateKey(p256Key: key), inSecureEnclave: false),
+                    Data([softwareTag]) + key.rawRepresentation)
         }
-        let key = P256.Signing.PrivateKey()
-        return (SSHIdentity(privateKey: NIOSSHPrivateKey(p256Key: key), inSecureEnclave: false),
-                Data([softwareTag]) + key.rawRepresentation)
+        // Usable only while the phone is unlocked, and never copied to
+        // another device by a backup. A failure here is reported, never
+        // swapped for a software key whose private bytes would leave the chip.
+        var error: Unmanaged<CFError>?
+        guard let access = SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+                                                           .privateKeyUsage, &error) else {
+            throw Failure.enclave(error?.takeRetainedValue().localizedDescription ?? "no access control")
+        }
+        do {
+            let key = try SecureEnclave.P256.Signing.PrivateKey(accessControl: access)
+            return (SSHIdentity(privateKey: NIOSSHPrivateKey(secureEnclaveP256Key: key), inSecureEnclave: true),
+                    Data([enclaveTag]) + key.dataRepresentation)
+        } catch {
+            throw Failure.enclave(error.localizedDescription)
+        }
     }
 
     private static func decode(_ data: Data) -> SSHIdentity? {
@@ -88,13 +108,27 @@ struct SSHIdentity {
          kSecAttrAccount as String: account]
     }
 
-    private static func keychainRead(service: String) -> Data? {
+    private enum ReadResult {
+        case found(Data)
+        case missing
+        case failed(OSStatus)
+    }
+
+    private static func keychainRead(service: String) -> ReadResult {
         var q = query(service: service)
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var out: AnyObject?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess else { return nil }
-        return out as? Data
+        let status = SecItemCopyMatching(q as CFDictionary, &out)
+        switch status {
+        case errSecSuccess:
+            guard let data = out as? Data else { return .failed(errSecDecode) }
+            return .found(data)
+        case errSecItemNotFound:
+            return .missing
+        default:
+            return .failed(status)
+        }
     }
 
     private static func keychainWrite(_ data: Data, service: String) -> OSStatus {

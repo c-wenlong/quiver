@@ -1,4 +1,5 @@
 import Foundation
+import NIOConcurrencyHelpers
 import NIOCore
 import NIOPosix
 import NIOSSH
@@ -11,6 +12,10 @@ enum SSHConsoleError: LocalizedError, Equatable {
     case keyRejected(user: String)
     case unreachable(String)
     case shellRefused
+    /// TCP connected, but login or shell setup didn't finish in time.
+    case timedOut
+    /// The connection broke after the shell was open.
+    case dropped(String)
 
     var errorDescription: String? {
         switch self {
@@ -22,6 +27,10 @@ enum SSHConsoleError: LocalizedError, Equatable {
             "Can't reach the machine's SSH port. Check that Tailscale is on. (\(detail))"
         case .shellRefused:
             "The machine logged this phone in but wouldn't start a shell."
+        case .timedOut:
+            "The machine's SSH port answered, but logging in didn't finish within \(Int(SSHShell.setupDeadline.nanoseconds / 1_000_000_000)) seconds."
+        case .dropped(let detail):
+            "The connection dropped: \(detail)"
         }
     }
 }
@@ -55,6 +64,8 @@ final class SSHShell: @unchecked Sendable {
         self.child = child
     }
 
+    static let setupDeadline = TimeAmount.seconds(20)
+
     static func open(target: SSHTarget, key: NIOSSHPrivateKey, cols: Int, rows: Int,
                      onEvent: @escaping @Sendable (Event) -> Void) async throws -> SSHShell {
         let auth = PublicKeyAuth(user: target.user, key: key)
@@ -79,6 +90,15 @@ final class SSHShell: @unchecked Sendable {
         }
 
         let shell = ShellHandler(cols: cols, rows: rows, onEvent: onEvent)
+        // The connect timeout covers TCP only; this one covers key
+        // exchange, login and the shell, so a machine that goes quiet
+        // mid-setup can't leave the console connecting forever.
+        let expired = NIOLockedValueBox(false)
+        let deadline = channel.eventLoop.scheduleTask(in: setupDeadline) {
+            expired.withLockedValue { $0 = true }
+            channel.close(promise: nil)
+        }
+        defer { deadline.cancel() }
         do {
             let child: Channel = try await channel.pipeline.handler(type: NIOSSHHandler.self).flatMap { ssh in
                 let promise = channel.eventLoop.makePromise(of: Channel.self)
@@ -98,6 +118,7 @@ final class SSHShell: @unchecked Sendable {
             // A promise left open trips NIO's leak check.
             shell.ready.fail(error)
             channel.close(promise: nil)
+            if expired.withLockedValue({ $0 }) { throw SSHConsoleError.timedOut }
             if pin.mismatched { throw SSHConsoleError.hostKeyMismatch }
             if auth.rejected { throw SSHConsoleError.keyRejected(user: target.user) }
             if let known = error as? SSHConsoleError { throw known }
@@ -119,6 +140,11 @@ final class SSHShell: @unchecked Sendable {
 
     func close() {
         channel.close(promise: nil)
+    }
+
+    /// Returns once the SSH connection itself has closed.
+    func connectionClosed() async {
+        try? await channel.closeFuture.get()
     }
 }
 
@@ -188,6 +214,8 @@ private final class ShellHandler: ChannelInboundHandler, @unchecked Sendable {
     private let onEvent: @Sendable (SSHShell.Event) -> Void
     /// Replies come back in request order: the pty's, then the shell's.
     private var granted = 0
+    /// Why the channel is closing, when it isn't a plain logout.
+    private var failure: Error?
 
     init(cols: Int, rows: Int, onEvent: @escaping @Sendable (SSHShell.Event) -> Void) {
         self.cols = cols
@@ -236,12 +264,16 @@ private final class ShellHandler: ChannelInboundHandler, @unchecked Sendable {
     }
 
     func channelInactive(context: ChannelHandlerContext) {
-        ready.fail(SSHConsoleError.shellRefused)
-        onEvent(.closed(nil))
+        ready.fail(failure ?? SSHConsoleError.shellRefused)
+        onEvent(.closed(failure.map { SSHConsoleError.dropped(($0 as? LocalizedError)?.errorDescription ?? "\($0)") }))
+        // One shell per connection: once it ends, the connection has no
+        // other use, and left open it would hold a login on the machine.
+        context.channel.parent?.close(promise: nil)
         context.fireChannelInactive()
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
+        failure = failure ?? error
         ready.fail(error)
         context.close(promise: nil)
     }

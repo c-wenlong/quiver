@@ -99,8 +99,9 @@ xcodebuild -project QuiverRemote.xcodeproj -scheme QuiverRemote \
 The console's SSH tests need a server and skip without one.
 `script/console-sshd.sh` starts a throwaway sshd on 127.0.0.1:2222 (its
 own host key, config and authorized_keys in a temp folder; nothing in
-`~/.ssh` or `/etc/ssh` changes) that trusts the tests' made-up key, and
-prints the `TEST_RUNNER_QUIVER_SSH_*` variables to run the tests with.
+`~/.ssh` or `/etc/ssh` changes) that trusts a key made fresh for that
+run, and prints the `TEST_RUNNER_QUIVER_SSH_*` variables, the key
+included, to run the tests with.
 
 `project.yml` carries the pieces that matter: bundle id
 `com.quiver.remote`, the `quiver` URL scheme so pair QRs open the app,

@@ -29,6 +29,8 @@ targets:
         product: NIOCore
       - package: SwiftNIO
         product: NIOPosix
+      - package: SwiftNIO
+        product: NIOConcurrencyHelpers
       - package: SwiftNIOSSH
         product: NIOSSH
       - package: SwiftTerm

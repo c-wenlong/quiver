@@ -109,6 +109,28 @@ final class ConsoleModelTests: XCTestCase {
         XCTAssertTrue(message.contains("host keys"), message)
     }
 
+    func testStopDuringSetupStartsNothing() async {
+        store.save(SSHTarget(host: "127.0.0.1", port: 9, user: "u", hostKeys: ["ssh-ed25519 AAAA"]), for: hub.id)
+        let console = model()
+        let started = Task { await console.start(hub: hub, client: client) }
+        // Let start() reach its hub request, then press Done.
+        await Task.yield()
+        console.stop()
+        await started.value
+        XCTAssertEqual(console.phase, .preparing, "a stopped console never moves on to connecting")
+    }
+
+    func testOutputBeforeTheScreenIsKept() {
+        let console = model()
+        console.receiveForTesting(.output(Array("banner\n".utf8)))
+        console.receiveForTesting(.output(Array("$ ".utf8)))
+        let screen = Screen()
+        console.screen = screen
+        XCTAssertEqual(String(decoding: screen.fed, as: UTF8.self), "banner\n$ ")
+        console.receiveForTesting(.output(Array("ls".utf8)))
+        XCTAssertEqual(String(decoding: screen.fed, as: UTF8.self), "banner\n$ ls")
+    }
+
     func testHubDownDialsTheSavedTarget() async {
         store.save(SSHTarget(host: "127.0.0.1", port: 9, user: "u", hostKeys: ["ssh-ed25519 AAAA"]), for: hub.id)
         let console = model()
@@ -120,21 +142,51 @@ final class ConsoleModelTests: XCTestCase {
     }
 }
 
+@MainActor private final class Screen: ConsoleScreen {
+    var fed: [UInt8] = []
+    func feed(_ bytes: [UInt8]) { fed += bytes }
+}
+
 /// The real transport against a throwaway sshd. Skipped unless
-/// `TEST_RUNNER_QUIVER_SSH_PORT`, `…_USER` and `…_HOST_KEY` are set
-/// (xcodebuild strips the prefix); `script/console-sshd.sh` starts one
-/// that trusts `testIdentity()` and prints them.
+/// `TEST_RUNNER_QUIVER_SSH_PORT`, `…_USER`, `…_HOST_KEY` and `…_KEY` are
+/// set (xcodebuild strips the prefix); `script/console-sshd.sh` starts
+/// one with a fresh key each run and prints them.
 final class SSHShellIntegrationTests: XCTestCase {
-    func testOpensAShellAndEchoes() async throws {
+    private struct Server {
+        let target: SSHTarget
+        let key: NIOSSHPrivateKey
+    }
+
+    private func server(hostKeys: [String]? = nil) throws -> Server {
         let env = ProcessInfo.processInfo.environment
         guard let port = env["QUIVER_SSH_PORT"].flatMap(Int.init), let user = env["QUIVER_SSH_USER"],
-              let hostKey = env["QUIVER_SSH_HOST_KEY"] else {
+              let hostKey = env["QUIVER_SSH_HOST_KEY"], let hex = env["QUIVER_SSH_KEY"],
+              let raw = Self.bytes(hex: hex),
+              let key = try? P256.Signing.PrivateKey(rawRepresentation: raw) else {
             throw XCTSkip("no test sshd")
         }
-        let target = SSHTarget(host: "127.0.0.1", port: port, user: user, hostKeys: [hostKey])
+        return Server(target: SSHTarget(host: "127.0.0.1", port: port, user: user, hostKeys: hostKeys ?? [hostKey]),
+                      key: NIOSSHPrivateKey(p256Key: key))
+    }
+
+    private static func bytes(hex: String) -> Data? {
+        guard hex.count % 2 == 0 else { return nil }
+        var out = Data()
+        var at = hex.startIndex
+        while at < hex.endIndex {
+            let next = hex.index(at, offsetBy: 2)
+            guard let byte = UInt8(hex[at..<next], radix: 16) else { return nil }
+            out.append(byte)
+            at = next
+        }
+        return out
+    }
+
+    func testOpensAShellAndEchoes() async throws {
+        let server = try server()
         let seen = expectation(description: "echo comes back")
         let output = OutputLog(expect: "quiver-console-42", fulfil: seen)
-        let shell = try await SSHShell.open(target: target, key: testIdentity().privateKey, cols: 80, rows: 24) { event in
+        let shell = try await SSHShell.open(target: server.target, key: server.key, cols: 80, rows: 24) { event in
             if case .output(let bytes) = event { output.append(bytes) }
         }
         // The typed line echoes back too; only the shell's answer says 42.
@@ -143,14 +195,25 @@ final class SSHShellIntegrationTests: XCTestCase {
         shell.close()
     }
 
-    func testRefusesAHostKeyTheHubDidntList() async throws {
-        let env = ProcessInfo.processInfo.environment
-        guard let port = env["QUIVER_SSH_PORT"].flatMap(Int.init), let user = env["QUIVER_SSH_USER"] else {
-            throw XCTSkip("no test sshd")
+    func testLogoutClosesTheConnection() async throws {
+        let server = try server()
+        let closed = expectation(description: "closed after exit")
+        let shell = try await SSHShell.open(target: server.target, key: server.key, cols: 80, rows: 24) { event in
+            if case .closed(nil) = event { closed.fulfill() }
         }
-        let target = SSHTarget(host: "127.0.0.1", port: port, user: user, hostKeys: ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAA"])
+        let ended = expectation(description: "the SSH connection ends with its one shell")
+        Task {
+            await shell.connectionClosed()
+            ended.fulfill()
+        }
+        shell.write(Array("exit\n".utf8))
+        await fulfillment(of: [closed, ended], timeout: 10)
+    }
+
+    func testRefusesAHostKeyTheHubDidntList() async throws {
+        let server = try server(hostKeys: ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAA"])
         do {
-            _ = try await SSHShell.open(target: target, key: testIdentity().privateKey, cols: 80, rows: 24) { _ in }
+            _ = try await SSHShell.open(target: server.target, key: server.key, cols: 80, rows: 24) { _ in }
             XCTFail("connected to an unlisted host key")
         } catch let error as SSHConsoleError {
             XCTAssertEqual(error, .hostKeyMismatch)
@@ -158,17 +221,12 @@ final class SSHShellIntegrationTests: XCTestCase {
     }
 
     func testReportsARejectedKey() async throws {
-        let env = ProcessInfo.processInfo.environment
-        guard let port = env["QUIVER_SSH_PORT"].flatMap(Int.init), let user = env["QUIVER_SSH_USER"],
-              let hostKey = env["QUIVER_SSH_HOST_KEY"] else {
-            throw XCTSkip("no test sshd")
-        }
-        let target = SSHTarget(host: "127.0.0.1", port: port, user: user, hostKeys: [hostKey])
+        let server = try server()
         do {
-            _ = try await SSHShell.open(target: target, key: testIdentity(9).privateKey, cols: 80, rows: 24) { _ in }
+            _ = try await SSHShell.open(target: server.target, key: testIdentity(9).privateKey, cols: 80, rows: 24) { _ in }
             XCTFail("logged in with a key sshd doesn't trust")
         } catch let error as SSHConsoleError {
-            XCTAssertEqual(error, .keyRejected(user: user))
+            XCTAssertEqual(error, .keyRejected(user: server.target.user))
         }
     }
 }
