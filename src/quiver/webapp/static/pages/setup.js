@@ -234,7 +234,16 @@ function paint() {
 
 function bindRetry() {
   const btn = document.getElementById("setup-retry");
-  if (btn) btn.onclick = () => { page.loadError = null; page.data = null; render(); };
+  if (!btn) return;
+  btn.onclick = async () => {
+    btn.disabled = true;
+    const gen = routeGen;
+    if (!(await load(gen))) return;
+    // FirstRunSetupModel.load: each fresh preview resets where AGENTS.md
+    // starts from; the step and the ticks stay.
+    if (page.data && page.wizard) page.start = defaultStart(page.data.preview.instructions);
+    paint();
+  };
 }
 
 /* The page's own entry: a "Set up this machine" card. */
