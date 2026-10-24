@@ -112,6 +112,11 @@ def github_catalog_for(home: Path | None = None) -> Path:
     return data_dir_for(home) / GITHUB_SUBDIR / GITHUB_CATALOG_BASENAME
 
 
+def github_owners_cache_for(home: Path | None = None) -> Path:
+    """The login-plus-orgs list a repo search and a sync are scoped to."""
+    return cache_dir_for(home) / "github_owners.json"
+
+
 def github_mirrors_for(home: Path | None = None) -> Path:
     """The bare clones `swe gh pr worktree` fetches PR heads into."""
     return data_dir_for(home) / GITHUB_SUBDIR / "mirrors"
@@ -255,7 +260,7 @@ SESSION_CACHE_FILE = CACHE_DIR / "session_cache.json"
 RATE_LIMITS_CACHE_FILE = CACHE_DIR / "rate_limits_cache.json"
 SESSION_COUNTS_CACHE_FILE = CACHE_DIR / "session_counts.json"
 # `swe gh repo search` owner scope (login + orgs), short TTL per login.
-GITHUB_OWNERS_CACHE = CACHE_DIR / "github_owners.json"
+GITHUB_OWNERS_CACHE = github_owners_cache_for()
 # The synced catalog behind `swe gh sync`; only a resync rewrites it.
 GITHUB_CATALOG = github_catalog_for()
 # The bare mirrors and PR checkouts `swe gh pr worktree` maintains.

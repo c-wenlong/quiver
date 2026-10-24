@@ -90,6 +90,33 @@ if args[:1] == ["api"] and "--method" in args:
 if args[:1] == ["api"] and args[1].startswith("notifications"):
     print(json.dumps(state["notes"]))
     sys.exit(0)
+# Pinning, repo search and the catalog sync. "repos" maps a name, as
+# typed in lower case, to how GitHub spells it; "orgs" is the login's
+# orgs (None fails the call); "lists" maps an owner to its repo names.
+if args[:2] == ["repo", "view"]:
+    name = state.get("repos", {}).get(args[2].lower())
+    if name is None:
+        fail("GraphQL: Could not resolve to a Repository with the name '" + args[2] + "'.")
+    print(json.dumps({"nameWithOwner": name}))
+    sys.exit(0)
+if args[:2] == ["api", "user/orgs"]:
+    if state.get("orgs") is None:
+        fail("HTTP 403: Resource not accessible")
+    print("\n".join(state["orgs"]))
+    sys.exit(0)
+if args[:2] == ["search", "repos"]:
+    if state.get("search_error"):
+        fail(state["search_error"])
+    print(json.dumps([{"fullName": n, "description": n + " blurb", "stargazersCount": 3,
+                       "updatedAt": "2026-10-20T00:00:00Z"} for n in state.get("found", [])]))
+    sys.exit(0)
+if args[:2] == ["repo", "list"]:
+    names = state.get("lists", {}).get(args[2])
+    if names is None:
+        fail("HTTP 502: Bad Gateway")
+    print(json.dumps([{"nameWithOwner": args[2] + "/" + n, "description": n, "stargazerCount": 1,
+                       "updatedAt": "2026-10-20T00:00:00Z", "isPrivate": False} for n in names]))
+    sys.exit(0)
 fail("fake gh: unexpected " + " ".join(args), 2)
 """
 
@@ -554,6 +581,169 @@ def _node(script: str, stdin: str = "") -> subprocess.CompletedProcess:
                               text=True, timeout=30)
 
 
+class TestPin(_Base):
+    """The Add repository sheet: ``get(search=...)`` and ``post("add")``
+    against a temp HOME and a fake ``gh``."""
+
+    def pins(self):
+        return [r["name"] for r in G.pinned(self.home)]
+
+    def test_search_reads_the_hubs_catalog_without_gh(self):
+        from quiver.github import catalog
+
+        fake = FakeGh(self)
+        catalog.write([{"full_name": "o/quiver", "owner": "o", "description": "arrows", "stars": 4}],
+                      ["o"], path=paths.github_catalog_for(self.home))
+        body = R.get(self.ctx, {"search": "  quiv "})
+        self.assertEqual((body["status"], body["source"], body["query"]), ("ok", "catalog", "quiv"))
+        self.assertEqual([r["name"] for r in body["results"]], ["o/quiver"])
+        self.assertEqual(fake.calls(), [])
+
+    def test_search_falls_through_to_github_and_is_cached(self):
+        fake = FakeGh(self, orgs=[], found=["octo/new"])
+        body = R.get(self.ctx, {"search": "new"})
+        self.assertEqual((body["source"], body["github"]["status"]), ("github", "ok"))
+        self.assertEqual(body["results"][0]["name"], "octo/new")
+        R.get(self.ctx, {"search": "NEW"})
+        self.assertEqual(sum(c[:2] == ["search", "repos"] for c in fake.calls()), 1)
+
+    def test_search_failures_are_answered_not_raised(self):
+        FakeGh(self, signed_out=True)
+        body = R.get(self.ctx, {"search": "q"})
+        self.assertEqual(body["status"], "auth-required")
+        self.assertIn("gh auth login", body["error"])
+        self.assertEqual(R.get(self.ctx, {"search": "   "})["results"], [])
+        with self.assertRaises(PageError) as caught:
+            R.get(self.ctx, {"search": "x" * 201})
+        self.assertEqual(caught.exception.code, "bad_search")
+
+    def test_add_pins_githubs_spelling_and_answers_the_pins(self):
+        _pin(self.home, "o/a")
+        FakeGh(self, repos={"o/quiver": "O/Quiver"})
+        body = R.post(self.ctx, "add", {"repo": "https://github.com/o/quiver/pull/3"})
+        self.assertEqual(body["repo"], "O/Quiver")
+        self.assertEqual([r["name"] for r in body["repos"]], ["o/a", "O/Quiver"])
+        self.assertEqual(self.pins(), ["o/a", "O/Quiver"])
+        self.assertEqual(body["machine"], "hub-box")
+
+    def test_add_drops_cached_searches(self):
+        self._fake = FakeGh(self, orgs=[], found=["o/b"], repos={"o/b": "o/b"})
+        R.get(self.ctx, {"search": "b"})
+        R.post(self.ctx, "add", {"repo": "o/b"})
+        R.get(self.ctx, {"search": "b"})
+        # The second search ran again rather than answer from before the pin.
+        self.assertEqual(sum(c[:2] == ["search", "repos"] for c in self._fake.calls()), 2)
+
+    def test_add_refusals(self):
+        fake = FakeGh(self, repos={})
+        for body, status, code in (({}, 422, "bad_repo"), ({"repo": 7}, 422, "bad_repo"),
+                                   ({"repo": "not a repo"}, 422, "bad_repo"),
+                                   ({"repo": "o/gone"}, 404, "unknown_repo")):
+            with self.assertRaises(PageError) as caught:
+                R.post(self.ctx, "add", body)
+            self.assertEqual((caught.exception.status, caught.exception.code), (status, code), body)
+        self.assertEqual(self.pins(), [])
+        self.assertEqual([c[:2] for c in fake.calls() if c[0] != "auth"], [["repo", "view"]])
+        fake.update(signed_out=True)
+        G.CACHE.clear()
+        with self.assertRaises(PageError) as caught:
+            R.post(self.ctx, "add", {"repo": "o/a"})
+        self.assertEqual((caught.exception.status, caught.exception.code), (409, "gh_auth_required"))
+
+    def test_an_unpinned_repo_says_so_in_plain_words(self):
+        with self.assertRaises(PageError) as caught:
+            R.get(self.ctx, {"repo": "x/y"})
+        self.assertEqual((caught.exception.status, caught.exception.code), (404, "not_pinned"))
+        self.assertEqual(caught.exception.message, "x/y is not pinned on the hub.")
+
+
+class TestManagePins(_Base):
+    """The gear popover's Unpin and the rail's drag: ``post("remove")``
+    and ``post("reorder")`` on the hub's own pin file, with no ``gh``."""
+
+    def setUp(self):
+        super().setUp()
+        _pin(self.home, "o/a", "o/b", "x/c")
+        self.gh = FakeGh(self)
+
+    def pins(self):
+        return [r["name"] for r in G.pinned(self.home)]
+
+    def refused(self, action, body, status, code):
+        with self.assertRaises(PageError) as caught:
+            R.post(self.ctx, action, body)
+        self.assertEqual((caught.exception.status, caught.exception.code), (status, code), body)
+
+    def test_unpin_answers_the_pins_and_drops_the_repos_views(self):
+        G.CACHE.get(("board", G.home_key(self.home), "o/b"), lambda: "board")
+        G.CACHE.get(("board", G.home_key(self.home), "o/a"), lambda: "kept")
+        body = R.post(self.ctx, "remove", {"repo": "O/B"})
+        self.assertEqual(body["repo"], "o/b")
+        self.assertEqual([r["name"] for r in body["repos"]], ["o/a", "x/c"])
+        self.assertEqual(self.pins(), ["o/a", "x/c"])
+        self.assertEqual(G.CACHE.get(("board", G.home_key(self.home), "o/b"), lambda: "fresh")[0], "fresh")
+        self.assertEqual(G.CACHE.get(("board", G.home_key(self.home), "o/a"), lambda: "fresh")[0], "kept")
+        self.assertEqual(self.gh.calls(), [])
+
+    def test_unpin_refusals(self):
+        self.refused("remove", {"repo": "o/zzz"}, 404, "not_pinned")
+        self.refused("remove", {"repo": "nope"}, 422, "bad_repo")
+        self.refused("remove", {}, 422, "bad_repo")
+        self.assertEqual(self.pins(), ["o/a", "o/b", "x/c"])
+
+    def test_reorder_takes_the_named_order_and_keeps_the_rest(self):
+        body = R.post(self.ctx, "reorder", {"order": ["x/c", "o/a", "o/b"]})
+        self.assertEqual([r["name"] for r in body["repos"]], ["x/c", "o/a", "o/b"])
+        # A partial list moves those to the front; a pin it doesn't name
+        # (one added from another tab meanwhile) keeps its place after them.
+        body = R.post(self.ctx, "reorder", {"order": ["o/b", "gone/repo"]})
+        self.assertEqual(self.pins(), ["o/b", "x/c", "o/a"])
+        self.assertEqual(self.gh.calls(), [])
+
+    def test_reorder_refusals(self):
+        for order in (None, "o/a", [1], [""], ["o/a"] * (R.REORDER_MAX + 1)):
+            self.refused("reorder", {"order": order}, 422, "bad_order")
+        self.assertEqual(self.pins(), ["o/a", "o/b", "x/c"])
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestPoll(unittest.TestCase):
+    """GhUI.poll under node, with a fake clock, timer, route and tab."""
+
+    SCRIPT = """
+let now = 1000000, hidden = false, hash = "#/repositories", tick = null, onShow = null;
+global.Date.now = () => now;
+global.setInterval = (fn) => { tick = fn; return 1; };
+global.clearInterval = () => { tick = null; };
+global.location = { get hash() { return hash; } };
+global.document = { get hidden() { return hidden; },
+  addEventListener: (name, fn) => { if (name === "visibilitychange") onShow = fn; } };
+global.esc = (s) => String(s); global.Fmt = { ago: () => "" };
+GITHUB_JS
+const runs = [];
+let busy = false; // a sheet open: the page skips the read and says so
+const read = () => { if (busy) return false; runs.push(now); };
+GhUI.poll("repositories", read);
+const step = (ms, h) => { now += ms; if (h !== undefined) hidden = h; };
+step(60000); tick();                     // on screen: the minute tick reads
+step(30000, true);                       // the tab goes to the background
+step(30000); tick();                     // hidden: the tick is skipped
+step(50000, false); onShow();            // back 2m10s after the last read: reads at once
+step(20000); onShow();                   // back again 20s later: nothing yet
+step(40000, false); busy = true; tick(); // a tick the page skips (a sheet open)...
+step(5000, true); busy = false;
+step(25000, false); onShow();            // ...doesn't count: back 90s after the read, it reads
+step(5000); hash = "#/inbox"; tick();    // another page: the poll stops
+process.stdout.write(JSON.stringify({ runs: runs.map((t) => t - 1000000), stopped: tick === null }));
+"""
+
+    def test_hidden_ticks_are_skipped_and_a_return_catches_up(self):
+        script = self.SCRIPT.replace("GITHUB_JS", (STATIC / "github.js").read_text())
+        done = _node(script)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {"runs": [60000, 170000, 260000], "stopped": True})
+
+
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestMarkdown(unittest.TestCase):
     """GhUI.markdown, run under node with the two globals it borrows."""
@@ -696,6 +886,32 @@ class TestRoute(HubBase):
                                      body={**body, "method": "octopus"}, headers=auth)
         self.assertEqual(status, 422)
         self.assertEqual(len(fake.writes()), 1)
+
+    def test_add_through_the_hub_needs_a_same_site_origin(self):
+        fake = FakeGh(self, repos={"o/b": "o/b"})
+        auth = self.auth()
+        status, _ = self.srv.request("POST", "/v1/app/repositories/add", body={"repo": "o/b"},
+                                     headers={**auth, "Origin": "https://evil.example"})
+        self.assertEqual(status, 403)
+        self.assertEqual(fake.calls(), [])
+        status, data = self.srv.request("POST", "/v1/app/repositories/add", body={"repo": "o/b"},
+                                        headers={**auth, "Origin": self.origin()})
+        self.assertEqual(status, 200, data)
+        self.assertEqual([r["name"] for r in G.pinned(self.srv.home)], ["o/b"])
+
+    def test_unpin_and_reorder_through_the_hub(self):
+        _pin(self.srv.home, "o/a", "o/b")
+        auth = {**self.auth(), "Origin": self.origin()}
+        status, _ = self.srv.request("POST", "/v1/app/repositories/reorder", body={"order": ["o/b"]},
+                                     headers={**auth, "Origin": "https://evil.example"})
+        self.assertEqual(status, 403)
+        status, data = self.srv.request("POST", "/v1/app/repositories/reorder", body={"order": ["o/b"]},
+                                        headers=auth)
+        self.assertEqual(status, 200, data)
+        status, data = self.srv.request("POST", "/v1/app/repositories/remove", body={"repo": "o/a"},
+                                        headers=auth)
+        self.assertEqual(status, 200, data)
+        self.assertEqual([r["name"] for r in G.pinned(self.srv.home)], ["o/b"])
 
     def test_page_scripts_are_bundled(self):
         _, js = self.srv.request("GET", "/app/pages.js")

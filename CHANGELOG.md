@@ -17,6 +17,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same Replace after a Run that left a real file in the way. The Mac app's
   AGENTS.md page gets Replace and back up too, behind a confirmation.
 
+- **`swe session index` reads Pi, Cursor, Qoder, CodeBuddy and OpenCode.**
+  swe's index writer now decodes these the way the Quiver app does, so a
+  Linux hub's search matches what was said in them too. Cursor chats take
+  the title, folder and times their transcript lacks from the chat's
+  `meta.json`; OpenCode sessions (1.x and 2.x tables) index under
+  `<opencode.db>#<id>`. Both writers produce the same rows for each file,
+  so on a Mac neither re-reads what the other already read.
+
+- **Session search reads Devin CLI sessions.** Both index writers (the
+  Quiver app and `swe session index`) now read every Devin session from
+  `~/.local/share/devin/cli/sessions.db`, along the chain that holds each
+  message's final version, so a search matches what was said in any
+  Devin session, not only the few exported to `transcripts/*.json`. swe
+  also reads those exports, as the app already did. Each session indexes
+  under `<sessions.db>#<id>` and is read again only when its activity
+  time or node count moves; a session Devin hides or deletes leaves the
+  index.
+
 - **Web app: Settings › Experimental › Session search is a real switch.**
   It was greyed out as Mac app only. It now turns the hub's transcript
   index on and off (the same setting as `swe session index --on`/`--off`),

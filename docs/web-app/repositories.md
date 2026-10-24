@@ -2,12 +2,14 @@
 
 The two GitHub pages: Repositories (sidebar id `repositories`, the Mac
 app's `RepositoriesPage`, `RepoDetailPage` and `PrDetailSheet`) and Inbox
-(id `inbox`, `InboxPage`). Each has one write: merging a pull request
-from the PR sheet, and marking notifications read.
+(id `inbox`, `InboxPage`). Repositories merges pull requests from the
+PR sheet and manages the pins: the Add repository sheet
+(`AddRepoSheet`), Unpin in the rail's gear popover (`RepoManager`), and
+drag to reorder. Inbox marks notifications read.
 
 | File | What |
 |---|---|
-| `src/quiver/webapp/pages/repositories.py` | `GET /v1/app/repositories`, `POST /v1/app/repositories/merge` |
+| `src/quiver/webapp/pages/repositories.py` | `GET /v1/app/repositories`, `POST /v1/app/repositories/merge`, `/add`, `/remove` and `/reorder` |
 | `src/quiver/webapp/pages/inbox.py` | `GET /v1/app/inbox`, `POST /v1/app/inbox/read` |
 | `src/quiver/webapp/pages/_github.py` | Shared: the `gh` cache, the write lock, the hub's pins, the env payload. The leading underscore keeps it off `/v1/app/`. |
 | `src/quiver/webapp/static/pages/github.js`, `github.css` | Shared by both scripts: `GhUI` (icons, the gh setup card, the minute poll, the writes' POST, the PR body's markdown) and the styles. |
@@ -18,7 +20,8 @@ from the PR sheet, and marking notifications read.
 Every read runs the `gh` CLI in the hub process, through the same
 builders `swe gh … --json` uses (`quiver.github.cli`). So the pages show
 what **the hub machine's `gh` login** can see, and the pinned repos are
-the hub machine's (`~/.quiver/config/github.json`, `swe gh repo add`).
+the hub machine's (`~/.quiver/config/github.json`, the same file
+`swe gh repo add` writes there).
 The browser's own GitHub session plays no part. If `gh` is missing or
 signed out on the hub, both pages show the app's setup card
 (`brew install gh` / `gh auth login`) with a line saying to run it on the
@@ -31,8 +34,12 @@ a failed one), per hub home and per key: the env probe, each pin's
 board, each focus surface and window, each PR, the inbox. Only one fetch
 per key runs at a time; a second caller waits for its reply. The pages
 poll every minute while open, like the app, so a poll costs at most one
-round of `gh` calls whoever is looking. Refresh sends `refresh=1`, which
-skips the cache unless the reply is under 5 seconds old.
+round of `gh` calls whoever is looking. A tab in the background skips
+its ticks; when it comes back a minute or more after the last read, it
+reads at once rather than waiting for the next tick, as the app reloads
+a page it shows again. The poll also waits while a sheet is open.
+Refresh sends `refresh=1`, which skips the cache unless the reply is
+under 5 seconds old.
 
 A write drops what it changed: a merge forgets the repo's board, focus
 surfaces and PR details; a mark-read forgets the inbox. A read that was
@@ -41,8 +48,9 @@ is not kept, so the next look reads GitHub again.
 
 ## Writes
 
-Both go through the functions `swe` itself calls, in the hub process
-(`quiver.github.cli.merge_pr`, `mark_threads_read`, `mark_all_read`),
+They go through the functions `swe` itself calls, in the hub process
+(`quiver.github.cli.merge_pr`, `mark_threads_read`, `mark_all_read`,
+`quiver.github.manage.add_repo`),
 with the hub's `gh` login. Nothing a browser sends reaches a shell: the
 repo must be a pin, the number and ids digits, the method one of three
 words. Writes run one at a time per hub (`_github.WRITE_LOCK`), behind
@@ -154,6 +162,78 @@ shows merged, or the Auto-merge badge), and the page behind it reads the
 repo again so a merged row leaves the list. A refusal shows in an error
 card in the sheet, with the confirm still open to retry or cancel.
 
+**Search** (`search=<text>`), the Add repository sheet's droplist.
+`swe gh repo search <text> --json` in process: the hub's synced catalog
+(`swe gh sync`, Settings › Integrations › GitHub › Sync now) first, and
+when it has no match, or no catalog exists yet, a live `gh search repos`
+scoped to the hub login and its orgs. Up to 15 hits:
+
+```json
+{"github": GhEnv | null, "status": "ok", "error": null, "query": "quiv",
+ "results": [{"name", "description", "stars", "updated_at", "url"}],
+ "source": "catalog" | "github" | null}
+```
+
+A catalog hit runs no `gh` at all (`github` is then `null`). A live
+search that can't run answers 200 with `status` (`auth-required`,
+`upstream-error`, …) and `error`, which the sheet shows above the last
+good list. Replies are cached like the other reads, per lower-cased
+query; text over 200 characters is a 400 `bad_search`.
+
+**Add** (`POST /v1/app/repositories/add`), `swe gh repo add <repo>
+--json` in process: `{"repo": "owner/name"}` (a GitHub URL or SSH remote
+works too, as in swe). The hub asks GitHub for the repo (`gh repo view`),
+which proves the hub login can see it and gives its own spelling, then
+pins that spelling. Pinning a pinned repo changes nothing. Answers
+`{"repo", "repos": [PinnedRepo], "machine"}`, the pin and every pin
+after it, and drops cached searches. Refusals: 422 `bad_repo` (not
+`owner/name` or a GitHub URL), 409 `gh_unavailable` /
+`gh_auth_required`, 404 `unknown_repo` (GitHub can't find it, or this
+login can't see it; the message is "Cannot reach owner/name: …"), 502
+`add_failed`.
+
+The sheet follows the app's: a "Pin a repository" title and caption, one
+field ("owner/repo, GitHub URL, or search terms"), a search after a
+350 ms pause (Enter searches at once; an emptied field clears the list),
+"Searching your repos…" above the hits while one runs, each hit's name,
+stars and description with Pin or a Pinned badge, and a "Pin
+owner/repo" button once the text is `owner/repo` or a github.com URL. A
+line under the hits says where they came from. A pin closes the sheet
+and the dashboard reads again. The sheet opens from the rail's last row
+(Add repository) and the empty page's Add repository button. A focus
+link to a repo the hub hasn't pinned (`not_pinned`) shows "owner/name
+is not pinned on the hub." with a Pin it button, which pins it and
+opens the repo.
+
+**Unpin** (`POST /v1/app/repositories/remove`), `swe gh repo remove
+<repo> --json`: `{"repo": "owner/name"}`, matched as pinned whatever its
+case. No `gh` call; the pin list is the hub's own file. The repo's cached
+board, focus surfaces and PR details are dropped, so a re-pin reads
+GitHub again. Answers `{"repo", "repos", "machine"}`. A repo that isn't
+pinned is a 404 `not_pinned` (the page then reads the pins again), a
+malformed one a 422.
+
+**Reorder** (`POST /v1/app/repositories/reorder`), `swe gh repo reorder
+--json`: `{"order": ["owner/name", …]}` (at most 500). The named pins
+take the first slots in that order; a pin it doesn't name keeps its
+place after them, and a name that isn't pinned is ignored, so a pin added
+from another tab meanwhile is never lost. Answers `{"repos", "machine"}`;
+anything but a list of names is a 422 `bad_order`.
+
+The rail's gear opens the app's popover: "Pinned repositories", the pins
+grouped by owner (owners sorted, an owner line only when there are
+several), each with Open on GitHub and an Unpin button, then "Add
+repository…". Unpin acts on the first click, as in the app, and its row
+spins while it runs. The popover closes on a click outside or Escape.
+Rail rows drag to reorder (a grip shows on hover): a drop moves the repo
+within its run, an owner's active repos or its quiet ones, and every
+other pin keeps its slot (`PinOrder.move`). The new order shows at once
+and is saved behind it; a drop while a save runs is sent once that one
+answers, and a failed save shows its error and reads the stored order
+back. A repaint that arrives mid-drag waits for the drop. One pin write
+runs at a time from the page, as in the app. Touch screens have no drag;
+the narrow layout's chip strip drags sideways.
+
 ## Inbox
 
 `GET /v1/app/inbox` is `swe gh inbox --all --limit=50 --json`: `{"github",
@@ -195,7 +275,6 @@ Left out because they write (they stay in `swe` and the Mac app):
 | Write | Where it lives |
 |---|---|
 | Re-run failed or all jobs of a workflow run | `swe gh run rerun`, Actions row menu in the Mac app |
-| Pin, unpin, add a repository (with catalog search and sync), reorder pins by drag | `swe gh repo add/remove/reorder`, `swe gh sync`, the rail's gear and Add repository |
 | Open a PR in a session (PR worktree) | `swe gh pr worktree`, the PR row's context menu |
 
 Also different:
@@ -214,4 +293,6 @@ Also different:
   starts empty and waits for the first reply.
 - Refresh sits in the rail as in the app (in the header when there is no
   rail). ⌘K focuses the search; ⌘R and ⌘[ stay the browser's.
-- Drag to reorder and the rail's gear popover are not there (writes).
+- Drag to reorder needs a mouse or trackpad (HTML drag and drop); a
+  touch screen reorders nowhere but the Mac app and `swe gh repo
+  reorder`.

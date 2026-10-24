@@ -54,6 +54,11 @@ const GhUI = (() => {
     tray: '<path d="M3 13h5l1 3h6l1-3h5M5 5h14l2 8v6H3v-6z"/>',
     refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>',
     envelope: '<rect x="3" y="5.5" width="18" height="13" rx="2"/><path d="m3.5 7 8.5 6 8.5-6"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/>',
+    minusCircle: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
+    grip: '<circle cx="9" cy="6" r="1" fill="currentColor"/><circle cx="15" cy="6" r="1" fill="currentColor"/><circle cx="9" cy="12" r="1" fill="currentColor"/><circle cx="15" cy="12" r="1" fill="currentColor"/><circle cx="9" cy="18" r="1" fill="currentColor"/><circle cx="15" cy="18" r="1" fill="currentColor"/>',
+    star: '<path d="m12 3.6 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"/>',
     envelopeOpen: '<path d="M3 10.5 12 4l9 6.5V19a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="m3.5 11 8.5 5.5 8.5-5.5"/>',
   };
 
@@ -115,16 +120,40 @@ const GhUI = (() => {
     }
   }
 
-  /* The pages refetch every minute while open, as the app's do. The hub
-   * caches gh replies for that long, so a poll costs at most one round. */
+  /* The pages refetch every minute while open and on screen, as the
+   * app's do. The hub caches gh replies for that long, so a poll costs
+   * at most one round. A tab in the background skips its ticks; coming
+   * back after a minute or more reads at once instead of waiting up to
+   * a minute for the next tick, as the app reloads a page it shows.
+   * ``fn`` returns false when it skipped the read (a sheet open, a read
+   * already running), so only a real read counts as the last one. */
+  const POLL_MS = 60000;
   const polls = {};
+  const route = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+  function stopPoll(page) {
+    if (!polls[page]) return;
+    clearInterval(polls[page].timer);
+    delete polls[page];
+  }
+  function runPoll(page) {
+    const entry = polls[page];
+    if (!entry) return;
+    if (route() !== page) return stopPoll(page);
+    if (document.hidden) return;
+    if (entry.fn() !== false) entry.last = Date.now();
+  }
+  let watching = false;
   function poll(page, fn) {
-    if (polls[page]) clearInterval(polls[page]);
-    polls[page] = setInterval(() => {
-      const here = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
-      if (here !== page) { clearInterval(polls[page]); delete polls[page]; return; }
-      if (!document.hidden) fn();
-    }, 60000);
+    stopPoll(page);
+    polls[page] = { fn, last: Date.now(), timer: setInterval(() => runPoll(page), POLL_MS) };
+    if (watching) return;
+    watching = true;
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) return;
+      for (const name of Object.keys(polls)) {
+        if (Date.now() - polls[name].last >= POLL_MS) runPoll(name);
+      }
+    });
   }
 
   function hashParams() {

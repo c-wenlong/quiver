@@ -393,15 +393,19 @@ public final class SearchIndexer: @unchecked Sendable {
     /// comes from the container's own session row, `messages` from its
     /// transcript rows; `byteOffset` carries the synthetic size, so the
     /// `.current` check (offset == size) can hold on a later pass.
+    /// - Parameter fileRow: the `files` row as it stood before the session
+    ///   was read — what the commit fences on. Read after, it could be a
+    ///   newer commit from another writer (swe's), which this older read
+    ///   would then replace.
     @discardableResult
     public func finishSession(
-        path: String, stat: SearchFileStat,
+        path: String, stat: SearchFileStat, fileRow: SearchFileRow?,
         fields: SearchSessionFields, messages: [SearchMessage]
     ) throws -> Bool {
         try commitWholeRead(
             path: path, stat: stat, byteOffset: stat.sizeBytes ?? 0,
             fields: fields, rows: Self.messageRows(from: messages),
-            hasSession: true, old: try? store.fileRow(for: path))
+            hasSession: true, old: fileRow)
     }
 
     /// A read that never committed. Counted against the mtime it failed at:

@@ -24,7 +24,7 @@ app's saved value does).
 | Notifications | All three rows Mac app only. |
 | Providers | Harnesses tab: Provider visibility is Mac app only, with a link to the Harnesses page. Inference tab: the API keys, read only (below). |
 | Services | Mac app only (keys in the Mac's Keychain). |
-| Integrations | GitHub: gh's login (with the app's warnings and a re-check button) and the synced repo catalog. Remote: the setup checklist until it's done, the hub, paired devices, Pair a device, and pair requests waiting for approval (below). |
+| Integrations | GitHub: gh's login (with the app's warnings and a re-check button) and the synced repo catalog with Sync now. Remote: the setup checklist until it's done, the hub, paired devices, Pair a device, and pair requests waiting for approval (below). |
 | Paths | The hub's swe, API keys file and MCP servers folder, read only. Editor: Mac app only. |
 | Doctor | A link to the Doctor page (`#/doctor`); the app draws Doctor inside Settings. |
 | Experimental | Session search: a switch for the hub's transcript index (`swe session index --on`/`--off`), with its status underneath (below). |
@@ -84,8 +84,8 @@ plans, stay in the Mac app.
 
 The switch is the hub's own setting, `enabled` in
 `~/.quiver/data/search/indexer.json`: while it is on, the hub's
-`remote-search-index` thread runs a pass over Claude Code and Codex
-transcripts every two minutes (`sessions/search_writer.py`). Turning it
+`remote-search-index` thread runs a pass over every transcript swe can
+decode (the list is in [data-model.md](../data-model.md)) every two minutes (`sessions/search_writer.py`). Turning it
 on also starts a pass at once, so the line under the switch reads
 "Indexing: the first pass reads every transcript and can take a few
 minutes." and the page re-reads the status every 3 seconds until
@@ -161,7 +161,7 @@ it shows the cached result, so the page stays quick.
 
 ## Writes
 
-All three behind the device bearer and the hub's Origin check, one at a time.
+All four behind the device bearer and the hub's Origin check, one at a time.
 
 `POST /v1/app/settings/pair`, body `{}`: mints a token
 (`pairing.mint_pair_token`) and answers `{"ticket": {"host", "port",
@@ -177,6 +177,20 @@ thread (quietly skipped if the hub loop or a CLI pass holds the lock; any
 other failure lands in `last_error`). Answers `{"session_search": …}` in
 the `get` shape; `400 bad_enabled` when `enabled` isn't a boolean.
 
+`POST /v1/app/settings/sync`, body `{}`: Integrations › GitHub › Sync
+now, `swe gh sync --json` in process (`quiver.github.manage.sync_catalog`)
+with the hub's `gh` login, into the hub's catalog. It probes `gh` afresh
+first. Answers `{"github": {"env", "catalog"}, "failed": [{"owner",
+"error"}]}`: the GitHub card read again, and the owners whose listing
+failed (`<orgs>` when the org list itself failed); their old rows stay.
+The page shows "Skipped … — their old repos stayed." for them, as the app
+does. The button is off while a sync runs and while `gh` is not signed
+in. A sync can take a minute on a big account, so it does not hold the
+other writes' lock: a second sync while one runs is a 409 `busy`, a
+missing or signed-out `gh` a 409 `gh_unavailable` / `gh_auth_required`
+in the setup words, and an account with no login or orgs a 502
+`sync_failed`.
+
 `POST /v1/app/settings/revoke`, body `{"device_id": "…"}` (plus
 `"confirm_this_device": true` for the device sending it): answers
 `{"revoked", "this_device", "devices"}`, the list in the `get` shape.
@@ -188,7 +202,7 @@ the `get` shape; `400 bad_enabled` when `enabled` isn't a boolean.
 | 404 | `unknown_device` | no paired device has that id |
 | 409 | `already_revoked` | the device is already signed out |
 | 409 | `confirm_this_device` | revoking the sender's own device without `confirm_this_device: true` |
-| 404 | `unknown_action` | any action but `pair`, `revoke` and `session_search` |
+| 404 | `unknown_action` | any action but `pair`, `revoke`, `session_search` and `sync` |
 | 403 | `bad_origin` | a cross-site POST |
 | 401 | `unauthorized` | neither a paired device nor the owner's tailnet device |
 
@@ -211,6 +225,6 @@ decode a PNG drawn from the SVG.
 - Reordering pages in Sidebar and providers in Provider visibility.
 - Key editing, checking, revealing, adding the `source` line, and coding
   plans in Inference.
-- Editing paths, and GitHub's "Sync now" (run `swe gh sync` on the hub).
+- Editing paths.
 - Approving and denying pair requests here: the Mac section has neither;
   the hub's remote page does it.
