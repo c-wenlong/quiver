@@ -88,7 +88,7 @@ class TestAttach(unittest.TestCase):
         with patch.object(
             supervise, "launch_tmux", return_value="qv-x"
         ) as launch, \
-             patch.object(supervise, "boot_pane"), \
+             patch.object(supervise, "boot_pane", return_value="❯"), \
              patch.object(supervise, "tmux_alive", return_value=True):
             ok, note = self._attach(mode="tmux")
         self.assertTrue(ok, note)
@@ -563,7 +563,7 @@ class TestHubWrites(unittest.TestCase):
         # real tmux session — sandboxed CI has neither tmux nor claude.
         with patch.object(supervise, "tmux_bin", return_value="/usr/bin/tmux"), \
              patch.object(supervise, "launch_tmux", return_value="qv-x"), \
-             patch.object(supervise, "boot_pane"), \
+             patch.object(supervise, "boot_pane", return_value="❯"), \
              patch.object(supervise, "tmux_alive", return_value=True), \
              patch.object(supervise, "_stop_local_writers"):
             status, data = self.srv.request(
@@ -630,7 +630,7 @@ class TestHubWrites(unittest.TestCase):
     def test_attachment_upload_and_message_ref(self):
         with patch.object(supervise, "tmux_bin", return_value="/usr/bin/tmux"), \
              patch.object(supervise, "launch_tmux", return_value="qv-t"), \
-             patch.object(supervise, "boot_pane"), \
+             patch.object(supervise, "boot_pane", return_value="❯"), \
              patch.object(supervise, "tmux_alive", return_value=True), \
              patch.object(supervise, "_stop_local_writers"):
             self.srv.request(

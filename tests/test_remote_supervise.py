@@ -767,7 +767,8 @@ class TestAttachMtime(unittest.TestCase):
                           side_effect=lambda *a, **k: order.append(
                               "launch") or "qv-new"), \
              patch.object(supervise, "boot_pane",
-                          side_effect=lambda *a, **k: order.append("boot")), \
+                          side_effect=lambda *a, **k: order.append("boot")
+                          or "❯"), \
              patch.object(supervise, "tmux_alive", return_value=True), \
              patch.object(supervise, "_stop_local_writers",
                           side_effect=lambda *a, **k: order.append("stop")):
@@ -792,7 +793,7 @@ class TestAttachMtime(unittest.TestCase):
         with patch("quiver.remote.tail.resolve_jsonl_path",
                    return_value=old), \
              patch.object(supervise, "launch_tmux", return_value="qv-new"), \
-             patch.object(supervise, "boot_pane") as boot, \
+             patch.object(supervise, "boot_pane", return_value="❯") as boot, \
              patch.object(supervise, "tmux_alive", return_value=False), \
              patch.object(supervise, "_stop_local_writers") as stop:
             ok, note = supervise.attach(
@@ -802,6 +803,30 @@ class TestAttachMtime(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("exited", note)
         boot.assert_called_once()
+        stop.assert_not_called()
+        self.assertIsNone(supervise.meta_for(self.home, self.key))
+
+    def test_tmux_handoff_fails_when_boot_times_out(self):
+        # A pane that never settles is not ready for the phone's write:
+        # drop it and leave the original writer running.
+        old = Path(tempfile.mkdtemp()) / "old.jsonl"
+        old.write_text("{}\n")
+        import os
+        stale = time.time() - 3600
+        os.utime(old, (stale, stale))
+        with patch("quiver.remote.tail.resolve_jsonl_path",
+                   return_value=old), \
+             patch.object(supervise, "launch_tmux", return_value="qv-new"), \
+             patch.object(supervise, "boot_pane", return_value=None), \
+             patch.object(supervise, "kill") as kill, \
+             patch.object(supervise, "_stop_local_writers") as stop:
+            ok, note = supervise.attach(
+                self.home, self.key, self.session,
+                last_append_at=None, status="done", mode="tmux",
+            )
+        self.assertFalse(ok)
+        self.assertIn("did not finish", note)
+        kill.assert_called_once_with("qv-new")
         stop.assert_not_called()
         self.assertIsNone(supervise.meta_for(self.home, self.key))
 
@@ -821,7 +846,7 @@ class TestAttachMtime(unittest.TestCase):
              patch.object(supervise, "launch_tmux",
                           side_effect=lambda *a, **k: live.append(222)
                           or "qv-new"), \
-             patch.object(supervise, "boot_pane"), \
+             patch.object(supervise, "boot_pane", return_value="❯"), \
              patch.object(supervise, "tmux_alive", return_value=True), \
              patch.object(supervise.os, "kill") as kill:
             ok, _ = supervise.attach(

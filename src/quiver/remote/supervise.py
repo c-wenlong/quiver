@@ -52,8 +52,9 @@ ATTACH_IDLE_S = 5.0
 LAUNCH_SETTLE_S = 1.0
 
 # How long attach waits for a resumed TUI to boot past its trust gate.
-# The registry lock is held throughout, so keep it short.
-ATTACH_BOOT_S = 15.0
+# The phone's attach request times out at 15 s and the launch settle
+# comes first, so this stays well under it (a real resume boots in ~2 s).
+ATTACH_BOOT_S = 8.0
 
 # Harness -> tier-A channel mode for ``attach(mode="auto")``. Harnesses
 # not listed keep the tmux channel.
@@ -484,7 +485,9 @@ def attach(
         # gate with "No, exit" selected: the tailer read it as an
         # approval and the phone's next Enter quit claude. Get past it
         # before anyone can write to the pane.
-        boot_pane(name, timeout=ATTACH_BOOT_S)
+        if boot_pane(name, timeout=ATTACH_BOOT_S) is None:
+            kill(name)
+            return False, f"{binary} did not finish starting under tmux"
         if not tmux_alive(name):
             return False, f"{binary} exited while starting under tmux"
         meta["tmux"] = name
