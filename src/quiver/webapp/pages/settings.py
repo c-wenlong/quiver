@@ -15,6 +15,10 @@ belongs to the hub machine:
   list``'s rows: each provider and whether the API keys file sets its
   key, the value masked by ``mask_key``. A raw key never leaves here.
 - ``paths``: where the hub's swe, API keys file and MCP servers folder are.
+- ``session_search``: Experimental › Session search, the hub's transcript
+  index as ``swe session index --status --json`` reports it (whether the
+  hub keeps it current, a pass running now, the last pass or its error,
+  and the session and message totals).
 - ``?part=github``: Integrations › GitHub, ``gh``'s login and the synced
   repo catalog, asked for apart because ``gh auth status`` can be slow.
 - ``?part=remote_setup``: the steps from nothing to a paired phone, as
@@ -28,6 +32,11 @@ Writes, both behind the device bearer and the Origin check:
 - ``pair``: mint a one-time pair token (``swe remote pair --json``) and
   return its browser link and ``quiver://pair`` deep link, each with a QR
   code drawn here as SVG (``_qr``), since the web app loads no library.
+- ``session_search``: ``{"enabled": bool}`` is ``swe session index
+  --on``/``--off``. Turning it on also starts a pass at once on a
+  background thread, rather than waiting for the hub loop's next cycle;
+  the answer is the new ``session_search`` status, and the page polls
+  until ``running`` clears.
 - ``revoke``: ``{"device_id"}`` signs one paired device out of the hub
   (``swe remote devices --revoke``). The device must be one ``get``
   lists. Revoking the device that sent the request also needs
@@ -52,7 +61,7 @@ from urllib.parse import urlsplit
 from quiver import __version__
 from quiver.webapp.pages import PageError
 
-ACTIONS = ("pair", "revoke")
+ACTIONS = ("pair", "revoke", "session_search")
 DEVICE_ID_MAX = 64
 # The hub's id for the owner's own tailnet device (hub._owner_device).
 TAILNET_PREFIX = "tailnet:"
@@ -80,6 +89,7 @@ def get(ctx, args: dict) -> dict:
         "remote": _remote(ctx),
         "providers": _providers(ctx, home),
         "paths": _paths(ctx, home),
+        "session_search": _session_search(home),
     }
 
 
@@ -89,7 +99,49 @@ def post(ctx, action: str, body: dict) -> dict:
     with _WRITE_LOCK:
         if action == "pair":
             return {"ticket": _mint(ctx)}
+        if action == "session_search":
+            return _set_session_search(ctx, body)
         return _revoke(ctx, body)
+
+
+# -- session search -------------------------------------------------------
+
+
+def _session_search(home: Path) -> dict:
+    from quiver.sessions import search_writer
+
+    return search_writer.status(home)
+
+
+def _set_session_search(ctx, body: dict) -> dict:
+    from quiver.sessions import search_writer
+
+    enabled = body.get("enabled")
+    if not isinstance(enabled, bool):
+        raise PageError(400, "bad_enabled", "enabled must be true or false")
+    home = _home(ctx)
+    search_writer.set_enabled(home, enabled)
+    if enabled:
+        threading.Thread(target=_first_pass, args=(home,),
+                         name="settings-search-index", daemon=True).start()
+        # Give the thread the lock before answering, so the page sees
+        # ``running`` and starts polling.
+        for _ in range(20):
+            if search_writer.is_running(home):
+                break
+            time.sleep(0.01)
+    return {"session_search": _session_search(home)}
+
+
+def _first_pass(home: Path) -> None:
+    from quiver.sessions import search_writer
+
+    try:
+        search_writer.run_pass(home)
+    except Exception:
+        # IndexBusy: the hub loop or a CLI pass already has it. Anything
+        # else run_pass saved as last_error, which the Settings row shows.
+        pass
 
 
 # -- remote ---------------------------------------------------------------

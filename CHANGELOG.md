@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Settings › Experimental › Session search is a real switch.**
+  It was greyed out as Mac app only. It now turns the hub's transcript
+  index on and off (the same setting as `swe session index --on`/`--off`),
+  starts a first pass at once, and shows what the index holds under the
+  switch: indexing progress, "Synced: N sessions, M messages", files
+  behind or failed, and the last pass's error if it failed.
+
 - **Web app: the Sessions search box matches what was said.** Typing in
   the box still filters titles, folders and models at once; after a
   short pause it also asks the hub's `/v1/search`, so a session whose

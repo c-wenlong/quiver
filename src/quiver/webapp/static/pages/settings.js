@@ -5,7 +5,9 @@
  * code), the GitHub CLI, the API keys (read only, masked), the hub's
  * paths. Appearance and Sidebar are kept per browser, in localStorage.
  * Rows that configure the Mac app itself are greyed out and say
- * "Mac app only". Writes: POST /v1/app/settings/pair and /revoke.
+ * "Mac app only". Experimental › Session search turns the hub's transcript
+ * index on and off and shows what it holds. Writes: POST
+ * /v1/app/settings/pair, /revoke and /session_search.
  *
  * This script also runs when the app loads, before any page is opened,
  * to apply the saved appearance and hide the pages switched off in
@@ -123,6 +125,12 @@ const settingsPage = {
   // whose revoke is being confirmed, rows waiting on the hub, errors.
   ticket: null, target: "web", minting: false, pairError: null,
   confirming: null, revoking: new Set(), revokeErrors: {}, timer: null,
+  // Session search: a switch write in flight, its error, the poll that
+  // runs while a pass does.
+  searchBusy: false, searchError: null, searchPoll: null,
+  // Bumped by every switch write and page visit: a status read that
+  // started before one is stale and never lands.
+  searchGen: 0,
 };
 
 function settingsSection() {
@@ -141,6 +149,7 @@ async function renderSettings() {
   const gen = routeGen;
   const p = settingsPage;
   const mine = ++p.gen;
+  p.searchGen++;
   settingsStopClock();
   p.ticket = null;
   p.confirming = null;
@@ -650,11 +659,99 @@ function doctorSection() {
 
 /* ---------------------------------------------------------- Experimental */
 
+const SEARCH_POLL_MS = 3000;
+
 function experimentalSection() {
+  const p = settingsPage;
+  const ss = p.data && p.data.session_search;
+  // A hub from before the Python indexer sends no status: the row stays
+  // the Mac app's.
+  if (!ss) {
+    return setCard([
+      macRow("Session search", "Index the text of every session transcript, so search can match what was said, not only titles and paths.",
+        '<span class="badge">Experimental</span>'),
+    ]);
+  }
+  const detail = "Index the text of Claude Code and Codex transcripts on the hub, so search can match what was said, not only titles and paths.";
+  const problem = p.searchError || (ss.error ? `Couldn't read the index: ${ss.error}`
+    : ss.last_error ? `The last pass failed: ${ss.last_error.message}` : "");
+  const status = `<div class="set-search-status">${esc(searchStatusLine(ss))}</div>`;
+  const warn = problem
+    ? `<div class="set-warning">${settingsIcon("warn")}<span>${esc(problem)}</span></div>` : "";
   return setCard([
-    macRow("Session search", "Index the text of every session transcript, so search can match what was said, not only titles and paths.",
-      '<span class="badge">Experimental</span>'),
+    setRow("Session search", `${esc(detail)}${status}${warn}`,
+      `<span class="badge">Experimental</span>${setSwitch("session-search", !!ss.enabled,
+        { label: "Session search", disabled: p.searchBusy })}`,
+      { html: true }),
   ]);
+}
+
+/* The line under the switch: Mac SearchIndexModel.statusLine's wording. */
+function searchStatusLine(ss) {
+  const n = (count, noun) => `${Number(count || 0).toLocaleString("en-US")} ${noun}${count === 1 ? "" : "s"}`;
+  const files = ss.files || {};
+  const totals = `${n(ss.sessions, "session")}, ${n(ss.messages, "message")}`;
+  let line;
+  if (ss.running) {
+    line = ss.last_pass ? `Indexing now · ${totals} so far`
+      : "Indexing: the first pass reads every transcript and can take a few minutes.";
+  } else if (!ss.enabled) {
+    line = ss.exists && ss.sessions ? `Off. The index still holds ${totals}.` : "Off.";
+  } else if (!ss.exists) {
+    line = "The index hasn't run yet.";
+  } else {
+    line = `Synced: ${totals}`;
+    if (ss.last_pass && ss.last_pass.finished_at) line += ` · last pass ${Fmt.ago(ss.last_pass.finished_at)}`;
+  }
+  if (files.due) line += ` · ${n(files.due, "file")} behind`;
+  if (files.failed) line += ` · ${n(files.failed, "file")} failed`;
+  return line;
+}
+
+async function settingsSetSearch(on) {
+  const p = settingsPage;
+  p.searchBusy = true;
+  p.searchError = null;
+  const gen = ++p.searchGen;
+  paintSettings();
+  const { status, data } = await apiPost("/v1/app/settings/session_search", { enabled: on });
+  p.searchBusy = false;
+  if (gen !== p.searchGen) return;
+  if (status === 200 && data && data.session_search) {
+    if (p.data) p.data.session_search = data.session_search;
+  } else {
+    p.searchError = (data && data.error && data.error.message)
+      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.");
+  }
+  if (!onSettingsPage()) return;
+  paintSettings();
+  document.querySelector('[data-switch="session-search"]')?.focus();
+  settingsPollSearch();
+}
+
+/* While a pass runs, re-read the status every few seconds; stop once it
+ * settles or the section is left. */
+function settingsPollSearch() {
+  const p = settingsPage;
+  clearTimeout(p.searchPoll);
+  const ss = p.data && p.data.session_search;
+  if (!ss || !ss.running) return;
+  p.searchPoll = setTimeout(async () => {
+    if (!onSettingsPage() || settingsSection() !== "experimental") return;
+    const gen = p.searchGen;
+    const { status, data } = await api("/v1/app/settings");
+    if (gen !== p.searchGen) return;
+    if (status === 200 && data && data.session_search && p.data) {
+      p.data.session_search = data.session_search;
+      if (onSettingsPage() && settingsSection() === "experimental") {
+        const sw = document.activeElement && document.activeElement.dataset
+          ? document.activeElement.dataset.switch : null;
+        paintSettings();
+        if (sw) document.querySelector(`[data-switch="${sw}"]`)?.focus();
+      }
+    }
+    settingsPollSearch();
+  }, SEARCH_POLL_MS);
 }
 
 /* --------------------------------------------------------------- binding */
@@ -699,6 +796,11 @@ function bindSettings(section) {
       paintSettings();
       document.querySelector(`[data-switch="page:${id}"]`)?.focus();
     };
+  }
+  const searchSwitch = panel.querySelector('[data-switch="session-search"]');
+  if (searchSwitch) {
+    searchSwitch.onclick = () => settingsSetSearch(searchSwitch.getAttribute("aria-checked") !== "true");
+    settingsPollSearch();
   }
   for (const btn of panel.querySelectorAll("[data-sidebar-all]")) {
     btn.onclick = () => {

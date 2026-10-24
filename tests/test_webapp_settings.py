@@ -6,6 +6,7 @@ import shutil
 import struct
 import subprocess
 import tempfile
+import time
 import unittest
 import xml.etree.ElementTree as ET
 import zlib
@@ -722,3 +723,67 @@ class TestOwnerTailnetCaller(_Settings):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSessionSearch(_Settings):
+    def wait_idle(self):
+        from quiver.sessions import search_writer
+
+        for _ in range(500):
+            if not search_writer.is_running(self.home):
+                return
+            time.sleep(0.01)
+        self.fail("the pass never finished")
+
+    def get(self, cred):
+        status, data = self.srv.request("GET", "/v1/app/settings",
+                                        headers={"Authorization": f"Bearer {cred['credential']}"})
+        self.assertEqual(status, 200, data)
+        return json.loads(data)["session_search"]
+
+    def test_status_is_off_with_no_index(self):
+        ss = self.get(self.device("laptop"))
+        self.assertEqual((ss["enabled"], ss["running"], ss["exists"]), (False, False, False))
+
+    def test_turning_it_on_indexes_now_and_off_stops_the_hub(self):
+        from quiver.sessions import search_index, search_writer
+
+        projects = Path(self.home) / ".claude" / "projects" / "p"
+        projects.mkdir(parents=True)
+        (projects / "a.jsonl").write_text(json.dumps({
+            "type": "user", "sessionId": "s1", "timestamp": "2026-10-01T10:00:00Z",
+            "message": {"content": "turned on from settings"}}, separators=(",", ":")) + "\n")
+        me = self.device("laptop")
+        status, data = self.post("session_search", {"enabled": True}, me)
+        self.assertEqual(status, 200, data)
+        self.assertTrue(data["session_search"]["enabled"])
+        self.wait_idle()
+        ss = self.get(me)
+        self.assertEqual((ss["sessions"], ss["last_pass"]["indexed"]), (1, 1))
+        self.assertEqual(len(search_index.search(self.home, "settings")), 1)
+        status, data = self.post("session_search", {"enabled": False}, me)
+        self.assertEqual(status, 200, data)
+        self.assertFalse(search_writer.is_enabled(self.home))
+
+    def test_enabled_must_be_a_boolean(self):
+        status, data = self.post("session_search", {"enabled": "yes"}, self.device("laptop"))
+        self.assertEqual((status, data["error"]["code"]), (400, "bad_enabled"))
+
+    def test_a_foreign_origin_cannot_turn_it_on(self):
+        from quiver.sessions import search_writer
+
+        me = self.device("laptop")
+        headers = {"Authorization": f"Bearer {me['credential']}", "Origin": "https://evil.example",
+                   "Content-Type": "application/json"}
+        status, _ = self.srv.request("POST", "/v1/app/settings/session_search",
+                                     body={"enabled": True}, headers=headers)
+        self.assertEqual(status, 403)
+        self.assertFalse(search_writer.is_enabled(self.home))
+
+    def test_a_failed_first_pass_is_recorded(self):
+        from quiver.sessions import search_writer
+
+        with patch.object(search_writer, "open_index", side_effect=search_writer.IndexUnavailable("too new")):
+            settings_page._first_pass(Path(self.home))
+        self.assertFalse(search_writer.is_running(self.home))
+        self.assertEqual(search_writer.status(self.home)["last_error"]["message"], "too new")

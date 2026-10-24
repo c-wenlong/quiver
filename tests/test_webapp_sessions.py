@@ -574,7 +574,7 @@ class TestTranscriptSearchBox(unittest.TestCase):
     def test_a_hub_without_an_index_says_how_to_turn_it_on(self):
         out = self.run_js(self.type_query("queue") + "return searchNote(filteredSessions().kept);",
                           {"status": 200, "data": {"indexed": False, "results": []}})
-        self.assertIn("swe session index --on", out)
+        self.assertIn('href="#/settings?section=experimental"', out)
 
     def test_a_failed_search_falls_back_to_details(self):
         out = self.run_js(self.type_query("trim") + """
