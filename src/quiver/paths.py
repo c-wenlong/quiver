@@ -103,7 +103,7 @@ def data_dir_for(home: Path | None = None) -> Path:
 
 
 def search_index_for(home: Path | None = None) -> Path:
-    """The app's FTS5 transcript-search index. The Python side only reads it."""
+    """The FTS5 transcript-search index the app and ``swe session index`` share."""
     return data_dir_for(home) / SEARCH_SUBDIR / SEARCH_INDEX_BASENAME
 
 
@@ -278,8 +278,8 @@ data/ledger/
 # message times of your own sessions. Personal, and rewritten on each sync.
 data/devin-cloud/
 
-# The app's full-text search index: message text from every local session.
-# Personal, and rebuilt by the app whenever it is missing.
+# The full-text search index: message text from every local session.
+# Personal, and rebuilt by the app or `swe session index` when missing.
 data/search/
 
 # The GitHub mirror clones and per-PR checkouts `swe gh pr worktree`

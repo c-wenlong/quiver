@@ -203,13 +203,16 @@ HELP = {
   {c('cyan', 'swe session <N>')}              Show last N sessions
   {c('cyan', 'swe session use <N>')}          Resume session #N
   {c('cyan', 'swe session -i')}               Pick with arrow keys; space reads a transcript, Enter resumes
+  {c('cyan', 'swe session index')}            Index Claude Code and Codex transcripts for --search
+  {c('cyan', 'swe session index --on|--off')} Whether the remote hub keeps the index current
+  {c('cyan', 'swe session index --status')}   What the index holds, without a pass
 
 {c('bold', 'Flags')}
   {c('cyan', '--agent=<name>')}               Filter by agent (claude, codex, opencode, droid, ...)
   {c('cyan', '--here')}                       Filter to current directory only
   {c('cyan', '--search=<text>')}              Filter title/path/agent/session id, and transcript
-                                            content when the Quiver app's search index exists
-                                            (alias: -q, --grep)
+                                            content when a search index exists (the Quiver
+                                            app's, or swe session index) (alias: -q, --grep)
   {c('cyan', '-d N, --days=<N>')}             Include today and the preceding N-1 calendar dates
   {c('cyan', '-w N, --weeks=<N>')}            Include the latest N times 7 calendar dates
   {c('cyan', '-s, --start=<YYYY-MM-DD>')}     Inclusive range start; use together with --end
@@ -228,7 +231,8 @@ HELP = {
   swe session -w 3
   swe session -s 2026-07-01 -e 2026-07-30
   swe session --search=login
-  swe session 30 -q quiver"""
+  swe session 30 -q quiver
+  swe session index --on"""
     ),
     "report": (
         "Summarize coding sessions and manage follow-ups",
