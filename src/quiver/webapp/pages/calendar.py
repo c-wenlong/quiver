@@ -11,7 +11,8 @@ Bot", since its Bots pass one task between them.
 
 ``GET /v1/app/calendar?mode=week&anchor=2026-10-24&tz=Asia/Singapore
 &first_weekday=1`` answers the visible range (``mode`` is ``day``,
-``week``, ``month`` or ``days`` with ``n`` from 2 to 9), its blocks with
+``week``, ``month`` or ``days`` with ``n`` from 2 to 9) with buffer days
+each side for the horizontal swipe, its blocks with
 tokens and cost, the legend's totals and accounts, and the session rows a
 block click opens. Read only. Lane layout, the hidden toggles and the
 month cells are the page's (``static/pages/calendar.js``).
@@ -92,6 +93,15 @@ def visible_days(mode: str, n: int, anchor: date, first_weekday: int) -> list[da
     else:
         start, count = anchor, max(1, n)
     return [start + timedelta(days=i) for i in range(count)]
+
+
+def buffer_days(mode: str, n: int) -> int:
+    """Days the grid renders past each edge of the visible range, so a
+    horizontal swipe shows painted columns before the page re-centres on
+    where it came to rest (CalendarModel.renderRange, widened to a week
+    so a day swipes freely). Whole weeks in week mode, which snaps by
+    week; none in month mode, which does not slide."""
+    return {"day": 7, "week": 14, "month": 0}.get(mode, max(7, n))
 
 
 def add_months(day: date, count: int) -> date:
@@ -467,6 +477,11 @@ def get(ctx, args: dict) -> dict:
     days = visible_days(mode, n, anchor, first_weekday)
     bounds = [_midnight(d, tz) for d in days] + [_midnight(days[-1] + timedelta(days=1), tz)]
     start, end = bounds[0], bounds[-1]
+    pad = buffer_days(mode, n)
+    render_days = [days[0] + timedelta(days=i) for i in range(-pad, len(days) + pad)]
+    render_bounds = ([_midnight(d, tz) for d in render_days]
+                     + [_midnight(render_days[-1] + timedelta(days=1), tz)])
+    render_start, render_end = render_bounds[0], render_bounds[-1]
     if mode == "month":
         first = anchor.replace(day=1)
         totals_range = (_midnight(first, tz), _midnight(add_months(first, 1), tz))
@@ -476,13 +491,14 @@ def get(ctx, args: dict) -> dict:
     rescan = (args.get("rescan") or "") in {"1", "true"}
     with ctx.state.webapp.ledger(rescan=rescan) as (store, catalog, scan_ok):
         priced = Priced(store, catalog, tz)
-        rows = store.activity_events(start - LOOKOUT_S, end + LOOKOUT_S, list(CALENDAR_HARNESSES))
+        rows = store.activity_events(render_start - LOOKOUT_S, render_end + LOOKOUT_S,
+                                     list(CALENDAR_HARNESSES))
         usage = by_session(store, catalog)
         scanned_at = store.meta("scanned_at")
     pieces = [p for p in session_pieces(rows, priced)
               if is_real(p["harness"], usage.get((p["harness"], p["session"])))]
     blocks = [b for b in group_by_project(pieces, Projects())
-              if b["end"] >= start and b["start"] < end]
+              if b["end"] >= render_start and b["start"] < render_end]
 
     accounts = Accounts(ctx.home)
     window = [b for b in blocks if b["start"] < end
@@ -518,6 +534,10 @@ def get(ctx, args: dict) -> dict:
         "totals_range": {"start": lo, "end": hi},
         "days": [{"date": d.isoformat(), "start": bounds[i], "end": bounds[i + 1]}
                  for i, d in enumerate(days)],
+        # The visible days with the buffer each side: the columns a
+        # horizontal swipe scrolls through. Blocks cover all of them.
+        "render_days": [{"date": d.isoformat(), "start": render_bounds[i], "end": render_bounds[i + 1]}
+                        for i, d in enumerate(render_days)],
         "gap_s": GAP_S,
         "blocks": blocks,
         "legend": legend,
