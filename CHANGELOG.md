@@ -298,6 +298,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cursor usage on Linux.** swe now reads the session `cursor-agent`
   keeps in `~/.config/cursor/auth.json`, so a machine signed in only
   through the CLI shows Cursor's limits.
+
+- **Web app: Calendar scrolls sideways across dates.** The day, week
+  and N-day grids only moved with the arrow keys or the chevrons. They
+  now slide like the Mac app's: a trackpad swipe, shift-scroll or a
+  touch swipe moves through days, snapping to a day (a whole week in
+  week mode), with the day header and hour axis pinned as the columns
+  move. The hub sends a week or two of buffer days each side
+  (`render_days`), and once a swipe comes to rest the page loads the
+  range starting there and re-centres on it, keeping the hour. Keys and
+  chevrons scroll the same grid one step at a time.
+
 - **Web app: Menu bar and Widgets say "Mac app only" and stay put.** The
   two sidebar items wear the same "Mac app only" pill as Settings' Mac-only
   rows and are no longer links, so neither a click nor Tab reaches them. A
