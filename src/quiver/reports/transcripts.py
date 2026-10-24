@@ -615,6 +615,8 @@ def _sqlite_json_parts(session: Session, db_path: str) -> NormalizedTranscript:
             except (TypeError, json.JSONDecodeError, RecursionError):
                 continue
             part_type = str(part.get("type") or "").lower()
+            if part_type in {"reasoning", "thinking"}:
+                continue  # the model's thinking, dropped like every other reader's
             if part_type in {"tool", "tool-invocation", "tool_result"}:
                 state = part.get("state") if isinstance(part.get("state"), dict) else {}
                 msg = _tool_message(part.get("tool"), state.get("input"), state.get("output"))

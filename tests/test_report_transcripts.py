@@ -422,6 +422,7 @@ class TranscriptReaderTest(_HomeCase):
         conn.execute("INSERT INTO message VALUES (?, ?, ?, ?)", ("m1", "oc-1", 1, json.dumps({"role": "user"})))
         conn.execute("INSERT INTO message VALUES (?, ?, ?, ?)", ("m2", "oc-1", 2, json.dumps({"role": "assistant"})))
         conn.execute("INSERT INTO part VALUES (?, ?, ?, ?)", ("m1", "oc-1", 1, json.dumps({"type": "text", "text": "Fix tests"})))
+        conn.execute("INSERT INTO part VALUES (?, ?, ?, ?)", ("m2", "oc-1", 2, json.dumps({"type": "reasoning", "text": "The user wants the tests fixed."})))
         conn.execute("INSERT INTO part VALUES (?, ?, ?, ?)", ("m2", "oc-1", 2, json.dumps({"type": "tool", "tool": "bash", "state": {"input": {"command": "python3 -m unittest"}, "output": "OK"}})))
         conn.commit()
         conn.close()
