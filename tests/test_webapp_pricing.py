@@ -127,6 +127,10 @@ class TestOverrideWriter(unittest.TestCase):
         self.assertEqual(cat.user_keys("swe-2-medium"), [])
         self.assertEqual(cat.user_keys("swe-2-high"), ["swe-2-high"])
         self.assertEqual(cat.user_keys("nothing"), [])
+        # An alias the row resolves through is a saved price it shows.
+        aliased = PricingCatalog({"claude-haiku-4-5": _rates(1e-6, 1e-6)}, {"aliases": {"model_private_11": "claude-haiku-4-5"}},
+                                 overrides={"claude-haiku-4-5"})
+        self.assertEqual(aliased.user_keys("MODEL_PRIVATE_11"), ["claude-haiku-4-5"])
         self.assertEqual(base_name("anthropic/claude-opus-5-20261001"), "claude-opus-5")
         self.assertEqual(base_name("gpt-5-high"), "gpt-5")
 

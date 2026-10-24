@@ -348,37 +348,56 @@
       });
     };
     if ($("qp-remove")) $("qp-remove").onclick = () => writePrice(sheet, "remove", "Removing…", { model: r.model });
+    // Each opening is its own form: a reply to an earlier one leaves it be.
     sheet.dataset.working = "";
+    sheet.dataset.token = String(++priceForms);
     sync();
     if (!sheet.open) sheet.showModal();
     $("qp-in").focus();
   }
+
+  let priceForms = 0;
+  const onPricing = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "pricing";
+  // The form sits outside the panel, so leaving the page must close it.
+  window.addEventListener("hashchange", () => {
+    const sheet = document.getElementById("qp-sheet");
+    if (sheet && sheet.open && !onPricing()) sheet.close();
+  });
 
   /* The sheet closes once the hub has written and repriced; the page then
    * repaints from its answer, read with the same period and filter. */
   async function writePrice(sheet, action, label, body) {
     const $ = (id) => document.getElementById(id);
     if (sheet.dataset.working) return;
+    const token = sheet.dataset.token;
     sheet.dataset.working = "1";
     $("qp-working").textContent = label;
     for (const id of ["qp-save", "qp-remove", "qp-cancel"]) if ($(id)) $(id).disabled = true;
     const q = { period: state.period, tz: timeZone() };
     if (state.harness.length) q.harness = state.harness.join(",");
+    const asked = JSON.stringify([state.period, state.harness]);
     const { status, data } = await apiPost(`/v1/app/pricing/${action}`, { ...body, ...q });
-    sheet.dataset.working = "";
+    // Only the form this request came from reacts to its answer.
+    const mine = sheet.dataset.token === token && sheet.open && !!$("qp-form");
+    if (mine) sheet.dataset.working = "";
     if (status === 401) {
-      sheet.close();
-      return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      if (mine) sheet.close();
+      if (onPricing()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      return;
     }
     if (status === 200 && data && data.page) {
+      if (mine) sheet.close();
+      if (!onPricing()) return;
+      // The answer was read with the period and filter of the time; if
+      // they have changed since, read the page again rather than show it.
+      if (JSON.stringify([state.period, state.harness]) !== asked) { render("pricing"); return; }
       state.seq++;  // a read still in flight began before the write
       state.data = data.page;
       state.harness = data.page.harness_filter || [];
-      if (sheet.open) sheet.close();
-      if ((location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "pricing") paint();
+      paint();
       return;
     }
-    if (!sheet.open || !$("qp-form")) return;
+    if (!mine) return;
     $("qp-working").textContent = "";
     for (const id of ["qp-remove", "qp-cancel"]) if ($(id)) $(id).disabled = false;
     $("qp-save").disabled = false;

@@ -291,8 +291,15 @@ class PricingCatalog:
         if lowered.endswith("-fast"):
             lookup |= {lowered[:-5], *forms(lowered[:-5], True, True)}
         # A saved key keeps its effort suffix, as in ``override_index``.
-        return sorted(k for k in self.overrides
-                      if k.lower() in lookup or any(f in lookup for f in forms(k, True)))
+        found = {k for k in self.overrides
+                 if k.lower() in lookup or any(f in lookup for f in forms(k, True))}
+        # The key the name resolves to, aliases followed (``MODEL_PRIVATE_11``
+        # priced by a saved ``claude-haiku-4-5``): the price the row shows.
+        for name in ([model, model.strip()[:-5]] if lowered.endswith("-fast") else [model]):
+            key = self._key(name)
+            if key in self.overrides:
+                found.add(key)
+        return sorted(found)
 
     def source(self, key: str) -> str:
         """Where an entry's price came from: ``"yours"`` (the user's
