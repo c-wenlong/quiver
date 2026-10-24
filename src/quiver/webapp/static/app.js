@@ -148,6 +148,36 @@ const PERIODS = [["today", "Today"], ["7d", "7 days"], ["month", "This month"], 
   ["90d", "90 days"], ["365d", "365 days"], ["all", "All time"]];
 const overview = { period: "month", data: null, gen: 0, focus: null };
 
+/* First run (no shared AGENTS.md on the hub machine): the Mac app opens
+ * its setup sheet once at launch, then remembers it was offered. Here a
+ * bare /app/ opens #/setup once per browser; after that Overview keeps a
+ * card linking it until setup runs. */
+const SETUP_OFFERED_KEY = "quiver.setup.offered";
+let landedBare = !location.hash.replace(/^#\/?/, "");
+// Leaving before Overview answered spends the offer: only the landing counts.
+window.addEventListener("hashchange", () => { landedBare = false; });
+
+function offerSetupOnce(d) {
+  const bare = landedBare;
+  landedBare = false;
+  if (!bare || !d.first_run) return false;
+  try {
+    if (localStorage.getItem(SETUP_OFFERED_KEY)) return false;
+    localStorage.setItem(SETUP_OFFERED_KEY, "1");
+  } catch { return false; }
+  location.hash = "#/setup";
+  return true;
+}
+
+function setupCard(d) {
+  if (!d.first_run) return "";
+  const where = d.machine ? esc(d.machine) : "this machine";
+  return `<div class="card offer">
+    <div class="offer-text"><div class="card-title">Set up ${where}</div>
+      <p class="card-subtitle">Pick the agents you use, then give them one AGENTS.md, one skills folder and one list of MCP servers.</p></div>
+    <a class="offer-button" href="#/setup">Set up</a></div>`;
+}
+
 function timeZone() {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; }
 }
@@ -176,6 +206,7 @@ async function renderOverview(_id, rescan = false) {
     return;
   }
   overview.data = data;
+  if (offerSetupOnce(data)) return;
   paintOverview();
 }
 
@@ -197,7 +228,7 @@ function paintOverview() {
   const notes = (d.notes || []).map((n) => `<div class="card"><p class="note">${esc(n)}</p></div>`).join("");
   document.getElementById("panel").innerHTML = `<div class="page">
     ${overviewHeader(false)}
-    <div class="stack">${notes}
+    <div class="stack">${setupCard(d)}${notes}
       <div class="overview">
         <div class="main stack">${totalCard(d)}${breakdownCard(d)}</div>
         <div class="side stack">${quickCard(d)}${activityCard(d)}</div>

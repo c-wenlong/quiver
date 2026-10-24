@@ -1,6 +1,8 @@
 """The web app on the hub: /app/ pages and /v1/app/* data."""
 
 import json
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -56,9 +58,87 @@ class TestWebAppRoutes(HubBase):
         self.assertEqual(body["harnesses"][0]["harness"], "claude")
         self.assertEqual(body["machine"], self.srv.state.machine["name"])
         self.assertEqual(body["notes"], [])
+        # No shared AGENTS.md yet: Overview offers setup until there is one.
+        self.assertTrue(body["first_run"])
+        agents = self.srv.home / ".quiver/AGENTS.md"
+        agents.parent.mkdir(parents=True, exist_ok=True)
+        agents.write_text("# shared\n")
+        body = json.loads(self.srv.request(
+            "GET", "/v1/app/overview?period=all&tz=UTC", headers=self.auth())[1])
+        self.assertFalse(body["first_run"])
         # The store is the web app's own, never the Mac app's.
         self.assertTrue((self.srv.home / ".quiver/data/web-ledger/ledger.sqlite").exists())
         self.assertFalse((self.srv.home / ".quiver/data/ledger").exists())
+
+
+APP_JS = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/app.js"
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestSetupOffer(unittest.TestCase):
+    """app.js's first-run offer, run under node with the browser stubbed:
+    each case is a fresh page load at ``hash``."""
+
+    def offer(self, hash_, body, stored=None, storage_throws=False):
+        storage = ("{ getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); } }"
+                   if storage_throws else
+                   "{ m: new Map(Object.entries(" + json.dumps(stored or {}) + ")),"
+                   " getItem(k) { return this.m.has(k) ? this.m.get(k) : null; },"
+                   " setItem(k, v) { this.m.set(k, String(v)); } }")
+        prelude = (
+            "const listeners = {};\n"
+            "globalThis.window = { addEventListener(t, f) { (listeners[t] ||= []).push(f); } };\n"
+            "globalThis.document = { addEventListener() {} };\n"
+            "globalThis.location = { hash: " + json.dumps(hash_) + " };\n"
+            "globalThis.localStorage = " + storage + ";\n"
+            # Every listener but route(), which needs the page's DOM.
+            "const fire = (t) => (listeners[t] || []).filter((f) => f !== route).forEach((f) => f());\n"
+            # Pages app.js names that sessions.js and manage.js define.
+            "function renderSessions() {} function renderHarnesses() {} function renderAccounts() {}\n")
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(prelude + APP_JS.read_text(encoding="utf-8")
+                    + "\nprocess.stdout.write(JSON.stringify((() => {" + body + "})()));\n")
+        self.addCleanup(Path(f.name).unlink)
+        done = subprocess.run(["node", f.name], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    FIRST = "const d = { first_run: true };"
+    RESULT = "({ went, hash: location.hash, offered: localStorage.getItem('quiver.setup.offered') })"
+
+    def test_a_bare_landing_opens_setup_once(self):
+        out = self.offer("", self.FIRST + "const went = offerSetupOnce(d);"
+                         " const again = offerSetupOnce(d); return { ...(" + self.RESULT + "), again };")
+        self.assertEqual(out, {"went": True, "hash": "#/setup", "offered": "1", "again": False})
+
+    def test_a_saved_offer_stays_on_overview(self):
+        out = self.offer("", self.FIRST + "const went = offerSetupOnce(d); return " + self.RESULT + ";",
+                         stored={"quiver.setup.offered": "1"})
+        self.assertEqual(out, {"went": False, "hash": "", "offered": "1"})
+
+    def test_a_link_to_overview_is_not_redirected(self):
+        for hash_ in ("#/overview", "#/overview?x=1"):
+            out = self.offer(hash_, self.FIRST + "const went = offerSetupOnce(d); return " + self.RESULT + ";")
+            self.assertEqual(out, {"went": False, "hash": hash_, "offered": None}, hash_)
+
+    def test_leaving_before_overview_answers_spends_the_offer(self):
+        out = self.offer("", self.FIRST + "location.hash = '#/sessions'; fire('hashchange');"
+                         " const went = offerSetupOnce(d); return " + self.RESULT + ";")
+        self.assertEqual(out, {"went": False, "hash": "#/sessions", "offered": None})
+
+    def test_a_set_up_machine_or_blocked_storage_never_redirects(self):
+        out = self.offer("", "const went = offerSetupOnce({ first_run: false }); return " + self.RESULT + ";")
+        self.assertEqual(out, {"went": False, "hash": "", "offered": None})
+        out = self.offer("", self.FIRST + "return { went: offerSetupOnce(d), hash: location.hash };",
+                         storage_throws=True)
+        self.assertEqual(out, {"went": False, "hash": ""})
+
+    def test_overview_shows_the_card_only_on_first_run(self):
+        out = self.offer("#/overview", "return [setupCard({ first_run: true, machine: '<b>box</b>' }),"
+                         " setupCard({ first_run: false, machine: 'box' })];")
+        self.assertIn('href="#/setup"', out[0])
+        self.assertIn("Set up &lt;b&gt;box&lt;/b&gt;", out[0])
+        self.assertEqual(out[1], "")
 
 
 if __name__ == "__main__":

@@ -21,12 +21,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   asks for the new session's first message and opens its chat once it
   starts.
 
+- **Remote PWA: queued messages wait in a tray above the prompt box,
+  and stop lives in the send button.** The browser client now works like
+  the iPhone app. A message sent while the agent works joins a Queued
+  tray instead of a bubble that new output pushes off screen; each row
+  has Edit (the text goes back into the prompt box and the button
+  saves it in place), Remove, and Send now (written into the running
+  turn), and the header removes them all after a second tap. A message
+  leaves the tray for the transcript once it goes out, and the tray
+  reloads from the hub when the chat opens or the page comes back. The
+  Queue/Steer picker and the separate Stop button are gone: with the box
+  empty and the agent working, the round send button is a red stop.
+
 - **Web app: first-run setup for the hub machine.** `#/setup` ports the
   Mac app's setup sheet: pick the agents found on the hub machine (and
   star them), then link one AGENTS.md, skills folder and MCP list into
   each, through the same code as `swe setup --apply --json`, then pick
   a look. The page opens on a "Set up this machine" card while the hub
   has no shared AGENTS.md. The notifications step stays in the Mac app.
+  Until then, Overview shows a Set up card, and opening a bare `/app/`
+  goes to `#/setup` once per browser, as the Mac app offers its sheet
+  once at launch.
 
 - **Web app: remote control on the Sessions page.** Clicking a session
   opens its chat: the transcript with thinking, tool cards, diffs and
