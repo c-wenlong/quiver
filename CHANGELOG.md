@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote iPhone app: paired with more than one hub.** Pairing the
+  app with another machine, such as a home server's hub, used to
+  replace the hub it was paired with. Now the new hub joins a list: the
+  hub menu at the top right of Sessions lists every paired hub with its
+  name and address, a check on the one on screen, and Pair another hub;
+  a tap switches, and the tabs, chats and Usage figures start afresh
+  for that hub. Unpair drops only the hub on screen and shows the next.
+  Each hub keeps its own Keychain credential, and a phone paired before
+  this keeps its hub. A refused answer from a hub the app has switched
+  away from no longer unpairs the hub it switched to.
+
 - **Remote PWA: / command menu in the prompt box.** Typing `/` at the
   start of the browser client's prompt box lists the commands this
   session's harness will run, from the hub's `GET

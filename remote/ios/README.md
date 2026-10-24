@@ -36,9 +36,15 @@ copies the Mac app's `harness-*.svg` into `Assets.xcassets/Harnesses`.
   app).
 - **Token:** paste the token `swe remote pair` prints.
 
-The credential goes in the Keychain. A phone paired under the old
-webview shell keeps its pairing: the app reads the old stored
-credential once and moves it.
+The app can be paired with several hubs at once, say a Mac and a home
+server: pairing another hub (Pair another hub in the hub menu, or a
+scanned code) adds it instead of replacing the first, and the hub menu
+at the top right of Sessions switches between them. Unpair drops only
+the hub on screen. Each hub's credential is its own Keychain item; the
+addresses, names and the hub on screen are in UserDefaults. A phone
+paired before this keeps its hub: the app moves the old single pairing
+into the list on first launch, and a phone paired under the old webview
+shell keeps its pairing the same way.
 
 ## Building
 

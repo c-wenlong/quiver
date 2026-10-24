@@ -121,6 +121,14 @@ final class ChatModel {
     private var replayingHistory = false
 
     private weak var app: AppModel?
+    /// The hub this chat belongs to. Its key means nothing on another
+    /// hub, so once the app switches (or re-pairs), every request this
+    /// chat still has to make, even halfway through an action, stops.
+    private let openedOn: PairedHub?
+    private var hubClient: HubClient? {
+        guard let app, app.hub == openedOn else { return nil }
+        return app.client
+    }
     private var seen = Set<Int>()
     private var cursor = 0
     /// Tool call id to the id of its card (ids, not positions: removing a
@@ -158,13 +166,14 @@ final class ChatModel {
     init(key: String, app: AppModel) {
         self.key = key
         self.app = app
+        self.openedOn = app.hub
         mentions.fetch = { [weak self] query in
-            guard let self, let client = self.app?.client else { throw HubError.network(CancellationError()) }
+            guard let self, let client = self.hubClient else { throw HubError.network(CancellationError()) }
             return try await client.files(self.key, query: query, limit: MentionSearch.limit)
         }
         mentions.machine = { [weak self] in self?.machineName ?? "that machine" }
         commands.fetch = { [weak self] in
-            guard let self, let client = self.app?.client else { throw HubError.network(CancellationError()) }
+            guard let self, let client = self.hubClient else { throw HubError.network(CancellationError()) }
             return try await client.commands(self.key)
         }
     }
@@ -181,7 +190,7 @@ final class ChatModel {
     /// First open loads history; a resume (back from the background) keeps
     /// what's on screen and replays events after `cursor`.
     func start() async {
-        guard let client = app?.client else { return }
+        guard let client = hubClient else { return }
         generation += 1
         let gen = generation
         streamTask?.cancel()
@@ -203,7 +212,7 @@ final class ChatModel {
                 switch event {
                 case .connected: self.live = true
                 case .disconnected: self.live = false
-                case .unauthorized: self.app?.unpair(); return
+                case .unauthorized: self.app?.unpair(from: client); return
                 case .truncated:
                     self.dropPending()
                     await self.backfill(client)
@@ -365,7 +374,7 @@ final class ChatModel {
     /// page at a time; returns whether anything was added.
     @discardableResult
     func loadEarlier() async -> Bool {
-        guard hasEarlier, !loadingEarlier, nextBefore != nil, let client = app?.client else { return false }
+        guard hasEarlier, !loadingEarlier, nextBefore != nil, let client = hubClient else { return false }
         loadingEarlier = true
         defer { loadingEarlier = false }
         // A page of only tool results whose calls are further back adds
@@ -653,7 +662,7 @@ final class ChatModel {
     }
 
     private func send(_ text: String) async {
-        guard let client = app?.client else { return }
+        guard let client = hubClient else { return }
         let cid = UUID().uuidString
         let route = Self.route(agentActive: row?.sessionStatus == .active, holdsSends: row?.holdsQueuedSends ?? true)
         stage(text, clientId: cid, toTray: route.toTray)
@@ -763,7 +772,7 @@ final class ChatModel {
     /// Send now: the hub stops holding it and writes it into the running
     /// turn. It shows "Sending now" until its result or echo arrives.
     func sendNow(_ cid: String) async {
-        guard let client = app?.client, markSendingNow(cid) else { return }
+        guard let client = hubClient, markSendingNow(cid) else { return }
         trayNote = nil
         if editingId == cid { cancelEdit() }
         do {
@@ -800,7 +809,7 @@ final class ChatModel {
         case .waiting:
             break
         }
-        guard let client = app?.client else { return }
+        guard let client = hubClient else { return }
         trayNote = nil
         if editingId == cid { cancelEdit() }
         markRemoving(cid)
@@ -905,7 +914,7 @@ final class ChatModel {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         guard queued.contains(where: { $0.clientId == cid && $0.phase == .waiting }) else { return editWentOut(cid, text: text) }
-        guard let client = app?.client else { return }
+        guard let client = hubClient else { return }
         savingEdit = true
         defer { savingEdit = false }
         do {
@@ -952,7 +961,7 @@ final class ChatModel {
     /// An older hub can't edit in place: remove the message, then queue the
     /// new text, which lands at the end.
     private func requeueEdit(_ cid: String, text: String) async {
-        guard let client = app?.client else { return }
+        guard let client = hubClient else { return }
         do {
             try await client.queueAction(key, clientId: cid, op: "cancel")
         } catch {
@@ -986,7 +995,7 @@ final class ChatModel {
     }
 
     func decide(_ requestId: String, decision: String) async {
-        guard let client = app?.client else { return }
+        guard let client = hubClient else { return }
         updateApproval(requestId) { .submitting }
         do {
             let queued = try await client.approve(key, requestId: requestId, decision: decision)
@@ -997,7 +1006,7 @@ final class ChatModel {
     }
 
     func interrupt() async {
-        guard let client = app?.client else { return }
+        guard let client = hubClient else { return }
         do { try await client.control(key, op: "interrupt") } catch {
             items.append(ChatItem(id: UUID().uuidString, kind: .system((error as? HubError)?.message ?? "Interrupt failed")))
         }
@@ -1010,7 +1019,7 @@ final class ChatModel {
     private(set) var attachError: String?
 
     func attach() async {
-        guard let client = app?.client else { return }
+        guard let client = hubClient else { return }
         attaching = true
         attachError = nil
         defer { attaching = false }
