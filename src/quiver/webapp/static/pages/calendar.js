@@ -166,6 +166,7 @@
       return;
     }
     const lead = ISO(addDays(D(days[base].date), dir * windowDays(S.data.mode, S.data.n)));
+    halt();
     go({ anchor: lead, lead }, true);
   }
   const setMode = (mode, n) => {
@@ -300,6 +301,19 @@
   }
 
   let settleTimer = 0;
+
+  /* Stops a step's smooth scroll where it is and drops its landing, so
+   * a jump past the buffer is not overtaken by the older step. */
+  function halt() {
+    const scroll = document.getElementById("cal-scroll");
+    if (scroll) {
+      scroll.scrollTo({ left: scroll.scrollLeft, behavior: "auto" });
+      S.left = scroll.scrollLeft;
+    }
+    clearTimeout(settleTimer);
+    Object.assign(S, { scrolling: false, stepTarget: null, armedAt: 0, pending: null });
+  }
+
   function bindSlide() {
     const scroll = document.getElementById("cal-scroll");
     const rest = () => { clearTimeout(settleTimer); settle(); };
@@ -350,7 +364,10 @@
       S.lead = lead;
       apply(data);
     }
-    if (lead !== S.data.days[0].date) go({ anchor: lead, lead }, true);
+    // Compared with the range on its way too: swiping back to the shown
+    // range before the next one arrives must replace that request.
+    const wanted = S.loading && S.lead ? S.lead : S.data.days[0].date;
+    if (lead !== wanted) go({ anchor: lead, lead }, true);
   }
 
   /* ------------------------------------------------------------ week grid */
