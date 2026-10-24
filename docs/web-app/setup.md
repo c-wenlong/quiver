@@ -15,7 +15,8 @@ The page opens on one card:
 - **This machine is set up** otherwise, with Run setup again (the Mac
   app reopens the sheet from Settings › General the same way).
 
-The button starts the sheet's steps, in a card laid out like the sheet:
+The button reads the machine afresh (as the sheet loads its preview each
+time it opens), then starts the sheet's steps, in a card laid out like the sheet:
 the Quiver mark, the step bars and "1 of 2", the step's title and
 subtitle, and a footer with Skip setup, Back and Continue.
 

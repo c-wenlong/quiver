@@ -252,7 +252,20 @@ function paintLanding() {
       <div><button class="setup-button" id="setup-start">Run setup again</button></div></div>`;
   }
   paintShell(card);
-  document.getElementById("setup-start").onclick = () => { startWizard(); paint(); focusTitle(); };
+  const start = document.getElementById("setup-start");
+  start.onclick = async () => {
+    // Read the machine afresh each time, as the sheet loads its preview
+    // when it opens: after a run the old preview would offer the adopted
+    // file again, and the hub would refuse it.
+    start.disabled = true;
+    start.textContent = "Checking…";
+    const gen = routeGen;
+    if (!(await load(gen))) return;
+    if (page.loadError) return paint();
+    startWizard();
+    paint();
+    focusTitle();
+  };
 }
 
 const TITLES = {
