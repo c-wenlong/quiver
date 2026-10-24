@@ -46,6 +46,15 @@ class GhEnv:
         return "ok"
 
 
+def env_error(env: GhEnv) -> str:
+    """Why ``env`` blocks a ``gh`` call, in the words every surface shows."""
+    if not env.installed:
+        return "gh is not installed: brew install gh"
+    if env.error:
+        return f"gh is not responding ({env.error})"
+    return "gh is not authenticated: run `gh auth login`"
+
+
 def probe_env() -> GhEnv:
     """Check ``gh`` presence and ``gh auth status`` once."""
     env = GhEnv()

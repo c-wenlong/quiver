@@ -90,6 +90,33 @@ if args[:1] == ["api"] and "--method" in args:
 if args[:1] == ["api"] and args[1].startswith("notifications"):
     print(json.dumps(state["notes"]))
     sys.exit(0)
+# Pinning, repo search and the catalog sync. "repos" maps a name, as
+# typed in lower case, to how GitHub spells it; "orgs" is the login's
+# orgs (None fails the call); "lists" maps an owner to its repo names.
+if args[:2] == ["repo", "view"]:
+    name = state.get("repos", {}).get(args[2].lower())
+    if name is None:
+        fail("GraphQL: Could not resolve to a Repository with the name '" + args[2] + "'.")
+    print(json.dumps({"nameWithOwner": name}))
+    sys.exit(0)
+if args[:2] == ["api", "user/orgs"]:
+    if state.get("orgs") is None:
+        fail("HTTP 403: Resource not accessible")
+    print("\n".join(state["orgs"]))
+    sys.exit(0)
+if args[:2] == ["search", "repos"]:
+    if state.get("search_error"):
+        fail(state["search_error"])
+    print(json.dumps([{"fullName": n, "description": n + " blurb", "stargazersCount": 3,
+                       "updatedAt": "2026-10-20T00:00:00Z"} for n in state.get("found", [])]))
+    sys.exit(0)
+if args[:2] == ["repo", "list"]:
+    names = state.get("lists", {}).get(args[2])
+    if names is None:
+        fail("HTTP 502: Bad Gateway")
+    print(json.dumps([{"nameWithOwner": args[2] + "/" + n, "description": n, "stargazerCount": 1,
+                       "updatedAt": "2026-10-20T00:00:00Z", "isPrivate": False} for n in names]))
+    sys.exit(0)
 fail("fake gh: unexpected " + " ".join(args), 2)
 """
 
