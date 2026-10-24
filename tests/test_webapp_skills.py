@@ -289,10 +289,30 @@ class TestWrites(_WriteHome, unittest.TestCase):
                                            "target": str(self.shared.parent)})
         self.assertEqual(reply["harness"]["state"], "linked")
         self.assertEqual(self.states(reply)["codex"], "linked")
-        self.assertEqual(reply["skill"]["path"], str(self.shared))
+        self.assertEqual(reply["skill"]["path"], os.path.realpath(self.shared))
         self.assertIn("codex", reply["skill"]["harnesses"])
         self.assertEqual(reply["machine"], "box")
         self.assertIn("codex", self.links())
+
+    def test_a_skill_named_through_a_symlink_is_the_listed_one(self):
+        """The inventory lists realpaths; a path through a symlinked home
+        (macOS's /var -> /private/var) still names the skill."""
+        alias = Path(tempfile.mkdtemp()) / "home"
+        alias.symlink_to(self.home)
+        reply = self.post("link", {"harness": self.path("codex"), "skill": str(alias / ".quiver" / "skills" / "tdd")})
+        self.assertEqual(reply["skill"]["path"], os.path.realpath(self.shared))
+        detail = page.get(self.ctx, {"skill": str(alias / ".quiver" / "skills" / "tdd")})
+        self.assertEqual(detail["skill"]["path"], os.path.realpath(self.shared))
+
+    def test_a_symlink_to_a_folder_off_the_list_is_still_unknown(self):
+        stray = Path(tempfile.mkdtemp()) / "stray"
+        stray.mkdir()
+        (stray / "SKILL.md").write_text("---\nname: stray\n---\n")
+        (self.home / "via").symlink_to(stray)
+        for ref in (str(self.home / "via"), str(stray), "/etc\0x"):
+            with self.assertRaises(PageError) as caught:
+                page.get(self.ctx, {"skill": ref})
+            self.assertEqual((caught.exception.status, caught.exception.code), (404, "unknown_skill"), ref)
 
     def test_a_name_works_when_one_folder_has_it(self):
         reply = self.post("link", {"harness": "codex"})
