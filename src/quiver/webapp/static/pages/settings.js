@@ -62,7 +62,7 @@ function settingsApplySidebar(hidden) {
   }
   const ids = [...hidden].filter((id) => /^[a-z]+$/.test(id));
   if (!ids.length) { style.textContent = ""; return; }
-  const sel = (id) => `[href="#/${id}"]`;
+  const sel = (id) => `[data-page="${id}"]`;
   const items = ids.map((id) => `#sidebar .nav-item${sel(id)}`).join(",\n");
   const shown = `.nav-item${ids.map((id) => `:not(${sel(id)})`).join("")}`;
   style.textContent = `${items} { display: none !important; }\n`
@@ -221,9 +221,8 @@ function setRow(title, detail, control = "", opts = {}) {
     ${control ? `<div class="set-control">${control}</div>` : ""}</div>`;
 }
 
-const MAC_ONLY_BADGE = '<span class="badge set-mac">Mac app only</span>';
-
-/* A row that configures the Mac app itself: the app's wording, greyed. */
+/* A row that configures the Mac app itself: the app's wording, greyed,
+ * with app.js's MAC_ONLY_BADGE (the sidebar's Mac-only items wear it too). */
 function macRow(title, detail, extra = "") {
   return setRow(title, detail, `${extra}${MAC_ONLY_BADGE}`, { cls: "set-mac-only" });
 }
