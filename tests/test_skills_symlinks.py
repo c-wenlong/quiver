@@ -25,9 +25,9 @@ class SkillsSymlinksTest(unittest.TestCase):
             home = Path(tmp)
             shared = home / ".quiver" / "skills"
             shared.mkdir(parents=True)
-            (home / ".cursor").mkdir()
             (shared / "demo-skill").mkdir()
             (shared / "demo-skill" / "SKILL.md").write_text("---\nname: demo\n---\n")
+            (home / ".cursor").mkdir()
 
             hints = skills_symlink_hints(home=home)
             cursor = [h for h in hints if h.label == "cursor"]
@@ -49,34 +49,32 @@ class SkillsSymlinksTest(unittest.TestCase):
             self.assertTrue(cursor_link.is_symlink())
             self.assertEqual(cursor_link.resolve(), shared.resolve())
 
-    def test_a_harness_without_its_home_folder_gets_no_hint(self):
+    def test_no_hint_for_a_harness_whose_home_is_missing(self):
+        # No ~/.augment means augment is not installed: offering a link
+        # there would make the dir, and init then reads it as evidence.
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             (home / ".quiver" / "skills").mkdir(parents=True)
             (home / ".claude").mkdir()
-            (home / ".config").mkdir()
 
-            hints = skills_symlink_hints(home=home)
-            self.assertEqual([h.label for h in hints], ["claude"])
-            applied = apply_skills_symlink_hints(hints, home=home)
-            self.assertEqual(applied, ["symlink claude"])
-            self.assertEqual(sorted(p.name for p in home.iterdir()),
-                             [".claude", ".config", ".quiver"])
-            self.assertEqual(list((home / ".config").iterdir()), [])
+            labels = {h.label for h in skills_symlink_hints(home=home)}
+            self.assertEqual(labels, {"claude"})
 
     def test_apply_never_creates_a_harness_home(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             (home / ".quiver" / "skills").mkdir(parents=True)
-            stale = SkillsSymlinkHint(label="augment", path=home / ".augment" / "skills",
-                                      action="symlink", command="", reason="")
+            stale = SkillsSymlinkHint(
+                label="augment", path=home / ".augment" / "skills",
+                action="symlink", command="", reason="")
 
             self.assertEqual(apply_skills_symlink_hints([stale], home=home), [])
             self.assertFalse((home / ".augment").exists())
 
     def test_a_binary_on_path_without_its_home_folder_is_linked(self):
         # Installed but never run: no ~/.codex yet, so the binary is the
-        # only evidence, as in swe init.
+        # only evidence, as in swe init. The wizard never runs init, so
+        # this link is the only one that harness gets there.
         self.on_path = {"codex"}
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)

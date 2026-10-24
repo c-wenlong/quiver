@@ -194,16 +194,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`swe setup --apply` no longer makes folders for harnesses you don't
-  have.** Every run after the first linked `~/.quiver/skills` into the
-  skills root of each harness quiver knows, creating `~/.augment`,
-  `~/.pi`, `~/.kiro` and the rest whether or not the harness was
-  installed; the linking pass then took those folders as installs,
-  registered them in `harness.json` and linked `AGENTS.md` into them.
-  The skills step now links only harnesses that are installed: their
-  folder exists, or their command is on PATH. The web app's Setup page,
-  Doctor's setup fix and the interactive wizard use the same code.
-  Folders and entries an earlier run made stay until you remove them.
+- **`swe setup --apply` run twice no longer invents harnesses.** The
+  second run linked skills into every harness in the `HARNESS_ROOTS`
+  table, making `~/.augment`, `~/.kiro`, `~/.pi` and the rest to hold the
+  links, and the linking pass then read those new folders as proof the
+  harness was installed and registered and linked each one. The skills
+  step now links only harnesses that are installed, by the rules
+  `swe init` follows: the harness folder exists, or its command is on
+  PATH (installed but never run). The web app's Setup page, Doctor's
+  setup fix and the interactive wizard share this code, and the wizard,
+  which never runs `swe init`, still links a never-run install. Folders
+  an earlier run made are left in place; `rm` the ones for harnesses you
+  don't use and archive their entries with `swe harness archive <name>`.
 
 - **Remote: a refused request no longer breaks the next one on the same
   connection.** When the hub answered a POST before reading its body (a
