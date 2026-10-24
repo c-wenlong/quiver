@@ -96,6 +96,18 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         #expect(model.linkError == nil)
     }
 
+    @Test func replaceWaitsForUnsavedProjectEdits() async throws {
+        let folder = try TempFolder()
+        _ = try folder.write("AGENTS.md", "project\n")
+        let runner = RoutingRunner([])
+        let model = AgentsModel()
+        model.openProject(folder.url)
+        model.document(for: model.projectFiles[0]).text = "changed"
+        await model.link(swe: SweClient(runner: runner), force: true)
+        #expect(runner.calls.isEmpty)
+        #expect(model.linkError == AgentsModel.saveFirst)
+    }
+
     @Test func aFailedInitIsShownAndTheCheckStillRefreshes() async throws {
         let folder = try TempFolder()
         let agents = try folder.write("AGENTS.md", "x")

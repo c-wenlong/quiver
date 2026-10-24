@@ -31,7 +31,9 @@ function agentsMark(h) {
 }
 
 const agentsPage = {
-  scope: "global", data: null, globalError: null, seq: 0,
+  // Global and Project reads count separately, so finishing one never
+  // drops the other's answer.
+  scope: "global", data: null, globalError: null, globalSeq: 0, projectSeq: 0,
   folder: null, project: null, projectError: null, file: "AGENTS.md",
   // The init in flight ("link" or "replace"), whether Replace is asking
   // to confirm, and the last run's failure (AgentsModel.linking/linkError).
@@ -62,23 +64,26 @@ function agentsTabs() {
 }
 
 async function renderAgents() {
-  const p = agentsPage, gen = routeGen, mine = ++p.seq;
+  const p = agentsPage, gen = routeGen;
   if (p.folder === null) {
     try { p.folder = localStorage.getItem(AGENTS_FOLDER_KEY) || ""; } catch { p.folder = ""; }
   }
   paintAgents(!p.data && !p.globalError);
+  const mineGlobal = ++p.globalSeq, mineProject = p.folder ? ++p.projectSeq : null;
   const loads = [api("/v1/app/agents")];
   if (p.folder) loads.push(api(`/v1/app/agents?folder=${encodeURIComponent(p.folder)}`));
   const [global, project] = await Promise.all(loads);
-  if (gen !== routeGen || mine !== p.seq) return;
+  if (gen !== routeGen) return;
   if (global.status === 401 || (project && project.status === 401)) {
     return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
   }
   // A failed check (an unreadable .linkignore, say) stays on the Global
   // tab; the Project tab reads its folder all the same.
-  if (global.status === 200 && global.data) { p.data = global.data; p.globalError = null; }
-  else p.globalError = agentsErrorText(global);
-  if (project) agentsTakeProject(project);
+  if (mineGlobal === p.globalSeq) {
+    if (global.status === 200 && global.data) { p.data = global.data; p.globalError = null; }
+    else p.globalError = agentsErrorText(global);
+  }
+  if (project && mineProject === p.projectSeq) agentsTakeProject(project);
   paintAgents(false);
 }
 
@@ -186,7 +191,7 @@ function agentsConfirm(d, blocked) {
 /* AgentsModel.link: one init at a time; the hub answers with the Global
  * tab read again, whether the run worked or not. */
 async function agentsRun(action) {
-  const p = agentsPage, gen = routeGen;
+  const p = agentsPage;
   if (p.running) return;
   p.running = action;
   p.confirming = false;
@@ -194,20 +199,30 @@ async function agentsRun(action) {
   paintAgents(false);
   const { status, data } = await apiPost(`/v1/app/agents/${action}`, {});
   p.running = null;
-  if (gen !== routeGen) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  // The answer is kept even if the page was left meanwhile, so a return
+  // to it shows the result rather than a button still spinning.
+  const here = onAgentsPage();
+  if (status === 401) {
+    if (here) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    return;
+  }
   if (status === 200 && data) {
-    // A load still in flight read the links before this run: drop it.
-    p.seq++;
+    // A Global load still in flight read the links before this run: drop it.
+    p.globalSeq++;
     p.data = data;
     p.globalError = null;
     p.runError = data.error || null;
   } else {
     p.runError = agentsErrorText({ status, data });
   }
+  if (!here) return;
   paintAgents(false);
   const again = document.querySelector(`[data-agents="${action === "replace" ? "ask" : "link"}"]`);
   if (again) again.focus();
+}
+
+function onAgentsPage() {
+  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "agents";
 }
 
 function agentsLinkRow(h, home) {
@@ -251,7 +266,7 @@ function agentsProject() {
 }
 
 async function agentsOpenFolder(value) {
-  const p = agentsPage, folder = value.trim(), gen = routeGen, mine = ++p.seq;
+  const p = agentsPage, folder = value.trim(), gen = routeGen, mine = ++p.projectSeq;
   p.folder = folder;
   p.project = null;
   p.projectError = null;
@@ -261,7 +276,7 @@ async function agentsOpenFolder(value) {
   paintAgents(false);
   if (!folder) return;
   const reply = await api(`/v1/app/agents?folder=${encodeURIComponent(folder)}`);
-  if (gen !== routeGen || mine !== p.seq) return;
+  if (gen !== routeGen || mine !== p.projectSeq) return;
   if (reply.status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
   agentsTakeProject(reply);
   paintAgents(false);

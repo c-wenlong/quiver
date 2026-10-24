@@ -118,8 +118,9 @@ private struct LinksStrip: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Button("Replace and back up…") { confirmingReplace = true }
                         .secondaryButton()
-                        .disabled(model.linking)
-                        .help("Runs swe init --force, which copies each real file in the way to ~/.quiver/backups before linking over it.")
+                        .disabled(model.linking || model.projectHasUnsavedChanges)
+                        .help(model.projectHasUnsavedChanges ? AgentsModel.saveFirst
+                              : "Runs swe init --force, which copies each real file in the way to ~/.quiver/backups before linking over it.")
                 }
             }
             if let error = model.linkError {
