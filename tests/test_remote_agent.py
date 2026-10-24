@@ -1172,6 +1172,30 @@ class TestAgentRouteValidation(unittest.TestCase):
             headers=self.srv.auth)
         self.assertEqual(status, 404)
 
+    def test_satellite_queue_tray_is_empty_and_actions_409(self):
+        # A satellite delivers or refuses on arrival, so nothing waits
+        # on the hub: the list is empty and an action says why.
+        self.srv.request(
+            "POST", "/v1/agent/catalog",
+            {"machine_id": self.mid, "rows": [
+                {"key": "claude:r1", "ownership": "attached",
+                 "status": "active"}]},
+            headers=self.srv.auth)
+        self.srv.state.catalog.refresh()
+        key = "claude%3Ar1%40sat-m1"
+        status, data = self.srv.request(
+            "GET", f"/v1/sessions/{key}/queue", headers=self.srv.auth)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data), {"sends": []})
+        status, data = self.srv.request(
+            "POST", f"/v1/sessions/{key}/queue",
+            {"client_id": "q-1", "op": "cancel"}, headers=self.srv.auth)
+        self.assertEqual(status, 409)
+        self.assertEqual(
+            json.loads(data)["error"]["code"], "queue_unsupported")
+        replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+        self.assertEqual(replay, [])
+
     def test_forward_control_on_observed_is_409(self):
         self.srv.request(
             "POST", "/v1/agent/catalog",
