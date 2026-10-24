@@ -257,10 +257,43 @@ class TestSensors(unittest.TestCase):
                 patch("subprocess.run", side_effect=compute.subprocess.TimeoutExpired("x", 3)):
             self.assertIsNone(compute.read_nvidia())
 
+    def test_pmon_rows(self):
+        # A 580 driver's output (jpg and ofa columns), two GPUs, one pid on both.
+        text = ("# gpu         pid   type     sm    mem    enc    dec    jpg    ofa    command \n"
+                "# Idx           #    C/G      %      %      %      %      %      %    name \n"
+                "    0       1740     G      -      -      -      -      -      -    Xorg           \n"
+                "    0       4242     C     35      9      -      -      -      -    python3        \n"
+                "    1       4242     C     20      4      -      -      -      -    python3        \n"
+                "    1          -     -      -      -      -      -      -      -    -              \n")
+        self.assertEqual(compute.parse_nvidia_pmon(text), {1740: 0.0, 4242: 55.0})
+
+    def test_pmon_older_driver_columns(self):
+        text = ("# gpu        pid  type    sm   mem   enc   dec   command\n"
+                "# Idx          #   C/G     %     %     %     %   name\n"
+                "    0       7001     C    12     3     -     -   ollama\n")
+        self.assertEqual(compute.parse_nvidia_pmon(text), {7001: 12.0})
+        self.assertEqual(compute.parse_nvidia_pmon(""), {})
+
+    def test_pmon_absent_or_failing(self):
+        with patch("shutil.which", return_value=None):
+            self.assertIsNone(compute.read_nvidia_processes())
+        with patch("shutil.which", return_value="/usr/bin/nvidia-smi"), \
+                patch("subprocess.run", side_effect=compute.subprocess.TimeoutExpired("x", 3)):
+            self.assertIsNone(compute.read_nvidia_processes())
+        failed = compute.subprocess.CompletedProcess([], 6, "", "pmon not supported")
+        with patch("shutil.which", return_value="/usr/bin/nvidia-smi"), \
+                patch("subprocess.run", return_value=failed):
+            self.assertIsNone(compute.read_nvidia_processes())
+        done = compute.subprocess.CompletedProcess([], 0, "    0   12   C   7   1   -   -   x\n", "")
+        with patch("shutil.which", return_value="/usr/bin/nvidia-smi"), \
+                patch("subprocess.run", return_value=done) as run:
+            self.assertEqual(compute.read_nvidia_processes(), {12: 7.0})
+        self.assertEqual(run.call_args[0][0][1:], ["pmon", "-c", "1", "-s", "u"])
+
 
 class TestHistory(unittest.TestCase):
     def _tick(self, at, memory=1):
-        return compute.Tick(at, {"claude": (memory, 1.0)}, {}, {"cpu": 50.0}, None)
+        return compute.Tick(at, {"claude": (memory, 1.0, None)}, {"cpu": 50.0}, None)
 
     def test_rings_window_and_peaks(self):
         h = compute.History()
@@ -297,9 +330,12 @@ class _Model(unittest.TestCase):
                   start=50, anon_kb=2048)
         m.hwmon(0, "k10temp", temps=(55000,))
         self.now = [5000.0]
+        # pmon's reading: claude's two pids on the GPU, someone else's too.
+        self.gpu_by_pid = {101: 30.0, 102: 5.0, 4000: 60.0}
         self.model = compute.ComputeModel(
             proc=m.proc, sys_root=m.sys,
             nvidia=lambda: compute.parse_nvidia("0, GTX, 40, 1, 8, 60, 5\n"),
+            nvidia_processes=lambda: self.gpu_by_pid,
             clock=lambda: self.now[0], self_pid=999)
         self.model.home = Path(HOME)
         self._patches = [
@@ -347,10 +383,24 @@ class TestModel(_Model):
         self.assertEqual(body["temperatures"], {"cpu": 55.0, "gpu": 60.0})
         trend = body["trend"]
         self.assertEqual(len(trend["harnesses"]["claude"]), 2)
-        self.assertEqual(trend["gpus"][0]["points"][-1][1], 40.0)
+        self.assertEqual([pt[3] for pt in trend["harnesses"]["claude"]], [35.0, 35.0])
+        self.assertNotIn("gpus", trend)
+        self.assertEqual(body["gpus"][0]["utilization_percent"], 40.0)
         self.assertTrue(trend["gpu_available"] and trend["temperature_available"])
         self.assertEqual(trend["peaks"]["claude"], 3 * 1024**3 + 1024 * 1024)
         json.dumps(body)
+
+    def test_gpu_is_none_without_pmon_and_zero_off_the_gpu(self):
+        self.gpu_by_pid = None
+        self.model.sample()
+        self.assertEqual(self.model.payload(10)["trend"]["harnesses"]["claude"][-1][3], None)
+        self.assertFalse(self.model.payload(10)["trend"]["gpu_available"])
+        self.gpu_by_pid = {4000: 60.0}
+        self.now[0] += 10.0
+        self.model.sample()
+        trend = self.model.payload(10)["trend"]
+        self.assertEqual([pt[3] for pt in trend["harnesses"]["claude"]], [None, 0.0])
+        self.assertTrue(trend["gpu_available"])
 
     def test_a_bad_registry_is_an_error_not_a_crash(self):
         with patch("quiver.harness.registry.load_registry_readonly", side_effect=ValueError("bad json")):
