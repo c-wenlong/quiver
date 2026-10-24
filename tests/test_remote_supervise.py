@@ -134,17 +134,18 @@ class TestTmuxHelpers(unittest.TestCase):
         ])
 
     def test_launch_tmux_edges(self):
-        # No tmux → None. Existing pane → reuse its name. Failed
-        # new-session → None. _tmux blowing up → None. Pane gone by
-        # the settle check → None.
+        # No tmux → None. A live session under the name is not ours
+        # (callers launch only when nothing is supervised or kept for
+        # the key) → None, never a reuse. Failed new-session → None.
+        # _tmux blowing up → None. Pane gone by the settle check → None.
         with patch.object(supervise, "tmux_bin", return_value=None):
             self.assertIsNone(supervise.launch_tmux("k", ["claude"], "/tmp"))
         with patch.object(supervise, "tmux_bin", return_value="/x/tmux"), \
-             patch.object(supervise, "tmux_alive", return_value=True):
-            self.assertEqual(
-                supervise.launch_tmux("claude:s1", ["claude"], "/tmp"),
-                supervise.tmux_name("claude:s1"),
-            )
+             patch.object(supervise, "tmux_alive", return_value=True), \
+             patch.object(supervise, "_tmux") as tmux:
+            self.assertIsNone(
+                supervise.launch_tmux("claude:s1", ["claude"], "/tmp"))
+            tmux.assert_not_called()
         with patch.object(supervise, "tmux_bin", return_value="/x/tmux"), \
              patch.object(supervise, "tmux_alive", return_value=False), \
              patch.object(supervise, "_tmux", return_value=self._cp(rc=1)):

@@ -73,6 +73,11 @@ CONTROL_OPS = frozenset(
      "detach", "kill"}
 )
 
+# ``detach``'s ``mode``: ``now`` closes the tmux session (the default, so
+# older clients keep their behaviour), ``when_idle`` waits for the turn
+# to end first, ``keep`` stops supervising but leaves tmux running.
+DETACH_MODES = frozenset({"now", "when_idle", "keep"})
+
 NOTIFY_KINDS = frozenset({"needs_you", "finished", "error", "limit"})
 
 # Session ownership: ``attached`` runs under our supervisor (read+write),
@@ -265,7 +270,17 @@ def parse_control_command(body: dict) -> dict:
     value = body.get("value")
     if value is not None and not isinstance(value, str):
         raise ValueError("control.value must be a string when given")
-    return {"op": op, "value": value}
+    cmd = {"op": op, "value": value}
+    if op == "detach":
+        mode = body.get("mode")
+        if mode is None:
+            mode = "now"
+        if not isinstance(mode, str) or mode not in DETACH_MODES:
+            raise ValueError(
+                f"detach mode must be one of {sorted(DETACH_MODES)}"
+            )
+        cmd["mode"] = mode
+    return cmd
 
 
 def parse_launch_command(body: dict) -> dict:
