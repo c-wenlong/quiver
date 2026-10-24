@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -86,6 +87,54 @@ class SkillsSymlinksTest(unittest.TestCase):
             self.assertEqual(apply_skills_symlink_hints(hints, home=home), ["symlink codex"])
             self.assertEqual((home / ".codex" / "skills").resolve(), shared.resolve())
             self.assertEqual(sorted(p.name for p in home.iterdir()), [".codex", ".quiver"])
+
+    def test_an_archived_harness_on_path_is_not_linked(self):
+        self.on_path = {"codex"}
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".quiver" / "skills").mkdir(parents=True)
+            config = home / ".quiver" / "config"
+            config.mkdir()
+            (config / "harness.json").write_text(
+                json.dumps({"codex": {"command": "codex", "state": "archived"}}))
+
+            self.assertEqual(skills_symlink_hints(home=home), [])
+            stale = SkillsSymlinkHint(label="codex", path=home / ".codex" / "skills",
+                                      action="symlink", command="", reason="")
+            self.assertEqual(apply_skills_symlink_hints([stale], home=home), [])
+            self.assertFalse((home / ".codex").exists())
+
+    def test_an_unreadable_registry_links_nothing_by_path(self):
+        # The archive can't be read, so an archived harness can't be told
+        # apart: only roots whose folder exists are linked.
+        self.on_path = {"codex"}
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".quiver" / "skills").mkdir(parents=True)
+            (home / ".quiver" / "config").mkdir()
+            (home / ".quiver" / "config" / "harness.json").write_text("{not json")
+            (home / ".claude").mkdir()
+
+            self.assertEqual([h.label for h in skills_symlink_hints(home=home)], ["claude"])
+
+    def test_a_file_where_the_harness_folder_goes_is_left_alone(self):
+        # A blocked folder must not stop the other links in the same run.
+        self.on_path = {"codex", "cursor", "crush"}
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            shared = home / ".quiver" / "skills"
+            shared.mkdir(parents=True)
+            (home / ".codex").write_text("not a folder\n")
+            (home / ".cursor").symlink_to(home / "gone")
+            (home / ".config").write_text("not a folder either\n")
+            (home / ".claude").mkdir()
+
+            hints = skills_symlink_hints(home=home)
+            self.assertEqual([h.label for h in hints], ["claude", "crush"])
+            self.assertEqual(apply_skills_symlink_hints(hints, home=home), ["symlink claude"])
+            self.assertEqual((home / ".codex").read_text(), "not a folder\n")
+            self.assertTrue((home / ".cursor").is_symlink())
+            self.assertEqual((home / ".claude" / "skills").resolve(), shared.resolve())
 
 
 if __name__ == "__main__":
