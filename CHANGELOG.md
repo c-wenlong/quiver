@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: your own devices open it without pairing.** A browser on a
+  device signed in to the hub owner's Tailscale account loads `/app/`
+  straight away; the hub knows it from `tailscale whois` (cached a
+  minute per address). Pairing stays for tagged nodes, other people's
+  devices, phones' remote control and satellites.
+
 - **Remote: detach can wait for the turn to end or keep tmux running.**
   The control route's `detach` takes a `mode`. `now` is today's
   behaviour and stays the default. `when_idle` answers at once and
@@ -118,6 +124,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through print mode or a server API doesn't offer TUI-only commands,
   and commands that would open a picker on the computer are left out.
   Claude Code, Codex and opencode are covered, satellites included.
+
+- **Remote: the hub lists a session's files for `@` mentions.**
+  `GET /v1/sessions/{id}/files?q=` returns files and folders under the
+  session's working folder, ranked for a typeahead (file name matches
+  first, then shorter and more recently changed paths), so the phone's
+  prompt box can offer `@path` as you type. Git repos are listed with
+  their `.gitignore` applied; other folders skip hidden and build folders.
+  Nothing outside the working folder is ever listed, symlinks included.
+  Sessions on a satellite machine get a clear "not available yet" error.
 
 - **Web app: Repositories and Inbox.** Repositories shows the hub's pinned
   repos as the Mac app does: pull requests, issues and Actions across
