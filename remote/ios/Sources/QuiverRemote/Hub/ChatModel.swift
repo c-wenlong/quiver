@@ -65,6 +65,8 @@ final class ChatModel {
     private var revealTask: Task<Void, Never>?
     /// When the last live entry was shown.
     private var lastReveal: ContinuousClock.Instant?
+    /// How the reveal waits between entries; tests swap in a gate.
+    var pause: (Duration) async -> Void = { try? await Task.sleep(for: $0) }
     /// A send went through and nothing from the agent has come back yet.
     private(set) var awaitingReply = false
     /// Bumped by every start() and stop(), so a start() still fetching
@@ -139,10 +141,12 @@ final class ChatModel {
         guard revealTask == nil else { return }
         revealTask = Task { [weak self] in
             // Events often arrive a few ms apart, so the queue empties
-            // between them: keep the gap from the last entry shown.
-            if let self, let last = self.lastReveal, let delay = Self.revealDelay(waiting: self.pending.count) {
+            // between them: keep the gap from the last entry shown. Only
+            // for a new entry; a result or status change goes straight in.
+            if let self, let first = self.pending.first, Self.addsEntry(first), let last = self.lastReveal,
+               let delay = Self.revealDelay(waiting: self.pending.count) {
                 let gap = delay - (ContinuousClock.now - last)
-                if gap > .zero { try? await Task.sleep(for: gap) }
+                if gap > .zero { await self.pause(gap) }
             }
             while let self, !Task.isCancelled, !self.pending.isEmpty {
                 guard let delay = Self.revealDelay(waiting: self.pending.count) else {
@@ -156,11 +160,21 @@ final class ChatModel {
                 // result landing on its card goes straight through.
                 if self.items.count > before {
                     self.lastReveal = .now
-                    if !self.pending.isEmpty { try? await Task.sleep(for: delay) }
+                    if !self.pending.isEmpty { await self.pause(delay) }
                 }
             }
             // A cancelled pass was already replaced, maybe by a newer one.
             if !Task.isCancelled { self?.revealTask = nil }
+        }
+    }
+
+    /// Whether an event would add an entry to the transcript, rather than
+    /// update one or change the session's status.
+    static func addsEntry(_ env: Envelope) -> Bool {
+        switch env.type {
+        case "approval.requested": return true
+        case "message.appended": return env.decode(MessageData.self)?.kind != "tool_result"
+        default: return false
         }
     }
 
