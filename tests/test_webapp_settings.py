@@ -434,6 +434,25 @@ class TestGet(_Settings):
         self.assertEqual(body["remote"]["token_ttl_s"], pairing.TOKEN_TTL_S)
         self.assertEqual(body["machine"], self.srv.state.machine["name"])
 
+    def test_remote_setup_is_its_own_part_and_reads_this_machine(self):
+        from quiver.remote import setup
+
+        made_up = setup.Facts(platform="darwin", exe=None, status=None)
+        seen = {}
+
+        def fake_gather(home=None, **_kw):
+            seen["home"] = home
+            return made_up
+
+        with patch.object(setup, "gather", fake_gather):
+            body = settings_page.get(self.ctx(), {"part": "remote_setup"})
+        report = body["remote_setup"]
+        self.assertEqual(seen["home"], self.home)
+        self.assertFalse(report["ready"])
+        self.assertEqual(report["steps"][0]["id"], "tailscale.installed")
+        self.assertEqual(report["steps"][0]["state"], setup.NEEDS_YOU)
+        self.assertNotIn("remote_setup", settings_page.get(self.ctx(), {}), "the main read stays quick")
+
     def test_hub_address_comes_from_the_saved_config(self):
         save_hub_config(self.home, "127.0.0.1", 8477, "https://box.example.ts.net:8477")
         remote = settings_page.get(self.ctx(), {})["remote"]

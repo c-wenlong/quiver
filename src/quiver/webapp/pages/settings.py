@@ -17,6 +17,11 @@ belongs to the hub machine:
 - ``paths``: where the hub's swe, API keys file and MCP servers folder are.
 - ``?part=github``: Integrations › GitHub, ``gh``'s login and the synced
   repo catalog, asked for apart because ``gh auth status`` can be slow.
+- ``?part=remote_setup``: the steps from nothing to a paired phone, as
+  ``swe remote setup --json`` reports them for this machine, asked for
+  apart because it calls tailscale and probes the hub's own https
+  address. Read only: the page never runs ``--apply``, which can move the
+  very hub serving it.
 
 Writes, both behind the device bearer and the Origin check:
 
@@ -62,6 +67,10 @@ def get(ctx, args: dict) -> dict:
     part = args.get("part") or ""
     if part == "github":
         return {"github": _github(ctx, refresh=args.get("refresh") == "1")}
+    if part == "remote_setup":
+        from quiver.remote import setup
+
+        return {"remote_setup": setup.evaluate(setup.gather(home=ctx.home))}
     if part:
         raise PageError(400, "bad_part", f"unknown part: {part}")
     home = _home(ctx)
