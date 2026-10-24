@@ -44,6 +44,14 @@ def skills_symlink_hints(home: Path | None = None) -> list[SkillsSymlinkHint]:
     for label, rel in SYMLINK_TARGETS:
         path = home / rel
         if not path.exists():
+            if not path.parent.is_dir():
+                # No home folder means the harness is not installed here.
+                # Linking it anyway made ~/.augment, ~/.pi and the like on
+                # every run after the first, and swe init then registered
+                # them and linked AGENTS.md in. swe init links installed
+                # harnesses whose home does not exist yet on its own
+                # evidence (a binary on PATH, a config dir elsewhere).
+                continue
             hints.append(
                 SkillsSymlinkHint(
                     label=label,
@@ -107,7 +115,11 @@ def skills_symlink_hints(home: Path | None = None) -> list[SkillsSymlinkHint]:
 
 
 def apply_skills_symlink_hints(hints: list[SkillsSymlinkHint], home: Path | None = None) -> list[str]:
-    """Apply safe symlink hints (mkdir shared, ln -sf when target missing)."""
+    """Apply safe symlink hints (mkdir shared, ln -sf when target missing).
+
+    A symlink goes only into a harness folder that already exists: this
+    never creates a harness's home, which would make it look installed.
+    """
     home = home or Path.home()
     applied: list[str] = []
 
@@ -115,8 +127,8 @@ def apply_skills_symlink_hints(hints: list[SkillsSymlinkHint], home: Path | None
         if hint.action == "create_shared":
             hint.path.mkdir(parents=True, exist_ok=True)
             applied.append(f"mkdir {hint.label}")
-        elif hint.action == "symlink" and not hint.path.exists():
-            hint.path.parent.mkdir(parents=True, exist_ok=True)
+        elif (hint.action == "symlink" and not hint.path.exists()
+              and hint.path.parent.is_dir()):
             hint.path.symlink_to(home / SHARED_REL)
             applied.append(f"symlink {hint.label}")
 

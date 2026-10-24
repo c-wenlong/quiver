@@ -183,6 +183,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`swe setup --apply` no longer makes folders for harnesses you don't
+  have.** Every run after the first linked `~/.quiver/skills` into the
+  skills root of each harness quiver knows, creating `~/.augment`,
+  `~/.pi`, `~/.kiro` and the rest whether or not the harness was
+  installed; the linking pass then took those folders as installs,
+  registered them in `harness.json` and linked `AGENTS.md` into them.
+  The skills step now links only into a harness folder that already
+  exists. The web app's Setup page and Doctor's setup fix run the same
+  code. Folders and entries an earlier run made stay until you remove
+  them.
+
 - **Remote: a session's status follows a send within a second.** The
   hub re-read every session's status only on its 10 second catalog
   refresh, so after a send the phone could show the session idle while

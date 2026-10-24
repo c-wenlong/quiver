@@ -218,6 +218,66 @@ class TestApply(_Home, unittest.TestCase):
         self.assertEqual(self.refused("run", starred=[]).status, 404)
 
 
+class TestRerun(_Home, unittest.TestCase):
+    """A second apply must not make uninstalled harnesses look installed.
+
+    The first run creates ~/.quiver/skills; the second used to symlink it
+    into every harness skills root quiver knows, making ~/.augment,
+    ~/.pi, ~/.kiro and the rest, which swe init then registered and
+    linked AGENTS.md into. Only claude and codex are installed here.
+    """
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.make_home(Path(tmp.name))
+        (self.home / ".codex").mkdir()
+
+    def outside_quiver(self) -> list[str]:
+        return sorted(
+            str(path.relative_to(self.home)) for path in self.home.rglob("*")
+            if path.relative_to(self.home).parts[0] != ".quiver"
+        )
+
+    def assert_rerun_is_a_no_op(self, apply):
+        apply()
+        self.assertTrue((self.home / ".quiver" / "skills").is_dir())
+        tree, registry = self.outside_quiver(), sorted(self.registry())
+        for _ in range(2):
+            apply()
+            self.assertEqual(self.outside_quiver(), tree)
+            self.assertEqual(sorted(self.registry()), registry)
+        for name in (".augment", ".pi", ".kiro", ".cursor", ".config"):
+            self.assertFalse((self.home / name).exists(), name)
+        self.assertTrue((self.home / ".codex" / "skills").is_symlink())
+        return registry
+
+    def test_doctors_setup_fix_twice_adds_no_folder_or_harness(self):
+        from quiver.setup.commands import apply_setup
+        registry = self.assert_rerun_is_a_no_op(lambda: apply_setup(self.home))
+        self.assertEqual(registry, ["claude"])
+
+    def test_the_cli_apply_twice_adds_no_folder_or_harness(self):
+        from quiver.setup.commands import cmd_setup
+
+        def run():
+            with redirect_stdout(io.StringIO()), \
+                    patch("sys.stdin.isatty", return_value=False):
+                self.assertEqual(cmd_setup(["--apply", "--json"]), 0)
+        self.assertEqual(self.assert_rerun_is_a_no_op(run), ["claude"])
+
+    def test_uninstalled_stars_stay_registered_without_folders(self):
+        # Ticking a catalog harness on the Setup page registers it on
+        # purpose, before it is installed; that must not make its home.
+        registry = self.assert_rerun_is_a_no_op(
+            lambda: self.post(starred=["claude", "augment", "pi"], adopt=None))
+        self.assertEqual(registry, ["augment", "claude", "pi"])
+        self.assertEqual(self.registry()["augment"]["state"], "starred")
+
+    def post(self, **body):
+        return setup_page.post(self.ctx(), "apply", body)
+
+
 class TestRoute(_Home, HubBase):
     def setUp(self):
         super().setUp()
