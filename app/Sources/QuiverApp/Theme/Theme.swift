@@ -88,18 +88,32 @@ enum Theme {
 
     // MARK: Type roles (tokens.json `core.typography`)
 
-    static let pageTitle = Font.system(size: 28, weight: .semibold)
-    static let pageSubtitle = Font.system(size: 14)
-    static let sectionTitle = Font.system(size: 20, weight: .semibold)
-    static let display = Font.system(size: 72, weight: .bold)
-    static let figure = Font.system(size: 20, weight: .bold)
-    static let cardTitle = Font.system(size: 14, weight: .medium)
-    static let rowTitle = Font.system(size: 14, weight: .medium)
-    static let bodySmall = Font.system(size: 14)
-    static let nav = Font.system(size: 13)
-    static let control = Font.system(size: 12, weight: .medium)
-    static let caption = Font.system(size: 12)
-    static let tableHeader = Font.system(size: 12, weight: .medium)
+    @MainActor static var pageTitle: Font { font(size: 28, weight: .semibold) }
+    @MainActor static var pageSubtitle: Font { font(size: 14) }
+    @MainActor static var sectionTitle: Font { font(size: 20, weight: .semibold) }
+    @MainActor static var display: Font { font(size: 72, weight: .bold) }
+    @MainActor static var figure: Font { font(size: 20, weight: .bold) }
+    @MainActor static var cardTitle: Font { font(size: 14, weight: .medium) }
+    @MainActor static var rowTitle: Font { font(size: 14, weight: .medium) }
+    @MainActor static var bodySmall: Font { font(size: 14) }
+    @MainActor static var nav: Font { font(size: 13) }
+    @MainActor static var control: Font { font(size: 12, weight: .medium) }
+    @MainActor static var caption: Font { font(size: 12) }
+    @MainActor static var tableHeader: Font { font(size: 12, weight: .medium) }
+
+    /// A system font at `size` points as designed, scaled by View › Zoom
+    /// (`TextZoom`). Every font in the app comes through here or the roles
+    /// above, so ⌘+ and ⌘− reach every page. Reading the zoom inside a view's
+    /// body is what redraws that view when it changes.
+    @MainActor static func font(size: CGFloat, weight: Font.Weight? = nil, design: Font.Design? = nil) -> Font {
+        .system(size: scaled(size), weight: weight, design: design)
+    }
+
+    /// `size` points at the current zoom, for AppKit fonts and measurements
+    /// that have to match a `font(size:)`.
+    @MainActor static func scaled(_ size: CGFloat) -> CGFloat {
+        TextZoom.pointSize(size, at: TextZoomModel.shared.zoom)
+    }
 
     // MARK: Shape and size (tokens.json `core.radius`, `size`, `space`)
 
@@ -231,7 +245,7 @@ struct Card<Content: View, Accessory: View>: View {
                         if let title { Text(title).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary) }
                         if let subtitle {
                             Text(subtitle)
-                                .font(monoSubtitle ? .system(size: 12, design: .monospaced) : Theme.caption)
+                                .font(monoSubtitle ? Theme.font(size: 12, design: .monospaced) : Theme.caption)
                                 .foregroundStyle(Theme.textSecondary)
                         }
                     }

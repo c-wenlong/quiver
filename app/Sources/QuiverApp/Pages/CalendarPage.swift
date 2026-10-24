@@ -214,7 +214,7 @@ private struct CalendarContent: View {
         VStack(alignment: .leading, spacing: 0) {
             MiniMonth(model: model)
                 .padding(.bottom, 10)
-            Text("Harnesses").font(.system(size: 11, weight: .semibold))
+            Text("Harnesses").font(Theme.font(size: 11, weight: .semibold))
                 .foregroundStyle(Theme.textSecondary).textCase(.uppercase)
                 .padding(.bottom, 4)
             ScrollView {
@@ -291,7 +291,7 @@ private struct CalendarContent: View {
                 // over it without swallowing clicks on the cells.
                 if model.visibleWindowBlocks.isEmpty {
                     Text("No harness activity \(model.emptyRangeNoun)")
-                        .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                        .font(Theme.font(size: 12)).foregroundStyle(Theme.textSecondary)
                         .allowsHitTesting(false)
                 }
             }
@@ -489,7 +489,7 @@ private struct CalendarContent: View {
             ForEach(weeks.indices, id: \.self) { row in
                 HStack(alignment: .top, spacing: 0) {
                     Text("\(iso.component(.weekOfYear, from: weeks[row].first ?? model.anchor))")
-                        .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+                        .font(Theme.font(size: 9)).foregroundStyle(Theme.textSecondary)
                         .frame(width: Self.weekNumberWidth, alignment: .leading)
                         .padding(.top, 4)
                     ForEach(weeks[row], id: \.self) { day in
@@ -535,7 +535,7 @@ private struct CalendarContent: View {
             VStack(spacing: 0) {
                 ForEach(0..<24, id: \.self) { hour in
                     Text(hourLabel(hour))
-                        .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+                        .font(Theme.font(size: 9)).foregroundStyle(Theme.textSecondary)
                         .frame(width: Self.axisWidth - 8, height: Self.hourHeight,
                                alignment: .topTrailing)
                         .id("h\(hour)")
@@ -545,7 +545,7 @@ private struct CalendarContent: View {
             // buffer day's.
             if let today = model.days.first(where: { $0.contains(now) }) {
                 Text(now, format: .dateTime.hour().minute())
-                    .font(.system(size: 9, weight: .medium))
+                    .font(Theme.font(size: 9, weight: .medium))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 5).padding(.vertical, 2)
                     .background(.red, in: Capsule())
@@ -689,7 +689,7 @@ private struct DayHeaderRow: View, Equatable {
     private func dayHeader(_ day: DateInterval, width: CGFloat) -> some View {
         let isToday = day.contains(now)
         let number = Text(day.start.formatted(.dateTime.day()))
-            .font(.system(size: 12, weight: isToday ? .semibold : .regular))
+            .font(Theme.font(size: 12, weight: isToday ? .semibold : .regular))
             .foregroundStyle(isToday ? .white : .primary)
             .lineLimit(1)
             .padding(.horizontal, 5).padding(.vertical, 2)
@@ -878,7 +878,7 @@ private struct DayColumn: View, Equatable {
         // 3pt bar, then 5pt of padding each side of the text.
         let textWidth = frame.width - 13
         var lines: [GraphicsContext.ResolvedText] = []
-        if let title = Self.fitted(title(segment.block), font: .system(size: 10, weight: .medium),
+        if let title = Self.fitted(title(segment.block), font: Theme.font(size: 10, weight: .medium),
                                    color: nil, width: textWidth, in: context) {
             lines.append(title)
         }
@@ -887,7 +887,7 @@ private struct DayColumn: View, Equatable {
             let range = CalendarFormat.range(start: block.start, end: block.end)
                 + (multiAccount.contains(block.harness)
                    ? " · \(model.accountName(for: block.accountHome))" : "")
-            if let detail = Self.fitted(range, font: .system(size: 9), color: Theme.textSecondary,
+            if let detail = Self.fitted(range, font: Theme.font(size: 9), color: Theme.textSecondary,
                                         width: textWidth, in: context) {
                 lines.append(detail)
             }
@@ -913,7 +913,7 @@ private struct DayColumn: View, Equatable {
                        with: .color(Theme.textSecondary),
                        style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
         let count = context.resolve(Text("+\(overflow.hidden.count)")
-            .font(.system(size: 11, weight: .semibold)))
+            .font(Theme.font(size: 11, weight: .semibold)))
         context.draw(count, at: CGPoint(x: frame.midX, y: frame.minY + 4), anchor: .top)
     }
 
@@ -1064,7 +1064,7 @@ private struct MiniMonth: View {
         VStack(spacing: 4) {
             HStack {
                 Text(Self.monthTitle.string(from: month))
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(Theme.font(size: 11, weight: .semibold))
                 Spacer()
                 Button { shiftMonth(-1) } label: { Image(systemName: "chevron.up") }
                     .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
@@ -1076,21 +1076,21 @@ private struct MiniMonth: View {
                 Text("").frame(width: 16)
                 ForEach(weeks.first ?? [], id: \.self) { day in
                     Text(day.formatted(.dateTime.weekday(.narrow)))
-                        .font(.system(size: 8)).foregroundStyle(Theme.textSecondary)
+                        .font(Theme.font(size: 8)).foregroundStyle(Theme.textSecondary)
                         .frame(maxWidth: .infinity)
                 }
             }
             ForEach(Array(weeks.enumerated()), id: \.offset) { row, week in
                 HStack(spacing: 0) {
                     Text("\(iso.component(.weekOfYear, from: week[0]))")
-                        .font(.system(size: 8)).foregroundStyle(Theme.textSecondary)
+                        .font(Theme.font(size: 8)).foregroundStyle(Theme.textSecondary)
                         .frame(width: 16, alignment: .leading)
                     ForEach(week, id: \.self) { day in
                         let inMonth = cal.isDate(day, equalTo: month, toGranularity: .month)
                         let isToday = cal.isDateInToday(day)
                         Button { model.go(to: day) } label: {
                             Text(day.formatted(.dateTime.day()))
-                                .font(.system(size: 9))
+                                .font(Theme.font(size: 9))
                                 .foregroundStyle(isToday ? .white : (inMonth ? .primary : Theme.textMuted))
                                 .frame(maxWidth: .infinity).frame(height: 16)
                                 .background(isToday ? Color.red : .clear, in: Circle())
@@ -1145,7 +1145,7 @@ private struct HarnessLegend: View {
             .overlay {
                 if shown {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(Theme.font(size: 9, weight: .bold))
                         .foregroundStyle(.white)
                 }
             }
@@ -1172,7 +1172,7 @@ private struct HarnessLegend: View {
             if accounts.count > 1 {
                 Button { model.toggleAccountsExpanded(harness) } label: {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 8)).foregroundStyle(Theme.textSecondary)
+                        .font(Theme.font(size: 8)).foregroundStyle(Theme.textSecondary)
                         .frame(width: 20, height: 20)
                         .contentShape(.rect)
                 }
@@ -1187,11 +1187,11 @@ private struct HarnessLegend: View {
                 HStack(spacing: 6) {
                     checkbox(shown: !model.isHidden(harness))
                     HarnessIcon(harness: harness, size: 13)
-                    Text(HarnessMark(harness).name).font(.system(size: 11))
+                    Text(HarnessMark(harness).name).font(Theme.font(size: 11))
                         .foregroundStyle(model.isHidden(harness) ? .secondary : .primary)
                     Spacer()
                     Text(Self.time(model.totals[harness] ?? 0))
-                        .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                        .font(Theme.font(size: 10)).foregroundStyle(Theme.textSecondary)
                 }
             }
             .help(model.isHidden(harness) ? "Show \(HarnessMark(harness).name)" : "Hide \(HarnessMark(harness).name)")
@@ -1208,12 +1208,12 @@ private struct HarnessLegend: View {
                     HStack(spacing: 6) {
                         checkbox(shown: shown)
                         Text(model.accountName(for: home))
-                            .font(.system(size: 10))
+                            .font(Theme.font(size: 10))
                             .foregroundStyle(shown ? .primary : .secondary)
                             .lineLimit(1)
                         Spacer()
                         Text(Self.time(model.accountTotals(for: harness)[home] ?? 0))
-                            .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+                            .font(Theme.font(size: 9)).foregroundStyle(Theme.textSecondary)
                     }
                     .padding(.leading, 18)
                 }
@@ -1266,14 +1266,14 @@ private struct MonthCell: View {
                     Spacer(minLength: 0)
                     if isFirst {
                         Text(day, format: .dateTime.month(.wide).day())
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(Theme.font(size: 9, weight: .semibold))
                             .foregroundStyle(isToday ? .white : (inMonth ? .primary : Theme.textMuted))
                             .padding(.horizontal, 4).padding(.vertical, 1)
                             .background(isToday ? Color.red : .clear,
                                         in: RoundedRectangle(cornerRadius: 4))
                     } else {
                         Text(day, format: .dateTime.day())
-                            .font(.system(size: 9))
+                            .font(Theme.font(size: 9))
                             .foregroundStyle(isToday ? .white : (inMonth ? .primary : Theme.textMuted))
                             .padding(.horizontal, 4).padding(.vertical, 1)
                             .background(isToday ? Color.red : .clear,
@@ -1295,7 +1295,7 @@ private struct MonthCell: View {
                 if split.more > 0 {
                     Button { more() } label: {
                         Text("\(split.more) more")
-                            .font(.system(size: 9))
+                            .font(Theme.font(size: 9))
                             .foregroundStyle(Theme.textSecondary)
                     }
                     .buttonStyle(.plain)
@@ -1334,8 +1334,8 @@ private struct MonthEntry: View {
             RoundedRectangle(cornerRadius: 1.5).fill(color)
                 .frame(width: 3, height: 10)
             Text(Self.clock.string(from: entry.start))
-                .font(.system(size: 8)).foregroundStyle(Theme.textSecondary)
-            Text(title).font(.system(size: 9)).lineLimit(1)
+                .font(Theme.font(size: 8)).foregroundStyle(Theme.textSecondary)
+            Text(title).font(Theme.font(size: 9)).lineLimit(1)
         }
         .padding(.horizontal, 6)
         .frame(height: 16)
@@ -1368,14 +1368,14 @@ private struct SessionRow: View {
                 Text(CalendarFormat.sessionTitle(row.session.title,
                                                  sessionId: ref.sessionId,
                                                  harness: harness))
-                    .font(.system(size: 11, weight: .medium)).lineLimit(1)
+                    .font(Theme.font(size: 11, weight: .medium)).lineLimit(1)
                 Text("\(CalendarFormat.range(start: ref.start, end: ref.end)) · "
                      + "\(ref.responses) response\(ref.responses == 1 ? "" : "s")")
-                    .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+                    .font(Theme.font(size: 9)).foregroundStyle(Theme.textSecondary)
                 if let parent = row.parent {
                     Label(parent.label, systemImage: "arrow.turn.down.right")
                         .labelStyle(.titleAndIcon)
-                        .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+                        .font(Theme.font(size: 9)).foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
                 }
             }
@@ -1383,7 +1383,7 @@ private struct SessionRow: View {
             if let open {
                 Button { open() } label: {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                        .font(Theme.font(size: 10)).foregroundStyle(Theme.textSecondary)
                 }
                 .buttonStyle(.plain)
                 .help("Open session")
@@ -1423,17 +1423,17 @@ private struct BlockCard: View {
             HStack(spacing: 8) {
                 HarnessIcon(harness: HarnessMark(block.harness).icon ?? block.harness, size: 18)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(block.project).font(.system(size: 12, weight: .semibold))
+                    Text(block.project).font(Theme.font(size: 12, weight: .semibold))
                         .lineLimit(1)
                     if model.accounts(for: block.harness).count > 1 {
                         Text(model.accountName(for: block.accountHome))
-                            .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+                            .font(Theme.font(size: 9)).foregroundStyle(Theme.textSecondary)
                     }
                 }
                 Spacer(minLength: 0)
             }
             Text("\(range) · \(duration) · \(block.responses) response\(block.responses == 1 ? "" : "s")")
-                .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+                .font(Theme.font(size: 9)).foregroundStyle(Theme.textSecondary)
             VStack(spacing: 0) {
                 ForEach(shown, id: \.ref.sessionId) { item in
                     SessionRow(ref: item.ref, row: item.row, harness: block.harness,
@@ -1441,7 +1441,7 @@ private struct BlockCard: View {
                 }
                 if more > 0 {
                     Text("+\(more) more")
-                        .font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+                        .font(Theme.font(size: 9)).foregroundStyle(Theme.textSecondary)
                         .padding(.vertical, 5)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 10)
@@ -1495,7 +1495,7 @@ private struct OverflowCard: View {
                 Text("\(overflow.hidden.count) more · "
                      + CalendarFormat.range(start: overflow.start,
                                             end: overflow.end))
-                    .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                    .font(Theme.font(size: 10)).foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 12).padding(.bottom, 8)
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -1524,10 +1524,10 @@ private struct OverflowCard: View {
             HarnessIcon(harness: HarnessMark(block.harness).icon ?? block.harness,
                         size: 14)
             VStack(alignment: .leading, spacing: 2) {
-                Text(block.project).font(.system(size: 11, weight: .semibold))
+                Text(block.project).font(Theme.font(size: 11, weight: .semibold))
                     .lineLimit(1)
                 Text(rowDetail(block))
-                    .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                    .font(Theme.font(size: 10)).foregroundStyle(Theme.textSecondary)
                     .lineLimit(1)
             }
             Spacer(minLength: 0)

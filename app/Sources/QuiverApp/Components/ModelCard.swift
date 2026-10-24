@@ -21,7 +21,7 @@ struct ModelCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     BrandLogo(vendor: row.vendor, size: 18)
-                    ModelName(name: title, qualifier: row.qualifier, font: .system(size: 15))
+                    ModelName(name: title, qualifier: row.qualifier, font: Theme.font(size: 15))
                 }
                 Text(subtitle)
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -119,13 +119,13 @@ struct ModelCard: View {
     private func priceTile(_ label: String, _ price: Double?,
                            highlighted: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
+            Text(label).font(Theme.font(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(price.map(Self.price) ?? "—")
-                    .font(.system(size: 13, weight: .medium)).monospacedDigit()
+                    .font(Theme.font(size: 13, weight: .medium)).monospacedDigit()
                     .foregroundStyle(price == nil ? Theme.textMuted : Theme.textPrimary)
                 if price != nil {
-                    Text("/ 1M").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                    Text("/ 1M").font(Theme.font(size: 11)).foregroundStyle(Theme.textMuted)
                 }
             }
         }
@@ -151,7 +151,7 @@ struct CostDotScale: View {
 
     private static let track: CGFloat = 8
     private static let dot: CGFloat = 10
-    private static let labelFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+    private static var labelFont: NSFont { .systemFont(ofSize: Theme.scaled(11), weight: .semibold) }
 
     var body: some View {
         VStack(spacing: 5) {
@@ -159,7 +159,7 @@ struct CostDotScale: View {
                 let width = min((name as NSString).size(withAttributes: [.font: Self.labelFont])
                     .width.rounded(.up), geo.size.width)
                 Text(name)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(Theme.font(size: 11, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1).truncationMode(.middle)
                     .frame(width: width)

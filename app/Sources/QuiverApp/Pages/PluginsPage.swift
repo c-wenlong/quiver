@@ -271,7 +271,7 @@ private struct DriftRow: View {
                 HStack(alignment: .top, spacing: 6) {
                     // A code block: bg.code, 6/8 padding, radius 4, mono 12/16.
                     Text(finding.fix)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(Theme.font(size: 12, design: .monospaced))
                         .lineSpacing(2)
                         .foregroundStyle(Theme.textSecondary)
                         .textSelection(.enabled)

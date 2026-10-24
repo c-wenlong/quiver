@@ -106,7 +106,7 @@ private struct WidgetCard: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 8) {
                     Image(systemName: widget.symbol)
-                        .font(.system(size: 14))
+                        .font(Theme.font(size: 14))
                         .foregroundStyle(Theme.textSecondary)
                         .frame(width: 18)
                     Text(widget.title).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
@@ -278,7 +278,7 @@ private struct TotalPickRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "sum")
-                .font(.system(size: 12))
+                .font(Theme.font(size: 12))
                 .foregroundStyle(Theme.textSecondary)
                 .frame(width: 16, height: 16)
             Text("Total").font(Theme.bodySmall).foregroundStyle(Theme.textLabel)

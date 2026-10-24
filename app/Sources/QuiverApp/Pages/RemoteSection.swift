@@ -203,7 +203,7 @@ private struct PairSheet: View {
                         Text(instructions).font(Theme.caption).foregroundStyle(Theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                         Text(payload(ticket))
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(Theme.font(size: 11, design: .monospaced))
                             .foregroundStyle(Theme.textPrimary)
                             .textSelection(.enabled)
                             .lineLimit(3)

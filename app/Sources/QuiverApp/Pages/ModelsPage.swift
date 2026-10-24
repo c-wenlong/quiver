@@ -135,7 +135,7 @@ private struct ModelsContent: View {
         guard let updatedAt = model.updatedAt else { return false }
         let text = "Updated \(updatedAt.formatted(.relative(presentation: .named)))"
         let stamp = (text as NSString)
-            .size(withAttributes: [.font: NSFont.systemFont(ofSize: 12)]).width
+            .size(withAttributes: [.font: NSFont.systemFont(ofSize: Theme.scaled(12))]).width
         return controlsWidth + 8 + Self.searchMinWidth + 8 + stamp + 8 + trailingWidth <= toolbarWidth
     }
 
@@ -467,7 +467,7 @@ struct ChartCard: View {
                         .frame(width: 10, height: 10)
                     BrandLogo(vendor: vendor, size: 12)
                     Text(vendor.name)
-                        .font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+                        .font(Theme.font(size: 10.5)).foregroundStyle(Theme.textSecondary)
                 }
             }
         }
@@ -506,12 +506,12 @@ private struct BarColumn: View {
     /// sticks out sideways.
     static func labelReach(_ row: ModelsModel.Row) -> CGFloat {
         let angle = ChartCard.labelAngle * .pi / 180
-        let lineHeight = NSFont.systemFont(ofSize: ChartCard.labelFont).boundingRectForFont.height
+        let lineHeight = NSFont.systemFont(ofSize: Theme.scaled(ChartCard.labelFont)).boundingRectForFont.height
         return width(of: label(row)) * cos(angle) + lineHeight / 2 * sin(angle)
     }
 
     private static func width(of text: String) -> CGFloat {
-        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: ChartCard.labelFont)]
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: Theme.scaled(ChartCard.labelFont))]
         return (text as NSString).size(withAttributes: attrs).width
     }
 
@@ -525,7 +525,7 @@ private struct BarColumn: View {
                 .overlay(alignment: .top) {
                     if let value = row.value {
                         Text(metric.format(value))
-                            .font(.system(size: 10, weight: .medium)).monospacedDigit()
+                            .font(Theme.font(size: 10, weight: .medium)).monospacedDigit()
                             .foregroundStyle(valueColor)
                             .lineLimit(1).minimumScaleFactor(0.6)
                             .padding(.top, 4)
@@ -555,7 +555,7 @@ private struct BarColumn: View {
                     Color.clear.frame(width: 0, height: 0)
                         .overlay(alignment: .trailing) {
                             Text(Self.label(row))
-                                .font(.system(size: ChartCard.labelFont))
+                                .font(Theme.font(size: ChartCard.labelFont))
                                 .foregroundStyle(row.used ? Theme.textPrimary : Theme.textSecondary)
                                 .lineLimit(1)
                                 .fixedSize()
@@ -637,7 +637,7 @@ struct TableCard: View {
     // No padding around the glyph: its right edge lines up with the
     // right-aligned figures under it.
     return Image(systemName: tip.icon)
-        .font(.system(size: 13))
+        .font(Theme.font(size: 13))
         .hoverTip(tip.text, title: tip.title)
 }
 

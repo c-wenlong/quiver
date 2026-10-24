@@ -203,7 +203,7 @@ struct PrDetailSheet: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(Theme.font(size: 9, weight: .semibold))
                         .foregroundStyle(Theme.textMuted)
                         .rotationEffect(checksOpen ? .degrees(90) : .zero)
                     Text("Checks").font(Theme.caption).foregroundStyle(Theme.textMuted)
@@ -242,7 +242,7 @@ struct PrDetailSheet: View {
                 if let url = URL(string: check.url), !check.url.isEmpty {
                     Button { openURL(url) } label: {
                         Image(systemName: "arrow.up.right.square")
-                            .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                            .font(Theme.font(size: 11)).foregroundStyle(Theme.textMuted)
                     }
                     .plainButton()
                     .help("Open the check")
@@ -300,7 +300,7 @@ struct PrDetailSheet: View {
 private struct CheckGlyph: View {
     var state: String
     var body: some View {
-        Image(systemName: symbol).font(.system(size: 14)).foregroundStyle(color)
+        Image(systemName: symbol).font(Theme.font(size: 14)).foregroundStyle(color)
     }
     private var symbol: String {
         switch state {
@@ -377,7 +377,7 @@ private struct MarkdownBlocks: View {
                 switch block {
                 case .heading(let level, let text):
                     Text(MarkdownBody.inline(text))
-                        .font(.system(size: headingSize(level), weight: .semibold))
+                        .font(Theme.font(size: headingSize(level), weight: .semibold))
                         .foregroundStyle(Theme.textPrimary)
                 case .paragraph(let text):
                     Text(MarkdownBody.inline(text))
@@ -388,7 +388,7 @@ private struct MarkdownBlocks: View {
                                 .foregroundStyle(Theme.textMuted)
                         }
                         Text(code)
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(Theme.font(size: 11, design: .monospaced))
                             .foregroundStyle(Theme.textPrimary)
                             .textSelection(.enabled)
                     }
@@ -436,7 +436,7 @@ private struct MarkdownBlocks: View {
         case .task(let done):
             Image(systemName: done ? "checkmark.square.fill" : "square")
                 .foregroundStyle(done ? Theme.success : Theme.textMuted)
-                .font(.system(size: 11))
+                .font(Theme.font(size: 11))
         }
     }
 }
@@ -455,7 +455,7 @@ private struct DetailsSection: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(Theme.font(size: 9, weight: .semibold))
                         .foregroundStyle(Theme.textMuted)
                         .rotationEffect(open ? .degrees(90) : .zero)
                     Text(MarkdownBody.inline(title))

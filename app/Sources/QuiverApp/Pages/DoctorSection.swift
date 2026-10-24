@@ -82,7 +82,7 @@ private struct FindingRow: View {
     @Bindable var model: DoctorModel
 
     /// 12/16 mono, for check ids and fix commands.
-    private static let mono = Font.system(size: 12, design: .monospaced)
+    private static var mono: Font { Theme.font(size: 12, design: .monospaced) }
 
     var color: Color {
         switch finding.severity {

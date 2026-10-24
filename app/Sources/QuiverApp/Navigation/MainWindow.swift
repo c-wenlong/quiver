@@ -164,7 +164,7 @@ private struct Sidebar: View {
                     ForEach(model.sidebar.visibleGroups) { group in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(group.title)
-                                .font(.system(size: 11))
+                                .font(Theme.font(size: 11))
                                 .foregroundStyle(Theme.textMuted)
                                 .padding(.horizontal, 10)
                                 .padding(.bottom, 4)
@@ -253,7 +253,7 @@ private struct Sidebar: View {
             model.sidebarCollapsed = expansion.collapsed
         } label: {
             Image(systemName: "sidebar.left")
-                .font(.system(size: 15, weight: .regular))
+                .font(Theme.font(size: 15, weight: .regular))
                 .frame(width: 18)
                 .foregroundStyle(Theme.textNav)
                 .padding(.horizontal, 8)
@@ -319,7 +319,7 @@ private struct NavItem: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: section.symbol)
-                    .font(.system(size: 15, weight: .regular))
+                    .font(Theme.font(size: 15, weight: .regular))
                     .frame(width: 18)
                 Text(section.title)
                     .font(Theme.nav.weight(isSelected ? .medium : .regular))
@@ -333,7 +333,7 @@ private struct NavItem: View {
                         // hiding the text keeps VoiceOver from reading
                         // "Inbox 3, 3 unread".
                         .accessibilityHidden(true)
-                        .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                        .font(Theme.font(size: 10, weight: .semibold).monospacedDigit())
                         .foregroundStyle(Theme.textSecondary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
@@ -414,7 +414,7 @@ private struct ShortcutCap: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 11).monospacedDigit())
+            .font(Theme.font(size: 11).monospacedDigit())
             .foregroundStyle(Theme.textSecondary)
             .frame(width: width, height: 18)
             .background(Theme.panel, in: .rect(cornerRadius: 5))

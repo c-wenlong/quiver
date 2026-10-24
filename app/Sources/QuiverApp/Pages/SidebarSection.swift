@@ -30,7 +30,7 @@ struct SidebarSection: View {
                 ForEach(SidebarGroup.allCases) { group in
                     VStack(alignment: .leading, spacing: 0) {
                         Text(group.title)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(Theme.font(size: 11, weight: .medium))
                             .foregroundStyle(Theme.textMuted)
                             .padding(.horizontal, 8)
                             .padding(.bottom, 4)
@@ -59,7 +59,7 @@ private struct SidebarRow: View {
             GripDots()
             HStack(spacing: 14) {
                 Image(systemName: row.section.symbol)
-                    .font(.system(size: 15))
+                    .font(Theme.font(size: 15))
                     .foregroundStyle(Theme.textSecondary)
                     .frame(width: 18)
                 Text(row.section.title).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)

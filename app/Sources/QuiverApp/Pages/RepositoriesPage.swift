@@ -288,7 +288,7 @@ private struct RepoGroupHeader: View {
                 .plainButton()
                 .help("Open \(repo) in full")
             }
-            .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+            .font(Theme.font(size: 12)).foregroundStyle(Theme.textMuted)
             .opacity(hovering ? 1 : 0)
         }
         .font(Theme.control)
@@ -375,7 +375,7 @@ private struct RepoRail: View {
                     RailRow(selected: model.shownRepo == nil,
                             select: { model.shownRepo = nil }) {
                         Image(systemName: "square.stack.3d.up")
-                            .font(.system(size: 12))
+                            .font(Theme.font(size: 12))
                         Text("All repos").font(Theme.nav)
                         Spacer(minLength: 6)
                         Text("\(total)").font(Theme.caption.monospacedDigit())
@@ -395,7 +395,7 @@ private struct RepoRail: View {
                             } label: {
                                 HStack(spacing: 6) {
                                     Image(systemName: "chevron.right")
-                                        .font(.system(size: 9, weight: .semibold))
+                                        .font(Theme.font(size: 9, weight: .semibold))
                                         .rotationEffect(open ? .degrees(90) : .zero)
                                     Text("\(group.quiet.count) quiet").font(Theme.nav)
                                     Spacer()
@@ -414,7 +414,7 @@ private struct RepoRail: View {
                     // take keyboard focus.
                     Button(action: add) {
                         HStack(spacing: 8) {
-                            Image(systemName: "plus").font(.system(size: 12))
+                            Image(systemName: "plus").font(Theme.font(size: 12))
                             Text("Add repository").font(Theme.nav)
                             Spacer(minLength: 0)
                         }
@@ -481,7 +481,7 @@ private struct RailIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 13))
+                .font(Theme.font(size: 13))
                 .foregroundStyle(Theme.textSecondary)
                 .frame(width: 28, height: 28)
                 .contentShape(.rect)
@@ -711,7 +711,7 @@ struct RepoSurfaces: View {
                     window: window(for: .issues, rows: count(state))) { issue in
             OpenRow(url: issue.url, open: openURL.callAsFunction) {
                 Image(systemName: issue.state == .open ? "exclamationmark.circle" : "checkmark.circle")
-                    .font(.system(size: 15))
+                    .font(Theme.font(size: 15))
                     .foregroundStyle(issue.state == .open ? Theme.success : Theme.textMuted)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
@@ -814,7 +814,7 @@ struct RepoSurfaces: View {
                                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                             if let commit = build.commit {
                                 Text(commit.prefix(7))
-                                    .font(.system(size: 12, design: .monospaced))
+                                    .font(Theme.font(size: 12, design: .monospaced))
                                     .foregroundStyle(Theme.textMuted)
                             }
                             if let at = build.updatedAt?.date {
@@ -853,7 +853,7 @@ struct RepoSurfaces: View {
                     preview: preview, edge: expandEdge,
                     window: window(for: .releases, rows: count(state))) { release in
             OpenRow(url: release.url, open: openURL.callAsFunction) {
-                Image(systemName: "tag").font(.system(size: 14))
+                Image(systemName: "tag").font(Theme.font(size: 14))
                     .foregroundStyle(Theme.accent)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
@@ -866,7 +866,7 @@ struct RepoSurfaces: View {
                     }
                     Text(release.tag
                          + (release.publishedAt?.date.map { " · \(UsageFormat.ago($0, now: .now))" } ?? ""))
-                        .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
+                        .font(Theme.font(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
                 }
             }
         }
@@ -885,11 +885,11 @@ struct RepoSurfaces: View {
                     preview: preview, edge: expandEdge,
                     window: window(for: .tags, rows: count(state))) { tag in
             OpenRow(url: tag.url, open: openURL.callAsFunction) {
-                Image(systemName: "tag").font(.system(size: 14))
+                Image(systemName: "tag").font(Theme.font(size: 14))
                     .foregroundStyle(Theme.textSecondary)
                 Text(tag.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                 Spacer(minLength: 12)
-                Text(tag.sha).font(.system(size: 12, design: .monospaced))
+                Text(tag.sha).font(Theme.font(size: 12, design: .monospaced))
                     .foregroundStyle(Theme.textMuted)
             }
         }
@@ -908,14 +908,14 @@ struct RepoSurfaces: View {
                     preview: preview, edge: expandEdge,
                     window: window(for: .branches, rows: count(state))) { branch in
             OpenRow(url: branch.url, open: openURL.callAsFunction) {
-                Image(systemName: "arrow.triangle.branch").font(.system(size: 14))
+                Image(systemName: "arrow.triangle.branch").font(Theme.font(size: 14))
                     .foregroundStyle(branch.default ? Theme.accent : Theme.textSecondary)
                 Text(branch.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                     .lineLimit(1).truncationMode(.middle)
                 if branch.default { Badge("Default") }
                 if branch.protected { Badge("Protected") }
                 Spacer(minLength: 12)
-                Text(branch.sha).font(.system(size: 12, design: .monospaced))
+                Text(branch.sha).font(Theme.font(size: 12, design: .monospaced))
                     .foregroundStyle(Theme.textMuted)
             }
         }
@@ -1183,7 +1183,7 @@ private struct RepoManager: View {
                             if let url = URL(string: "https://github.com/\(pin.name)") { openURL(url) }
                         } label: {
                             Image(systemName: "arrow.up.right.square")
-                                .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                                .font(Theme.font(size: 13)).foregroundStyle(Theme.textSecondary)
                         }
                         .plainButton()
                         .help("Open on GitHub")
@@ -1191,7 +1191,7 @@ private struct RepoManager: View {
                             Task { await model.removeRepo(pin.name, swe: app.swe) }
                         } label: {
                             Image(systemName: "minus.circle")
-                                .font(.system(size: 13)).foregroundStyle(Theme.dangerText)
+                                .font(Theme.font(size: 13)).foregroundStyle(Theme.dangerText)
                         }
                         .plainButton()
                         .help("Unpin \(pin.name)")
@@ -1348,7 +1348,7 @@ struct PrStateIcons: View {
 
     private func icon(_ symbol: String, _ color: Color) -> some View {
         Image(systemName: symbol)
-            .font(.system(size: 17))
+            .font(Theme.font(size: 17))
             .foregroundStyle(color)
     }
 }
@@ -1360,7 +1360,7 @@ private struct RunIcon: View {
     var conclusion: String?
     private var running: Bool { status == "in_progress" || status == "queued" }
     var body: some View {
-        Image(systemName: symbol).font(.system(size: 15)).foregroundStyle(color)
+        Image(systemName: symbol).font(Theme.font(size: 15)).foregroundStyle(color)
             .symbolEffect(.rotate, options: .repeating, isActive: running)
     }
     private var symbol: String {
@@ -1388,7 +1388,7 @@ private struct RunIcon: View {
 private struct BuildMark: View {
     var status: String
     var body: some View {
-        Image(systemName: symbol).font(.system(size: 14)).foregroundStyle(color)
+        Image(systemName: symbol).font(Theme.font(size: 14)).foregroundStyle(color)
     }
     private var symbol: String {
         switch status {

@@ -6,6 +6,7 @@ import UserNotifications
 struct QuiverApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var model = AppModel.shared
+    @State private var textZoom = TextZoomModel.shared
 
     var body: some Scene {
         Window("Quiver", id: "main") {
@@ -37,6 +38,18 @@ struct QuiverApp: App {
                     model.resetSidebarWidth()
                 }
                 .disabled(model.sidebarCollapsed)
+                Divider()
+                // Text size, like a browser's zoom. AppKit also matches
+                // ⌘= to the "+" item, so no shift is needed.
+                Button("Actual Size") { textZoom.actualSize() }
+                    .keyboardShortcut("0", modifiers: .command)
+                    .disabled(textZoom.isActualSize)
+                Button("Zoom In") { textZoom.zoomIn() }
+                    .keyboardShortcut("+", modifiers: .command)
+                    .disabled(!textZoom.canZoomIn)
+                Button("Zoom Out") { textZoom.zoomOut() }
+                    .keyboardShortcut("-", modifiers: .command)
+                    .disabled(!textZoom.canZoomOut)
                 Divider()
                 ForEach(Array(model.sidebar.shortcutSections.enumerated()), id: \.element) { index, section in
                     Button(section.title) {

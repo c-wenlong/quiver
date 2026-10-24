@@ -324,7 +324,7 @@ private struct CountedMenu: View {
                 if let symbol { Image(systemName: symbol).foregroundStyle(Theme.textSecondary) }
                 Text(title).foregroundStyle(Theme.textPrimary).lineLimit(1).truncationMode(.tail)
                 Spacer(minLength: 4)
-                Image(systemName: "chevron.down").font(.system(size: 12))
+                Image(systemName: "chevron.down").font(Theme.font(size: 12))
                     .foregroundStyle(Theme.textSecondary)
             }
             .font(Theme.bodySmall)
@@ -394,7 +394,7 @@ private struct CountedMenu: View {
                     Text(detail).font(Theme.caption).foregroundStyle(Theme.textMuted).monospacedDigit()
                 }
                 Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(Theme.font(size: 11, weight: .semibold))
                     .foregroundStyle(Theme.accent)
                     .opacity(selection == key ? 1 : 0)
             }
@@ -651,7 +651,7 @@ struct SessionDetail: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Resume command").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     Text(command.argv.joined(separator: " "))
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(Theme.font(size: 12, design: .monospaced))
                         .textSelection(.enabled)
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)

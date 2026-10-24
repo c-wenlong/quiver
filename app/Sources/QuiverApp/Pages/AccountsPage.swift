@@ -402,7 +402,7 @@ private struct AddAccountSheet: View {
             TextField("Name, like Work or Personal", text: $name)
                 .quiverField()
             Text(caption(for: vendor))
-                .font(.caption).foregroundStyle(.secondary)
+                .font(Theme.font(size: 10)).foregroundStyle(.secondary)
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }

@@ -178,7 +178,7 @@ private struct SourceHeader: View {
             Text(source.title)
                 // Body size at the section weight: above a marketplace's
                 // 14/500 name, well under the page title.
-                .font(.system(size: 16, weight: .semibold))
+                .font(Theme.font(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
                 .fixedSize()
@@ -202,13 +202,13 @@ private struct SourceHeader: View {
         switch source.kind {
         case .local:
             Image(systemName: "folder")
-                .font(.system(size: 14, weight: .medium))
+                .font(Theme.font(size: 14, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
         case .harness(let harness):
             HarnessIcon(harness: harness, size: 16)
         case .unregistered:
             Image(systemName: "questionmark.circle")
-                .font(.system(size: 14, weight: .medium))
+                .font(Theme.font(size: 14, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
         }
     }
@@ -285,18 +285,18 @@ private struct MarketplaceCard: View {
             if canRename, hovering {
                 Button("Rename", systemImage: "pencil", action: onRename)
                     .labelStyle(.iconOnly)
-                    .font(.system(size: 10))
+                    .font(Theme.font(size: 10))
                     .foregroundStyle(Theme.textSecondary)
                     .buttonStyle(.plain)
                     .help("Rename \(name)")
             }
             if name != market.name {
-                Text(market.name).font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                Text(market.name).font(Theme.font(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary).lineLimit(1)
             }
             if let tag = market.tag { SourceTag(text: tag) }
             if market.tag == "github" {
                 Image(systemName: "lock.fill")
-                    .font(.system(size: 10))
+                    .font(Theme.font(size: 10))
                     .foregroundStyle(Theme.textMuted)
                     .help("Updates from GitHub would undo edits, so this marketplace is read-only.")
             }
@@ -322,7 +322,7 @@ private struct SourceTag: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 11, weight: .medium))
+            .font(Theme.font(size: 11, weight: .medium))
             .foregroundStyle(Theme.textSecondary)
             .lineLimit(1)
             .padding(.horizontal, 6)
@@ -367,7 +367,7 @@ private struct PluginRow: View {
                     }
                 }
                 if shown != plugin.name {
-                    Text(plugin.ref).font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textMuted).lineLimit(1)
+                    Text(plugin.ref).font(Theme.font(size: 12, design: .monospaced)).foregroundStyle(Theme.textMuted).lineLimit(1)
                 }
                 if let description = plugin.description, !description.isEmpty {
                     Text(description)
@@ -422,7 +422,7 @@ private struct DriftBadge: View {
                 Circle().fill(state == .unregistered ? Theme.danger : Theme.warning).frame(width: 6, height: 6)
                 Text(state.title)
             }
-            .font(.system(size: 12, weight: .medium))
+            .font(Theme.font(size: 12, weight: .medium))
             .foregroundStyle(Theme.textLabel)
             .lineLimit(1)
             .padding(.horizontal, 8)
@@ -480,11 +480,11 @@ private struct HarnessChip: View {
             HarnessMarkView(harness: harness, size: 12)
             Text(status.title)
             if !actions.isEmpty {
-                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                Image(systemName: "chevron.down").font(Theme.font(size: 9, weight: .semibold))
                     .foregroundStyle(Theme.textMuted)
             }
         }
-        .font(.system(size: 11, weight: .medium))
+        .font(Theme.font(size: 11, weight: .medium))
         .foregroundStyle(status == .enabled || status == .installed ? Theme.textPrimary : Theme.textSecondary)
         .lineLimit(1)
         .padding(.horizontal, 8)

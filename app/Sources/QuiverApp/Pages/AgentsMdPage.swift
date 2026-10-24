@@ -325,11 +325,11 @@ struct InstructionEditor: View {
         Group {
             if readOnly {
                 TextEditor(text: .constant(document.text))
-                    .font(.system(size: 13, design: .monospaced))
+                    .font(Theme.font(size: 13, design: .monospaced))
                     .scrollContentBackground(.hidden)
             } else if mode == "raw" {
                 TextEditor(text: $document.text)
-                    .font(.system(size: 13, design: .monospaced))
+                    .font(Theme.font(size: 13, design: .monospaced))
                     .scrollContentBackground(.hidden)
                     .focused($editing)
             } else {

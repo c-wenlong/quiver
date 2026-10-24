@@ -360,7 +360,7 @@ private struct LinksStep: View {
             }
             ForEach(outcome.leftAlone, id: \.path) { row in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(Self.tilde(row.path)).font(.system(size: 12, design: .monospaced))
+                    Text(Self.tilde(row.path)).font(Theme.font(size: 12, design: .monospaced))
                         .foregroundStyle(Theme.textPrimary).textSelection(.enabled)
                     if !row.detail.isEmpty {
                         Text(row.detail).font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -380,7 +380,7 @@ private struct LinksStep: View {
     private func row(icon: String, title: String, detail: String,
                      @ViewBuilder extra: () -> some View = { EmptyView() }) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon).font(.system(size: 15)).foregroundStyle(Theme.textSecondary)
+            Image(systemName: icon).font(Theme.font(size: 15)).foregroundStyle(Theme.textSecondary)
                 .frame(width: 20).padding(.top, 2)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 6) {
@@ -422,7 +422,7 @@ private struct LookStep: View {
                     .overlay(alignment: .topTrailing) {
                         if isOn {
                             Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 16))
+                                .font(Theme.font(size: 16))
                                 .foregroundStyle(Theme.textPrimary, Theme.card)
                                 .padding(8)
                         }
@@ -525,7 +525,7 @@ private struct NotificationsStep: View {
         @Bindable var limits = app.limits
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "bell.badge").font(.system(size: 16))
+                Image(systemName: "bell.badge").font(Theme.font(size: 16))
                     .foregroundStyle(Theme.textSecondary).padding(.top, 2)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
