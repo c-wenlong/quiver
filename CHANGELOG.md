@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same Replace after a Run that left a real file in the way. The Mac app's
   AGENTS.md page gets Replace and back up too, behind a confirmation.
 
+- **`swe session index` reads Grok, Kiro and Hermes.** Grok's
+  `summary.json` and Kiro's `<uuid>.json` read together with the
+  transcript beside them (`chat_history.jsonl`, `<uuid>.jsonl`), so a
+  change to either file reads the session again; Hermes reads its
+  `session_*.json` documents. The rows match the Quiver app's.
+
 - **`swe session index` reads Pi, Cursor, Qoder, CodeBuddy and OpenCode.**
   swe's index writer now decodes these the way the Quiver app does, so a
   Linux hub's search matches what was said in them too. Cursor chats take
