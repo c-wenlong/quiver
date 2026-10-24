@@ -138,13 +138,10 @@ def _first_pass(home: Path) -> None:
 
     try:
         search_writer.run_pass(home)
-    except search_writer.IndexBusy:
-        pass  # the hub loop or a CLI pass already has it
-    except Exception as exc:  # shown on the Settings row, never raised
-        try:
-            search_writer.record_error(home, str(exc) or type(exc).__name__)
-        except OSError:
-            pass
+    except Exception:
+        # IndexBusy: the hub loop or a CLI pass already has it. Anything
+        # else run_pass saved as last_error, which the Settings row shows.
+        pass
 
 
 # -- remote ---------------------------------------------------------------

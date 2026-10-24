@@ -783,6 +783,7 @@ class TestSessionSearch(_Settings):
     def test_a_failed_first_pass_is_recorded(self):
         from quiver.sessions import search_writer
 
-        with patch.object(search_writer, "run_pass", side_effect=search_writer.IndexUnavailable("too new")):
+        with patch.object(search_writer, "open_index", side_effect=search_writer.IndexUnavailable("too new")):
             settings_page._first_pass(Path(self.home))
+        self.assertFalse(search_writer.is_running(self.home))
         self.assertEqual(search_writer.status(self.home)["last_error"]["message"], "too new")

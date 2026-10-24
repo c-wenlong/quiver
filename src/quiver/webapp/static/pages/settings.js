@@ -128,6 +128,9 @@ const settingsPage = {
   // Session search: a switch write in flight, its error, the poll that
   // runs while a pass does.
   searchBusy: false, searchError: null, searchPoll: null,
+  // Bumped by every switch write and page visit: a status read that
+  // started before one is stale and never lands.
+  searchGen: 0,
 };
 
 function settingsSection() {
@@ -146,6 +149,7 @@ async function renderSettings() {
   const gen = routeGen;
   const p = settingsPage;
   const mine = ++p.gen;
+  p.searchGen++;
   settingsStopClock();
   p.ticket = null;
   p.confirming = null;
@@ -708,9 +712,11 @@ async function settingsSetSearch(on) {
   const p = settingsPage;
   p.searchBusy = true;
   p.searchError = null;
+  const gen = ++p.searchGen;
   paintSettings();
   const { status, data } = await apiPost("/v1/app/settings/session_search", { enabled: on });
   p.searchBusy = false;
+  if (gen !== p.searchGen) return;
   if (status === 200 && data && data.session_search) {
     if (p.data) p.data.session_search = data.session_search;
   } else {
@@ -732,7 +738,9 @@ function settingsPollSearch() {
   if (!ss || !ss.running) return;
   p.searchPoll = setTimeout(async () => {
     if (!onSettingsPage() || settingsSection() !== "experimental") return;
+    const gen = p.searchGen;
     const { status, data } = await api("/v1/app/settings");
+    if (gen !== p.searchGen) return;
     if (status === 200 && data && data.session_search && p.data) {
       p.data.session_search = data.session_search;
       if (onSettingsPage() && settingsSection() === "experimental") {
