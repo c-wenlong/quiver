@@ -696,7 +696,7 @@ const SessionChat = (() => {
       // Reconnect with replay from the last seq shown.
       clearTimeout(chat.retryTimer);
       chat.retryTimer = setTimeout(() => {
-        if (gen === chat.gen && !chat.stream) openStream(gen, chat.seq);
+        if (gen === chat.gen && !chat.stream) openStream(gen, resumeSeq());
       }, 2000);
     });
   }
@@ -742,10 +742,18 @@ const SessionChat = (() => {
     const h = chat.history;
     chat.history = null;
     const log = $("chat-log");
-    if (!h || h.resolved || !log || log.querySelector(`.msg.approval[data-req="${CSS.escape(h.rid)}"]`)) return;
+    // Not found before the backfill's last message: asked after it, so the
+    // stream's live part brings it like any other.
+    if (!h || !h.seq || h.resolved || !log || log.querySelector(`.msg.approval[data-req="${CSS.escape(h.rid)}"]`)) return;
     const stick = nearBottom();
     appendMessage({ kind: "approval", text: h.prompt || "Approval requested", request_id: h.rid }, false, h.seq, h.seq);
     if (stick) scrollBottom();
+  }
+
+  /* Where a reconnect picks up: the last seq shown, or the start again
+   * while the search for a waiting approval hasn't finished. */
+  function resumeSeq() {
+    return chat.history ? 0 : chat.seq;
   }
 
   /* The request_id of this session's approval the hub still waits on
@@ -967,7 +975,7 @@ const SessionChat = (() => {
   });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && chat.key && chat.rowKnown && !chat.stream) {
-      openStream(chat.gen, chat.seq);
+      openStream(chat.gen, resumeSeq());
     }
   });
 
