@@ -581,7 +581,6 @@ def _node(script: str, stdin: str = "") -> subprocess.CompletedProcess:
                               text=True, timeout=30)
 
 
-@unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestPin(_Base):
     """The Add repository sheet: ``get(search=...)`` and ``post("add")``
     against a temp HOME and a fake ``gh``."""
@@ -658,6 +657,7 @@ class TestPin(_Base):
         self.assertEqual(caught.exception.message, "x/y is not pinned on the hub.")
 
 
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestMarkdown(unittest.TestCase):
     """GhUI.markdown, run under node with the two globals it borrows."""
 

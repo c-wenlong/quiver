@@ -585,11 +585,13 @@
     bindRefresh(() => renderFocus(f.repo, true));
     document.getElementById("gh-pin-this").onclick = async () => {
       if (u.pinning) return;
+      const gen = routeGen;
       u.pinning = true;
       u.error = null;
       paintUnpinned();
       const { status, data } = await GhUI.post("/v1/app/repositories/add", { repo: f.repo });
-      if (page.focus !== f || f.unpinned !== u) return;
+      // The pin stands either way; only the page that asked repaints.
+      if (gen !== routeGen || page.focus !== f || f.unpinned !== u) return;
       u.pinning = false;
       if (status === 200 && data) {
         // The pin may be spelled differently ("O/Repo"): follow it.
