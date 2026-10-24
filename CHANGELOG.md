@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Remote web app: chats stream in instead of landing in blocks.** The
+  browser client gets the iPhone app's treatment: messages that arrive
+  together show one at a time with a short gap (a replay after
+  reconnecting still lands at once), new messages fade and slide in
+  (fade only with reduced motion), and three pulsing dots under the
+  last message show the agent is working or a send is waiting.
+
 - **Remote iPhone app: chats stream in instead of landing in blocks.**
   Messages that reach the phone together are shown one at a time with a
   short gap (a replay after reconnecting still lands at once), new
