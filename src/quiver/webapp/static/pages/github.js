@@ -117,16 +117,39 @@ const GhUI = (() => {
     }
   }
 
-  /* The pages refetch every minute while open, as the app's do. The hub
-   * caches gh replies for that long, so a poll costs at most one round. */
+  /* The pages refetch every minute while open and on screen, as the
+   * app's do. The hub caches gh replies for that long, so a poll costs
+   * at most one round. A tab in the background skips its ticks; coming
+   * back after a minute or more reads at once instead of waiting up to
+   * a minute for the next tick, as the app reloads a page it shows. */
+  const POLL_MS = 60000;
   const polls = {};
+  const route = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+  function stopPoll(page) {
+    if (!polls[page]) return;
+    clearInterval(polls[page].timer);
+    delete polls[page];
+  }
+  function runPoll(page) {
+    const entry = polls[page];
+    if (!entry) return;
+    if (route() !== page) return stopPoll(page);
+    if (document.hidden) return;
+    entry.last = Date.now();
+    entry.fn();
+  }
+  let watching = false;
   function poll(page, fn) {
-    if (polls[page]) clearInterval(polls[page]);
-    polls[page] = setInterval(() => {
-      const here = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
-      if (here !== page) { clearInterval(polls[page]); delete polls[page]; return; }
-      if (!document.hidden) fn();
-    }, 60000);
+    stopPoll(page);
+    polls[page] = { fn, last: Date.now(), timer: setInterval(() => runPoll(page), POLL_MS) };
+    if (watching) return;
+    watching = true;
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) return;
+      for (const name of Object.keys(polls)) {
+        if (Date.now() - polls[name].last >= POLL_MS) runPoll(name);
+      }
+    });
   }
 
   function hashParams() {
