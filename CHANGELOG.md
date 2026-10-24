@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote PWA: @ file mentions in the prompt box.** Typing `@` in the
+  browser client's prompt box opens a menu of files and folders under
+  the session's folder, from the hub's `GET /v1/sessions/{id}/files`,
+  filtered as you type. Arrow keys move through it, Enter or Tab picks,
+  Escape closes it, and a tap works on touch. A file goes in as `@path `;
+  a folder as `@path/` with the menu still open to pick inside it; a
+  path with spaces is quoted, as Claude Code writes it. An `@` inside a
+  word, such as an email address, opens nothing, and a satellite's
+  session says file search isn't available for that machine yet.
+
 - **Remote PWA: swipe a session to attach, detach, pin, rename or fork
   it.** The phone web app's Sessions list gets the iPhone app's swipe
   actions: right to attach a session, or to detach one you hold; left to
