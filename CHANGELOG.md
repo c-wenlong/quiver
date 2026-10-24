@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote: detach can wait for the turn to end or keep tmux running.**
+  The control route's `detach` takes a `mode`. `now` is today's
+  behaviour and stays the default. `when_idle` answers at once and
+  detaches when the session stops working, unless an attach or another
+  detach cancels it first. `keep` stops supervising but leaves the tmux
+  session running for `tmux attach` on the Mac; attaching from the phone
+  later takes that same tmux session back instead of starting a second
+  run, and the hub closes a kept session nobody has used for 12 hours.
+  Satellites support all three.
+
 - **Remote iPhone app: links in replies get a preview card.** A reply
   that links to a web page shows a card under the text with the page's
   host, its path and an Open button (up to three per reply). Tapping the

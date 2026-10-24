@@ -20,6 +20,14 @@ The registry is ``data/remote/supervised.json``: ``{key: {mode, tmux,
 tool_name, session_id, cwd, attached_at}}``. Catalog reads the same file
 to flag ownership; a dead tmux entry is pruned on read so a crashed
 supervisor cleanly reverts a session to ``observed``.
+
+Detach has three modes (``DETACH_MODES``): ``now`` kills the tmux
+session, ``keep`` stops supervising but leaves tmux running, and
+``when_idle`` (``detach.py``) waits for the turn to end, then does
+``now``. A kept session is recorded in ``data/remote/kept.json``
+(``{key: {...the supervised row, pane_pid, kept_at}}``), under the same
+lock as the supervised registry: re-attach adopts it instead of
+launching a second run, and ``reap_kept`` closes one nobody uses.
 """
 
 from __future__ import annotations
@@ -67,6 +75,15 @@ _MODE_BINARY = {"serve": "opencode", "appserver": "codex",
 
 # ``attach`` accepts exactly these; anything else is a 422 at the route.
 ATTACH_MODES = frozenset({"auto", "tmux", "headless", "serve", "appserver"})
+
+# A kept tmux session with no tmux client attached and no transcript
+# activity for this long is closed by the hub's (or satellite's)
+# periodic loop.
+KEPT_IDLE_REAP_S = 12 * 3600
+
+# Tests point every tmux call at a private server (``tmux -L <name>``)
+# so they never touch the user's own.
+_TMUX_SOCKET: str | None = None
 
 
 def resolve_mode(session: Session, mode: str) -> str:
@@ -156,8 +173,9 @@ def _save_registry(home: Path | None, entries: dict[str, dict]) -> None:
 
 
 def _tmux(*args: str) -> subprocess.CompletedProcess:
+    server = ["-L", _TMUX_SOCKET] if _TMUX_SOCKET else []
     return subprocess.run(
-        [tmux_bin() or "tmux", *args],
+        [tmux_bin() or "tmux", *server, *args],
         capture_output=True, text=True, timeout=10,
     )
 
@@ -410,6 +428,12 @@ def attach(
     with _registry_lock(home):
         if session_key in _load_registry(home):
             return True, "already attached"
+        # A tmux session kept running by an earlier detach is taken back
+        # as it is, mid-turn or not: launching here would start a second
+        # run of the same session next to it.
+        adopted = _adopt_kept_locked(home, session_key, session)
+        if adopted is not None:
+            return adopted
         if status == "active":
             return False, "session is mid-turn; try again when it is idle"
         if last_append_at is not None and \
@@ -587,6 +611,206 @@ def detach(home: Path | None, session_key: str) -> bool:
             killed = kill(channel_name(home, session_key))
         _unmark_locked(home, session_key)
         return killed
+
+
+# -- kept tmux sessions ----------------------------------------------------
+
+
+def _kept_file(home: Path | None) -> Path:
+    return remote_dir_for(home) / "kept.json"
+
+
+def _load_kept(home: Path | None) -> dict[str, dict]:
+    try:
+        data = json.loads(_kept_file(home).read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return {str(k): v for k, v in data.items() if isinstance(v, dict)}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_kept(home: Path | None, entries: dict[str, dict]) -> None:
+    path = _kept_file(home)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(path, json.dumps(entries, indent=1))
+    except OSError:
+        pass
+
+
+def kept(home: Path | str | None) -> dict[str, dict]:
+    """Kept tmux sessions by key, as recorded (not checked for life)."""
+    home_path = Path(home) if home is not None else None
+    with _registry_lock(home_path):
+        return _load_kept(home_path)
+
+
+def pane_pid(name: str) -> int | None:
+    """The pid of tmux session ``name``'s live pane, else None.
+
+    A pane whose process exited (``remain-on-exit``) counts as gone. The
+    pid names one run of the harness: tmux keeps it for the pane's life,
+    so the same pid later means the same process.
+    """
+    try:
+        out = _tmux("list-panes", "-s", "-t", name,
+                    "-F", "#{pane_dead} #{pane_pid}")
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    for line in out.stdout.splitlines():
+        dead, _, pid = line.strip().partition(" ")
+        if dead == "0" and pid.isdigit():
+            return int(pid)
+    return None
+
+
+def tmux_clients(name: str) -> int | None:
+    """How many tmux clients are attached to ``name``; None if unknown."""
+    try:
+        out = _tmux("display-message", "-p", "-t", name,
+                    "#{session_attached}")
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    text = out.stdout.strip()
+    return int(text) if text.isdigit() else None
+
+
+def keep(home: Path | None, session_key: str) -> tuple[bool, str]:
+    """attached → observed, leaving the tmux session (and harness) running.
+
+    Only a tmux-mode session has something to leave running. The row
+    moves from the supervised registry to ``kept.json`` in one locked
+    step, with the pane's pid so a later attach can tell the same run
+    from a different one under a reused name.
+    """
+    with _registry_lock(home):
+        meta = _load_registry(home).get(session_key)
+        if meta is None:
+            return False, "session is not attached"
+        if meta.get("mode") != "tmux":
+            return False, (
+                f"{meta.get('mode')} sessions have no tmux session to "
+                "keep; detach now or when idle instead"
+            )
+        name = channel_name(home, session_key)
+        pid = pane_pid(name)
+        _unmark_locked(home, session_key)
+        if pid is None:
+            return True, (
+                "the tmux session had already exited; session is "
+                "observed again"
+            )
+        entries = _load_kept(home)
+        entries[session_key] = {
+            **meta, "tmux": name, "pane_pid": pid, "kept_at": time.time(),
+        }
+        _save_kept(home, entries)
+        return True, (
+            f"stopped supervising; tmux session {name} keeps running "
+            f"(tmux attach -t {name})"
+        )
+
+
+def _adopt_kept_locked(
+    home: Path | None, session_key: str, session: Session
+) -> tuple[bool, str] | None:
+    """Take a kept tmux session back under supervision, registry lock held.
+
+    Adopted only when the recorded tmux session is still up with the
+    same pane process for the same harness. None means there is nothing
+    to adopt and attach should launch as usual; a kept tmux session that
+    now runs something else is refused rather than launched over, since
+    ``launch_tmux`` would reuse the name and bind to that pane.
+    """
+    entries = _load_kept(home)
+    row = entries.get(session_key)
+    if row is None:
+        return None
+    name = str(row.get("tmux") or "")
+    pid = pane_pid(name) if name else None
+    if pid is None:
+        entries.pop(session_key, None)
+        _save_kept(home, entries)
+        return None
+    if pid != row.get("pane_pid") or \
+            row.get("tool_name") != session.tool_name:
+        return False, (
+            f"tmux session {name} no longer runs this session; close it "
+            f"(tmux kill-session -t {name}) and attach again"
+        )
+    meta = {k: v for k, v in row.items()
+            if k not in {"pane_pid", "kept_at"}}
+    meta["attached_at"] = time.time()
+    entries.pop(session_key, None)
+    _save_kept(home, entries)
+    _mark_locked(home, session_key, meta)
+    return True, f"adopted kept tmux session {name}"
+
+
+def _last_activity(session: Session | None) -> float:
+    """Seconds since the epoch of the session's last transcript write."""
+    if session is None:
+        return 0.0
+    from quiver.remote import tail
+
+    transcript = tail.resolve_jsonl_path(session)
+    if transcript is not None:
+        try:
+            return transcript.stat().st_mtime
+        except OSError:
+            pass
+    return (session.timestamp or 0) / 1000
+
+
+def reap_kept(
+    home: Path | None,
+    session_for,
+    now: float | None = None,
+) -> list[str]:
+    """Close kept tmux sessions nobody uses; returns the reaped keys.
+
+    One is closed when no tmux client is attached to it and neither the
+    keep nor its transcript has moved for ``KEPT_IDLE_REAP_S``. Rows
+    whose tmux session is gone, or whose pane now runs another process,
+    are dropped without killing anything. ``session_for(key)`` gives the
+    catalog's Session (or None). Runs under the registry lock so it
+    cannot race an attach adopting the same session.
+    """
+    now = time.time() if now is None else now
+    reaped: list[str] = []
+    with _registry_lock(home):
+        entries = _load_kept(home)
+        if not entries:
+            return []
+        changed = False
+        for key, row in list(entries.items()):
+            name = str(row.get("tmux") or "")
+            if not name or pane_pid(name) != row.get("pane_pid"):
+                entries.pop(key, None)
+                changed = True
+                continue
+            if tmux_clients(name) != 0:
+                continue  # someone is looking, or tmux would not say
+            try:
+                session = session_for(key)
+            except Exception:
+                session = None
+            last = max(float(row.get("kept_at") or 0),
+                       _last_activity(session))
+            if now - last < KEPT_IDLE_REAP_S:
+                continue
+            kill(name)
+            entries.pop(key, None)
+            changed = True
+            reaped.append(key)
+        if changed:
+            _save_kept(home, entries)
+    return reaped
 
 
 def _pending_dir(home: Path | None) -> Path:
