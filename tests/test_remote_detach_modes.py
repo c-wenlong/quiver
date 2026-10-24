@@ -156,6 +156,48 @@ class TestPendingDetaches(unittest.TestCase):
         self.assertIn("still attached", note)
         self.assertFalse(self.fired.is_set())
 
+    def test_nudge_rechecks_at_once_instead_of_at_the_next_poll(self):
+        # A long poll, so only the nudge can explain a prompt fire.
+        checked = threading.Event()
+
+        def status():
+            checked.set()
+            return self._status()
+
+        with patch.object(detach, "WHEN_IDLE_POLL_S", 60):
+            self._live = "active"
+            self.pd.schedule("k", status=status, fire=self._fire,
+                             report=self._report)
+            self.assertTrue(checked.wait(2))  # first check: still busy
+            self._live = "done"
+            self.pd.nudge("k")
+            self.assertTrue(self.fired.wait(2))
+        self.assertEqual(self.reports.get(timeout=2),
+                         (True, "detached", False))
+
+    def test_nudge_does_not_spin_the_waiter(self):
+        self._live = "active"
+        self._schedule()
+        self.pd.nudge("k")
+        time.sleep(0.1)
+        # About one check per 20 ms poll, not thousands from a wake left set.
+        self.assertLess(len(self.statuses), 30)
+        self.pd.cancel("k", "x")
+        self.pd.nudge("nobody")  # nothing pending: a no-op
+
+    def test_probed_idle_status_nudges_hub_and_satellite_detaches(self):
+        from quiver.remote.hub import HubState
+        state = HubState(Path(tempfile.mkdtemp()))
+        ag = agent_mod.RemoteAgent("http://h:1", "c", Path(tempfile.mkdtemp()))
+        for owner in (state, ag):
+            with patch.object(owner.detaches, "nudge") as nudge, \
+                 patch.object(owner.catalog, "note_status") as note:
+                owner.tail_manager._on_status("claude:s1", "active", 5.0)
+                nudge.assert_not_called()
+                owner.tail_manager._on_status("claude:s1", "done", 6.0)
+                nudge.assert_called_once_with("claude:s1")
+                self.assertEqual(note.call_count, 2)
+
 
 class _TmuxAttachedServer(_Server):
     """Hub with claude:s1 supervised in tmux mode (tmux faked)."""

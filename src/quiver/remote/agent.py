@@ -180,8 +180,14 @@ class RemoteAgent:
         # The stream thread, the work loop and fork threads all finish
         # commands; the cursor advance must not interleave.
         self._done_lock = threading.Lock()
+        from quiver.sessions.status import session_statuses
+        # Same status re-probe as the hub: the satellite's tailer emits
+        # session.status itself, and its catalog push carries the
+        # fresher of the two.
         self.tail_manager = tail.TailManager(
             emit=self._capture, machine_id=self.machine_id, home=self.home,
+            status_of=session_statuses,
+            on_status=self._on_probed_status,
         )
         # Requeue uplink events the hub never acknowledged — the
         # transcript cursor is saved on read, so an in-memory buffer
@@ -191,6 +197,13 @@ class RemoteAgent:
         events, _truncated = self._outbox.read_since(
             OUTBOX_KEY, self._outbox_ack)
         self.outbox = list(events)
+
+    def _on_probed_status(self, key: str, status: str, at: float) -> None:
+        """Same as the hub's: patch the catalog row, and let a pending
+        ``when_idle`` detach act once the turn is over."""
+        self.catalog.note_status(key, status, at)
+        if status != "active":
+            self.detaches.nudge(key)
 
     def _cmd_cursor_file(self) -> Path:
         return agent_file_for(self.home).parent / "agent-cursor.json"
@@ -294,6 +307,9 @@ class RemoteAgent:
         if adopted:
             rows = self.catalog.refresh()
         for key in adopted:
+            # A launch or fork starts with its first turn: its tailer
+            # (created on the next sync) starts hot and status-probed.
+            self.tail_manager.wake(key)
             # Names the key a phone's launch became; the hub maps it to
             # the hub-scoped key and answers GET /v1/launches with it.
             lid = (supervise.meta_for(self.home, key) or {}).get("launch_id")
@@ -650,7 +666,8 @@ class RemoteAgent:
         while not self._stop.is_set():
             try:
                 self._push_catalog()
-                self.tail_manager.sync(self.catalog.tail_rows())
+                rows, as_of = self.catalog.tail_snapshot()
+                self.tail_manager.sync(rows, as_of=as_of)
                 supervise.reap_kept(self.home, self.catalog.session_for)
             except Exception:
                 pass

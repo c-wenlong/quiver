@@ -18,6 +18,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   address is the whole app; the old details sheet is the chat's Details
   button, and attached sessions carry an Attached badge in the list.
 
+- **Web app: Settings, with remote pairing.** The Settings page from the
+  Mac app, for the hub machine. Integrations › Remote shows the hub,
+  the paired devices with "This device" marked and a Revoke that asks
+  first (signing out the browser you're on needs its own confirm), and
+  Pair a device, which mints a one-time code and shows the browser link
+  and the `quiver://pair` app link as QR codes. The hub draws those
+  itself with a small stdlib encoder (a port of Nayuki's MIT QR
+  generator), since the web app loads no library. Appearance and which
+  pages the sidebar lists are kept per browser; the API keys show
+  masked and read only; the GitHub CLI and the hub's paths are listed;
+  "Set up this machine" and Doctor link to their pages. Rows that set
+  up the Mac app itself (Dock, login item, terminal, notifications,
+  updates, Keychain services) are greyed out as "Mac app only".
+
 - **Web app: your own devices open it without pairing.** A browser on a
   device signed in to the hub owner's Tailscale account loads `/app/`
   straight away; the hub knows it from `tailscale whois` (cached a
@@ -82,6 +96,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   harness's share. Pull to refresh asks the hub for new readings.
 
 ### Fixed
+
+- **Remote: a session's status follows a send within a second.** The
+  hub re-read every session's status only on its 10 second catalog
+  refresh, so after a send the phone could show the session idle while
+  the reply was already streaming, and showed it working for up to 10
+  seconds after the turn ended. Now a session that was just written to,
+  or whose transcript grew, has its own status checked about once a
+  second, and the change goes to the phone at once. An older catalog
+  read can no longer flip it back. Satellites do the same.
 
 - **Remote: a malformed write body gets an answer.** A list or object
   as a message's `mode`, an approval's `decision` or a control `op` made

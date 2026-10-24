@@ -172,7 +172,47 @@ Gemini, Cline, ...) re-read the whole window whenever their change token
 moves, which is the cost behind [#515](https://github.com/c-wenlong/quiver/issues/515), so
 `SnapshotSource.hot_poll_s` caps them at the active cadence: they get the
 immediate wake but never poll faster than an active session already
-does. The status column itself still updates on the catalog refresh.
+does.
+
+Status between catalog refreshes: a session that is hot, or whose
+source moved since its last probe, has its status re-probed by the tail
+thread at most once a second (`STATUS_PROBE_S`). "Moved" means the poll
+advanced the cursor, message or not, so a turn that ends on a record
+with nothing to show (Codex `task_complete`, Claude `turn_duration`)
+still gets its probe. Every session owed a probe in one tick goes
+through a single `sessions/status.py` call, so the live-pid registry,
+the bg-job table and the status tail cache are read once per tick, not
+once per session. Each session is probed with the session's last-activity time raised to the
+transcript's mtime (the catalog's copy can be minutes old, and a
+mid-turn transcript older than `ACTIVE_WINDOW_S` reads as
+interrupted). A probe that finds the session no longer active also nudges a pending
+`when_idle` detach (`PendingDetaches.nudge`) to check at once instead of
+at its next 2 s poll. Besides writes through the hub, a launch, a fork,
+and an attach the catalog loop notices (the CLI, a kept tmux session
+taken back) wake the session too. A change emits `session.status` and
+`notify` at once, so
+a send flips the phone to active within about a second and the end of
+the turn flips it back as fast. Sessions neither hot nor growing are
+never probed.
+
+Two readers now set a session's status, so each read carries the time
+it was taken and the newer read wins:
+
+| Who | Time of the read | Where the rule lives |
+|---|---|---|
+| Catalog refresh | when the refresh started (`Catalog.tail_snapshot`) | `TailManager.sync(rows, as_of=...)` skips keys probed later |
+| Tail probe | just before the probe reads, not the tick's start | `Catalog.note_status` patches the row; a refresh that started earlier keeps it |
+
+So a refresh that read "done" just before the send landed cannot flip
+the phone back to done, and the catalog's own rows (the session list,
+the inbox, a satellite's catalog push) agree with the events. A tie
+goes to the catalog. `TailManager` writes `statuses` and emits status
+events only under `_status_lock`, since the catalog thread (`sync`) and
+the tail thread (probes) both write them. The probe reads outside that
+lock and applies a result only if the session's tailer is still the
+same object, and `sync` drops tailers under the lock, so a session the
+catalog removed mid-read never comes back as a status event. Satellites probe the same way
+and their catalog push carries the result.
 
 Before a message leaves the hub, `injected.py` removes what a harness
 wrote into the transcript for itself rather than for you: Claude Code's
