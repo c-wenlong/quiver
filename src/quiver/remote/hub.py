@@ -344,6 +344,9 @@ class HubState:
 
     def start(self) -> None:
         self._register_machine()
+        # A keep or adopt cut short by a crash leaves a key in both
+        # the supervised and kept registries; settle it before serving.
+        supervise.reconcile_kept(self.home)
         targets: list = [
             (self._catalog_loop, "remote-catalog"),
             (self._tail_loop, "remote-tail"),
@@ -2075,6 +2078,13 @@ class _Handler(BaseHTTPRequestHandler):
         # Attaching again cancels a when_idle detach; one already
         # running finishes first, and this attach then starts over.
         undone = self._state.detaches.cancel(key, "cancelled by attach")
+        if undone == "fired":
+            # The detach ran while we waited, and a catalog refresh may
+            # have replaced the row: judge from the current one and the
+            # registry, never the request's copy.
+            row = self._state.catalog.row_for(key) or row
+            if supervise.meta_for(self._state.home, key) is None:
+                row["ownership"] = protocol.OWNERSHIP_OBSERVED
         if row.get("ownership") == protocol.OWNERSHIP_ATTACHED:
             self._send_json(200, {"ok": True, "note": (
                 "already attached; the pending detach is cancelled"

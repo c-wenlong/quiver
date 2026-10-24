@@ -336,7 +336,15 @@ whose pane now runs a different process is refused, since a launch
 would reuse the name and bind to that pane. The hub's catalog loop (and
 each satellite's) closes a kept tmux session once no tmux client is
 attached to it and neither the keep nor its transcript has moved for
-`supervise.KEPT_IDLE_REAP_S` (12 hours).
+`supervise.KEPT_IDLE_REAP_S` (12 hours). It forgets a record only once
+that tmux session is confirmed gone: a failed kill is retried on the
+next loop, and a record whose pane now runs another process stays (and
+is never killed), so attach keeps refusing it. `launch_tmux` never binds
+to a live tmux session it did not just start. Both moves between the
+registries (keep, adopt) write the destination before removing the
+source and fail the request on a write error; a key left in both by a
+crash is settled at start-up, and before each keep, adopt and reap, in
+favour of the supervised row.
 
 Satellites take the same modes: the hub forwards `mode` in the control
 command, and the satellite runs the wait, the keep, the adoption and

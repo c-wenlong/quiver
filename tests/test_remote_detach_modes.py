@@ -172,7 +172,9 @@ class TestHubDetachRoutes(unittest.TestCase):
         self.kills = []
         for p in (
             patch.object(detach, "WHEN_IDLE_POLL_S", 0.02),
-            # The registry row says tmux; tmux itself is faked.
+            # The registry row says tmux; tmux itself is faked, binary
+            # included (CI's Nix sandbox has none).
+            patch.object(supervise, "tmux_bin", return_value="/x/tmux"),
             patch.object(supervise, "tmux_alive", return_value=True),
             patch.object(supervise, "kill",
                          side_effect=lambda n: self.kills.append(n) or True),
@@ -326,6 +328,43 @@ class TestHubDetachRoutes(unittest.TestCase):
         self.assertIn("adopted", data["note"])
         launch.assert_not_called()
         self.assertEqual(self._ownership(), "attached")
+
+    def test_attach_rechecks_after_a_detach_it_waited_for(self):
+        # The attach arrives while the when_idle detach is running and a
+        # catalog refresh swaps the rows meanwhile: the request's own
+        # row still says attached, but the session is observed now.
+        firing, release = threading.Event(), threading.Event()
+        state = self.srv.state
+
+        def slow_detach(session, op, value):
+            firing.set()
+            release.wait(3)
+            state.catalog.refresh()
+            supervise.unmark(self.srv.home, self.key)
+            return inject.InjectResult(True, "detached")
+
+        fake = MagicMock()
+        fake.control.side_effect = slow_detach
+        old_row = state.catalog.row_for(self.key)
+        with patch.object(inject, "injector_for", return_value=fake), \
+             patch.object(supervise, "attach",
+                          return_value=(True, "attached under tmux")) as att:
+            status, _ = self._control({"op": "detach", "mode": "when_idle"})
+            self.assertEqual(status, 202)
+            self.live = ["done"]
+            self.assertTrue(firing.wait(3))
+            answer = {}
+            t = threading.Thread(target=lambda: answer.update(
+                zip(("status", "data"), self._control({"op": "attach"}))))
+            t.start()
+            time.sleep(0.3)  # the attach is now waiting in cancel()
+            release.set()
+            t.join(5)
+        self.assertEqual(answer["status"], 200, answer)
+        self.assertEqual(answer["data"]["note"], "attached under tmux")
+        att.assert_called_once()
+        self.assertIsNot(state.catalog.row_for(self.key), old_row)
+        self.assertEqual(old_row["ownership"], "attached")  # the stale copy
 
     def test_satellite_detach_carries_its_mode(self):
         captured = []
@@ -493,6 +532,173 @@ class TestKeptTmuxSessions(unittest.TestCase):
         self.assertIn("already exited", note)
         self.assertEqual(supervise.kept(self.home), {})
         self.assertIsNone(supervise.meta_for(self.home, self.key))
+
+
+class TestKeptRecordsWithFakes(unittest.TestCase):
+    """Record moves and the reaper's edge cases, no tmux needed."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.key = "claude:s1"
+        self.name = supervise.tmux_name(self.key)
+        self.alive = {self.name: True}
+        self.pids = {self.name: 4242}
+        self.kill_ok = True
+        self.kills = []
+
+        def kill(name):
+            self.kills.append(name)
+            if self.kill_ok:
+                self.alive[name] = False
+            return self.kill_ok
+
+        for p in (
+            patch.object(supervise, "tmux_bin", return_value="/x/tmux"),
+            patch.object(supervise, "tmux_alive",
+                         side_effect=lambda n: self.alive.get(n, False)),
+            patch.object(supervise, "pane_pid",
+                         side_effect=lambda n: self.pids.get(n)
+                         if self.alive.get(n) else None),
+            patch.object(supervise, "tmux_clients", return_value=0),
+            patch.object(supervise, "kill", side_effect=kill),
+        ):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _keep(self):
+        supervise.mark(self.home, self.key, _tmux_meta(self.name))
+        return supervise.keep(self.home, self.key)
+
+    def _attach(self):
+        with patch.object(supervise, "_local_writer_pids", return_value=[]):
+            return supervise.attach(
+                self.home, self.key, _session(), last_append_at=None,
+                status="done", mode="tmux")
+
+    def _age(self):
+        rows = supervise.kept(self.home)
+        rows[self.key]["kept_at"] = time.time() - supervise.KEPT_IDLE_REAP_S - 60
+        supervise._save_kept(self.home, rows)
+
+    def _reap(self):
+        return supervise.reap_kept(self.home, lambda k: None)
+
+    def test_reaper_keeps_a_foreign_pane_and_attach_keeps_refusing(self):
+        self.assertTrue(self._keep()[0])
+        self._age()
+        self.pids[self.name] = 999  # a new process under our name
+        self.assertEqual(self._reap(), [])
+        self.assertEqual(self.kills, [])
+        self.assertIn(self.key, supervise.kept(self.home))
+        with patch.object(supervise, "launch_tmux") as launch:
+            ok, note = self._attach()
+        self.assertFalse(ok)
+        self.assertIn("no longer runs this session", note)
+        launch.assert_not_called()
+        # Once that session is closed, the record goes and attach runs.
+        self.alive[self.name] = False
+        self.assertEqual(self._reap(), [])
+        self.assertEqual(supervise.kept(self.home), {})
+
+    def test_attach_never_binds_to_a_stray_session_under_the_name(self):
+        # No supervised or kept row, but the derived name is taken.
+        with patch.object(supervise, "_tmux") as tmux:
+            ok, note = self._attach()
+        self.assertFalse(ok)
+        self.assertIn("already exists and is not supervised", note)
+        tmux.assert_not_called()  # no new-session, nothing bound
+        self.assertIsNone(supervise.meta_for(self.home, self.key))
+
+    def test_reaper_keeps_the_record_when_kill_fails(self):
+        self.assertTrue(self._keep()[0])
+        self._age()
+        self.kill_ok = False
+        self.assertEqual(self._reap(), [])
+        self.assertEqual(self.kills, [self.name])
+        self.assertIn(self.key, supervise.kept(self.home))
+        self.kill_ok = True  # next loop
+        self.assertEqual(self._reap(), [self.key])
+        self.assertEqual(supervise.kept(self.home), {})
+
+    def test_failed_kill_of_a_session_that_is_gone_anyway_drops_it(self):
+        self.assertTrue(self._keep()[0])
+        self._age()
+        self.kill_ok = False
+
+        def kill(name):
+            self.alive[name] = False  # it exited on its own
+            return False
+
+        with patch.object(supervise, "kill", side_effect=kill):
+            self.assertEqual(self._reap(), [self.key])
+        self.assertEqual(supervise.kept(self.home), {})
+
+    def _failing_writes(self, filename):
+        real = supervise.atomic_write_text
+
+        def write(path, text):
+            if Path(path).name == filename:
+                raise OSError("disk full")
+            return real(path, text)
+
+        return patch.object(supervise, "atomic_write_text", side_effect=write)
+
+    def test_keep_fails_cleanly_when_the_kept_record_cannot_be_written(self):
+        supervise.mark(self.home, self.key, _tmux_meta(self.name))
+        with self._failing_writes("kept.json"):
+            ok, note = supervise.keep(self.home, self.key)
+        self.assertFalse(ok)
+        self.assertIn("disk full", note)
+        self.assertIsNotNone(supervise.meta_for(self.home, self.key))
+        self.assertEqual(supervise.kept(self.home), {})
+
+    def test_keep_rolls_back_when_the_registry_cannot_be_written(self):
+        supervise.mark(self.home, self.key, _tmux_meta(self.name))
+        with self._failing_writes("supervised.json"):
+            ok, note = supervise.keep(self.home, self.key)
+        self.assertFalse(ok)
+        self.assertIsNotNone(supervise.meta_for(self.home, self.key))
+        self.assertEqual(supervise.kept(self.home), {})
+
+    def test_interrupted_move_settles_on_the_supervised_row(self):
+        # A crash between the two writes leaves the key in both.
+        supervise.mark(self.home, self.key, _tmux_meta(self.name))
+        supervise._save_kept(self.home, {self.key: dict(
+            _tmux_meta(self.name), pane_pid=4242, kept_at=time.time())})
+        supervise.reconcile_kept(self.home)
+        self.assertEqual(supervise.kept(self.home), {})
+        self.assertIsNotNone(supervise.meta_for(self.home, self.key))
+        # And keep itself settles it first, then keeps normally.
+        supervise._save_kept(self.home, {self.key: dict(
+            _tmux_meta(self.name), pane_pid=1, kept_at=0)})
+        ok, _note = supervise.keep(self.home, self.key)
+        self.assertTrue(ok)
+        self.assertEqual(supervise.kept(self.home)[self.key]["pane_pid"], 4242)
+        self.assertIsNone(supervise.meta_for(self.home, self.key))
+
+    def test_adopt_keeps_the_kept_record_when_the_registry_write_fails(self):
+        self.assertTrue(self._keep()[0])
+        with self._failing_writes("supervised.json"), \
+             patch.object(supervise, "launch_tmux") as launch:
+            ok, note = self._attach()
+        self.assertFalse(ok)
+        self.assertIn("disk full", note)
+        launch.assert_not_called()
+        self.assertIn(self.key, supervise.kept(self.home))
+        self.assertIsNone(supervise.meta_for(self.home, self.key))
+        ok, note = self._attach()
+        self.assertTrue(ok, note)
+        self.assertIn("adopted", note)
+
+    def test_adopt_with_a_failed_kept_cleanup_still_attaches(self):
+        self.assertTrue(self._keep()[0])
+        with self._failing_writes("kept.json"):
+            ok, note = self._attach()
+        self.assertTrue(ok, note)
+        # Left in both for a moment; the supervised row wins.
+        supervise.reconcile_kept(self.home)
+        self.assertEqual(supervise.kept(self.home), {})
+        self.assertIsNotNone(supervise.meta_for(self.home, self.key))
 
 
 class TestSatelliteDetachModes(unittest.TestCase):

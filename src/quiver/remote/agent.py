@@ -663,6 +663,7 @@ class RemoteAgent:
                 self._stop.wait(RECONNECT_S)
 
     def run(self) -> int:
+        supervise.reconcile_kept(self.home)
         self._register()
         self._push_catalog()
         threads = [
