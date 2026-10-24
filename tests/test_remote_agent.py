@@ -1208,12 +1208,14 @@ class TestAgentRouteValidation(unittest.TestCase):
             "GET", f"/v1/sessions/{key}/queue", headers=self.srv.auth)
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(data), {"sends": []})
-        status, data = self.srv.request(
-            "POST", f"/v1/sessions/{key}/queue",
-            {"client_id": "q-1", "op": "cancel"}, headers=self.srv.auth)
-        self.assertEqual(status, 409)
-        self.assertEqual(
-            json.loads(data)["error"]["code"], "queue_unsupported")
+        for body in ({"client_id": "q-1", "op": "cancel"},
+                     {"client_id": "q-1", "op": "edit", "text": "new"}):
+            status, data = self.srv.request(
+                "POST", f"/v1/sessions/{key}/queue", body,
+                headers=self.srv.auth)
+            self.assertEqual(status, 409, body)
+            self.assertEqual(
+                json.loads(data)["error"]["code"], "queue_unsupported")
         replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
         self.assertEqual(replay, [])
 

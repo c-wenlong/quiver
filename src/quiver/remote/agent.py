@@ -22,7 +22,8 @@ from pathlib import Path
 from quiver.paths import remote_dir_for
 from quiver.remote import attachments, catalog as catalog_mod, slash
 from quiver.remote import inject, journal, protocol, supervise, tail
-from quiver.remote import usage as usage_mod
+from quiver.remote import fork as fork_mod, usage as usage_mod
+from quiver.remote.detach import PendingDetaches
 
 AGENT_FILE = "agent.json"          # satellite's stored hub credential
 PUSH_BATCH = 50                    # events per /v1/agent/events POST
@@ -164,6 +165,11 @@ class RemoteAgent:
         # which can run minutes (headless claude): those go through
         # ``_work_q`` so a queued interrupt/detach isn't stuck behind it.
         self._work_q: "queue_mod.Queue" = queue_mod.Queue()
+        # ``detach`` with ``mode: when_idle``, waiting out a turn here.
+        self.detaches = PendingDetaches(self._stop)
+        # Fresh per-session status for those waits; tests stub it.
+        from quiver.sessions.status import session_statuses
+        self.status_of = session_statuses
         # Two cursors: ``_last_cmd_seq`` dedups frames seen on the wire;
         # ``_done_cmd_seq`` is the persisted *completed* floor the
         # ``?last=`` replay starts from — a crash mid-dispatch replays
@@ -171,6 +177,9 @@ class RemoteAgent:
         self._last_cmd_seq = self._load_cmd_cursor()
         self._done_cmd_seq = self._last_cmd_seq
         self._done_set: set[int] = set()
+        # The stream thread, the work loop and fork threads all finish
+        # commands; the cursor advance must not interleave.
+        self._done_lock = threading.Lock()
         self.tail_manager = tail.TailManager(
             emit=self._capture, machine_id=self.machine_id, home=self.home,
         )
@@ -232,11 +241,12 @@ class RemoteAgent:
         """Advance the completed cursor to the highest contiguous seq."""
         if not isinstance(seq, int):
             return
-        self._done_set.add(seq)
-        while self._done_cmd_seq + 1 in self._done_set:
-            self._done_cmd_seq += 1
-            self._done_set.discard(self._done_cmd_seq)
-        self._save_cmd_cursor()
+        with self._done_lock:
+            self._done_set.add(seq)
+            while self._done_cmd_seq + 1 in self._done_set:
+                self._done_cmd_seq += 1
+                self._done_set.discard(self._done_cmd_seq)
+            self._save_cmd_cursor()
 
     # -- upstream ----------------------------------------------------------
 
@@ -401,8 +411,23 @@ class RemoteAgent:
             # later interrupt/detach isn't stuck behind the run.
             self._work_q.put((seq, ev))
             return
+        if (ev.get("data") or {}).get("op") == "fork":
+            # Booting the fork's pane can take 30 s: run it beside the
+            # stream so an interrupt or detach behind it goes at once.
+            # The cursor still waits for it, so a crash replays it.
+            threading.Thread(
+                target=self._dispatch_then_done, args=(seq, ev),
+                name=f"agent-fork-{seq}", daemon=True,
+            ).start()
+            return
         self._dispatch(ev)
         self._mark_done(seq)
+
+    def _dispatch_then_done(self, seq, ev: dict) -> None:
+        try:
+            self._dispatch(ev)
+        finally:
+            self._mark_done(seq)
 
     def _work_loop(self) -> None:
         while not self._stop.is_set():
@@ -487,7 +512,19 @@ class RemoteAgent:
                 return payload is not None, (err or "staged"), False
             if session is None:
                 return False, "unknown session on this machine", False
+            if op == "fork":
+                # Tracked like launch: the result and the adopted
+                # session both carry the hub's launch id.
+                ok, note = fork_mod.start(
+                    self.home, session, self.catalog.tail_rows(),
+                    str(data.get("prompt") or ""),
+                    str(data.get("launch_id") or ""),
+                )
+                return ok, note, False
             if op == "attach":
+                # Same as the hub: attaching again cancels a when_idle
+                # detach (one already running finishes first).
+                undone = self.detaches.cancel(key, "cancelled by attach")
                 ok, note = supervise.attach(
                     self.home, key, session,
                     last_append_at=self.tail_manager.last_append_at(key),
@@ -496,6 +533,8 @@ class RemoteAgent:
                 )
                 if ok:
                     self.tail_manager.wake(key)
+                if ok and undone == "cancelled":
+                    note += "; the pending detach is cancelled"
                 return ok, note, False
             if op == "tail":
                 # The hub is asking us to stream an older session a
@@ -540,15 +579,62 @@ class RemoteAgent:
                 )
                 return result.ok, result.note, result.degraded
             if op == "control":
+                ctl = str(data.get("ctl") or "")
+                mode = str(data.get("mode") or "now")
+                if ctl == "kill" or (ctl == "detach" and mode != "when_idle"):
+                    self.detaches.cancel(key, f"replaced by {ctl} {mode}")
+                if ctl == "detach" and mode == "when_idle":
+                    return self._detach_when_idle(key, session)
+                if ctl == "detach" and mode == "keep":
+                    ok, note = supervise.keep(self.home, key)
+                    return ok, note, False
                 result = injector.control(
-                    session,
-                    str(data.get("ctl") or ""),
-                    str(data.get("value") or ""),
+                    session, ctl, str(data.get("value") or ""),
                 )
                 return result.ok, result.note, result.degraded
             return False, f"unknown op {op}", False
         except Exception as exc:
             return False, str(exc), False
+
+    def _detach_when_idle(
+        self, key: str, session
+    ) -> tuple[bool, str, bool]:
+        """Queue a detach for when this machine's session goes idle.
+
+        The command's own result says it is queued; the detach itself
+        reports a second ``command.result`` (``op: detach``), and the
+        catalog push carries the ownership change to the hub.
+        """
+        if supervise.meta_for(self.home, key) is None:
+            return False, "session is not attached on this machine", False
+
+        def status() -> str:
+            current = self.catalog.session_for(key) or session
+            got = self.status_of([current])
+            return str(got[0]) if got else ""
+
+        def fire() -> tuple[bool, str]:
+            if supervise.meta_for(self.home, key) is None:
+                return False, "session was already detached"
+            current = self.catalog.session_for(key) or session
+            result = inject.injector_for(
+                self.home, key, supervise.meta_for(self.home, key),
+                emit=self._capture, machine=self.machine_id,
+            ).control(current, "detach", "")
+            return result.ok, result.note
+
+        def report(ok: bool, note: str, cancelled: bool) -> None:
+            fields = {"command_id": "", "op": "detach",
+                      "mode": "when_idle", "ok": ok, "note": note}
+            if cancelled:
+                fields["cancelled"] = True
+            self._buffer_result(protocol.event(
+                "command.result", key, self.machine_id, fields))
+
+        if not self.detaches.schedule(
+                key, status=status, fire=fire, report=report):
+            return True, "a detach is already waiting for this turn to end", False
+        return True, "detaches when the current turn ends", False
 
     # -- loops -------------------------------------------------------------
 
@@ -565,6 +651,7 @@ class RemoteAgent:
             try:
                 self._push_catalog()
                 self.tail_manager.sync(self.catalog.tail_rows())
+                supervise.reap_kept(self.home, self.catalog.session_for)
             except Exception:
                 pass
             self._stop.wait(CATALOG_PUSH_S)
@@ -604,6 +691,7 @@ class RemoteAgent:
                 self._stop.wait(RECONNECT_S)
 
     def run(self) -> int:
+        supervise.reconcile_kept(self.home)
         self._register()
         self._push_catalog()
         threads = [
@@ -631,6 +719,7 @@ class RemoteAgent:
             pass
         self._stop.set()
         self.tail_manager.interrupt()
+        self.detaches.close()
         for t in threads:
             t.join(timeout=2)
         return 0
