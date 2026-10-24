@@ -304,7 +304,9 @@ empty list with `supported: false`.
   `~/.codex/skills`, `~/.agents/skills`, `.agents/skills`); for opencode
   `~/.config/opencode/command(s)` and `.opencode/command(s)`.
   Descriptions come from frontmatter, else the body's first line;
-  `user-invocable: false` hides a skill. On a name clash each harness's
+  `user-invocable: false` hides a skill. Only regular files are read,
+  and only their first 16 KB; in a project's folders a link out of the
+  folder is skipped too, since the repo decides what is there. On a name clash each harness's
   own rule applies: Claude Code takes a skill over a command file and
   the personal one over the project one, opencode takes the project's.
   Codex file prompts (`/prompts:`) are not listed: codex no longer reads
@@ -325,7 +327,10 @@ empty list with `supported: false`.
   `/v1/agent/catalog` push, only when it changed: per harness, the user
   layers once, the project layers of each folder that has any, and its
   `auto` channel, plus the mode of each attached session. The hub keeps
-  it beside the satellite's rows and answers from it. A satellite whose
+  it beside the satellite's rows and answers from it. The object is
+  capped (500 entries a layer, 1 MiB, the biggest folders dropped first);
+  if the push would still pass the hub's 4 MiB limit, the agent sends
+  the rows without it. A satellite whose
   agent never sent one gets built-ins only, `custom_available: false`
   and a note saying custom commands aren't available for that machine
   yet.

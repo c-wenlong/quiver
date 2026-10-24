@@ -34,6 +34,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import threading
 import time
 from pathlib import Path
@@ -49,6 +50,18 @@ CACHE_TTL_S = 30.0
 
 # A description is one line in a phone menu.
 MAX_DESCRIPTION = 160
+
+# Bytes read from any one command or skill file. Frontmatter and a first
+# line fit well inside it, and a repo can't make the menu (or a
+# satellite's automatic push) read without end by shipping a symlink to
+# /dev/zero or a huge file.
+MAX_READ = 16 * 1024
+
+# What a satellite's push may carry: entries per layer, and the whole
+# ``slash`` object as JSON. The hub refuses bodies over 4 MiB, and the
+# rows ride in the same body.
+MAX_LAYER_ENTRIES = 500
+MAX_PAYLOAD_BYTES = 1 << 20
 
 SOURCES = ("builtin", "user", "project", "skill", "plugin")
 
@@ -100,22 +113,60 @@ def _one_line(text: str) -> str:
     return text
 
 
-def read_meta(path: Path) -> dict | None:
+def _inside(path: Path | str, root_real: str) -> bool:
+    real = os.path.realpath(path)
+    return real == root_real or real.startswith(root_real.rstrip(os.sep) + os.sep)
+
+
+def _read_head(path: Path, root_real: str | None = None) -> str | None:
+    """The first ``MAX_READ`` bytes of a regular file, else None.
+
+    Refuses FIFOs, devices and sockets (opened non-blocking, then checked
+    on the open descriptor, so a swapped file can't slip past a stat),
+    and with ``root_real`` anything whose real path leaves that folder:
+    a repo's ``.claude/commands/x.md -> ~/.ssh/id_rsa`` would otherwise
+    show the key's first line as a description.
+    """
+    if root_real is not None and not _inside(path, root_real):
+        return None
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOCTTY", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        chunks, left = [], MAX_READ
+        while left > 0:
+            chunk = os.read(fd, left)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            left -= len(chunk)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    return b"".join(chunks).decode("utf-8", errors="replace")
+
+
+def read_meta(path: Path, root_real: str | None = None) -> dict | None:
     """``{name, description, argument_hint, hidden}`` from one markdown file.
 
     ``name`` is the frontmatter ``name`` or "" (the caller knows the
     default: a skill's folder, a command's file stem). A missing
     description falls back to the body's first non-empty line, which is
-    what Claude Code and Codex both show. None when the file is unreadable.
+    what Claude Code and Codex both show. None when the file is not a
+    regular file inside ``root_real`` (see ``_read_head``) or unreadable.
     """
-    from quiver.skills.discovery import parse_skill_md
+    from quiver.skills.discovery import parse_skill_text
 
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    text = _read_head(path, root_real)
+    if text is None:
         return None
     fields, body = _frontmatter(text)
-    _name, description = parse_skill_md(path)
+    _name, description = parse_skill_text(text)
     if not description:
         for line in body.splitlines():
             line = line.strip().lstrip("#").strip()
@@ -145,21 +196,47 @@ def _entry(name: str, meta: dict, source: str) -> dict:
 # Folders
 
 
-def _md_files(root: Path, recursive: bool = True) -> list[Path]:
-    """Every ``*.md`` under ``root``, sorted, hidden folders skipped."""
-    out: list[Path] = []
+def _root_real(root: Path) -> str | None:
     try:
         if not root.is_dir():
-            return out
+            return None
     except OSError:
-        return out
+        return None
+    return os.path.realpath(root)
+
+
+def _walk(root_real: str, keep=lambda d: not d.startswith("."),
+          confine: bool = True):
+    """``os.walk`` following links, never into a folder twice (a link
+    back up would loop forever), and with ``confine`` never out of
+    ``root_real``."""
+    seen: set[str] = set()
+    for dirpath, dirnames, filenames in os.walk(root_real, followlinks=True):
+        real = os.path.realpath(dirpath)
+        if real in seen:
+            dirnames[:] = []
+            continue
+        seen.add(real)
+        dirnames[:] = sorted(
+            d for d in dirnames
+            if keep(d) and (not confine
+                            or _inside(os.path.join(dirpath, d), root_real))
+        )
+        yield dirpath, dirnames, filenames
+
+
+def _md_files(root_real: str, recursive: bool = True,
+              confine: bool = True) -> list[Path]:
+    """Every ``*.md`` under the folder, sorted, hidden folders skipped."""
+    out: list[Path] = []
     if not recursive:
         try:
-            return sorted(p for p in root.glob("*.md") if p.is_file())
+            names = sorted(os.listdir(root_real))
         except OSError:
             return out
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
-        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        return [Path(root_real) / n for n in names
+                if n.endswith(".md") and not n.startswith(".")]
+    for dirpath, _dirnames, filenames in _walk(root_real, confine=confine):
         for name in sorted(filenames):
             if name.endswith(".md") and not name.startswith("."):
                 out.append(Path(dirpath) / name)
@@ -167,58 +244,59 @@ def _md_files(root: Path, recursive: bool = True) -> list[Path]:
 
 
 def command_files(root: Path, source: str, sep: str = ":",
-                  prefix: str = "", recursive: bool = True) -> list[dict]:
+                  prefix: str = "", recursive: bool = True,
+                  confine: bool = True) -> list[dict]:
     """A command folder's entries: one per ``*.md``, named by its path.
 
     ``commands/frontend/component.md`` is ``frontend:component`` (Claude
     Code turns each folder into a ``:`` segment); ``prefix`` namespaces a
-    plugin's commands (``my-plugin:``).
+    plugin's commands (``my-plugin:``). ``confine`` refuses links out of
+    the folder: on for a project's folders, which come with whatever repo
+    is checked out, off for the user's own, where a skill linked in from
+    elsewhere (``~/.quiver/skills/x -> ~/.agents/skills/x``) is normal.
+    Every file is still read only if it is a regular file, and only its
+    first ``MAX_READ`` bytes.
     """
+    root_real = _root_real(root)
+    if root_real is None:
+        return []
     out = []
-    for path in _md_files(root, recursive):
-        meta = read_meta(path)
+    for path in _md_files(root_real, recursive, confine):
+        meta = read_meta(path, root_real if confine else None)
         if meta is None or meta["hidden"]:
             continue
-        rel = path.relative_to(root).with_suffix("")
+        rel = path.relative_to(root_real).with_suffix("")
         name = prefix + sep.join(rel.parts)
         out.append(_entry(name, meta, source))
     return out
 
 
 def skill_folders(root: Path, source: str = "skill", prefix: str = "",
-                  recursive: bool = False) -> list[dict]:
+                  recursive: bool = False, confine: bool = True) -> list[dict]:
     """A skills root's entries: one per folder holding a ``SKILL.md``.
 
     Claude Code reads one level (``<root>/<name>/SKILL.md``); Codex walks
     the tree, so ``recursive`` follows it down. The frontmatter ``name``
-    wins over the folder name, as both harnesses do.
+    wins over the folder name, as both harnesses do. ``confine`` as in
+    ``command_files``.
     """
-    out = []
-    try:
-        if not root.is_dir():
-            return out
-    except OSError:
-        return out
+    root_real = _root_real(root)
+    if root_real is None:
+        return []
     if recursive:
-        found = []
-        for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
-            # Codex installs its bundled skills under ``.system``.
-            dirnames[:] = sorted(
-                d for d in dirnames
-                if not d.startswith(".") or d == ".system"
-            )
-            if "SKILL.md" in filenames:
-                found.append(Path(dirpath))
+        # Codex installs its bundled skills under ``.system``.
+        keep = lambda d: not d.startswith(".") or d == ".system"  # noqa: E731
+        found = [Path(dirpath) for dirpath, _d, filenames
+                 in _walk(root_real, keep, confine) if "SKILL.md" in filenames]
     else:
         try:
-            found = sorted(
-                p for p in root.iterdir()
-                if not p.name.startswith(".") and (p / "SKILL.md").is_file()
-            )
+            found = [Path(root_real) / n for n in sorted(os.listdir(root_real))
+                     if not n.startswith(".")]
         except OSError:
             found = []
+    out = []
     for folder in found:
-        meta = read_meta(folder / "SKILL.md")
+        meta = read_meta(folder / "SKILL.md", root_real if confine else None)
         if meta is None or meta["hidden"]:
             continue
         name = prefix + (meta["name"] or folder.name)
@@ -251,11 +329,11 @@ def project_dirs(cwd: str, home: Path) -> list[Path]:
     return [start] if start != home else []
 
 
-def _skills_root(harness: str, home: Path) -> Path | None:
-    """The harness's user skills folder: registry first, then the
-    ``HARNESS_ROOTS`` fallback; None when the registry says it has none."""
+def _registry_skills(harness: str, home: Path) -> tuple[bool, Path | None]:
+    """``(declared, root)`` from the registry's ``capabilities.skills``:
+    declared when it names a usable ``~/`` root or says the harness has
+    no skills (``supported: false``, root None)."""
     from quiver.init.layout import load_registry
-    from quiver.skills.layout import HARNESS_ROOTS
 
     try:
         registry = load_registry(home)
@@ -266,12 +344,23 @@ def _skills_root(harness: str, home: Path) -> Path | None:
         if isinstance(entry, dict) else None
     if isinstance(skills, dict):
         if skills.get("supported") is False:
-            return None
+            return True, None
         root = skills.get("root")
         if isinstance(root, str) and root.startswith("~/"):
             rel = Path(root[2:])
             if rel.parts and ".." not in rel.parts:
-                return home / rel
+                return True, home / rel
+    return False, None
+
+
+def _skills_root(harness: str, home: Path) -> Path | None:
+    """The harness's user skills folder: registry first, then the
+    ``HARNESS_ROOTS`` fallback; None when the registry says it has none."""
+    from quiver.skills.layout import HARNESS_ROOTS
+
+    declared, root = _registry_skills(harness, home)
+    if declared:
+        return root
     for label, rel in HARNESS_ROOTS:
         if label == harness:
             return home / rel
@@ -334,16 +423,19 @@ def _claude_plugins(home: Path, cwd: str | None) -> list[dict]:
         if live is not None:
             folder = live
         prefix = ref.partition("@")[0] + ":"
-        out += command_files(folder / "commands", "plugin", prefix=prefix)
-        out += skill_folders(folder / "skills", "plugin", prefix=prefix)
+        out += command_files(folder / "commands", "plugin", prefix=prefix,
+                             confine=False)
+        out += skill_folders(folder / "skills", "plugin", prefix=prefix,
+                             confine=False)
     return out
 
 
 def _claude_user(home: Path) -> dict:
     root = _skills_root("claude", home)
     return {
-        "skills": skill_folders(root, "skill") if root else [],
-        "commands": command_files(home / ".claude" / "commands", "user"),
+        "skills": skill_folders(root, "skill", confine=False) if root else [],
+        "commands": command_files(home / ".claude" / "commands", "user",
+                                  confine=False),
         "plugins": _claude_plugins(home, None),
     }
 
@@ -361,11 +453,6 @@ def _claude_project(cwd: str, home: Path) -> dict:
     }
 
 
-def _codex_home(home: Path) -> Path:
-    env = os.environ.get("CODEX_HOME")
-    return Path(env) if env and home == Path.home() else home / ".codex"
-
-
 def _mentions(rows: list[dict]) -> list[dict]:
     for row in rows:
         row["insert"] = f"${row['name']} "
@@ -373,10 +460,16 @@ def _mentions(rows: list[dict]) -> list[dict]:
 
 
 def _codex_user(home: Path) -> dict:
-    root = _skills_root("codex", home) or (_codex_home(home) / "skills")
-    skills = skill_folders(root, "skill", recursive=True)
+    # An explicit registry root wins; otherwise $CODEX_HOME moves codex's
+    # skills folder before the HARNESS_ROOTS default (~/.codex/skills).
+    declared, root = _registry_skills("codex", home)
+    if not declared:
+        env = os.environ.get("CODEX_HOME")
+        root = Path(env) / "skills" if env else _skills_root("codex", home)
+    skills = (skill_folders(root, "skill", recursive=True, confine=False)
+              if root else [])
     skills += skill_folders(home / ".agents" / "skills", "skill",
-                            recursive=True)
+                            recursive=True, confine=False)
     return {"skills": _mentions(skills)}
 
 
@@ -392,7 +485,8 @@ def _opencode_user(home: Path) -> dict:
     commands: list[dict] = []
     for sub in ("command", "commands"):
         commands += command_files(
-            home / ".config" / "opencode" / sub, "user", sep="/")
+            home / ".config" / "opencode" / sub, "user", sep="/",
+            confine=False)
     return {"commands": commands}
 
 
@@ -627,7 +721,8 @@ def _answer(key, harness, channel, attached, rows, custom_available, note):
 # Satellites
 
 
-def satellite_payload(rows: list[dict], home: Path | None = None) -> dict:
+def satellite_payload(rows: list[dict],
+                      home: Path | None = None) -> dict | None:
     """What a satellite pushes beside its catalog.
 
     Per harness its sessions use: the user-level layers once, the
@@ -636,7 +731,8 @@ def satellite_payload(rows: list[dict], home: Path | None = None) -> dict:
     session. ``home`` is the quiver home (for the supervised registry);
     harness folders are read under the user's own home. Scans go through
     the same caches, so the push every few seconds rescans at most once
-    per ``CACHE_TTL_S``.
+    per ``CACHE_TTL_S``. Bounded by ``bound_payload``; None when even
+    that can't make it fit.
     """
     from quiver.remote import supervise
 
@@ -663,6 +759,45 @@ def satellite_payload(rows: list[dict], home: Path | None = None) -> dict:
         meta = supervise.meta_for(home, key) if key else None
         if meta and meta.get("mode"):
             out["attached"][key] = str(meta["mode"])
+    return bound_payload(out)
+
+
+def _capped(layers: dict) -> dict:
+    return {name: rows[:MAX_LAYER_ENTRIES] if isinstance(rows, list) else []
+            for name, rows in (layers or {}).items()}
+
+
+def _size(obj) -> int:
+    return len(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+
+
+def bound_payload(payload: dict) -> dict | None:
+    """``payload`` cut to fit a catalog push, or None when it can't.
+
+    Each layer keeps its first ``MAX_LAYER_ENTRIES``; then, while the
+    whole is over ``MAX_PAYLOAD_BYTES``, the biggest folder goes (its
+    sessions fall back to the user level) and ``truncated`` is set. If
+    the user levels alone are still too big, nothing is sent: the rows
+    must always get through.
+    """
+    out = {"harnesses": {}, "attached": dict(payload.get("attached") or {})}
+    for harness, slot in (payload.get("harnesses") or {}).items():
+        out["harnesses"][harness] = {
+            "user": _capped(slot.get("user")),
+            "folders": {cwd: _capped(layers) for cwd, layers
+                        in (slot.get("folders") or {}).items()},
+            "auto": slot.get("auto"),
+        }
+    folders = [(_size(layers), harness, cwd)
+               for harness, slot in out["harnesses"].items()
+               for cwd, layers in slot["folders"].items()]
+    folders.sort(reverse=True)
+    while _size(out) > MAX_PAYLOAD_BYTES:
+        if not folders:
+            return None
+        _n, harness, cwd = folders.pop(0)
+        del out["harnesses"][harness]["folders"][cwd]
+        out["truncated"] = True
     return out
 
 

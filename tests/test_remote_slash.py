@@ -85,6 +85,78 @@ class TestFrontmatter(_Home):
         )
 
 
+class TestHostileFiles(_Home):
+    """A repo controls its .claude folder; opening the menu must not hang,
+    exhaust memory, or leak files from outside it."""
+
+    def setUp(self):
+        super().setUp()
+        self.cmds = self.proj / ".claude" / "commands"
+        _write(self.cmds / "ok.md", "---\ndescription: fine\n---\n")
+
+    def names(self):
+        return _names(slash.custom_entries("claude", str(self.proj)))
+
+    @unittest.skipUnless(Path("/dev/zero").exists(), "needs /dev/zero")
+    def test_symlink_to_dev_zero_is_skipped(self):
+        (self.cmds / "hang.md").symlink_to("/dev/zero")
+        skill = self.proj / ".claude" / "skills" / "hang"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").symlink_to("/dev/zero")
+        self.assertEqual(self.names(), ["ok"])
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "needs mkfifo")
+    def test_fifo_is_skipped_without_blocking(self):
+        os.mkfifo(self.cmds / "pipe.md")
+        self.assertEqual(self.names(), ["ok"])
+
+    def test_symlink_out_of_the_folder_is_skipped(self):
+        secret = _write(self.home / "secret.txt", "PRIVATE KEY\n")
+        (self.cmds / "leak.md").symlink_to(secret)
+        outside = self.home / "elsewhere"
+        outside.mkdir()
+        _write(outside / "far.md", "far\n")
+        (self.cmds / "sub").symlink_to(outside)
+        self.assertEqual(self.names(), ["ok"])
+
+    def test_user_level_links_out_still_load_but_devices_do_not(self):
+        # ~/.quiver/skills/x -> ~/.agents/skills/x is how users share
+        # skills; only a project's folders are confined.
+        real = self.home / ".agents/skills/shared"
+        _write(real / "SKILL.md", "---\ndescription: s\n---\n")
+        skills = self.home / ".claude/skills"
+        skills.mkdir(parents=True)
+        (skills / "shared").symlink_to(real)
+        user_cmds = self.home / ".claude/commands"
+        user_cmds.mkdir(parents=True)
+        if Path("/dev/zero").exists():
+            (user_cmds / "zero.md").symlink_to("/dev/zero")
+        names = self.names()
+        self.assertIn("shared", names)
+        self.assertNotIn("zero", names)
+
+    def test_link_loop_terminates(self):
+        (self.cmds / "loop").symlink_to(self.cmds)
+        self.assertEqual(self.names(), ["ok"])
+
+    def test_big_file_is_read_only_to_the_cap(self):
+        _write(self.cmds / "big.md",
+               "---\ndescription: big one\n---\n" + "x" * (4 << 20))
+        got = []
+        real_read = os.read
+
+        def read(fd, n):
+            data = real_read(fd, n)
+            got.append(len(data))
+            return data
+
+        with patch.object(slash.os, "read", side_effect=read):
+            rows = {r["name"]: r for r in
+                    slash.custom_entries("claude", str(self.proj))}
+        self.assertEqual(rows["big"]["description"], "big one")
+        self.assertLessEqual(sum(got), slash.MAX_READ * len(rows))
+
+
 class TestClaudeSources(_Home):
     def test_sources_and_names(self):
         _write(self.home / ".claude/commands/standup.md",
@@ -196,6 +268,28 @@ class TestOtherHarnesses(_Home):
             [r["source"] for r in listed if r["name"] == "compact"],
             ["builtin", "skill"],
         )
+
+    def test_codex_home_moves_the_skills_root(self):
+        moved = self.home / "codex-elsewhere"
+        _write(moved / "skills/moved/SKILL.md", "---\ndescription: m\n---\n")
+        _write(self.home / ".codex/skills/default/SKILL.md",
+               "---\ndescription: d\n---\n")
+        with patch.dict(os.environ, {"CODEX_HOME": str(moved)}):
+            names = _names(slash.custom_entries("codex", str(self.proj)))
+        self.assertIn("moved", names)
+        self.assertNotIn("default", names)
+
+    def test_registry_root_beats_codex_home(self):
+        _write(config_dir_for(self.home) / "harness.json", json.dumps({
+            "codex": {"capabilities": {"skills": {"root": "~/reg"}}},
+        }))
+        _write(self.home / "reg/chosen/SKILL.md", "---\ndescription: c\n---\n")
+        moved = self.home / "codex-elsewhere"
+        _write(moved / "skills/moved/SKILL.md", "---\ndescription: m\n---\n")
+        with patch.dict(os.environ, {"CODEX_HOME": str(moved)}):
+            names = _names(slash.custom_entries("codex", str(self.proj)))
+        self.assertIn("chosen", names)
+        self.assertNotIn("moved", names)
 
     def test_unknown_harness_is_empty(self):
         self.assertEqual(slash.custom_entries("nope", str(self.proj)), [])
@@ -370,6 +464,55 @@ class TestSatellite(_Home):
     def test_malformed_payload_is_not_stored(self):
         reply = self.push({"slash": {"harnesses": "nope"}})
         self.assertFalse(reply["slash"])
+
+    def test_bound_payload_drops_folders_then_gives_up(self):
+        row = {"name": "n", "description": "d" * 100, "source": "project"}
+        payload = {"harnesses": {"claude": {
+            "user": {"skills": [dict(row, name=f"u{i}") for i in range(3)]},
+            "folders": {
+                "/a": {"commands": [dict(row, name=f"a{i}")
+                                    for i in range(2000)]},
+                "/b": {"commands": [dict(row, name="b")]},
+            },
+            "auto": "tmux",
+        }}, "attached": {}}
+        with patch.object(slash, "MAX_PAYLOAD_BYTES", 20000):
+            out = slash.bound_payload(payload)
+        folders = out["harnesses"]["claude"]["folders"]
+        self.assertNotIn("/a", folders)
+        self.assertIn("/b", folders)
+        self.assertTrue(out["truncated"])
+        with patch.object(slash, "MAX_PAYLOAD_BYTES", 10):
+            self.assertIsNone(slash.bound_payload(payload))
+        capped = slash.bound_payload(payload)
+        self.assertEqual(
+            len(capped["harnesses"]["claude"]["folders"]["/a"]["commands"]),
+            slash.MAX_LAYER_ENTRIES)
+
+    def test_oversized_menu_never_blocks_rows(self):
+        ag = agent_mod.RemoteAgent(
+            "http://h:1", "cred", Path(tempfile.mkdtemp()))
+        ag.catalog._fetch = lambda: [
+            Session(timestamp=0, agent="Claude Code", path=str(self.proj),
+                    title="t", session_id="r1", tool_name="claude")]
+        ag.catalog._status_of = lambda ss: [""] * len(ss)
+        _write(self.home / ".claude/commands/a.md", "x" * 50 + "\n")
+        sent = []
+
+        def post(_hub, _path, _cred, body):
+            sent.append(body)
+            return 200, {"ok": True, "slash": "slash" in body}
+
+        with patch.object(agent_mod, "_post", side_effect=post), \
+                patch.object(agent_mod, "CATALOG_BODY_MAX", 300), \
+                patch.object(slash, "_auto_channel", return_value="tmux"), \
+                patch("sys.stderr"):
+            self.assertTrue(ag._push_catalog())
+            self.assertTrue(ag._push_catalog())
+        self.assertEqual(len(sent), 2)
+        for body in sent:
+            self.assertNotIn("slash", body)
+            self.assertEqual(len(body["rows"]), 1)
 
     def test_agent_sends_commands_only_when_changed(self):
         ag = agent_mod.RemoteAgent(
