@@ -187,13 +187,18 @@ def error(code: str, message_text: str) -> dict:
     return {"error": {"code": code, "message": message_text}}
 
 
+def _message_text(text, field: str) -> str:
+    """A message body's text: a string with something besides spaces."""
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError(f"{field} must be a non-empty string")
+    return text
+
+
 def parse_message_command(body: dict) -> dict:
     """Validate a ``POST .../message`` body; raises ValueError on bad input."""
     if not isinstance(body, dict):
         raise ValueError("body must be a JSON object")
-    text = body.get("text")
-    if not isinstance(text, str) or not text.strip():
-        raise ValueError("message.text must be a non-empty string")
+    text = _message_text(body.get("text"), "message.text")
     mode = body.get("mode")
     if mode is None or mode == "":
         mode = "queue"
@@ -224,11 +229,15 @@ def parse_message_command(body: dict) -> dict:
 
 
 # What ``POST .../queue`` can do to one waiting queue-mode send.
-QUEUE_OPS = frozenset({"steer", "cancel"})
+QUEUE_OPS = frozenset({"steer", "cancel", "edit"})
 
 
 def parse_queue_action(body: dict) -> dict:
-    """Validate a ``POST .../queue`` body: ``{client_id, op}``."""
+    """Validate a ``POST .../queue`` body: ``{client_id, op, text?}``.
+
+    ``text`` is required for ``edit`` (validated like a message's) and
+    ignored otherwise.
+    """
     if not isinstance(body, dict):
         raise ValueError("body must be a JSON object")
     client_id = body.get("client_id")
@@ -242,7 +251,10 @@ def parse_queue_action(body: dict) -> dict:
     # A list or object op is unhashable: check the type before ``in``.
     if not isinstance(op, str) or op not in QUEUE_OPS:
         raise ValueError(f"queue.op must be one of {sorted(QUEUE_OPS)}")
-    return {"client_id": client_id, "op": op}
+    text = None
+    if op == "edit":
+        text = _message_text(body.get("text"), "queue.text")
+    return {"client_id": client_id, "op": op, "text": text}
 
 
 def parse_approval_command(body: dict) -> dict:

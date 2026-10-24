@@ -172,7 +172,47 @@ Gemini, Cline, ...) re-read the whole window whenever their change token
 moves, which is the cost behind [#515](https://github.com/c-wenlong/quiver/issues/515), so
 `SnapshotSource.hot_poll_s` caps them at the active cadence: they get the
 immediate wake but never poll faster than an active session already
-does. The status column itself still updates on the catalog refresh.
+does.
+
+Status between catalog refreshes: a session that is hot, or whose
+source moved since its last probe, has its status re-probed by the tail
+thread at most once a second (`STATUS_PROBE_S`). "Moved" means the poll
+advanced the cursor, message or not, so a turn that ends on a record
+with nothing to show (Codex `task_complete`, Claude `turn_duration`)
+still gets its probe. Every session owed a probe in one tick goes
+through a single `sessions/status.py` call, so the live-pid registry,
+the bg-job table and the status tail cache are read once per tick, not
+once per session. Each session is probed with the session's last-activity time raised to the
+transcript's mtime (the catalog's copy can be minutes old, and a
+mid-turn transcript older than `ACTIVE_WINDOW_S` reads as
+interrupted). A probe that finds the session no longer active also nudges a pending
+`when_idle` detach (`PendingDetaches.nudge`) to check at once instead of
+at its next 2 s poll. Besides writes through the hub, a launch, a fork,
+and an attach the catalog loop notices (the CLI, a kept tmux session
+taken back) wake the session too. A change emits `session.status` and
+`notify` at once, so
+a send flips the phone to active within about a second and the end of
+the turn flips it back as fast. Sessions neither hot nor growing are
+never probed.
+
+Two readers now set a session's status, so each read carries the time
+it was taken and the newer read wins:
+
+| Who | Time of the read | Where the rule lives |
+|---|---|---|
+| Catalog refresh | when the refresh started (`Catalog.tail_snapshot`) | `TailManager.sync(rows, as_of=...)` skips keys probed later |
+| Tail probe | just before the probe reads, not the tick's start | `Catalog.note_status` patches the row; a refresh that started earlier keeps it |
+
+So a refresh that read "done" just before the send landed cannot flip
+the phone back to done, and the catalog's own rows (the session list,
+the inbox, a satellite's catalog push) agree with the events. A tie
+goes to the catalog. `TailManager` writes `statuses` and emits status
+events only under `_status_lock`, since the catalog thread (`sync`) and
+the tail thread (probes) both write them. The probe reads outside that
+lock and applies a result only if the session's tailer is still the
+same object, and `sync` drops tailers under the lock, so a session the
+catalog removed mid-read never comes back as a status event. Satellites probe the same way
+and their catalog push carries the result.
 
 Before a message leaves the hub, `injected.py` removes what a harness
 wrote into the transcript for itself rather than for you: Claude Code's
@@ -237,7 +277,7 @@ GET  /v1/sessions/{id}/events        SSE stream; ?last=seq replays journal
 GET  /v1/sessions/{id}/commands      the "/" menu: commands this session's harness will run
 POST /v1/sessions/{id}/message       {text, mode: queue|steer, attachments[]}
 GET  /v1/sessions/{id}/queue         queue-mode sends still waiting for idle
-POST /v1/sessions/{id}/queue         {client_id, op: steer|cancel} on one waiting send
+POST /v1/sessions/{id}/queue         {client_id, op: steer|cancel|edit, text?} on one waiting send
 POST /v1/sessions/{id}/attachments   multipart upload → staged file, returns ref
 POST /v1/sessions/{id}/approval      {request_id, decision}
 POST /v1/sessions/{id}/pin           {pinned: bool} → pin or unpin on the hub
@@ -304,8 +344,17 @@ never both a send and a removal. An unknown `client_id` is `404
 unknown_send`; one that already left (sent, steered, removed, failed) is
 `409 not_waiting` while the hub remembers it (the last 256). Satellite
 sessions never park a queue-mode send on the hub (the satellite delivers
-on arrival or refuses a busy session), so their list is empty and both
-ops answer `409 queue_unsupported`.
+on arrival or refuses a busy session), so their list is empty and every
+op answers `409 queue_unsupported`.
+
+`edit` takes a `text` (checked like a message's: a string with more
+than spaces in it, else `422 bad_command`) and replaces the waiting
+send's text in place, keeping its place in the queue; it answers `200
+{ok, client_id, op, text}`. The send's job reads its command only after
+claiming it under the same lock, so an edit racing the injection either
+lands first, and the new text goes out, or answers `409 not_waiting`
+and the old text goes out. A `200` edit is never followed by the old
+text. Attachments stay as they were.
 
 `POST /v1/sessions/{id}/control {op: "detach", mode}` hands an attached
 session back to `observed`. The mode says what happens to the harness:
