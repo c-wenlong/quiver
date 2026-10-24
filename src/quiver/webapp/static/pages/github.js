@@ -1,6 +1,6 @@
 /* Shared by the Repositories and Inbox pages (repositories.js, inbox.js):
- * line icons for GitHub states, the gh setup card, a minute poll, and the
- * PR body's markdown. The bundle runs each script in its own scope, so this
+ * line icons for GitHub states, the gh setup card, a minute poll, the
+ * writes' POST, and the PR body's markdown. The bundle runs each script in its own scope, so this
  * one hands the others a single global, GhUI. Not a page itself. */
 "use strict";
 
@@ -54,6 +54,7 @@ const GhUI = (() => {
     tray: '<path d="M3 13h5l1 3h6l1-3h5M5 5h14l2 8v6H3v-6z"/>',
     refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>',
     envelope: '<rect x="3" y="5.5" width="18" height="13" rx="2"/><path d="m3.5 7 8.5 6 8.5-6"/>',
+    envelopeOpen: '<path d="M3 10.5 12 4l9 6.5V19a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="m3.5 11 8.5 5.5 8.5-5.5"/>',
   };
 
   function ico(name, cls = "", title = "") {
@@ -128,6 +129,26 @@ const GhUI = (() => {
 
   function hashParams() {
     return new URLSearchParams(location.hash.split("?")[1] || "");
+  }
+
+  /* app.js's api() only reads; a write sends JSON with the same headers
+   * (authHeaders: the bearer when one is stored, and X-Quiver-Pair so an
+   * owner's tailnet device is admitted without one). Never throws:
+   * { status: 0 } when the hub is unreachable. */
+  async function post(path, body) {
+    let resp;
+    try {
+      resp = await fetch(path, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(body),
+      });
+    } catch {
+      return { status: 0, data: null };
+    }
+    let data = null;
+    try { data = await resp.json(); } catch { /* empty body */ }
+    return { status: resp.status, data };
   }
 
   function failMessage(status, data) {
@@ -394,6 +415,6 @@ const GhUI = (() => {
     return renderSegments(segments(String(body || "").replace(/\r\n?/g, "\n")));
   }
 
-  return { ico, ago, envSetup, setupCard, bindSetup, copyText, poll, hashParams, failMessage, keepFocus, markdown };
+  return { ico, ago, envSetup, setupCard, bindSetup, copyText, poll, hashParams, post, failMessage, keepFocus, markdown };
 })();
 globalThis.GhUI = GhUI;
