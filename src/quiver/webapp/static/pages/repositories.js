@@ -5,7 +5,8 @@
  * arm auto-merge, behind an inline confirm) and AddRepoSheet (search the
  * hub's synced catalog or GitHub, then pin), with the rail's gear
  * popover (RepoManager: open or unpin each pin) and drag to reorder.
- * Re-running and PR worktrees stay in swe and the Mac app. */
+ * Actions rows re-run failed or all jobs from their ⋯ menu (the app's
+ * context menu). PR worktrees stay in swe and the Mac app. */
 "use strict";
 
 (() => {
@@ -37,6 +38,8 @@
     managing: false, mutating: null, queuedOrder: null, pinError: null,
     pinGen: 0, // bumped as each pin write starts and ends
     dragging: null, repaintAfterDrag: false,
+    // Re-runs: the open row menu, the runs being re-run, the last failure.
+    runMenu: null, rerunning: new Set(), actionError: null,
   };
 
   const BATCH = 10; // rows each scroll fill reveals on the focus page
@@ -212,14 +215,24 @@
       <span class="gh-row-side">${(issue.assignees || []).slice(0, 2).map((a) => badge(`@${a}`)).join("")}</span>`);
   }
 
-  function runRow(run) {
-    const done = run.conclusion ? badge(run.conclusion === "success" ? "Passed" : capitalize(run.conclusion)) : "";
-    return link(run.url, `<span class="gh-row-lead">${runIcon(run)}</span>
+  /* A run row opens GitHub; its ⋯ button holds the app's context menu:
+   * Re-run failed jobs (a failed run only), Re-run all jobs, Open on
+   * GitHub. A run being re-run spins where its badge was. */
+  function runRow(repo, run) {
+    const key = `${repo}#${run.id}`;
+    const side = page.rerunning.has(key) ? ico("running", "gh-muted gh-spin")
+      : run.conclusion ? badge(run.conclusion === "success" ? "Passed" : capitalize(run.conclusion)) : "";
+    const open = page.runMenu && page.runMenu.key === key;
+    return `<div class="gh-run">${link(run.url, `<span class="gh-row-lead">${runIcon(run)}</span>
       <span class="gh-row-main">
         <span class="gh-row-title"><span class="gh-title">${esc(run.title)}</span></span>
         <span class="gh-row-sub">${esc(run.workflow)} · ${esc(run.branch)} · ${esc(run.event)}${agoPart(run.created_at)}</span>
       </span>
-      <span class="gh-row-side">${done}</span>`);
+      <span class="gh-row-side">${side}</span>`)}
+      ${run.id ? `<button type="button" class="icon-button gh-run-more${open ? " open" : ""}" data-run-menu="${esc(key)}"
+        data-repo="${esc(repo)}" data-run="${esc(run.id)}" data-failed="${run.conclusion === "failure" ? "1" : ""}"
+        data-url="${esc(run.url)}" title="Re-run…" aria-label="Re-run ${esc(run.title)}" aria-haspopup="menu"
+        aria-expanded="${open}">${ico("more")}</button>` : ""}</div>`;
   }
 
   function releaseRow(rel) {
@@ -245,7 +258,7 @@
   }
 
   const ROW = {
-    pull_requests: (repo, r) => prRow(repo, r), issues: (_repo, r) => issueRow(r), runs: (_repo, r) => runRow(r),
+    pull_requests: (repo, r) => prRow(repo, r), issues: (_repo, r) => issueRow(r), runs: (repo, r) => runRow(repo, r),
     releases: (_repo, r) => releaseRow(r), tags: (_repo, r) => tagRow(r), branches: (_repo, r) => branchRow(r),
   };
   const EMPTY = {
@@ -375,7 +388,7 @@
       <input class="field gh-search" id="gh-search" type="search" placeholder="Search" value="${esc(page.filter)}" autocomplete="off"
         spellcheck="false" aria-label="Search" title="Search titles, branches, authors and states like failing or draft (⌘K)">
     </div>`;
-    const error = (page.pinError ? errorCard(page.pinError) : "") + (page.error ? errorCard(page.error) : "");
+    const error = [page.pinError, page.actionError, page.error].filter(Boolean).map((e) => errorCard(e)).join("");
     const repos = listedRepos().filter((p) => rowCount(p.name, page.tab) !== 0);
     let list;
     if (!repos.length) {
@@ -665,8 +678,108 @@
     }
   }
 
-  /* Shared by both views: fold rows and PR rows. */
+  /* The run menu floats on <body>: both views repaint the panel. */
+  function runMenuEl() {
+    let menu = document.getElementById("gh-run-menu");
+    if (!menu) {
+      menu = document.createElement("div");
+      menu.id = "gh-run-menu";
+      menu.className = "gh-menu";
+      menu.setAttribute("role", "menu");
+      menu.hidden = true;
+      document.body.appendChild(menu);
+    }
+    return menu;
+  }
+
+  function closeRunMenu(refocus = false) {
+    const m = page.runMenu;
+    if (!m) return;
+    page.runMenu = null;
+    runMenuEl().hidden = true;
+    const btn = document.querySelector(`[data-run-menu="${CSS.escape(m.key)}"]`);
+    if (btn) { btn.classList.remove("open"); btn.setAttribute("aria-expanded", "false"); if (refocus) btn.focus(); }
+  }
+
+  function openRunMenu(btn) {
+    const key = btn.dataset.runMenu;
+    if (page.runMenu && page.runMenu.key === key) return closeRunMenu(true);
+    closeRunMenu();
+    page.runMenu = { key, repo: btn.dataset.repo, run: btn.dataset.run, failed: !!btn.dataset.failed, url: btn.dataset.url };
+    btn.classList.add("open");
+    btn.setAttribute("aria-expanded", "true");
+    const menu = runMenuEl();
+    const busy = page.rerunning.has(key);
+    menu.innerHTML = `${page.runMenu.failed ? `<button type="button" role="menuitem" data-rerun="failed"${busy ? " disabled" : ""}>${ico("rerun")}<span>Re-run failed jobs</span></button>` : ""}
+      <button type="button" role="menuitem" data-rerun="all"${busy ? " disabled" : ""}>${ico("rerun")}<span>Re-run all jobs</span></button>
+      <div class="gh-menu-divider" role="separator"></div>
+      <a role="menuitem" href="${esc(page.runMenu.url)}" target="_blank" rel="noopener">${ico("external")}<span>Open on GitHub</span></a>`;
+    menu.hidden = false;
+    placeRunMenu();
+    const m = page.runMenu;
+    for (const item of menu.querySelectorAll("[data-rerun]")) item.onclick = () => rerun(m, item.dataset.rerun === "failed");
+    menu.querySelector("a").onclick = () => closeRunMenu();
+    const first = menu.querySelector("[role=menuitem]:not([disabled])");
+    if (first) first.focus();
+    // A menu's keys: arrows move between items, Home and End jump.
+    menu.onkeydown = (e) => {
+      const items = [...menu.querySelectorAll("[role=menuitem]:not([disabled])")];
+      const at = items.indexOf(document.activeElement);
+      const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1 }[e.key];
+      if (to === undefined || !items.length) return;
+      e.preventDefault();
+      items[(to + items.length) % items.length].focus();
+    };
+  }
+
+  function placeRunMenu() {
+    const m = page.runMenu;
+    const menu = document.getElementById("gh-run-menu");
+    const btn = m && document.querySelector(`[data-run-menu="${CSS.escape(m.key)}"]`);
+    if (!menu || menu.hidden) return;
+    if (!btn) return closeRunMenu();
+    const r = btn.getBoundingClientRect();
+    const below = r.bottom + 4 + menu.offsetHeight <= window.innerHeight;
+    menu.style.top = `${Math.round(below ? r.bottom + 4 : r.top - 4 - menu.offsetHeight)}px`;
+    menu.style.left = `${Math.round(Math.max(8, Math.min(r.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 8)))}px`;
+  }
+
+  /* The view on screen, whichever it is, repainted in place. */
+  function repaintView() {
+    const repo = GhUI.hashParams().get("repo");
+    if (repo && page.focus && page.focus.repo === repo && page.focus.data) GhUI.keepFocus("gh-search", paintFocus);
+    else if (onDashboard()) GhUI.keepFocus("gh-search", paintDashboard);
+  }
+
+  /* GitHubModel.rerunRun: success only makes the next read fresh (the
+   * hub dropped the repo's cache); the row flips on GitHub's schedule. */
+  async function rerun(m, failedOnly) {
+    closeRunMenu(true);
+    if (page.rerunning.has(m.key)) return;
+    page.rerunning.add(m.key);
+    page.actionError = null;
+    repaintView();
+    const { status, data } = await GhUI.post("/v1/app/repositories/rerun",
+      { repo: m.repo, run: Number(m.run), failed: failedOnly });
+    page.rerunning.delete(m.key);
+    if (status === 200 && data) {
+      const repo = GhUI.hashParams().get("repo");
+      if (repo && page.focus && page.focus.repo === repo) return renderFocus(repo);
+      if (onDashboard()) return renderDashboard();
+      return;
+    }
+    page.actionError = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked."
+      : GhUI.failMessage(status, data);
+    repaintView();
+  }
+
+  /* Shared by both views: fold rows, PR rows and run menus. */
   function bindRows(root, repaint) {
+    for (const btn of root.querySelectorAll("[data-run-menu]")) {
+      btn.onclick = (e) => { e.stopPropagation(); openRunMenu(btn); };
+    }
+    // A repaint redrew the button the open menu hangs from.
+    if (page.runMenu) placeRunMenu();
     for (const btn of root.querySelectorAll("[data-expand]")) {
       btn.onclick = () => {
         const key = btn.dataset.expand;
@@ -826,7 +939,7 @@
           <input class="field gh-search" id="gh-search" type="search" placeholder="Filter by title, branch, tag…"
             value="${esc(f.filter)}" autocomplete="off" spellcheck="false" aria-label="Filter">
         </div>
-        ${f.error ? errorCard(f.error) : ""}
+        ${page.actionError ? errorCard(page.actionError) : ""}${f.error ? errorCard(f.error) : ""}
         <div class="gh-box"><div class="gh-surface last">${surfaceHtml(f.repo, f.tab, f.data.surfaces, {
           query: f.filter.trim(), unfiltered: false,
           window: { shown: f.shown[key] || BATCH, fetching: f.fetching.has(key),
@@ -1314,8 +1427,14 @@
     }
   }
 
-  window.addEventListener("resize", () => { if (page.managing) placeManager(); });
-  document.addEventListener("scroll", () => { if (page.managing) placeManager(); }, true);
+  window.addEventListener("resize", () => { if (page.managing) placeManager(); if (page.runMenu) placeRunMenu(); });
+  document.addEventListener("scroll", () => { if (page.managing) placeManager(); if (page.runMenu) placeRunMenu(); }, true);
+  document.addEventListener("click", (e) => {
+    if (page.runMenu && !(e.target.closest && e.target.closest("#gh-run-menu"))) closeRunMenu();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && page.runMenu) { e.stopPropagation(); closeRunMenu(true); }
+  }, true);
 
   /* The gear popover closes on a click outside it or on Escape. */
   document.addEventListener("click", (e) => {
@@ -1346,6 +1465,8 @@
   window.addEventListener("hashchange", () => {
     const here = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
     if (here !== "repositories") closeSheets();
+    closeRunMenu();
+    page.actionError = null;
   });
 
   registerPage("repositories", render);

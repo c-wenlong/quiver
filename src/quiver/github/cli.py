@@ -1467,6 +1467,16 @@ def _cmd_run(rest: list[str], json_view: bool) -> int:
     return _finish(env, results, opts, json_view, _render_run_table)
 
 
+def rerun_run(repo: str, run_id: str, failed_only: bool) -> gh.GhResult:
+    """``gh run rerun <id> --repo <repo> [--failed]``: the one re-run
+    call, shared by ``swe gh run rerun`` and the web app's Actions rows.
+    ``run_id`` must be digits."""
+    args = ["run", "rerun", run_id, "--repo", repo]
+    if failed_only:
+        args.append("--failed")
+    return gh.run_gh(args, timeout=60)
+
+
 def _cmd_run_rerun(run_id: str, opts: dict, json_view: bool) -> int:
     err = error_stream(json_view)
     if not run_id.isdigit():
@@ -1487,10 +1497,7 @@ def _cmd_run_rerun(run_id: str, opts: dict, json_view: bool) -> int:
             emit({**_env_emit(env), "repo": None, "run": int(run_id),
                   "rerun": False, "error": res_err})
         return 1
-    args = ["run", "rerun", run_id, "--repo", repo]
-    if opts["failed"]:
-        args.append("--failed")
-    result = gh.run_gh(args, timeout=60)
+    result = rerun_run(repo, run_id, bool(opts["failed"]))
     if result.status != "ok":
         msg = result.error or result.status
         if json_view:

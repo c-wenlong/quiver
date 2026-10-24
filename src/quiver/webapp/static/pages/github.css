@@ -331,3 +331,28 @@ dialog.gh-add-sheet { width: min(520px, calc(100vw - 32px)); }
   .gh-rail-row.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
   .gh-rail-row.drop-after { box-shadow: inset -2px 0 0 var(--accent); }
 }
+
+/* Actions rows: the link plus a ⋯ button for Re-run (the app's context
+ * menu), shown on hover or focus, always on touch screens. */
+.gh-run { display: flex; align-items: center; border-top: 1px solid var(--row-divider); }
+.gh-surface > .gh-run:first-child { border-top: 0; }
+.gh-run > .gh-row { flex: 1; min-width: 0; border-top: 0; }
+.gh-run-more { width: 30px; height: 30px; flex: none; margin-right: 6px; opacity: 0; transition: opacity .15s; }
+.gh-run:hover .gh-run-more, .gh-run-more:focus-visible, .gh-run-more.open { opacity: 1; }
+.gh-run-more .gh-ico { width: 15px; height: 15px; }
+@media (hover: none) { .gh-run-more { opacity: 1; } }
+.gh-menu {
+  position: fixed; z-index: 30; min-width: 190px; padding: 4px; display: flex; flex-direction: column;
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.2);
+}
+.gh-menu[hidden] { display: none; }
+.gh-menu > button, .gh-menu > a {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 0; border-radius: 6px; background: transparent;
+  color: var(--text-primary); font-size: 13px; text-align: left; text-decoration: none; cursor: pointer;
+}
+.gh-menu > button:hover:not(:disabled), .gh-menu > a:hover, .gh-menu > :focus-visible { background: var(--hover); }
+.gh-menu > button:disabled { opacity: .5; cursor: default; }
+.gh-menu .gh-ico { width: 14px; height: 14px; color: var(--text-secondary); }
+.gh-menu-divider { border-top: 1px solid var(--row-divider); margin: 4px 2px; }
+.gh-run:hover { background: var(--row-hover); }
+.gh-run > .gh-row:hover { background: transparent; }
