@@ -138,7 +138,11 @@ The CLI side of remote also speaks `--json`:
 - `Harness`: `state` is `active` | `starred` | `archived`; `rate_limit` is
   null unless `--usage` and starred; `sessions_100d` decodes through the
   custom key `sessions100D`. `archived` carries `reason`, `archived_at`,
-  `usage`, or is null.
+  `usage`, or is null. `no_reading` says why `rate_limit` is null:
+  `signed_out` (no credential swe can read with), `error` (credentials,
+  but the fetch failed), or null with a reading, without `--usage`, or
+  when swe can't tell. Readers that predate it keep showing "no reading";
+  treat any other value as null.
 - `RateLimit`: `status`, `used_percent`, `remaining_percent`,
   `limit_reached`, `reset_at`, `window`, `window_seconds`, `plan_type`,
   `remaining_units`, `total_units`, `fetched_at`, `windows`,

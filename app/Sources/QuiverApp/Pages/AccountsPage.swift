@@ -600,7 +600,11 @@ private struct HarnessAccountCard: View {
                         }
                     } else {
                         switch row.usageNote {
-                        case .signIn?: Text("Sign in to see usage")
+                        case .signIn?:
+                            // Extra accounts always have Sign in in the menu.
+                            Text(row.profile != nil || HarnessAccess.loginCommand(for: row.name) != nil
+                                 ? "Not signed in. Use Sign in from the menu." : "Not signed in. Sign in from \(ownName).")
+                        case .fetchFailed?: Text("Couldn't fetch usage. Refresh to try again.")
                         case .updateSwe?: Text("Update swe to read this account's usage")
                         case nil: Text(noLimitReason)
                         }

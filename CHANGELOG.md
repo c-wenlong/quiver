@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   switch: indexing progress, "Synced: N sessions, M messages", files
   behind or failed, and the last pass's error if it failed.
 
+- **Web app: the Sessions search box matches what was said.** Typing in
+  the box still filters titles, folders and models at once; after a
+  short pause it also asks the hub's `/v1/search`, so a session whose
+  transcript holds the words stays listed, with the matching snippet
+  under its row and the words marked. A hub with no search index says
+  it is matching titles and details only, and how to turn the index on.
+
 - **Session search without the Mac app: `swe session index`.** swe now
   writes the transcript search index itself, the same
   `~/.quiver/data/search/search.sqlite` file and schema the Quiver app
@@ -449,6 +456,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   script in `/app/pages.js` is compiled and run on its own, so a page
   that fails to parse or throws while loading is logged in the console
   and skipped; the pages around it still load.
+
+- **Accounts: "Not signed in" and "Couldn't fetch" instead of "No reading
+  yet".** A starred harness with no usage reading now says why. swe
+  checks for the credential its fetcher reads after an empty fetch, and
+  `swe list --usage --json` and `/v1/usage` rows carry it as
+  `no_reading` (`signed_out` or `error`). The web app's Accounts page
+  names the machine and the login command (`codex login`, `cursor-agent
+  login`, ...), and the Mac app's swe-fed cards say "Not signed in" or
+  "Couldn't fetch usage" too, extra accounts included.
+- **Cursor usage on Linux.** swe now reads the session `cursor-agent`
+  keeps in `~/.config/cursor/auth.json`, so a machine signed in only
+  through the CLI shows Cursor's limits.
 
 ### Added
 
