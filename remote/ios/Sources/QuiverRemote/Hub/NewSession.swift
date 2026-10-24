@@ -77,7 +77,14 @@ final class LaunchFlow {
 
     private(set) var phase: Phase = .idle
 
-    var busy: Bool { phase == .starting || phase == .waiting }
+    /// Starting, waiting, or started and about to open the chat: Start
+    /// stays off the whole time, so one tap can't launch twice.
+    var busy: Bool {
+        switch phase {
+        case .starting, .waiting, .started: true
+        default: false
+        }
+    }
 
     /// Returns the new session's key, or nil with `phase` saying why.
     /// `attempts` polls, `interval` apart: a cold Claude start takes a
@@ -86,6 +93,7 @@ final class LaunchFlow {
              fetch: (String) async throws -> LaunchStatus,
              attempts: Int = 90,
              interval: Duration = .seconds(1)) async -> String? {
+        guard !busy else { return nil }
         phase = .starting
         let accepted: LaunchStatus
         do {
@@ -129,6 +137,9 @@ final class LaunchFlow {
             : "It started but hasn't shown up yet. It'll appear in Sessions when it does.")
         return nil
     }
+
+    /// Started: the sheet is refreshing the list before it opens the chat.
+    var opening: Bool { if case .started = phase { true } else { false } }
 
     func reset() { phase = .idle }
 }

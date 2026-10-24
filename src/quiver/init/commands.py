@@ -227,7 +227,8 @@ def _instruction_filename(label: str) -> str | None:
 
 
 def _pick_new_harnesses(
-    new: list[LinkStatus], home: Path, yes: bool, evidence_only: bool = False
+    new: list[LinkStatus], home: Path, yes: bool, evidence_only: bool = False,
+    ask: bool = True,
 ) -> tuple[dict[str, tuple[Path, str | None]], dict[str, Path]] | None:
     """Split ``new`` into (managed, declined); None when cancelled.
 
@@ -239,7 +240,9 @@ def _pick_new_harnesses(
     there to say so; it returns two empty dicts and the roots wait,
     unlinked, for an interactive run. In a terminal the multiselect
     decides, pre-ticking only roots with harness evidence. A cancelled
-    picker leaves the registry alone entirely.
+    picker leaves the registry alone entirely. ``ask=False`` is a run
+    with no terminal however stdin looks (the web app's Doctor page, run
+    on the hub's own thread), and says nothing about it.
     """
     if yes:
         return {s.label: (s.path, "AGENTS.md") for s in new}, {}
@@ -248,6 +251,8 @@ def _pick_new_harnesses(
             s.label: (s.path, "AGENTS.md")
             for s in new if has_harness_evidence(s.label)
         }, {}
+    if not ask:
+        return {}, {}
     if not _supported():
         names = ", ".join(s.label for s in new)
         print(c("dim", f"  not a terminal: left {len(new)} new skills "
@@ -338,13 +343,16 @@ class InitRun:
 
 def run_init(home: Path, *, check_only: bool = False, force: bool = False,
              migrate: bool = False, yes: bool = False,
-             evidence_only: bool = False, quiet: bool = False) -> InitRun:
+             evidence_only: bool = False, quiet: bool = False,
+             ask: bool = True) -> InitRun:
     """Build the layout and link every harness; the body of `swe init`.
 
     ``evidence_only`` registers only the new skills folders whose owner has
     a command on PATH or a catalog entry and leaves the rest waiting, which
     is what `swe setup --apply` wants with nobody there to ask. ``quiet``
     keeps it from printing, for callers that emit one JSON document.
+    ``ask=False`` never opens the picker: new skills folders wait, as on a
+    run without a terminal.
     Raises LinkIgnoreError when ~/.quiver/.linkignore can't be read.
     """
     patterns = load_linkignore(home)
@@ -394,7 +402,7 @@ def run_init(home: Path, *, check_only: bool = False, force: bool = False,
                 print(c("dim", "  harness.json not migrated yet, "
                               "run swe list once, then swe init again"))
         else:
-            decided = _pick_new_harnesses(new, home, yes, evidence_only)
+            decided = _pick_new_harnesses(new, home, yes, evidence_only, ask)
             if decided is not None:
                 managed, declined = decided
                 held -= set(managed) | set(declined)

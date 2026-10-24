@@ -1,5 +1,6 @@
-/* Skills: a port of the Mac app's SkillsPage and SkillDetailView. Read
- * only: linking, unlinking, New skill and frontmatter edits stay in
+/* Skills: a port of the Mac app's SkillsPage and SkillDetailView. The
+ * Harness links popover links, unlinks and links all, through
+ * POST /v1/app/skills/<action>; New skill and frontmatter edits stay in
  * `swe skills` and the Mac app. The list is #/skills; one skill is
  * #/skills?skill=<its folder>. Data: /v1/app/skills (pages/skills.py). */
 "use strict";
@@ -7,6 +8,9 @@
 const skillsPage = {
   data: null, seq: 0, query: "", harness: "", source: "", showsAll: false,
   links: null,            // null closed, "" the chip list, else a root's path
+  // Writes: folders waiting on the hub, the confirm on show ({kind, path}
+  // or {kind: "link_all", paths}), the last failure and Link all's summary.
+  busy: new Set(), confirm: null, actionError: null, summary: null,
   detail: {},             // folder -> detail payload
   fmShowsAll: false, treeShowsAll: false, open: new Set(),
 };
@@ -31,10 +35,10 @@ function rootExplanation(root) {
   const d = root.detail || "";
   switch (root.state) {
     case "linked": return root.archived
-      ? "Reads the shared skills. Archived in swe, so swe init won't relink it if you unlink it."
+      ? "Reads the shared skills. Archived in swe, so swe init won't relink it if you unlink it, but you can link it here."
       : "Reads the shared skills in ~/.quiver/skills.";
     case "create": return root.archived
-      ? "No skills folder yet. Archived in swe, so swe init leaves it alone."
+      ? "No skills folder yet. Archived in swe, so swe init leaves it alone; linking here creates it."
       : "No skills folder yet. Linking creates it.";
     case "relink": return d ? `Points somewhere else: ${d.replace("points at ", "")}.` : "Points somewhere else.";
     case "absorb": return d === "empty" ? "An empty folder. Linking replaces it."
@@ -96,11 +100,51 @@ function skillsLinkDot(link) {
   return `<span class="sk-dot ${link}" aria-hidden="true"></span>`;
 }
 
-function skillsChip(name, link, { compact = false, root = "" } = {}) {
+function skillsChip(name, link, { compact = false, root = "", busy = false } = {}) {
   const tag = root ? "button" : "span";
   const data = root ? ` data-root="${esc(root)}" type="button"` : "";
+  const dot = busy ? '<span class="sk-spin" aria-label="Working"></span>' : skillsLinkDot(link);
   return `<${tag} class="sk-chip ${link}${compact ? " compact" : ""}"${data}
-    title="${esc(Fmt.harnessName(name))}: ${LINK_TITLE[link].toLowerCase()}">${skillsLinkDot(link)}${skillsMark(name, compact ? "logo logo-sm" : "logo")}</${tag}>`;
+    title="${esc(Fmt.harnessName(name))}: ${LINK_TITLE[link].toLowerCase()}">${dot}${skillsMark(name, compact ? "logo logo-sm" : "logo")}</${tag}>`;
+}
+
+/* SkillRoot.linkNeedsForce */
+const rootNeedsForce = (root) => root.state === "absorb" && root.detail !== "empty";
+
+/* SkillsModel.linkAllTargets: loose folders that cost nothing to point at
+ * the shared root, and the ones a person should look at. */
+function linkAllTargets(roots) {
+  const link = [], skipped = [];
+  for (const r of roots) {
+    const l = rootLink(r);
+    if (l === "notLinked" && !r.archived && !rootNeedsForce(r)) link.push(r);
+    else if (l === "notLinked" && !r.archived) skipped.push(r);
+    else if (l === "blocked" && (r.state === "keep" || r.state === "conflict")) skipped.push(r);
+  }
+  return { link, skipped };
+}
+
+/* What a confirm says will happen, in full, before anything moves. */
+function skillsConfirmText(c, d) {
+  const shared = skillsPath(d.shared_dir, d.home);
+  if (c.kind === "link_all") {
+    const roots = c.paths.map((path) => d.harnesses.find((r) => r.path === path)).filter(Boolean);
+    const names = roots.map((r) => `${Fmt.harnessName(r.name)} (${skillsPath(r.path, d.home)})`).join(", ");
+    return `Points ${roots.length === 1 ? "this folder" : `these ${roots.length} folders`} at ${shared}: ${names}. Each one is missing, empty or a link elsewhere, so nothing is backed up or lost.`;
+  }
+  const root = d.harnesses.find((r) => r.path === c.path);
+  const path = skillsPath(root.path, d.home), name = Fmt.harnessName(root.name);
+  if (c.kind === "unlink") {
+    return `Removes the link at ${path}. ${name} stops loading the shared skills; nothing in ${shared} changes.`
+      + (root.archived ? " It's archived in swe, so swe init won't link it again." : "");
+  }
+  switch (root.state) {
+    case "create": return `Creates ${path} as a link to ${shared}, so ${name} loads every shared skill.`;
+    case "relink": return `Points ${path} at ${shared} instead of where it points now, so ${name} loads every shared skill.`;
+    default: return rootNeedsForce(root)
+      ? `Copies ${path} into ~/.quiver/backups, then replaces it with a link to ${shared}. The skills in it (${root.detail}) are all in the shared library already.`
+      : `Removes ${path}, which holds no files, and puts a link to ${shared} in its place.`;
+  }
 }
 
 /* ------------------------------------------------------------------ list */
@@ -108,6 +152,7 @@ function skillsChip(name, link, { compact = false, root = "" } = {}) {
 function renderSkills() {
   // The Harness links popover never stays open across a page change.
   skillsPage.links = null;
+  skillsPage.confirm = null;
   const q = new URLSearchParams((location.hash.split("?")[1]) || "");
   const path = q.get("skill");
   skillsPage.onDetail = !!path;
@@ -133,10 +178,15 @@ async function renderSkillsList() {
   paintSkills();
 }
 
+/* The payload of what is on screen: a skill's own on its detail page,
+ * so the header and the chips read the same link states. */
+function skillsShown() {
+  const p = skillsPage;
+  return (p.onDetail && p.headerData) || p.data || p.headerData;
+}
+
 function skillsHeader(busy) {
-  // The payload of what is on screen: a skill's own on its detail page,
-  // so the header and the chips read the same link states.
-  const p = skillsPage, d = (p.onDetail && p.headerData) || p.data || p.headerData;
+  const p = skillsPage, d = skillsShown();
   const where = d && d.machine ? d.machine : "the hub";
   let links = "";
   if (d) {
@@ -166,24 +216,61 @@ function skillsLinksPanel(d) {
     const link = rootLink(root);
     return `<div class="sk-popover" role="dialog" aria-label="${esc(Fmt.harnessName(root.name))}">
       <button class="sk-back-small" id="sk-links-back" type="button">‹ Harness links</button>
-      <div class="sk-root-head">${skillsMark(root.name)}<span class="name">${esc(Fmt.harnessName(root.name))}</span>
+      <div class="sk-root-head">${Fmt.logo(root.name).startsWith("<img") ? Fmt.logo(root.name) : ""}<span class="name">${esc(Fmt.harnessName(root.name))}</span>
         <span class="badge">${LINK_TITLE[link]}</span></div>
       <code class="sk-mono">${esc(skillsPath(root.path, d.home))}</code>
       <p class="sk-body">${esc(rootExplanation(root))}</p>
-      <p class="caption">Link or unlink it with <code>swe skills link</code> on the hub, or in the Mac app.</p>
+      ${skillsRootActions(root, d, link)}
     </div>`;
   }
+  const p = skillsPage, { link: targets } = linkAllTargets(roots);
+  const confirmAll = p.confirm && p.confirm.kind === "link_all" ? p.confirm : null;
+  let all = "";
+  if (confirmAll) {
+    all = skillsConfirm(confirmAll, d, `Link ${confirmAll.paths.length}`, p.busy.size > 0);
+  } else if (targets.length) {
+    all = `<div class="sk-actions"><button class="sk-button" type="button" id="sk-link-all"${p.busy.size ? " disabled" : ""}>Link all (${targets.length})</button></div>`;
+  }
   const body = roots.length
-    ? `<div class="sk-chips">${roots.map((r) => skillsChip(r.name, rootLink(r), { root: r.path })).join("")}</div>
+    ? `<div class="sk-chips">${roots.map((r) => skillsChip(r.name, rootLink(r), { root: r.path, busy: p.busy.has(r.path) })).join("")}</div>
        <div class="sk-legend">${["linked", "notLinked", "blocked"].map((l) =>
-         `<span>${skillsLinkDot(l)}${LINK_TITLE[l]}</span>`).join("")}<span class="muted">Click one for its folder.</span></div>`
+         `<span>${skillsLinkDot(l)}${LINK_TITLE[l]}</span>`).join("")}<span class="muted">Click one to link or unlink it.</span></div>
+       ${all}`
     : `<div class="sk-none"><span>No harness skills folders found. Register a harness first.</span>
        <a class="sk-button" href="#/harnesses">Open Harnesses</a></div>`;
   return `<div class="sk-popover" role="dialog" aria-label="Harness links">
     <div><div class="card-title">Harness links</div>
       <p class="caption">Each harness reads one skills folder. A linked folder points at ${esc(skillsPath(d.shared_dir, d.home))}, so every shared skill reaches it.</p></div>
     ${body}
+    ${p.summary ? `<p class="caption sk-summary">${esc(p.summary)}</p>` : ""}
+    ${p.actionError ? `<p class="error sk-popover-error" role="alert">${esc(p.actionError)}</p>` : ""}
   </div>`;
+}
+
+/* RootDetail's buttons: Unlink for a linked folder, Link to shared skills
+ * for one that isn't, nothing for a blocked one; each asks first. */
+function skillsRootActions(root, d, link) {
+  // One write at a time, as the hub runs them: a reply can then never
+  // land after a newer one and paint older states over it.
+  const p = skillsPage, busy = p.busy.size > 0;
+  const c = p.confirm && p.confirm.path === root.path ? p.confirm : null;
+  if (c) return skillsConfirm(c, d, c.kind === "unlink" ? "Unlink" : "Link", busy);
+  if (link === "linked") {
+    return `<div class="sk-actions"><button class="sk-button" type="button" data-sk-ask="unlink"${busy ? " disabled" : ""}>Unlink</button></div>`;
+  }
+  if (link === "notLinked") {
+    return `<div class="sk-actions"><button class="sk-button primary" type="button" data-sk-ask="link"${busy ? " disabled" : ""}>Link to shared skills</button></div>`;
+  }
+  return "";
+}
+
+function skillsConfirm(c, d, go, busy) {
+  return `<div class="sk-confirm" role="group" aria-label="Confirm">
+    <p class="sk-body">${esc(skillsConfirmText(c, d))}</p>
+    <div class="sk-actions">
+      <button class="sk-button" type="button" id="sk-confirm-cancel">Cancel</button>
+      <button class="sk-button primary" type="button" id="sk-confirm-go"${busy ? " disabled" : ""}>${esc(go)}</button>
+    </div></div>`;
 }
 
 function bindSkillsHeader() {
@@ -196,12 +283,26 @@ function bindSkillsHeader() {
     bindSkillsHeader();
   };
   const btn = document.getElementById("sk-links");
-  if (btn) btn.onclick = (e) => { e.stopPropagation(); p.links = p.links === null ? "" : null; repaintHeader(); };
+  if (btn) btn.onclick = (e) => { e.stopPropagation(); p.links = p.links === null ? "" : null; p.confirm = null; repaintHeader(); };
   const back = document.getElementById("sk-links-back");
-  if (back) back.onclick = (e) => { e.stopPropagation(); p.links = ""; repaintHeader(); };
+  if (back) back.onclick = (e) => { e.stopPropagation(); p.links = ""; p.confirm = null; repaintHeader(); };
   for (const chip of document.querySelectorAll(".sk-popover [data-root]")) {
-    chip.onclick = (e) => { e.stopPropagation(); p.links = chip.dataset.root; repaintHeader(); };
+    chip.onclick = (e) => { e.stopPropagation(); p.links = chip.dataset.root; p.confirm = null; repaintHeader(); };
   }
+  for (const ask of document.querySelectorAll(".sk-popover [data-sk-ask]")) {
+    ask.onclick = (e) => { e.stopPropagation(); p.confirm = { kind: ask.dataset.skAsk, path: p.links }; repaintHeader(); };
+  }
+  const all = document.getElementById("sk-link-all");
+  if (all) all.onclick = (e) => {
+    e.stopPropagation();
+    const d = skillsShown();
+    p.confirm = { kind: "link_all", paths: linkAllTargets(d.harnesses).link.map((r) => r.path) };
+    repaintHeader();
+  };
+  const cancel = document.getElementById("sk-confirm-cancel");
+  if (cancel) cancel.onclick = (e) => { e.stopPropagation(); p.confirm = null; repaintHeader(); };
+  const go = document.getElementById("sk-confirm-go");
+  if (go) go.onclick = (e) => { e.stopPropagation(); skillsWrite(p.confirm); };
   const pop = document.querySelector(".sk-popover");
   if (pop) pop.onclick = (e) => e.stopPropagation();
   if (!p.outsideBound) {
@@ -209,11 +310,128 @@ function bindSkillsHeader() {
     const close = () => {
       if (p.links === null) return;
       p.links = null;
+      p.confirm = null;
       repaintHeader();
     };
     document.addEventListener("click", () => { if (document.querySelector(".sk-links-wrap")) close(); });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape" && document.querySelector(".sk-popover")) close(); });
   }
+}
+
+/* ---------------------------------------------------------------- writes */
+
+const skillsOnRoute = () => /^#\/skills(\?|$)/.test(location.hash);
+const skillsRoutePath = () => new URLSearchParams(location.hash.split("?")[1] || "").get("skill");
+
+/* Link, Unlink or Link all, once its confirm is accepted. As the Mac
+ * app's RootDetail does, a folder's own action goes back to the chip
+ * list first, where its chip spins until the hub answers. */
+async function skillsWrite(c) {
+  const p = skillsPage, d = skillsShown();
+  if (!c || !d) return;
+  const skill = p.onDetail ? skillsRoutePath() : null;
+  let action, body, paths;
+  if (c.kind === "link_all") {
+    paths = c.paths;
+    action = "link_all";
+    body = { harnesses: paths };
+  } else {
+    const root = d.harnesses.find((r) => r.path === c.path);
+    if (!root) return;
+    paths = [root.path];
+    action = c.kind;
+    // The state and its detail as the confirm described them: an empty
+    // folder that fills with copies stays "absorb" but now needs a backup.
+    body = { harness: root.path, expect: root.state, expect_detail: root.detail || "" };
+  }
+  if (skill) body.skill = skill;
+  if (p.busy.size) return;
+  p.writes = (p.writes || 0) + 1;
+  p.confirm = null;
+  if (c.kind !== "link_all") p.links = "";
+  p.actionError = null;
+  for (const x of paths) p.busy.add(x);
+  skillsRepaint();
+  const { status, data } = await apiPost(`/v1/app/skills/${action}`, body);
+  for (const x of paths) p.busy.delete(x);
+  if (status === 401) {
+    if (skillsOnRoute()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    return;
+  }
+  if (status !== 200 || !data) {
+    p.actionError = (data && data.error && data.error.message)
+      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    // A failed change may still have moved something: read the list again.
+    return skillsReload();
+  }
+  if (action === "link_all") p.summary = skillsSummary(data.result);
+  skillsApply(data, data.skill);
+  skillsRepaint();
+}
+
+/* SkillsModel.linkAll's summary caption. */
+function skillsSummary(r) {
+  const n = r.linked.length, parts = [];
+  if (n > 0 || !r.failed.length) parts.push(`Linked ${n} ${n === 1 ? "harness" : "harnesses"}.`);
+  if (r.failed.length) parts.push(r.failed.map((f) => `${f.name}: ${f.message}`).join("; "));
+  if (r.skipped.length) {
+    const names = r.skipped.map((s) => `${s.name} (${rootExplanation(s)})`).join(", ");
+    parts.push(`${r.skipped.length} ${r.skipped.length === 1 ? "needs" : "need"} a look: ${names}`);
+  }
+  return parts.join(" ");
+}
+
+/* Takes a list payload read after a write as the page's own: the list,
+ * and for the skill whose detail is open, its row and the folders. Any
+ * read still in flight began before the write, so it is dropped. */
+function skillsApply(list, skillRow) {
+  const p = skillsPage, open = p.onDetail ? skillsRoutePath() : null;
+  p.seq++;
+  p.data = {
+    machine: list.machine, home: list.home, shared_dir: list.shared_dir, harnesses: list.harnesses,
+    skills: list.skills, plugin_skill_count: list.plugin_skill_count, catalog_error: list.catalog_error,
+  };
+  const cur = open && p.detail[open];
+  // The reply's row is for the skill open when the write began; another
+  // may be open now, so take that one's own row from the list.
+  const row = skillRow && skillRow.path === open ? skillRow
+    : open ? list.skills.find((s) => s.path === open) : null;
+  p.detail = {};
+  if (cur && row) {
+    p.detail[open] = { ...cur, skill: row, harnesses: list.harnesses, shared_dir: list.shared_dir };
+    p.headerData = p.detail[open];
+  } else if (p.headerData) {
+    p.headerData = { ...p.headerData, harnesses: list.harnesses, shared_dir: list.shared_dir };
+  }
+}
+
+async function skillsReload() {
+  const writes = skillsPage.writes;
+  const { status, data } = await api("/v1/app/skills");
+  // A write started meanwhile answers with newer states than this read.
+  if (writes !== skillsPage.writes) return;
+  if (status === 200 && data) skillsApply(data, null);
+  skillsRepaint();
+}
+
+/* Paints whatever the Skills route shows now from the page's data,
+ * keeping the popover as it is; another page is left alone. */
+function skillsRepaint() {
+  if (!skillsOnRoute()) return;
+  const p = skillsPage, path = skillsRoutePath();
+  if (path) {
+    if (p.detail[path]) paintSkillDetail(p.detail[path]);
+    else renderSkillDetail(path);
+  } else if (p.data) {
+    paintSkills();
+  }
+}
+
+/* The page's own error card for the last failed write (the Mac app's
+ * ErrorCard over the list). */
+function skillsActionCard() {
+  const e = skillsPage.actionError;
+  return e ? `<div class="card sk-action-error"><p class="error" role="alert">${esc(e)}</p></div>` : "";
 }
 
 /* Skills that ship inside a plugin move to the Plugins page, but only
@@ -258,6 +476,7 @@ function paintSkills() {
       <span class="go">${moved === 1 ? "see it under Plugins" : "see them under Plugins"}</span><span aria-hidden="true">→</span></a>` : "";
   document.getElementById("panel").innerHTML = `<div class="page">${skillsHeader(false)}
     <div class="stack">
+      ${skillsActionCard()}
       <div class="filters">
         <select class="field" id="sk-harness" aria-label="Harness">${options(
           [["", "All harnesses"], ...harnesses.map((h) => [h, Fmt.harnessName(h)])], p.harness)}</select>
@@ -402,6 +621,7 @@ function paintSkillDetail(d) {
   }
   document.getElementById("panel").innerHTML = `<div class="page">${skillsHeader(false)}${skillsBack()}
     <div class="stack">
+      ${skillsActionCard()}
       <div class="sk-lock">${skillsLockIcon()}<span>${esc(lock)}</span></div>
       ${header}${fm}${skillsContents(d)}
     </div>

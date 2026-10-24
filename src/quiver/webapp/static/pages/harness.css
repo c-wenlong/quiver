@@ -30,3 +30,54 @@
   .harness-actions { grid-column: 2; flex-direction: row; justify-content: flex-start; }
   .harness-archive { grid-column: 1 / -1; }
 }
+
+/* Header buttons, the row editor's entry, and the three sheets (the
+ * <dialog id="harness-sheet"> manage.js builds): editor, Detect, Add. */
+.harness-add { display: inline-flex; align-items: center; gap: 6px; }
+.harness-add svg { width: 14px; height: 14px; }
+.page-actions .harness-button { height: 36px; border-radius: 10px; }
+.harness-none { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.harness-none .empty { margin: 0; }
+.harness-row { cursor: pointer; }
+.harness-row:hover { background: var(--row-hover); }
+.harness-open {
+  border: 0; background: transparent; padding: 0; margin: 0; font: inherit; font-size: inherit;
+  font-weight: inherit; color: inherit; text-align: left; cursor: pointer;
+}
+.harness-open:hover { text-decoration: underline; text-underline-offset: 2px; }
+.harness-open:focus-visible { outline: 2px solid var(--accent-fill); outline-offset: 2px; border-radius: 4px; }
+dialog.harness-sheet { width: min(560px, calc(100vw - 32px)); background: var(--panel); }
+dialog.harness-sheet[data-kind="detect"] { width: min(460px, calc(100vw - 32px)); }
+dialog.harness-sheet[data-kind="add"] { width: min(420px, calc(100vw - 32px)); }
+.harness-form { gap: 16px; }
+.harness-sheet-head { display: flex; flex-direction: column; gap: 4px; }
+.harness-sheet-head .sheet-title { font-size: 20px; letter-spacing: -0.5px; }
+.harness-sheet .sheet-title .logo { width: 20px; height: 20px; }
+.harness-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.harness-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.harness-label { font-size: 12px; font-weight: 500; color: var(--text-label); }
+.harness-hint:empty { display: none; }
+.harness-hint.problem { color: var(--danger-text); }
+.harness-input { width: 100%; }
+.harness-input.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; }
+textarea.harness-input { height: auto; padding: 8px 10px; resize: vertical; line-height: 1.45; }
+.harness-input:focus-visible { outline: 2px solid var(--accent-fill); outline-offset: 1px; }
+.harness-input:disabled { opacity: .6; }
+.harness-sheet-error { margin: 0; user-select: text; }
+.harness-sheet-text { margin: 0; font-size: 13px; color: var(--text-secondary); }
+.harness-detect-list { display: flex; flex-direction: column; gap: 6px; max-height: 360px; overflow-y: auto; }
+.harness-detect-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; cursor: pointer; }
+.harness-detect-row input { margin: 0; accent-color: var(--accent-fill); }
+.harness-detect-name { color: var(--text-primary); }
+.harness-detect-path { color: var(--text-muted); word-break: break-all; }
+.harness-scanning { display: flex; align-items: center; gap: 8px; margin: 0; }
+.harness-spinner {
+  width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--border-strong);
+  border-top-color: var(--text-secondary); animation: spin 1s linear infinite; flex: none;
+}
+@media (max-width: 720px) {
+  .harness-pair { grid-template-columns: minmax(0, 1fr); }
+  /* Three header buttons don't fit beside the title on a phone: they go under it. */
+  .page-header:has(.harness-add) { flex-wrap: wrap; }
+  .page-header:has(.harness-add) .titles { flex-basis: 100%; }
+}

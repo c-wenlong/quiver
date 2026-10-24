@@ -16,6 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a look. The page opens on a "Set up this machine" card while the hub
   has no shared AGENTS.md. The notifications step stays in the Mac app.
 
+- **Web app: Doctor, and the Harnesses page's editor, Detect and Add.**
+  `#/doctor` shows the `swe doctor` report as the Mac app's Settings ›
+  Doctor does: each finding with its fix command, a copy button, and Run
+  where swe can make the fix itself (`swe setup --apply`, `swe init`,
+  `swe harness discover --apply`). Run asks first, saying what it will do
+  on which machine; the hub runs the fix the finding names, never a
+  command sent from the browser. On Harnesses, a click on a row opens the
+  app's editor (name, command, description, version, aliases, tags,
+  notes; an alias another harness uses is refused), Detect scans the hub
+  for coding CLIs and registers the ticked ones, and Add harness adds a
+  custom one without overwriting anything.
+
 - **Web app: Settings, with remote pairing.** The Settings page from the
   Mac app, for the hub machine. Integrations › Remote shows the hub,
   the paired devices with "This device" marked and a Revoke that asks
@@ -29,6 +41,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Set up this machine" and Doctor link to their pages. Rows that set
   up the Mac app itself (Dock, login item, terminal, notifications,
   updates, Keychain services) are greyed out as "Mac app only".
+
+- **Remote iPhone app: type @ to mention a file.** Typing `@` in the
+  prompt box opens a list of files and folders from the session's
+  working folder just above it, filtered as you type. Tapping a file
+  puts `@path ` in the message; tapping a folder puts `@folder/` and
+  lists what's inside. A space, a tap in the transcript, or deleting the
+  `@` closes it. Sessions on a satellite say file search isn't available
+  for that machine yet. A path with spaces goes in quoted,
+  `@"My Documents/notes.txt"`, as Claude Code writes it. On iOS 17 the
+  menu follows the end of the text rather than the caret.
+
+- **Remote iPhone app: swipe a session to attach, detach, pin, rename or
+  fork it.** Swipe right on a Sessions row to attach it, or to detach
+  one you hold; swipe left to pin, rename or fork it. A full swipe runs
+  the first action, and a long press shows them all in a menu. A
+  session that looks idle detaches once the hub sees it idle, with Undo;
+  a working one asks whether to detach when the turn ends, keep it
+  running in tmux, or detach now.
+  Pinned sessions sit in a Pinned section at the top. Fork asks for the
+  new session's first message and opens its chat once it starts.
+
+- **Remote iPhone app: type / for the session's commands.** A `/` at
+  the start of the prompt box opens the commands this session's harness
+  will run, from the hub's per-session list: each shows its name, a
+  short description, any argument it takes and where it comes from
+  (Built-in, Project, User, Skill, Plugin). Typing filters by name, and
+  tapping one puts `/name ` (or a Codex skill's `$name `) in the box,
+  ready for an argument. The list loads once per chat open and reloads
+  on a pull. A harness with no commands says so, and a satellite
+  session notes that its custom commands aren't available yet.
 
 - **Web app: your own devices open it without pairing.** A browser on a
   device signed in to the hub owner's Tailscale account loads `/app/`
@@ -156,6 +198,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and skipped; the pages around it still load.
 
 ### Added
+
+- **Web app: link and unlink harness skills folders.** The Skills page's
+  Harness links popover now does what the Mac app's does: a folder opens
+  with Link to shared skills or Unlink, and Link all (N) links every loose
+  folder at once, through the same functions as `swe skills link|unlink`.
+  Each asks first and says exactly what will happen (a folder of shared
+  copies is backed up before it is replaced). A folder holding skills that
+  exist nowhere else, a file in the way, or one that changed since the
+  page read it is refused with the reason; Link all leaves archived
+  harnesses alone.
+
+- **Web app: Sync on the MCP servers page.** A server's sheet copies it
+  from one harness (or the Quiver hub) to the harnesses you switch on, as
+  the Mac app's Sync does: Preview shows, per harness, the file it writes,
+  the command line it gets and the env var and header names it gains,
+  loses or changes (values never leave the hub), and Sync asks inline,
+  naming every file, before writing exactly the previewed plan. It runs
+  `swe mcp sync`'s own code in process, refuses with 409 if any config
+  changed since the preview, and refuses a hub server whose `${NAME}` has
+  no value rather than writing it literally.
 
 - **Web app: Fix and Fix all on the Plugins page's Health tab.** Each
   finding swe can fix has a Fix button that opens an inline confirm with

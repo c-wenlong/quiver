@@ -208,7 +208,7 @@ def cmd_setup(args):
                   or preview_error)
         return 1 if failed else 0
 
-    new_harness, new_mcp, skill_hints = _discover(home)
+    new_harness, new_mcp, skill_hints = _setup_findings(home)
     actionable_skills = _actionable(skill_hints)
 
     print(f"\n{c('bold', 'quiver setup')}\n")
@@ -317,9 +317,9 @@ def cmd_setup(args):
     return 0
 
 
-def _discover(home: Path):
-    """What setup would register, import and link: high-confidence new
-    harnesses, MCP servers outside the hub, and every skills-root hint."""
+def _setup_findings(home: Path) -> tuple[list, list, list]:
+    """What setup would apply: (new high-confidence harnesses, new MCP
+    servers, skills-root hints)."""
     harness_findings = discover_harnesses()
     new_harness = [f for f in harness_findings if f.status == "new" and f.confidence == "high"]
     mcp_findings = discover_mcp_servers()
@@ -338,7 +338,7 @@ def _setup_data(home: Path, apply: bool, adopt: Path | None = None,
     error when discovery itself failed (the document then carries it as
     data, so the caller still gets a well-formed reply)."""
     try:
-        new_harness, new_mcp, skill_hints = _discover(home)
+        new_harness, new_mcp, skill_hints = _setup_findings(home)
     except (EOFError, KeyboardInterrupt):
         raise
     except Exception as exc:
@@ -390,8 +390,24 @@ def setup_apply(home: Path, adopt: Path | None = None,
     """``swe setup --apply --json [--adopt=<file>] [--starred=a,b]``, in
     process: its ``applied`` envelope. Refusals (an ``adopt`` file
     ``check_adoptable`` turns down) are the caller's to check first, as
-    ``cmd_setup`` does."""
+    ``cmd_setup`` does. Unlike ``apply_setup`` (the Doctor page's fix), a
+    failed discovery comes back in ``errors`` rather than raising, as the
+    command's JSON envelope carries it."""
     return _setup_data(home, apply=True, adopt=adopt, starred=starred)[0]["applied"]
+
+
+def apply_setup(home: Path | None = None) -> dict:
+    """``swe setup --apply --json``'s ``applied`` document, in process.
+
+    The web app's Doctor page runs a ``setup`` fix through here, the way
+    the Mac app's Run calls ``swe setup --apply --json``: no --adopt and
+    no --starred, so the stars stay as they are. A step that fails is
+    reported in ``errors`` or ``links.error``, as on the command line; a
+    discovery that fails raises.
+    """
+    home = home or Path.home()
+    new_harness, new_mcp, skill_hints = _setup_findings(home)
+    return _apply_all(new_harness, new_mcp, _actionable(skill_hints), home, None, None)
 
 
 def _apply_all(new_harness, new_mcp, actionable_skills, home: Path,

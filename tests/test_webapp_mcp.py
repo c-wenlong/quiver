@@ -2,6 +2,7 @@
 browser, the managed servers folder beside it, and health only on request."""
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -11,7 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from quiver.webapp.pages import mcp
+from quiver.mcp import cli as mcp_cli
+from quiver.webapp.pages import PageError, mcp
 
 from tests.test_remote_hub import HubBase
 
@@ -265,6 +267,323 @@ class TestRoute(HubBase):
         status, body = self.srv.request("GET", "/app/pages.js")
         self.assertEqual(status, 200)
         self.assertIn(b'registerPage("mcp"', body)
+
+
+LINEAR_TOKEN = "lin_api_LIVEVALUE0987654321"
+HUB_TOKEN = "ntn_HUBSECRETVALUE5555555555"
+REGISTRY = {"claude": {"aliases": ["cc"]}, "cursor": {}, "codex": {}}
+
+
+class _SyncHome:
+    """A real temp HOME holding claude, cursor and codex configs and the
+    hub's mcp.json; swe's config paths and registry point into it."""
+
+    def setUp(self):
+        super().setUp()
+        self.home = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.home, True)
+        cmap = {
+            "claude": {"path": self.home / ".claude.json", "key": "mcpServers", "label": "Claude Code"},
+            "cursor": {"path": self.home / ".cursor" / "mcp.json", "key": "mcpServers", "label": "Cursor"},
+            "codex": {"path": self.home / ".codex" / "config.toml", "key": "mcp_servers",
+                      "label": "Codex", "format": "standard", "io_type": "toml_region"},
+        }
+        self.claude, self.cursor, self.codex = (cmap[n]["path"] for n in ("claude", "cursor", "codex"))
+        self.hub = self.home / ".quiver" / "mcp.json"
+        self.hub.parent.mkdir(parents=True)
+        self.cursor.parent.mkdir()
+        self.codex.parent.mkdir()
+        self.claude.write_text(json.dumps({"numStartups": 7, "mcpServers": {
+            "linear": {"command": "node", "args": ["/srv/linear.js", "--token", LINEAR_TOKEN],
+                       "env": {"LINEAR_API_KEY": LINEAR_TOKEN, "DEBUG": "1"}},
+        }}))
+        self.cursor.write_text(json.dumps({"mcpServers": {
+            "linear": {"command": "node", "args": ["/old/linear.js"],
+                       "env": {"OLD_KEY": "old-value", "DEBUG": "0"}, "disabled": True},
+            "keep": {"command": "keep"},
+        }}))
+        self.codex.write_text('model = "o3"\n\n[mcp_servers.other]\ncommand = "x"\n')
+        self.hub.write_text(json.dumps({"mcpServers": {
+            "notion": {"command": "npx", "args": ["notion-mcp"], "env": {"NOTION_TOKEN": "${NOTION_TOKEN}"}},
+        }}))
+        for patcher in (
+            patch.dict(os.environ, {"HOME": str(self.home)}),
+            patch.object(mcp_cli, "MCP_CONFIG_MAP", cmap),
+            patch.object(mcp_cli, "MCP_SOURCE_FILE", self.hub),
+            patch.object(mcp_cli, "_load_registry", return_value=REGISTRY),
+            patch("quiver.harness.registry.load_registry_readonly", return_value=REGISTRY),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def snapshot(self):
+        return {p: p.read_bytes() if p.exists() else None
+                for p in (self.claude, self.cursor, self.codex, self.hub)}
+
+    def set_secret(self, name, value):
+        path = self.home / ".quiver" / "secrets" / "mcp" / ".api_keys"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"export {name}={value}\n")
+
+
+LINEAR = {"server": "linear", "source": "claude", "targets": ["cursor", "codex"], "replace": ["cursor"]}
+
+
+class TestSync(_SyncHome, unittest.TestCase):
+    def post(self, action, **body):
+        return mcp.post(_ctx(), action, body)
+
+    def refused(self, action, **body):
+        with self.assertRaises(PageError) as caught:
+            self.post(action, **body)
+        return caught.exception
+
+    def test_preview_shows_the_plan_and_writes_nothing(self):
+        before = self.snapshot()
+        reply = self.post("preview", **LINEAR)
+        self.assertEqual(self.snapshot(), before)
+        self.assertTrue(reply["report"]["dry_run"])
+        plan = {h["harness"]: h for h in reply["harnesses"]}
+        self.assertEqual(list(plan), ["cursor", "codex"])
+        self.assertEqual((plan["cursor"]["outcome"], plan["codex"]["outcome"]), ("replace", "add"))
+        self.assertEqual(plan["cursor"]["path"], "~/.cursor/mcp.json")
+        self.assertEqual(plan["cursor"]["env"],
+                         {"added": ["LINEAR_API_KEY"], "removed": ["OLD_KEY"], "changed": ["DEBUG"]})
+        self.assertEqual(plan["cursor"]["kept"], ["disabled"])
+        self.assertTrue(plan["cursor"]["command_changes"])
+        self.assertEqual(plan["cursor"]["before"]["summary"], "node /old/linear.js")
+        self.assertEqual(reply["files"], ["~/.cursor/mcp.json", "~/.codex/config.toml"])
+        text = json.dumps(reply)
+        for secret in (LINEAR_TOKEN, "old-value"):
+            self.assertNotIn(secret, text)
+
+    def test_sync_writes_exactly_the_previewed_plan(self):
+        fingerprint = self.post("preview", **LINEAR)["fingerprint"]
+        reply = self.post("sync", **LINEAR, fingerprint=fingerprint)
+        self.assertIsNone(reply["error"])
+        self.assertFalse(reply["report"]["dry_run"])
+        cursor = json.loads(self.cursor.read_text())["mcpServers"]
+        self.assertEqual(cursor["linear"]["args"], ["/srv/linear.js", "--token", LINEAR_TOKEN])
+        self.assertEqual(cursor["linear"]["env"], {"LINEAR_API_KEY": LINEAR_TOKEN, "DEBUG": "1"})
+        self.assertTrue(cursor["linear"]["disabled"])  # the harness's own key survives
+        self.assertEqual(cursor["keep"], {"command": "keep"})
+        codex = self.codex.read_text()
+        self.assertIn("[mcp_servers.linear]", codex)
+        self.assertIn('model = "o3"', codex)
+        self.assertEqual(json.loads(self.claude.read_text())["numStartups"], 7)
+        row = next(r for r in reply["page"]["servers"] if r["name"] == "linear")
+        self.assertFalse(row["conflict"])
+        self.assertEqual(sorted(row["harnesses"]), ["claude", "codex", "cursor"])
+        self.assertNotIn(LINEAR_TOKEN, json.dumps(reply))
+
+    def test_sync_refuses_when_a_config_changed_since_the_preview(self):
+        fingerprint = self.post("preview", **LINEAR)["fingerprint"]
+        data = json.loads(self.cursor.read_text())
+        data["mcpServers"]["linear"]["args"] = ["/newer/linear.js"]
+        self.cursor.write_text(json.dumps(data))
+        before = self.snapshot()
+        error = self.refused("sync", **LINEAR, fingerprint=fingerprint)
+        self.assertEqual((error.status, error.code), (409, "plan_changed"))
+        self.assertEqual(self.snapshot(), before)
+        # The source changing counts too.
+        fingerprint = self.post("preview", **LINEAR)["fingerprint"]
+        data = json.loads(self.claude.read_text())
+        data["mcpServers"]["linear"]["env"]["DEBUG"] = "2"
+        self.claude.write_text(json.dumps(data))
+        self.assertEqual(self.refused("sync", **LINEAR, fingerprint=fingerprint).code, "plan_changed")
+        self.assertEqual(self.refused("sync", **LINEAR, fingerprint="0" * 64).code, "plan_changed")
+        self.assertEqual(self.refused("sync", **LINEAR, fingerprint="é" * 64).code, "plan_changed")
+
+    def test_a_secret_with_no_value_refuses_and_writes_nothing(self):
+        before = self.snapshot()
+        body = {"server": "notion", "source": "quiver", "targets": ["claude"]}
+        for action in ("preview", "sync"):
+            error = self.refused(action, **body, fingerprint="x")
+            self.assertEqual((error.status, error.code), (409, "secrets_missing"))
+            self.assertIn("NOTION_TOKEN", error.message)
+            self.assertIn("swe mcp secret set NOTION_TOKEN", error.message)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_from_the_hub_the_value_is_written_but_never_sent(self):
+        self.set_secret("NOTION_TOKEN", HUB_TOKEN)
+        body = {"server": "notion", "source": "quiver", "targets": ["claude", "cursor"]}
+        preview = self.post("preview", **body)
+        self.assertEqual([h["outcome"] for h in preview["harnesses"]], ["add", "add"])
+        reply = self.post("sync", **body, fingerprint=preview["fingerprint"])
+        self.assertEqual(json.loads(self.claude.read_text())["mcpServers"]["notion"]["env"],
+                         {"NOTION_TOKEN": HUB_TOKEN})
+        for answer in (preview, reply):
+            self.assertNotIn(HUB_TOKEN, json.dumps(answer))
+        self.assertEqual(preview["from"]["env_keys"], ["NOTION_TOKEN"])
+
+    def test_targets_must_still_be_what_the_page_showed(self):
+        # cursor has its own linear: adding without approval would replace it.
+        error = self.refused("preview", server="linear", source="claude", targets=["cursor"])
+        self.assertEqual((error.status, error.code), (409, "target_changed"))
+        # codex lacks it: there is nothing of its own to replace.
+        error = self.refused("preview", server="linear", source="claude", targets=["codex"], replace=["codex"])
+        self.assertEqual((error.status, error.code), (409, "target_changed"))
+        # The source already has its own definition: nothing to copy there.
+        error = self.refused("preview", server="linear", source="cursor", targets=["cursor"])
+        self.assertEqual((error.status, error.code), (409, "target_changed"))
+        # cursor's definition is a source too, and replaces claude's with approval.
+        reply = self.post("preview", server="linear", source="cursor", targets=["claude", "codex"],
+                          replace=["claude"])
+        self.assertEqual([h["outcome"] for h in reply["harnesses"]], ["replace", "add"])
+
+    def test_refusals(self):
+        cases = [
+            ("preview", {"server": "nope", "source": "claude", "targets": ["codex"]}, 404, "unknown_server"),
+            ("preview", {"server": "linear", "source": "gemini", "targets": ["codex"]}, 422, "bad_source"),
+            ("preview", {"server": "linear", "source": "quiver", "targets": ["codex"]}, 422, "bad_source"),
+            ("preview", {"server": "linear", "source": "claude", "targets": ["evil"]}, 422, "unknown_harness"),
+            ("preview", {"server": "linear", "source": "claude", "targets": ["../x"]}, 422, "unknown_harness"),
+            ("preview", {"server": "linear", "source": "claude", "targets": []}, 422, "no_targets"),
+            ("preview", {"server": "linear", "source": "claude", "targets": "codex"}, 422, "bad_targets"),
+            ("preview", {"server": "linear", "source": "claude", "targets": ["codex"], "replace": ["cursor"]},
+             422, "bad_replace"),
+            ("preview", {"server": "", "source": "claude", "targets": ["codex"]}, 422, "bad_server"),
+            ("preview", {"server": "linear", "source": 3, "targets": ["codex"]}, 422, "bad_source"),
+            ("sync", {"server": "linear", "source": "claude", "targets": ["codex"]}, 422, "no_fingerprint"),
+            ("remove", {"server": "linear"}, 404, "unknown_action"),
+        ]
+        before = self.snapshot()
+        for action, body, status, code in cases:
+            with self.subTest(code=code, body=body):
+                error = self.refused(action, **body)
+                self.assertEqual((error.status, error.code), (status, code))
+        self.assertEqual(self.snapshot(), before)
+        with self.assertRaises(PageError) as caught:
+            mcp.post(_ctx(), "preview", ["linear"])
+        self.assertEqual(caught.exception.status, 422)
+
+    def test_a_name_with_a_comma_cannot_sync_alone(self):
+        data = json.loads(self.claude.read_text())
+        data["mcpServers"]["a,b"] = {"command": "x"}
+        self.claude.write_text(json.dumps(data))
+        error = self.refused("preview", server="a,b", source="claude", targets=["codex"])
+        self.assertEqual((error.status, error.code), (422, "comma_name"))
+
+    def test_only_pattern_matches_the_name_alone(self):
+        self.assertEqual(mcp.only_pattern("a*b?[c]"), "a[*]b[?][[]c]")
+        data = json.loads(self.claude.read_text())
+        data["mcpServers"]["lin*"] = {"command": "star"}
+        self.claude.write_text(json.dumps(data))
+        body = {"server": "lin*", "source": "claude", "targets": ["codex"]}
+        reply = self.post("sync", **body, fingerprint=self.post("preview", **body)["fingerprint"])
+        self.assertEqual(reply["report"]["targets"][0]["added"], ["lin*"])
+        self.assertNotIn("[mcp_servers.linear]", self.codex.read_text())
+
+    def test_a_save_that_fails_is_reported(self):
+        body = {"server": "linear", "source": "claude", "targets": ["codex"]}
+        fingerprint = self.post("preview", **body)["fingerprint"]
+        with patch.object(mcp_cli, "get_tool_saver", return_value=lambda servers, path: (_ for _ in ()).throw(OSError("disk full"))):
+            error = self.refused("sync", **body, fingerprint=fingerprint)
+        self.assertEqual(error.status, 409)
+        self.assertIn("disk full", error.message)
+
+    def test_sync_writes_the_checked_source_not_a_later_read(self):
+        # An edit to the source landing after the fingerprint check must not
+        # reach a target: the write uses the snapshot that was checked.
+        body = {"server": "linear", "source": "claude", "targets": ["codex"]}
+        fingerprint = self.post("preview", **body)["fingerprint"]
+        real = mcp_cli.servers_for_source
+        tampered = {"linear": {"command": "evil", "args": []}}
+        with patch.object(mcp_cli, "servers_for_source", side_effect=[real("claude"), tampered, tampered]):
+            self.post("sync", **body, fingerprint=fingerprint)
+        codex = self.codex.read_text()
+        self.assertIn('command = "node"', codex)
+        self.assertNotIn("evil", codex)
+
+    def test_a_target_changed_mid_sync_is_left_alone(self):
+        fingerprint = self.post("preview", **LINEAR)["fingerprint"]
+        real = mcp_cli.get_tool_servers
+        calls = {"cursor": 0}
+
+        def reads(target):
+            servers = real(target)
+            if target == "cursor":
+                calls["cursor"] += 1
+                if calls["cursor"] > 1:  # after the check, before its save
+                    servers["linear"] = {"command": "someone-else"}
+            return servers
+
+        with patch.object(mcp_cli, "get_tool_servers", side_effect=reads):
+            reply = self.post("sync", **LINEAR, fingerprint=fingerprint)
+        self.assertEqual([t["name"] for t in reply["report"]["targets"]], ["codex"])
+        self.assertIn("changed while syncing", reply["error"])
+        self.assertEqual(json.loads(self.cursor.read_text())["mcpServers"]["linear"]["args"], ["/old/linear.js"])
+
+    def test_a_save_failing_part_way_keeps_what_was_saved(self):
+        fingerprint = self.post("preview", **LINEAR)["fingerprint"]
+        real = mcp_cli.get_tool_saver
+
+        def saver(target):
+            if target == "cursor":
+                return lambda servers, path: (_ for _ in ()).throw(OSError("read-only file system"))
+            return real(target)
+
+        with patch.object(mcp_cli, "get_tool_saver", side_effect=saver):
+            reply = self.post("sync", **LINEAR, fingerprint=fingerprint)
+        # codex (an add) went first and was saved; cursor's save failed.
+        self.assertEqual(reply["report"]["targets"],
+                         [{"name": "codex", "added": ["linear"], "updated": [], "skipped": [], "pruned": []}])
+        self.assertIn("Sync stopped at cursor: read-only file system", reply["error"])
+        self.assertEqual([(h["harness"], h["outcome"]) for h in reply["harnesses"]],
+                         [("cursor", "not_run"), ("codex", "add")])
+        self.assertEqual(reply["files"], ["~/.codex/config.toml"])
+        self.assertIn("[mcp_servers.linear]", self.codex.read_text())
+
+    def test_sources_and_targets_follow_the_mac_model(self):
+        row = {"name": "x", "harnesses": ["claude", "cursor"], "variants": [["claude"], ["cursor"]],
+               "conflict": True, "in_hub": True}
+        self.assertEqual(mcp.sources(row), ["claude", "cursor", "quiver"])
+        self.assertEqual(mcp.sync_targets(row, "claude", ["claude", "cursor", "codex"]), (["codex"], ["cursor"]))
+        self.assertEqual(mcp.sync_targets(row, "quiver", ["claude", "cursor", "codex"]),
+                         (["codex"], ["claude", "cursor"]))
+
+
+class TestSyncRoute(_SyncHome, HubBase):
+    def origin(self):
+        return f"http://127.0.0.1:{self.srv.port}"
+
+    def test_needs_a_device(self):
+        before = self.snapshot()
+        status, _ = self.srv.request("POST", "/v1/app/mcp/preview", body=LINEAR)
+        self.assertEqual(status, 401)
+        status, _ = self.srv.request("POST", "/v1/app/mcp/sync", body={**LINEAR, "fingerprint": "x"})
+        self.assertEqual(status, 401)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_preview_then_sync_over_the_route(self):
+        auth = {**self.auth(), "Origin": self.origin()}
+        status, data = self.srv.request("POST", "/v1/app/mcp/preview", body=LINEAR, headers=auth)
+        self.assertEqual(status, 200, data)
+        fingerprint = json.loads(data)["fingerprint"]
+        status, data = self.srv.request("POST", "/v1/app/mcp/sync",
+                                        body={**LINEAR, "fingerprint": fingerprint}, headers=auth)
+        self.assertEqual(status, 200, data)
+        self.assertIn("linear", json.loads(self.cursor.read_text())["mcpServers"])
+        self.assertNotIn(LINEAR_TOKEN.encode(), data)
+        status, data = self.srv.request("POST", "/v1/app/mcp/sync",
+                                        body={**LINEAR, "fingerprint": fingerprint}, headers=auth)
+        self.assertEqual(status, 409, data)  # the plan it described has happened
+        self.assertIn("target_changed", data.decode())
+
+    def test_a_cross_site_post_is_refused(self):
+        before = self.snapshot()
+        status, data = self.srv.request("POST", "/v1/app/mcp/preview", body=LINEAR,
+                                        headers={**self.auth(), "Origin": "https://evil.example"})
+        self.assertEqual(status, 403)
+        self.assertIn("bad_origin", data.decode())
+        self.assertEqual(self.snapshot(), before)
+
+    def test_refusal_reaches_the_page(self):
+        status, data = self.srv.request("POST", "/v1/app/mcp/preview",
+                                        body={"server": "notion", "source": "quiver", "targets": ["claude"]},
+                                        headers=self.auth())
+        self.assertEqual(status, 409)
+        self.assertEqual(json.loads(data)["error"]["code"], "secrets_missing")
 
 
 if __name__ == "__main__":

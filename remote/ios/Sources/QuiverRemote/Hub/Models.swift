@@ -78,17 +78,39 @@ struct SessionRow: Codable, Identifiable, Hashable {
     let harness: String?
     let agent: String?
     let cwd: String?
-    let title: String?
+    /// The name you gave it on the hub, else the harness's own title.
+    var title: String?
     let lastActiveAt: Double?
-    let status: String?
+    var status: String?
     let machineId: String?
-    let ownership: String?
+    var ownership: String?
     let attachable: Bool?
     /// A satellite's session, which the hub forwards to that machine.
     var remote: Bool? = nil
+    /// The harness's own title, even when `title` is a name you set.
+    var harnessTitle: String? = nil
+    var pinned: Bool? = nil
+    /// When it was pinned (epoch seconds): the Pinned section's order.
+    var pinnedAt: Double? = nil
+    /// The harness can start a fork of this session.
+    var canFork: Bool? = nil
 
     var id: String { key }
     var displayTitle: String { (title?.isEmpty == false ? title : nil) ?? "Untitled session" }
+    var isPinned: Bool { pinned == true }
+    /// A name set on the hub replaces the harness's title.
+    var hasCustomTitle: Bool {
+        guard let harnessTitle, let title, !title.isEmpty else { return false }
+        return title != harnessTitle
+    }
+
+    /// The pin and name the hub answered or announced, laid over this row.
+    mutating func apply(_ meta: SessionMeta) {
+        title = meta.title
+        if let h = meta.harnessTitle { harnessTitle = h }
+        pinned = meta.pinned
+        pinnedAt = meta.pinned == true ? meta.pinnedAt : nil
+    }
     var harnessName: String { agent ?? harness ?? "agent" }
     var sessionStatus: SessionStatus { SessionStatus(raw: status) }
     var isAttached: Bool { ownership == "attached" }
@@ -101,6 +123,21 @@ struct SessionRow: Codable, Identifiable, Hashable {
     var needsYouNow: Bool {
         sessionStatus == .approval || (sessionStatus == .followup && Staleness.isFresh(lastActiveAt))
     }
+}
+
+/// `POST .../pin` and `.../title` answer this; `session.meta` carries it.
+struct SessionMeta: Codable, Equatable {
+    var title: String?
+    var harnessTitle: String?
+    var pinned: Bool?
+    var pinnedAt: Double?
+}
+
+/// `POST .../control {op: "detach", mode: "when_idle"}` answers 202 with this.
+struct DetachQueued: Decodable {
+    let queued: Bool?
+    let mode: String?
+    let note: String?
 }
 
 struct SessionsResponse: Codable {
@@ -177,6 +214,8 @@ struct CommandResult: Decodable {
     let degraded: Bool?
     let clientId: String?
     let requestId: String?
+    /// `when_idle` on a detach's result.
+    var mode: String? = nil
     /// A queued send removed before it went out (`POST .../queue` cancel):
     /// `ok` is false, but nothing failed.
     var cancelled: Bool? = nil
@@ -302,4 +341,70 @@ struct SearchResult: Decodable, Identifiable, Hashable {
 struct SearchResponse: Decodable {
     let results: [SearchResult]
     let indexed: Bool?
+}
+
+/// One path from `GET /v1/sessions/{id}/files`, relative to the
+/// session's working folder.
+struct FileEntry: Codable, Hashable {
+    let path: String
+    var kind: String? = nil
+    var mtime: Double? = nil
+
+    var isDir: Bool { kind == "dir" }
+}
+
+/// `GET /v1/sessions/{id}/files?q=&limit=`: the prompt box's `@` menu.
+struct FilesResponse: Codable {
+    var cwd: String? = nil
+    var query: String? = nil
+    var source: String? = nil
+    var truncated: Bool? = nil
+    let entries: [FileEntry]
+}
+
+/// One entry of `GET /v1/sessions/{id}/commands`.
+struct SlashCommand: Codable, Hashable {
+    let name: String
+    var description: String? = nil
+    /// `builtin`, `user`, `project`, `skill` or `plugin`.
+    var source: String? = nil
+    var argumentHint: String? = nil
+    var argumentRequired: Bool? = nil
+    /// What to put in the prompt box when it isn't `/name ` (Codex
+    /// skills are `$name `).
+    var insert: String? = nil
+
+    /// What the box gets on a pick, always ending in a space.
+    var insertText: String {
+        let text = (insert?.isEmpty == false ? insert! : "/\(name)")
+        return text.last?.isWhitespace == true ? text : text + " "
+    }
+
+    /// How the menu names it: the inserted text without its space.
+    var label: String { insertText.trimmingCharacters(in: .whitespaces) }
+
+    /// The source tag, in sentence case.
+    var sourceLabel: String? {
+        switch source {
+        case nil, "": nil
+        case "builtin": "Built-in"
+        case "user": "User"
+        case "project": "Project"
+        case "skill": "Skill"
+        case "plugin": "Plugin"
+        case let s?: s.prefix(1).uppercased() + s.dropFirst()
+        }
+    }
+}
+
+/// `GET /v1/sessions/{id}/commands`: the prompt box's `/` menu.
+struct CommandsResponse: Codable {
+    var key: String? = nil
+    var harness: String? = nil
+    var channel: String? = nil
+    var attached: Bool? = nil
+    var supported: Bool? = nil
+    var customAvailable: Bool? = nil
+    let commands: [SlashCommand]
+    var note: String? = nil
 }
