@@ -289,7 +289,7 @@ private struct ChatItemView: View {
         case .user(let text, let send):
             UserBubble(text: text, send: send) { Task { await model.retry(item) } }
         case .assistant(let text):
-            RichText(text: text).frame(maxWidth: .infinity, alignment: .leading)
+            AssistantReply(text: text)
         case .thinking(let text):
             ThinkingCard(text: text)
         case .tool(let call, let result):
