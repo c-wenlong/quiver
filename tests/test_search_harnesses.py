@@ -90,6 +90,111 @@ class DevinDecodeTests(unittest.TestCase):
         self.assertEqual(step, _msgs([("user", "hi there", "t")]))
 
 
+class JsonlDecodeTests(unittest.TestCase):
+    """The Swift ``SearchDecoderTests`` (Pi), ``SearchMoreDecoderTests``
+    (Cursor) and ``SearchNewHarnessDecoderTests`` (Qoder, CodeBuddy)
+    cases."""
+
+    def test_pi(self):
+        _, hints = decode.Decoder("pi").decode_line(
+            b'{"type": "session", "id": "pi-1", "cwd": "/repo/pi", "timestamp": "2026-05-12T06:40:00Z"}')
+        self.assertEqual((hints.session_id, hints.cwd), ("pi-1", "/repo/pi"))
+        decoder = decode.Decoder("pi")
+        user, hints = decoder.decode_line(
+            b'{"type": "message", "id": "m1", "timestamp": "t1", "message": {"role": "user",'
+            b' "content": [{"type": "text", "text": "ls the dir"}]}}')
+        self.assertEqual((user, hints.title), (_msgs([("user", "ls the dir", "t1")]), "ls the dir"))
+        assistant, _ = decoder.decode_line(
+            b'{"type": "message", "timestamp": "t2", "message": {"role": "assistant", "content":'
+            b' [{"type": "thinking", "thinking": "hmm"}, {"type": "toolCall", "id": "call_1",'
+            b' "name": "bash", "arguments": {"command": "ls -la"}}]}}')
+        self.assertEqual(assistant, _msgs([("tool", "bash: ls -la", "t2")]))
+        result, _ = decoder.decode_line(
+            b'{"type": "message", "timestamp": "t3", "message": {"role": "toolResult",'
+            b' "toolCallId": "call_1", "toolName": "bash", "content": [{"type": "text",'
+            b' "text": "AGENTS.md\\nREADME.md"}], "isError": false}}')
+        self.assertEqual(result, _msgs([("tool", "bash: AGENTS.md\nREADME.md", "t3")]))
+        self.assertEqual(decode.Decoder("pi").decode_line(
+            b'{"type": "model_change", "provider": "x", "modelId": "y"}')[0], [])
+        _, info = decode.Decoder("pi").decode_line(b'{"type": "session_info", "name": "my session name"}')
+        self.assertEqual(info.title, "my session name")
+
+    def test_cursor(self):
+        out, hints = decode.Decoder("cursor").decode_line(
+            b'{"role":"user","message":{"content":[{"type":"text","text":"how do I fix the build?"}]}}')
+        self.assertEqual((out, hints.title),
+                         (_msgs([("user", "how do I fix the build?", None)]), "how do I fix the build?"))
+        out, _ = decode.Decoder("cursor").decode_line(
+            b'{"role":"assistant","message":{"content":[{"type":"text","text":"Checking the build."},'
+            b'{"type":"tool_use","name":"Bash","input":{"command":"swift build"}}]}}')
+        self.assertEqual(out, _msgs([("assistant", "Checking the build.", None),
+                                     ("tool", "Bash: swift build", None)]))
+        out, _ = decode.Decoder("cursor").decode_line(b'{"role":"user","content":"plain text body"}')
+        self.assertEqual(out, _msgs([("user", "plain text body", None)]))
+        for role in ("system", "turn_ended", "summary"):
+            line = ('{"role":"%s","message":{"content":[{"type":"text","text":"x"}]}}' % role).encode()
+            self.assertEqual(decode.Decoder("cursor").decode_line(line)[0], [])
+        self.assertFalse(decode.Decoder("cursor").wants(b'{"kind":"progress"}'))
+
+    def test_qoder(self):
+        decoder = decode.Decoder("qoder")
+        _, dirs = decoder.decode_line(b'{"type":"workspace-directories","directories":["/repo/qoder"]}')
+        self.assertEqual(dirs.cwd, "/repo/qoder")
+        user, hints = decoder.decode_line(
+            b'{"type":"user","timestamp":"t1","sessionId":"q-1","message":{"role":"user","content":'
+            b'[{"type":"text","text":"fix the flaky test"},{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}')
+        self.assertEqual(user, _msgs([("user", "fix the flaky test", "t1")]))
+        self.assertEqual((hints.session_id, hints.title), ("q-1", "fix the flaky test"))
+        assistant, _ = decoder.decode_line(
+            b'{"type":"assistant","timestamp":"t2","message":{"role":"assistant","content":"on it"}}')
+        self.assertEqual(assistant, _msgs([("assistant", "on it", "t2")]))
+        _, moved = decoder.decode_line(
+            b'{"type":"user","sessionId":"q-1","cwd":"/elsewhere","message":{"role":"user","content":"again"}}')
+        self.assertIsNone(moved.cwd)
+        decoder = decode.Decoder("qoder")
+        _, meta = decoder.decode_line(
+            b'{"type":"user","sessionId":"q","isMeta":true,"message":{"role":"user",'
+            b'"content":"<system-reminder>env</system-reminder>"}}')
+        self.assertEqual((meta.injected_user_turn, meta.title), (True, None))
+        _, title = decoder.decode_line(b'{"type":"custom-title","customTitle":"Named"}')
+        self.assertEqual(title.title, "Named")
+
+    def test_codebuddy(self):
+        decoder = decode.Decoder("codebuddy")
+        user, hints = decoder.decode_line(
+            b'{"type":"message","sessionId":"cb-1","cwd":"/repo/cb","gitBranch":"main","timestamp":"t1",'
+            b'"role":"user","content":[{"type":"input_text","text":"why failing?"},'
+            b'{"type":"input_text","text":"part two"}]}')
+        self.assertEqual(user, _msgs([("user", "why failing?\n\npart two", "t1")]))
+        self.assertEqual((hints.session_id, hints.cwd, hints.title),
+                         ("cb-1", "/repo/cb", "why failing? part two"))
+        assistant, _ = decoder.decode_line(
+            b'{"type":"message","role":"assistant","timestamp":"t2","content":[{"type":"output_text","text":"checking"}]}')
+        self.assertEqual(assistant, _msgs([("assistant", "checking", "t2")]))
+        plain, _ = decoder.decode_line(b'{"type":"message","role":"user","content":"plain body"}')
+        self.assertEqual(plain, _msgs([("user", "plain body", None)]))
+
+        decoder = decode.Decoder("codebuddy")
+        decoder.decode_line(b'{"type":"ai-title","aiTitle":"Generated name"}')
+        self.assertIsNone(decoder.decode_line(
+            b'{"type":"message","role":"user","content":"typed ask"}')[1].title)
+        self.assertEqual(decoder.decode_line(
+            b'{"type":"summary","summary":"The CLI\'s title"}')[1].title, "The CLI's title")
+        self.assertIsNone(decoder.decode_line(b'{"type":"ai-title","aiTitle":"revised"}')[1].title)
+
+        decoder = decode.Decoder("codebuddy")
+        skipped, hints = decoder.decode_line(
+            b'{"type":"message","role":"user","content":[{"type":"input_text","text":"queued work"}],'
+            b'"providerData":{"skipRun":true}}')
+        self.assertEqual(([m.role for m in skipped], hints.injected_user_turn, hints.title),
+                         (["user"], True, None))
+        self.assertTrue(decoder.decode_line(
+            b'{"type":"message","role":"user","content":"<task-notification>done</task-notification>"}'
+        )[1].injected_user_turn)
+        self.assertEqual(decoder.decode_line(
+            b'{"type":"message","role":"user","content":"a real prompt"}')[1].title, "a real prompt")
+
+
 _DEVIN_SCHEMA = """
 CREATE TABLE sessions (id TEXT PRIMARY KEY, working_directory TEXT NOT NULL,
   backend_type TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '',
@@ -259,6 +364,178 @@ class DevinTests(_Home):
         self.assertEqual(self.run_pass().indexed, 1)
         self.assertEqual(conn.execute("SELECT count(*) FROM sessions").fetchone()[0], 1)
         self.assertEqual(conn.execute("SELECT message_count FROM sessions").fetchone()[0], 3)
+
+
+_OPENCODE_SCHEMA = """
+CREATE TABLE session (id text PRIMARY KEY, parent_id text, directory text NOT NULL,
+  title text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL,
+  time_archived integer);
+CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL,
+  time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);
+CREATE TABLE part (id text PRIMARY KEY, message_id text NOT NULL, session_id text NOT NULL,
+  time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);
+CREATE TABLE session_v2 (id text PRIMARY KEY, parent_id text, directory text NOT NULL,
+  title text, time_created integer NOT NULL, time_updated integer NOT NULL, time_archived integer);
+CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL,
+  seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL,
+  data text NOT NULL);
+"""
+
+
+def build_jsonl_home(home: Path) -> None:
+    """Pi, Cursor, Qoder, CodeBuddy and OpenCode sessions under ``home``,
+    the same files ``SearchHarnessScanTests``-style fixtures write."""
+    def write(path: Path, lines, compact=False) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        separators = (",", ":") if compact else None
+        path.write_text("".join(json.dumps(line, separators=separators) + "\n" for line in lines))
+
+    write(home / ".pi/agent/sessions/--repo-pi--/2026-10-01_pi-1.jsonl", [
+        {"type": "session", "id": "pi-1", "cwd": "/repo/pi", "timestamp": "2026-10-01T09:00:00Z"},
+        {"type": "message", "timestamp": "2026-10-01T09:00:01Z", "message": {
+            "role": "user", "content": [{"type": "text", "text": "list the pangolin files"}]}},
+        {"type": "message", "timestamp": "2026-10-01T09:00:02Z", "message": {
+            "role": "assistant", "content": [{"type": "text", "text": "Listing."}, {
+                "type": "toolCall", "id": "c1", "name": "bash",
+                "arguments": {"command": "ls pangolin/"}}]}},
+        {"type": "message", "timestamp": "2026-10-01T09:00:03Z", "message": {
+            "role": "toolResult", "toolName": "bash",
+            "content": [{"type": "text", "text": "scales.md"}]}},
+        {"type": "session_info", "name": "Pangolin files"},
+    ])
+    chat = "4f9d0c1e-0000-4000-8000-00000000c0de"
+    write(home / f".cursor/projects/repo-cur/agent-transcripts/{chat}/{chat}.jsonl", [
+        {"role": "user", "message": {"content": [
+            {"type": "text", "text": "<user_query>\nwhy does the okapi build fail\n</user_query>"}]}},
+        {"role": "assistant", "message": {"content": [
+            {"type": "text", "text": "Checking."},
+            {"type": "tool_use", "name": "Shell", "input": {"command": "make okapi"}}]}},
+    ], compact=True)
+    meta = home / f".cursor/chats/0123abcd/{chat}/meta.json"
+    meta.parent.mkdir(parents=True)
+    meta.write_text(json.dumps({"title": "Okapi  build\nfailure", "cwd": "/repo/cur",
+                                "createdAtMs": 1791300000123, "updatedAtMs": 1791300099999}))
+    write(home / ".cursor/projects/repo-cur/agent-transcripts/lone/lone.jsonl", [
+        {"role": "user", "message": {"content": "a chat with no meta"}}], compact=True)
+    write(home / ".qoder/projects/-repo-q/q-1.jsonl", [
+        {"type": "workspace-directories", "directories": ["/repo/q"]},
+        {"type": "user", "timestamp": "2026-10-02T09:00:00Z", "sessionId": "q-1", "cwd": "/repo/q2",
+         "message": {"role": "user", "content": [
+             {"type": "text", "text": "tune the quokka cache"},
+             {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}]}},
+        {"type": "assistant", "timestamp": "2026-10-02T09:00:05Z",
+         "message": {"role": "assistant", "content": "Tuned."}},
+    ])
+    write(home / ".qoder/projects/-repo-q/subagents/agent-1.jsonl", [
+        {"type": "user", "sessionId": "sub", "message": {"role": "user", "content": "hidden"}}])
+    write(home / ".codebuddy/projects/-repo-cb/cb-1.jsonl", [
+        {"type": "message", "sessionId": "cb-1", "cwd": "/repo/cb", "timestamp": 1791300000,
+         "role": "user", "content": [{"type": "input_text", "text": "why is the tapir slow"}]},
+        {"type": "message", "role": "assistant", "timestamp": "2026-10-03T09:00:05Z",
+         "content": [{"type": "output_text", "text": "Profiling the tapir."}]},
+        {"type": "ai-title", "aiTitle": "Tapir slowness"},
+    ])
+    db = home / ".local/share/opencode/opencode.db"
+    db.parent.mkdir(parents=True)
+    conn = sqlite3.connect(db)
+    conn.executescript(_OPENCODE_SCHEMA)
+    conn.executemany("INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?)", [
+        ("ses_1", None, "/repo/oc", "Fix the flaky test", 1791100000000, 1791100003000, None),
+        ("ses_child", "ses_1", "/repo/oc", "child", 1791100000000, 1791100003000, None),
+        ("ses_old", None, "/repo/oc", "archived", 1791100000000, 1791100003000, 1791100009000),
+    ])
+    conn.executemany("INSERT INTO message VALUES (?, ?, ?, ?, ?)", [
+        ("m_u1", "ses_1", 1791100000000, 1791100000000, '{"role":"user"}'),
+        ("m_a1", "ses_1", 1791100001000, 1791100001000, '{"role":"assistant"}'),
+    ])
+    conn.executemany("INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)", [
+        ("p1", "m_u1", "ses_1", 1791100000000, 1791100000000,
+         '{"type":"text","text":"fix the flaky zebrafish test"}'),
+        ("p2", "m_a1", "ses_1", 1791100001000, 1791100001000,
+         '{"type":"reasoning","text":"thinking about the quokka"}'),
+        ("p3", "m_a1", "ses_1", 1791100001500, 1791100001500, '{"type":"text","text":"found it"}'),
+        ("p4", "m_a1", "ses_1", 1791100002000, 1791100002000,
+         '{"type":"tool","tool":"read","state":{"status":"error","input":{"filePath":"/repo/x.yml"},'
+         '"error":"Error: File not found"}}'),
+    ])
+    conn.execute("INSERT INTO session_v2 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                 ("ses_v2", None, "/repo/v2", "", 1792000000000, 1792000005000, None))
+    conn.executemany("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)", [
+        ("sm1", "ses_v2", "user", 1, 1792000000000, 1792000000000, '{"text":"deploy the ibex"}'),
+        ("sm2", "ses_v2", "assistant", 2, 1792000001000, 1792000001000, json.dumps({"content": [
+            {"type": "reasoning", "text": "plan"}, {"type": "text", "text": "Deploying."},
+            {"type": "tool", "name": "bash", "state": {
+                "input": {"command": "deploy ibex"}, "content": [{"type": "text", "text": "ok"}]}}]})),
+        ("sm3", "ses_v2", "system", 3, 1792000002000, 1792000002000, '{"text":"bookkeeping"}'),
+    ])
+    conn.commit()
+    conn.close()
+
+
+class JsonlHarnessTests(_Home):
+    def setUp(self):
+        super().setUp()
+        build_jsonl_home(self.home)
+
+    def sessions(self):
+        return {row[0]: row[1:] for row in self.db().execute(
+            "SELECT session_id, agent, title, cwd, created_at, updated_at, message_count"
+            " FROM sessions")}
+
+    def test_every_harness_indexes(self):
+        result = self.run_pass()
+        self.assertEqual((result.failed, result.moved), (0, 0))
+        got = self.sessions()
+        chat = "4f9d0c1e-0000-4000-8000-00000000c0de"
+        self.assertEqual(got["pi-1"], ("pi", "Pangolin files", "/repo/pi",
+                                       "2026-10-01T09:00:01Z", "2026-10-01T09:00:03Z", 4))
+        # meta.json fills only what the transcript never says: the first
+        # prompt keeps the title (Orca's mergeCursorChatMeta order). The
+        # stamp is cut, not rounded, the way Foundation formats it.
+        self.assertEqual(got[chat], ("cursor", "<user_query> why does the okapi build fail </user_query>",
+                                     "/repo/cur", "2026-10-06T15:20:00.122Z",
+                                     "2026-10-06T15:21:39.999Z", 3))
+        self.assertEqual(got["lone"][1:3], ("a chat with no meta", None))
+        self.assertEqual(got["q-1"], ("qoder", "tune the quokka cache", "/repo/q",
+                                      "2026-10-02T09:00:00Z", "2026-10-02T09:00:05Z", 2))
+        self.assertNotIn("sub", got)
+        self.assertEqual(got["cb-1"], ("codebuddy", "Tapir slowness", "/repo/cb",
+                                       "2026-10-03T09:00:05Z", "2026-10-06T15:20:00.000Z", 2))
+        self.assertEqual(got["ses_1"], ("opencode", "Fix the flaky test", "/repo/oc",
+                                        "2026-10-04T07:46:40.000Z", "2026-10-04T07:46:43.000Z", 3))
+        self.assertEqual(got["ses_v2"][:2], ("opencode", "deploy the ibex"))
+        self.assertNotIn("ses_child", got)
+        self.assertNotIn("ses_old", got)
+        rows = [r[0] for r in self.db().execute(
+            "SELECT f.tool_text FROM messages m JOIN messages_fts f ON f.rowid = m.id"
+            " JOIN sessions s ON s.id = m.session_row_id WHERE s.agent = 'opencode'"
+            " AND m.role = 'tool' ORDER BY m.id")]
+        self.assertEqual(sorted(rows), ["bash: deploy ibex\nok", "read: /repo/x.yml\nError: File not found"])
+        for phrase in ("pangolin", "okapi", "quokka cache", "tapir", "zebrafish", "ibex"):
+            self.assertTrue(search_index.search(self.home, phrase), phrase)
+        again = self.run_pass()
+        self.assertEqual((again.indexed, again.current), (0, again.files))
+
+    def test_a_meta_only_change_reads_the_cursor_chat_again(self):
+        self.run_pass()
+        chat = "4f9d0c1e-0000-4000-8000-00000000c0de"
+        meta = self.home / f".cursor/chats/0123abcd/{chat}/meta.json"
+        meta.write_text(json.dumps({"title": "Renamed okapi chat", "cwd": "/repo/moved"}))
+        os.utime(meta, (2_000_000_000, 2_000_000_000))
+        self.assertEqual(self.run_pass().indexed, 1)
+        self.assertEqual(self.sessions()[chat][2:4], ("/repo/moved", None))
+
+    def test_a_grown_qoder_transcript_is_read_whole(self):
+        self.run_pass()
+        path = self.home / ".qoder/projects/-repo-q/q-1.jsonl"
+        with open(path, "a") as handle:
+            handle.write(json.dumps({"type": "user", "sessionId": "q-1", "cwd": "/repo/other",
+                                     "message": {"role": "user", "content": "and the koala"}}) + "\n")
+        self.assertEqual(self.run_pass().indexed, 1)
+        # A whole read keeps the first cwd and the first prompt's title.
+        self.assertEqual(self.sessions()["q-1"][1:3], ("tune the quokka cache", "/repo/q"))
+        self.assertEqual(self.db().execute("SELECT count(*) FROM sessions WHERE agent = 'qoder'")
+                         .fetchone()[0], 1)
 
 
 if __name__ == "__main__":

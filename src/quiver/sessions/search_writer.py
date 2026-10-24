@@ -27,10 +27,10 @@ Sharing one file with the Swift writer rests on four rules:
 - One Python writer at a time, through an ``flock`` on ``index.lock``
   beside the database. The Swift app doesn't take it and doesn't need to.
 
-The pass covers the sources :func:`sources` lists (Claude Code and Codex
-transcripts, Devin's ATIF exports) plus the sessions inside Devin's
-``sessions.db`` (:mod:`quiver.sessions.search_containers`). Rows for other
-harnesses, written by the app, are never touched.
+The pass covers the transcript files :func:`sources` lists plus the
+sessions inside Devin's ``sessions.db`` and OpenCode's ``opencode.db``
+(:mod:`quiver.sessions.search_containers`). Rows for other harnesses,
+written by the app, are never touched.
 """
 
 from __future__ import annotations
@@ -509,7 +509,7 @@ class Store:
 SKIP, CURRENT, APPEND, WHOLE = "skip", "current", "append", "whole"
 # Harnesses whose transcripts may be read from the last offset. The rest
 # are read whole whenever they change, as the Swift writer reads them.
-APPENDABLE = frozenset({"claude", "codex"})
+APPENDABLE = frozenset({"claude", "codex", "pi"})
 
 
 def should_index(path: str) -> bool:
@@ -576,6 +576,9 @@ class _Pending:
     # The session id the records never carry (``sessionIDFromPath``); a
     # record's own id still wins.
     session_id_hint: str | None = None
+    # Fields a sidecar supplies (Cursor's ``meta.json``), gap-filled into
+    # the final commit (``setFieldOverlay``).
+    overlay: SessionFields | None = None
     messages: list = field(default_factory=list)
     hints: decode.Hints = field(default_factory=decode.Hints)
     first_ts: str | None = None
@@ -606,6 +609,19 @@ class _Pending:
             self.last_ts = ts
 
     def fields(self) -> SessionFields:
+        fields = self._decoded_fields()
+        overlay = self.overlay
+        if overlay is not None:
+            # The transcript's own records keep precedence.
+            fields = replace(
+                fields,
+                title=fields.title or overlay.title,
+                cwd=fields.cwd if fields.cwd is not None else overlay.cwd,
+                created_at=fields.created_at if fields.created_at is not None else overlay.created_at,
+                updated_at=fields.updated_at if fields.updated_at is not None else overlay.updated_at)
+        return fields
+
+    def _decoded_fields(self) -> SessionFields:
         return SessionFields(
             agent=self.harness,
             session_id=self.hints.session_id or self.session_id_hint or Path(self.path).stem,
@@ -646,16 +662,21 @@ class Indexer:
         self.prints = {} if prints is None else prints
 
     def index_file(self, path: str, harness: str, *, document: bool = False,
-                   session_id: str | None = None) -> str:
+                   session_id: str | None = None, meta_path: str | None = None) -> str:
         """Read one transcript into the index. Returns what happened:
         ``skip``, ``current``, ``indexed``, ``moved`` (another writer won the
         fence) or ``failed``. ``document`` reads the file as one JSON value
-        (``indexWholeFile``) instead of JSONL lines."""
+        (``indexWholeFile``) instead of JSONL lines. ``meta_path`` is a
+        Cursor chat's ``meta.json``: its mtime blends into the stat and its
+        fields fill what the transcript never records."""
         if not should_index(path):
             return SKIP
         stat = file_stat(path)
         if stat is None:
             return SKIP
+        meta_stat = file_stat(meta_path) if meta_path else None
+        if meta_stat is not None:
+            stat = replace(stat, mtime_ms=max(stat.mtime_ms, meta_stat.mtime_ms))
         row = self.store.file_row(path)
         need = read_need(row, stat)
         if need in (SKIP, CURRENT):
@@ -667,10 +688,11 @@ class Indexer:
         appending = (need == APPEND and not document and harness in APPENDABLE
                      and stat.size - row.byte_offset <= self.buffer_budget)
         try:
+            overlay = cursor_meta_fields(meta_path) if meta_stat is not None else None
             if document:
                 committed = self._read_document(path, harness, stat, row, session_id)
             else:
-                committed = self._read(path, harness, stat, row, appending, session_id)
+                committed = self._read(path, harness, stat, row, appending, session_id, overlay)
         except _Moved:
             return "moved"
         except (OSError, sqlite3.Error, ValueError, RecursionError):
@@ -720,7 +742,8 @@ class Indexer:
         return "indexed" if committed else "moved"
 
     def _read(self, path: str, harness: str, stat: FileStat,
-              row: FileRow | None, appending: bool, session_id: str | None = None) -> bool:
+              row: FileRow | None, appending: bool, session_id: str | None = None,
+              overlay: SessionFields | None = None) -> bool:
         decoder = decode.Decoder(harness)
         with open(path, "rb") as handle:
             start = 0
@@ -747,7 +770,8 @@ class Indexer:
                         if end >= start:
                             break
             pending = _Pending(path=path, harness=harness, appending=appending,
-                               row=row, decoder=decoder, session_id_hint=session_id)
+                               row=row, decoder=decoder, session_id_hint=session_id,
+                               overlay=overlay)
             end_offset = start
             for line, end_offset in _lines(handle, start):
                 if not line or not decoder.wants(line):
@@ -882,6 +906,55 @@ def _walk(root: Path, suffix: str = ".jsonl") -> list[str]:
     return found
 
 
+def cursor_meta_fields(meta_path: str) -> SessionFields | None:
+    """``Ledger.cursorMetaFields``: the title, cwd and times a Cursor
+    transcript never writes, from its chat's ``meta.json``."""
+    try:
+        with open(meta_path, "rb") as handle:
+            meta = json.loads(handle.read())
+    except (OSError, ValueError, RecursionError):
+        return None
+    if not isinstance(meta, dict):
+        return None
+    title = decode.json_string(meta.get("title"))
+    return SessionFields(
+        agent="cursor", session_id="", file_path="",
+        title=(decode.title_candidate(title, 96) if title else None) or "",
+        cwd=decode.json_string(meta.get("cwd")),
+        created_at=decode.stamp_iso(meta.get("createdAtMs")),
+        updated_at=decode.stamp_iso(meta.get("updatedAtMs")))
+
+
+def cursor_chat_meta_index(chats_root: Path) -> dict[str, str]:
+    """``Ledger.cursorChatMetaIndex``: chat id -> ``meta.json`` under
+    ``<chats>/<md5 of cwd>/<chat id>/``, first workspace (by name) wins."""
+    index: dict[str, str] = {}
+    try:
+        workspaces = sorted(chats_root.iterdir(), key=lambda p: p.name)
+    except OSError:
+        return index
+    for workspace in workspaces:
+        if not workspace.is_dir():
+            continue
+        try:
+            chats = list(workspace.iterdir())
+        except OSError:
+            continue
+        for chat in chats:
+            meta = chat / "meta.json"
+            if chat.name not in index and meta.exists():
+                index[chat.name] = str(meta)
+    return index
+
+
+def cursor_chat_id(path: str) -> str | None:
+    """A transcript's chat id: its directory's name, when that sits in
+    ``agent-transcripts``."""
+    chat_dir = os.path.dirname(path)
+    return (os.path.basename(chat_dir)
+            if os.path.basename(os.path.dirname(chat_dir)) == "agent-transcripts" else None)
+
+
 @dataclass(frozen=True)
 class Source:
     """One file a pass reads: its harness, and whether it is one JSON
@@ -891,9 +964,11 @@ class Source:
     harness: str
     document: bool = False
     session_id: str | None = None
+    meta_path: str | None = None
 
 
 DEVIN_DB = ".local/share/devin/cli/sessions.db"
+OPENCODE_DB = ".local/share/opencode/opencode.db"
 
 
 def sources(home: Path) -> list[Source]:
@@ -901,11 +976,12 @@ def sources(home: Path) -> list[Source]:
     out: list[Source] = []
     seen: set[str] = set()
 
-    def add(found: list[str], harness: str, document: bool = False) -> None:
+    def add(found: list[str], harness: str, document: bool = False, meta=None) -> None:
         for path in found:
             if path not in seen:
                 seen.add(path)
-                out.append(Source(path, harness, document))
+                out.append(Source(path, harness, document,
+                                  meta_path=meta(path) if meta else None))
 
     for claude_home in _homes(home, "claude", ".claude"):
         add(_walk(claude_home / "projects"), "claude")
@@ -916,14 +992,61 @@ def sources(home: Path) -> list[Source]:
     # The database holds the same sessions and more; both are read, and
     # search shows one hit per session.
     add(_walk((home / DEVIN_DB).parent / "transcripts", ".json"), "devin", document=True)
+    add(_walk(home / ".pi/agent/sessions"), "pi")
+    # Only `agent-transcripts/` holds chats; the projects tree also keeps
+    # mcps/, canvases/ and friends. The chat's meta.json sits in the
+    # `chats` tree beside `projects`.
+    cursor_projects = home / ".cursor/projects"
+    metas = cursor_chat_meta_index(cursor_projects.parent / "chats")
+    add([p for p in _walk(cursor_projects) if "agent-transcripts" in Path(p).parts],
+        "cursor", meta=lambda p: metas.get(cursor_chat_id(p) or ""))
+    add(_walk(home / ".qoder/projects"), "qoder")
+    add(_walk(home / ".codebuddy/projects"), "codebuddy")
     return out
 
 
-def _index_devin(indexer: "Indexer", db_path: Path, result: "PassResult", should_stop) -> None:
-    """``Ledger.indexDevinSessions``: each visible session in
-    ``sessions.db`` under ``<db>#<id>``, then rows for sessions the database
-    no longer lists removed. A database that will not open or enumerate is
-    skipped whole."""
+def _devin_entries(conn: sqlite3.Connection, db_path: str):
+    """``Ledger.indexDevinSessions``' listing: ``(path, stat, read)`` per
+    visible session."""
+    for session in containers.devin_sessions(conn):
+        path = containers.synthetic_path(db_path, session.id)
+
+        def read(session=session, path=path):
+            messages, prompt_title = containers.devin_messages(conn, session)
+            return SessionFields(
+                agent="devin", session_id=session.id, file_path=path,
+                title=containers.devin_title(session, prompt_title),
+                cwd=session.directory,
+                created_at=decode.iso_seconds(session.created_ms / 1000),
+                updated_at=decode.iso_seconds(session.stat_mtime_ms / 1000),
+                message_count=len(messages)), messages
+
+        yield path, FileStat(ino=None, mtime_ms=session.stat_mtime_ms, size=session.nodes), read
+
+
+def _opencode_entries(conn: sqlite3.Connection, db_path: str):
+    """``Ledger.indexOpenCodeSessions``' listing."""
+    for session in containers.opencode_sessions(conn):
+        path = containers.synthetic_path(db_path, session.id)
+
+        def read(session=session, path=path):
+            messages = containers.opencode_messages(conn, session)
+            return SessionFields(
+                agent="opencode", session_id=session.id, file_path=path,
+                title=containers.opencode_title(session, messages),
+                cwd=session.directory,
+                created_at=decode.iso_seconds(session.created_ms / 1000),
+                updated_at=decode.iso_seconds(session.activity_ms / 1000),
+                message_count=len(messages)), messages
+
+        yield path, FileStat(ino=None, mtime_ms=float(session.activity_ms), size=session.count), read
+
+
+def _index_container(indexer: "Indexer", db_path: Path, entries, result: "PassResult",
+                     should_stop) -> None:
+    """Each session a database lists, under ``<db>#<id>``, then rows for
+    sessions it no longer lists removed. A database that will not open or
+    enumerate is skipped whole."""
     if not db_path.is_file():
         return
     resolved = os.path.realpath(db_path)
@@ -936,28 +1059,14 @@ def _index_devin(indexer: "Indexer", db_path: Path, result: "PassResult", should
         # adds for a session created after it is no candidate.
         candidates = indexer.store.files_with_prefix(resolved + "#")
         try:
-            sessions = containers.devin_sessions(conn)
+            listed = list(entries(conn, resolved))
         except sqlite3.Error:
             return
         live: set[str] = set()
-        for session in sessions:
+        for path, stat, read in listed:
             if should_stop is not None and should_stop():
                 return
-            path = containers.synthetic_path(resolved, session.id)
             live.add(path)
-            stat = FileStat(ino=None, mtime_ms=session.stat_mtime_ms, size=session.nodes)
-
-            def read(session=session, path=path):
-                messages, prompt_title = containers.devin_messages(conn, session)
-                fields = SessionFields(
-                    agent="devin", session_id=session.id, file_path=path,
-                    title=containers.devin_title(session, prompt_title),
-                    cwd=session.directory,
-                    created_at=decode.iso_seconds(session.created_ms / 1000),
-                    updated_at=decode.iso_seconds(session.stat_mtime_ms / 1000),
-                    message_count=len(messages))
-                return fields, messages
-
             result.files += 1
             result.count(indexer.index_session(path, stat, read))
         # Only a complete, non-empty listing retires anything: an empty one
@@ -1079,9 +1188,12 @@ def _pass(home: Path, path: Path, should_stop) -> PassResult:
             result.files += 1
             result.count(indexer.index_file(source.path, source.harness,
                                             document=source.document,
-                                            session_id=source.session_id))
-        if should_stop is None or not should_stop():
-            _index_devin(indexer, home / DEVIN_DB, result, should_stop)
+                                            session_id=source.session_id,
+                                            meta_path=source.meta_path))
+        for db, entries in ((DEVIN_DB, _devin_entries), (OPENCODE_DB, _opencode_entries)):
+            if should_stop is not None and should_stop():
+                break
+            _index_container(indexer, home / db, entries, result, should_stop)
         # A failed drain leaves the orphans for the next pass's.
         try:
             result.drained = indexer.drain()
