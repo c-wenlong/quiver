@@ -35,6 +35,7 @@
     // (one at a time, as GitHubModel's mutating set), a newer drop queued
     // behind it, the last failure, and a drag in progress.
     managing: false, mutating: null, queuedOrder: null, pinError: null,
+    pinGen: 0, // bumped as each pin write starts and ends
     dragging: null, repaintAfterDrag: false,
   };
 
@@ -335,11 +336,15 @@
     // Only the newest read paints: one begun before a merge must not put
     // the merged row back over the read the merge started.
     const seq = ++page.seq;
+    const pinGen = page.pinGen;
     page.loading = true;
     GhUI.keepFocus("gh-search", paintDashboard);
     const { status, data } = await api(`/v1/app/repositories${refresh ? "?refresh=1" : ""}`);
     if (gen !== routeGen || seq !== page.seq) return;
     page.loading = false;
+    // A read that began before an unpin or reorder, or lands while one
+    // runs, may list the pins as they were: the page's own list wins.
+    if (data && data.repos && page.data && (page.mutating || pinGen !== page.pinGen)) data.repos = page.data.repos;
     if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
     if (status !== 200 || !data) {
       // Keep the last good rows under the error, as the app does.
@@ -489,17 +494,20 @@
   async function unpin(name) {
     if (page.mutating) return;
     page.mutating = name;
+    page.pinGen++;
     page.pinError = null;
     paintDashboard();
     const { status, data } = await GhUI.post("/v1/app/repositories/remove", { repo: name });
     page.mutating = null;
+    page.pinGen++;
     if (status === 200 && data && page.data) {
       page.data.repos = data.repos;
       delete page.data.boards[name];
       if (page.shown === name) page.shown = null;
     } else if (status === 404 && data && data.error && data.error.code === "not_pinned") {
       // Unpinned elsewhere already: the list is what's out of date.
-      renderDashboard(true);
+      if (onDashboard()) renderDashboard(true);
+      return;
     } else {
       page.pinError = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
     }
@@ -528,6 +536,7 @@
     paintDashboard();
     if (page.mutating) { page.queuedOrder = order; return; }
     page.mutating = "<reorder>";
+    page.pinGen++;
     let next = order;
     while (next) {
       const { status, data } = await GhUI.post("/v1/app/repositories/reorder", { order: next });
@@ -537,11 +546,15 @@
         page.pinError = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
         next = null;
         page.mutating = null;
-        return renderDashboard(true);
+        page.pinGen++;
+        // Read the stored order back, but only onto this page.
+        if (onDashboard()) renderDashboard(true);
+        return;
       }
       if (!next && page.data) page.data.repos = data.repos;
     }
     page.mutating = null;
+    page.pinGen++;
     if (onDashboard()) paintDashboard();
   }
 
@@ -554,7 +567,9 @@
       for (const r of panel.querySelectorAll(".drop-before, .drop-after")) r.classList.remove("drop-before", "drop-after");
     };
     // Rows run across in the narrow layout's chip strip, down otherwise.
-    const across = (row) => getComputedStyle(row.parentElement).flexDirection === "row";
+    // Asked of the rail's list: a quiet row's own parent is display:
+    // contents there and keeps its column direction.
+    const across = (row) => getComputedStyle(row.closest(".gh-rail-list")).flexDirection === "row";
     const after = (row, e) => {
       const r = row.getBoundingClientRect();
       return across(row) ? e.clientX > r.left + r.width / 2 : e.clientY > r.top + r.height / 2;
