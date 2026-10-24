@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe remote setup`: every step from nothing to a paired phone.**
+  Remote control needs Tailscale installed and signed in, MagicDNS and
+  HTTPS certificates on in the tailnet, a certificate this machine can
+  fetch, the hub running in the background behind `tailscale serve`, and
+  a paired device. `swe remote setup` checks each in order and says
+  whether it's done, something Quiver does itself, or something only a
+  person can do, with the page to open (the sign-in link Tailscale
+  reports, the admin console's DNS page). `--apply` does Quiver's part:
+  it starts the hub on loopback with its https address and sets up
+  `tailscale serve`, checking the certificate first so a working hub is
+  never moved somewhere it can't be reached. A certificate that fails
+  says why in plain words, such as a DNS server Tailscale can't reach.
+  `--json` gives the same list for the Mac app. The hub's LaunchAgent
+  now loads on a retry when launchd answers "Input/output error", and
+  every Tailscale call finds the CLI inside Tailscale.app too.
+
 - **Remote iPhone app: Console.** Console, in the hub menu on
   Sessions, opens a shell on the hub's machine over SSH, for debugging
   when chat can't help. It dials the machine's sshd over the tailnet,

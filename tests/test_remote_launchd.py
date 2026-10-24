@@ -87,5 +87,48 @@ class LaunchdTest(unittest.TestCase):
         self.assertEqual(launchd.loaded_pid(run=FakeLaunchctl(fail={"print"})), (False, None))
 
 
+
+class BootstrapRetryTest(unittest.TestCase):
+    """bootstrap right after bootout can fail with EIO while launchd
+    still tears the old job down; it loads on a retry."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.log = self.home / "serve.log"
+
+    def fake(self, eio_times):
+        calls = []
+
+        def run(argv, **_kw):
+            calls.append(argv[1])
+            if argv[1] == "bootstrap" and calls.count("bootstrap") <= eio_times:
+                return subprocess.CompletedProcess(argv, 5, stdout="",
+                                                   stderr="Bootstrap failed: 5: Input/output error")
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+        return run, calls
+
+    def test_an_io_error_is_retried(self):
+        run, calls = self.fake(eio_times=2)
+        sleeps = []
+        launchd.install(["/x/swe"], self.log, "/bin", home=self.home, run=run, sleep=sleeps.append)
+        self.assertEqual(calls, ["bootout", "bootstrap", "bootstrap", "bootstrap"])
+        self.assertEqual(len(sleeps), 2)
+
+    def test_it_gives_up_after_the_last_try(self):
+        run, calls = self.fake(eio_times=99)
+        with self.assertRaises(RuntimeError) as ctx:
+            launchd.install(["/x/swe"], self.log, "/bin", home=self.home, run=run, sleep=lambda _s: None)
+        self.assertIn("Input/output error", str(ctx.exception))
+        self.assertEqual(calls.count("bootstrap"), launchd.BOOTSTRAP_TRIES)
+
+    def test_other_errors_are_not_retried(self):
+        def run(argv, **_kw):
+            rc = 1 if argv[1] == "bootstrap" else 0
+            return subprocess.CompletedProcess(argv, rc, stdout="", stderr="no such file")
+        with self.assertRaises(RuntimeError):
+            launchd.install(["/x/swe"], self.log, "/bin", home=self.home, run=run,
+                            sleep=lambda _s: self.fail("slept"))
+
+
 if __name__ == "__main__":
     unittest.main()
