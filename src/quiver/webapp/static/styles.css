@@ -73,6 +73,12 @@ button { font: inherit; color: inherit; }
 .nav-item:hover { background: var(--hover); color: var(--text-primary); }
 .nav-item.active { background: var(--nav-active); color: var(--text-primary); font-weight: 500; }
 .nav-item.soon { opacity: .45; }
+/* Mac app only: the label dims as Settings' rows do, the pill stays clear. */
+.nav-item.mac-only { opacity: 1; cursor: default; gap: 8px; }
+.nav-item.mac-only:hover { background: transparent; color: var(--text-nav); }
+.nav-item.mac-only > svg, .nav-item.mac-only > span:not(.badge) { opacity: .45; }
+.nav-item.mac-only > span:not(.badge) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.nav-item .badge { margin-left: auto; font-size: 10px; padding: 0 6px; white-space: nowrap; }
 .nav-item svg { width: 15px; height: 15px; flex: none; }
 .panel {
   flex: 1; min-width: 0; margin: 8px 12px 12px 0; background: var(--panel);
@@ -249,6 +255,7 @@ select.field { flex: 0 1 auto; max-width: 240px; }
 .badge { flex: none; font-size: 12px; font-weight: 500; color: var(--text-label); background: var(--subtle);
   border: 1px solid var(--border-strong); border-radius: 999px; padding: 1px 8px; }
 .badge.status-active { color: var(--accent); }
+.badge.mac-only { color: var(--text-muted); font-weight: 400; }
 .badge.status-error { color: var(--danger-text); }
 .badge.status-followup, .badge.status-interrupted { color: var(--warning-text); }
 .fold, .link { border: 0; background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; padding: 6px 8px; }
