@@ -25,10 +25,17 @@
   font-size: 12px; color: var(--text-secondary);
 }
 
-/* Day, week and N-day grid */
-.cal-time { display: flex; flex-direction: column; height: 100%; }
-.cal-head { display: flex; padding: 8px 0; border-bottom: 1px solid var(--border); }
-.cal-axis-gap { width: 52px; flex: none; }
+/* Day, week and N-day grid. One scroller both ways: --cols columns
+ * render (the buffer days each side included), --span of them fill the
+ * width, and a horizontal scroll snaps to the .snap columns. The header
+ * row sticks to the top and the hour axis to the left. */
+.cal-time { --cal-axis: 52px; height: 100%; }
+.cal-head {
+  display: flex; position: sticky; top: 0; z-index: 4;
+  background: var(--card); border-bottom: 1px solid var(--border);
+}
+.cal-heads { padding: 8px 0; }
+.cal-axis-gap { width: var(--cal-axis); flex: none; position: sticky; left: 0; z-index: 1; background: var(--card); }
 .cal-heads, .cal-cols { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); }
 .cal-dayhead { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-primary); min-width: 0; white-space: nowrap; }
 .cal-dayhead .dn { padding: 2px 5px; border-radius: 5px; font-variant-numeric: tabular-nums; }
@@ -40,9 +47,13 @@
 .cal-heads.compact .wd { display: none; }
 .cal-heads.compact .wdn { display: inline; }
 
-.cal-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-.cal-canvas { display: flex; height: calc(24 * var(--cal-hour)); position: relative; }
-.cal-axis { width: 52px; flex: none; position: relative; }
+.cal-scroll {
+  height: 100%; overflow: auto; overscroll-behavior: contain;
+  scroll-snap-type: x mandatory; scroll-padding-left: var(--cal-axis);
+}
+.cal-canvas { width: calc(var(--cal-axis) + (100% - var(--cal-axis)) * var(--cols) / var(--span)); }
+.cal-grid { display: flex; height: calc(24 * var(--cal-hour)); position: relative; }
+.cal-axis { width: var(--cal-axis); flex: none; position: sticky; left: 0; z-index: 3; background: var(--card); }
 .cal-hour {
   display: block; height: var(--cal-hour); padding-right: 8px; text-align: right;
   font-size: 9px; color: var(--text-secondary); font-variant-numeric: tabular-nums;
@@ -56,6 +67,7 @@
     color-mix(in srgb, var(--border) 50%, transparent) 0 1px, transparent 1px var(--cal-hour));
 }
 .cal-col { position: relative; min-width: 0; border-left: 1px solid var(--border); }
+.cal-col.snap { scroll-snap-align: start; }
 .cal-now { position: absolute; left: 0; right: 0; height: 1.5px; background: var(--cal-red); z-index: 2; pointer-events: none; }
 
 .cal-block {
@@ -192,7 +204,7 @@
   .cal-body { grid-template-columns: minmax(0, 1fr); }
   .cal-main { height: max(420px, 70vh); }
   .cal-panel { max-height: none; }
-  .cal-axis-gap, .cal-axis { width: 40px; }
+  .cal-time { --cal-axis: 40px; }
   .cal-overflow { flex-direction: column; }
   .cal-overflow-list { width: auto; border-right: 0; border-bottom: 1px solid var(--border); max-height: 220px; }
   .cal-overflow-detail { width: auto; }
