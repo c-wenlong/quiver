@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Settings, with remote pairing.** The Settings page from the
+  Mac app, for the hub machine. Integrations › Remote shows the hub,
+  the paired devices with "This device" marked and a Revoke that asks
+  first (signing out the browser you're on needs its own confirm), and
+  Pair a device, which mints a one-time code and shows the browser link
+  and the `quiver://pair` app link as QR codes. The hub draws those
+  itself with a small stdlib encoder (a port of Nayuki's MIT QR
+  generator), since the web app loads no library. Appearance and which
+  pages the sidebar lists are kept per browser; the API keys show
+  masked and read only; the GitHub CLI and the hub's paths are listed;
+  "Set up this machine" and Doctor link to their pages. Rows that set
+  up the Mac app itself (Dock, login item, terminal, notifications,
+  updates, Keychain services) are greyed out as "Mac app only".
+
 - **Web app: your own devices open it without pairing.** A browser on a
   device signed in to the hub owner's Tailscale account loads `/app/`
   straight away; the hub knows it from `tailscale whois` (cached a
