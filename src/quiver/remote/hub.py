@@ -1858,13 +1858,14 @@ class _Handler(BaseHTTPRequestHandler):
     }
 
     def _queue_action(self, key: str, row: dict) -> None:
-        """``POST /v1/sessions/{key}/queue {client_id, op}``.
+        """``POST /v1/sessions/{key}/queue {client_id, op, text?}``.
 
         ``steer`` takes one waiting queue-mode send off the idle wait and
         submits it as a steer (after the steers already queued);
         ``cancel`` drops it and reports ``command.result`` with
-        ``cancelled: true``. Both claim the send under the ``Waiting``
-        lock, so they race the send's own job safely.
+        ``cancelled: true``; ``edit`` replaces its text in place. All
+        three act under the ``Waiting`` lock, so they race the send's own
+        job safely: the job injects only after claiming it there.
         """
         body = self._read_body()
         if body is None:
@@ -1878,6 +1879,24 @@ class _Handler(BaseHTTPRequestHandler):
         client_id, op = act["client_id"], act["op"]
         state = self._state
         steer_key = self._send_key(key, "steer")
+        if op == "edit":
+            text = act["text"]
+
+            def change(send) -> None:
+                # The job's command is the same dict, read only after
+                # its claim, so it injects the new text.
+                send.text = text
+                send.payload["cmd"]["text"] = text
+
+            send, gone = state.waiting.update(key, client_id, change)
+            if send is None:
+                self._queue_gone(gone)
+                return
+            self._send_json(200, {
+                "ok": True, "client_id": client_id, "op": op,
+                "text": text,
+            })
+            return
         if op == "steer":
             # Sending now is a write: the same rules as a steer message.
             if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
@@ -1896,14 +1915,7 @@ class _Handler(BaseHTTPRequestHandler):
             key, client_id, "steered" if op == "steer" else "removed"
         )
         if send is None:
-            if gone == "unknown":
-                self._send_error(
-                    404, "unknown_send",
-                    "no queued message with that client_id",
-                )
-            else:
-                self._send_error(409, "not_waiting", self._GONE_NOTES.get(
-                    gone, "that message is no longer queued"))
+            self._queue_gone(gone)
             return
         if op == "cancel":
             self._send_result(
@@ -1918,6 +1930,16 @@ class _Handler(BaseHTTPRequestHandler):
             )
             state.sendq.submit(steer_key, job, cancel)
         self._send_json(200, {"ok": True, "client_id": client_id, "op": op})
+
+    def _queue_gone(self, gone: str) -> None:
+        """Answer an action on a send that is not waiting."""
+        if gone == "unknown":
+            self._send_error(
+                404, "unknown_send", "no queued message with that client_id",
+            )
+        else:
+            self._send_error(409, "not_waiting", self._GONE_NOTES.get(
+                gone, "that message is no longer queued"))
 
     def _fresh_status(self, session, fallback: str) -> str:
         """Reclassify one session now; the catalog row can be stale."""
