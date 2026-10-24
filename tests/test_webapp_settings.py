@@ -787,3 +787,82 @@ class TestSessionSearch(_Settings):
             settings_page._first_pass(Path(self.home))
         self.assertFalse(search_writer.is_running(self.home))
         self.assertEqual(search_writer.status(self.home)["last_error"]["message"], "too new")
+
+
+class TestSync(_Settings):
+    """Sync now: swe gh sync in process, against a fake gh on PATH."""
+
+    def setUp(self):
+        super().setUp()
+        from quiver.webapp.pages import _github as G
+
+        patcher = patch.object(G, "CACHE", G.TtlCache())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_sync_fills_the_hubs_catalog_and_answers_with_the_card(self):
+        from quiver import paths
+        from quiver.github import catalog
+        from tests.test_webapp_repositories import FakeGh
+
+        FakeGh(self, orgs=["acme"], lists={"octo": ["dots"], "acme": ["sdk"]})
+        me = self.device("laptop")
+        status, body = self.post("sync", {}, me)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["failed"], [])
+        self.assertEqual(body["github"]["env"]["login"], "octo")
+        self.assertEqual(body["github"]["catalog"]["repos"], 2)
+        self.assertEqual(catalog.status(paths.github_catalog_for(self.home))["repos"], 2)
+
+    def test_sync_probes_gh_afresh_so_a_switched_account_counts(self):
+        from quiver import paths
+        from quiver.github import catalog
+        from quiver.webapp.pages import _github as G
+        from tests.test_webapp_repositories import FakeGh
+
+        # The card read the old account a moment ago; gh is now signed in as octo.
+        G.CACHE.get(("env", G.home_key(self.home)),
+                    lambda: gh.GhEnv(installed=True, authenticated=True, login="old-account"))
+        FakeGh(self, orgs=[], lists={"octo": ["dots"]})
+        status, body = self.post("sync", {}, self.device("laptop"))
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["github"]["env"]["login"], "octo")
+        self.assertEqual(catalog.status(paths.github_catalog_for(self.home))["owners"], ["octo"])
+
+    def test_skipped_owners_are_named(self):
+        from tests.test_webapp_repositories import FakeGh
+
+        FakeGh(self, orgs=["acme"], lists={"octo": ["dots"]})
+        status, body = self.post("sync", {}, self.device("laptop"))
+        self.assertEqual(status, 200)
+        self.assertEqual([f["owner"] for f in body["failed"]], ["acme"])
+        self.assertEqual(body["github"]["catalog"]["repos"], 1)
+
+    def test_a_signed_out_gh_is_refused_in_its_setup_words(self):
+        from tests.test_webapp_repositories import FakeGh
+
+        fake = FakeGh(self, signed_out=True)
+        status, body = self.post("sync", {}, self.device("laptop"))
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"]["code"], "gh_auth_required")
+        self.assertIn("gh auth login", body["error"]["message"])
+        self.assertEqual([c[:2] for c in fake.calls()], [["auth", "status"]])
+
+    def test_one_sync_at_a_time(self):
+        settings_page._SYNC_LOCK.acquire()
+        try:
+            with self.assertRaises(PageError) as raised:
+                settings_page.post(self.ctx(), "sync", {})
+        finally:
+            settings_page._SYNC_LOCK.release()
+        self.assertEqual((raised.exception.status, raised.exception.code), (409, "busy"))
+
+    def test_cross_site_sync_is_refused(self):
+        from tests.test_webapp_repositories import FakeGh
+
+        fake = FakeGh(self)
+        headers = {"Authorization": f"Bearer {self.device('phone')['credential']}",
+                   "Origin": "https://evil.example", "Content-Type": "application/json"}
+        status, _ = self.srv.request("POST", "/v1/app/settings/sync", body={}, headers=headers)
+        self.assertEqual(status, 403)
+        self.assertEqual(fake.calls(), [])
