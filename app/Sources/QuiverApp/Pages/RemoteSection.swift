@@ -9,12 +9,9 @@ import SwiftUI
 struct RemoteSection: View {
     @Environment(AppModel.self) private var app
     @State private var model: RemoteModel?
-    /// Which payload the QR encodes while the ticket sheet is up.
-    fileprivate enum PairTarget: String, CaseIterable, Identifiable {
-        case web, app
-        var id: Self { self }
-        var title: String { self == .web ? "Browser" : "Quiver app" }
-    }
+    /// `swe remote setup`: whether the Hub card offers the checklist.
+    @State private var setup: RemoteSetupModel?
+    @State private var showsSetup = false
     @State private var target: PairTarget = .web
 
     var body: some View {
@@ -24,17 +21,57 @@ struct RemoteSection: View {
         }
         .task(id: app.swePath) {
             let remote = RemoteModel(swe: app.swe)
+            let checklist = RemoteSetupModel(swe: { [app] in app.swe })
             model = remote
-            await remote.load()
+            setup = checklist
+            async let status: Void = remote.load()
+            async let report: Void = checklist.load()
+            _ = await (status, report)
+        }
+        // The first-run wizard's "Set up now" lands here once it closes.
+        .onChange(of: app.pendingRemoteSetup, initial: true) { _, pending in
+            guard pending else { return }
+            app.pendingRemoteSetup = false
+            showsSetup = true
         }
         .quiverSheet(isPresented: showTicket, onDismiss: { model?.dismissTicket() }) {
             if let model { PairSheet(model: model, target: $target) }
         }
+        .quiverSheet(isPresented: showSetupSheet, onDismiss: reload) {
+            if let model, let setup { RemoteSetupSheet(setup: setup, remote: model) }
+        }
     }
 
+    /// Waits for the models, which the wizard's hand-off can beat.
+    private var showSetupSheet: Binding<Bool> {
+        Binding(get: { showsSetup && model != nil && setup != nil },
+                set: { showsSetup = $0 })
+    }
+
+    /// The setup sheet shows its own pair card over itself.
     private var showTicket: Binding<Bool> {
-        Binding(get: { model?.ticket != nil },
+        Binding(get: { model?.ticket != nil && !showsSetup },
                 set: { if !$0 { model?.dismissTicket() } })
+    }
+
+    /// The report says remote control isn't finished: the Hub card offers
+    /// the checklist. Nil until it loads, and when this swe has no
+    /// `remote setup` (an older one), so the card falls back to the hint.
+    private var setupReport: RemoteSetupReport? { setup?.report }
+
+    @ViewBuilder private var setupRow: some View {
+        if let report = setupReport, !report.ready {
+            SettingRow(title: "Remote control isn't set up yet",
+                       detail: setupDetail(report)) {
+                Button("Set up remote control") { showsSetup = true }
+                    .primaryButton()
+            }
+        }
+    }
+
+    private func setupDetail(_ report: RemoteSetupReport) -> String {
+        guard let next = report.current else { return "" }
+        return "Next step: \(next.title)"
     }
 
     private var hubCard: some View {
@@ -54,6 +91,12 @@ struct RemoteSection: View {
                                detail: hubDetail(status)) {
                         Badge("Online")
                     }
+                    if setupReport?.ready == false {
+                        Divider().overlay(Theme.border)
+                        setupRow
+                    }
+                } else if setupReport?.ready == false {
+                    setupRow
                 } else {
                     SettingRow(title: "No hub reachable",
                                detail: "Run `swe remote serve` on the machine that should host your phone sessions, then refresh.") {
@@ -138,8 +181,19 @@ struct RemoteSection: View {
     }
 
     private func reload() {
-        Task { await model?.load() }
+        Task {
+            async let status: Void? = model?.load()
+            async let report: Void? = setup?.load()
+            _ = await (status, report)
+        }
     }
+}
+
+/// Which payload the pair code encodes.
+enum PairTarget: String, CaseIterable, Identifiable {
+    case web, app
+    var id: Self { self }
+    var title: String { self == .web ? "Browser" : "Quiver app" }
 }
 
 private struct DeviceRow: View {
@@ -173,9 +227,10 @@ private struct DeviceRow: View {
 }
 
 /// The pair sheet: QR plus a copyable link and the token's countdown.
-private struct PairSheet: View {
+/// Settings › Remote and the setup checklist both open it.
+struct PairSheet: View {
     @Bindable var model: RemoteModel
-    @Binding var target: RemoteSection.PairTarget
+    @Binding var target: PairTarget
     /// Ticks the countdown once a second.
     @State private var now = Date()
     private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -195,7 +250,7 @@ private struct PairSheet: View {
                         .background(.white, in: .rect(cornerRadius: Theme.cardRadius))
                     VStack(alignment: .leading, spacing: 10) {
                         Picker("", selection: $target) {
-                            ForEach(RemoteSection.PairTarget.allCases) { t in
+                            ForEach(PairTarget.allCases) { t in
                                 Text(t.title).tag(t)
                             }
                         }

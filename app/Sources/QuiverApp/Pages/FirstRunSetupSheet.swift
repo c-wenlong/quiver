@@ -3,8 +3,9 @@ import QuiverCore
 import SwiftUI
 import UserNotifications
 
-/// The first-run setup window, in four steps: the agents you use, one
-/// shared AGENTS.md, skills and MCP servers, the look, and notifications.
+/// The first-run setup window, in five steps: the agents you use, one
+/// shared AGENTS.md, skills and MCP servers, the look, notifications, and
+/// an optional offer to set up phone access once the window closes.
 /// The second step is the only one that writes outside Quiver's own
 /// settings, through one `swe setup --apply` call.
 struct FirstRunSetupSheet: View {
@@ -50,6 +51,7 @@ private struct Content: View {
                     case .links: LinksStep(model: model)
                     case .look: LookStep()
                     case .notifications: NotificationsStep()
+                    case .phone: PhoneStep()
                     }
                 }
                 .padding(.horizontal, 40)
@@ -103,6 +105,7 @@ private struct Content: View {
         case .links: "One setup for all of them"
         case .look: "Pick a look"
         case .notifications: "Set up notifications"
+        case .phone: "Phone access"
         }
     }
 
@@ -116,6 +119,8 @@ private struct Content: View {
             "Change it later in Settings › General."
         case .notifications:
             "Quiver tells you when a limit nears its end and when it resets."
+        case .phone:
+            "Watch and steer sessions from your phone, over Tailscale. Optional: skip it now and set it up any time in Settings › Integrations › Remote."
         }
     }
 
@@ -132,16 +137,22 @@ private struct Content: View {
                     .secondaryButton()
                     .disabled(model.applying)
             }
-            Button(continueTitle) {
-                if model.step == .notifications {
-                    app.closeFirstRunSetup(reload: model.outcome != nil)
-                } else {
+            if model.step == .phone {
+                Button("Later") { app.closeFirstRunSetup(reload: model.outcome != nil) }
+                    .secondaryButton()
+                Button("Set up now") {
+                    app.closeFirstRunSetup(reload: model.outcome != nil, remoteSetup: true)
+                }
+                .primaryButton()
+                .keyboardShortcut(.return, modifiers: .command)
+            } else {
+                Button(continueTitle) {
                     Task { await model.next(order: app.providers.rows.map(\.provider.id)) }
                 }
+                .primaryButton()
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(model.applying || (model.step == .links && !previewReady))
             }
-            .primaryButton()
-            .keyboardShortcut(.return, modifiers: .command)
-            .disabled(model.applying || (model.step == .links && !previewReady))
         }
     }
 
@@ -154,7 +165,6 @@ private struct Content: View {
         switch model.step {
         case .links where model.applying: "Setting up…"
         case .links where model.needsApply: "Set up"
-        case .notifications: "Start using Quiver"
         default: "Continue"
         }
     }
@@ -595,5 +605,43 @@ private struct NotificationsStep: View {
             Button("Allow") { Task { await app.limits.requestNotifications() } }
                 .secondaryButton()
         }
+    }
+}
+
+// MARK: - Step 5: phone access
+
+/// What setting up phone access involves. Nothing runs here: "Set up now"
+/// opens the checklist in Settings › Integrations › Remote once this
+/// window closes, and "Later" just finishes.
+private struct PhoneStep: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            row(icon: "network", title: "Tailscale",
+                detail: "Your phone reaches this Mac over Tailscale, a private network between your own devices. Quiver checks it's installed, signed in, and has HTTPS on.")
+            Divider().overlay(Theme.border)
+            row(icon: "server.rack", title: "The hub",
+                detail: "Quiver runs a small server in the background that your phone talks to, and puts it behind tailscale serve.")
+            Divider().overlay(Theme.border)
+            row(icon: "iphone", title: "Your phone",
+                detail: "Scan a code with the Quiver app, or open a link in the phone's browser.")
+        }
+        .padding(.horizontal, Theme.cardPadding)
+        .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
+    }
+
+    private func row(icon: String, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon).font(Theme.font(size: 15)).foregroundStyle(Theme.textSecondary)
+                .frame(width: 20).padding(.top, 2)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+                Text(detail).font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 14)
     }
 }

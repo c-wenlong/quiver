@@ -217,13 +217,29 @@ final class AppModel {
     /// AGENTS.md that hasn't finished or skipped it, or from Settings.
     var showsFirstRunSetup = false
 
+    /// Settings › Integrations › Remote opens its setup checklist the next
+    /// time it shows, then clears this.
+    var pendingRemoteSetup = false
+
     /// Setup finished or skipped: never offered at launch again. When it
     /// ran, every page whose data it changed loads afresh (stars,
     /// harnesses, skills links, MCP servers), since their own 60-second
     /// staleness checks would keep showing what was there before.
-    func closeFirstRunSetup(reload: Bool = false) {
+    ///
+    /// `remoteSetup` is the wizard's "Set up now" on its phone step: it
+    /// opens Settings › Integrations, whose Remote section then opens the
+    /// setup checklist (`pendingRemoteSetup`).
+    func closeFirstRunSetup(reload: Bool = false, remoteSetup: Bool = false) {
         UserDefaults.standard.set(true, forKey: FirstRun.defaultsKey)
         showsFirstRunSetup = false
+        if remoteSetup {
+            UserDefaults.standard.set(SettingsSection.integrations.rawValue, forKey: "settingsSection")
+            // Past `selection`'s covered-window guard: the card covering
+            // the window is this wizard, which is closing, not a page's.
+            openSection = .settings
+            UserDefaults.standard.set(AppSection.settings.rawValue, forKey: "lastSection")
+            pendingRemoteSetup = true
+        }
         guard reload else { return }
         Task { [others, providers, skills, mcp, swe, swePath] in
             await others.load()
