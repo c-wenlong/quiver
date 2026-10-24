@@ -55,6 +55,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Pinned sessions sit in a Pinned section at the top. Fork asks for the
   new session's first message and opens its chat once it starts.
 
+- **Remote iPhone app: type / for the session's commands.** A `/` at
+  the start of the prompt box opens the commands this session's harness
+  will run, from the hub's per-session list: each shows its name, a
+  short description, any argument it takes and where it comes from
+  (Built-in, Project, User, Skill, Plugin). Typing filters by name, and
+  tapping one puts `/name ` (or a Codex skill's `$name `) in the box,
+  ready for an argument. The list loads once per chat open and reloads
+  on a pull. A harness with no commands says so, and a satellite
+  session notes that its custom commands aren't available yet.
+
 - **Web app: your own devices open it without pairing.** A browser on a
   device signed in to the hub owner's Tailscale account loads `/app/`
   straight away; the hub knows it from `tailscale whois` (cached a
