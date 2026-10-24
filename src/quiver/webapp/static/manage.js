@@ -307,13 +307,13 @@ function onHarnessesPage() {
   return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "harnesses";
 }
 
-/* app.js's api() only reads; writes send JSON with the same credential. */
+/* app.js's api() only reads; writes send JSON with the same headers. */
 async function apiPost(path, body) {
   let resp;
   try {
     resp = await fetch(path, {
       method: "POST",
-      headers: { Authorization: `Bearer ${credential()}`, "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(body),
     });
   } catch {
