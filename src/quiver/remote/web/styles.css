@@ -105,6 +105,25 @@ button.ghost { background: none; border: none; font-size: 26px; line-height: 1; 
 .msg.user .send-note { font-size: .75rem; color: var(--dim); margin-top: 4px; }
 .msg.user.failed { opacity: 1; }
 .msg.user.failed .send-note { color: var(--red); }
+.arrive { animation: arrive .25s ease-out; }
+@keyframes arrive { from { opacity: 0; transform: translateY(12px); } }
+#chat-working {
+  display: inline-flex; gap: 4px; align-items: center; margin: 4px 0 10px;
+  padding: 0 12px; height: 30px; border-radius: 99px;
+  background: var(--panel); border: 1px solid var(--border);
+  animation: arrive .2s ease-out;
+}
+#chat-working span {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--dim);
+  animation: wave 1.2s ease-in-out infinite;
+}
+#chat-working span:nth-child(2) { animation-delay: .18s; }
+#chat-working span:nth-child(3) { animation-delay: .36s; }
+@keyframes wave { 0%, 60%, 100% { opacity: .3; transform: none; } 30% { opacity: 1; transform: translateY(-2px); } }
+@media (prefers-reduced-motion: reduce) {
+  @keyframes arrive { from { opacity: 0; } }
+  #chat-working span { animation: none; opacity: .6; }
+}
 details.tool {
   background: var(--panel); border: 1px solid var(--border);
   border-radius: 10px; margin: 6px 0;

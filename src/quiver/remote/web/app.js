@@ -28,6 +28,14 @@ const state = {
   usageMachine: null,
   inboxCount: 0,
   openGen: 0,
+  // Live events not yet shown. The hub polls a busy transcript about
+  // once a second, so several messages arrive together; they are shown
+  // one at a time instead of as a block.
+  pending: [],
+  revealTimer: null,
+  lastRevealAt: 0,
+  // A send went through and nothing from the agent has come back yet.
+  awaitingReply: false,
 };
 
 function esc(s) {
@@ -319,6 +327,8 @@ const toolCards = new Map(); // call_id → card element
 async function openChat(key) {
   state.currentKey = key;
   const gen = ++state.openGen; // a second openChat supersedes this one
+  dropPending();
+  state.awaitingReply = false;
   toolCards.clear();
   el("chat-log").innerHTML = "";
   show("chat");
@@ -352,6 +362,7 @@ function updateOwnership(row) {
   const busy = row && row.status === "active";
   const canAttach = observed && row && row.attachable && !busy;
   el("attach-btn").classList.toggle("hidden", !canAttach);
+  updateWorking();
   el("chat-banner-text").textContent = !observed
     ? ""
     : canAttach
@@ -379,8 +390,13 @@ function appendEvent(ev, live = true) {
     appendMessage(ev.data || {}, ev.seq, live);
   } else if (ev.type === "session.status") {
     const row = state.sessions.find((r) => r.key === ev.session);
+    const status = (ev.data || {}).status || "";
+    // The turn ended (or stopped to ask) without a message to show.
+    if (ev.session === state.currentKey && status && status !== "active") {
+      state.awaitingReply = false;
+    }
     if (row) {
-      row.status = (ev.data || {}).status || "";
+      row.status = status;
       // An open chat polls nothing — a turn ending here should un-hide
       // the Attach button / reword the banner on its own.
       if (row.key === state.currentKey) updateOwnership(row);
@@ -423,6 +439,8 @@ function appendEvent(ev, live = true) {
         } else {
           b.classList.add("failed");
           if (note) note.textContent = d.note || "send failed";
+          state.awaitingReply = false;
+          updateWorking();
         }
       }
     }
@@ -462,6 +480,75 @@ function appendEvent(ev, live = true) {
     });
   }
   if (live) scrollBottom();
+}
+
+/* ── live pacing ────────────────────────────────────────────
+   Live events reveal one at a time with a short gap that shrinks as
+   more wait; a replay after reconnecting (more than 24) lands at once. */
+
+function revealDelay(waiting) {
+  if (waiting <= 0 || waiting > 24) return null;
+  return Math.min(180, 1200 / waiting);
+}
+
+function enqueue(ev) {
+  state.pending.push(ev);
+  updateWorking();
+  if (state.revealTimer !== null) return;
+  // Frames often arrive in separate reads a few ms apart: the queue
+  // empties between them, so keep the gap from the last entry shown.
+  const gap = (revealDelay(state.pending.length) || 0) - (performance.now() - state.lastRevealAt);
+  if (gap > 0) state.revealTimer = setTimeout(revealNext, gap);
+  else revealNext();
+}
+
+function revealNext() {
+  state.revealTimer = null;
+  if (!state.pending.length) { updateWorking(); return; }
+  const delay = revealDelay(state.pending.length);
+  if (delay === null) { flushPending(); return; }
+  const log = el("chat-log");
+  const before = log.childElementCount;
+  showLive(state.pending.shift());
+  updateWorking();
+  // Only a new entry earns a pause; a status change or a result landing
+  // on its card goes straight through.
+  const added = log.childElementCount > before;
+  if (added) state.lastRevealAt = performance.now();
+  if (state.pending.length) state.revealTimer = setTimeout(revealNext, added ? delay : 0);
+}
+
+function flushPending() {
+  clearTimeout(state.revealTimer);
+  state.revealTimer = null;
+  const all = state.pending;
+  state.pending = [];
+  for (const ev of all) showLive(ev);
+  updateWorking();
+}
+
+function showLive(ev) {
+  appendEvent(ev);
+  if (ev.seq && state.currentKey) rememberSeq(state.currentKey, ev.seq);
+}
+
+function dropPending() {
+  clearTimeout(state.revealTimer);
+  state.revealTimer = null;
+  state.pending = [];
+}
+
+// Three pulsing dots under the last message while the agent is
+// mid-turn, a send waits for its reply, or messages are still being
+// revealed.
+function updateWorking() {
+  const row = state.sessions.find((r) => r.key === state.currentKey);
+  const on = !!state.currentKey &&
+    ((row && row.status === "active") || state.awaitingReply || state.pending.length > 0);
+  const dots = el("chat-working");
+  if (dots.classList.contains("hidden") === !on) return;
+  dots.classList.toggle("hidden", !on);
+  if (on) scrollBottom();
 }
 
 /* ── diff pane ──────────────────────────────────────────────
@@ -606,7 +693,9 @@ function appendMessage(msg, seq, live = true) {
       body.appendChild(pre);
     }
     if (msg.tool.call_id) toolCards.set(msg.tool.call_id, d);
+    if (live) d.classList.add("arrive");
     log.appendChild(d);
+    if (live) state.awaitingReply = false;
     return;
   }
   if (kind === "user" && live) {
@@ -622,8 +711,20 @@ function appendMessage(msg, seq, live = true) {
         return !msg.ts || !sentAt || msg.ts >= sentAt - 5;
       }
     );
+    if (hit && hit === log.lastElementChild) {
+      // Still the newest entry: settle the bubble where it is, so it
+      // doesn't leave and come back in. Dropping .pending also tells a
+      // late POST reply or command.result it's already delivered.
+      hit.classList.remove("pending");
+      delete hit.dataset.clientId;
+      const note = hit.querySelector(".send-note");
+      if (note) note.remove();
+      hit.querySelector(".text").innerHTML = md(msg.text);
+      return;
+    }
     if (hit) hit.remove();
   }
+  if (live && kind !== "user" && kind !== "tool_result") state.awaitingReply = false;
   const div = document.createElement("div");
   div.className = `msg ${kind}`;
   const role = { user: "you", assistant: "agent", thinking: "thought", error: "error" }[kind];
@@ -680,6 +781,7 @@ function appendMessage(msg, seq, live = true) {
   } else {
     div.innerHTML = `<div class="role">${role || kind}</div><div class="text">${md(msg.text)}</div>`;
   }
+  if (live) div.classList.add("arrive");
   log.appendChild(div);
 }
 
@@ -747,11 +849,17 @@ function handleFrame(key, frame) {
   if (!data.trim()) return;
   let ev;
   try { ev = JSON.parse(data); } catch { return; }
-  if (ev.seq) rememberSeq(key, ev.seq);
-  if (state.currentKey === key) appendEvent(ev);
+  if (ev.type === "journal.truncated" || ev.type === "journal.caught-up") {
+    if (ev.seq && !state.pending.length) rememberSeq(key, ev.seq);
+    return;
+  }
+  // The cursor advances as each event is shown (showLive), so events
+  // still waiting when the stream drops are replayed on reconnect.
+  if (state.currentKey === key) enqueue(ev);
 }
 
 function closeStream() {
+  dropPending();
   if (state.stream) {
     try { state.stream.reader.cancel(); } catch {}
     state.stream = null;
@@ -1030,6 +1138,7 @@ function appendOptimistic(text, clientId) {
   div.innerHTML =
     `<div class="role">you</div><div class="text">${md(text)}</div>` +
     `<div class="send-note">sending…</div>`;
+  div.classList.add("arrive");
   el("chat-log").appendChild(div);
   scrollBottom();
   return div;
@@ -1053,6 +1162,9 @@ el("composer").addEventListener("submit", async (e) => {
   const mode = el("composer-mode").value;
   const clientId = newClientId();
   const bubble = appendOptimistic(text, clientId);
+  const gen = state.openGen;
+  state.awaitingReply = true;
+  updateWorking();
   let status = 0, data = null;
   try {
     ({ status, data } = await api(
@@ -1075,6 +1187,11 @@ el("composer").addEventListener("submit", async (e) => {
         : "sent";
     }
   } else {
+    // Another chat may be open by now; its dots aren't ours to clear.
+    if (gen === state.openGen) {
+      state.awaitingReply = false;
+      updateWorking();
+    }
     failBubble(
       bubble,
       (data && data.error && data.error.message)
