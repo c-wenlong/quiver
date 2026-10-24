@@ -111,6 +111,21 @@ class TestCommandValidation(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         parse({**base, field: bad})
 
+    def test_message_mode_default_is_only_for_missing_null_or_empty(self):
+        self.assertEqual(
+            protocol.parse_message_command({"text": "hi"})["mode"], "queue")
+        for empty in (None, ""):
+            with self.subTest(mode=empty):
+                out = protocol.parse_message_command(
+                    {"text": "hi", "mode": empty})
+                self.assertEqual(out["mode"], "queue")
+        # Other falsy values are not "missing": they are bad modes.
+        for falsy in (False, 0, 0.0):
+            with self.subTest(mode=falsy):
+                with self.assertRaises(ValueError):
+                    protocol.parse_message_command(
+                        {"text": "hi", "mode": falsy})
+
     def test_launch(self):
         out = protocol.parse_launch_command(
             {"harness": "codex", "cwd": "/srv/app", "prompt": "go"})
