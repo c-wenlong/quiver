@@ -189,8 +189,12 @@ def parse_message_command(body: dict) -> dict:
     text = body.get("text")
     if not isinstance(text, str) or not text.strip():
         raise ValueError("message.text must be a non-empty string")
-    mode = body.get("mode") or "queue"
-    if mode not in MESSAGE_MODES:
+    mode = body.get("mode")
+    if mode is None or mode == "":
+        mode = "queue"
+    # Type-check before every set lookup below: a JSON list or object is
+    # unhashable, and the TypeError would drop the request unanswered.
+    if not isinstance(mode, str) or mode not in MESSAGE_MODES:
         raise ValueError(f"message.mode must be one of {sorted(MESSAGE_MODES)}")
     attachments = body.get("attachments") or []
     if not isinstance(attachments, list) or not all(
@@ -244,7 +248,9 @@ def parse_approval_command(body: dict) -> dict:
     decision = body.get("decision")
     if not request_id or not isinstance(request_id, str):
         raise ValueError("approval.request_id is required")
-    if decision not in {"allow", "deny", "always"}:
+    if not isinstance(decision, str) or decision not in {
+        "allow", "deny", "always"
+    }:
         raise ValueError("approval.decision must be allow|deny|always")
     return {"request_id": request_id, "decision": decision}
 
@@ -254,7 +260,7 @@ def parse_control_command(body: dict) -> dict:
     if not isinstance(body, dict):
         raise ValueError("body must be a JSON object")
     op = body.get("op")
-    if op not in CONTROL_OPS:
+    if not isinstance(op, str) or op not in CONTROL_OPS:
         raise ValueError(f"control.op must be one of {sorted(CONTROL_OPS)}")
     value = body.get("value")
     if value is not None and not isinstance(value, str):

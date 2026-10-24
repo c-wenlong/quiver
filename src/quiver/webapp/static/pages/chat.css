@@ -52,9 +52,10 @@
 .msg.compaction { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-secondary); }
 .msg.compaction::before, .msg.compaction::after { content: ""; flex: 1; border-top: 1px dashed var(--border-strong); }
 .msg.error .text { color: var(--danger-text); }
-.msg code { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.msg code { font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent); }
 .msg pre.code {
-  background: var(--subtle); border-radius: 8px; padding: 8px 10px; margin: 4px 0;
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 4px 0;
   overflow-x: auto; white-space: pre; font-size: 12px;
 }
 .msg pre.code code { background: transparent; padding: 0; }

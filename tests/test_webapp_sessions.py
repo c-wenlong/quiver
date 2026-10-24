@@ -19,6 +19,7 @@ from quiver.webapp import sessions
 from quiver.webapp.api import WebApp
 
 from tests.test_remote_hub import HubBase, _AttachedServer
+from tests.test_remote_owner_device import _OWNER_IP, OwnerBase
 
 STATIC = Path(__file__).resolve().parent.parent / "src" / "quiver" / "webapp" / "static"
 
@@ -342,6 +343,28 @@ class TestChatObserved(HubBase):
         self.assertEqual(json.loads(data)["error"]["code"], "not_idle")
 
 
+class TestChatOwnerDevice(OwnerBase):
+    """The hub owner's own tailnet device has no bearer: the chat's
+    requests carry app.js's X-Quiver-Pair header and get in on that."""
+
+    def test_reads_stream_and_writes_without_pairing(self):
+        headers = {"X-Forwarded-For": _OWNER_IP, "X-Forwarded-Proto": "https", "X-Quiver-Pair": "1"}
+        self.assertEqual(self.get("/v1/sessions/claude%3As1/messages?limit=500")[0], 200)
+        conn = http.client.HTTPConnection("127.0.0.1", self.srv.port, timeout=5)
+        try:
+            conn.request("GET", "/v1/sessions/claude%3As1/events?last=0", headers=headers)
+            self.assertEqual(conn.getresponse().status, 200)
+        finally:
+            conn.close()
+        # In, and refused only by the session's ownership.
+        status, data = self.srv.request("POST", "/v1/sessions/claude%3As1/message",
+                                        {"text": "hi"}, headers=headers)
+        self.assertEqual((status, json.loads(data)["error"]["code"]), (409, "not_attached"))
+        headers.pop("X-Quiver-Pair")
+        self.assertEqual(self.srv.request("GET", "/v1/sessions/claude%3As1/messages",
+                                          headers=headers)[0], 401)
+
+
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestChatScript(unittest.TestCase):
     """pages/chat.js's pure helpers, run under node with the globals it
@@ -369,6 +392,28 @@ class TestChatScript(unittest.TestCase):
             " T.md('before\\n```python\\nx = 1\\n```\\nafter')];")
         self.assertEqual(out[0], "&lt;img src=x onerror=alert(1)&gt; <strong>bold</strong> <code>a&lt;b</code>")
         self.assertEqual(out[1], 'before<pre class="code"><code>x = 1</code></pre>after')
+
+    def test_code_keeps_its_markers(self):
+        out = self.run_js(
+            "return [T.md('```js\\nconst s = \"**keep**\"; // `tick`\\n```'),"
+            " T.md('`**raw**` and **bold**')];")
+        self.assertEqual(out[0], '<pre class="code"><code>const s = &quot;**keep**&quot;; // `tick`</code></pre>')
+        self.assertEqual(out[1], "<code>**raw**</code> and <strong>bold</strong>")
+
+    def test_codex_patches_from_the_decoder_render_as_diffs(self):
+        """args_full exactly as tail.py journals a codex apply_patch: a
+        custom tool whose input is the raw patch text."""
+        from quiver.remote import tail
+        patch_text = "*** Begin Patch\n*** Update File: src/a.py\n@@\n-old\n+new\n*** End Patch"
+        [msg] = tail._decode_codex({"type": "response_item", "payload": {
+            "type": "custom_tool_call", "name": "apply_patch", "call_id": "c1", "input": patch_text}})
+        out = self.run_js(
+            "return [T.toolDiff(" + json.dumps(msg["tool"]) + "),"
+            " T.toolDiff({ name: 'apply_patch', args_full: JSON.stringify({ input: " + json.dumps(patch_text) + " }) })];")
+        for html in out:
+            self.assertIn('<div class="diff-file">src/a.py</div>', html)
+            self.assertIn('<div class="diff-line diff-del">-old</div><div class="diff-line diff-add">+new</div>', html)
+            self.assertIn('<div class="diff-line diff-meta">*** End Patch</div>', html)
 
     def test_edit_tools_render_as_diffs(self):
         out = self.run_js("""

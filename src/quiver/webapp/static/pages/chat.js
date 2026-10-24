@@ -37,14 +37,10 @@ const SessionChat = (() => {
 
   /* ------------------------------------------------------------ requests */
 
-  function authHeaders(extra = {}) {
-    const headers = Object.assign({}, extra);
-    const cred = typeof credential === "function" ? credential() : "";
-    if (cred) headers.Authorization = `Bearer ${cred}`;
-    return headers;
-  }
-
-  /* status 0 means the hub never answered (offline, connection lost). */
+  /* Every request carries app.js's authHeaders: the paired bearer when
+   * there is one, and X-Quiver-Pair, which lets the hub owner's own
+   * tailnet devices in without pairing. status 0 means the hub never
+   * answered (offline, connection lost). */
   async function post(path, body) {
     let resp;
     try {
@@ -82,13 +78,18 @@ const SessionChat = (() => {
   /* Minimal markdown-ish rendering, as the PWA does: escape everything,
    * then restore fenced code blocks, inline code and bold. */
   function md(text) {
-    let t = esc(text || "");
+    // Code is set aside as it is found, so no later rule reaches into it:
+    // a "**" or a backtick inside a code block stays as written.
+    const code = [];
+    const keep = (html) => `\u0000${code.push(html) - 1}\u0000`;
+    let t = esc(String(text || "").replace(/\u0000/g, ""));
     // A fence swallows the line breaks around it (the text is pre-wrap) and
     // the language word after its opening backticks.
-    t = t.replace(/\n?```[\w+-]*\n?([\s\S]*?)```\n?/g, (_m, code) => `<pre class="code"><code>${code.replace(/^\n+|\n+$/g, "")}</code></pre>`);
-    t = t.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+    t = t.replace(/\n?```[\w+-]*\n?([\s\S]*?)```\n?/g,
+      (_m, body) => keep(`<pre class="code"><code>${body.replace(/^\n+|\n+$/g, "")}</code></pre>`));
+    t = t.replace(/`([^`\n]+)`/g, (_m, body) => keep(`<code>${body}</code>`));
     t = t.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
-    return t;
+    return t.replace(/\u0000(\d+)\u0000/g, (_m, i) => code[Number(i)]);
   }
 
   function newClientId() {
@@ -147,8 +148,15 @@ const SessionChat = (() => {
   /* Raw patch text (codex apply_patch): colour by line sigil. */
   function renderPatch(filePath, patch) {
     const rows = String(patch || "").split("\n").slice(0, 400).map((ln) => diffRow(
-      ln.startsWith("+") ? "diff-add" : ln.startsWith("-") ? "diff-del" : ln.startsWith("@@") ? "diff-meta" : "diff-ctx", ln));
+      ln.startsWith("+") ? "diff-add" : ln.startsWith("-") ? "diff-del"
+        : ln.startsWith("@@") || ln.startsWith("***") ? "diff-meta" : "diff-ctx", ln));
     return `<div class="diff">${diffFile(filePath)}${rows.join("")}</div>`;
+  }
+
+  /* The file a patch names first (codex's "*** Update File: x"), if any. */
+  function patchFile(patch) {
+    const m = String(patch || "").match(/^\*\*\* (?:Update|Add|Delete) File: (.+)$/m);
+    return m ? m[1].trim() : "";
   }
 
   /* A diff's HTML for edit-ish tools, or null for anything else. */
@@ -157,14 +165,19 @@ const SessionChat = (() => {
     if (!DIFF_TOOLS.has(name) || !tool.args_full) return null;
     let args;
     try { args = JSON.parse(tool.args_full); } catch { return null; }
+    const patching = name === "apply_patch" || name === "patch";
+    // Codex's apply_patch is a custom tool whose input is the patch text
+    // itself, so the hub's args_full is a JSON string, not an object.
+    if (patching && typeof args === "string") return args ? renderPatch(patchFile(args), args) : null;
     if (!args || typeof args !== "object") return null;
     const file = args.file_path || args.path || args.filename || "";
     if (name === "write" || name === "notebookedit" || name === "file_edit") {
       const content = args.content || args.new_source || "";
       return content ? renderDiff(file, "", content) : null;
     }
-    if (name === "apply_patch" || name === "patch") {
-      return renderPatch(file, args.patch || args.diff || tool.args_full);
+    if (patching) {
+      const patch = args.patch || args.diff || args.input || tool.args_full;
+      return renderPatch(file || patchFile(patch), patch);
     }
     if (name === "multiedit" && Array.isArray(args.edits)) {
       const parts = args.edits.slice(0, 8)
@@ -393,16 +406,16 @@ const SessionChat = (() => {
       for (const card of log.querySelectorAll(".msg.approval")) {
         if (card.dataset.req !== d.request_id || !card.dataset.queued) continue;
         delete card.dataset.queued;
-        const note = card.querySelector(".approval-note");
+        // The request's own answer may still be on its way: it must not
+        // undo what this result settled.
+        card.dataset.settled = "1";
         if (d.ok) {
           card.classList.add("resolved");
+          const note = card.querySelector(".approval-note");
           if (note) note.remove();
         } else {
           card.querySelectorAll(".approval-actions button").forEach((b) => { b.disabled = false; });
-          if (note) {
-            note.classList.remove("queued");
-            note.textContent = `Approval failed: ${d.note || "the satellite rejected it"}`;
-          }
+          approvalNote(card).textContent = `Approval failed: ${d.note || "the satellite rejected it"}`;
         }
       }
     }
@@ -507,31 +520,47 @@ const SessionChat = (() => {
     const buttons = () => div.querySelectorAll(".approval-actions button");
     for (const btn of buttons()) {
       btn.onclick = async () => {
+        const gen = chat.gen;
         buttons().forEach((b) => { b.disabled = true; });
-        const note = div.querySelector(".approval-note") || document.createElement("div");
-        note.className = "approval-note";
+        // Waiting from before the request: a satellite's command.result
+        // can land before the hub's 202 does, and must find the card.
+        div.dataset.queued = "1";
+        delete div.dataset.settled;
         const { status, data } = await post(sessionPath(chat.key, "approval"),
           { decision: btn.dataset.dec, request_id: msg.request_id });
-        // An approval.resolved that raced us wins: don't reopen.
-        if (div.classList.contains("resolved")) return;
+        // The chat moved on, or an approval.resolved or command.result that
+        // raced the answer already settled the card: theirs wins.
+        if (gen !== chat.gen || div.classList.contains("resolved") || div.dataset.settled) return;
+        const note = approvalNote(div);
         if (status === 202) {
           // The hub queued it for a satellite; the card stays pending until
           // a command.result or approval.resolved event closes it.
-          div.dataset.queued = "1";
           note.classList.add("queued");
           note.textContent = "Queued: waiting for the satellite";
-          div.appendChild(note);
-        } else if (status >= 400 || status === 0) {
+          return;
+        }
+        delete div.dataset.queued;
+        if (status >= 400 || status === 0) {
           buttons().forEach((b) => { b.disabled = false; });
           note.textContent = status === 0 ? "Request failed: connection lost"
             : `Approval failed: ${errorText(data) || "the prompt may have closed"}`;
-          div.appendChild(note);
           noteRefusal(data);
         } else {
+          note.remove();
           div.classList.add("resolved");
         }
       };
     }
+  }
+
+  function approvalNote(card) {
+    let note = card.querySelector(".approval-note");
+    if (!note) {
+      note = document.createElement("div");
+      card.appendChild(note);
+    }
+    note.className = "approval-note";
+    return note;
   }
 
   /* ---------------------------------------------------------- live pacing

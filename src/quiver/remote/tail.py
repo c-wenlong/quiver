@@ -20,7 +20,8 @@ Three source kinds cover every parser the registry knows:
   gemini, copilot, devin, forge, crush).
 
 Polling is "~1s while ``sessions/status.py`` says active, back off idle",
-and ``_redact_secrets`` runs on every text before it can leave the
+plus a short hot window after the hub or a satellite writes to a session
+(``TailManager.wake``), and ``_redact_secrets`` runs on every text before it can leave the
 process — transcript text is not user-originated.
 """
 
@@ -32,6 +33,7 @@ import json
 import os
 import secrets
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -45,6 +47,14 @@ from quiver.sessions.models import Session
 # Poll cadence: tight while the session is mid-turn, relaxed otherwise.
 POLL_ACTIVE_S = 1.0
 POLL_IDLE_S = 8.0
+# After a write to a session (a message going out, an approval answer, a
+# control op, an attach) its tailer polls at once and then this fast for
+# HOT_WINDOW_S, so the echo and first reply show up without waiting out
+# an idle interval the catalog has not yet flipped to active. Each new
+# write re-arms the window. Snapshot sources cap this at POLL_ACTIVE_S
+# (see SnapshotSource.hot_poll_s).
+POLL_HOT_S = 0.25
+HOT_WINDOW_S = 15.0
 # Tmux-pane approval prompt watch — a subprocess per attached session,
 # so slower than the transcript poll.
 PANE_APPROVAL_S = 3.0
@@ -756,6 +766,11 @@ class SnapshotSource:
     new tail items emitted. Cheap enough at the idle poll cadence.
     """
 
+    # A changed snapshot store is re-read whole (Devin: up to
+    # SNAPSHOT_WINDOW chain nodes), so a hot window polls these no
+    # faster than an active session already does (issue #515).
+    hot_poll_s = POLL_ACTIVE_S
+
     def __init__(self, session: Session) -> None:
         self.session = session
         self._fps: list[str] = []
@@ -944,6 +959,10 @@ class Tailer:
             source.start_near_end()
         self.next_poll_at = 0.0
         self._pending_save = False
+        # What the cursor file holds now. A poll that leaves the source
+        # here writes nothing, so the 0.25 s hot cadence and the 1 s
+        # active one cost a read, not a file write, while nothing moves.
+        self._saved: dict | None = state or None
 
     def _load_cursor(self) -> dict:
         try:
@@ -953,31 +972,39 @@ class Tailer:
             return {}
 
     def save_cursor(self) -> None:
+        state = self.source.state()
         try:
             self._cursor_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._cursor_path.with_suffix(".tmp")
-            tmp.write_text(
-                json.dumps(self.source.state()), encoding="utf-8"
-            )
+            tmp.write_text(json.dumps(state), encoding="utf-8")
             os.replace(tmp, self._cursor_path)
         except OSError:
-            pass
+            return
+        self._saved = state
 
     def due(self, now: float) -> bool:
         return now >= self.next_poll_at
 
-    def poll(self, now: float, active: bool) -> list[dict]:
+    def interval(self, active: bool, hot: bool = False) -> float:
+        """Seconds until the next poll: hot beats active beats idle."""
+        base = POLL_ACTIVE_S if active else POLL_IDLE_S
+        if hot:
+            return min(base, getattr(self.source, "hot_poll_s", POLL_HOT_S))
+        return base
+
+    def poll(self, now: float, active: bool, hot: bool = False) -> list[dict]:
         """Poll the source; the cursor is only marked dirty here.
 
         ``commit_cursor`` runs the save — the manager calls it after the
         events are journaled, so a crash between poll and write replays
         (duplicates, recoverable) instead of skipping messages forever.
         """
-        self.next_poll_at = now + (
-            POLL_ACTIVE_S if active else POLL_IDLE_S
-        )
+        self.next_poll_at = now + self.interval(active, hot)
         out = self.source.poll()
-        if out or active:
+        # A source can move without emitting (records that decode to
+        # nothing, an opencode row still streaming), so compare the
+        # state rather than trusting ``out`` alone.
+        if out or self.source.state() != self._saved:
             self._pending_save = True
         return out
 
@@ -1018,9 +1045,62 @@ class TailManager:
         # pane watcher last issued; key -> last pane check time.
         self._approval_outstanding: dict[str, tuple[str, str]] = {}
         self._approval_checked_at: dict[str, float] = {}
+        # Wake state, written by request threads (``wake``) and read by
+        # the tail thread (``tick``); nothing else here is shared that
+        # way, so this lock guards only these three. ``_woken`` holds
+        # keys owed an immediate poll; ``tick`` swaps it out and clears
+        # the event in one step, so a wake landing mid-tick stays set
+        # and the next ``wait`` returns at once instead of being lost.
+        self._wake_lock = threading.Lock()
+        self._wake_event = threading.Event()
+        self._woken: set[str] = set()
+        self._hot_until: dict[str, float] = {}
 
     def last_append_at(self, key: str) -> float | None:
         return self.last_append.get(key)
+
+    # -- waking --------------------------------------------------------------
+
+    def wake(self, key: str, now: float | None = None) -> None:
+        """Something was just written to ``key``'s session: poll it now.
+
+        Safe from any thread. Opens (or extends) the key's hot window
+        and wakes a loop parked in ``wait``. A key with no tailer yet
+        keeps its window, so an ``ensure`` that follows starts hot.
+        """
+        now = time.time() if now is None else now
+        with self._wake_lock:
+            until = now + HOT_WINDOW_S
+            if until > self._hot_until.get(key, 0.0):
+                self._hot_until[key] = until
+            self._woken.add(key)
+            self._wake_event.set()
+
+    def interrupt(self) -> None:
+        """End a ``wait`` early without scheduling a poll (shutdown)."""
+        self._wake_event.set()
+
+    def wait(self, timeout: float) -> bool:
+        """Park the tail loop until ``timeout`` or the next wake."""
+        return self._wake_event.wait(timeout)
+
+    def is_hot(self, key: str, now: float | None = None) -> bool:
+        now = time.time() if now is None else now
+        with self._wake_lock:
+            return self._hot_until.get(key, 0.0) > now
+
+    def waking(self, key: str, injector):
+        """``injector`` with a wake before and after each write it makes."""
+        return _WakingInjector(injector, lambda: self.wake(key))
+
+    def _take_wakes(self, now: float) -> tuple[set[str], dict[str, float]]:
+        with self._wake_lock:
+            woken, self._woken = self._woken, set()
+            self._wake_event.clear()
+            self._hot_until = {
+                k: t for k, t in self._hot_until.items() if t > now
+            }
+            return woken, dict(self._hot_until)
 
     def ensure(self, key: str, session: Session, status: str) -> None:
         """Start a tailer on demand — a client opened this session.
@@ -1150,13 +1230,15 @@ class TailManager:
     def tick(self, now: float | None = None) -> int:
         """Poll every due tailer; returns events emitted."""
         now = time.time() if now is None else now
+        woken, hot_until = self._take_wakes(now)
         n = 0
         for key, tailer in list(self.tailers.items()):
-            if not tailer.due(now):
+            if key not in woken and not tailer.due(now):
                 continue
             try:
                 messages = tailer.poll(
-                    now, active=self.statuses.get(key) == "active"
+                    now, active=self.statuses.get(key) == "active",
+                    hot=key in hot_until,
                 )
             except Exception:
                 tailer.next_poll_at = now + POLL_IDLE_S
@@ -1241,3 +1323,33 @@ class TailManager:
             key,
             protocol.event(etype, key, self.machine_id, data),
         )
+
+
+class _WakingInjector:
+    """Wraps an injector so its writes wake the session's tailer.
+
+    The wake goes out before the write (the harness can react at once)
+    and again after it returns: a headless claude ``send`` blocks for
+    the whole turn, and the reply that follows deserves its own window.
+    Everything else passes through untouched.
+    """
+
+    _WRITES = frozenset({"send", "approval", "control"})
+
+    def __init__(self, inner, wake: Callable[[], None]) -> None:
+        self._inner = inner
+        self._wake = wake
+
+    def __getattr__(self, name: str):
+        attr = getattr(self._inner, name)
+        if name not in self._WRITES or not callable(attr):
+            return attr
+
+        def write(*args, **kwargs):
+            self._wake()
+            try:
+                return attr(*args, **kwargs)
+            finally:
+                self._wake()
+
+        return write

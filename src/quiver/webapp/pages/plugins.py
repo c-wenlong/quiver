@@ -1,4 +1,4 @@
-"""The Plugins page: the Mac app's PluginsPage, read only.
+"""The Plugins page: the Mac app's PluginsPage.
 
 Two views, as the app's two tabs:
 
@@ -11,9 +11,12 @@ Two views, as the app's two tabs:
   each, with every plugin's state per harness worked out once.
 
 Reading every marketplace can take a while on a machine with many, so each
-view is kept here for ``CACHE_TTL_S``; ``?refresh=1`` reads it again. Fixes,
-installs, enables and Add marketplace are writes and stay in ``swe`` and the
-Mac app (see docs/web-app/plugins.md).
+view is kept here for ``CACHE_TTL_S``; ``?refresh=1`` reads it again.
+
+The one write is Health's Fix and Fix all (``post``), which run a finding's
+harness CLI commands the way ``swe find plugins --fix=<id>`` does. Installs,
+enables and Add marketplace stay in ``swe`` and the Mac app (see
+docs/web-app/plugins.md).
 """
 
 from __future__ import annotations
@@ -105,6 +108,131 @@ def health(home: Path) -> dict:
         row["kind_title"] = KIND_TITLES.get(kind, kind[:1].upper() + kind[1:])
         row["severe"] = kind == "unregistered"
     return report
+
+
+# ---------------------------------------------------------------- Fixes
+
+ACTIONS = ("fix", "fix_all")
+# A fix id is ``<harness>:<kind>:<ref or marketplace dir>``; a path can be
+# long, but not this long.
+ID_MAX = 4096
+# More than any hub has findings; a body past it is not one the page sent.
+IDS_MAX = 500
+
+# One fix at a time, across every request: two harness CLIs editing the
+# same config at once could lose a change. The Mac app holds PluginWork
+# for the same reason. A second request is refused rather than queued, as
+# a fix can take minutes.
+_WRITE_LOCK = threading.Lock()
+
+# What runs a command; tests put a fake here. ``None`` is apply_fix's own
+# subprocess.run.
+_run = None
+
+
+def post(ctx, action: str, body: dict) -> dict:
+    """``fix`` (``{"id"}``) runs one finding's fix; ``fix_all``
+    (``{"ids": [...]}``) runs the ones the confirmation listed, one at a
+    time in report order, stopping at the first that fails.
+
+    Every id must be a finding Health lists right now and one swe can run;
+    the commands are the ones ``quiver.find.plugin_drift`` builds, never
+    anything from the request. The answer has each id's result and the
+    refreshed Health view."""
+    if action not in ACTIONS:
+        raise PageError(404, "unknown_action", f"unknown plugins action: {action}")
+    if not isinstance(body, dict):
+        raise PageError(422, "bad_body", "the body must be a JSON object")
+    ids = [_fix_id(body.get("id"))] if action == "fix" else _fix_ids(body.get("ids"))
+    home = ctx.home or Path.home()
+    if not _WRITE_LOCK.acquire(blocking=False):
+        raise PageError(409, "busy", "A fix is already running. Wait for it, then refresh.")
+    try:
+        drift = health(home)["drift"]
+        current = {f["id"]: f for f in drift}
+        for fid in ids:
+            finding = current.get(fid)
+            if finding is None:
+                raise PageError(404, "unknown_finding",
+                                f"No current plugin drift has id {fid}. Refresh and try again.")
+            if not finding.get("runnable"):
+                raise PageError(422, "not_runnable",
+                                f"No command does {fid}, so make the edit by hand: {finding.get('fix')}")
+        try:
+            results = _run_fixes(home, ids, drift)
+        finally:
+            # Even a failed fix may have changed something; both views
+            # read again on their next request.
+            _invalidate(home)
+        view, built_at = cached("health", home)
+    finally:
+        _WRITE_LOCK.release()
+    return {
+        "action": action,
+        "results": results,
+        "ran": sum(1 for r in results if r["status"] == "fixed"),
+        "health": {**view, "view": "health", "built_at": built_at,
+                   "machine": (ctx.machine or {}).get("name")},
+    }
+
+
+def _fix_id(value) -> str:
+    if not isinstance(value, str) or not value or len(value) > ID_MAX:
+        raise PageError(422, "bad_id", "id must be a fix id Health lists")
+    return value
+
+
+def _fix_ids(value) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise PageError(422, "bad_ids", "ids must list the fixes to run")
+    if len(value) > IDS_MAX:
+        raise PageError(422, "bad_ids", f"ids can list at most {IDS_MAX} fixes")
+    ids = [_fix_id(v) for v in value]
+    if len(set(ids)) != len(ids):
+        raise PageError(422, "bad_ids", "ids lists a fix twice")
+    return ids
+
+
+def _run_fixes(home: Path, ids: list[str], drift: list[dict]) -> list[dict]:
+    """PluginsModel.fixAll, from ``drift`` (the findings as just read): in
+    report order, and the next fix is taken from a fresh read, so one
+    an earlier fix already cleared is skipped (``gone``) rather than run.
+    Only ``ids`` run: a finding a fix newly exposes waits for its own
+    confirmation. The first failure stops the rest (``not-run``)."""
+    from quiver.find.models import DriftRow
+    from quiver.find.plugin_drift import FixError, apply_fix
+
+    wanted = set(ids)
+    done: dict = {}
+    while True:
+        pick = next((f["id"] for f in drift if f["id"] in wanted and f["id"] not in done
+                     and f.get("runnable")), None)
+        if pick is None:
+            break
+        try:
+            finding = apply_fix(home, pick, run=_run)
+        except FixError as exc:
+            done[pick] = {"id": pick, "status": "failed", "fixed": None, "error": str(exc)}
+            break
+        done[pick] = {"id": pick, "status": "fixed", "fixed": DriftRow.of(finding).to_json(),
+                      "error": None}
+        if len(done) == len(ids):
+            break
+        # The caller read ``drift`` just before; after a fix, read again.
+        drift = health(home)["drift"]
+    failed = any(r["status"] == "failed" for r in done.values())
+    rest = [{"id": i, "status": "not-run" if failed else "gone", "fixed": None, "error": None}
+            for i in ids if i not in done]
+    return list(done.values()) + rest
+
+
+def _invalidate(home: Path) -> None:
+    """Drop both views for ``home``: a fix changes what Explore shows too.
+    Each view's lock waits out a read in flight, so a read that began
+    before the fix cannot land after this and keep its old answer."""
+    for view in VIEWS:
+        with _locks[view]:
+            _cache.pop((view, str(home)), None)
 
 
 # ---------------------------------------------------------------- Explore
