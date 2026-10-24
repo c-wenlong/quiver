@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: your own devices open it without pairing.** A browser on a
+  device signed in to the hub owner's Tailscale account loads `/app/`
+  straight away; the hub knows it from `tailscale whois` (cached a
+  minute per address). Pairing stays for tagged nodes, other people's
+  devices, phones' remote control and satellites.
+
 - **Remote iPhone app: queued messages wait in a tray above the prompt
   box.** A message sent while the agent works no longer sits in the
   transcript, where new output pushed it off screen: it joins a tray
@@ -89,6 +95,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and skipped; the pages around it still load.
 
 ### Added
+
+- **Web app: Fix and Fix all on the Plugins page's Health tab.** Each
+  finding swe can fix has a Fix button that opens an inline confirm with
+  the exact command it will run; Fix all first lists every finding and
+  command it will run. The hub runs them as `swe find plugins --fix=<id>`
+  does, one at a time in report order, stopping at the first failure,
+  and only for fix ids its own current findings list: the browser never
+  sends a command. The cards repaint from the fresh findings the hub
+  answers with.
 
 - **Remote: list, send now or remove a queued message.** `GET
   /v1/sessions/{key}/queue` lists a session's queue-mode sends still
