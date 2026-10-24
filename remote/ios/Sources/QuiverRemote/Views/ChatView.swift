@@ -83,7 +83,8 @@ private struct ChatBody: View {
                     .transition(.asymmetric(insertion: arrival(12), removal: .opacity))
                 }
                 if model.working, !model.loading {
-                    WorkingIndicator().transition(arrival(8))
+                    WorkingIndicator(harness: model.row?.harness, name: model.row?.harnessName ?? "agent")
+                        .transition(arrival(8))
                 }
             }
             .animation(.easeOut(duration: 0.2), value: model.working)
@@ -288,7 +289,7 @@ private struct ChatItemView: View {
         case .user(let text, let send):
             UserBubble(text: text, send: send) { Task { await model.retry(item) } }
         case .assistant(let text):
-            RichText(text: text).frame(maxWidth: .infinity, alignment: .leading)
+            AssistantReply(text: text)
         case .thinking(let text):
             ThinkingCard(text: text)
         case .tool(let call, let result):
@@ -311,11 +312,28 @@ private struct ChatItemView: View {
     }
 }
 
-/// Three pulsing dots under the last message while the agent works.
-private struct WorkingIndicator: View {
+/// The harness's logo with three pulsing dots beside it, under the last
+/// message while the agent works; new messages land above it.
+struct WorkingIndicator: View {
+    let harness: String?
+    let name: String
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        HStack(spacing: 8) {
+            HarnessIcon(harness: harness, name: name, size: 16)
+            dots
+        }
+        .font(Theme.caption)
+        .padding(.leading, 9).padding(.trailing, 12).frame(height: 30)
+        .background(Theme.card, in: .capsule)
+        .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement()
+        .accessibilityLabel("\(name) is working")
+    }
+
+    private var dots: some View {
         TimelineView(.animation(paused: reduceMotion)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             HStack(spacing: 4) {
@@ -328,12 +346,6 @@ private struct WorkingIndicator: View {
                 }
             }
         }
-        .padding(.horizontal, 12).frame(height: 30)
-        .background(Theme.card, in: .capsule)
-        .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement()
-        .accessibilityLabel("Agent is working")
     }
 }
 
