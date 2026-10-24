@@ -47,6 +47,9 @@ const state = {
   // Client ids that left the tray: a queue list fetched before that
   // can't bring them back.
   settledSends: new Set(),
+  // Live echoes of user messages that matched no row: a queue list
+  // fetched before them can't bring those sends back.
+  unmatchedEchoes: [],
   // The queued send whose text is in the prompt box to be edited.
   editingId: null,
   draftBeforeEdit: "",
@@ -437,7 +440,12 @@ function appendEvent(ev, live = true) {
     const d = ev.data || {};
     let settled = false;
     if (d.op === "message" && d.client_id) {
-      const entry = takeQueued(d.client_id);
+      // Remembered even when no row shows it yet: a queue list fetched
+      // before this result can't bring the send back.
+      state.settledSends.add(d.client_id);
+      const entry = takeQueued(
+        d.client_id, d.cancelled ? "That message was removed" : undefined,
+      );
       if (entry) {
         // A queued send went out (or failed): into the transcript as a
         // send, settled below. One that was removed is just gone.
@@ -1364,6 +1372,7 @@ function resetTray() {
   state.queued = [];
   state.departed = [];
   state.settledSends = new Set();
+  state.unmatchedEchoes = [];
   state.editingId = null;
   state.draftBeforeEdit = "";
   state.savingEdit = false;
@@ -1376,13 +1385,19 @@ function resetTray() {
 
 /* A send that left the hub's queue: out of the tray (or the hidden
  * departed list), remembered as settled. */
-function takeQueued(cid) {
+function takeQueued(cid, gone = "That message already went out") {
   for (const list of ["queued", "departed"]) {
     const entry = state[list].find((q) => q.cid === cid);
     if (entry) {
       state[list] = state[list].filter((q) => q !== entry);
       state.settledSends.add(cid);
-      if (state.editingId === cid) cancelEdit();
+      if (state.editingId === cid) {
+        // Too late to edit: the unfinished text stays in the box to send
+        // as a new message.
+        state.editingId = null;
+        state.draftBeforeEdit = "";
+        state.editNote = gone;
+      }
       renderTray();
       return entry;
     }
@@ -1395,17 +1410,23 @@ function echoLeavesTray(text) {
     const entry = state[list].find((q) => echoes(text, q.text));
     if (entry) { takeQueued(entry.cid); return; }
   }
+  // No row for it yet: a queue list fetched before this echo may still
+  // name the send, so mergeQueue checks against it.
+  state.unmatchedEchoes.push(text);
 }
 
 async function loadQueue(key, gen) {
+  // Only echoes that arrive while this list is on its way can be
+  // missing from it.
+  state.unmatchedEchoes = [];
   let status = 0, data = null;
   try {
     ({ status, data } = await api(`/v1/sessions/${encodeURIComponent(key)}/queue`));
   } catch { return; }
   if (gen !== state.openGen || state.currentKey !== key) return;
   // An older hub has no queue route: the tray only shows this page's sends.
-  if (status !== 200 || !data) return;
-  mergeQueue(data.sends || []);
+  if (status === 200 && data) mergeQueue(data.sends || []);
+  state.unmatchedEchoes = [];
 }
 
 /* The hub's list wins: what it holds shows in its order (keeping what
@@ -1420,8 +1441,20 @@ function mergeQueue(sends) {
     const cid = send.client_id;
     if (!cid || known.has(cid) || out.some((q) => q.cid === cid)) continue;
     const mine = state.queued.find((q) => q.cid === cid);
-    if (mine) out.push(mine.phase === "posting" ? { ...mine, phase: "waiting" } : mine);
-    else out.push({ cid, text: send.text || "", phase: "waiting", note: "" });
+    if (!mine) {
+      const echo = state.unmatchedEchoes.findIndex((t) => echoes(t, send.text));
+      if (echo >= 0) {
+        // It went out between the hub's answer and now.
+        state.unmatchedEchoes.splice(echo, 1);
+        state.settledSends.add(cid);
+        continue;
+      }
+    }
+    // The hub's text wins: another device may have edited it. The local
+    // row keeps its action state.
+    const text = send.text == null ? (mine ? mine.text : "") : send.text;
+    if (mine) out.push({ ...mine, text, phase: mine.phase === "posting" ? "waiting" : mine.phase });
+    else out.push({ cid, text, phase: "waiting", note: "" });
   }
   for (const mine of state.queued) {
     if (out.some((q) => q.cid === mine.cid)) continue;
@@ -1640,7 +1673,16 @@ function renderTray() {
   for (const q of shown) {
     const editing = q.cid === state.editingId;
     let right;
-    if (q.note) {
+    const actions = (off) =>
+      `<button type="button" class="tray-btn" data-act="edit" aria-label="Edit" title="Edit"${off}>✎</button>` +
+      `<button type="button" class="tray-btn" data-act="remove" aria-label="Remove" title="Remove"${off}>✕</button>` +
+      `<button type="button" class="tray-btn" data-act="send-now" aria-label="Send now" title="Send now"${off}>↵</button>`;
+    // A refused action can be tried again: the buttons stay, and the
+    // note goes under the text.
+    const retry = !!q.note && q.phase === "waiting";
+    if (retry) {
+      right = actions("");
+    } else if (q.note) {
       right = `<span class="tray-row-note${q.phase === "left" ? " left" : ""}">${esc(q.note)}</span>` +
         (q.phase === "left"
           ? `<button type="button" class="tray-btn" data-act="remove" aria-label="Remove">✕</button>`
@@ -1648,15 +1690,12 @@ function renderTray() {
     } else if (q.phase === "sendingNow") {
       right = `<span class="tray-row-note left">Sending now</span>`;
     } else {
-      const off = q.phase === "posting" ? " disabled" : "";
-      right =
-        `<button type="button" class="tray-btn" data-act="edit" aria-label="Edit" title="Edit"${off}>✎</button>` +
-        `<button type="button" class="tray-btn" data-act="remove" aria-label="Remove" title="Remove"${off}>✕</button>` +
-        `<button type="button" class="tray-btn" data-act="send-now" aria-label="Send now" title="Send now"${off}>↵</button>`;
+      right = actions(q.phase === "posting" ? " disabled" : "");
     }
     html += `<div class="tray-row${editing ? " editing" : ""}${q.phase === "posting" ? " posting" : ""}" data-cid="${esc(q.cid)}">` +
       `<span class="tray-mark${q.phase === "sendingNow" ? " spin" : ""}">${editing ? "✎" : ""}</span>` +
-      `<span class="tray-text">${esc(q.text.replace(/\n/g, " "))}</span>${right}</div>`;
+      `<span class="tray-col"><span class="tray-text">${esc(q.text.replace(/\n/g, " "))}</span>` +
+      (retry ? `<span class="tray-row-note sub">${esc(q.note)}</span>` : "") + `</span>${right}</div>`;
   }
   tray.innerHTML = html + `</div>`;
   const bar = el("edit-bar");
