@@ -519,7 +519,8 @@ _SPINNER_FRAME_SECONDS = 0.08
 
 def _fetch_rate_limits(refresh: bool, tool_names: set[str], wait: bool = False,
                        refresh_failed: bool = False,
-                       cache_ttl: float | None = None) -> dict:
+                       cache_ttl: float | None = None,
+                       no_reading: dict | None = None) -> dict:
     """Rate limits for the REMAINING column.
 
     On a terminal the fetch runs behind a spinner and workers get a longer
@@ -531,7 +532,10 @@ def _fetch_rate_limits(refresh: bool, tool_names: set[str], wait: bool = False,
     for it: the macOS app reads limits that way from a fresh process each
     time, where a provider's first fetch often takes longer than the short
     cap, so it would only ever see the last cached reading, hours old.
+
+    ``no_reading`` is passed through to ``get_all_rate_limits``.
     """
+    extra = {} if no_reading is None else {"no_reading": no_reading}
     from quiver.harness.rate_limits import (
         _RATE_LIMIT_FETCH_DEADLINE_TTY,
         get_all_rate_limits,
@@ -541,12 +545,12 @@ def _fetch_rate_limits(refresh: bool, tool_names: set[str], wait: bool = False,
         return get_all_rate_limits(
             use_cache=not refresh, tool_names=tool_names,
             deadline=_RATE_LIMIT_FETCH_DEADLINE_TTY,
-            refresh_failed=refresh_failed, cache_ttl=cache_ttl,
+            refresh_failed=refresh_failed, cache_ttl=cache_ttl, **extra,
         )
     if not sys.stdout.isatty():
         return get_all_rate_limits(
             use_cache=not refresh, tool_names=tool_names,
-            refresh_failed=refresh_failed, cache_ttl=cache_ttl,
+            refresh_failed=refresh_failed, cache_ttl=cache_ttl, **extra,
         )
 
     holder: dict = {}
@@ -557,7 +561,7 @@ def _fetch_rate_limits(refresh: bool, tool_names: set[str], wait: bool = False,
                 use_cache=not refresh,
                 tool_names=tool_names,
                 deadline=_RATE_LIMIT_FETCH_DEADLINE_TTY,
-                refresh_failed=refresh_failed, cache_ttl=cache_ttl,
+                refresh_failed=refresh_failed, cache_ttl=cache_ttl, **extra,
             )
         except Exception as exc:
             # Surface the failure exactly as the non-TTY path would instead
@@ -739,6 +743,7 @@ def cmd_list(args):
     starred_set = set(stars)
 
     if json_view:
+        no_reading: dict[str, str] = {}
         rate_limits = (
             _fetch_rate_limits(
                 refresh=refresh,
@@ -746,6 +751,7 @@ def cmd_list(args):
                             if name in tools and name not in excluded},
                 wait=True,
                 refresh_failed=refresh_failed, cache_ttl=cache_ttl,
+                no_reading=no_reading,
             )
             if usage_view
             else {}
@@ -755,7 +761,7 @@ def cmd_list(args):
         counts_100d = _session_counts(100)
         return emit({"harnesses": [
             HarnessRow.of(name, info, starred_set, archived, counts_100d,
-                          rate_limits.get(name)).to_json()
+                          rate_limits.get(name), no_reading.get(name)).to_json()
             for name, info in tools.items()
             if not tag_filter or tag_filter in info.get("tags", [])
         ]})

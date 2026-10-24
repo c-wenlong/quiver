@@ -5080,5 +5080,181 @@ class AccountRateLimitTest(unittest.TestCase):
         self.assertEqual(info.fetched_at, 1_700_000_000.0)
 
 
+
+class CursorCliTokenTest(unittest.TestCase):
+    """cursor-agent's own auth file, its only token store off macOS."""
+
+    def _write(self, directory: str, body) -> str:
+        path = os.path.join(directory, "auth.json")
+        with open(path, "w") as f:
+            f.write(body if isinstance(body, str) else json.dumps(body))
+        return path
+
+    def test_reads_the_access_token(self):
+        from quiver.harness.rate_limits import _read_cursor_cli_token
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write(tmp, {"accessToken": " a.b.c ", "refreshToken": "r.s.t"})
+            self.assertEqual(_read_cursor_cli_token(path), "a.b.c")
+
+    def test_missing_or_malformed_files_have_no_token(self):
+        from quiver.harness.rate_limits import _read_cursor_cli_token
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(_read_cursor_cli_token(os.path.join(tmp, "absent.json")))
+            for body in ("{not json", "[]", {"accessToken": ""}, {"accessToken": 7}, {}):
+                self.assertIsNone(_read_cursor_cli_token(self._write(tmp, body)), body)
+
+    def test_token_ladder_is_editor_then_cli_file_then_keychain(self):
+        from quiver.harness import rate_limits
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write(tmp, {"accessToken": "cli.token.x"})
+            with patch.object(rate_limits, "_CURSOR_CLI_AUTH_FILE", path), \
+                 patch.object(rate_limits, "_read_cursor_keychain_token",
+                              return_value="keychain.token.x") as keychain:
+                with patch.object(rate_limits, "_read_cursor_state_token",
+                                  return_value="editor.token.x"):
+                    self.assertEqual(rate_limits._get_cursor_access_token(), "editor.token.x")
+                with patch.object(rate_limits, "_read_cursor_state_token", return_value=None):
+                    self.assertEqual(rate_limits._get_cursor_access_token(), "cli.token.x")
+                    keychain.assert_not_called()
+                    os.remove(path)
+                    self.assertEqual(rate_limits._get_cursor_access_token(), "keychain.token.x")
+
+
+class NoReadingReasonTest(unittest.TestCase):
+    """``get_all_rate_limits(no_reading=...)``: signed out vs failed fetch."""
+
+    def setUp(self):
+        from quiver.harness import rate_limits
+        self.rl = rate_limits
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.cache = Path(tmp.name) / "rate_limits_cache.json"
+        saved_fetchers = dict(rate_limits._FETCHERS)
+        saved_probes = dict(rate_limits._SIGNED_IN)
+        self.builtin = saved_fetchers
+
+        def restore():
+            rate_limits._FETCHERS.clear()
+            rate_limits._FETCHERS.update(saved_fetchers)
+            rate_limits._SIGNED_IN.clear()
+            rate_limits._SIGNED_IN.update(saved_probes)
+        self.addCleanup(restore)
+        rate_limits._FETCHERS.clear()
+        for p in (patch.object(rate_limits, "RATE_LIMITS_CACHE_FILE", self.cache),
+                  patch.object(rate_limits, "_CACHE_TTL", 300.0)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def run_all(self, **kwargs):
+        reasons: dict = {}
+        result = get_all_rate_limits(no_reading=reasons, **kwargs)
+        return result, reasons
+
+    def test_an_empty_fetch_is_signed_out_or_failed_by_the_probe(self):
+        register("out", MagicMock(return_value=None), signed_in=lambda: False)
+        register("broken", MagicMock(return_value=None), signed_in=lambda: True)
+        register("raises", MagicMock(side_effect=RuntimeError("boom")))
+        register("unknown", MagicMock(return_value=None))
+        result, reasons = self.run_all(use_cache=False)
+        self.assertEqual(result, {})
+        self.assertEqual(reasons, {"out": "signed_out", "broken": "error", "raises": "error"})
+        saved = json.loads(self.cache.read_text())
+        self.assertEqual(set(saved["no_data"]), {"out", "broken", "raises", "unknown"})
+        self.assertEqual(saved["no_data_status"],
+                         {"out": "signed_out", "broken": "error", "raises": "error"})
+
+    def test_a_reading_has_no_reason_and_the_probe_is_not_asked(self):
+        probe = MagicMock(return_value=False)
+        register("ok", MagicMock(return_value=RateLimitInfo(
+            tool_name="ok", used_percent=5, limit_reached=False,
+            reset_at=0.0, plan_type="x", window_seconds=0)), signed_in=probe)
+        result, reasons = self.run_all(use_cache=False)
+        self.assertIn("ok", result)
+        self.assertEqual(reasons, {})
+        probe.assert_not_called()
+
+    def test_empty_is_normal_keeps_signed_out_but_not_error(self):
+        register("quiet", MagicMock(return_value=None), signed_in=lambda: True,
+                 empty_is_normal=True)
+        register("quiet_out", MagicMock(return_value=None), signed_in=lambda: False,
+                 empty_is_normal=True)
+        _result, reasons = self.run_all(use_cache=False)
+        self.assertEqual(reasons, {"quiet_out": "signed_out"})
+
+    def test_a_probe_that_raises_gives_no_reason(self):
+        register("odd", MagicMock(return_value=None),
+                 signed_in=MagicMock(side_effect=OSError("keychain")))
+        _result, reasons = self.run_all(use_cache=False)
+        self.assertEqual(reasons, {})
+
+    def test_a_stand_in_fetcher_never_runs_the_real_probe(self):
+        probe = MagicMock(return_value=True)
+        register("tool", MagicMock(return_value=None), signed_in=probe)
+        self.rl._FETCHERS["tool"] = MagicMock(return_value=None)
+        _result, reasons = self.run_all(use_cache=False)
+        self.assertEqual(reasons, {})
+        probe.assert_not_called()
+
+    def test_a_cached_failure_keeps_its_reason_and_is_not_refetched(self):
+        fetcher = MagicMock(return_value=None)
+        register("broken", fetcher, signed_in=lambda: True)
+        self.run_all(use_cache=False)
+        _result, reasons = self.run_all()
+        self.assertEqual(fetcher.call_count, 1)
+        self.assertEqual(reasons, {"broken": "error"})
+        # A Refresh press retries what failed.
+        self.run_all(refresh_failed=True)
+        self.assertEqual(fetcher.call_count, 2)
+
+    def test_signed_out_is_rechecked_every_call(self):
+        signed_in = [False]
+        info = RateLimitInfo(tool_name="tool", used_percent=7, limit_reached=False,
+                             reset_at=0.0, plan_type="x", window_seconds=0)
+        fetcher = MagicMock(side_effect=lambda: info if signed_in[0] else None)
+        register("tool", fetcher, signed_in=lambda: signed_in[0])
+        _result, reasons = self.run_all(use_cache=False)
+        self.assertEqual(reasons, {"tool": "signed_out"})
+        signed_in[0] = True
+        result, reasons = self.run_all()
+        self.assertEqual(fetcher.call_count, 2)
+        self.assertEqual(result["tool"].used_percent, 7)
+        self.assertEqual(reasons, {})
+
+    def test_a_kept_reading_beats_a_reason(self):
+        info = RateLimitInfo(tool_name="tool", used_percent=7, limit_reached=False,
+                             reset_at=0.0, plan_type="x", window_seconds=0)
+        register("tool", MagicMock(side_effect=[info, None]), signed_in=lambda: True)
+        self.run_all(use_cache=False)
+        result, reasons = self.run_all(use_cache=False)
+        # The 24h fallback still shows the last reading; no reason with it.
+        self.assertIn("tool", result)
+        self.assertEqual(reasons, {})
+
+    def test_a_filtered_run_carries_other_tools_reasons(self):
+        register("out", MagicMock(return_value=None), signed_in=lambda: False)
+        register("broken", MagicMock(return_value=None), signed_in=lambda: True)
+        self.run_all(use_cache=False)
+        self.run_all(use_cache=False, tool_names={"out"})
+        saved = json.loads(self.cache.read_text())
+        self.assertEqual(saved["no_data_status"], {"out": "signed_out", "broken": "error"})
+
+    def test_cache_without_the_status_map_reads_as_no_reason(self):
+        from quiver.harness.rate_limits import _load_cached_no_data_status
+        self.assertEqual(_load_cached_no_data_status(), {})
+        self.cache.write_text(json.dumps({"cached_at": time.time(), "limits": {},
+                                          "no_data": {"a": time.time()}}))
+        self.assertEqual(_load_cached_no_data_status(), {})
+        self.cache.write_text(json.dumps({"no_data_status": {"a": "signed_out", "b": "nope"}}))
+        self.assertEqual(_load_cached_no_data_status(), {"a": "signed_out"})
+        self.cache.write_text("[]")
+        self.assertEqual(_load_cached_no_data_status(), {})
+
+    def test_every_builtin_fetcher_has_a_probe(self):
+        self.assertEqual(set(self.builtin), {"codex", "copilot", "claude", "droid",
+                                             "freebuff", "cursor", "devin"})
+        for name, fetcher in self.builtin.items():
+            self.assertIs(self.rl._SIGNED_IN[name][0], fetcher, name)
+
+
 if __name__ == "__main__":
     unittest.main()

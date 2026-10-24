@@ -296,7 +296,8 @@ final class HeldRunner: CommandRunning, @unchecked Sendable {
     @Test func anAccountUsageErrorIsNotReadAsOldSwe() async {
         // "couldn't read devin usage for this account" is an outage in the
         // account, not a swe that lacks the subcommand: the reading is
-        // failed and the feature keeps being asked.
+        // failed (the card says the fetch failed, not "update swe") and the
+        // feature keeps being asked.
         let devin = profile(.devin, "devin-work")
         let runner = LockedRunner([
             (["list"], .init(status: 0, stdout: listBody, stderr: "")),
@@ -306,7 +307,7 @@ final class HeldRunner: CommandRunning, @unchecked Sendable {
         let model = model(runner) { [(devin, self.paths("devin-work"))] }
         await model.load()
         #expect(model.sweKnowsAccountUsage)
-        #expect(model.cards.first { $0.profile?.id == devin.id }?.usageNote == nil)
+        #expect(model.cards.first { $0.profile?.id == devin.id }?.usageNote == .fetchFailed)
         await model.load()
         #expect(runner.count(["harness", "usage"]) == 2)
     }

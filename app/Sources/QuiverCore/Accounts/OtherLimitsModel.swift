@@ -8,11 +8,22 @@ import Observation
 @MainActor
 @Observable
 public final class OtherLimitsModel {
-    /// Why a card cannot show a reading: the account needs signing in
-    /// (swe answered null) or the installed swe cannot answer at all.
+    /// Why a card cannot show a reading: the account needs signing in,
+    /// its credentials are there but the fetch failed, or the installed swe
+    /// cannot answer at all.
     public enum UsageNote: String, Codable, Sendable {
         case signIn = "sign-in"
+        case fetchFailed = "fetch-failed"
         case updateSwe = "update-swe"
+
+        /// The note for swe's `no_reading` on a harness's own row.
+        init?(_ reason: Harness.NoReading?) {
+            switch reason {
+            case .signedOut?: self = .signIn
+            case .error?: self = .fetchFailed
+            case nil: return nil
+            }
+        }
     }
 
     public struct Row: Identifiable, Codable, Equatable, Sendable {
@@ -330,7 +341,8 @@ public final class OtherLimitsModel {
             var cardList = harnesses
                 .filter { !Self.ownAccounts.contains($0.name) && $0.state == .starred }
                 .map { harness in
-                    Card(name: harness.name, displayName: harness.displayName,
+                    Card(name: harness.name, usageNote: UsageNote(harness.noReading),
+                         displayName: harness.displayName,
                          accountName: accountNames[harness.name], command: harness.command,
                          cliInstalled: harness.installed, limit: harness.rateLimit)
                 }
@@ -349,7 +361,8 @@ public final class OtherLimitsModel {
                 guard starred?.contains(vendor) == true else { continue }
                 let reading = extraReadings[profile.id]
                 let note: UsageNote? = !sweKnowsAccountUsage ? .updateSwe
-                    : (reading != nil && reading?.failed == false && reading?.limit == nil ? .signIn : nil)
+                    : reading == nil || reading?.limit != nil ? nil
+                    : reading?.failed == true ? .fetchFailed : .signIn
                 let card = Card(name: vendor, profile: profile, usageNote: note,
                                 displayName: nil, command: profile.vendor.cliCommand,
                                 cliInstalled: installed[vendor], limit: reading?.limit)

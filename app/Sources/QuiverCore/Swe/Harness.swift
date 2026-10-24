@@ -25,13 +25,23 @@ public struct Harness: Decodable, Sendable, Identifiable, Equatable {
     /// The harness's brand colour as "#RRGGBB", for charts. Nil from a swe
     /// that predates the field.
     public let primaryColor: String?
+    /// Why `rateLimit` is nil, when swe could tell. Nil with a reading,
+    /// with no known reason, or from a swe that predates the field.
+    public let noReading: NoReading?
+
+    public enum NoReading: String, Decodable, Sendable {
+        /// No credential the fetcher could read with.
+        case signedOut = "signed_out"
+        /// Credentials are there, but the fetch failed.
+        case error
+    }
 
     enum CodingKeys: String, CodingKey {
         case name, displayName, command, description, version, aliases, tags, state
         // convertFromSnakeCase capitalises "100d" to "100D", so the
         // wire key `sessions_100d` arrives as `sessions100D`.
         case sessions100d = "sessions100D"
-        case rateLimit, installed, archived, notes, primaryColor
+        case rateLimit, installed, archived, notes, primaryColor, noReading
     }
 
     /// What the app calls it: the display name when set, else the brand
@@ -61,6 +71,8 @@ public struct Harness: Decodable, Sendable, Identifiable, Equatable {
         archived = (try? c.decodeIfPresent(Archive.self, forKey: .archived)) ?? nil
         notes = (try? c.decodeIfPresent(String.self, forKey: .notes)) ?? nil
         primaryColor = (try? c.decodeIfPresent(String.self, forKey: .primaryColor)) ?? nil
+        noReading = rateLimit == nil
+            ? (try? c.decodeIfPresent(NoReading.self, forKey: .noReading)) ?? nil : nil
     }
 
     public struct Archive: Decodable, Sendable, Equatable {

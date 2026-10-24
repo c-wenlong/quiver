@@ -68,18 +68,20 @@ def snapshot(refresh: bool = False) -> dict:
         if name not in archived
     }
     starred = set(load_stars())
+    no_reading: dict[str, str] = {}
     with _FETCH_LOCK:
         limits = get_all_rate_limits(
             tool_names={name for name in starred if name in tools},
             deadline=_RATE_LIMIT_FETCH_DEADLINE_TTY,
             refresh_failed=refresh,
             cache_ttl=REFRESH_TTL_S if refresh else CACHE_TTL_S,
+            no_reading=no_reading,
         )
         counts = session_counts(WINDOW_DAYS)
     return {
         "harnesses": [
             HarnessRow.of(name, info, starred, archived, counts,
-                          limits.get(name)).to_json()
+                          limits.get(name), no_reading.get(name)).to_json()
             for name, info in tools.items()
         ],
         "window_days": WINDOW_DAYS,

@@ -24,11 +24,13 @@ class _Patched:
     """Patches every source ``snapshot`` reads; ``fetch`` records calls."""
 
     def __init__(self, registry, stars=(), archived=None, limits=None,
-                 counts=None):
+                 counts=None, no_reading=None):
         self.calls = []
 
         def fetch(**kw):
             self.calls.append(kw)
+            if kw.get("no_reading") is not None:
+                kw["no_reading"].update(no_reading or {})
             return dict(limits or {})
 
         self._patches = [
@@ -72,6 +74,18 @@ class TestSnapshot(unittest.TestCase):
         self.assertEqual(p.calls[0]["tool_names"], {"codex"})
         self.assertFalse(p.calls[0]["refresh_failed"])
         self.assertEqual(p.calls[0]["cache_ttl"], usage.CACHE_TTL_S)
+
+    def test_rows_say_why_a_starred_limit_is_missing(self):
+        reg = {"codex": {"command": "codex"}, "cursor": {"command": "cursor-agent"},
+               "devin": {"command": "devin"}}
+        with _Patched(reg, stars=["codex", "cursor", "devin"],
+                      no_reading={"codex": "signed_out", "cursor": "error"}):
+            body = usage.snapshot()
+        rows = {r["name"]: r for r in body["harnesses"]}
+        self.assertEqual(rows["codex"]["no_reading"], "signed_out")
+        self.assertEqual(rows["cursor"]["no_reading"], "error")
+        self.assertIsNone(rows["devin"]["no_reading"])
+        self.assertIsNone(rows["codex"]["rate_limit"])
 
     def test_archived_harness_left_out(self):
         reg = {"codex": {"command": "codex"}, "old": {"command": "old"}}
