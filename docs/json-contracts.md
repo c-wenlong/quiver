@@ -128,6 +128,7 @@ The CLI side of remote also speaks `--json`:
 | `swe remote devices --json` | `{devices: [DeviceRow]}`; `--revoke=<id>` → `{revoked, ok}`; `--requests` → `{requests: [PairRequestRow]}`; `--approve=<code>` → `{ok, device_id, name, node_name}`; `--deny=<code>` → `{ok}` |
 | `swe remote pair --json` | `{host, port, token, name, url, deep_link, expires_in_s}` — `url` opens the PWA, `deep_link` is the `quiver://pair?…` form for the iOS shell; `expires_in_s` is the token TTL |
 | `swe remote notify --json` | `{notify: {url?, topic?, ntfy_token?, enabled, action_credential?}}` with credential fields redacted to `***` |
+| `swe remote ssh --json` | `{enabled, user, port, listening, host_keys: [{key, fingerprint}], devices: [{id, name, fingerprint, installed, revoked}]}`; `--on`/`--off` apply first, and `devices` lists only devices that sent a key |
 
 `DeviceRow`: `{id, name, created_at, last_seen_at, revoked}`.
 

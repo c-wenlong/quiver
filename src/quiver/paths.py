@@ -122,6 +122,7 @@ def remote_dir_for(home: Path | None = None) -> Path:
 
     Holds ``devices.json`` (paired phone credentials, mode 600),
     ``inbox_dismissals.json`` (per-device inbox dismissals, mode 600),
+    ``ssh.json`` (whether paired phones' SSH keys may log in),
     ``machine.json`` (this machine's stable remote id), ``pair_tokens.json``
     (one-time pairing hand-offs), ``cursors/`` (per-session transcript read
     offsets), ``journal/`` (per-session event logs) and ``inbox/`` (staged
@@ -339,6 +340,11 @@ def atomic_write_text(path: "Path", text: str, *, private: bool = False) -> None
     An existing file's mode is carried over. ``private=True`` floors a new
     file at 0600, for anything that may hold credentials.
     """
+    atomic_write_bytes(path, text.encode("utf-8"), private=private)
+
+
+def atomic_write_bytes(path: "Path", data: bytes, *, private: bool = False) -> None:
+    """``atomic_write_text`` for bytes that must land exactly as given."""
     import os
     import tempfile
 
@@ -357,8 +363,8 @@ def atomic_write_text(path: "Path", text: str, *, private: bool = False) -> None
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp",
                                dir=str(path.parent))
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
         # mkstemp is 0600; widen only to whatever the file already was.
         if mode is not None:
             os.chmod(tmp, mode)
