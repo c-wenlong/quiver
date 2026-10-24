@@ -346,7 +346,7 @@ class TestCommands(unittest.TestCase):
     def test_install_keeps_public_url_and_loopback(self):
         seen = {}
 
-        def fake_install(program, log_path, path_env):
+        def fake_install(program, log_path, path_env, **_kw):
             seen["program"] = program
             return Path("/h/Library/LaunchAgents/x.plist")
 

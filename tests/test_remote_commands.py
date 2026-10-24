@@ -251,7 +251,7 @@ class TestServe(unittest.TestCase):
     def test_install_hands_the_hub_to_launchd(self):
         seen = {}
 
-        def fake_install(program, log_path, path_env):
+        def fake_install(program, log_path, path_env, **_kw):
             seen["program"], seen["log"] = program, log_path
             return Path("/h/Library/LaunchAgents/x.plist")
 
@@ -271,11 +271,40 @@ class TestServe(unittest.TestCase):
         # A shell-started hub still holds the port.
         self.assertIn("outside launchd", err)
 
-    def test_install_is_macos_only(self):
-        with patch.object(commands.sys, "platform", "linux"):
+    def test_install_on_linux_without_systemd_says_so(self):
+        with patch.object(commands.sys, "platform", "linux"), \
+             patch.object(commands.systemd, "available", return_value=False):
             rc, _, err = _run(["serve", "--install"])
         self.assertEqual(rc, 1)
-        self.assertIn("systemd", err)
+        self.assertIn("no systemd user manager", err)
+
+    def test_install_on_linux_writes_a_systemd_unit(self):
+        seen = {}
+
+        def fake_install(program, log_path, path_env, **_kw):
+            seen["program"] = program
+            return Path("/h/.config/systemd/user/quiver-remote-hub.service"), "sudo loginctl enable-linger $USER"
+
+        with patch.object(commands.sys, "platform", "linux"), \
+             patch.object(commands.sys, "argv", ["/home/kai/.local/bin/swe"]), \
+             patch("quiver.remote.commands.os.access", return_value=True), \
+             patch.object(commands.systemd, "available", return_value=True), \
+             patch.object(commands.systemd, "status", return_value=(None, False)), \
+             patch.object(commands.systemd, "install", fake_install), \
+             patch.object(commands, "_probe", side_effect=[None, {"ok": True}]):
+            rc, out, err = _run(["serve", "--install", "--public-url=https://box.tail.ts.net:8477"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen["program"], ["/home/kai/.local/bin/swe", "remote", "serve", "--host=127.0.0.1",
+                                           "--public-url=https://box.tail.ts.net:8477"])
+        self.assertIn("quiver-remote-hub.service", out)
+        self.assertIn("starts at boot", out)
+        self.assertIn("enable-linger", err)
+
+    def test_install_elsewhere_is_refused(self):
+        with patch.object(commands.sys, "platform", "win32"):
+            rc, _, err = _run(["serve", "--install"])
+        self.assertEqual(rc, 1)
+        self.assertIn("macOS (launchd) and Linux (systemd) only", err)
 
     def test_uninstall_reports_a_failed_stop(self):
         with patch.object(commands.sys, "platform", "darwin"), \
@@ -287,7 +316,7 @@ class TestServe(unittest.TestCase):
     def test_install_prefers_the_app_bundle_and_checks_the_hub_started(self):
         seen = {}
 
-        def fake_install(program, log_path, path_env):
+        def fake_install(program, log_path, path_env, **_kw):
             seen["program"] = program
             return Path("/h/x.plist")
 
