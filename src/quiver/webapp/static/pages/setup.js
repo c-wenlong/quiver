@@ -99,8 +99,9 @@ function startWizard() {
     wizard: true, step: 0, selected: new Set(d.agents.starred || []),
     start: defaultStart(d.preview.instructions), applying: false, outcome: null,
     applyError: null, appliedSelection: null, adopted: false, showingMore: false,
-    installing: null, finished: false, installRun: null, installErrors: {},
+    installing: null, finished: false, installErrors: {},
   });
+  // An install still running on the hub keeps its row's "Installing…".
 }
 
 function order() {
@@ -356,6 +357,13 @@ function agentsStep() {
   const missing = others.filter((p) => page.selected.has(p.id));
   let html = "";
   if (a.error) html += `<div class="card setup-error"><p class="error" role="alert">${esc(a.error)}</p></div>`;
+  // A failed install whose agent now reads as found (its command landed on
+  // PATH before the installer failed) has no banner left to show it in.
+  for (const [id, error] of Object.entries(page.installErrors)) {
+    if (!missing.some((p) => p.id === id)) {
+      html += `<div class="card setup-error"><p class="error setup-pre" role="alert">Installing ${esc(agentName(id))}: ${esc(error)}</p></div>`;
+    }
+  }
   html += missing.map(missingBanner).join("");
   html += `<div class="setup-found"><span>Found on ${esc(machineName())}</span><span class="setup-count num">${installed.length}</span></div>`;
   html += installed.length ? grid(installed)
@@ -418,14 +426,18 @@ function installButton(p, m) {
 
 async function runInstall(id, via) {
   if (page.installRun) return;
-  const gen = routeGen;
   page.installRun = `${id}:${via}`;
   delete page.installErrors[id];
   paint();
   const { status, data } = await apiPost("/v1/app/setup/install", { id, via });
   page.installRun = null;
-  if (gen !== routeGen) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  // Kept even if the page was left meanwhile, so coming back shows the
+  // result rather than a row still installing.
+  const here = onPage();
+  if (status === 401) {
+    if (here) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    return;
+  }
   if (status === 200 && data && data.setup) {
     page.data = data.setup;
     if (data.error) page.installErrors[id] = data.error;
@@ -433,6 +445,7 @@ async function runInstall(id, via) {
     page.installErrors[id] = (data && data.error && data.error.message)
       || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
   }
+  if (!here || !page.wizard) return;
   paint();
   const again = document.querySelector(`[data-run-install="${CSS.escape(via)}"][data-agent="${CSS.escape(id)}"]`)
     || document.querySelector(".setup-tile");

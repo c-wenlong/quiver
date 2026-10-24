@@ -284,30 +284,51 @@ class TestInstall(_Home, unittest.TestCase):
     def setUp(self):
         self.make_home(Path(tempfile.mkdtemp()))
 
-    def install(self, body, *, returncode=0, which=None):
+    def install(self, body, *, returncode=0, which=None, run=None):
         """POST install with the installer and PATH stubbed; returns (reply, run)."""
-        from subprocess import CompletedProcess
+        import subprocess
 
         def where(cmd):
             return which.get(cmd) if which else ("/opt/homebrew/bin/brew" if cmd == "brew" else None)
 
-        done = CompletedProcess([], returncode, stdout="==> Pouring gemini-cli\n", stderr="")
+        def installer(argv, **kwargs):
+            kwargs["stdout"].write(b"==> Pouring gemini-cli\n")
+            return subprocess.CompletedProcess(argv, returncode)
+
         with patch("quiver.harness.commands.shutil.which", side_effect=where), \
-                patch("quiver.harness.commands.subprocess.run", return_value=done) as run, \
+                patch("quiver.harness.commands.subprocess.run", side_effect=run or installer) as stub, \
                 patch("quiver.harness.tools.live_version", return_value="1.0.0"):
             reply = setup_page.post(self.ctx(), "install", body)
-        return reply, run
+        return reply, stub
 
     def test_runs_the_agents_own_installer_and_registers_it(self):
+        import subprocess
+
         reply, run = self.install({"id": "gemini", "via": "brew"},
                                   which={"brew": "/opt/homebrew/bin/brew", "gemini": "/opt/homebrew/bin/gemini"})
         self.assertIsNone(reply["error"])
         self.assertEqual(run.call_args.args[0], ["brew", "install", "gemini-cli"])
-        # No terminal: nothing on stdin, the output captured.
-        self.assertTrue(run.call_args.kwargs["capture_output"])
-        self.assertIsNotNone(run.call_args.kwargs["stdin"])
+        # No terminal: nothing on stdin, the output into a file, not memory.
+        self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
+        self.assertEqual(run.call_args.kwargs["stderr"], subprocess.STDOUT)
         self.assertEqual(self.registry()["gemini"]["command"], "gemini")
         self.assertIn("agents", reply["setup"])
+
+    def test_an_alias_never_picks_another_agents_installer(self):
+        self.registry_file.write_text(json.dumps({"codex": {"command": "codex", "aliases": ["gemini"]}}))
+        _, run = self.install({"id": "gemini", "via": "brew"})
+        self.assertEqual(run.call_args.args[0], ["brew", "install", "gemini-cli"])
+
+    def test_a_timeout_keeps_what_the_installer_printed(self):
+        import subprocess
+
+        def slow(argv, **kwargs):
+            kwargs["stdout"].write(b"==> Downloading gemini-cli\n")
+            raise subprocess.TimeoutExpired(argv, 600)
+
+        reply, _ = self.install({"id": "gemini", "via": "brew"}, run=slow)
+        self.assertIn("brew install timed out.", reply["error"])
+        self.assertIn("Downloading gemini-cli", reply["error"])
 
     def test_a_failed_install_says_why_with_its_output(self):
         reply, _ = self.install({"id": "gemini", "via": "brew"}, returncode=1)

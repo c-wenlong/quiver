@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -2082,6 +2083,13 @@ def install_argv(installer) -> tuple[str | None, list[str]]:
 INSTALL_OUTPUT_TAIL = 4000
 
 
+def _tail(log) -> str:
+    """The last INSTALL_OUTPUT_TAIL bytes of an open log file, as text."""
+    size = log.seek(0, os.SEEK_END)
+    log.seek(max(0, size - INSTALL_OUTPUT_TAIL))
+    return log.read().decode("utf-8", errors="replace")
+
+
 def run_install(reg_name: str, cmd_name: str, installer, argv: list[str],
                 npm: str | None, *, capture: bool = False) -> InstallResult:
     """Run ``argv`` (from ``install_argv``) and register the harness: the
@@ -2098,25 +2106,36 @@ def run_install(reg_name: str, cmd_name: str, installer, argv: list[str],
     entry = tools.get(reg_name) or {}
 
     timeout = 300 if installer.via == "npm" else 600
-    output = ""
-    try:
-        if capture:
-            result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
-                                    stdin=subprocess.DEVNULL)
-            output = ((result.stdout or "") + (result.stderr or ""))[-INSTALL_OUTPUT_TAIL:]
-        else:
+    if capture:
+        # A file rather than a pipe: an installer that prints for ten
+        # minutes costs disk, not hub memory, and what it printed before a
+        # timeout is still there to show.
+        with tempfile.TemporaryFile() as log:
+            try:
+                result = subprocess.run(argv, stdout=log, stderr=subprocess.STDOUT, timeout=timeout,
+                                        stdin=subprocess.DEVNULL)
+            except subprocess.TimeoutExpired:
+                return InstallResult(code=1, action=None, path=None, version=None, output=_tail(log),
+                                     exited=False, error=f"{installer.via} install timed out.")
+            except Exception as exc:
+                return InstallResult(code=1, action=None, path=None, version=None, output=_tail(log),
+                                     exited=False, error=f"{installer.via} install failed: {exc}")
+            output = _tail(log)
+    else:
+        output = ""
+        try:
             result = subprocess.run(
                 argv,
                 capture_output=False,
                 text=True,
                 timeout=timeout,
             )
-    except subprocess.TimeoutExpired:
-        return InstallResult(code=1, action=None, path=None, version=None, output=output,
-                             exited=False, error=f"{installer.via} install timed out.")
-    except Exception as exc:
-        return InstallResult(code=1, action=None, path=None, version=None, output=output,
-                             exited=False, error=f"{installer.via} install failed: {exc}")
+        except subprocess.TimeoutExpired:
+            return InstallResult(code=1, action=None, path=None, version=None, output=output,
+                                 exited=False, error=f"{installer.via} install timed out.")
+        except Exception as exc:
+            return InstallResult(code=1, action=None, path=None, version=None, output=output,
+                                 exited=False, error=f"{installer.via} install failed: {exc}")
 
     if result.returncode != 0:
         return InstallResult(code=result.returncode, action=None, path=None, version=None,
@@ -2185,11 +2204,13 @@ def run_install(reg_name: str, cmd_name: str, installer, argv: list[str],
 def install_harness(name: str, via: str) -> InstallResult:
     """``swe install <name> --via=<via>`` with no terminal: the harness's
     own installer for that method, its output captured. Raises
-    InstallError when there is none or its tool is off PATH."""
+    InstallError when there is none or its tool is off PATH. ``name`` is
+    the harness's own id, never read as an alias: one harness may list
+    another's id among its aliases, and the button names the id."""
     from quiver.harness.installers import installers_for
 
     tools = load_registry_readonly()
-    reg_name = resolve(tools, name) or name
+    reg_name = name
     installer = next((inst for inst in installers_for(reg_name) if inst.via == via), None)
     if installer is None:
         raise InstallError(f"'{reg_name}' has no {via} installer.")

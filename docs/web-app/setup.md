@@ -32,9 +32,11 @@ subtitle, and a footer with Skip setup, Back and Continue.
    package manager. Each has **Install**, which runs it on the hub, and
    Copy; a manager that isn't on the hub's PATH is dimmed and says so in
    place of Install. While one runs it reads "Installing…" and the other
-   Install buttons wait. A failure shows under the list with the end of
-   the installer's output; a success re-reads the page, so the agent moves
-   to "Found" with its tick kept.
+   Install buttons wait, across a refresh or a trip to another page. A
+   failure shows under the list with the end of the installer's output (in
+   a card above the grid if the agent now reads as found anyway); a
+   success re-reads the page, so the agent moves to "Found" with its tick
+   kept.
 2. **One setup for all of them.** Shared instructions, with the "Start
    from" picker when your agents already have instruction files (your
    first one by default, or Quiver's starter file) and the note for each
@@ -124,8 +126,10 @@ Harnesses page and Doctor's fixes hold.
 `swe install gemini --via=brew` in process
 (`harness.commands.install_harness`): the agent's own install command for
 that method from `swe install`'s table, never a package the request
-names. It runs with nothing on stdin and its output captured, so a cask or
-script that asks for a password fails instead of waiting. It shares
+names, and the id is never read as another harness's alias. It runs with
+nothing on stdin and its output written to a temporary file (the last
+4,000 bytes come back, a timeout's included), so a cask or script that
+asks for a password fails instead of waiting. It shares
 Doctor's one-fix lock (409 `busy`) and the registry lock, and on success
 registers the harness as `swe install` does. The reply is `{"error",
 "setup"}`: what went wrong with the last lines of the installer's output
