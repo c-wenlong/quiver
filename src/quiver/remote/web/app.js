@@ -2752,8 +2752,12 @@ async function loadCommands() {
   } else {
     cmds.error = commandsError(hubError(status, data));
   }
-  menu.active = 0;
-  renderMenu();
+  // The list is kept either way; only an open / menu redraws, so a late
+  // answer can't move the @ menu's highlight.
+  if (menu.kind === "slash") {
+    menu.active = 0;
+    renderMenu();
+  }
 }
 
 function commandsError(err) {
