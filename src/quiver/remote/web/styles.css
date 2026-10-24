@@ -294,3 +294,91 @@ details.tool.has-diff > summary { color: var(--text); }
 .count-row .bar { margin-top: 0; }
 .count-row .bar .fill { background: var(--accent); min-width: 4px; }
 .count-row .n { font-variant-numeric: tabular-nums; color: var(--dim); min-width: 2.5ch; text-align: right; }
+
+/* session row actions: swipe, ⋯ menu, sheets, toast */
+.swipe { position: relative; margin: 6px 0; border-radius: 12px; overflow: hidden; }
+.swipe > .srow {
+  margin: 0; position: relative; z-index: 1;
+  touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  transition: transform .28s cubic-bezier(.2, .9, .3, 1);
+}
+.swipe-acts {
+  position: absolute; top: 0; bottom: 0; width: 0; display: flex; overflow: hidden;
+  transition: width .28s cubic-bezier(.2, .9, .3, 1);
+}
+.swipe.dragging > .srow, .swipe.dragging .swipe-acts { transition: none; }
+.swipe-acts.lead { left: 0; }
+/* The first trailing action sits at the row's edge. */
+.swipe-acts.trail { right: 0; flex-direction: row-reverse; }
+.swipe-acts button {
+  flex: 1 1 0; min-width: 0; margin: 0; padding: 0 6px; border: 0; border-radius: 0;
+  font-size: .85rem; font-weight: 600; white-space: nowrap; overflow: hidden; color: #fff;
+  transition: flex-grow .2s, padding .2s;
+}
+/* Past a full swipe the edge action stretches across and runs on release. */
+.swipe.armed .swipe-acts button:not(:first-child) { flex-grow: 0; padding: 0; }
+.swipe-acts .act-attach { background: var(--accent); color: #08111f; }
+.swipe-acts .act-detach { background: #5b6478; }
+.swipe-acts .act-pin, .swipe-acts .act-unpin { background: var(--yellow); color: #1f1603; }
+.swipe-acts .act-rename { background: #3f5a8a; }
+.swipe-acts .act-fork { background: #7a5cd6; }
+.srow .sub.note { color: var(--yellow); }
+.row-more {
+  flex: 0 0 auto; width: auto; margin: -6px -6px -6px 0; padding: 6px 8px;
+  background: none; border: 0; border-radius: 8px; color: var(--dim); font-size: 1.05rem; line-height: 1;
+}
+.row-more:hover, .row-more:focus-visible { color: var(--text); background: var(--panel2); }
+/* Touch screens swipe and long-press instead; screen readers still get it. */
+@media (hover: none), (pointer: coarse) {
+  .row-more {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+  }
+}
+
+.sheet-back {
+  position: fixed; inset: 0; z-index: 20; display: flex; align-items: flex-end; justify-content: center;
+  background: rgba(0, 0, 0, .5); animation: sheet-fade .15s ease-out;
+}
+.sheet {
+  width: 100%; max-width: 520px; max-height: 85vh; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--border); border-bottom: 0;
+  border-radius: 16px 16px 0 0; padding: 16px 16px calc(env(safe-area-inset-bottom) + 16px);
+  animation: arrive .2s ease-out;
+}
+/* Forms sit at the top so the on-screen keyboard doesn't cover them. */
+.sheet-back.form { align-items: flex-start; padding: calc(env(safe-area-inset-top) + 12px) 10px 0; }
+.sheet-back.form .sheet { border-bottom: 1px solid var(--border); border-radius: 16px; padding-bottom: 16px; }
+@media (min-width: 600px) {
+  .sheet-back, .sheet-back.form { align-items: center; padding: 16px; }
+  .sheet { border-bottom: 1px solid var(--border); border-radius: 16px; padding-bottom: 16px; }
+}
+.sheet-title { font-size: 1rem; margin: 0 0 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sheet-actions { display: flex; flex-direction: column; gap: 8px; }
+.sheet-actions button, .sheet .rename-reset { width: 100%; margin: 0; }
+.sheet button.danger { color: var(--red); }
+.sheet button:disabled { opacity: .5; cursor: default; }
+.sheet button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sheet-cancel { color: var(--dim); }
+.sheet-note { font-size: .82rem; margin: 6px 2px 10px; }
+.sheet-label { display: flex; justify-content: space-between; gap: 8px; font-size: .85rem; color: var(--dim); }
+.sheet-label .rename-count { font-variant-numeric: tabular-nums; }
+.sheet textarea {
+  width: 100%; min-height: 6.5em; padding: 12px; margin: 6px 0; resize: vertical;
+  background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 10px; font: inherit;
+}
+.sheet-error { font-size: .85rem; margin: 6px 2px; min-height: 0; }
+.sheet-error:empty { display: none; }
+.sheet-row { display: flex; gap: 8px; margin-top: 10px; }
+.sheet-row button { flex: 1; width: auto; margin: 0; }
+@keyframes sheet-fade { from { opacity: 0; } }
+
+.toast {
+  position: fixed; left: 14px; right: 14px; margin: 0 auto; max-width: 480px; z-index: 15;
+  bottom: calc(env(safe-area-inset-bottom) + 58px);
+  display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 16px;
+  background: var(--text); color: var(--bg); border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .35); font-size: .88rem;
+}
+.toast-text { flex: 1; min-width: 0; }
+.toast-act { width: auto; margin: 0; padding: 6px 8px; background: none; border: 0; color: var(--bg); font-weight: 700; }
