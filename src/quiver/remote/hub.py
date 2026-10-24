@@ -315,6 +315,7 @@ class HubState:
 
     def stop(self) -> None:
         self._stop.set()
+        self.tail_manager.interrupt()
         # Fail every accepted-but-not-yet-started send honestly; the
         # in-flight one sees _stop and reports the same note.
         self.waiting.wake_all()
@@ -496,7 +497,8 @@ class HubState:
                     attachments.sweep(self.home)
                 except Exception:
                     pass
-            self._stop.wait(0.25)
+            # A write to a session (tail_manager.wake) cuts this short.
+            self.tail_manager.wait(0.25)
 
 
 def _json_bytes(payload) -> bytes:
@@ -1434,11 +1436,12 @@ class _Handler(BaseHTTPRequestHandler):
     def _injector(self, key: str):
         meta = supervise.meta_for(self._state.home, key)
         # emit + machine let tier-A channels raise approval events from
-        # their server streams, same path the tmux watcher uses.
-        return inject.injector_for(
+        # their server streams, same path the tmux watcher uses. Every
+        # write through it wakes the session's tailer.
+        return self._state.tail_manager.waking(key, inject.injector_for(
             self._state.home, key, meta,
             emit=self._state.emit, machine=self._state.machine_id,
-        )
+        ))
 
     def _forward(
         self, key: str, mid: str, action: str, row: dict
@@ -1964,6 +1967,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not ok:
             self._send_error(409, "not_idle", note)
             return
+        self._state.tail_manager.wake(key)
         row["ownership"] = protocol.OWNERSHIP_ATTACHED
         self._emit_ownership(key)
         self._send_json(200, {"ok": True, "note": note})

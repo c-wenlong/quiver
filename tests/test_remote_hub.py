@@ -1110,6 +1110,22 @@ class TestSendQueue(unittest.TestCase):
         evs, _ = self.srv.state.journal.read_since(self.key, 0)
         self.assertEqual(evs[-1]["type"], "command.result")
 
+    def test_send_wakes_the_session_tailer(self):
+        from quiver.remote import inject
+        fake = self._injector()
+        mgr = self.srv.state.tail_manager
+        self.assertFalse(mgr.is_hot(self.key))
+        q = self.srv.state.bus.subscribe(self.key)
+        with patch.object(inject, "injector_for", return_value=fake):
+            status, data = self._post({"text": "hi", "mode": "steer"})
+            self.assertEqual(status, 202, data)
+            q.get(timeout=5)
+        fake.send.assert_called_once()
+        self.assertTrue(mgr.is_hot(self.key))
+        # The tail loop is told to poll it now, not on its next tick.
+        self.assertIn(self.key, mgr._woken)
+        self.assertTrue(mgr.wait(0))
+
     def test_queue_waits_for_idle(self):
         from quiver.remote import hub as hub_mod
         from quiver.remote import inject
