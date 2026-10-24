@@ -87,9 +87,6 @@ class LaunchdTest(unittest.TestCase):
         self.assertEqual(launchd.loaded_pid(run=FakeLaunchctl(fail={"print"})), (False, None))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class BootstrapRetryTest(unittest.TestCase):
     """bootstrap right after bootout can fail with EIO while launchd
@@ -131,3 +128,7 @@ class BootstrapRetryTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             launchd.install(["/x/swe"], self.log, "/bin", home=self.home, run=run,
                             sleep=lambda _s: self.fail("slept"))
+
+
+if __name__ == "__main__":
+    unittest.main()

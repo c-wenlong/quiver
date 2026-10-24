@@ -87,7 +87,19 @@ class Facts:
     loopback_ok: bool = False
     https_ok: bool = False
     https_error: str = ""
-    devices: int = 0
+    # When each paired device that isn't revoked was paired.
+    device_times: list[float] = field(default_factory=list)
+    # When --apply last moved the hub to a new address; devices paired
+    # before it can't reach the hub any more.
+    moved_at: float | None = None
+    satellites: int = 0
+
+    @property
+    def devices(self) -> int:
+        """Devices that can still reach the hub."""
+        if self.moved_at is None:
+            return len(self.device_times)
+        return sum(1 for t in self.device_times if t >= self.moved_at)
 
     @property
     def dns_name(self) -> str:
@@ -212,6 +224,14 @@ def evaluate(f: Facts) -> dict:
     want = f.public_url
     if not cert_ok:
         steps.append(_step("hub.service", t_hub, BLOCKED, blocked_by(t_cert)))
+    elif darwin and f.loopback_ok and not f.agent_running:
+        # Something else answers on the port, most likely a hub started
+        # from a shell: the background one would fail to bind.
+        steps.append(_step(
+            "hub.service", t_hub, NEEDS_YOU,
+            f"A hub started outside launchd answers on 127.0.0.1:{f.port}, so the "
+            "background one can't start. Stop it, then check again.",
+            {"kind": "command", "label": "Copy command", "command": "pkill -f 'swe remote serve'"}))
     elif darwin:
         args = f.agent_args or []
         right = f"--public-url={want}" in args and "--host=127.0.0.1" in args
@@ -223,13 +243,14 @@ def evaluate(f: Facts) -> dict:
                 "The hub keeps stopping. Its log is ~/.quiver/data/remote/serve.log.",
                 _apply("Restart hub")))
         else:
-            detail = ("Runs on its tailnet address today; moves behind tailscale serve"
-                      if args else "Not installed yet")
-            steps.append(_step("hub.service", t_hub, TODO, detail, _apply("Start hub")))
+            detail = move_note(f) if args else "Not installed yet"
+            steps.append(_step("hub.service", t_hub, TODO, detail,
+                               _apply("Move hub" if args else "Start hub")))
     elif f.loopback_ok and f.hub_config.get("public_url") == want:
         steps.append(_step("hub.service", t_hub, OK))
     else:
-        cmd = f"swe remote serve --public-url={want}"
+        port_flag = f"--port={f.port} " if f.port != DEFAULT_PORT else ""
+        cmd = f"swe remote serve {port_flag}--public-url={want}"
         steps.append(_step(
             "hub.service", t_hub, NEEDS_YOU,
             f"Run `{cmd}` under a systemd user unit so it starts at boot.",
@@ -253,11 +274,18 @@ def evaluate(f: Facts) -> dict:
 
     # 8. A device paired.
     t_paired = "A phone paired"
+    stranded = len(f.device_times) - f.devices
     if f.devices:
         steps.append(_step("phone.paired", t_paired, OK,
                            "1 device" if f.devices == 1 else f"{f.devices} devices"))
     elif not reach_ok:
         steps.append(_step("phone.paired", t_paired, BLOCKED, blocked_by(t_reach)))
+    elif stranded:
+        steps.append(_step(
+            "phone.paired", t_paired, NEEDS_YOU,
+            f"The hub moved to {want}. Pair your devices again there: "
+            f"{'the one' if stranded == 1 else f'the {stranded}'} paired at the old "
+            "address can't reach it.", {"kind": "pair", "label": "Pair a phone"}))
     else:
         steps.append(_step("phone.paired", t_paired, NEEDS_YOU,
                            "Scan a code with the Quiver app, or open a link in a browser.",
@@ -269,6 +297,20 @@ def evaluate(f: Facts) -> dict:
         "url": want,
         "steps": steps,
     }
+
+
+def move_note(f: Facts) -> str:
+    """What moving a hub that already runs elsewhere does to its clients."""
+    note = f"Runs on its tailnet address today. Moving it to {f.public_url} changes its address"
+    who = []
+    if f.device_times:
+        n = len(f.device_times)
+        who.append("the paired device" if n == 1 else f"the {n} paired devices")
+    if f.satellites:
+        who.append("the satellite" if f.satellites == 1 else f"the {f.satellites} satellites")
+    if not who:
+        return note + "."
+    return f"{note}, so {' and '.join(who)} must be paired or pointed at it again."
 
 
 def cert_advice(error: str) -> str:
@@ -314,8 +356,12 @@ def _run_json(run: Runner, argv: list[str], timeout: float = 10) -> tuple[dict |
 
 
 def _get(url: str, timeout: float) -> tuple[bool, str]:
+    """GET ``url``. https retries against the OS CA bundle when Python's
+    own store has none (python.org builds on macOS), as satellites do."""
+    from quiver.remote.agent import _urlopen
+
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with _urlopen(urllib.request.Request(url), timeout) as resp:
             return 200 <= resp.status < 300, ""
     except Exception as exc:  # noqa: BLE001 - any failure is "not reachable"
         return False, str(getattr(exc, "reason", exc))
@@ -329,6 +375,29 @@ def _agent(home: Path | None, run: Runner) -> tuple[list[str] | None, bool]:
         return None, False
     loaded, pid = launchd.loaded_pid(run)
     return (list(args) if isinstance(args, list) else None), bool(loaded and pid)
+
+
+def _state_file(home: Path | None) -> Path:
+    return remote_dir_for(home) / "setup-state.json"
+
+
+def load_state(home: Path | None = None) -> dict:
+    try:
+        data = json.loads(_state_file(home).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def record_move(home: Path | None, url: str, now: float | None = None) -> None:
+    """Remember that the hub moved to ``url``, so devices paired before
+    it are no longer counted as able to reach it."""
+    try:
+        path = _state_file(home)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(path, json.dumps({"moved_at": time.time() if now is None else now, "url": url}))
+    except OSError:
+        pass
 
 
 def _cert_cache(home: Path | None) -> Path:
@@ -395,7 +464,14 @@ def gather(home: Path | None = None, port: int | None = None, run: Runner = subp
     elif certs_on and not f.https_ok and f.exe:
         # A cached answer still shows; only --apply or a recheck fetches.
         f.cert = _cached_cert(home, f.dns_name)
-    f.devices = len(pairing.load_devices(home))
+    f.device_times = [float(row.get("created_at") or 0) for row in pairing.load_devices(home).values()
+                      if not row.get("revoked_at")]
+    moved = load_state(home)
+    if moved.get("url") == f.public_url and moved.get("moved_at"):
+        f.moved_at = float(moved["moved_at"])
+    from quiver.remote.catalog import load_machines
+
+    f.satellites = len(load_machines(home))
     return f
 
 
@@ -426,7 +502,8 @@ class Actions:
 
 def apply(home: Path | None = None, port: int | None = None, actions: Actions | None = None,
           gather_fn: Callable[..., Facts] | None = None, log: Callable[[str], None] = lambda _m: None,
-          max_steps: int = 8) -> dict:
+          max_steps: int = 8, fresh_cert: bool = False,
+          record: Callable[[str], None] | None = None) -> dict:
     """Do every step Quiver can do, in order, and return the final report.
 
     Stops at the first step that needs a person or failed: later steps
@@ -435,22 +512,33 @@ def apply(home: Path | None = None, port: int | None = None, actions: Actions | 
     """
     gather_fn = gather_fn or gather
     actions = actions or default_actions(home)
+    record = record or (lambda url: record_move(home, url))
     report: dict = {}
-    for _ in range(max_steps):
-        facts = gather_fn(home=home, port=port, fetch_cert=True)
+    tried: set[str] = set()
+    for i in range(max_steps):
+        facts = gather_fn(home=home, port=port, fetch_cert=True, fresh_cert=fresh_cert and i == 0)
         report = evaluate(facts)
         nxt = next((s for s in report["steps"] if s["state"] != OK), None)
-        if nxt is None or nxt["state"] != TODO:
+        if nxt is None:
+            return report
+        # A hub that keeps stopping is restarted once; anything else that
+        # failed or needs a person ends the run.
+        restart = nxt["state"] == FAILED and nxt["id"] == "hub.service" and nxt["id"] not in tried
+        if nxt["state"] != TODO and not restart:
             return report
         sid = nxt["id"]
+        tried.add(sid)
         if sid == "tailscale.cert":
             # gather fetched it; a TODO here means the fetch didn't run.
             return report
         if sid == "hub.service":
-            log(f"starting the hub for {facts.public_url}")
+            moving = bool(facts.agent_args) and not restart
+            log(f"{'moving' if moving else 'starting'} the hub to {facts.public_url}")
             err = actions.install_hub(facts.public_url, facts.port)
             if err is None and not actions.wait_hub(facts.port):
                 err = f"the hub didn't answer on 127.0.0.1:{facts.port}"
+            if err is None and moving:
+                record(facts.public_url)
         elif sid == "hub.reachable":
             log(f"setting up tailscale serve on :{facts.port}")
             err = actions.start_serve(facts.exe or "tailscale", facts.port)

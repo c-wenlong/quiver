@@ -38,10 +38,12 @@ GOOD_ARGS = ["/A/swe", "remote", "serve", "--host=127.0.0.1", f"--public-url={UR
 
 
 def facts(**over):
-    """A machine where every step is done; tests take pieces away."""
+    """A machine where every step is done; tests take pieces away.
+    ``devices=N`` stands for N devices paired at time 1000."""
+    n = over.pop("devices", 1)
     f = setup.Facts(platform="darwin", exe="/usr/local/bin/tailscale", version="1.102.4",
                     status=running(), serve=SERVE, agent_args=GOOD_ARGS, agent_running=True,
-                    loopback_ok=True, https_ok=True, devices=1)
+                    loopback_ok=True, https_ok=True, device_times=[1000.0] * n)
     for k, v in over.items():
         setattr(f, k, v)
     return f
@@ -121,13 +123,34 @@ class EvaluateTest(unittest.TestCase):
         self.assertEqual(setup.cert_advice("first\nrate limited"),
                          "Tailscale couldn't get a certificate: rate limited")
 
-    def test_a_hub_on_its_tailnet_address_is_moved(self):
+    def test_a_hub_on_its_tailnet_address_is_moved_saying_who_must_pair_again(self):
         old = ["/A/swe", "remote", "serve", "--tailnet"]
-        r = setup.evaluate(facts(agent_args=old, https_ok=False, cert=(True, "")))
+        r = setup.evaluate(facts(agent_args=old, loopback_ok=False, https_ok=False, cert=(True, ""),
+                                 devices=3, satellites=1))
         hub = step(r, "hub.service")
         self.assertEqual(hub["state"], setup.TODO)
-        self.assertEqual(hub["action"]["kind"], "apply")
-        self.assertIn("tailnet address", hub["detail"])
+        self.assertEqual(hub["action"], {"kind": "apply", "label": "Move hub"})
+        self.assertIn("changes its address", hub["detail"])
+        self.assertIn("the 3 paired devices and the satellite", hub["detail"])
+
+    def test_devices_paired_before_a_move_must_pair_again(self):
+        r = setup.evaluate(facts(devices=2, moved_at=2000.0))
+        paired = step(r, "phone.paired")
+        self.assertEqual(paired["state"], setup.NEEDS_YOU)
+        self.assertIn("The hub moved to", paired["detail"])
+        self.assertIn("the 2 paired at the old address", paired["detail"])
+        self.assertFalse(r["ready"])
+        after = facts(moved_at=2000.0)
+        after.device_times = [1000.0, 2500.0]
+        self.assertEqual(states(setup.evaluate(after))["phone.paired"], setup.OK)
+
+    def test_a_hub_started_from_a_shell_must_be_stopped_first(self):
+        r = setup.evaluate(facts(agent_args=None, agent_running=False, loopback_ok=True,
+                                 https_ok=False, cert=(True, "")))
+        hub = step(r, "hub.service")
+        self.assertEqual(hub["state"], setup.NEEDS_YOU)
+        self.assertIn("outside launchd", hub["detail"])
+        self.assertEqual(hub["action"]["command"], "pkill -f 'swe remote serve'")
 
     def test_a_hub_that_keeps_stopping_points_at_its_log(self):
         r = setup.evaluate(facts(loopback_ok=False, https_ok=False, cert=(True, "")))
@@ -141,6 +164,9 @@ class EvaluateTest(unittest.TestCase):
         hub = step(r, "hub.service")
         self.assertEqual(hub["state"], setup.NEEDS_YOU)
         self.assertEqual(hub["action"]["command"], f"swe remote serve --public-url={URL}")
+        other = setup.evaluate(facts(platform="linux", agent_args=None, https_ok=False, cert=(True, ""),
+                                     hub_config={}, port=9000))
+        self.assertIn("--port=9000 ", step(other, "hub.service")["action"]["command"])
         ok = setup.evaluate(facts(platform="linux", agent_args=None, hub_config={"public_url": URL}))
         self.assertEqual(states(ok)["hub.service"], setup.OK)
 
@@ -195,8 +221,10 @@ class ApplyTest(unittest.TestCase):
 
     def test_it_moves_the_hub_then_sets_up_serve(self):
         acts = self.machine()
-        report = setup.apply(actions=acts, gather_fn=self.gather)
+        moved = []
+        report = setup.apply(actions=acts, gather_fn=self.gather, record=moved.append)
         self.assertEqual(self.calls, [("hub", URL, 8477), ("serve", 8477)])
+        self.assertEqual(moved, [URL], "the move is remembered for re-pairing")
         self.assertEqual(states(report)["hub.reachable"], setup.OK)
         self.assertEqual(states(report)["phone.paired"], setup.NEEDS_YOU, "a person pairs")
 
@@ -226,6 +254,24 @@ class ApplyTest(unittest.TestCase):
         acts.wait_hub = lambda _p: False
         report = setup.apply(actions=acts, gather_fn=self.gather)
         self.assertIn("didn't answer", step(report, "hub.service")["detail"])
+
+    def test_a_hub_that_keeps_stopping_is_restarted_once(self):
+        acts = self.machine(agent_args=GOOD_ARGS, loopback_ok=False)
+        report = setup.apply(actions=acts, gather_fn=self.gather, record=lambda _u: self.fail("not a move"))
+        self.assertEqual(self.calls, [("hub", URL, 8477)], "one restart, then it reports")
+        self.assertEqual(states(report)["hub.service"], setup.FAILED)
+
+    def test_recheck_fetches_the_certificate_afresh_once(self):
+        acts = self.machine(agent_args=GOOD_ARGS, serve=SERVE, https_ok=True)
+        seen = []
+
+        def gather(**kw):
+            seen.append(kw.get("fresh_cert"))
+            return self.f
+
+        setup.apply(actions=acts, gather_fn=gather, fresh_cert=True)
+        self.assertEqual(seen[0], True)
+        self.assertTrue(all(v is False for v in seen[1:]))
 
     def test_linux_serve_without_an_operator_gives_the_fix(self):
         acts = self.machine(agent_args=GOOD_ARGS)
@@ -269,7 +315,122 @@ class CertCheckTest(unittest.TestCase):
         self.assertEqual(len(self.runs), 2)
 
 
+class GatherTest(unittest.TestCase):
+    """gather reads tailscale, the service, the hub and devices.json."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+
+    def fake_run(self, argv, **_kw):
+        if argv[1:3] == ["status", "--json"]:
+            out = json.dumps(running(Version="1.102.4-t3c"))
+        elif argv[1:4] == ["serve", "status", "--json"]:
+            out = json.dumps(SERVE)
+        else:
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="no")
+        return subprocess.CompletedProcess(argv, 0, stdout=out, stderr="")
+
+    def test_it_reads_the_machine(self):
+        from quiver.remote import pairing
+
+        devices = {"a": {"created_at": 500.0, "revoked_at": None},
+                   "b": {"created_at": 600.0, "revoked_at": 700.0}}
+        with patch.object(setup, "tailscale_exe", return_value="/ts"), \
+             patch.object(pairing, "load_devices", return_value=devices), \
+             patch.object(setup, "_agent", return_value=(GOOD_ARGS, True)):
+            f = setup.gather(home=self.home, run=self.fake_run, get=lambda url, _t: (True, ""))
+        f.platform = "darwin"
+        self.assertEqual(f.version, "1.102.4")
+        self.assertEqual(f.dns_name, NAME)
+        self.assertEqual(f.serve, SERVE)
+        self.assertEqual(f.device_times, [500.0], "a revoked device can't reach the hub")
+        self.assertTrue(f.loopback_ok and f.https_ok)
+        self.assertTrue(setup.evaluate(f)["ready"])
+
+    def test_a_recorded_move_applies_to_its_own_address(self):
+        setup.record_move(self.home, URL, now=123.0)
+        with patch.object(setup, "tailscale_exe", return_value="/ts"), \
+             patch.object(setup, "_agent", return_value=(None, False)):
+            f = setup.gather(home=self.home, run=self.fake_run, get=lambda url, _t: (False, "down"))
+        self.assertEqual(f.moved_at, 123.0)
+        setup.record_move(self.home, "https://elsewhere:8477", now=5.0)
+        with patch.object(setup, "tailscale_exe", return_value="/ts"), \
+             patch.object(setup, "_agent", return_value=(None, False)):
+            f = setup.gather(home=self.home, run=self.fake_run, get=lambda url, _t: (False, "down"))
+        self.assertIsNone(f.moved_at)
+
+    def test_no_tailscale_reads_nothing_from_it(self):
+        with patch.object(setup, "tailscale_exe", return_value=None), \
+             patch.object(setup, "_agent", return_value=(None, False)):
+            f = setup.gather(home=self.home, run=lambda *a, **k: self.fail("ran tailscale"),
+                             get=lambda url, _t: (False, ""))
+        self.assertIsNone(f.status)
+        self.assertEqual(f.public_url, "")
+
+    def test_https_retries_against_the_os_ca_bundle(self):
+        from quiver.remote import agent
+
+        seen = []
+
+        class Resp:
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        with patch.object(agent, "_urlopen", lambda req, timeout: seen.append(req.full_url) or Resp()):
+            self.assertEqual(setup._get(URL + "/v1/status", 5), (True, ""))
+        self.assertEqual(seen, [URL + "/v1/status"])
+
+
+class DefaultActionsTest(unittest.TestCase):
+    def test_serve_runs_tailscale_serve_in_the_background(self):
+        calls = []
+
+        def run(argv, **_kw):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+        acts = setup.default_actions(Path(tempfile.mkdtemp()), run=run)
+        self.assertIsNone(acts.start_serve("/ts", 8477))
+        self.assertEqual(calls, [["/ts", "serve", "--bg", "--https=8477", "http://127.0.0.1:8477"]])
+
+    def test_a_refused_serve_returns_its_message(self):
+        def run(argv, **_kw):
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="Access denied: serve config denied")
+
+        acts = setup.default_actions(Path(tempfile.mkdtemp()), run=run)
+        self.assertIn("Access denied", acts.start_serve("/ts", 8477))
+
+    def test_install_hub_builds_the_loopback_program(self):
+        seen = {}
+
+        def fake_install(program, log_path, path_env, home=None, run=None):
+            seen["program"] = program
+            return Path("/x.plist")
+
+        with patch.object(commands, "hub_program", return_value=(GOOD_ARGS, None)) as prog, \
+             patch.object(setup.launchd, "install", fake_install):
+            err = setup.default_actions(Path(tempfile.mkdtemp())).install_hub(URL, 8477)
+        self.assertIsNone(err)
+        prog.assert_called_once_with("127.0.0.1", 8477, URL)
+        self.assertEqual(seen["program"], GOOD_ARGS)
+
+    def test_install_hub_reports_a_load_failure(self):
+        with patch.object(commands, "hub_program", return_value=(GOOD_ARGS, None)), \
+             patch.object(setup.launchd, "install", side_effect=RuntimeError("EIO")):
+            err = setup.default_actions(Path(tempfile.mkdtemp())).install_hub(URL, 8477)
+        self.assertIn("EIO", err)
+
+
 class CommandTest(unittest.TestCase):
+    def test_a_port_out_of_range_changes_nothing(self):
+        err = io.StringIO()
+        with patch.object(setup, "apply", side_effect=AssertionError("applied")), \
+             contextlib.redirect_stdout(err):
+            rc = commands.cmd_remote(["setup", "--apply", "--port=84770"])
+        self.assertEqual(rc, 1)
+        self.assertIn("1 to 65535", err.getvalue())
+
     def test_json_is_the_report(self):
         out = io.StringIO()
         with patch.object(setup, "gather", return_value=facts(devices=0)), \

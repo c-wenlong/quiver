@@ -612,11 +612,15 @@ def _cmd_setup(flags: dict, json_view: bool) -> int:
     try:
         port = int(flags["--port"]) if flags.get("--port") else None
     except ValueError:
-        print(c("red", "--port must be a number"), file=error_stream(json_view))
+        port = 0
+    if port is not None and not 1 <= port <= 65535:
+        # Checked before anything changes: --apply would stop a working
+        # hub and install one that can't start.
+        print(c("red", "--port must be a number from 1 to 65535"), file=error_stream(json_view))
         return 1
     if flags.get("--apply"):
         say = (lambda _m: None) if json_view else (lambda m: print(c("dim", f"… {m}"), flush=True))
-        report = setup_mod.apply(port=port, log=say)
+        report = setup_mod.apply(port=port, log=say, fresh_cert=bool(flags.get("--recheck")))
     else:
         report = setup_mod.evaluate(setup_mod.gather(
             port=port, fetch_cert=bool(flags.get("--recheck")),
