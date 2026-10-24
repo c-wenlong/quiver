@@ -171,16 +171,18 @@ class TestMacOnlySidebar(unittest.TestCase):
 
     def test_mac_only_items_wear_the_pill_and_are_not_links(self):
         sidebar = self.run_route("#/overview")["sidebar"]
-        for label in ("Menu bar", "Widgets"):
+        for page, label in (("menubar", "Menu bar"), ("widgets", "Widgets")):
             item = sidebar[sidebar.rindex('<span class="nav-item', 0, sidebar.index(f"<span>{label}</span>")):]
             item = item[:item.index("Mac app only</span></span>")]
-            self.assertTrue(item.startswith('<span class="nav-item soon mac-only" aria-disabled="true">'), item)
+            self.assertTrue(item.startswith('<span class="nav-item soon mac-only" data-page="%s" aria-disabled="true">' % page), item)
             self.assertNotIn("href", item)
             self.assertIn('<span class="badge mac-only">', item)
         self.assertNotIn('href="#/menubar"', sidebar)
         self.assertNotIn('href="#/widgets"', sidebar)
-        # A page that isn't ported yet is still a link.
-        self.assertIn('href="#/status"', sidebar)
+        # A page that isn't ported yet is still a link. Every row carries
+        # data-page, which Settings' hide switches select on.
+        self.assertIn('data-page="status" href="#/status"', sidebar)
+        self.assertEqual(sidebar.count("data-page="), sidebar.count('class="nav-item'))
 
     def test_a_mac_only_hash_opens_overview(self):
         for hash_ in ("#/menubar", "#/widgets", "#widgets", "#/menubar?x=1"):
@@ -188,7 +190,7 @@ class TestMacOnlySidebar(unittest.TestCase):
             self.assertEqual(out["rendered"], ["overview"], hash_)
             self.assertEqual(out["replaced"], ["#/overview"], hash_)
             self.assertIn('aria-current="page"', out["sidebar"])
-            self.assertIn('class="nav-item active " href="#/overview"', out["sidebar"])
+            self.assertIn('class="nav-item active " data-page="overview" href="#/overview"', out["sidebar"])
             self.assertNotIn("part of the Mac app", out["panel"])
 
     def test_other_hashes_are_left_alone(self):

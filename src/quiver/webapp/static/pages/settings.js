@@ -62,7 +62,7 @@ function settingsApplySidebar(hidden) {
   }
   const ids = [...hidden].filter((id) => /^[a-z]+$/.test(id));
   if (!ids.length) { style.textContent = ""; return; }
-  const sel = (id) => `[href="#/${id}"]`;
+  const sel = (id) => `[data-page="${id}"]`;
   const items = ids.map((id) => `#sidebar .nav-item${sel(id)}`).join(",\n");
   const shown = `.nav-item${ids.map((id) => `:not(${sel(id)})`).join("")}`;
   style.textContent = `${items} { display: none !important; }\n`

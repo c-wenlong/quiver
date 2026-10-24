@@ -93,14 +93,15 @@ function renderSidebar(current) {
     <div class="nav-group">
       <div class="nav-heading">${heading}</div>
       ${items.map(([id, label]) => {
-        // Not a link, so neither a click nor Tab reaches it.
+        // Every row carries data-page for Settings' hide switches. A
+        // Mac-only row is not a link, so neither a click nor Tab reaches it.
         if (MAC_ONLY.has(id)) {
-          return `<span class="nav-item soon mac-only" aria-disabled="true">${icon(id)}<span>${label}</span>${MAC_ONLY_BADGE}</span>`;
+          return `<span class="nav-item soon mac-only" data-page="${id}" aria-disabled="true">${icon(id)}<span>${label}</span>${MAC_ONLY_BADGE}</span>`;
         }
         const live = id in PAGES;
         const cls = ["nav-item", id === current ? "active" : "", live ? "" : "soon"].join(" ");
         const title = live ? "" : ' title="Not in the web app yet"';
-        return `<a class="${cls}" href="#/${id}"${title}${id === current ? ' aria-current="page"' : ""}>${icon(id)}<span>${label}</span></a>`;
+        return `<a class="${cls}" data-page="${id}" href="#/${id}"${title}${id === current ? ' aria-current="page"' : ""}>${icon(id)}<span>${label}</span></a>`;
       }).join("")}
     </div>`).join("");
 }
