@@ -71,6 +71,8 @@ replays the journal.
 | `GET /v1/sessions` | `{sessions: [SessionRow + key, machine_id, ownership, attachable], machines, server_time}` — the SessionRow fields are identical to `swe session --json` |
 | `GET /v1/sessions/{key}/events` | SSE of `message.appended`, `session.status`, `notify`, `compaction`; `?last=seq` replays |
 | `GET /v1/sessions/{key}/messages` | `{messages: [events], next_before, has_more}` journal backfill |
+| `GET /v1/sessions/{key}/queue` | `{sends: [{client_id, text, attachments, queued_at}]}`: queue-mode sends with a `client_id` still waiting for idle, oldest first; always empty for a satellite session. `404 unknown_session` |
+| `POST /v1/sessions/{key}/queue` | `{client_id, op: steer\|cancel}` → `200 {ok, client_id, op}`. `404 unknown_send`, `409 not_waiting` (already sent, steered, removed or failed), `409 not_attached` (steer on an observed session), `409 queue_unsupported` (satellite session), `422 bad_command`, `429 backlog_full` (steer queue full) |
 | `GET /v1/events` | global SSE (all sessions + `machine.*`) |
 | `GET /v1/inbox` | `{items: [{key, machine_id, harness, agent, title, cwd, status, last_active_at, request_id?}]}`: pending approvals (`status: approval`, any age), plus sessions in `followup`/`error`/`interrupted` active in the last 3 days, minus rows this device dismissed. `?done=1` adds sessions finished since the hub's local midnight as `status: done` |
 | `POST /v1/inbox/dismiss` | `{key, last_active_at}` → `200 {ok}`; hides the row for this device until its `last_active_at` moves past the given one. `422 bad_dismiss` without a key or a numeric `last_active_at` |
@@ -98,6 +100,16 @@ The send's outcome lands as a `command.result` event on the session key
 (same shape satellite results use): `{command_id, op: "message", ok,
 note, degraded, client_id}`. Validation failures (bad body, unknown
 attachment) still answer synchronously — `400`, `422` — before the 202.
+A second send under a `client_id` that is still waiting in queue mode is
+`409 duplicate_client_id`.
+
+A waiting queue-mode send can be acted on through `POST .../queue`:
+`steer` sends it now as a steer (its `command.result` arrives like any
+steer's, `degraded` included), and `cancel` drops it and emits its
+`command.result` at once with `ok: false`, `note: "removed before
+sending"` and `cancelled: true`. `cancelled` appears only on a removed
+send, so a client can tell a removal from a failure. Exactly one
+`command.result` is emitted per send, whichever side wins a race.
 
 For sessions owned by a satellite (`key@machine`) the same route returns
 the same `202` shape, except `waiting` is always `false` — the satellite

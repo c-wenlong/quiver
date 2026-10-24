@@ -7,7 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Remote iPhone app: links in replies get a preview card.** A reply
+  that links to a web page shows a card under the text with the page's
+  host, its path and an Open button (up to three per reply). Tapping the
+  card, or the link in the text, opens the page in an in-app browser, so
+  closing it brings you back to the chat.
+
+- **Remote iPhone app: a Usage tab with limits and spend.** Each harness
+  that reports a quota gets a card with its logo and a bar per window
+  (5 h, weekly and so on) showing the percent used and when it resets,
+  amber past 80% and red at 100%, with a quiet note when the reading is
+  stale; satellites' harnesses group under their machine. Below it, cost
+  and tokens for today, 7 or 30 days, a daily cost chart and each
+  harness's share. Pull to refresh asks the hub for new readings.
+
 ### Fixed
+
+- **Remote: a malformed write body gets an answer.** A list or object
+  as a message's `mode`, an approval's `decision` or a control `op` made
+  the hub drop the connection with no response. It now answers `422
+  bad_command`, and only a missing, null or empty `mode` defaults to
+  `queue`.
+
+- **Remote: a send from the phone shows up within a second.** The hub
+  used to poll an idle session's transcript only every 8 seconds, so the
+  message, the agent starting and its first reply could lag that long
+  after the send had already reached the session. Now every message,
+  approval answer, interrupt or attach wakes that session's tailer at
+  once and polls it every quarter second for the next 15 seconds, on the
+  hub and on satellites alike. Devin and other stores that are re-read
+  whole stay at once a second.
+
+- **Remote web app: chats stream in instead of landing in blocks.** The
+  browser client gets the iPhone app's treatment: messages that arrive
+  together show one at a time with a short gap (a replay after
+  reconnecting still lands at once), new messages fade and slide in
+  (fade only with reduced motion), and three pulsing dots under the
+  last message show the agent is working or a send is waiting.
+
+- **Remote iPhone app: a delivered message stops saying "Sending".** A
+  send settled only when the transcript echoed it back as a user
+  message, so a slash command such as `/rename`, which never appears as
+  one, kept "Sending" under it forever. The machine's confirmation now
+  settles it. A message steered into a running turn says the agent
+  reads it at its next step, since Claude Code takes mid-turn input
+  between tool calls.
+
+- **Remote iPhone app: the working indicator shows which agent is working.**
+  While a session runs, the bar under the last message shows the
+  harness's logo with the pulsing dots beside it, and new messages land
+  above it.
+
+- **Remote iPhone app: stop lives in the send button.** The separate Stop
+  button above the prompt box is gone. With nothing typed while the agent
+  works, the round button beside the box turns red with a white square
+  and interrupts the turn; once you type it sends again.
 
 - **Remote iPhone app: chats stream in instead of landing in blocks.**
   Messages that reach the phone together are shown one at a time with a
@@ -31,6 +87,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `swe mcp sync`'s own code in process, refuses with 409 if any config
   changed since the preview, and refuses a hub server whose `${NAME}` has
   no value rather than writing it literally.
+
+- **Remote: list, send now or remove a queued message.** `GET
+  /v1/sessions/{key}/queue` lists a session's queue-mode sends still
+  waiting for the agent to go idle (`client_id`, `text`, `attachments`,
+  `queued_at`), so the phone can show them after it reopens. `POST
+  /v1/sessions/{key}/queue {client_id, op}` with `steer` sends one now
+  as a steer, and with `cancel` drops it and reports a `command.result`
+  with `cancelled: true` and the note "removed before sending". A send
+  that already went out is `409 not_waiting`, an unknown one `404
+  unknown_send`, and a cancel racing the send never both sends and
+  removes it. Satellite sessions never hold queued sends on the hub, so
+  their list is empty and the actions answer `409 queue_unsupported`.
 
 - **Web app: Repositories and Inbox.** Repositories shows the hub's pinned
   repos as the Mac app does: pull requests, issues and Actions across

@@ -141,6 +141,35 @@ Copy the `search_index.py` `files`-row pattern: byte-offset cursor per
 transcript, stat → read appended bytes → decode new records → emit
 events. ~1s poll while `sessions/status.py` says active, back off idle.
 
+Cadence per session, fastest rule first:
+
+| State | Poll every | Constant |
+|---|---|---|
+| Hot: the hub or satellite wrote to it in the last 15 s | 0.25 s (snapshot stores 1 s) | `POLL_HOT_S`, `HOT_WINDOW_S` |
+| Active per `sessions/status.py` | 1 s | `POLL_ACTIVE_S` |
+| Anything else | 8 s | `POLL_IDLE_S` |
+
+A write is any message that actually goes out (queue mode once the wait
+is over, steer at once), an approval answer, a control op, or an attach.
+Every injector the hub or a satellite builds comes wrapped by
+`TailManager.waking`, which calls `TailManager.wake(key)` before and
+after the write; the attach routes call it directly. `wake` is safe from
+any thread: it marks the key owed a poll, opens or extends its window,
+and sets an event the tail loop parks on, so the loop polls at once
+instead of sleeping out its 0.25 s tick or the session's 8 s idle
+interval. Each new write re-arms the window. Without it a send to an
+idle session waited up to 8 s for its echo, and longer for the reply,
+until the next catalog refresh (every 10 s) flipped the row to active.
+
+The hot window costs little because only woken sessions get it. A JSONL
+poll that finds the file the same size is one `stat`, and an opencode
+poll is a few queries on per-session indexes. Snapshot stores (Devin,
+Gemini, Cline, ...) re-read the whole window whenever their change token
+moves, which is the cost behind [#515](https://github.com/c-wenlong/quiver/issues/515), so
+`SnapshotSource.hot_poll_s` caps them at the active cadence: they get the
+immediate wake but never poll faster than an active session already
+does. The status column itself still updates on the catalog refresh.
+
 Before a message leaves the hub, `injected.py` removes what a harness
 wrote into the transcript for itself rather than for you: Claude Code's
 `<system-reminder>` and `<task-notification>` envelopes (a finished task
@@ -202,6 +231,8 @@ events upstream and receive command envelopes downstream):
 GET  /v1/sessions                    catalog: SessionRow shape + machine + ownership
 GET  /v1/sessions/{id}/events        SSE stream; ?last=seq replays journal
 POST /v1/sessions/{id}/message       {text, mode: queue|steer, attachments[]}
+GET  /v1/sessions/{id}/queue         queue-mode sends still waiting for idle
+POST /v1/sessions/{id}/queue         {client_id, op: steer|cancel} on one waiting send
 POST /v1/sessions/{id}/attachments   multipart upload → staged file, returns ref
 POST /v1/sessions/{id}/approval      {request_id, decision}
 POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill
@@ -227,6 +258,36 @@ steer injects mid-turn where the channel allows (codex turn input, tmux
 send-keys), else degrades to queue with a UI hint. `SessionRow.to_json`
 is reused verbatim so phone and macOS app share semantics —
 `docs/json-contracts.md` gains a section rather than a parallel dialect.
+
+The phone shows queue-mode sends that are still waiting in a tray above
+the prompt box. `GET /v1/sessions/{id}/queue` lists them, oldest first:
+`{sends: [{client_id, text, attachments, queued_at}]}` (attachment refs
+as sent, `queued_at` in epoch seconds). Only sends that carried a
+`client_id` are listed, and a send leaves the list the moment its job
+starts handing it to the injector. The list lives in the hub's memory
+(`sendq.Waiting`), so it survives the app closing but not a hub restart,
+which fails every waiting send with "hub restarted; message not sent".
+While a send waits, a second send under the same `client_id` is `409
+duplicate_client_id`.
+
+`POST /v1/sessions/{id}/queue {client_id, op}` acts on one waiting send.
+`steer` stops its wait and submits it as a steer-mode send, behind the
+steers already queued for that session; it then degrades and reports
+exactly like a steer message, and needs the session attached (`409
+not_attached`). `cancel` drops it and emits its `command.result` with
+`ok: false`, `note: "removed before sending"` and `cancelled: true`.
+Both answer `200 {ok, client_id, op}`. Either frees the send's slot in the
+session's 20-send backlog at once. A send leaves the waiting state
+exactly once, under a lock, and whoever moves it reports it: the job
+(to inject, or to fail it on timeout or restart) or this route. So a
+cancel racing the job's start either wins, and nothing is sent, or
+loses with `409 not_waiting` ("that message already went out"); there is
+never both a send and a removal. An unknown `client_id` is `404
+unknown_send`; one that already left (sent, steered, removed, failed) is
+`409 not_waiting` while the hub remembers it (the last 256). Satellite
+sessions never park a queue-mode send on the hub (the satellite delivers
+on arrival or refuses a busy session), so their list is empty and both
+ops answer `409 queue_unsupported`.
 
 `POST /v1/sessions` starts a harness under tmux (`supervise.launch_new`)
 on the hub, or queues a `launch` command for the satellite named in
