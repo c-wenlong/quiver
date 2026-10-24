@@ -193,6 +193,27 @@ class TestHubWriteRoutes(unittest.TestCase):
         row = self.srv.state.catalog.row_for("claude:s1")
         self.assertEqual(row["ownership"], "attached")
 
+
+    def test_unhashable_body_fields_answer_422(self):
+        # These used to raise TypeError in the handler, which dropped
+        # the connection with no response at all.
+        for action, body in (
+            ("message", {"text": "hi", "mode": []}),
+            ("message", {"text": "hi", "mode": {}}),
+            ("approval", {"request_id": "r1", "decision": []}),
+            ("approval", {"request_id": "r1", "decision": {}}),
+            ("control", {"op": []}),
+            ("control", {"op": {}}),
+        ):
+            with self.subTest(action=action, body=body):
+                status, data = self.srv.request(
+                    "POST", f"/v1/sessions/claude:s1/{action}",
+                    body=body, headers=self.hdr,
+                )
+                self.assertEqual(status, 422, data)
+                self.assertEqual(
+                    json.loads(data)["error"]["code"], "bad_command"
+                )
     def test_message_success(self):
         from quiver.remote import inject
         q = self.srv.state.bus.subscribe("claude:s1")

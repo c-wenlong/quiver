@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Remote: a malformed write body gets an answer.** A list or object
+  as a message's `mode`, an approval's `decision` or a control `op` made
+  the hub drop the connection with no response. It now answers `422
+  bad_command`, and only a missing, null or empty `mode` defaults to
+  `queue`.
+
 - **Remote web app: chats stream in instead of landing in blocks.** The
   browser client gets the iPhone app's treatment: messages that arrive
   together show one at a time with a short gap (a replay after
