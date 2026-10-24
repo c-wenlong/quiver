@@ -814,6 +814,21 @@ class TestSync(_Settings):
         self.assertEqual(body["github"]["catalog"]["repos"], 2)
         self.assertEqual(catalog.status(paths.github_catalog_for(self.home))["repos"], 2)
 
+    def test_sync_probes_gh_afresh_so_a_switched_account_counts(self):
+        from quiver import paths
+        from quiver.github import catalog
+        from quiver.webapp.pages import _github as G
+        from tests.test_webapp_repositories import FakeGh
+
+        # The card read the old account a moment ago; gh is now signed in as octo.
+        G.CACHE.get(("env", G.home_key(self.home)),
+                    lambda: gh.GhEnv(installed=True, authenticated=True, login="old-account"))
+        FakeGh(self, orgs=[], lists={"octo": ["dots"]})
+        status, body = self.post("sync", {}, self.device("laptop"))
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["github"]["env"]["login"], "octo")
+        self.assertEqual(catalog.status(paths.github_catalog_for(self.home))["owners"], ["octo"])
+
     def test_skipped_owners_are_named(self):
         from tests.test_webapp_repositories import FakeGh
 

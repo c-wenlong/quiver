@@ -935,7 +935,9 @@ async function settingsSyncGithub() {
     // A 409 for gh means the card's own line is out of date: check again.
     if (status === 409 && data && data.error && String(data.error.code || "").startsWith("gh_")) settingsLoadGithub(true);
   }
-  if (gen === routeGen && onSettingsPage() && settingsSection() === "integrations") settingsRepaintRemote("#set-gh-sync");
+  // Repainted even when the sync began on an earlier visit: the page shown
+  // now still draws the shared state, "Syncing…" included.
+  if (onSettingsPage() && settingsSection() === "integrations") settingsRepaintRemote("#set-gh-sync");
 }
 
 async function settingsMint() {

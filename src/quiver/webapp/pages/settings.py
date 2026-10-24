@@ -387,19 +387,24 @@ def _sync(ctx) -> dict:
     A missing or signed-out ``gh`` is a 409 in its own setup words. The
     answer is the GitHub card again (``env`` and the new ``catalog``)
     plus ``failed``, the owners that did not list, whose old rows stay."""
-    from quiver.github import gh, manage
+    from quiver import paths
+    from quiver.github import catalog, gh, manage
     from quiver.webapp.pages import _github as gh_shared
 
     if not _SYNC_LOCK.acquire(blocking=False):
         raise PageError(409, "busy", "A sync is already running. Wait for it, then try again.")
     try:
-        env = gh_shared.probe(ctx.home, refresh=True)
+        # Never the cached probe: its login names the account the catalog
+        # is saved under, and a gh auth switch seconds ago must count.
+        env = gh.probe_env()
         if env.status != "ok":
             raise PageError(409, "gh_" + env.status.replace("-", "_"), gh.env_error(env))
         summary = manage.sync_catalog(env, ctx.home)
         if summary["error"]:
             raise PageError(502, "sync_failed", summary["error"])
-        return {"github": _github(ctx), "failed": summary["failed"]}
+        return {"github": {"env": gh_shared.env_payload(env),
+                           "catalog": catalog.status(paths.github_catalog_for(ctx.home))},
+                "failed": summary["failed"]}
     finally:
         _SYNC_LOCK.release()
 
