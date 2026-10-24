@@ -7,9 +7,11 @@ for row. The leading underscore keeps it from being served as a page.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
+from quiver.ledger.pricing import SUPPLEMENT, alias_target
 from quiver.webapp.static import STATIC_DIR
 
 # (id, name, colour or None, icon or None, keywords, model-name patterns)
@@ -91,6 +93,18 @@ OTHER = ("other", "Other", "#45454b", None, (), ())
 _PATTERNS = [(re.compile("^(?:" + p + ")"), b) for b in BRANDS for p in b[5]]
 
 
+def _load_aliases() -> dict[str, str]:
+    try:
+        raw = json.loads(SUPPLEMENT.read_text(encoding="utf-8")).get("aliases") or {}
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return {k.lower(): v for k, v in raw.items() if isinstance(v, str)}
+
+
+# The supplement's aliases, keyed lower-cased as ``PricingCatalog`` keys them.
+_ALIASES = _load_aliases()
+
+
 def logo_file(icon: str | None) -> str | None:
     """The logo shipped in ``/app/`` for a brand icon id, colour version
     first (``HarnessIcon.exists``), or ``None`` when the web app has none."""
@@ -102,12 +116,20 @@ def logo_file(icon: str | None) -> str | None:
     return None
 
 
+def resolved_name(model: str) -> str | None:
+    """``ModelBrands.resolvedName``: the real name the bundled price
+    supplement aliases a logged id to, such as ``claude-haiku-4-5`` for
+    Devin's ``MODEL_PRIVATE_11``; ``None`` when the name is its own."""
+    return alias_target(model, _ALIASES)
+
+
 def brand_for(model: str) -> dict:
     """``ModelBrands.forModel``: the brand of a logged name such as
-    ``claude-opus-5-5`` or ``openrouter/qwen3-coder``; "Other" when no
-    pattern matches. ``color`` falls back to Other's grey, as
-    ``ModelVendor`` does, and ``logo`` names the file under ``/app/``."""
-    name = model.lower()
+    ``claude-opus-5-5`` or ``openrouter/qwen3-coder``, through any alias
+    first; "Other" when no pattern matches. ``color`` falls back to
+    Other's grey, as ``ModelVendor`` does, and ``logo`` names the file
+    under ``/app/``."""
+    name = (resolved_name(model) or model).lower()
     name = name[name.rfind("/") + 1:]
     brand = next((b for pattern, b in _PATTERNS if pattern.match(name)), OTHER)
     bid, title, color, icon, _keywords, _models = brand

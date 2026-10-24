@@ -622,7 +622,10 @@ public final class ModelsModel {
     private func cachedMatch(_ name: String) -> (model: AALanguageModel, linked: Bool)? {
         if let cached = matchCache[name] { return cached }
         matcherMisses += 1
+        // An opaque id ("MODEL_PRIVATE_11") matches by the real name the
+        // price supplement aliases it to, unless the user linked it.
         let result = matcherIndex?.match(name)
+            ?? ModelBrands.resolvedName(name).flatMap { matcherIndex?.match($0) }
         matchCache[name] = result
         return result
     }
@@ -809,9 +812,14 @@ public final class ModelsModel {
                 pool.append(used[merged])
             }
             var result = Self.sort(pool, by: metric)
-            // Used names no AA entry covers are rows too when they match.
-            for un in unmatched where Self.matches(needle, un.model) {
-                guard seen.insert("unmatched:\(un.model)").inserted else { continue }
+            // Used names no AA entry covers are rows too when they match,
+            // by the logged id or the real name an alias gives it.
+            var aliasShown: Set<String> = []
+            for un in unmatched {
+                let alias = ModelBrands.resolvedName(un.model)
+                guard Self.matches(needle, un.model) || alias.map({ Self.matches(needle, $0) }) == true,
+                      seen.insert("unmatched:\(un.model)").inserted else { continue }
+                if let alias { aliasShown.insert(alias.lowercased()) }
                 result.append(Row(logged: un.model, aa: nil,
                                   harnesses: byModel[un.model]?.harnesses ?? [],
                                   tokens: un.tokens,
@@ -823,6 +831,7 @@ public final class ModelsModel {
             let lite = liteHay
                 .filter { $0.hay.contains(needle) }
                 .filter { !seen.contains("unmatched:\($0.row.key)")
+                          && !aliasShown.contains($0.row.key.lowercased())
                           && cachedMatch($0.row.key) == nil }
                 .sorted { Self.liteRank(needle, $0) < Self.liteRank(needle, $1) }
             for hit in lite.prefix(Self.searchLimit) {
@@ -960,5 +969,15 @@ extension ModelsModel.Row {
     /// matched, else the logged name.
     public var vendor: ModelVendor {
         aa.map { ModelVendor.of($0) } ?? ModelVendor.of(logged: logged)
+    }
+
+    /// The real name the price supplement aliases an opaque logged id to
+    /// ("claude-haiku-4-5" for "MODEL_PRIVATE_11"); nil for a real name.
+    public var alias: String? { ModelBrands.resolvedName(logged) }
+
+    /// The name a row shows: the AA model once matched, else the alias's
+    /// real name, else the logged name.
+    public var displayName: String {
+        aa.map(ModelMatcher.displayName) ?? alias ?? logged
     }
 }
