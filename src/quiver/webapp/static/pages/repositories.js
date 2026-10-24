@@ -2,7 +2,8 @@
  * pinned repos with its rail), RepoDetailPage (one repo, every state, at
  * #/repositories?repo=owner/name) and PrDetailSheet (a pull request's
  * checks, reviews and body, and its one write: merge with a strategy or
- * arm auto-merge, behind an inline confirm). Re-running, pinning,
+ * arm auto-merge, behind an inline confirm) and AddRepoSheet (search the
+ * hub's synced catalog or GitHub, then pin). Re-running, unpinning,
  * reordering and PR worktrees stay in swe and the Mac app. */
 "use strict";
 
@@ -28,6 +29,7 @@
     tab: "pulls", shown: null, filter: "",
     expanded: new Set(), openQuiet: new Set(),
     focus: null, sheet: null, observer: null, seq: 0,
+    add: null, // the Add repository sheet's state while it is open
   };
 
   const BATCH = 10; // rows each scroll fill reveals on the focus page
@@ -352,8 +354,8 @@
     const setup = GhUI.envSetup(d.github);
     if (setup) return GhUI.setupCard(setup, d.machine);
     if (!pins().length) {
-      return `<div class="card"><div class="gh-empty">${ico("stack", "gh-muted")}<span>Pin a repository to see its pull requests, issues and CI here.</span></div>
-        <p class="caption">Pin one on the hub with <code>swe gh repo add &lt;owner/name&gt;</code>, or in the Mac app.</p></div>`;
+      return `<div class="card"><div class="gh-empty">${ico("stack", "gh-muted")}<span>Pin a repository to see its pull requests, issues and CI here.</span>
+        <button type="button" class="gh-button" data-add-repo>${ico("plus")}<span>Add repository</span></button></div></div>`;
     }
     const tabs = tabsFor(!!page.shown);
     const toolbar = `<div class="gh-toolbar">
@@ -427,6 +429,7 @@
         <button type="button" class="gh-rail-row${page.shown ? "" : " selected"}" data-shown="">${ico("stack")}<span>All repos</span>
           <span class="gh-spacer"></span><span class="caption num gh-muted">${total}</span></button>
         ${body}
+        <button type="button" class="gh-rail-row gh-rail-add" data-add-repo title="Pin a repository">${ico("plus")}<span>Add repository</span></button>
       </div>
     </aside>`;
   }
@@ -465,6 +468,7 @@
       };
     }
     bindRows(panel, paintDashboard);
+    for (const btn of panel.querySelectorAll("[data-add-repo]")) btn.onclick = () => openAdd();
     const search = document.getElementById("gh-search");
     if (search) {
       search.oninput = () => { page.filter = search.value; GhUI.keepFocus("gh-search", paintDashboard); };
@@ -517,6 +521,13 @@
     if (gen !== routeGen || page.focus !== f || seq !== f.seq) return;
     f.loading = false;
     if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (status === 404 && data && data.error && data.error.code === "not_pinned") {
+      // A link to a repo the hub hasn't pinned: offer the pin itself.
+      f.data = null;
+      f.unpinned = { message: data.error.message, pinning: false, error: null };
+      return paintUnpinned();
+    }
+    f.unpinned = null;
     if (status !== 200 || !data) {
       if (!f.data) return pageError(focusHeader(f), status, data, () => renderFocus(repo, true));
       f.error = GhUI.failMessage(status, data);
@@ -561,6 +572,35 @@
         ? (data.entry.error || data.entry.status) : GhUI.failMessage(status, data);
     }
     GhUI.keepFocus("gh-search", paintFocus);
+  }
+
+  function paintUnpinned() {
+    const f = page.focus;
+    const u = f.unpinned;
+    document.getElementById("panel").innerHTML = `<div class="page gh-page">${focusHeader(f)}<div class="stack">
+      <div class="card"><div class="gh-empty">${ico("stack", "gh-muted")}<span>${esc(u.message)}</span>
+        <button type="button" class="gh-button gh-primary" id="gh-pin-this"${u.pinning ? " disabled" : ""}
+          title="Check that GitHub has the repo, then pin it on the hub">${u.pinning ? "Pinning…" : "Pin it"}</button></div>
+        ${u.error ? `<p class="error" role="alert">${esc(u.error)}</p>` : ""}</div></div></div>`;
+    bindRefresh(() => renderFocus(f.repo, true));
+    document.getElementById("gh-pin-this").onclick = async () => {
+      if (u.pinning) return;
+      const gen = routeGen;
+      u.pinning = true;
+      u.error = null;
+      paintUnpinned();
+      const { status, data } = await GhUI.post("/v1/app/repositories/add", { repo: f.repo });
+      // The pin stands either way; only the page that asked repaints.
+      if (gen !== routeGen || page.focus !== f || f.unpinned !== u) return;
+      u.pinning = false;
+      if (status === 200 && data) {
+        // The pin may be spelled differently ("O/Repo"): follow it.
+        if (data.repo !== f.repo) { location.hash = `#/repositories?repo=${encodeURIComponent(data.repo)}`; return; }
+        return renderFocus(f.repo, true);
+      }
+      u.error = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+      paintUnpinned();
+    };
   }
 
   /* One filled ring: show another batch of the rows already here, or
@@ -899,21 +939,185 @@
     GhUI.bindSetup(() => loadPr(true));
   }
 
+  /* ---------------------------------------------------------- add repository */
+
+  /* AddRepoSheet: type owner/repo, paste a GitHub URL, or search the
+   * account's repos and orgs (the hub's synced catalog first, then
+   * GitHub) and pin a hit. Typing is the search, after a 350 ms pause. */
+  function addEl() {
+    let dlg = document.getElementById("gh-add-sheet");
+    if (!dlg) {
+      dlg = document.createElement("dialog");
+      dlg.className = "sheet gh-sheet gh-add-sheet";
+      dlg.id = "gh-add-sheet";
+      dlg.setAttribute("aria-label", "Pin a repository");
+      dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
+      dlg.addEventListener("close", () => {
+        if (page.add) clearTimeout(page.add.timer);
+        page.add = null;
+      });
+      document.body.appendChild(dlg);
+    }
+    return dlg;
+  }
+
+  function openAdd() {
+    page.add = { query: "", results: [], source: null, error: null, searching: false,
+      pinError: null, working: null, seq: 0, timer: null, opened: Date.now() };
+    const dlg = addEl();
+    paintAdd();
+    if (!dlg.open) dlg.showModal();
+    const field = dlg.querySelector("#gh-add-query");
+    if (field) field.focus();
+  }
+
+  /* Text repo add can take as it is: owner/repo or a github.com URL. */
+  function directInput(text) {
+    const t = text.trim();
+    if (!t) return null;
+    if (t.includes("github.com")) return t;
+    const parts = t.split("/");
+    return parts.length === 2 && parts.every((x) => x) ? t : null;
+  }
+
+  async function runSearch() {
+    const a = page.add;
+    if (!a) return;
+    const q = a.query.trim();
+    const seq = ++a.seq; // a newer keystroke supersedes this search
+    if (!q) {
+      Object.assign(a, { results: [], source: null, error: null, searching: false });
+      return paintAdd();
+    }
+    a.searching = true;
+    paintAdd();
+    const { status, data } = await api(`/v1/app/repositories?search=${encodeURIComponent(q)}`);
+    if (page.add !== a || seq !== a.seq) return;
+    a.searching = false;
+    if (status === 200 && data) {
+      // Results stay on screen while a re-search runs, and a failed one
+      // keeps the last good list under its error, as the app does.
+      if (data.status === "ok") { a.results = data.results || []; a.source = data.source; a.error = null; }
+      else a.error = data.error || data.status;
+    } else {
+      a.error = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+    }
+    paintAdd();
+  }
+
+  async function pinRepo(name) {
+    const a = page.add;
+    if (!a || a.working) return;
+    a.working = name;
+    a.pinError = null;
+    paintAdd();
+    const { status, data } = await GhUI.post("/v1/app/repositories/add", { repo: name });
+    if (page.add !== a) return;
+    a.working = null;
+    if (status === 200 && data) {
+      if (page.data) page.data.repos = data.repos;
+      addEl().close();
+      const here = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+      if (here === "repositories" && !GhUI.hashParams().get("repo")) renderDashboard();
+      return;
+    }
+    a.pinError = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+    paintAdd();
+  }
+
+  function hitRow(hit, a) {
+    const pinned = pins().some((p) => p.name.toLowerCase() === String(hit.name).toLowerCase());
+    const stars = typeof hit.stars === "number" ? hit.stars.toLocaleString("en-US") : "0";
+    const side = pinned ? badge("Pinned")
+      : a.working === hit.name ? ico("running", "gh-muted gh-spin")
+        : `<button type="button" class="gh-button" data-pin="${esc(hit.name)}"${a.working ? " disabled" : ""}>Pin</button>`;
+    return `<div class="gh-hit">
+      <div class="gh-hit-main">
+        <div class="gh-hit-title"><span class="gh-title">${esc(hit.name)}</span>
+          <span class="caption gh-muted gh-inline">${ico("star", "gh-small")}<span class="num">${stars}</span></span></div>
+        ${hit.description ? `<div class="caption gh-clamp2">${esc(hit.description)}</div>` : ""}
+      </div>
+      <div class="gh-hit-side">${side}</div>
+    </div>`;
+  }
+
+  /* The field is drawn once per opening and never repainted, so typing
+   * (an IME composition included) is never interrupted; the droplist and
+   * the buttons under it repaint on their own. */
+  function paintAdd() {
+    const a = page.add;
+    const dlg = document.getElementById("gh-add-sheet");
+    if (!a || !dlg) return;
+    if (dlg.dataset.for !== String(a.opened)) {
+      dlg.dataset.for = String(a.opened);
+      dlg.innerHTML = `<div class="sheet-body">
+        <div class="sheet-title">Pin a repository</div>
+        <div class="caption">The pinned repos drive the Repositories page and act as the fallback when a command runs outside a checkout.</div>
+        <label class="gh-add-label caption" for="gh-add-query">Repository</label>
+        <input class="field gh-mono" id="gh-add-query" type="search" placeholder="owner/repo, GitHub URL, or search terms"
+          autocomplete="off" spellcheck="false">
+        <div class="gh-add-results" id="gh-add-results" aria-live="polite"></div>
+        <div class="gh-sheet-actions" id="gh-add-actions"></div></div>`;
+      const input = dlg.querySelector("#gh-add-query");
+      input.oninput = () => {
+        a.query = input.value;
+        clearTimeout(a.timer);
+        // An emptied field clears the list right away; text waits for a pause.
+        if (!a.query.trim()) runSearch();
+        else a.timer = setTimeout(runSearch, 350);
+        paintAdd();
+      };
+      input.onkeydown = (e) => {
+        if (e.key === "Enter") { e.preventDefault(); clearTimeout(a.timer); runSearch(); }
+      };
+    }
+    const direct = directInput(a.query);
+    const error = a.pinError || a.error;
+    const list = a.searching || a.results.length ? `<div class="gh-hits" role="list">
+        ${a.searching ? `<div class="gh-hits-busy caption gh-muted">${ico("running", "gh-spin")}<span>Searching your repos…</span></div>` : ""}
+        <div class="gh-hits-scroll">${a.results.map((h) => hitRow(h, a)).join("")}</div>
+      </div>` : "";
+    const where = a.results.length && !a.searching ? `<div class="caption gh-muted">${a.source === "catalog"
+      ? "From the hub's synced catalog. Not here? Sync it in Settings › Integrations, or type owner/name."
+      : "From GitHub: your account's and your organizations' repos."}</div>` : "";
+    const results = dlg.querySelector("#gh-add-results");
+    results.innerHTML = `${error ? `<div class="caption gh-danger-text" role="alert">${esc(error)}</div>` : ""}${list}${where}`;
+    for (const btn of results.querySelectorAll("[data-pin]")) btn.onclick = () => pinRepo(btn.dataset.pin);
+    const actions = dlg.querySelector("#gh-add-actions");
+    actions.innerHTML = `<span class="gh-spacer"></span>
+      <button type="button" class="gh-button" id="gh-add-cancel">Cancel</button>
+      ${direct ? `<button type="button" class="gh-button gh-primary" id="gh-add-direct"${a.working ? " disabled" : ""}
+        title="Check that the repo exists, then pin it">${a.working === direct ? "Pinning…" : `Pin ${esc(direct)}`}</button>` : ""}`;
+    actions.querySelector("#gh-add-cancel").onclick = () => dlg.close();
+    const go = actions.querySelector("#gh-add-direct");
+    if (go) go.onclick = () => pinRepo(direct);
+  }
+
   /* ---------------------------------------------------------- entry */
 
+  /* Either sheet open: the minute poll waits, so rows never shift
+   * under a confirm or a search. */
+  const SHEETS = ["gh-pr-sheet", "gh-add-sheet"];
+  const sheetOpen = () => SHEETS.some((id) => (document.getElementById(id) || {}).open);
+  function closeSheets() {
+    for (const id of SHEETS) {
+      const dlg = document.getElementById(id);
+      if (dlg && dlg.open) dlg.close();
+    }
+  }
+
   function render() {
-    const dlg = document.getElementById("gh-pr-sheet");
-    if (dlg && dlg.open) dlg.close();
+    closeSheets();
     const repo = GhUI.hashParams().get("repo");
     if (repo) {
       renderFocus(repo);
       GhUI.poll("repositories", () => {
-        if (page.focus && !page.focus.loading && !(document.getElementById("gh-pr-sheet") || {}).open) renderFocus(page.focus.repo);
+        if (page.focus && !page.focus.loading && !page.focus.unpinned && !sheetOpen()) renderFocus(page.focus.repo);
       });
     } else {
       renderDashboard();
       GhUI.poll("repositories", () => {
-        if (!page.loading && !(document.getElementById("gh-pr-sheet") || {}).open) renderDashboard();
+        if (!page.loading && !sheetOpen()) renderDashboard();
       });
     }
   }
@@ -930,8 +1134,7 @@
    * leaving the page (Back, a sidebar link) has to close it here. */
   window.addEventListener("hashchange", () => {
     const here = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
-    const dlg = document.getElementById("gh-pr-sheet");
-    if (here !== "repositories" && dlg && dlg.open) dlg.close();
+    if (here !== "repositories") closeSheets();
   });
 
   registerPage("repositories", render);

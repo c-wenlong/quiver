@@ -3,11 +3,10 @@ short cache, the hub's pinned repos, and the env payload.
 
 Every read goes through the builders behind ``swe gh … --json``
 (``quiver.github.cli``), in process, with the hub machine's own ``gh``
-login. The two writes (merging a PR, marking notifications read) call
-the same functions ``swe gh pr merge`` and ``swe gh inbox read`` do,
-one at a time under ``WRITE_LOCK``, and drop what they changed from the
-cache. Re-running, pinning and PR worktrees stay in ``swe`` and the Mac
-app.
+login. The writes (merging a PR, pinning a repo, marking notifications
+read) call the same functions ``swe gh pr merge``, ``swe gh repo add``
+and ``swe gh inbox read`` do, one at a time under ``WRITE_LOCK``, and
+drop what they changed from the cache.
 
 A leading underscore keeps this module off ``/v1/app/<page>``: the
 plugin loader refuses private names.
@@ -154,9 +153,7 @@ def pinned_name(home: Path | None, raw: str) -> str:
     for pin in pinned(home):
         if pin["name"].lower() == name.lower():
             return pin["name"]
-    raise PageError(404, "not_pinned",
-                    f"{name} is not pinned on the hub. Pin it with "
-                    "swe gh repo add, then refresh.")
+    raise PageError(404, "not_pinned", f"{name} is not pinned on the hub.")
 
 
 def env_payload(env: gh.GhEnv) -> dict:
