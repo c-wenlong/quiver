@@ -74,12 +74,17 @@ def _unquote(val: str) -> str:
 
 def parse_skill_md(md_path: Path) -> tuple[str, str]:
     """Return (name, description) from SKILL.md YAML frontmatter."""
-    name, desc = None, ""
     try:
         text = md_path.read_text(encoding="utf-8", errors="replace")
     except Exception:
         return md_path.parent.name, ""
+    return parse_skill_text(text, md_path.parent.name)
 
+
+def parse_skill_text(text: str, default_name: str = "") -> tuple[str, str]:
+    """``parse_skill_md`` on text already read, for callers that bound the
+    read themselves. ``default_name`` stands in for a missing ``name``."""
+    name, desc = None, ""
     if text.startswith("---"):
         end = text.find("\n---", 3)
         if end != -1:
@@ -102,7 +107,7 @@ def parse_skill_md(md_path: Path) -> tuple[str, str]:
             if key == "description" and buf and not desc:
                 desc = " ".join(x.strip() for x in buf).strip()
 
-    return (name or md_path.parent.name), desc
+    return (name or default_name), desc
 
 
 def discover_skills(home: Path | None = None, cwd: Path | None = None,
