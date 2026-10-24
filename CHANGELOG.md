@@ -287,6 +287,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Web app and remote PWA: the Quiver icon replaces the "W"
+  placeholder.** The favicon, home-screen icon, sidebar brand, setup
+  screen and Pricing's Quiver logo showed a placeholder zigzag that read
+  as a "W". `icon-192.png` and `icon-512.png` are now the Mac app's
+  light icon (`app/Icons/AppIcon-light.png`), and the hub no longer
+  serves `icon.svg`.
+
 - **Web app: Calendar scrolls sideways across dates.** The day, week
   and N-day grids only moved with the arrow keys or the chevrons. They
   now slide like the Mac app's: a trackpad swipe, shift-scroll or a

@@ -869,7 +869,8 @@ class TestHubWriteRoutes(unittest.TestCase):
 
     def test_static_assets(self):
         for path in ("/", "/app.js", "/styles.css",
-                     "/manifest.webmanifest", "/icon.svg"):
+                     "/manifest.webmanifest", "/icon-192.png",
+                     "/icon-512.png"):
             status, _ = self.srv.request("GET", path)
             self.assertEqual(status, 200, path)
         status, _ = self.srv.request("GET", "/nope.js")
