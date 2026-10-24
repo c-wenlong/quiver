@@ -744,6 +744,7 @@ async function runAction(a) {
     page.seq.health++;
     page.busy.health = false;
     page.data.health = null;
+    if (page.tab === "health" && onPage()) load("health");
     const r = data.result;
     let text;
     if (data.error) text = data.error;
