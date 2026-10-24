@@ -158,3 +158,22 @@
   .pl-market-head { flex-wrap: wrap; padding: 12px 16px; }
   .pl-rows { padding: 0 16px 8px; }
 }
+
+/* The sheet's Install / Enable / Disable / Uninstall per harness. */
+.pl-acts { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); padding-top: 12px; }
+.pl-act-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pl-act-name { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.pl-act { height: 28px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--card);
+  color: var(--text-primary); font-size: 12px; cursor: pointer; white-space: nowrap; }
+.pl-act:hover:not(:disabled) { background: var(--hover); }
+.pl-act.primary { background: var(--text-primary); color: var(--card); border-color: var(--text-primary); }
+.pl-act.primary.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.pl-act:disabled { opacity: .45; cursor: default; }
+.pl-act-running { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.pl-spinner { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--border-strong);
+  border-top-color: var(--text-secondary); animation: spin 1s linear infinite; }
+.pl-act-confirm { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: 10px; background: var(--subtle); font-size: 13px; }
+.pl-act-buttons { display: flex; justify-content: flex-end; gap: 8px; }
+.pl-acts .error, .pl-act-done { margin: 0; font-size: 12px; }
+.pl-pre { white-space: pre-wrap; overflow-wrap: anywhere; }

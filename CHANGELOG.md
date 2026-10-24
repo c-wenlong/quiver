@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: install, enable, disable and uninstall plugins.** A plugin's
+  sheet on Explore lists each harness with its state and the Mac app's
+  actions as buttons, where it used to say to use `swe plugins`. Each asks
+  first, naming the command (or Codex's config edit) and the machine, then
+  runs `swe plugins <verb> <ref> --harness=<h>` on the hub.
+
 - **Web app: AGENTS.md and Doctor link with a button.** The AGENTS.md
   page's Global tab has "Link with swe init" where it used to say to run
   `swe init` on the hub, and "Replace and back up…" where it said to run
