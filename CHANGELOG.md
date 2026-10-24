@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: New skill.** The Skills page has a New skill button (and one
+  in the empty list, which used to name `swe skills new <name>`). It opens
+  the Mac app's form, name and description, and writes
+  `~/.quiver/skills/<name>/SKILL.md` on the hub, then offers to open it.
+
 - **Web app: Install buttons for missing agents.** Setup's Install sheet
   for an agent that isn't on the hub has an Install button beside each
   package manager's command, which runs `swe install <name> --via=<method>`
