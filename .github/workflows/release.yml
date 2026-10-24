@@ -99,12 +99,18 @@ jobs:
         run: python3 -m twine check --strict dist/*
 
       - name: Install the built wheel and run it
+        # From /tmp, so the checkout's src/ can not stand in for a module
+        # the wheel forgot to package.
         run: |
           python3 -m venv /tmp/relcheck
           /tmp/relcheck/bin/pip install dist/quiver-*.whl
           test_home="$(mktemp -d)"
+          cd /tmp
           HOME="$test_home" /tmp/relcheck/bin/swe --help
           HOME="$test_home" /tmp/relcheck/bin/swe list
+          HOME="$test_home" /tmp/relcheck/bin/swe session --help
+          HOME="$test_home" /tmp/relcheck/bin/swe config --help
+          HOME="$test_home" /tmp/relcheck/bin/swe report --help
 
       - name: Upload the distributions as a workflow artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -213,6 +219,37 @@ jobs:
         # unsigned scaffold run prints "Signature=adhoc" here.
         run: codesign -dvvv app/build/Quiver.app || true
 
+      - name: Smoke-test the bundled app
+        # Exercises the bundle end to end, post-signing, against a
+        # throwaway HOME: the embedded swe (the build-time probe ran
+        # before codesign touched it), then the GUI binary itself.
+        run: |
+          test_home="$(mktemp -d)"
+          swe="app/build/Quiver.app/Contents/Resources/swe/bin/swe"
+          HOME="$test_home" "$swe" --help >/dev/null
+          HOME="$test_home" "$swe" version --json
+          # A GUI app that is still alive after 20 s has loaded its
+          # frameworks, Python and signature fine. A zombie child still
+          # answers kill -0, so check the process state before reaping.
+          HOME="$test_home" app/build/Quiver.app/Contents/MacOS/Quiver &
+          pid=$!
+          sleep 20
+          case "$(ps -o stat= -p "$pid" 2>/dev/null)" in
+            ""|*Z*)
+              if wait "$pid"; then status=0; else status=$?; fi
+              if [ "$status" -ne 0 ]; then
+                echo "::error::Quiver.app exited $status within 20 s of launch"
+                exit 1
+              fi
+              echo "Quiver.app exited cleanly before the timeout"
+              ;;
+            *)
+              kill "$pid" 2>/dev/null || true
+              wait "$pid" 2>/dev/null || true
+              echo "Quiver.app launched and stayed up"
+              ;;
+          esac
+
       - name: Notarize, sign and package the DMG
         # One script owns the whole post-build path: staple the .app,
         # stage the image, sign the DMG, submit it and staple it. The
@@ -285,9 +322,35 @@ jobs:
           security default-keychain -s login.keychain
           security delete-keychain "$RUNNER_TEMP/quiver-signing.keychain-db" || true
 
+  nix:
+    # Not on PRs: the derivation's checkPhase runs the same unittest suite
+    # ci.yml already runs, so per PR it only repeated a 6-minute job.  On a
+    # tag it proves the flake still builds before anything is attached.
+    name: Nix flake build and check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+
+      - uses: DeterminateSystems/nix-installer-action@e50d5f73bfe71c2dd0aa4218de8f4afa59f8f81d # v16
+
+      - name: Build the package (runs the unittest suite in the sandbox)
+        run: nix build --print-build-logs
+
+      - name: Exercise the built binary
+        run: |
+          test_home="$(mktemp -d)"
+          HOME="$test_home" ./result/bin/swe --help
+          HOME="$test_home" ./result/bin/swe init --check
+
+      - name: nix flake check
+        run: nix flake check --print-build-logs
+
   attach-to-release:
     name: Attach artifacts to the GitHub release
-    needs: [build, macos-app]
+    needs: [build, macos-app, nix]
     runs-on: ubuntu-latest
     permissions:
       # Only this job gets a writable token, and only for release assets.
