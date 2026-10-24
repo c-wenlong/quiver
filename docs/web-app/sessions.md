@@ -33,13 +33,23 @@ sheet as before.
    `status` as the hub has them now (the list's copy can be minutes old),
    and the machine's name.
 2. `GET /v1/sessions/{key}/messages?limit=500`, the backfill.
-3. `GET /v1/sessions/{key}/events?last=<seq of the last message shown>`,
+3. `GET /v1/inbox`, for an approval of this session the hub still waits
+   on (its `request_id`).
+4. `GET /v1/sessions/{key}/events?last=<seq of the last message shown>`,
    read with a fetch stream (EventSource can't send the bearer). Events
    are revealed one at a time with a short gap, as in the PWA; a replay of
    more than 24 lands at once. A dropped stream reconnects after 2 s from
    the last seq shown, and again when the tab becomes visible. Leaving the
    chat by any route aborts the stream, so it never keeps one of the
-   browser's few connections to the hub.
+   browser's few connections to the hub. When the waiting approval was
+   asked before that message (codex's app-server journals the ask before
+   its tool call), the stream starts at 0 instead, takes only that ask
+   from the part already shown, and puts its card back where it was
+   asked.
+
+Every request sends app.js's `authHeaders()`: the paired bearer when the
+browser has one, and `X-Quiver-Pair: 1`, so the hub owner's own tailnet
+devices work without pairing.
 
 Events handled: `message.appended`, `session.status` (badge, dots, Attach
 offer), `session.ownership` (composer and banner), `approval.requested`,
@@ -68,8 +78,11 @@ badge.
   harness in its terminal, so the banner names that before it happens.
 - Opening a chat streams from the last message the backfill showed, not
   from a seq saved in `localStorage`, so an approval asked or a result
-  reported after the last message is replayed into view. Within an open
-  chat, reconnects resume from the last seq shown, as in the PWA.
+  reported after the last message is replayed into view, and a waiting
+  approval asked before it is restored too. Within an open chat,
+  reconnects resume from the last seq shown, as in the PWA.
+- Codex's `apply_patch` (raw patch text) renders as a diff, and code
+  blocks keep `**` and backticks as written.
 - New messages scroll the page only when it is already at the bottom, so
   reading back through a long transcript isn't interrupted.
 - Stop shows a refusal instead of ignoring it, and an answered approval

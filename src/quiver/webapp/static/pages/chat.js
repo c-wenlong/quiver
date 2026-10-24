@@ -26,6 +26,9 @@ const SessionChat = (() => {
     // from here.
     seq: 0,
     toolCards: new Map(), // call_id -> tool card
+    // While set, the stream is replaying events the backfill already
+    // showed, looking for one waiting approval (restoreApproval).
+    history: null,
     confirmAttach: false, attaching: false, stopping: false,
   };
 
@@ -341,7 +344,7 @@ const SessionChat = (() => {
     const stick = live && nearBottom();
     const d = ev.data || {};
     if (ev.type === "message.appended") {
-      appendMessage(d, live);
+      appendMessage(d, live, ev.seq);
     } else if (ev.type === "session.status") {
       const status = d.status || "";
       // The turn ended (or stopped to ask) without a message to show.
@@ -358,7 +361,7 @@ const SessionChat = (() => {
         updateOwnership();
       }
     } else if (ev.type === "approval.requested") {
-      appendMessage({ kind: "approval", text: d.prompt || "Approval requested", request_id: d.request_id || "" }, live);
+      appendMessage({ kind: "approval", text: d.prompt || "Approval requested", request_id: d.request_id || "" }, live, ev.seq);
     } else if (ev.type === "command.result") {
       commandResult(d);
     } else if (ev.type === "approval.resolved") {
@@ -426,9 +429,16 @@ const SessionChat = (() => {
     }
   }
 
-  function appendMessage(msg, live = true) {
+  /* ``seq`` stamps the entry with its journal seq; ``at`` places it among
+   * the entries by that seq instead of at the end (a restored approval). */
+  function appendMessage(msg, live = true, seq = 0, at = 0) {
     const log = $("chat-log");
     if (!log) return;
+    const put = (el) => {
+      if (seq) el.dataset.seq = String(seq);
+      const next = at ? [...log.children].find((c) => Number(c.dataset.seq || 0) > at) : null;
+      log.insertBefore(el, next || null);
+    };
     const loading = $("chat-loading");
     if (loading) loading.remove();
     const kind = msg.kind || "assistant";
@@ -451,7 +461,7 @@ const SessionChat = (() => {
       }
       if (msg.tool.call_id) chat.toolCards.set(msg.tool.call_id, card);
       if (live) { card.classList.add("arrive"); chat.awaitingReply = false; }
-      log.appendChild(card);
+      put(card);
       return;
     }
     if (kind === "user" && live) {
@@ -485,7 +495,7 @@ const SessionChat = (() => {
       card.className = "tool";
       card.innerHTML = `<summary><span class="tool-name">Tool output</span></summary><div class="tool-body"><pre>${esc((msg.text || "").slice(0, 8000))}</pre></div>`;
       if (live) card.classList.add("arrive");
-      log.appendChild(card);
+      put(card);
       return;
     }
     const div = document.createElement("div");
@@ -506,7 +516,7 @@ const SessionChat = (() => {
       div.innerHTML = `<div class="role">${esc(kind)}</div><div class="text">${md(msg.text)}</div>`;
     }
     if (live) div.classList.add("arrive");
-    log.appendChild(div);
+    put(div);
   }
 
   function approvalCard(div, msg) {
@@ -694,6 +704,19 @@ const SessionChat = (() => {
   function handleFrame(key, frame) {
     const ev = parseFrame(frame);
     if (!ev || key !== chat.key) return;
+    const h = chat.history;
+    if (h) {
+      // Replaying what came before the backfill's last message, only to
+      // find the approval the hub says is still waiting.
+      if (ev.type === "journal.caught-up" || (typeof ev.seq === "number" && ev.seq > h.until)) {
+        restoreApproval();
+      } else {
+        const d = ev.data || {};
+        if (ev.type === "approval.requested" && d.request_id === h.rid) Object.assign(h, { prompt: d.prompt, seq: ev.seq, resolved: false });
+        if (ev.type === "approval.resolved" && (!d.request_id || d.request_id === h.rid)) h.resolved = true;
+        return;
+      }
+    }
     if (ev.type === "journal.truncated" || ev.type === "journal.caught-up") {
       if (ev.seq && !chat.pending.length) remember(ev.seq);
       return;
@@ -710,6 +733,29 @@ const SessionChat = (() => {
     const s = chat.stream;
     chat.stream = null;
     if (s) { try { s.ctrl.abort(); } catch { /* already done */ } }
+  }
+
+  /* An approval the hub still waits on, asked before the last message the
+   * backfill showed (codex's app-server journals the ask before the tool
+   * call it belongs to): its card goes back where it was asked. */
+  function restoreApproval() {
+    const h = chat.history;
+    chat.history = null;
+    const log = $("chat-log");
+    if (!h || h.resolved || !log || log.querySelector(`.msg.approval[data-req="${CSS.escape(h.rid)}"]`)) return;
+    const stick = nearBottom();
+    appendMessage({ kind: "approval", text: h.prompt || "Approval requested", request_id: h.rid }, false, h.seq, h.seq);
+    if (stick) scrollBottom();
+  }
+
+  /* The request_id of this session's approval the hub still waits on
+   * (the Inbox lists every pending one), or "". */
+  async function pendingApproval(gen) {
+    const key = chat.key;
+    const { status, data } = await api("/v1/inbox");
+    if (gen !== chat.gen || status !== 200 || !data) return "";
+    const item = (data.items || []).find((i) => i.key === key && i.status === "approval" && i.request_id);
+    return item ? String(item.request_id) : "";
   }
 
   /* -------------------------------------------------------------- opening */
@@ -761,6 +807,7 @@ const SessionChat = (() => {
     chat.rowKnown = false;
     chat.awaitingReply = false;
     chat.seq = 0;
+    chat.history = null;
     chat.toolCards.clear();
     chat.confirmAttach = false;
     chat.attaching = false;
@@ -768,7 +815,7 @@ const SessionChat = (() => {
     chat.connState = "connecting";
     paintShell();
     updateOwnership();
-    const [rowStatus, logStatus] = await Promise.all([loadRow(gen), backfill(gen)]);
+    const [rowStatus, logStatus, waiting] = await Promise.all([loadRow(gen), backfill(gen), pendingApproval(gen)]);
     if (gen !== chat.gen) return;
     if (rowStatus === 401 || logStatus === 401) {
       close();
@@ -777,8 +824,17 @@ const SessionChat = (() => {
     }
     if (rowStatus === 404) { setConn("err"); return; }
     // The stream starts after the last message backfill showed, so an
-    // approval asked or a result reported since is replayed into view.
-    openStream(gen, chat.seq);
+    // approval asked or a result reported since is replayed into view. A
+    // waiting approval may be older than that message: then the stream
+    // replays from the start, and only that ask is taken from the part
+    // the backfill already showed.
+    const shown = waiting && $("chat-log").querySelector(`.msg.approval[data-req="${CSS.escape(waiting)}"]`);
+    if (waiting && !shown && chat.seq) {
+      chat.history = { until: chat.seq, rid: waiting, prompt: "", seq: 0, resolved: false };
+      openStream(gen, 0);
+    } else {
+      openStream(gen, chat.seq);
+    }
   }
 
   function close() {

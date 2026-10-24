@@ -367,7 +367,9 @@ async function sessionDetails(key) {
       r = sessionRowFor(key);
     }
   }
-  if (!r || !document.getElementById("session-sheet")) return false;
+  // The answer may land after the chat was left for another page.
+  const chat = sessionChat();
+  if (!r || (chat && chat.key !== key) || !document.getElementById("session-sheet")) return false;
   openSheet(r);
   return true;
 }

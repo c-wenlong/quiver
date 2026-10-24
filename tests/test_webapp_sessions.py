@@ -279,6 +279,22 @@ class TestChatContract(unittest.TestCase):
         self.assertEqual([e["type"] for e in events], ["approval.requested", "journal.caught-up"])
         self.assertEqual(events[0]["data"]["request_id"], "r1")
 
+    def test_a_waiting_approval_older_than_the_last_message_is_found(self):
+        """Codex's app-server can journal the ask before its tool call: the
+        Inbox names the waiting request_id, and a replay from 0 has its
+        prompt, before the backfill's last message."""
+        self.emit("message.appended", protocol.message("user", "edit it"))
+        asked = self.emit("approval.requested", {"request_id": "r9", "prompt": "Edit a.py?"})
+        last = self.emit("message.appended", protocol.message("tool_use", "", tool={
+            "name": "apply_patch", "call_id": "c", "args_summary": "", "args_full": "\"x\""}))
+        self.assertLess(asked["seq"], last["seq"])
+        _, data = self.srv.request("GET", "/v1/inbox", headers=self.hdr)
+        [item] = [i for i in json.loads(data)["items"] if i["key"] == self.key]
+        self.assertEqual((item["status"], item["request_id"]), ("approval", "r9"))
+        replay = self.stream(0)
+        ask = next(e for e in replay if e["type"] == "approval.requested")
+        self.assertEqual((ask["seq"], ask["data"]["prompt"]), (asked["seq"], "Edit a.py?"))
+
     def test_send_settles_by_client_id(self):
         from quiver.remote import inject
         fake = MagicMock()
