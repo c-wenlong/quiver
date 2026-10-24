@@ -8,7 +8,6 @@ linked every one of them.
 """
 
 import json
-import os
 import subprocess
 import sys
 import tempfile
@@ -19,7 +18,8 @@ SRC = Path(__file__).resolve().parent.parent / "src"
 
 # Discovery also searches /opt/homebrew/bin and /usr/local/bin whatever PATH
 # says, so a developer's own installs would register here. Empty that list
-# so PATH, which holds only the fake claude, is the whole machine.
+# so PATH, which holds only the fake claude, is the whole machine. PATH
+# leaves out /usr/bin too: a Linux box can have a harness installed there.
 BOOT = (
     "import sys; import quiver.harness.discover as d; d.EXTRA_BIN_DIRS = []; "
     "from quiver.cli import main; sys.argv = ['swe'] + sys.argv[1:]; "
@@ -41,7 +41,7 @@ class SetupApplyTwiceTest(unittest.TestCase):
         claude.chmod(0o755)
         self.env = {
             "HOME": str(self.home),
-            "PATH": f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin",
+            "PATH": str(bin_dir),
             "PYTHONPATH": str(SRC),
             "NO_COLOR": "1",
         }
