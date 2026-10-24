@@ -721,6 +721,15 @@
     menu.querySelector("a").onclick = () => closeRunMenu();
     const first = menu.querySelector("[role=menuitem]:not([disabled])");
     if (first) first.focus();
+    // A menu's keys: arrows move between items, Home and End jump.
+    menu.onkeydown = (e) => {
+      const items = [...menu.querySelectorAll("[role=menuitem]:not([disabled])")];
+      const at = items.indexOf(document.activeElement);
+      const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1 }[e.key];
+      if (to === undefined || !items.length) return;
+      e.preventDefault();
+      items[(to + items.length) % items.length].focus();
+    };
   }
 
   function placeRunMenu() {

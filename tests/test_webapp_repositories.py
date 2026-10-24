@@ -760,6 +760,12 @@ class TestRerun(_Base):
         self.assertIn("gh auth login", err.message)
         self.assertEqual(self.gh.writes(), [])
 
+    def test_a_sign_out_since_the_cached_check_reads_as_one(self):
+        G.probe(self.home)  # signed in, and cached
+        self.gh.update(signed_out=True, rerun_error="HTTP 401: Bad credentials")
+        self.clock.t += 10  # past the refresh floor
+        self.refused(409, "gh_auth_required")
+
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestPoll(unittest.TestCase):

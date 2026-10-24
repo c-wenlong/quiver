@@ -204,6 +204,19 @@ def search(home, text: str, refresh: bool = False) -> dict:
             "source": found["source"]}
 
 
+def _require_gh(home, fresh: bool = False) -> None:
+    """A 409 in the setup words unless ``gh`` is installed and signed in.
+    The cached probe is trusted before a write (and asked again when it
+    says no); after a failed write the probe runs again, so a ``gh``
+    signed out or removed since the last check reads as that rather
+    than as GitHub refusing the write."""
+    env = G.probe(home, refresh=fresh)
+    if env.status != "ok" and not fresh:
+        env = G.probe(home, refresh=True)
+    if env.status != "ok":
+        raise PageError(409, "gh_" + env.status.replace("-", "_"), gh.env_error(env))
+
+
 def add(ctx, body: dict) -> dict:
     """Pin a repo, as ``swe gh repo add``: GitHub must know it under the
     hub's login, and its own spelling is what gets pinned. Callers hold
@@ -219,12 +232,10 @@ def add(ctx, body: dict) -> dict:
     name = repos.normalize_repo_input(raw)
     if not name:
         raise PageError(422, "bad_repo", f"Not a GitHub repo: {raw.strip()}")
-    env = G.probe(ctx.home)
-    if env.status != "ok":
-        env = G.probe(ctx.home, refresh=True)
-    if env.status != "ok":
-        raise PageError(409, "gh_" + env.status.replace("-", "_"), gh.env_error(env))
+    _require_gh(ctx.home)
     added = manage.add_repo(name, ctx.home)
+    if added.status != "ok":
+        _require_gh(ctx.home, fresh=True)
     if added.status == "not-found":
         raise PageError(404, "unknown_repo", added.error)
     if added.status != "ok":
@@ -296,12 +307,10 @@ def rerun(ctx, repo: str, run: str, failed: bool) -> dict:
     the next look reads the run's new state. Callers hold
     ``G.WRITE_LOCK``. Answers ``{"repo", "run", "failed_only", "rerun",
     "machine"}``, ``rerun`` always true."""
-    env = G.probe(ctx.home)
-    if env.status != "ok":
-        env = G.probe(ctx.home, refresh=True)
-    if env.status != "ok":
-        raise PageError(409, "gh_" + env.status.replace("-", "_"), gh.env_error(env))
+    _require_gh(ctx.home)
     result = ghcli.rerun_run(repo, run, failed)
+    if result.status != "ok":
+        _require_gh(ctx.home, fresh=True)
     if result.status == "not-found":
         raise PageError(404, "unknown_run", f"No workflow run {run} in {repo}.")
     if result.status != "ok":
