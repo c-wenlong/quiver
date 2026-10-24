@@ -2653,8 +2653,11 @@ class TestKeepAliveAfterRefusal(HubBase):
     def test_unframed_body_closes_the_connection(self):
         for extra in ("Transfer-Encoding: chunked\r\n",
                       "Content-Length: 1_0\r\n",
-                      "Content-Length: 5\r\nContent-Length: 6\r\n"):
-            with self.subTest(extra):
+                      "Content-Length: 5\r\nContent-Length: 6\r\n",
+                      # Too many digits for int() under its default
+                      # limit: this raised out of parse_request.
+                      f"Content-Length: {'9' * 5000}\r\n"):
+            with self.subTest(extra[:40]):
                 reply = self._raw(self._post_head(extra),
                                   b"5\r\nhello\r\n0\r\n\r\n")
                 self._assert_closed_cleanly(reply, 409)

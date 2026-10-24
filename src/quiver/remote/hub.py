@@ -666,7 +666,10 @@ class _Handler(BaseHTTPRequestHandler):
         # int() would also take "+5", "1_000" or non-ASCII digits.
         if not (raw.isascii() and raw.isdigit()):
             return None
-        return int(raw)
+        try:
+            return int(raw)
+        except ValueError:  # past sys.get_int_max_str_digits()
+            return None
 
     def _take_body(self, limit: int) -> bytes | None:
         """The request body when it is at most ``limit`` bytes, else None
