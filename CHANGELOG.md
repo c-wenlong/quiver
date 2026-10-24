@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote iPhone app: a Usage tab with limits and spend.** Each harness
+  that reports a quota gets a card with its logo and a bar per window
+  (5 h, weekly and so on) showing the percent used and when it resets,
+  amber past 80% and red at 100%, with a quiet note when the reading is
+  stale; satellites' harnesses group under their machine. Below it, cost
+  and tokens for today, 7 or 30 days, a daily cost chart and each
+  harness's share. Pull to refresh asks the hub for new readings.
+
 - **Web app: Repositories and Inbox.** Repositories shows the hub's pinned
   repos as the Mac app does: pull requests, issues and Actions across
   every pin, all seven surfaces (Pages, releases, tags, branches too) for

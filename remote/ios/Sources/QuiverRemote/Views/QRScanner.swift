@@ -1,4 +1,5 @@
 import SwiftUI
+import Vision
 import VisionKit
 
 /// Scans a `swe remote pair --app` QR in the app, so pairing doesn't
