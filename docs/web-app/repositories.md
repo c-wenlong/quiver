@@ -2,12 +2,13 @@
 
 The two GitHub pages: Repositories (sidebar id `repositories`, the Mac
 app's `RepositoriesPage`, `RepoDetailPage` and `PrDetailSheet`) and Inbox
-(id `inbox`, `InboxPage`). Each has one write: merging a pull request
-from the PR sheet, and marking notifications read.
+(id `inbox`, `InboxPage`). Repositories writes twice: merging a pull
+request from the PR sheet, and pinning a repo from the Add repository
+sheet (`AddRepoSheet`). Inbox marks notifications read.
 
 | File | What |
 |---|---|
-| `src/quiver/webapp/pages/repositories.py` | `GET /v1/app/repositories`, `POST /v1/app/repositories/merge` |
+| `src/quiver/webapp/pages/repositories.py` | `GET /v1/app/repositories`, `POST /v1/app/repositories/merge` and `/add` |
 | `src/quiver/webapp/pages/inbox.py` | `GET /v1/app/inbox`, `POST /v1/app/inbox/read` |
 | `src/quiver/webapp/pages/_github.py` | Shared: the `gh` cache, the write lock, the hub's pins, the env payload. The leading underscore keeps it off `/v1/app/`. |
 | `src/quiver/webapp/static/pages/github.js`, `github.css` | Shared by both scripts: `GhUI` (icons, the gh setup card, the minute poll, the writes' POST, the PR body's markdown) and the styles. |
@@ -18,7 +19,8 @@ from the PR sheet, and marking notifications read.
 Every read runs the `gh` CLI in the hub process, through the same
 builders `swe gh … --json` uses (`quiver.github.cli`). So the pages show
 what **the hub machine's `gh` login** can see, and the pinned repos are
-the hub machine's (`~/.quiver/config/github.json`, `swe gh repo add`).
+the hub machine's (`~/.quiver/config/github.json`, the same file
+`swe gh repo add` writes there).
 The browser's own GitHub session plays no part. If `gh` is missing or
 signed out on the hub, both pages show the app's setup card
 (`brew install gh` / `gh auth login`) with a line saying to run it on the
@@ -41,8 +43,9 @@ is not kept, so the next look reads GitHub again.
 
 ## Writes
 
-Both go through the functions `swe` itself calls, in the hub process
-(`quiver.github.cli.merge_pr`, `mark_threads_read`, `mark_all_read`),
+They go through the functions `swe` itself calls, in the hub process
+(`quiver.github.cli.merge_pr`, `mark_threads_read`, `mark_all_read`,
+`quiver.github.manage.add_repo`),
 with the hub's `gh` login. Nothing a browser sends reaches a shell: the
 repo must be a pin, the number and ids digits, the method one of three
 words. Writes run one at a time per hub (`_github.WRITE_LOCK`), behind
@@ -154,6 +157,49 @@ shows merged, or the Auto-merge badge), and the page behind it reads the
 repo again so a merged row leaves the list. A refusal shows in an error
 card in the sheet, with the confirm still open to retry or cancel.
 
+**Search** (`search=<text>`), the Add repository sheet's droplist.
+`swe gh repo search <text> --json` in process: the hub's synced catalog
+(`swe gh sync`, Settings › Integrations › GitHub › Sync now) first, and
+when it has no match, or no catalog exists yet, a live `gh search repos`
+scoped to the hub login and its orgs. Up to 15 hits:
+
+```json
+{"github": GhEnv | null, "status": "ok", "error": null, "query": "quiv",
+ "results": [{"name", "description", "stars", "updated_at", "url"}],
+ "source": "catalog" | "github" | null}
+```
+
+A catalog hit runs no `gh` at all (`github` is then `null`). A live
+search that can't run answers 200 with `status` (`auth-required`,
+`upstream-error`, …) and `error`, which the sheet shows above the last
+good list. Replies are cached like the other reads, per lower-cased
+query; text over 200 characters is a 400 `bad_search`.
+
+**Add** (`POST /v1/app/repositories/add`), `swe gh repo add <repo>
+--json` in process: `{"repo": "owner/name"}` (a GitHub URL or SSH remote
+works too, as in swe). The hub asks GitHub for the repo (`gh repo view`),
+which proves the hub login can see it and gives its own spelling, then
+pins that spelling. Pinning a pinned repo changes nothing. Answers
+`{"repo", "repos": [PinnedRepo], "machine"}`, the pin and every pin
+after it, and drops cached searches. Refusals: 422 `bad_repo` (not
+`owner/name` or a GitHub URL), 409 `gh_unavailable` /
+`gh_auth_required`, 404 `unknown_repo` (GitHub can't find it, or this
+login can't see it; the message is "Cannot reach owner/name: …"), 502
+`add_failed`.
+
+The sheet follows the app's: a "Pin a repository" title and caption, one
+field ("owner/repo, GitHub URL, or search terms"), a search after a
+350 ms pause (Enter searches at once; an emptied field clears the list),
+"Searching your repos…" above the hits while one runs, each hit's name,
+stars and description with Pin or a Pinned badge, and a "Pin
+owner/repo" button once the text is `owner/repo` or a github.com URL. A
+line under the hits says where they came from. A pin closes the sheet
+and the dashboard reads again. The sheet opens from the rail's last row
+(Add repository) and the empty page's Add repository button. A focus
+link to a repo the hub hasn't pinned (`not_pinned`) shows "owner/name
+is not pinned on the hub." with a Pin it button, which pins it and
+opens the repo.
+
 ## Inbox
 
 `GET /v1/app/inbox` is `swe gh inbox --all --limit=50 --json`: `{"github",
@@ -195,7 +241,7 @@ Left out because they write (they stay in `swe` and the Mac app):
 | Write | Where it lives |
 |---|---|
 | Re-run failed or all jobs of a workflow run | `swe gh run rerun`, Actions row menu in the Mac app |
-| Pin, unpin, add a repository (with catalog search and sync), reorder pins by drag | `swe gh repo add/remove/reorder`, `swe gh sync`, the rail's gear and Add repository |
+| Unpin, reorder pins by drag | `swe gh repo remove/reorder`, the rail's gear |
 | Open a PR in a session (PR worktree) | `swe gh pr worktree`, the PR row's context menu |
 
 Also different:
