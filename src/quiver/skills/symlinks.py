@@ -9,6 +9,24 @@ from quiver.skills.layout import HARNESS_ROOTS, SHARED_LABEL, SHARED_REL
 SYMLINK_TARGETS = tuple((label, rel) for label, rel in HARNESS_ROOTS if label != SHARED_LABEL)
 
 
+def _command_on_path(label: str, home: Path) -> bool:
+    """True when the harness's binary answers on PATH: installed, though
+    maybe never run, so its home folder may not exist yet.
+
+    The same test swe init uses (``init.layout.command_on_path``), with the
+    registry's own ``command`` honoured. A registry that will not parse
+    only loses that override here; the catalog's command still counts.
+    """
+    from quiver.configuration import CorruptConfigurationError
+    from quiver.init.layout import command_on_path, load_registry
+
+    try:
+        registry = load_registry(home)
+    except CorruptConfigurationError:
+        registry = {}
+    return command_on_path(label, registry)
+
+
 @dataclass(frozen=True)
 class SkillsSymlinkHint:
     label: str
@@ -44,13 +62,10 @@ def skills_symlink_hints(home: Path | None = None) -> list[SkillsSymlinkHint]:
     for label, rel in SYMLINK_TARGETS:
         path = home / rel
         if not path.exists():
-            if not path.parent.is_dir():
-                # No home folder means the harness is not installed here.
-                # Linking it anyway made ~/.augment, ~/.pi and the like on
-                # every run after the first, and swe init then registered
-                # them and linked AGENTS.md in. swe init links installed
-                # harnesses whose home does not exist yet on its own
-                # evidence (a binary on PATH, a config dir elsewhere).
+            if not path.parent.is_dir() and not _command_on_path(label, home):
+                # Not installed here. Linking it anyway made ~/.augment,
+                # ~/.pi and the like on every run after the first, and
+                # swe init then registered them and linked AGENTS.md in.
                 continue
             hints.append(
                 SkillsSymlinkHint(
@@ -117,8 +132,8 @@ def skills_symlink_hints(home: Path | None = None) -> list[SkillsSymlinkHint]:
 def apply_skills_symlink_hints(hints: list[SkillsSymlinkHint], home: Path | None = None) -> list[str]:
     """Apply safe symlink hints (mkdir shared, ln -sf when target missing).
 
-    A symlink goes only into a harness folder that already exists: this
-    never creates a harness's home, which would make it look installed.
+    A harness's home folder is created only when its binary is on PATH.
+    Making one for a harness that is not installed makes it look installed.
     """
     home = home or Path.home()
     applied: list[str] = []
@@ -127,8 +142,11 @@ def apply_skills_symlink_hints(hints: list[SkillsSymlinkHint], home: Path | None
         if hint.action == "create_shared":
             hint.path.mkdir(parents=True, exist_ok=True)
             applied.append(f"mkdir {hint.label}")
-        elif (hint.action == "symlink" and not hint.path.exists()
-              and hint.path.parent.is_dir()):
+        elif hint.action == "symlink" and not hint.path.exists():
+            if not hint.path.parent.is_dir():
+                if not _command_on_path(hint.label, home):
+                    continue
+                hint.path.parent.mkdir(parents=True, exist_ok=True)
             hint.path.symlink_to(home / SHARED_REL)
             applied.append(f"symlink {hint.label}")
 

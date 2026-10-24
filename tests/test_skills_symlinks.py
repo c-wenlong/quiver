@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from quiver.skills.symlinks import (
     SkillsSymlinkHint,
@@ -10,6 +11,15 @@ from quiver.skills.symlinks import (
 
 
 class SkillsSymlinksTest(unittest.TestCase):
+    def setUp(self):
+        # No harness binary resolves unless a test says so: one on the
+        # developer's PATH is install evidence and would add hints.
+        self.on_path: set[str] = set()
+        which = patch("quiver.init.layout.shutil.which",
+                      side_effect=lambda cmd: f"/bin/{cmd}" if cmd in self.on_path else None)
+        which.start()
+        self.addCleanup(which.stop)
+
     def test_suggests_symlink_when_cursor_skills_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -63,6 +73,21 @@ class SkillsSymlinksTest(unittest.TestCase):
 
             self.assertEqual(apply_skills_symlink_hints([stale], home=home), [])
             self.assertFalse((home / ".augment").exists())
+
+    def test_a_binary_on_path_without_its_home_folder_is_linked(self):
+        # Installed but never run: no ~/.codex yet, so the binary is the
+        # only evidence, as in swe init.
+        self.on_path = {"codex"}
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            shared = home / ".quiver" / "skills"
+            shared.mkdir(parents=True)
+
+            hints = skills_symlink_hints(home=home)
+            self.assertEqual([h.label for h in hints], ["codex"])
+            self.assertEqual(apply_skills_symlink_hints(hints, home=home), ["symlink codex"])
+            self.assertEqual((home / ".codex" / "skills").resolve(), shared.resolve())
+            self.assertEqual(sorted(p.name for p in home.iterdir()), [".codex", ".quiver"])
 
 
 if __name__ == "__main__":
