@@ -463,6 +463,10 @@ def attach(
         # tmux mode: stand the replacement up BEFORE killing the
         # original, so a failed handoff leaves the human's session
         # running rather than stopped with nothing to show for it.
+        # List the original's pids first: the replacement carries the
+        # same binary and resume flags, so a scan after launch would
+        # SIGTERM it too.
+        writers = _local_writer_pids(session)
         binary = launch_tool_name(session.tool_name)
         name = launch_tmux(
             session_key, [binary, *flags], session.path or None
@@ -473,7 +477,7 @@ def attach(
                 "after launch"
             )
         meta["tmux"] = name
-        _stop_local_writers(session)
+        _stop_local_writers(session, writers)
         _mark_locked(home, session_key, meta)
         return True, f"attached under tmux {name}"
 
@@ -492,8 +496,19 @@ def _writer_targets(session: Session) -> list[str]:
     ]
 
 
-def _stop_local_writers(session: Session) -> None:
-    """SIGTERM harness processes that still own ``session``.
+def _stop_local_writers(
+    session: Session, pids: list[int] | None = None
+) -> None:
+    """SIGTERM ``pids``, or every process found to own ``session``."""
+    for pid in _local_writer_pids(session) if pids is None else pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            continue
+
+
+def _local_writer_pids(session: Session) -> list[int]:
+    """Harness processes that still own ``session``.
 
     A process qualifies only when its executable's basename is the
     harness binary AND a resume-flag value appears as a whole argv
@@ -508,7 +523,7 @@ def _stop_local_writers(session: Session) -> None:
         launch_tool_name(session.tool_name) or ""
     )
     if not targets or not binary:
-        return
+        return []
     try:
         out = subprocess.run(
             ["pgrep", "-f", "|".join(
@@ -517,7 +532,8 @@ def _stop_local_writers(session: Session) -> None:
             capture_output=True, text=True, timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
-        return
+        return []
+    pids = []
     for pid_s in out.stdout.split():
         try:
             pid = int(pid_s)
@@ -540,10 +556,8 @@ def _stop_local_writers(session: Session) -> None:
             continue
         if not any(t in argv[1:] for t in targets):
             continue
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError:
-            continue
+        pids.append(pid)
+    return pids
 
 
 def detach(home: Path | None, session_key: str) -> bool:

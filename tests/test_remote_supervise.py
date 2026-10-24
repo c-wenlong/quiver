@@ -778,6 +778,30 @@ class TestAttachMtime(unittest.TestCase):
         self.assertEqual(meta["tmux"], "qv-new")
         self.assertEqual(meta["mode"], "tmux")
 
+    def test_tmux_handoff_spares_the_replacement(self):
+        # The replacement runs the same `claude --resume <id>` argv, so
+        # only pids listed before launch may be stopped.
+        old = Path(tempfile.mkdtemp()) / "old.jsonl"
+        old.write_text("{}\n")
+        import os
+        stale = time.time() - 3600
+        os.utime(old, (stale, stale))
+        live = [111]
+        with patch("quiver.remote.tail.resolve_jsonl_path",
+                   return_value=old), \
+             patch.object(supervise, "_local_writer_pids",
+                          side_effect=lambda _s: list(live)), \
+             patch.object(supervise, "launch_tmux",
+                          side_effect=lambda *a, **k: live.append(222)
+                          or "qv-new"), \
+             patch.object(supervise.os, "kill") as kill:
+            ok, _ = supervise.attach(
+                self.home, self.key, self.session,
+                last_append_at=None, status="done", mode="tmux",
+            )
+        self.assertTrue(ok)
+        kill.assert_called_once_with(111, supervise.signal.SIGTERM)
+
 
 class TestAttachModeGates(unittest.TestCase):
     def setUp(self):
