@@ -14,6 +14,11 @@ the code its swe command runs:
   ``ask=False``): new skills folders wait, real files in the way stay.
 - ``discover``: ``swe harness discover --apply --json``: the
   high-confidence matches (``discover_harnesses`` + ``apply_findings``).
+- ``install``: ``swe install <name> --via=<via>`` with its output captured
+  (``harness.commands.install_harness``). ``swe doctor`` itself gives an
+  off-PATH harness no action; this page adds one when swe knows an
+  installer for it, reinstalling the way the stray copy was installed
+  (``install_method``), so it lands on PATH.
 
 Nothing in the request says what to run: a finding that is not in the
 report, or that has no action, is refused. One fix runs at a time, as in
@@ -33,6 +38,7 @@ from __future__ import annotations
 
 import threading
 from contextlib import contextmanager
+from functools import partial
 from pathlib import Path
 
 from quiver.webapp.pages import PageError
@@ -69,6 +75,8 @@ def post(ctx, action: str, body: dict) -> dict:
         run = RUNNERS.get(finding.get("action") or "")
         if run is None:
             raise PageError(422, "no_action", "swe can't run this fix itself. Copy the command and run it on the hub.")
+        if finding["action"] == "install":
+            run = partial(run, name=finding["harness"], via=finding["via"])
         home = _home(ctx)
         error = _guarded(run, home)
         # Setup and init link files, and leave a real one in the way alone.
@@ -96,6 +104,13 @@ def _guarded(run, home: Path) -> str | None:
         return str(exc) or type(exc).__name__
 
 
+def install_now(home: Path, name: str, via: str) -> str | None:
+    """``swe install <name> --via=<via>`` as a Doctor fix, one at a time
+    with the others. Returns what went wrong."""
+    with _one_at_a_time():
+        return _guarded(partial(_run_install, name=name, via=via), home)
+
+
 def run_init_now(home: Path, *, force: bool = False) -> str | None:
     """``swe init`` (``--force`` when ``force``) as a Doctor fix: one at a
     time with the others, 409 while one runs. Returns what went wrong."""
@@ -111,6 +126,10 @@ def _report(ctx) -> dict:
     from quiver.harness.commands import doctor_report
 
     report = doctor_report(_home(ctx)).to_json()
+    for finding in report["findings"]:
+        via = install_method(finding["harness"]) if finding["check"] == "off-path" and finding.get("harness") else None
+        if via:
+            finding.update(action="install", via=via, fix=f"swe install {finding['harness']} --via={via}")
     # The machine the checks ran on, for the confirm line ("on <machine>").
     report["machine"] = ((ctx.machine or {}).get("name") if ctx is not None else None)
     return report
@@ -174,4 +193,44 @@ def _run_discover(home: Path) -> str | None:
     return None
 
 
-RUNNERS = {"setup": _run_setup, "init": _run_init, "discover": _run_discover}
+def install_method(name: str) -> str | None:
+    """The method a Run reinstalls an off-PATH harness with: the one that
+    put the stray copy there (an nvm npm install comes back through the
+    npm on PATH), else the first whose tool is on PATH."""
+    import os
+    import shutil
+
+    from quiver.harness.commands import _install_command_name
+    from quiver.harness.installers import METHOD_TOOL, installers_for, uninstaller_for
+    from quiver.harness.path_health import search_dirs_for_command
+    from quiver.harness.registry import load_registry_readonly
+
+    usable = [inst.via for inst in installers_for(name) if shutil.which(METHOD_TOOL[inst.via])]
+    if not usable:
+        return None
+    command = _install_command_name(name, load_registry_readonly())
+    for hit in search_dirs_for_command(command):
+        if hit.source == "path":
+            continue
+        remover = uninstaller_for(name, os.path.realpath(hit.path))
+        if remover is not None and remover.via in usable:
+            return remover.via
+    return usable[0]
+
+
+def _run_install(home: Path, name: str, via: str) -> str | None:
+    from quiver.harness.commands import install_harness
+
+    return install_problem(install_harness(name, via), name)
+
+
+def install_problem(result, name: str) -> str | None:
+    """What a captured install says went wrong, with the end of its output,
+    or None once the command is on PATH."""
+    if result.action is not None:
+        return None if result.path else f"Installed, but {name}'s command is still not on PATH."
+    tail = "\n".join(line for line in (result.output or "").strip().splitlines()[-8:])
+    return result.error + ("\n" + tail if tail else "")
+
+
+RUNNERS = {"setup": _run_setup, "init": _run_init, "discover": _run_discover, "install": _run_install}

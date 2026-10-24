@@ -169,6 +169,59 @@ class TestRun(_TempHome, unittest.TestCase):
             self.assertEqual(self.fix(finding)["error"], "cannot read .linkignore")
 
 
+class TestInstall(_TempHome, unittest.TestCase):
+    """An off-PATH harness gets Run: swe install <name> --via=<method>."""
+
+    def off_path(self, source="nvm",
+                 path="/home/u/.nvm/versions/node/v22/lib/node_modules/@openai/codex/bin/codex.js"):
+        from quiver.harness.path_health import OffPathHit
+
+        self.seed({"codex": {"command": "codex"}})
+        hit = OffPathHit("codex", path, source)
+        return patch("quiver.harness.path_health.find_off_path_tools", return_value=[("codex", "codex", hit)]), \
+            patch("quiver.harness.path_health.search_dirs_for_command", return_value=[hit])
+
+    def test_the_finding_names_the_method_that_put_it_there(self):
+        orphans, hits = self.off_path()
+        with orphans, hits, patch("shutil.which", side_effect=lambda t: f"/usr/bin/{t}" if t in ("brew", "npm") else None):
+            finding = self.finding("off-path")
+        # Homebrew comes first in swe's order, but an nvm copy came from npm.
+        self.assertEqual((finding["action"], finding["via"], finding["fix"]),
+                         ("install", "npm", "swe install codex --via=npm"))
+
+    def test_no_usable_method_means_no_run(self):
+        orphans, hits = self.off_path()
+        with orphans, hits, patch("shutil.which", return_value=None):
+            finding = self.finding("off-path")
+        self.assertNotIn("action", finding)
+        self.assertEqual(finding["fix"], "swe install codex")
+
+    def test_run_installs_with_that_method(self):
+        from quiver.harness.commands import InstallResult
+
+        orphans, hits = self.off_path()
+        done = InstallResult(code=0, action="Updated", path="/usr/bin/codex", version="1", output="",
+                             exited=True, error=None)
+        with orphans, hits, patch("shutil.which", side_effect=lambda t: f"/usr/bin/{t}" if t == "npm" else None), \
+                patch("quiver.harness.commands.install_harness", return_value=done) as install:
+            reply = self.fix(self.finding("off-path"))
+        install.assert_called_once_with("codex", "npm")
+        self.assertEqual((reply["ran"], reply["error"]), ("install", None))
+
+    def test_a_failed_install_shows_the_end_of_its_output(self):
+        from quiver.harness.commands import InstallResult
+
+        failed = InstallResult(code=1, action=None, path=None, version=None, exited=True,
+                               output="\n".join(f"line {i}" for i in range(20)),
+                               error="npm install exited with code 1")
+        problem = doctor_page.install_problem(failed, "codex")
+        self.assertTrue(problem.startswith("npm install exited with code 1\n"))
+        self.assertIn("line 19", problem)
+        self.assertNotIn("line 11", problem)
+        stray = InstallResult(code=1, action="Added", path=None, version=None, exited=True, output="", error=None)
+        self.assertIn("still not on PATH", doctor_page.install_problem(stray, "codex"))
+
+
 class TestRefusals(_TempHome, unittest.TestCase):
     def refused(self, action, body) -> PageError:
         with patch.dict(doctor_page.RUNNERS, {k: self.fail for k in doctor_page.RUNNERS}):
@@ -192,10 +245,10 @@ class TestRefusals(_TempHome, unittest.TestCase):
         self.assertEqual((error.status, error.code), (404, "unknown_finding"))
 
     def test_a_finding_without_an_action_is_refused(self):
-        report = DoctorReport([DoctorFinding("off-path", "error", "gemini is off PATH", "swe install gemini",
-                                             harness="gemini")])
+        report = DoctorReport([DoctorFinding("npm", "warning", "npm not found on PATH",
+                                             "Install Node/npm, or put npm on PATH.")])
         with patch("quiver.harness.commands.doctor_report", return_value=report):
-            error = self.refused("run", {"check": "off-path", "message": "gemini is off PATH"})
+            error = self.refused("run", {"check": "npm", "message": "npm not found on PATH"})
         self.assertEqual((error.status, error.code), (422, "no_action"))
 
     def test_an_action_this_page_does_not_know_is_refused(self):

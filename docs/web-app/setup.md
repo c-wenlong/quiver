@@ -28,9 +28,15 @@ subtitle, and a footer with Skip setup, Back and Continue.
    the catalog. A tile toggles its tick. The first ticks are the
    harnesses starred now. Ticking an agent that isn't installed adds the
    sheet's banner ("… isn't installed yet. Quiver will list it anyway…")
-   with **Install…**, which opens swe's install commands for it (one per
-   package manager, each with Copy; dimmed when that manager isn't on the
-   hub's PATH).
+   with **Install…**, which opens swe's install commands for it, one per
+   package manager. Each has **Install**, which runs it on the hub, and
+   Copy; a manager that isn't on the hub's PATH is dimmed and says so in
+   place of Install. While one runs it reads "Installing…" and the other
+   Install buttons wait, across a refresh or a trip to another page. A
+   failure shows under the list with the end of the installer's output (in
+   a card above the grid if the agent now reads as found anyway); a
+   success re-reads the page, so the agent moves to "Found" with its tick
+   kept.
 2. **One setup for all of them.** Shared instructions, with the "Start
    from" picker when your agents already have instruction files (your
    first one by default, or Quiver's starter file) and the note for each
@@ -113,8 +119,23 @@ Harnesses page and Doctor's fixes hold.
 | 404 | `unknown_file` | `adopt` is not one of the preview's `adopt_candidates` right now (no other path is opened) |
 | 503 | `setup_failed` | discovery itself failed, before anything was written |
 | 409 | `not_adoptable` | `adopt` sent once `AGENTS.md` already holds your own text |
-| 404 | `unknown_action` | any action but `apply` |
+| 404 | `unknown_action` | any action but `apply` and `install` |
 | 403 | `bad_origin` | the hub's Origin check, for a cross-site POST |
+
+`POST /v1/app/setup/install` with `{"id": "gemini", "via": "brew"}` is
+`swe install gemini --via=brew` in process
+(`harness.commands.install_harness`): the agent's own install command for
+that method from `swe install`'s table, never a package the request
+names, and the id is never read as another harness's alias. It runs with
+nothing on stdin and its output written to a temporary file (the last
+4,000 bytes come back, a timeout's included), so a cask or script that
+asks for a password fails instead of waiting. It shares
+Doctor's one-fix lock (409 `busy`) and the registry lock, and on success
+registers the harness as `swe install` does. The reply is `{"error",
+"setup"}`: what went wrong with the last lines of the installer's output
+(`null` once the command is on PATH), and this page's `GET` data read
+again. 404 `unknown_harness` for an id the page doesn't list, 422
+`bad_via` for a method that agent has no command for.
 
 Part-way failures are not refusals: as with `swe setup --apply --json`
 they come back in `applied.errors` or `applied.links.error`, and the
@@ -130,9 +151,10 @@ page shows them.
   A later change links it from Overview (when `first_run`) and from
   Settings (being built in parallel; it links to `#/setup`). So there is
   no "done" flag: the card keeps offering setup until AGENTS.md exists.
-- **Install… runs nothing.** The Mac sheet can run an install command in
-  Terminal. The browser may be on another machine, so the commands are
-  shown to copy and run on the hub.
+- **Install runs on the hub with no terminal.** The Mac sheet runs an
+  install command in Terminal, where a cask or script can ask for a
+  password. The web one runs it on the hub in process; one that needs a
+  password fails there, and Copy is beside it for a terminal.
 - **The Settings › Providers sentence** after the unstarred names is left
   out: that page is the Mac app's.
 

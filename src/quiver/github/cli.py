@@ -10,12 +10,10 @@ second, then every pinned repo — so a bare ``swe gh pr`` is the dashboard.
 
 import json
 import re
-import subprocess
 import time
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from pathlib import Path
 
 from quiver import paths
 from quiver.console import c, sanitize, truncate
@@ -1328,23 +1326,7 @@ def _cmd_pr_merge(ref: str, opts: dict, json_view: bool) -> int:
     return 0
 
 
-def _run_git(args: list[str], timeout: int = 120) -> gh.GhResult:
-    """``git <args>`` with ``run_gh``'s never-raise contract."""
-    try:
-        done = subprocess.run(
-            ["git", *args], capture_output=True, text=True,
-            timeout=timeout)
-    except FileNotFoundError:
-        return gh.GhResult("unavailable", error="git is not installed")
-    except subprocess.TimeoutExpired:
-        return gh.GhResult("upstream-error",
-                           error=f"git timed out after {timeout}s")
-    except OSError as exc:
-        return gh.GhResult("unavailable", error=str(exc))
-    if done.returncode != 0:
-        return gh.GhResult("upstream-error",
-                           error=(done.stderr or done.stdout or "").strip())
-    return gh.GhResult("ok", data=done.stdout)
+_run_git = manage.run_git
 
 
 def _pr_number(ref: str) -> str | None:
@@ -1355,30 +1337,8 @@ def _pr_number(ref: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _mirror_for(repo: str) -> str:
-    return str(paths.GITHUB_MIRRORS / (repo.replace("/", "__") + ".git"))
-
-
-def _worktree_for(repo: str, number: str) -> str:
-    return str(paths.WORKTREES_DIR / f"{repo.replace('/', '__')}-pr{number}")
-
-
-def _registered_worktrees(mirror: str) -> list[str]:
-    result = _run_git(["-C", mirror, "worktree", "list", "--porcelain"])
-    if result.status != "ok":
-        return []
-    return [line.split(" ", 1)[1]
-            for line in (result.data or "").splitlines()
-            if line.startswith("worktree ")]
-
-
 def _cmd_pr_worktree(ref: str, opts: dict, json_view: bool) -> int:
-    """A detached checkout of the PR's head under ~/.quiver/worktrees.
-
-    The repo's bare mirror lives under data/github/mirrors; the PR head
-    is fetched via refs/pull/N/head — GitHub's own ref, so fork PRs need
-    no fork remote. Re-running returns the existing checkout.
-    """
+    """A detached checkout of the PR's head (``manage.pr_worktree``)."""
     err = error_stream(json_view)
     number = _pr_number(ref)
     if number is None:
@@ -1399,41 +1359,15 @@ def _cmd_pr_worktree(ref: str, opts: dict, json_view: bool) -> int:
                   "path": None, "created": False, "error": res_err})
         return 1
 
-    def fail(step: str, result: gh.GhResult) -> int:
-        msg = result.error or result.status
+    made = manage.pr_worktree(repo, number)
+    if made.status != "ok":
         if json_view:
             emit({**_env_emit(env), "repo": repo, "pr": int(number),
-                  "path": None, "created": False,
-                  "error": f"{step}: {msg}"})
+                  "path": None, "created": False, "error": made.error})
         else:
-            print(c("red", f"  {step}: {msg}\n"))
+            print(c("red", f"  {made.error}\n"))
         return 1
-
-    mirror = _mirror_for(repo)
-    if not Path(mirror).is_dir():
-        paths.GITHUB_MIRRORS.mkdir(parents=True, exist_ok=True)
-        result = gh.run_gh(
-            ["repo", "clone", repo, mirror, "--",
-             "--bare", "--filter=blob:none"], timeout=300)
-        if result.status != "ok":
-            return fail("Clone failed", result)
-
-    result = _run_git(["-C", mirror, "fetch", "origin",
-                       f"refs/pull/{number}/head"], timeout=120)
-    if result.status != "ok":
-        return fail("Fetch failed", result)
-    sha = _run_git(["-C", mirror, "rev-parse", "--short=12", "FETCH_HEAD"])
-    head = (sha.data or "").strip() if sha.status == "ok" else None
-
-    path = _worktree_for(repo, number)
-    created = False
-    if path not in _registered_worktrees(mirror):
-        paths.WORKTREES_DIR.mkdir(parents=True, exist_ok=True)
-        result = _run_git(["-C", mirror, "worktree", "add", "--detach",
-                           path, "FETCH_HEAD"], timeout=300)
-        if result.status != "ok":
-            return fail("Worktree failed", result)
-        created = True
+    path, head, created = made.data["path"], made.data["head"], made.data["created"]
 
     if json_view:
         return emit({**_env_emit(env), "repo": repo, "pr": int(number),

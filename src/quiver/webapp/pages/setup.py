@@ -26,6 +26,14 @@ Every starred id must be one the page lists (a catalog agent or a
 registered harness), and ``adopt`` one of the preview's
 ``adopt_candidates`` right now; anything else is refused.
 The reply is ``{"applied", "first_run", "starred"}``.
+
+``POST /v1/app/setup/install`` with ``{"id", "via"}`` is ``swe install
+<id> --via=<via>`` in process with its output captured, for an agent the
+page lists as not found: one of the agent's own install commands, never
+a package the request names. It runs as a Doctor fix does (one at a time,
+409 while one runs) and answers ``{"error", "setup"}``: what went wrong
+with the end of the installer's output (``null`` once the command is on
+PATH) and this page's data read again.
 """
 
 from __future__ import annotations
@@ -104,6 +112,8 @@ def get(ctx, args) -> dict:
 
 
 def post(ctx, action: str, body: dict) -> dict:
+    if action == "install":
+        return _install(ctx, body)
     if action != "apply":
         raise PageError(404, "unknown_action", f"unknown setup action: {action}")
     starred = _starred(body.get("starred"))
@@ -149,6 +159,20 @@ def post(ctx, action: str, body: dict) -> dict:
             "first_run": _first_run(home),
             "starred": starred_names(load_registry_readonly()),
         }
+
+
+def _install(ctx, body: dict) -> dict:
+    from quiver.harness.installers import METHODS, installers_for
+    from quiver.webapp.pages.doctor import install_now
+
+    pid, via = body.get("id"), body.get("via")
+    if pid not in PROVIDER_IDS:
+        raise PageError(404, "unknown_harness", f"no agent named {pid!r}")
+    if via not in METHODS or via not in {inst.via for inst in installers_for(pid)}:
+        raise PageError(422, "bad_via", f"{pid} has no {via!r} install command")
+    home = _home(ctx)
+    error = install_now(home, pid, via)
+    return {"error": error, "setup": get(ctx, {})}
 
 
 def _starred(value) -> list[str]:

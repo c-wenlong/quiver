@@ -1,7 +1,7 @@
 """Pinning, repo search and the catalog sync, for any home.
 
-``swe gh repo add``, ``swe gh repo search`` and ``swe gh sync`` print
-what these return; the web app's Repositories and Settings pages call
+``swe gh repo add``, ``swe gh repo search``, ``swe gh sync`` and
+``swe gh pr worktree`` print what these return; the web app's Repositories and Settings pages call
 them in process for the hub's own home. Nothing here prints. Every
 function takes ``home`` (``None`` is the real one) and reads its pins,
 catalog and owner cache from that home's ``~/.quiver``.
@@ -13,6 +13,8 @@ hit answers without ever running ``gh``.
 """
 
 import json
+import os
+import subprocess
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -43,6 +45,14 @@ def pins_file(home: Path | None) -> Path:
 
 def catalog_file(home: Path | None) -> Path:
     return paths.github_catalog_for(home) if home else paths.GITHUB_CATALOG
+
+
+def mirrors_dir(home: Path | None) -> Path:
+    return paths.github_mirrors_for(home) if home else paths.GITHUB_MIRRORS
+
+
+def worktrees_dir(home: Path | None) -> Path:
+    return paths.worktrees_dir_for(home) if home else paths.WORKTREES_DIR
 
 
 def owners_cache_file(home: Path | None) -> Path:
@@ -245,3 +255,81 @@ def sync_catalog(env: gh.GhEnv, home: Path | None = None) -> dict:
             "listed": [{"owner": e["owner"], "status": e["status"],
                         "error": e["error"], "repos": len(e["rows"])}
                        for e in entries]}
+
+
+# ------------------------------------------------------------------ PR worktree
+
+def run_git(args: list[str], timeout: int = 120) -> gh.GhResult:
+    """``git <args>`` with ``gh.run_gh``'s never-raise contract."""
+    try:
+        done = subprocess.run(
+            ["git", *args], capture_output=True, text=True,
+            timeout=timeout)
+    except FileNotFoundError:
+        return gh.GhResult("unavailable", error="git is not installed")
+    except subprocess.TimeoutExpired:
+        return gh.GhResult("upstream-error",
+                           error=f"git timed out after {timeout}s")
+    except OSError as exc:
+        return gh.GhResult("unavailable", error=str(exc))
+    if done.returncode != 0:
+        return gh.GhResult("upstream-error",
+                           error=(done.stderr or done.stdout or "").strip())
+    return gh.GhResult("ok", data=done.stdout)
+
+
+def _registered_worktrees(mirror: str) -> list[str]:
+    result = run_git(["-C", mirror, "worktree", "list", "--porcelain"])
+    if result.status != "ok":
+        return []
+    return [line.split(" ", 1)[1]
+            for line in (result.data or "").splitlines()
+            if line.startswith("worktree ")]
+
+
+def pr_worktree(repo: str, number: str, home: Path | None = None) -> gh.GhResult:
+    """``swe gh pr worktree``: a detached checkout of PR ``number``'s
+    head under the home's ``~/.quiver/worktrees``.
+
+    The repo's bare mirror lives under ``data/github/mirrors``; the PR
+    head is fetched via ``refs/pull/N/head``, GitHub's own ref, so fork
+    PRs need no fork remote. Asking again fetches the head and returns
+    the existing checkout. ``data`` is ``{"path", "head", "created"}``;
+    a failure's ``error`` names the step ("Clone failed: …").
+    """
+    def fail(step: str, result: gh.GhResult) -> gh.GhResult:
+        return gh.GhResult(result.status if result.status != "ok" else "upstream-error",
+                           error=f"{step}: {result.error or result.status}")
+
+    mirrors = mirrors_dir(home)
+    mirror = str(mirrors / (repo.replace("/", "__") + ".git"))
+    if not Path(mirror).is_dir():
+        mirrors.mkdir(parents=True, exist_ok=True)
+        result = gh.run_gh(
+            ["repo", "clone", repo, mirror, "--",
+             "--bare", "--filter=blob:none"], timeout=300)
+        if result.status != "ok":
+            return fail("Clone failed", result)
+
+    result = run_git(["-C", mirror, "fetch", "origin",
+                      f"refs/pull/{number}/head"], timeout=120)
+    if result.status != "ok":
+        return fail("Fetch failed", result)
+    sha = run_git(["-C", mirror, "rev-parse", "--short=12", "FETCH_HEAD"])
+    head = (sha.data or "").strip() if sha.status == "ok" else None
+
+    trees = worktrees_dir(home)
+    path = str(trees / f"{repo.replace('/', '__')}-pr{number}")
+    created = False
+    # git lists checkouts by their real path: a home under a symlink
+    # (macOS's /var is /private/var) must still match its own checkout.
+    registered = {os.path.realpath(p) for p in _registered_worktrees(mirror)}
+    if os.path.realpath(path) not in registered:
+        trees.mkdir(parents=True, exist_ok=True)
+        result = run_git(["-C", mirror, "worktree", "add", "--detach",
+                          path, "FETCH_HEAD"], timeout=300)
+        if result.status != "ok":
+            return fail("Worktree failed", result)
+        created = True
+    return gh.GhResult("ok", data={"path": path, "head": head,
+                                   "created": created})
