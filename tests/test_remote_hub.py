@@ -2506,6 +2506,163 @@ class TestServerHardening(HubBase):
         self.assertIn("claude:s1", self.srv.state.tail_manager.tailers)
 
 
+class TestKeepAliveAfterRefusal(HubBase):
+    """A response sent before the body was read must not leave that body
+    on the keep-alive connection, where it would be parsed as the start
+    of the next request (which then got a 400 or 501)."""
+
+    def setUp(self):
+        super().setUp()
+        self.hdr = {**self.auth(), "Content-Type": "application/json"}
+
+    def _conn(self):
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.srv.port, timeout=5)
+        self.addCleanup(conn.close)
+        return conn
+
+    @staticmethod
+    def _exchange(conn, method, path, body=None, headers=None):
+        conn.request(method, path, body=body, headers=headers or {})
+        resp = conn.getresponse()
+        return resp, resp.read()
+
+    def _assert_reused(self, method, path, body, headers, status, code):
+        conn = self._conn()
+        resp, data = self._exchange(conn, method, path, body, headers)
+        self.assertEqual(resp.status, status, data)
+        self.assertEqual(json.loads(data)["error"]["code"], code)
+        self.assertFalse(resp.will_close, "small refused body closed")
+        sock = conn.sock
+        # The very same socket answers the next request properly.
+        resp, data = self._exchange(conn, "GET", "/v1/status")
+        self.assertEqual(resp.status, 200, data)
+        self.assertTrue(json.loads(data)["ok"])
+        self.assertIs(conn.sock, sock)
+
+    def test_refusals_leave_the_connection_usable(self):
+        msg = json.dumps({"text": "hello there " * 40})
+        cases = (
+            ("auth failure", "/v1/sessions/claude:s1/message",
+             {"Content-Type": "application/json"}, 401, "unauthorized"),
+            ("bad origin", "/v1/app/doctor/run",
+             {**self.hdr, "Origin": "http://evil.example"},
+             403, "bad_origin"),
+            ("unknown session", "/v1/sessions/claude:nope/message",
+             self.hdr, 404, "unknown_session"),
+            ("state conflict", "/v1/sessions/claude:s1/message",
+             self.hdr, 409, "not_attached"),
+        )
+        for label, path, headers, status, code in cases:
+            with self.subTest(label):
+                self._assert_reused("POST", path, msg, headers,
+                                    status, code)
+
+    def test_unread_upload_is_drained(self):
+        from quiver.remote import attachments
+        with patch.object(attachments, "MAX_BYTES", 8):
+            self._assert_reused(
+                "POST", "/v1/sessions/claude:s1/attachments?name=a.txt",
+                b"x" * 4096,
+                {**self.auth(), "Content-Type": "application/octet-stream"},
+                413, "too_large",
+            )
+
+    def test_normal_posts_reuse_the_connection(self):
+        conn = self._conn()
+        sock = None
+        for last in (1.0, 2.0, 3.0):
+            resp, data = self._exchange(
+                conn, "POST", "/v1/inbox/dismiss",
+                json.dumps({"key": "claude:s1", "last_active_at": last}),
+                self.hdr,
+            )
+            self.assertEqual(resp.status, 200, data)
+            self.assertFalse(resp.will_close)
+            sock = sock or conn.sock
+            self.assertIs(conn.sock, sock)
+        resp, data = self._exchange(conn, "GET", "/v1/inbox",
+                                    headers=self.hdr)
+        self.assertEqual(resp.status, 200, data)
+        self.assertIs(conn.sock, sock)
+
+    def _raw(self, head: bytes, body: bytes = b"") -> bytes:
+        """Send one raw request and read until the hub closes."""
+        sock = socket.create_connection(
+            ("127.0.0.1", self.srv.port), timeout=5)
+        try:
+            sock.sendall(head + body)
+            chunks = []
+            while True:
+                try:
+                    chunk = sock.recv(65536)
+                except socket.timeout:
+                    self.fail("hub kept the connection open")
+                except ConnectionResetError:
+                    break
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            return b"".join(chunks)
+        finally:
+            sock.close()
+
+    def _assert_closed_cleanly(self, reply: bytes, status: int) -> None:
+        head, _, body = reply.partition(b"\r\n\r\n")
+        lines = head.decode("latin-1").split("\r\n")
+        self.assertTrue(lines[0].startswith(f"HTTP/1.1 {status} "), reply)
+        self.assertIn("connection: close", [ln.lower() for ln in lines])
+        self.assertIn(b'"not_attached"', body)
+        # Exactly one response: the body never became a second request.
+        self.assertEqual(reply.count(b"HTTP/1.1 "), 1, reply)
+        # And the hub is fine afterwards.
+        status, _ = self.srv.request("GET", "/v1/status")
+        self.assertEqual(status, 200)
+
+    def _post_head(self, extra: str) -> bytes:
+        return (
+            "POST /v1/sessions/claude:s1/message HTTP/1.1\r\n"
+            "Host: x\r\nContent-Type: application/json\r\n"
+            f"Authorization: {self.hdr['Authorization']}\r\n"
+            f"{extra}\r\n"
+        ).encode()
+
+    def test_body_over_the_drain_cap_closes_the_connection(self):
+        from quiver.remote import hub as hub_mod
+        body = json.dumps({"text": "x" * 2000}).encode()
+        follow = b"GET /v1/status HTTP/1.1\r\nHost: x\r\n\r\n"
+        with patch.object(hub_mod, "_DRAIN_MAX", 64):
+            reply = self._raw(
+                self._post_head(f"Content-Length: {len(body)}\r\n"),
+                body + follow,
+            )
+        self._assert_closed_cleanly(reply, 409)
+
+    def test_slow_body_closes_instead_of_holding_the_thread(self):
+        from quiver.remote import hub as hub_mod
+        with patch.object(hub_mod, "_DRAIN_S", 0.3):
+            started = time.monotonic()
+            # 400 bytes declared, 10 sent: the drain can't finish.
+            reply = self._raw(
+                self._post_head("Content-Length: 400\r\n"),
+                b'{"text": "',
+            )
+        self.assertLess(time.monotonic() - started, 3)
+        self._assert_closed_cleanly(reply, 409)
+
+    def test_unframed_body_closes_the_connection(self):
+        for extra in ("Transfer-Encoding: chunked\r\n",
+                      "Content-Length: 1_0\r\n",
+                      "Content-Length: 5\r\nContent-Length: 6\r\n",
+                      # Too many digits for int() under its default
+                      # limit: this raised out of parse_request.
+                      f"Content-Length: {'9' * 5000}\r\n"):
+            with self.subTest(extra[:40]):
+                reply = self._raw(self._post_head(extra),
+                                  b"5\r\nhello\r\n0\r\n\r\n")
+                self._assert_closed_cleanly(reply, 409)
+
+
 class TestStartNotify(unittest.TestCase):
     def test_start_spawns_notifier_when_enabled(self):
         from quiver.remote import hub as hub_mod, notify
