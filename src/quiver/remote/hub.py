@@ -34,11 +34,13 @@ from quiver.remote import (
     catalog as catalog_mod,
     injected as injected_mod,
     dismissals,
+    files as files_mod,
     inject,
     notify,
     pairing,
     protocol,
     search as search_mod,
+    sessionmeta,
     sendq,
     slash,
     supervise,
@@ -1155,6 +1157,9 @@ class _Handler(BaseHTTPRequestHandler):
             if sep and action == "messages":
                 self._messages(key, args)
                 return
+            if sep and action == "files":
+                self._files(key, args)
+                return
             if sep and action == "queue":
                 if self._state.catalog.row_for(key) is None:
                     self._send_error(
@@ -1343,6 +1348,9 @@ class _Handler(BaseHTTPRequestHandler):
             if row is None:
                 self._send_error(404, "unknown_session", "no such session")
                 return
+            if action in sessionmeta.ACTIONS:
+                self._session_meta(key, action)
+                return
             remote_mid = row.get("machine_id")
             if remote_mid and remote_mid != self._state.machine_id:
                 self._forward(key, remote_mid, action, row)
@@ -1413,6 +1421,27 @@ class _Handler(BaseHTTPRequestHandler):
             ],
             "truncated": len(names) > FOLDER_LIST_CAP,
         })
+
+    def _files(self, key: str, args) -> None:
+        """``GET /v1/sessions/{id}/files?q=&limit=``: paths under the
+        session's working folder for the prompt box's ``@`` menu
+        (``files.py``)."""
+        row = self._state.catalog.row_for(key)
+        if row is None:
+            self._send_error(404, "unknown_session", "no such session")
+            return
+        try:
+            body = files_mod.for_session(
+                row,
+                hub_machine_id=self._state.machine_id,
+                machines=catalog_mod.load_machines(self._state.home),
+                query=str((args.get("q") or [""])[0]),
+                limit=_int_arg(args.get("limit"), files_mod.DEFAULT_LIMIT),
+            )
+        except files_mod.FilesError as exc:
+            self._send_error(exc.status, exc.code, exc.message)
+            return
+        self._send_json(200, body)
 
     def _launch(self) -> None:
         """``POST /v1/sessions``: start a harness on the hub or a satellite.
@@ -2043,6 +2072,32 @@ class _Handler(BaseHTTPRequestHandler):
         row["ownership"] = protocol.OWNERSHIP_ATTACHED
         self._emit_ownership(key)
         self._send_json(200, {"ok": True, "note": note})
+
+    def _session_meta(self, key: str, action: str) -> None:
+        """``POST /v1/sessions/{key}/pin|title``: kept on the hub for
+        every session, satellite ones too (``sessionmeta.py``)."""
+        body = self._read_body()
+        if body is None:
+            self._send_error(400, "bad_body", "unreadable JSON body")
+            return
+        try:
+            sessionmeta.update(self._state.home, key, action, body)
+        except ValueError as exc:
+            self._send_error(422, "bad_command", str(exc))
+            return
+        except sessionmeta.TooManyEntries as exc:
+            self._send_error(409, "too_many_pins", str(exc))
+            return
+        except OSError:
+            self._send_error(500, "store_failed", "could not save the change")
+            return
+        row = self._state.catalog.reapply_meta(key) or {}
+        data = sessionmeta.fields(row)
+        self._state.emit(
+            key,
+            protocol.event("session.meta", key, self._state.machine_id, data),
+        )
+        self._send_json(200, {"ok": True, **data})
 
     def _emit_ownership(self, key: str) -> None:
         row = self._state.catalog.row_for(key) or {}

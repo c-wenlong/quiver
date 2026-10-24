@@ -15,6 +15,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   minute per address). Pairing stays for tagged nodes, other people's
   devices, phones' remote control and satellites.
 
+- **Remote iPhone app: queued messages wait in a tray above the prompt
+  box.** A message sent while the agent works no longer sits in the
+  transcript, where new output pushed it off screen: it joins a tray
+  pinned above the prompt box ("3 messages queued"). Each row has three
+  icons: edit puts the text back in the prompt box to change it in place,
+  remove drops it before the agent sees it, and send now writes it into
+  the running turn. The header's remove button clears them all after
+  asking. A message leaves the tray and lands in the transcript once it
+  goes out. The tray reloads from the hub when you reopen the chat, and
+  the Queue/Steer picker is gone. On a hub too old to edit, an edit
+  removes the message and queues the new text at the end, and says so.
+
+- **Remote: pin a session and give it a name.** `POST
+  /v1/sessions/{key}/pin` and `/title` keep a pin and a display name on
+  the hub, so the phone and the web app agree and watched or satellite
+  sessions work too. Every session row gains `pinned`, `pinned_at` and
+  `harness_title`, and `title` shows your name when you set one. Open
+  clients hear about a change as a `session.meta` event.
+
 - **Remote iPhone app: links in replies get a preview card.** A reply
   that links to a web page shows a card under the text with the page's
   host, its path and an Open button (up to three per reply). Tapping the
@@ -125,6 +144,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through print mode or a server API doesn't offer TUI-only commands,
   and commands that would open a picker on the computer are left out.
   Claude Code, Codex and opencode are covered, satellites included.
+
+- **Remote: the hub lists a session's files for `@` mentions.**
+  `GET /v1/sessions/{id}/files?q=` returns files and folders under the
+  session's working folder, ranked for a typeahead (file name matches
+  first, then shorter and more recently changed paths), so the phone's
+  prompt box can offer `@path` as you type. Git repos are listed with
+  their `.gitignore` applied; other folders skip hidden and build folders.
+  Nothing outside the working folder is ever listed, symlinks included.
+  Sessions on a satellite machine get a clear "not available yet" error.
 
 - **Web app: Repositories and Inbox.** Repositories shows the hub's pinned
   repos as the Mac app does: pull requests, issues and Actions across
