@@ -380,6 +380,13 @@ async function loadSessions() {
   settleDetaches();
   setConn(true);
   if (state.view === "sessions") renderSessions();
+  // An open chat takes the fresh row too: a status or ownership that
+  // changed while the page was hidden would otherwise leave the banner
+  // and the send/stop button stale until the next event.
+  else if (state.view === "chat") {
+    const row = state.sessions.find((r) => r.key === state.currentKey);
+    if (row) updateOwnership(row);
+  }
 }
 
 /* ── session row actions ─────────────────────────────────────
@@ -1218,7 +1225,7 @@ function updateOwnership(row) {
   el("composer-text").disabled = observed;
   el("composer-text").placeholder = observed
     ? "Read-only: tap Attach to send"
-    : "Message the session";
+    : state.editingId ? "Edit the queued message" : "Message the session";
   el("chat-banner").classList.toggle("hidden", !observed);
   // attachable means "has resume flags"; the server also refuses when
   // the session is mid-turn, so hide the button then rather than have

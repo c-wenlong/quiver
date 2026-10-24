@@ -173,6 +173,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Remote PWA: an open chat follows the session list's refresh.** The
+  catalog reload (when the page comes back into view, or after a row
+  action) updated the row but not the open chat, so a session that
+  started working while the page was hidden kept a dimmed send button
+  instead of the red stop, and an ownership change kept the old banner,
+  until the next event. The chat now redraws its banner, prompt box and
+  send button from the fresh row; an edit in progress keeps its
+  placeholder.
+
 - **Remote: a session's status follows a send within a second.** The
   hub re-read every session's status only on its 10 second catalog
   refresh, so after a send the phone could show the session idle while
