@@ -48,6 +48,9 @@ from quiver.sessions.resume import resume_flags, launch_tool_name
 # time. "Idle" = no transcript append in this window.
 ATTACH_IDLE_S = 5.0
 
+# How long a fresh tmux pane must survive before launch_tmux trusts it.
+LAUNCH_SETTLE_S = 1.0
+
 # Harness -> tier-A channel mode for ``attach(mode="auto")``. Harnesses
 # not listed keep the tmux channel.
 _AUTO_MODE = {"opencode": "serve", "codex": "appserver"}
@@ -213,29 +216,35 @@ def meta_for(home: Path | None, session_key: str) -> dict | None:
 
 
 def launch_tmux(session_key: str, argv: list[str], cwd: str | None) -> str | None:
-    """Start ``argv`` in a detached tmux session; returns the tmux name."""
+    """Start ``argv`` in a detached tmux session; returns the tmux name.
+
+    The harness is exec'd directly, with this process's PATH, rather
+    than through tmux's default shell: under launchd that shell re-reads
+    zsh startup files, and nix-darwin's /etc/zshenv rebuilds PATH
+    without Homebrew, so ``claude`` exited 127 and took the pane with it.
+    """
     if not tmux_bin():
         return None
     name = tmux_name(session_key)
     if tmux_alive(name):
         return name
-    cmd = " ".join(_shquote(a) for a in argv)
-    args = ["new-session", "-d", "-s", name]
+    binary = shutil.which(argv[0]) or argv[0]
+    args = ["new-session", "-d", "-s", name,
+            "-e", f"PATH={os.environ.get('PATH', '')}"]
     if cwd:
         args += ["-c", cwd]
-    args.append(cmd)
+    args += [binary, *argv[1:]]
     try:
         if _tmux(*args).returncode != 0:
             return None
     except (OSError, subprocess.SubprocessError):
         return None
+    # A harness that dies on launch leaves nothing to write to; report
+    # it now instead of "attached" and a prune a few seconds later.
+    time.sleep(LAUNCH_SETTLE_S)
+    if not tmux_alive(name):
+        return None
     return name
-
-
-def _shquote(arg: str) -> str:
-    if arg and all(c.isalnum() or c in "-_./:=@%+," for c in arg):
-        return arg
-    return "'" + arg.replace("'", "'\\''") + "'"
 
 
 def send_text(name: str, text: str) -> bool:
@@ -459,7 +468,10 @@ def attach(
             session_key, [binary, *flags], session.path or None
         )
         if name is None:
-            return False, "tmux is not available or the launch failed"
+            return False, (
+                f"tmux is not available, or {binary} exited right "
+                "after launch"
+            )
         meta["tmux"] = name
         _stop_local_writers(session)
         _mark_locked(home, session_key, meta)
@@ -587,7 +599,9 @@ def launch_new(
     argv = [binary]
     name = launch_tmux(key, argv, cwd or None)
     if name is None:
-        return False, "tmux is not available or the launch failed", None
+        return False, (
+            f"tmux is not available, or {binary} exited right after launch"
+        ), None
     try:
         folder = _pending_dir(home)
         folder.mkdir(parents=True, exist_ok=True)
