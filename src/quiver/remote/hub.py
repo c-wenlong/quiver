@@ -2477,7 +2477,6 @@ class _Handler(BaseHTTPRequestHandler):
             "/app.js": "app.js",
             "/styles.css": "styles.css",
             "/manifest.webmanifest": "manifest.webmanifest",
-            "/icon.svg": "icon.svg",
             "/icon-192.png": "icon-192.png",
             "/icon-512.png": "icon-512.png",
         }.get(path)

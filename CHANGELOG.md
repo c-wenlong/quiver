@@ -287,17 +287,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Accounts: "Not signed in" and "Couldn't fetch" instead of "No reading
-  yet".** A starred harness with no usage reading now says why. swe
-  checks for the credential its fetcher reads after an empty fetch, and
-  `swe list --usage --json` and `/v1/usage` rows carry it as
-  `no_reading` (`signed_out` or `error`). The web app's Accounts page
-  names the machine and the login command (`codex login`, `cursor-agent
-  login`, ...), and the Mac app's swe-fed cards say "Not signed in" or
-  "Couldn't fetch usage" too, extra accounts included.
-- **Cursor usage on Linux.** swe now reads the session `cursor-agent`
-  keeps in `~/.config/cursor/auth.json`, so a machine signed in only
-  through the CLI shows Cursor's limits.
+- **Web app and remote PWA: the Quiver icon replaces the "W"
+  placeholder.** The favicon, home-screen icon, sidebar brand, setup
+  screen and Pricing's Quiver logo showed a placeholder zigzag that read
+  as a "W". `icon-192.png` and `icon-512.png` are now the Mac app's
+  light icon (`app/Icons/AppIcon-light.png`), and the hub no longer
+  serves `icon.svg`.
 
 - **Web app: Calendar scrolls sideways across dates.** The day, week
   and N-day grids only moved with the arrow keys or the chevrons. They
@@ -413,6 +408,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   script in `/app/pages.js` is compiled and run on its own, so a page
   that fails to parse or throws while loading is logged in the console
   and skipped; the pages around it still load.
+
+- **Accounts: "Not signed in" and "Couldn't fetch" instead of "No reading
+  yet".** A starred harness with no usage reading now says why. swe
+  checks for the credential its fetcher reads after an empty fetch, and
+  `swe list --usage --json` and `/v1/usage` rows carry it as
+  `no_reading` (`signed_out` or `error`). The web app's Accounts page
+  names the machine and the login command (`codex login`, `cursor-agent
+  login`, ...), and the Mac app's swe-fed cards say "Not signed in" or
+  "Couldn't fetch usage" too, extra accounts included.
+- **Cursor usage on Linux.** swe now reads the session `cursor-agent`
+  keeps in `~/.config/cursor/auth.json`, so a machine signed in only
+  through the CLI shows Cursor's limits.
 
 ### Added
 
