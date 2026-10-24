@@ -809,9 +809,16 @@ function onRowPointerUp(e) {
   acts.drag = null;
   if (!d.locked) return;
   suppressClick();
-  // A finger that rested before lifting carries no flick.
-  const v = e.type === "pointercancel" || e.timeStamp - d.lastT > 100 ? 0 : d.v;
   const { wrap, m } = d;
+  // The browser took the pointer back (a system gesture): nobody let
+  // go, so nothing runs and the row goes back to where it started.
+  if (e.type === "pointercancel") {
+    settleSwipe(wrap, d.base);
+    if (acts.renderLater) renderSessions();
+    return;
+  }
+  // A finger that rested before lifting carries no flick.
+  const v = e.timeStamp - d.lastT > 100 ? 0 : d.v;
   const key = wrap.dataset.key;
   const edge = (side) => {
     const b = wrap.querySelector(`.swipe-acts.${side} button`);
@@ -903,6 +910,10 @@ function openSheet(title, build, form = false) {
     if (e.target === back && !sheet.busy) closeSheet();
   });
   document.body.appendChild(back);
+  // Modal for real: everything behind the sheet goes inert, so Tab
+  // can't reach the tabs or the list while it is up.
+  sheet.inert = [...document.body.children].filter((n) => n !== back && !n.inert && n.tagName !== "SCRIPT");
+  for (const n of sheet.inert) n.inert = true;
   const first = back.querySelector("input, textarea, .sheet-actions button");
   if (first) first.focus({ preventScroll: true });
   return gen;
@@ -913,6 +924,7 @@ function closeSheet() {
   if (!s) return;
   acts.sheet = null;
   acts.sheetGen += 1;
+  for (const n of s.inert || []) n.inert = false;
   s.el.remove();
   if (s.focus && s.focus.focus && document.contains(s.focus)) s.focus.focus({ preventScroll: true });
 }
