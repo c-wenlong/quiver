@@ -204,6 +204,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rm` the ones for harnesses you don't use and archive their entries
   with `swe harness archive <name>`.
 
+- **Remote: a refused request no longer breaks the next one on the same
+  connection.** When the hub answered a POST before reading its body (a
+  401, a bad Origin, an unknown session, a 409 `not_attached`, a 413),
+  the body stayed on the keep-alive connection and was read as the start
+  of the next request, which got a 400 or 501. The web app's Sessions
+  chat and the PWA hit this after a refused send. Every response now
+  discards an unread body first: up to 1 MB within 2 seconds, keeping
+  the connection open, and anything larger, slower or sent chunked
+  closes the connection with `Connection: close` instead.
+
 - **Remote PWA: an open chat follows the session list's refresh.** The
   catalog reload (when the page comes back into view, or after a row
   action) updated the row but not the open chat, so a session that
