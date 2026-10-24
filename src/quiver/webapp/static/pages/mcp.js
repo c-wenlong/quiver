@@ -472,6 +472,8 @@ async function mcpPreview(s, thenConfirm) {
   st.running = true;
   st.error = null;
   st.confirming = false;
+  // One confirm at a time: a sync on show closes Remove's.
+  st.removing = false;
   mcpOpenSheet(s);
   const { status, data } = await mcpPost("preview", request);
   if (mcpPage.sheet !== st) return;
@@ -518,6 +520,10 @@ async function mcpSync(s) {
   if (mcpOnPage()) paintMcp();
 }
 
+/* A word as a shell would need it typed: bare when safe, else single
+ * quotes, so a copied "my server" stays one argument. */
+const mcpShellQuote = (word) => (/^[A-Za-z0-9_@%+=:,.\/-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`);
+
 /* Where Remove takes the server out of: every harness that has it, and the
  * hub (McpServersPage.removeServer). The hub refuses if any has changed. */
 const mcpRemovePlaces = (s) => [...s.harnesses, ...(s.in_hub ? ["quiver"] : [])];
@@ -528,7 +534,7 @@ function mcpRemoveConfirm(s) {
   const names = places.map((p) => (p === "quiver" ? "Quiver hub" : mcpMark(p).name)).join(", ");
   return `<div class="mcp-confirm mcp-remove-confirm" role="group" aria-label="Remove ${esc(s.name)}?">
     <p>Remove ${esc(s.name)}? It goes from ${esc(names)} on ${esc(where)}.</p>
-    <pre class="command">swe mcp remove ${esc(s.name)} --from=${esc(places.join(","))}</pre>
+    <pre class="command">swe mcp remove ${esc(mcpShellQuote(s.name))} --from=${esc(mcpShellQuote(places.join(",")))}</pre>
     <div class="sheet-actions"><button type="button" class="mcp-sheet-button" id="mcp-remove-cancel">Cancel</button>
       <button type="button" class="mcp-sheet-button primary danger" id="mcp-remove-go">Remove</button></div></div>`;
 }
@@ -754,7 +760,7 @@ function mcpBindSheet(sheet, s, st) {
       // A preview of exactly these picks can be confirmed as it is; any
       // other is read again first, so the confirm names what is on disk.
       const current = st.preview && st.preview.request === JSON.stringify(mcpRequest(s, st));
-      if (current && st.preview.files.length) { st.confirming = true; mcpOpenSheet(s); }
+      if (current && st.preview.files.length) { st.confirming = true; st.removing = false; mcpOpenSheet(s); }
       else mcpPreview(s, true);
     };
   }
