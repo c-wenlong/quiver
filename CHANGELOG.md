@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote: `swe remote serve --install` on Linux.** It writes a
+  systemd user unit (`~/.config/systemd/user/quiver-remote-hub.service`)
+  that starts the hub at boot and restarts it 15 s after it exits, the
+  way the LaunchAgent does on a Mac, so a Linux home server no longer
+  needs a hand-written unit. It turns on lingering so the hub outlives
+  logout, or says to run `sudo loginctl enable-linger $USER` when the
+  system won't let a user do that. `swe remote setup --apply` installs
+  it too, and the setup list shows a Linux hub that stops at logout.
+
 - **`swe remote setup`: every step from nothing to a paired phone.**
   Remote control needs Tailscale installed and signed in, MagicDNS and
   HTTPS certificates on in the tailnet, a certificate this machine can

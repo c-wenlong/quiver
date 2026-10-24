@@ -152,7 +152,7 @@ class EvaluateTest(unittest.TestCase):
                                  https_ok=False, cert=(True, "")))
         hub = step(r, "hub.service")
         self.assertEqual(hub["state"], setup.NEEDS_YOU)
-        self.assertIn("outside launchd", hub["detail"])
+        self.assertIn("outside the background service", hub["detail"])
         self.assertEqual(hub["action"]["command"], "pkill -f 'swe remote serve'")
 
     def test_a_hub_that_keeps_stopping_points_at_its_log(self):
@@ -161,16 +161,30 @@ class EvaluateTest(unittest.TestCase):
         self.assertEqual(hub["state"], setup.FAILED)
         self.assertIn("serve.log", hub["detail"])
 
-    def test_a_linux_hub_gets_its_command(self):
-        r = setup.evaluate(facts(platform="linux", agent_args=None, https_ok=False, cert=(True, ""),
-                                 hub_config={}))
+    def test_a_linux_hub_is_installed_as_a_systemd_unit(self):
+        r = setup.evaluate(facts(platform="linux", agent_args=None, agent_running=False, loopback_ok=False,
+                                 https_ok=False, cert=(True, "")))
+        self.assertEqual(step(r, "hub.service")["state"], setup.TODO)
+        ok = setup.evaluate(facts(platform="linux", linger=True))
+        self.assertIn("boot", step(ok, "hub.service")["detail"])
+
+    def test_a_linux_hub_without_lingering_says_how_to_keep_it(self):
+        r = setup.evaluate(facts(platform="linux", linger=False))
+        hub = step(r, "hub.service")
+        self.assertEqual(hub["state"], setup.OK, "it works; it just stops at logout")
+        self.assertIn("enable-linger", hub["detail"])
+
+    def test_linux_without_systemd_gets_the_command(self):
+        r = setup.evaluate(facts(platform="linux", service_available=False, agent_args=None,
+                                 https_ok=False, cert=(True, ""), hub_config={}))
         hub = step(r, "hub.service")
         self.assertEqual(hub["state"], setup.NEEDS_YOU)
         self.assertEqual(hub["action"]["command"], f"swe remote serve --public-url={URL}")
-        other = setup.evaluate(facts(platform="linux", agent_args=None, https_ok=False, cert=(True, ""),
-                                     hub_config={}, port=9000))
+        other = setup.evaluate(facts(platform="linux", service_available=False, agent_args=None,
+                                     https_ok=False, cert=(True, ""), hub_config={}, port=9000))
         self.assertIn("--port=9000 ", step(other, "hub.service")["action"]["command"])
-        ok = setup.evaluate(facts(platform="linux", agent_args=None, hub_config={"public_url": URL}))
+        ok = setup.evaluate(facts(platform="linux", service_available=False, agent_args=None,
+                                  hub_config={"public_url": URL}))
         self.assertEqual(states(ok)["hub.service"], setup.OK)
 
     def test_serve_missing_is_quivers_to_do_and_a_dead_serve_says_why(self):
@@ -345,6 +359,10 @@ class GatherTest(unittest.TestCase):
 
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
+        # Linux would ask systemctl too; these tests are about tailscale.
+        pin = patch.object(setup.sys, "platform", "darwin")
+        pin.start()
+        self.addCleanup(pin.stop)
 
     def fake_run(self, argv, **_kw):
         if argv[1:3] == ["status", "--json"]:
@@ -427,22 +445,19 @@ class DefaultActionsTest(unittest.TestCase):
         self.assertIn("Access denied", acts.start_serve("/ts", 8477))
 
     def test_install_hub_builds_the_loopback_program(self):
-        seen = {}
-
-        def fake_install(program, log_path, path_env, home=None, run=None):
-            seen["program"] = program
-            return Path("/x.plist")
-
+        home = Path(tempfile.mkdtemp())
         with patch.object(commands, "hub_program", return_value=(GOOD_ARGS, None)) as prog, \
-             patch.object(setup.launchd, "install", fake_install):
-            err = setup.default_actions(Path(tempfile.mkdtemp())).install_hub(URL, 8477)
+             patch.object(commands, "install_service", return_value=(Path("/x"), "")) as install:
+            err = setup.default_actions(home).install_hub(URL, 8477)
         self.assertIsNone(err)
         prog.assert_called_once_with("127.0.0.1", 8477, URL)
-        self.assertEqual(seen["program"], GOOD_ARGS)
+        self.assertEqual(install.call_args.args[0], GOOD_ARGS)
+        self.assertEqual(install.call_args.kwargs, {"home": home})
 
     def test_install_hub_reports_a_load_failure(self):
         with patch.object(commands, "hub_program", return_value=(GOOD_ARGS, None)), \
-             patch.object(setup.launchd, "install", side_effect=RuntimeError("EIO")):
+             patch.object(commands, "install_service",
+                          side_effect=RuntimeError("launchctl could not load the hub: EIO")):
             err = setup.default_actions(Path(tempfile.mkdtemp())).install_hub(URL, 8477)
         self.assertIn("EIO", err)
 

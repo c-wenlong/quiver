@@ -31,6 +31,7 @@ from quiver.remote import (
     launchd, notify, pairing, protocol, sshkeys, supervise, tail,
 )
 from quiver.remote import setup as setup_mod
+from quiver.remote import systemd
 from quiver.remote.hub import (
     DEFAULT_PORT,
     HubState,
@@ -54,7 +55,7 @@ _USAGE = f"""\
   {c('cyan', 'swe remote serve [--host=H] [--port=N]')}   Run the hub (REST + SSE)
   {c('cyan', 'swe remote serve --public-url=URL')}      Run behind tailscale serve (binds 127.0.0.1)
   {c('cyan', 'swe remote serve --install | --uninstall')}
-                                  Keep the hub running as a LaunchAgent
+                                  Keep the hub running (macOS LaunchAgent, Linux systemd unit)
   {c('cyan', 'swe remote setup [--apply] [--recheck] [--json]')}
                                   Check every step to a paired phone; --apply does Quiver's part
   {c('cyan', 'swe remote agent --hub=URL [--token=T]')}   Satellite: dial out to the hub
@@ -205,19 +206,21 @@ def _cmd_serve(flags: dict) -> int:
 
 
 def hub_program(host: str, port: int | None, public_url: str) -> tuple[list[str], str | None]:
-    """The LaunchAgent's command line, or an error saying why it can't run.
+    """The background service's command line, or an error saying why it
+    can't run.
 
-    It runs Quiver.app's bundled swe when the app is installed, else this
-    swe, unless that sits where macOS keeps launchd agents out. ``port``
-    is left off the command line when None (the default port).
+    On a Mac it runs Quiver.app's bundled swe when the app is installed,
+    else this swe, unless that sits where macOS keeps launchd agents out.
+    ``port`` is left off the command line when None (the default port).
     """
-    bundled = launchd.bundled_swe()
+    darwin = sys.platform == "darwin"
+    bundled = launchd.bundled_swe() if darwin else None
     swe = str(bundled) if bundled else os.path.abspath(sys.argv[0])
     if not bundled:
         if not os.access(swe, os.X_OK):
             return [], (f"cannot find the swe executable ({sys.argv[0]}); "
                         "run this as `swe remote serve --install`")
-        folder = launchd.protected_dir(swe)
+        folder = launchd.protected_dir(swe) if darwin else None
         if folder:
             return [], (f"{swe} is in ~/{folder}, which macOS blocks a LaunchAgent "
                         "from reading, so the hub would fail at every start. Install "
@@ -232,22 +235,57 @@ def hub_program(host: str, port: int | None, public_url: str) -> tuple[list[str]
     return program, None
 
 
+def _service_problem() -> str | None:
+    """Why ``--install`` can't keep a hub running here, or None."""
+    if sys.platform == "darwin":
+        return None
+    if sys.platform.startswith("linux"):
+        if systemd.available():
+            return None
+        return ("no systemd user manager here; run `swe remote serve` under "
+                "this machine's init system instead")
+    return "--install keeps the hub running on macOS (launchd) and Linux (systemd) only"
+
+
+def install_service(program: list[str], log_path: Path,
+                    home: Path | None = None) -> tuple[Path, str]:
+    """Install and (re)start the hub as this platform's background service.
+
+    Returns its file and a note to print ("" when none); raises
+    RuntimeError with the service manager's message.
+    """
+    path_env = os.environ.get("PATH", "")
+    if sys.platform == "darwin":
+        try:
+            return launchd.install(program, log_path, path_env, home=home), ""
+        except RuntimeError as exc:
+            raise RuntimeError(f"launchctl could not load the hub: {exc}") from exc
+    try:
+        path, linger = systemd.install(program, log_path, path_env, home=home)
+    except RuntimeError as exc:
+        raise RuntimeError(f"systemctl could not start the hub: {exc}") from exc
+    note = (f"it runs only while you're logged in; to keep it after logout, run `{linger}`"
+            if linger else "")
+    return path, note
+
+
 def _cmd_serve_launchd(flags: dict) -> int:
-    if sys.platform != "darwin":
-        print(c("red", "--install and --uninstall manage a macOS LaunchAgent; "
-                       "on Linux run `swe remote serve` under a systemd unit"),
-              file=sys.stderr)
+    problem = _service_problem()
+    if problem:
+        print(c("red", problem), file=sys.stderr)
         return 1
+    darwin = sys.platform == "darwin"
     if flags.get("--uninstall"):
         try:
-            removed = launchd.uninstall()
+            removed = launchd.uninstall() if darwin else systemd.uninstall()
         except RuntimeError as exc:
-            print(c("red", f"launchctl could not stop the hub: {exc}"), file=sys.stderr)
+            print(c("red", f"could not stop the hub: {exc}"), file=sys.stderr)
             return 1
         if removed:
-            print(f"stopped the hub and removed {launchd.plist_path()}")
+            where = launchd.plist_path() if darwin else systemd.unit_path()
+            print(f"stopped the hub and removed {where}")
         else:
-            print(c("dim", "no hub LaunchAgent was installed"))
+            print(c("dim", f"no hub {'LaunchAgent' if darwin else 'systemd unit'} was installed"))
         return 0
     try:
         host, port = _host_port(flags)
@@ -261,22 +299,24 @@ def _cmd_serve_launchd(flags: dict) -> int:
     if err:
         print(c("red", err), file=sys.stderr)
         return 1
-    # A hub started from a shell would keep the port, and launchd's copy
-    # would fail to bind on every retry.
+    # A hub started from a shell would keep the port, and the service's
+    # copy would fail to bind on every retry.
     probe_host = host or _tailscale_ip() or "127.0.0.1"
-    loaded, _ = launchd.loaded_pid()
+    loaded = launchd.loaded_pid()[0] if darwin else systemd.status()[1]
     stray = not loaded and _probe(probe_host, port, timeout=1.0) is not None
     log_path = remote_dir_for() / "serve.log"
     try:
-        path = launchd.install(program, log_path, os.environ.get("PATH", ""))
+        path, note = install_service(program, log_path)
     except RuntimeError as exc:
-        print(c("red", f"launchctl could not load the hub: {exc}"), file=sys.stderr)
+        print(c("red", str(exc)), file=sys.stderr)
         return 1
     print(f"installed {path}")
     print(f"  runs  {' '.join(program)}")
     print(f"  log   {log_path}")
-    print(c("dim", "  starts at login and restarts if it exits; "
+    print(c("dim", f"  starts at {'login' if darwin else 'boot'} and restarts if it exits; "
                    "run --install again to restart it, --uninstall to stop it"))
+    if note:
+        print(c("yellow", f"  {note}"), file=sys.stderr)
     if not stray:
         # A hub that can't start exits and launchd only retries, so wait
         # for it to answer rather than leave the phone offline unsaid.
@@ -289,10 +329,12 @@ def _cmd_serve_launchd(flags: dict) -> int:
             print(c("yellow", f"the hub is not answering on {probe_host}:{port} after "
                               f"{_INSTALL_WAIT_S} s; see {log_path}"), file=sys.stderr)
     if stray:
+        manager = "launchd" if darwin else "systemd"
+        delay = launchd.THROTTLE_S if darwin else systemd.RESTART_S
         print(c("yellow",
-                f"a hub started outside launchd already answers on {probe_host}:{port}. "
-                "Stop it (pgrep -f 'swe remote serve') and launchd starts its own "
-                f"within {launchd.THROTTLE_S} s."),
+                f"a hub started outside {manager} already answers on {probe_host}:{port}. "
+                f"Stop it (pgrep -f 'swe remote serve') and {manager} starts its own "
+                f"within {delay} s."),
               file=sys.stderr)
     return 0
 

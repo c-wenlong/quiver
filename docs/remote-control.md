@@ -58,7 +58,7 @@ app's Settings › Remote shows the same list from `--json`.
 | MagicDNS on | `CurrentTailnet.MagicDNSEnabled` and the node's `DNSName` | link to the admin console's DNS page; only an admin can turn it on |
 | HTTPS certificates on | the node's name in `CertDomains` | the same DNS page, Enable HTTPS |
 | Certificate | `tailscale cert` into a temp folder, removed at once (tailscaled keeps its own copy) | the reason, in plain words: a DNS lookup timeout says to add a reachable DNS server or turn on Override DNS servers |
-| Hub running in the background | the LaunchAgent runs `serve --host=127.0.0.1 --public-url=https://<name>:<port>` and answers on loopback | `--apply` installs it; on Linux, the `serve --public-url` command to run under systemd |
+| Hub running in the background | the LaunchAgent (Mac) or systemd user unit (Linux) runs `serve --host=127.0.0.1 --public-url=https://<name>:<port>` and answers on loopback | `--apply` installs it; a Linux user whose services stop at logout is told to run `sudo loginctl enable-linger $USER`; without a systemd user manager, the `serve --public-url` command to run under the init system |
 | Reachable over https | `tailscale serve status --json` proxies `:<port>` to the hub, and `https://<name>:<port>/v1/status` answers | `--apply` runs `tailscale serve --bg --https=<port> http://127.0.0.1:<port>`; on Linux a refused serve gives `sudo tailscale set --operator=$USER` |
 | A phone paired | `devices.json` | Pair a phone |
 
@@ -101,10 +101,9 @@ pair` prints `https://` links (the `quiver://` deep link gains
 Satellites dial the `https://` URL; when Python's default store has no
 CA certificates (python.org builds on macOS), the agent retries once
 against the OS bundle and keeps it, never skipping verification.
-On a Mac, `swe remote serve --install --public-url=URL` writes a
-LaunchAgent that runs the hub on `127.0.0.1` with that URL instead of
-`--tailnet`; on Linux, run the same `serve --public-url=URL` under a
-systemd user unit.
+`swe remote serve --install --public-url=URL` writes a LaunchAgent
+(Mac) or systemd user unit (Linux) that runs the hub on `127.0.0.1`
+with that URL instead of `--tailnet`.
 
 ## Precedents
 
@@ -159,6 +158,7 @@ remote/
   agent.py       # satellite daemon: dial hub, run local tail/inject
   notify.py      # needs-you/finished/error fan-out via self-hosted ntfy
   launchd.py     # serve --install: the hub as a per-user LaunchAgent
+  systemd.py     # serve --install on Linux: the hub as a systemd user unit
   setup.py       # swe remote setup: every step to a paired phone, --apply
   commands.py    # swe remote serve|agent|pair|attach|status — argv + print
 ```
@@ -686,7 +686,7 @@ harness supports it, an inlined path otherwise. Caps: 20 MB per file,
 image/pdf/text only, swept after 7 days or at session end, whichever
 comes first.
 
-## Keeping the hub up — `launchd.py`
+## Keeping the hub up — `launchd.py`, `systemd.py`
 
 A hub started from a shell dies with the login session, and nothing
 restarts it. `swe remote serve --install` writes
@@ -702,8 +702,20 @@ new bundle. The agent gets the installing shell's `PATH` and logs to
 `~/.quiver/data/remote/serve.log` with timestamped start and stop lines.
 It runs `serve --tailnet`: with no Tailscale address yet (early in a
 login) the hub exits instead of binding localhost, and launchd retries.
-`--install` again restarts it; `--uninstall` stops and removes it. On
-Linux, run `swe remote serve` under a systemd unit instead.
+`--install` again restarts it; `--uninstall` stops and removes it.
+
+On Linux, `--install` writes the systemd user unit
+`~/.config/systemd/user/quiver-remote-hub.service` (under
+`$XDG_CONFIG_HOME` when set) with `Restart=always`, `RestartSec=15` and
+`WantedBy=default.target`, then runs `daemon-reload`, `enable` and
+`restart`. It runs the `swe` that installed it, with the installing
+shell's `PATH`, and appends to the same `serve.log`. A user service
+stops at logout unless the user lingers, so `--install` runs `loginctl
+enable-linger` when lingering is off (polkit usually lets a user do it
+for themself) and, when that's refused, says to run `sudo loginctl
+enable-linger $USER`. A machine with no systemd user manager (some
+containers, WSL without systemd) is told to run `swe remote serve`
+under its own init system.
 
 ## Satellite — `agent.py`
 
