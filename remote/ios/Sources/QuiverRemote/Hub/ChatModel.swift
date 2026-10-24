@@ -429,15 +429,21 @@ final class ChatModel {
         awaitingReply = true
         do {
             let accepted = try await client.sendMessage(key, text: text, mode: mode.rawValue, clientId: cid)
-            if accepted.waiting == true, let i = items.firstIndex(where: { $0.id == id }) {
+            if accepted.waiting == true, let i = pendingSend(id) {
                 items[i].kind = .user(text: text, send: .queued("Queued until the agent is idle"))
             }
         } catch {
-            awaitingReply = false
-            if let i = items.firstIndex(where: { $0.id == id }) {
+            if let i = pendingSend(id) {
+                awaitingReply = false
                 items[i].kind = .user(text: text, send: .failed((error as? HubError)?.message ?? "Send failed"))
             }
         }
+    }
+
+    /// The bubble of a send the hub hasn't echoed yet. An echoed one keeps
+    /// its id but is delivered, so a late reply to the POST leaves it alone.
+    private func pendingSend(_ id: String) -> Int? {
+        items.firstIndex { if case .user(_, let s) = $0.kind, s != nil { $0.id == id } else { false } }
     }
 
     func retry(_ item: ChatItem) async {

@@ -52,6 +52,7 @@ struct ChatView: View {
 
 private struct ChatBody: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Bindable var model: ChatModel
 
     /// Scrolling within this many entries of the oldest one loaded asks
@@ -79,10 +80,10 @@ private struct ChatBody: View {
                         }
                     }
                     .onAppear { if index < Self.earlierThreshold, model.hasEarlier { model.wantsEarlier = true } }
-                    .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 12)), removal: .opacity))
+                    .transition(.asymmetric(insertion: arrival(12), removal: .opacity))
                 }
                 if model.working, !model.loading {
-                    WorkingIndicator().transition(.opacity.combined(with: .offset(y: 8)))
+                    WorkingIndicator().transition(arrival(8))
                 }
             }
             .animation(.easeOut(duration: 0.2), value: model.working)
@@ -95,6 +96,11 @@ private struct ChatBody: View {
         .modifier(LoadsEarlierAtRest(model: model, oldest: entries.first?.id))
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom) { bottomBar }
+    }
+
+    /// New entries fade in, rising `rise` points unless Reduce Motion is on.
+    private func arrival(_ rise: CGFloat) -> AnyTransition {
+        reduceMotion ? .opacity : .opacity.combined(with: .offset(y: rise))
     }
 
     @ViewBuilder private var bottomBar: some View {
