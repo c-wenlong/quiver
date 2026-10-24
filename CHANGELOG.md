@@ -45,6 +45,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `@"My Documents/notes.txt"`, as Claude Code writes it. On iOS 17 the
   menu follows the end of the text rather than the caret.
 
+- **Remote iPhone app: swipe a session to attach, detach, pin, rename or
+  fork it.** Swipe right on a Sessions row to attach it, or to detach
+  one you hold; swipe left to pin, rename or fork it. A full swipe runs
+  the first action, and a long press shows them all in a menu. A
+  session that looks idle detaches once the hub sees it idle, with Undo;
+  a working one asks whether to detach when the turn ends, keep it
+  running in tmux, or detach now.
+  Pinned sessions sit in a Pinned section at the top. Fork asks for the
+  new session's first message and opens its chat once it starts.
+
 - **Web app: your own devices open it without pairing.** A browser on a
   device signed in to the hub owner's Tailscale account loads `/app/`
   straight away; the hub knows it from `tailscale whois` (cached a

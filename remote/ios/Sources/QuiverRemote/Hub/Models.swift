@@ -78,17 +78,39 @@ struct SessionRow: Codable, Identifiable, Hashable {
     let harness: String?
     let agent: String?
     let cwd: String?
-    let title: String?
+    /// The name you gave it on the hub, else the harness's own title.
+    var title: String?
     let lastActiveAt: Double?
-    let status: String?
+    var status: String?
     let machineId: String?
-    let ownership: String?
+    var ownership: String?
     let attachable: Bool?
     /// A satellite's session, which the hub forwards to that machine.
     var remote: Bool? = nil
+    /// The harness's own title, even when `title` is a name you set.
+    var harnessTitle: String? = nil
+    var pinned: Bool? = nil
+    /// When it was pinned (epoch seconds): the Pinned section's order.
+    var pinnedAt: Double? = nil
+    /// The harness can start a fork of this session.
+    var canFork: Bool? = nil
 
     var id: String { key }
     var displayTitle: String { (title?.isEmpty == false ? title : nil) ?? "Untitled session" }
+    var isPinned: Bool { pinned == true }
+    /// A name set on the hub replaces the harness's title.
+    var hasCustomTitle: Bool {
+        guard let harnessTitle, let title, !title.isEmpty else { return false }
+        return title != harnessTitle
+    }
+
+    /// The pin and name the hub answered or announced, laid over this row.
+    mutating func apply(_ meta: SessionMeta) {
+        title = meta.title
+        if let h = meta.harnessTitle { harnessTitle = h }
+        pinned = meta.pinned
+        pinnedAt = meta.pinned == true ? meta.pinnedAt : nil
+    }
     var harnessName: String { agent ?? harness ?? "agent" }
     var sessionStatus: SessionStatus { SessionStatus(raw: status) }
     var isAttached: Bool { ownership == "attached" }
@@ -101,6 +123,21 @@ struct SessionRow: Codable, Identifiable, Hashable {
     var needsYouNow: Bool {
         sessionStatus == .approval || (sessionStatus == .followup && Staleness.isFresh(lastActiveAt))
     }
+}
+
+/// `POST .../pin` and `.../title` answer this; `session.meta` carries it.
+struct SessionMeta: Codable, Equatable {
+    var title: String?
+    var harnessTitle: String?
+    var pinned: Bool?
+    var pinnedAt: Double?
+}
+
+/// `POST .../control {op: "detach", mode: "when_idle"}` answers 202 with this.
+struct DetachQueued: Decodable {
+    let queued: Bool?
+    let mode: String?
+    let note: String?
 }
 
 struct SessionsResponse: Codable {
@@ -177,6 +214,8 @@ struct CommandResult: Decodable {
     let degraded: Bool?
     let clientId: String?
     let requestId: String?
+    /// `when_idle` on a detach's result.
+    var mode: String? = nil
     /// A queued send removed before it went out (`POST .../queue` cancel):
     /// `ok` is false, but nothing failed.
     var cancelled: Bool? = nil
