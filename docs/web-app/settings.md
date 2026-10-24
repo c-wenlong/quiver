@@ -27,7 +27,7 @@ app's saved value does).
 | Integrations | GitHub: gh's login (with the app's warnings and a re-check button) and the synced repo catalog. Remote: the setup checklist until it's done, the hub, paired devices, Pair a device, and pair requests waiting for approval (below). |
 | Paths | The hub's swe, API keys file and MCP servers folder, read only. Editor: Mac app only. |
 | Doctor | A link to the Doctor page (`#/doctor`); the app draws Doctor inside Settings. |
-| Experimental | Session search: Mac app only. |
+| Experimental | Session search: a switch for the hub's transcript index (`swe session index --on`/`--off`), with its status underneath (below). |
 
 A greyed row keeps the app's title and wording, with a "Mac app only"
 badge where its control would be.
@@ -80,6 +80,22 @@ the way `mask_key` prints it (first 8, last 4, length). A status select
 count. Adding, editing, checking and revealing keys, and the coding
 plans, stay in the Mac app.
 
+### Experimental › Session search
+
+The switch is the hub's own setting, `enabled` in
+`~/.quiver/data/search/indexer.json`: while it is on, the hub's
+`remote-search-index` thread runs a pass over Claude Code and Codex
+transcripts every two minutes (`sessions/search_writer.py`). Turning it
+on also starts a pass at once, so the line under the switch reads
+"Indexing: the first pass reads every transcript and can take a few
+minutes." and the page re-reads the status every 3 seconds until
+`running` clears. Settled, it reads "Synced: N sessions, M messages · last
+pass <ago>", with files behind or failed added, as the Mac row's status
+does. Off, it says how much the index still holds (the Mac app's rows
+count too). A failed pass or an unreadable index shows as a warning. A
+hub from before the Python indexer sends no `session_search`, and the row
+stays greyed as Mac app only.
+
 ### Kept per browser
 
 Appearance (`quiver.appearance`) sets `data-theme` on `<html>`, which
@@ -113,7 +129,12 @@ app loads, not only when Settings is open, so `app.js` needs no change.
               "has_key": true, "masked": "sk-proj-***1234 (32)", "url": "https://…", "description": "…"}]
   },
   "paths": {"swe": "~/.local/bin/swe", "api_keys": "~/.quiver/secrets/providers/.api_keys",
-            "mcp_servers": "~/.quiver/mcp/servers"}
+            "mcp_servers": "~/.quiver/mcp/servers"},
+  "session_search": {"enabled": true, "running": false, "exists": true, "schema_version": "1",
+                     "files": {"current": 909}, "sessions_by_agent": {"claude": 850, "codex": 58},
+                     "sessions": 908, "messages": 326558, "last_error": null,
+                     "last_pass": {"files": 909, "indexed": 3, "current": 906, "failed": 0, "moved": 0,
+                                   "drained": 0, "seconds": 0.4, "finished_at": 1792864722.4}}
 }
 ```
 
@@ -140,7 +161,7 @@ it shows the cached result, so the page stays quick.
 
 ## Writes
 
-Both behind the device bearer and the hub's Origin check, one at a time.
+All three behind the device bearer and the hub's Origin check, one at a time.
 
 `POST /v1/app/settings/pair`, body `{}`: mints a token
 (`pairing.mint_pair_token`) and answers `{"ticket": {"host", "port",
@@ -149,6 +170,12 @@ Both behind the device bearer and the hub's Origin check, one at a time.
 `swe remote pair --json` gives phones: the hub's `--public-url` when it
 runs behind `tailscale serve`, else the address it advertises, else the
 tailnet IP.
+
+`POST /v1/app/settings/session_search`, body `{"enabled": true|false}`:
+`swe session index --on`/`--off`. On also starts a pass on a background
+thread (quietly skipped if the hub loop or a CLI pass holds the lock; any
+other failure lands in `last_error`). Answers `{"session_search": …}` in
+the `get` shape; `400 bad_enabled` when `enabled` isn't a boolean.
 
 `POST /v1/app/settings/revoke`, body `{"device_id": "…"}` (plus
 `"confirm_this_device": true` for the device sending it): answers
@@ -161,7 +188,7 @@ tailnet IP.
 | 404 | `unknown_device` | no paired device has that id |
 | 409 | `already_revoked` | the device is already signed out |
 | 409 | `confirm_this_device` | revoking the sender's own device without `confirm_this_device: true` |
-| 404 | `unknown_action` | any action but `pair` and `revoke` |
+| 404 | `unknown_action` | any action but `pair`, `revoke` and `session_search` |
 | 403 | `bad_origin` | a cross-site POST |
 | 401 | `unauthorized` | neither a paired device nor the owner's tailnet device |
 

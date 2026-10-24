@@ -857,6 +857,21 @@ class _Lock:
         self.handle.close()
 
 
+def is_running(home: Path | None = None) -> bool:
+    """Whether a Python pass holds ``index.lock`` right now (the hub's
+    loop, a ``swe session index``, or a pass Settings started)."""
+    path = search_index_for(home).parent / LOCK_FILE
+    if fcntl is None or not path.exists():
+        return False
+    with open(path, "a+") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return True
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return False
+
+
 def run_pass(home: Path | None = None, *, should_stop=None) -> PassResult:
     """Index every Claude Code and Codex transcript under ``home`` once.
 
@@ -910,6 +925,7 @@ def status(home: Path | None = None) -> dict:
     state = load_state(home)
     body: dict = {
         "enabled": state.get("enabled") is True,
+        "running": is_running(home),
         "last_pass": state.get("last_pass"),
         "last_error": state.get("last_error"),
         "exists": False,
