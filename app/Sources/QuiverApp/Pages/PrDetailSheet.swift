@@ -323,7 +323,7 @@ private struct CheckGlyph: View {
 /// The PR body, segmented by `GitHubMarkdown`: prose between `<details>`
 /// folds renders as markdown; each fold collapses to its `<summary>`
 /// line — the way GitHub renders them.
-private struct MarkdownBody: View {
+struct MarkdownBody: View {
     let segments: [MarkdownSegment]
 
     init(body: String) { segments = GitHubMarkdown.segments(body) }
@@ -368,7 +368,7 @@ private struct MarkdownBody: View {
 /// The body's blocks as real views: sized headings, monospaced fences,
 /// a quote rail, and list markers that draw — the structures Apple's
 /// fused-text render could only hint at with characters.
-private struct MarkdownBlocks: View {
+struct MarkdownBlocks: View {
     let blocks: [MarkdownBlock]
 
     var body: some View {

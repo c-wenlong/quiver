@@ -49,6 +49,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now loads on a retry when launchd answers "Input/output error", and
   every Tailscale call finds the CLI inside Tailscale.app too.
 
+- **Mac app: read a session live from Sessions.** A click on a
+  session now opens its chat over the list, as in the web app: the
+  transcript from this Mac's hub, tool calls that open to their
+  arguments and output, approvals and how they were answered, then each
+  new message as the agent writes it, with a Live dot and the session's
+  status and ownership. ⌘[ or Sessions goes back; Details and the
+  context menu still open the details sheet, which is also what a click
+  opens for cloud sessions, ones the hub doesn't list, and any while the
+  hub is down. The first chat pairs the app with the hub on its own: it
+  lists as "Quiver for Mac" in Settings › Remote and keeps its
+  credential in `~/.quiver/secrets/remote/app-device.json`. Sending and
+  attaching follow in their own changes.
+
 - **Mac app: a setup checklist for remote control.** Settings ›
   Integrations › Remote now offers "Set up remote control" until the
   phone path is finished, in place of the old "Run `swe remote serve`"
