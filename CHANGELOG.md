@@ -32,6 +32,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Remote: a malformed write body gets an answer.** A list or object
+  as a message's `mode`, an approval's `decision` or a control `op` made
+  the hub drop the connection with no response. It now answers `422
+  bad_command`, and only a missing, null or empty `mode` defaults to
+  `queue`.
+
+- **Remote: a send from the phone shows up within a second.** The hub
+  used to poll an idle session's transcript only every 8 seconds, so the
+  message, the agent starting and its first reply could lag that long
+  after the send had already reached the session. Now every message,
+  approval answer, interrupt or attach wakes that session's tailer at
+  once and polls it every quarter second for the next 15 seconds, on the
+  hub and on satellites alike. Devin and other stores that are re-read
+  whole stay at once a second.
+
 - **Remote web app: chats stream in instead of landing in blocks.** The
   browser client gets the iPhone app's treatment: messages that arrive
   together show one at a time with a short gap (a replay after
@@ -81,6 +96,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unknown_send`, and a cancel racing the send never both sends and
   removes it. Satellite sessions never hold queued sends on the hub, so
   their list is empty and the actions answer `409 queue_unsupported`.
+
+- **Remote hub: the slash commands each session can run.**
+  `GET /v1/sessions/{id}/commands` lists what typing "/" in the phone's
+  prompt box should offer: the harness's built-ins plus the user's and
+  the project's own commands, skills and plugin commands, each with a
+  one-line description and where it came from. The list only holds what
+  will work the way the phone reaches that session, so a session driven
+  through print mode or a server API doesn't offer TUI-only commands,
+  and commands that would open a picker on the computer are left out.
+  Claude Code, Codex and opencode are covered, satellites included.
 
 - **Web app: Repositories and Inbox.** Repositories shows the hub's pinned
   repos as the Mac app does: pull requests, issues and Actions across
