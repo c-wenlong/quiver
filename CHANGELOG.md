@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote PWA: swipe a session to attach, detach, pin, rename or fork
+  it.** The phone web app's Sessions list gets the iPhone app's swipe
+  actions: right to attach a session, or to detach one you hold; left to
+  pin, rename or fork it. A full swipe runs the first action, a drag that
+  starts up or down still scrolls, and a long press, a right-click or the
+  ⋯ button on a desktop browser shows them all in a sheet. An idle
+  session detaches once the hub sees it idle, with Undo; a working one
+  asks whether to detach when the turn ends, keep it running in tmux, or
+  detach now. Pinned sessions sit in a Pinned section at the top. Fork
+  asks for the new session's first message and opens its chat once it
+  starts.
+
 - **Web app: remote control on the Sessions page.** Clicking a session
   opens its chat: the transcript with thinking, tool cards, diffs and
   compaction, live as the agent works, and for an attached session the
