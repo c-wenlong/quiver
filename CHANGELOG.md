@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Remote web app: chats stream in instead of landing in blocks.** The
+  browser client gets the iPhone app's treatment: messages that arrive
+  together show one at a time with a short gap (a replay after
+  reconnecting still lands at once), new messages fade and slide in
+  (fade only with reduced motion), and three pulsing dots under the
+  last message show the agent is working or a send is waiting.
+
 - **Remote iPhone app: stop lives in the send button.** The separate Stop
   button above the prompt box is gone. With nothing typed while the agent
   works, the round button beside the box turns red with a white square
