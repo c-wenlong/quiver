@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Queue/Steer picker is gone. On a hub too old to edit, an edit
   removes the message and queues the new text at the end, and says so.
 
+- **Remote: pin a session and give it a name.** `POST
+  /v1/sessions/{key}/pin` and `/title` keep a pin and a display name on
+  the hub, so the phone and the web app agree and watched or satellite
+  sessions work too. Every session row gains `pinned`, `pinned_at` and
+  `harness_title`, and `title` shows your name when you set one. Open
+  clients hear about a change as a `session.meta` event.
+
 - **Remote: edit a queued message in place.** `POST
   /v1/sessions/{key}/queue` takes `op: "edit"` with a `text`, which
   replaces a waiting send's text without moving it in the queue and
