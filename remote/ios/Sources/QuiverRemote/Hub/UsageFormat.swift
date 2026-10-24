@@ -108,7 +108,7 @@ enum UsageFormat {
         return "\(Int(d / 86_400)) d ago"
     }
 
-    /// "Teams", "Self serve business prolite"; nil for no plan.
+    /// "Teams", "Pro team"; nil for no plan.
     static func plan(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
         return capitalized(raw.replacingOccurrences(of: "_", with: " "))
@@ -139,7 +139,7 @@ enum UsageFormat {
         return String(format: scaled < 99.95 ? "%.1f%@" : "%.0f%@", scaled, units[i].suffix)
     }
 
-    /// "$0.42", "$12.30", "$5,404": cents below $1,000, whole dollars above.
+    /// "$0.42", "$12.30", "$5,432": cents below $1,000, whole dollars above.
     static func usd(_ value: Double?) -> String {
         let v = value ?? 0
         let f = NumberFormatter()

@@ -1,102 +1,102 @@
 import XCTest
 @testable import QuiverRemote
 
-/// Trimmed from real `/v1/usage` and `/v1/app/overview` answers (built by
+/// The shape of real `/v1/usage` and `/v1/app/overview` answers (built by
 /// `quiver.remote.usage.snapshot` and `quiver.ledger.overview.build`),
-/// with machine names and ids replaced. Kept fields the app ignores so
-/// decoding is shown to skip them.
+/// with every figure, name and time made up. Fields the app ignores are
+/// kept so decoding is shown to skip them.
 enum UsageFixtures {
-    static let serverTime: Double = 1_792_827_652.9
+    static let serverTime: Double = 1_800_000_000
 
     static let usage = #"""
     {
       "harnesses": [
-        {"name": "claude", "display_name": "Claude Code", "command": "claude", "version": "2.1.0", "notes": null,
-         "aliases": ["cc"], "tags": ["agentic"], "primary_color": "#D97757", "state": "starred", "sessions_100d": 773,
-         "rate_limit": {"status": "ok", "used_percent": 11, "remaining_percent": 89, "limit_reached": false,
-           "reset_at": 1793304000.481687, "window": "7d", "window_seconds": null, "plan_type": null,
+        {"name": "claude", "display_name": "Claude Code", "command": "claude", "version": "1.0.0", "notes": null,
+         "aliases": ["cc"], "tags": ["agentic"], "primary_color": "#D97757", "state": "starred", "sessions_100d": 120,
+         "rate_limit": {"status": "ok", "used_percent": 10, "remaining_percent": 90, "limit_reached": false,
+           "reset_at": 1800400000.0, "window": "7d", "window_seconds": null, "plan_type": null,
            "remaining_units": null, "total_units": null, "windows": [], "extra_usage_usd": null, "on_demand": null,
-           "fetched_at": 1792753303.8406641},
+           "fetched_at": 1799990000.0},
          "installed": true, "archived": null},
         {"name": "codex", "display_name": "Codex", "state": "starred", "sessions_100d": 5,
-         "rate_limit": {"status": "ok", "used_percent": 33, "remaining_percent": 67, "limit_reached": false,
-           "reset_at": 1793322577.0, "window": null, "window_seconds": 604800, "plan_type": "self_serve_business_prolite",
+         "rate_limit": {"status": "ok", "used_percent": 30, "remaining_percent": 70, "limit_reached": false,
+           "reset_at": 1800500000.0, "window": null, "window_seconds": 604800, "plan_type": "pro",
            "remaining_units": null, "total_units": null, "windows": [], "extra_usage_usd": null, "on_demand": null,
-           "fetched_at": 1792827600.0},
+           "fetched_at": 1799999900.0},
          "installed": true, "archived": null},
-        {"name": "opencode", "display_name": "OpenCode", "state": "active", "sessions_100d": 54, "rate_limit": null,
+        {"name": "opencode", "display_name": "OpenCode", "state": "active", "sessions_100d": 50, "rate_limit": null,
          "installed": true, "archived": null},
-        {"name": "cursor", "display_name": null, "state": "starred", "sessions_100d": 71,
+        {"name": "cursor", "display_name": null, "state": "starred", "sessions_100d": 70,
          "rate_limit": {"status": "ok", "used_percent": 0, "remaining_percent": 100, "limit_reached": false,
-           "reset_at": 1794460593.0, "window": "included", "window_seconds": 2678400, "plan_type": "free",
+           "reset_at": 1801000000.0, "window": "included", "window_seconds": 2678400, "plan_type": "free",
            "remaining_units": null, "total_units": null,
            "windows": [
              {"window": "included", "used_percent": 0, "remaining_percent": 100, "limit_reached": false,
-              "reset_at": 1794460593.0, "window_seconds": 2678400},
+              "reset_at": 1801000000.0, "window_seconds": 2678400},
              {"window": "grok_bot", "used_percent": 0, "remaining_percent": 100, "limit_reached": false,
-              "reset_at": null, "window_seconds": 604800, "unavailable": true, "as_of": 1792820000.0}],
+              "reset_at": null, "window_seconds": 604800, "unavailable": true, "as_of": 1799990000.0}],
            "extra_usage_usd": null,
            "on_demand": {"state": "unlimited", "scope": "team-member", "used_usd": 0.0, "limit_usd": null},
-           "fetched_at": 1792827635.018888},
+           "fetched_at": 1799999900.0},
          "installed": true, "archived": null},
-        {"name": "devin", "display_name": null, "state": "starred", "sessions_100d": 88,
-         "rate_limit": {"status": "ok", "used_percent": 98, "remaining_percent": 2, "limit_reached": false,
-           "reset_at": 1792915200.0, "window": "7d", "window_seconds": 604800, "plan_type": "teams",
+        {"name": "devin", "display_name": null, "state": "starred", "sessions_100d": 80,
+         "rate_limit": {"status": "ok", "used_percent": 90, "remaining_percent": 10, "limit_reached": false,
+           "reset_at": 1800300000.0, "window": "7d", "window_seconds": 604800, "plan_type": "teams",
            "remaining_units": null, "total_units": null,
            "windows": [
              {"window": "1d", "used_percent": 0, "remaining_percent": 100, "limit_reached": false,
-              "reset_at": 1792828800.0, "window_seconds": 86400},
-             {"window": "7d", "used_percent": 98, "remaining_percent": 2, "limit_reached": false,
-              "reset_at": 1792915200.0, "window_seconds": 604800}],
-           "extra_usage_usd": 8219.74, "on_demand": null, "fetched_at": 1792827635.0189388},
+              "reset_at": 1800050000.0, "window_seconds": 86400},
+             {"window": "7d", "used_percent": 90, "remaining_percent": 10, "limit_reached": false,
+              "reset_at": 1800300000.0, "window_seconds": 604800}],
+           "extra_usage_usd": 100.0, "on_demand": null, "fetched_at": 1799999900.0},
          "installed": true, "archived": null},
         {"name": "qwen-code", "display_name": "Qwen Code", "state": "active", "sessions_100d": null, "rate_limit": null,
          "installed": true, "archived": null}
       ],
       "window_days": 100,
-      "server_time": 1792827652.9,
-      "machine": {"id": "hub0001", "name": "studio.local", "os": "darwin", "online": true},
+      "server_time": 1800000000.0,
+      "machine": {"id": "hub0001", "name": "hub.local", "os": "darwin", "online": true},
       "machines": [
-        {"machine": {"id": "hub0001", "name": "studio.local", "os": "darwin", "online": true},
-         "harnesses": [], "window_days": 100, "reported_at": 1792827652.9, "received_at": 1792827652.9, "hub": true},
+        {"machine": {"id": "hub0001", "name": "hub.local", "os": "darwin", "online": true},
+         "harnesses": [], "window_days": 100, "reported_at": 1800000000.0, "received_at": 1800000000.0, "hub": true},
         {"machine": {"id": "sat0002", "name": "laptop.local", "online": false},
          "harnesses": [
            {"name": "gemini", "display_name": "Gemini CLI", "state": "starred", "sessions_100d": 3,
             "rate_limit": {"status": "auth-required", "used_percent": 0, "remaining_percent": 100, "limit_reached": false,
               "reset_at": null, "window": null, "window_seconds": null, "plan_type": null, "remaining_units": null,
               "total_units": null, "windows": [], "extra_usage_usd": null, "on_demand": null, "fetched_at": null}}],
-         "window_days": 100, "reported_at": 1792826000.0, "received_at": 1792826010.0, "hub": false}
+         "window_days": 100, "reported_at": 1799998000.0, "received_at": 1799998010.0, "hub": false}
       ]
     }
     """#
 
     static let overview = #"""
     {
-      "period": "7d", "time_zone": "Asia/Singapore",
-      "range": {"start_day": "2026-10-17", "end_day": "2026-10-24"},
-      "first_day": "2026-02-25",
-      "totals": {"tokens": 12997498697, "input": 202181994, "output": 41547602, "cache_read": 12564563122,
-                 "cache_write": 182487527, "reasoning": 6718452, "cost_usd": 5403.8346387200045,
-                 "unpriced_tokens": 1504919, "unpriced_models": ["x-test-1"]},
+      "period": "7d", "time_zone": "UTC",
+      "range": {"start_day": "2026-01-01", "end_day": "2026-01-08"},
+      "first_day": "2025-12-01",
+      "totals": {"tokens": 20000000, "input": 1000000, "output": 500000, "cache_read": 18000000,
+                 "cache_write": 500000, "reasoning": 0, "cost_usd": 1234.5,
+                 "unpriced_tokens": 2000000, "unpriced_models": ["x-test-1"]},
       "harnesses": [
-        {"harness": "claude", "tokens": 8417112203, "cost_usd": 2913.8321453000012, "share": 0.6475947718265811, "models": 2},
-        {"harness": "devin", "tokens": 4111253778, "cost_usd": 2120.8234083999987, "share": 0.31631115138706906, "models": 6},
-        {"harness": "codex", "tokens": 460666536, "cost_usd": 363.40516354000033, "share": 0.03544270684222712, "models": 3},
-        {"harness": "opencode", "tokens": 8466180, "cost_usd": 5.77392148, "share": 0.0006513699441227188, "models": 4}
+        {"harness": "claude", "tokens": 10000000, "cost_usd": 600.0, "share": 0.5, "models": 2},
+        {"harness": "devin", "tokens": 6000000, "cost_usd": 400.0, "share": 0.3, "models": 3},
+        {"harness": "codex", "tokens": 3000000, "cost_usd": 200.0, "share": 0.15, "models": 2},
+        {"harness": "opencode", "tokens": 1000000, "cost_usd": 34.5, "share": 0.05, "models": 1}
       ],
       "days": [
-        {"date": "2026-10-24", "tokens": 1547584944, "input": 10176, "output": 2994923, "cached": 1543402576, "cost_usd": 704.0862635999996},
-        {"date": "2026-10-23", "tokens": 2106741649, "input": 34207204, "output": 5126653, "cached": 2066398436, "cost_usd": 825.4763561600001},
-        {"date": "2026-10-22", "tokens": 1466534661, "input": 73997865, "output": 9956954, "cached": 1382557096, "cost_usd": 795.3936153999999},
-        {"date": "2026-10-20", "tokens": 1400000000, "cost_usd": 610.5},
-        {"date": "2026-10-19", "tokens": 1900000000, "cost_usd": 720.25},
-        {"date": "2026-10-18", "tokens": 2500000000, "cost_usd": 980.0},
-        {"date": "2026-10-17", "tokens": 2076637443, "cost_usd": 768.13}
+        {"date": "2026-01-08", "tokens": 3000000, "input": 100000, "output": 50000, "cached": 2850000, "cost_usd": 200.0},
+        {"date": "2026-01-07", "tokens": 2000000, "input": 100000, "output": 50000, "cached": 1850000, "cost_usd": 150.0},
+        {"date": "2026-01-06", "tokens": 2000000, "cost_usd": 150.0},
+        {"date": "2026-01-04", "tokens": 3000000, "cost_usd": 200.0},
+        {"date": "2026-01-03", "tokens": 4000000, "cost_usd": 250.0},
+        {"date": "2026-01-02", "tokens": 3000000, "cost_usd": 134.5},
+        {"date": "2026-01-01", "tokens": 3000000, "cost_usd": 150.0}
       ],
-      "quick": {"active_days": 7, "tokens_per_day": 1856785528, "busiest_day": "2026-10-18"},
-      "top_models": [{"model": "claude-opus-4-1", "tokens": 8000000000, "share": 0.6, "harnesses": ["claude"]}],
-      "heatmap": {"weeks": 26, "days": [{"date": "2026-10-25", "future": true}]},
-      "scanned_at": 1792827600.0, "notes": [], "machine": "studio.local"
+      "quick": {"active_days": 7, "tokens_per_day": 2857142, "busiest_day": "2026-01-03"},
+      "top_models": [{"model": "model-a", "tokens": 10000000, "share": 0.5, "harnesses": ["claude"]}],
+      "heatmap": {"weeks": 26, "days": [{"date": "2026-01-09", "future": true}]},
+      "scanned_at": 1800000000.0, "notes": [], "machine": "hub.local"
     }
     """#
 
@@ -110,13 +110,13 @@ final class UsageDecodingTests: XCTestCase {
         let body = try UsageFixtures.decode(UsageFixtures.usage, as: UsageResponse.self)
         let rows = try XCTUnwrap(body.harnesses)
         XCTAssertEqual(rows.map(\.name), ["claude", "codex", "opencode", "cursor", "devin", "qwen-code"])
-        XCTAssertEqual(rows[0].sessions100d, 773)
+        XCTAssertEqual(rows[0].sessions100d, 120)
         XCTAssertNil(rows[5].sessions100d)
         XCTAssertNil(rows[2].rateLimit)
         XCTAssertEqual(rows[3].title, "Cursor")
         XCTAssertEqual(rows[0].title, "Claude Code")
         XCTAssertEqual(body.windowDays, 100)
-        XCTAssertEqual(body.machine?.displayName, "studio")
+        XCTAssertEqual(body.machine?.displayName, "hub")
     }
 
     func testSingleWindowToolsUseTheRowItself() throws {
@@ -124,7 +124,7 @@ final class UsageDecodingTests: XCTestCase {
         let codex = try XCTUnwrap(rows[1].rateLimit?.displayWindows)
         XCTAssertEqual(codex.count, 1)
         XCTAssertEqual(codex[0].label, "Weekly")
-        XCTAssertEqual(codex[0].usedPercent, 33)
+        XCTAssertEqual(codex[0].usedPercent, 30)
         XCTAssertEqual(rows[0].rateLimit?.displayWindows.map(\.label), ["Weekly"])
     }
 
@@ -132,12 +132,12 @@ final class UsageDecodingTests: XCTestCase {
         let rows = try XCTUnwrap(UsageFixtures.decode(UsageFixtures.usage, as: UsageResponse.self).harnesses)
         let devin = try XCTUnwrap(rows[4].rateLimit)
         XCTAssertEqual(devin.displayWindows.map(\.label), ["Daily", "Weekly"])
-        XCTAssertEqual(devin.extraUsageUsd, 8219.74)
-        XCTAssertEqual(LimitCard.extraLines(devin), ["$8,220 extra usage left"])
+        XCTAssertEqual(devin.extraUsageUsd, 100)
+        XCTAssertEqual(LimitCard.extraLines(devin), ["$100.00 extra usage left"])
         let cursor = try XCTUnwrap(rows[3].rateLimit)
         XCTAssertEqual(cursor.onDemand?.state, "unlimited")
         XCTAssertEqual(cursor.displayWindows[1].unavailable, true)
-        XCTAssertEqual(cursor.displayWindows[1].asOf, 1_792_820_000)
+        XCTAssertEqual(cursor.displayWindows[1].asOf, 1_799_990_000)
         XCTAssertEqual(cursor.displayWindows.map(\.label), ["Included", "Grok bot"])
         XCTAssertEqual(LimitCard.extraLines(cursor), ["On-demand: $0.00, no limit"])
     }
@@ -164,12 +164,12 @@ final class UsageDecodingTests: XCTestCase {
 
     func testOverviewDecodes() throws {
         let body = try UsageFixtures.decode(UsageFixtures.overview, as: OverviewResponse.self)
-        XCTAssertEqual(body.totals?.tokens, 12_997_498_697)
-        XCTAssertEqual(body.totals?.unpricedTokens, 1_504_919)
+        XCTAssertEqual(body.totals?.tokens, 20_000_000)
+        XCTAssertEqual(body.totals?.unpricedTokens, 2_000_000)
         XCTAssertEqual(body.harnesses?.map(\.harness), ["claude", "devin", "codex", "opencode"])
         XCTAssertEqual(body.days?.count, 7)
-        XCTAssertEqual(body.range?.startDay, "2026-10-17")
-        XCTAssertEqual(body.machine, "studio.local")
+        XCTAssertEqual(body.range?.startDay, "2026-01-01")
+        XCTAssertEqual(body.machine, "hub.local")
     }
 
     func testEmptyBodiesDecode() throws {
@@ -236,7 +236,7 @@ final class UsageFormatTests: XCTestCase {
         XCTAssertEqual(UsageFormat.tokens(12_340), "12.3K")
         XCTAssertEqual(UsageFormat.tokens(1_234_567), "1.2M")
         XCTAssertEqual(UsageFormat.tokens(123_456_789), "123M")
-        XCTAssertEqual(UsageFormat.tokens(12_997_498_697), "13.0B")
+        XCTAssertEqual(UsageFormat.tokens(13_000_000_000), "13.0B")
         XCTAssertEqual(UsageFormat.tokens(999_960), "1.0M")
         XCTAssertEqual(UsageFormat.tokens(999_400), "999K")
         XCTAssertEqual(UsageFormat.tokens(99_960), "100K")
@@ -247,7 +247,7 @@ final class UsageFormatTests: XCTestCase {
         XCTAssertEqual(UsageFormat.usd(0.42), "$0.42")
         XCTAssertEqual(UsageFormat.usd(12.3), "$12.30")
         XCTAssertEqual(UsageFormat.usd(999.994), "$999.99")
-        XCTAssertEqual(UsageFormat.usd(5403.83), "$5,404")
+        XCTAssertEqual(UsageFormat.usd(5432.1), "$5,432")
         XCTAssertEqual(UsageFormat.usd(nil), "$0.00")
         XCTAssertEqual(UsageFormat.usdAxis(800), "$800")
         XCTAssertEqual(UsageFormat.usdAxis(1260), "$1.3K")
@@ -272,7 +272,7 @@ final class UsageFormatTests: XCTestCase {
     }
 
     func testPlanAndNames() {
-        XCTAssertEqual(UsageFormat.plan("self_serve_business_prolite"), "Self serve business prolite")
+        XCTAssertEqual(UsageFormat.plan("pro_team"), "Pro team")
         XCTAssertNil(UsageFormat.plan(nil))
         XCTAssertNil(UsageFormat.plan(""))
         XCTAssertEqual(UsageFormat.harnessName(id: "cursor", displayName: nil), "Cursor")
@@ -285,9 +285,9 @@ final class UsageFormatTests: XCTestCase {
         let utc = try XCTUnwrap(TimeZone(identifier: "UTC"))
         let series = UsageFormat.dailySeries(body.days ?? [], start: body.range?.startDay, end: body.range?.endDay, timeZone: utc)
         XCTAssertEqual(series.count, 8)
-        XCTAssertEqual(series.first?.cost, 768.13)
-        XCTAssertEqual(series[4].cost, 0, "the 21st had no usage")
-        XCTAssertEqual(series.last?.tokens, 1_547_584_944)
+        XCTAssertEqual(series.first?.cost, 150)
+        XCTAssertEqual(series[4].cost, 0, "the 5th had no usage")
+        XCTAssertEqual(series.last?.tokens, 3_000_000)
         XCTAssertEqual(series[1].date.timeIntervalSince(series[0].date), 86_400)
     }
 
