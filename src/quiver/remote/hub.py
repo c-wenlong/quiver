@@ -65,6 +65,13 @@ _SSE_HEARTBEAT_S = 15.0
 # can't hold a handler thread forever; SSE writes get the same cap,
 # which is harmless — a healthy client's socket never blocks for 30 s.
 _REQ_TIMEOUT_S = 30.0
+# A response sent before the handler read the request body (a 401, 404,
+# 409, 413 ...) first discards that body, or the next request on the
+# keep-alive connection would be parsed out of its bytes. Up to this
+# much, within this long, is read and dropped so the connection stays
+# open; anything bigger, slower or unframed closes the connection.
+_DRAIN_MAX = 1 << 20
+_DRAIN_S = 2.0
 _MAX_WORKERS = 64
 # How often an open SSE stream re-checks that its device wasn't revoked.
 _REVOCATION_CHECK_S = 5.0
@@ -577,6 +584,9 @@ class HubState:
             self.tail_manager.wait(0.25)
 
 
+_UNSET = object()
+
+
 def _json_bytes(payload) -> bytes:
     return json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
 
@@ -617,21 +627,121 @@ class _Handler(BaseHTTPRequestHandler):
     def _send_error(self, status: int, code: str, message: str) -> None:
         self._send_json(status, protocol.error(code, message))
 
+    # -- request body bookkeeping -------------------------------------
+    #
+    # ``_unread`` is how many body bytes of the current request are still
+    # on the socket: the declared Content-Length until something reads
+    # it, then 0. None means the body can't be framed (Transfer-Encoding,
+    # which the hub doesn't decode, or a malformed Content-Length), so
+    # the only safe end for the connection is a close. Every response
+    # goes through ``send_response``, which settles what is left before
+    # the status line, so no early-exit path can leave bytes behind.
+
+    _unread: int | None = 0
+    _must_close = False
+    _body_cache: object = _UNSET
+
+    def handle_one_request(self) -> None:
+        self._unread = 0
+        self._must_close = False
+        self._body_cache = _UNSET
+        super().handle_one_request()
+
+    def parse_request(self) -> bool:
+        if not super().parse_request():
+            return False
+        self._unread = self._declared_length()
+        return True
+
+    def _declared_length(self) -> int | None:
+        if self.headers.get("Transfer-Encoding") is not None:
+            return None
+        values = {v.strip() for v in
+                  self.headers.get_all("Content-Length") or []}
+        if not values:
+            return 0  # a request with neither header has no body
+        if len(values) > 1:
+            return None
+        raw = values.pop()
+        # int() would also take "+5", "1_000" or non-ASCII digits.
+        if not (raw.isascii() and raw.isdigit()):
+            return None
+        return int(raw)
+
+    def _take_body(self, limit: int) -> bytes | None:
+        """The request body when it is at most ``limit`` bytes, else None
+        (left unread for ``send_response`` to settle)."""
+        left = self._unread
+        if left is None or left > limit:
+            return None
+        self._unread = 0
+        return self.rfile.read(left) if left else b""
+
+    def _settle_body(self) -> None:
+        left = self._unread
+        self._unread = 0
+        if left == 0:
+            return
+        if left is None or left > _DRAIN_MAX or not self._drain(left):
+            self._must_close = True
+
+    def _drain(self, left: int) -> bool:
+        """Read and drop ``left`` body bytes within ``_DRAIN_S``. False
+        when the peer is too slow or goes away first."""
+        deadline = time.monotonic() + _DRAIN_S
+        try:
+            while left > 0:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self.connection.settimeout(remaining)
+                # read1: at most one recv per call, so the deadline holds
+                # against a peer trickling a byte at a time.
+                chunk = self.rfile.read1(min(left, 65536))
+                if not chunk:
+                    return False
+                left -= len(chunk)
+            return True
+        except OSError:  # TimeoutError included
+            return False
+        finally:
+            try:
+                self.connection.settimeout(_REQ_TIMEOUT_S)
+            except OSError:
+                pass
+
+    def send_response(self, code, message=None) -> None:
+        # 100 Continue goes out through send_response_only, so a client
+        # waiting for it is never drained here.
+        self._settle_body()
+        super().send_response(code, message)
+        if self._must_close:
+            self.send_header("Connection", "close")
+
+    def end_headers(self) -> None:
+        # A handler's own "Connection: keep-alive" must not reopen a
+        # connection whose request body was left on the socket.
+        if self._must_close:
+            self.close_connection = True
+        super().end_headers()
+
     def _read_body(self) -> dict | None:
+        # A second call returns the first answer: the bytes are gone.
+        if self._body_cache is not _UNSET:
+            return self._body_cache  # type: ignore[return-value]
         try:
-            length = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
-            length = 0
-        if length <= 0:
-            return {}
-        if length > _MAX_BODY:
-            return None
-        try:
-            raw = self.rfile.read(length)
-            data = json.loads(raw.decode("utf-8", errors="replace"))
+            raw = self._take_body(_MAX_BODY)
+            if raw is None:
+                return None
+            if not raw:
+                data: object = {}
+            else:
+                data = json.loads(raw.decode("utf-8", errors="replace"))
         except (ValueError, UnicodeError):
-            return None
-        return data if isinstance(data, dict) else None
+            data = None
+        result = data if isinstance(data, dict) else None
+        self._body_cache = result
+        return result
 
     def _device(self) -> str | None:
         auth = self.headers.get("Authorization") or ""
@@ -2240,17 +2350,13 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _read_upload(self):
         """Returns ``(name, data)`` or sends the error and returns None."""
-        try:
-            length = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
-            length = 0
-        if length <= 0:
+        if not self._unread:  # None: unframed, which the hub doesn't decode
             self._send_error(400, "bad_body", "empty upload")
             return None
-        if length > attachments.MAX_BYTES:
+        data = self._take_body(attachments.MAX_BYTES)
+        if data is None:
             self._send_error(413, "too_large", "attachment exceeds 20 MB")
             return None
-        data = self.rfile.read(length)
         ctype = self.headers.get("Content-Type") or ""
         if ctype.startswith("multipart/form-data"):
             name, data = _parse_multipart(ctype, data)
