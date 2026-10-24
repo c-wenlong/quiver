@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Remote iPhone app: the working indicator shows which agent is working.**
+  While a session runs, the bar under the last message shows the
+  harness's logo with the pulsing dots beside it, and new messages land
+  above it.
+
 - **Remote iPhone app: chats stream in instead of landing in blocks.**
   Messages that reach the phone together are shown one at a time with a
   short gap (a replay after reconnecting still lands at once), new
