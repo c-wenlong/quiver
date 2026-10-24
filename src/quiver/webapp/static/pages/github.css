@@ -356,3 +356,7 @@ dialog.gh-add-sheet { width: min(520px, calc(100vw - 32px)); }
 .gh-menu-divider { border-top: 1px solid var(--row-divider); margin: 4px 2px; }
 .gh-run:hover { background: var(--row-hover); }
 .gh-run > .gh-row:hover { background: transparent; }
+
+/* PR sheet: Open in session. */
+.gh-session .field { width: 100%; }
+.gh-session-prompt { resize: vertical; min-height: 64px; font: inherit; font-size: 13px; line-height: 1.4; }

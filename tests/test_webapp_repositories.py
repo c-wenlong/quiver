@@ -90,6 +90,12 @@ if args[:1] == ["api"] and "--method" in args:
 if args[:1] == ["api"] and args[1].startswith("notifications"):
     print(json.dumps(state["notes"]))
     sys.exit(0)
+if args[:2] == ["repo", "clone"]:
+    # "clone_from" is a local repo standing in for GitHub.
+    import subprocess
+    if not state.get("clone_from"):
+        fail("GraphQL: Could not resolve to a Repository with the name '" + args[2] + "'.")
+    sys.exit(subprocess.run(["git", "clone", "-q", "--bare", state["clone_from"], args[3]]).returncode)
 if args[:2] == ["run", "rerun"]:
     if args[2] not in state.get("runs", []):
         fail("HTTP 404: Not Found (https://api.github.com/repos/o/a/actions/runs/" + args[2] + ")")
@@ -803,6 +809,75 @@ process.stdout.write(JSON.stringify({ runs: runs.map((t) => t - 1000000), stoppe
         done = _node(script)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(json.loads(done.stdout), {"runs": [60000, 170000, 260000], "stopped": True})
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class TestPrWorktree(_Base):
+    """The PR sheet's Open in session, its hub half: ``post("worktree")``
+    with a fake ``gh`` whose clone copies a local repo that has GitHub's
+    ``refs/pull/7/head``. The browser starts the harness itself through
+    ``POST /v1/sessions``, which has its own tests."""
+
+    def setUp(self):
+        super().setUp()
+        _pin(self.home, "o/a")
+        src = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, src, True)
+        git = ["git", "-C", str(src), "-c", "user.email=t@example.com", "-c", "user.name=t"]
+        subprocess.run(["git", "init", "-q", "-b", "main", str(src)], check=True)
+        subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "base"], check=True)
+        subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "the pr"], check=True)
+        subprocess.run(git + ["update-ref", "refs/pull/7/head", "HEAD"], check=True)
+        self.head = subprocess.run(git + ["rev-parse", "--short=12", "HEAD"], check=True,
+                                   capture_output=True, text=True).stdout.strip()
+        self.gh = FakeGh(self, clone_from=str(src))
+
+    def test_checks_the_head_out_in_the_hubs_home_then_reuses_it(self):
+        body = R.post(self.ctx, "worktree", {"repo": "O/A", "number": "7"})
+        path = Path(body["path"])
+        self.assertEqual((body["repo"], body["number"], body["created"], body["head"]),
+                         ("o/a", 7, True, self.head))
+        self.assertEqual(path, paths.worktrees_dir_for(self.home) / "o__a-pr7")
+        self.assertTrue((paths.github_mirrors_for(self.home) / "o__a.git").is_dir())
+        out = subprocess.run(["git", "-C", str(path), "log", "-1", "--format=%s"],
+                             capture_output=True, text=True).stdout.strip()
+        self.assertEqual(out, "the pr")
+        again = R.post(self.ctx, "worktree", {"repo": "o/a", "number": 7})
+        self.assertEqual((again["path"], again["created"]), (body["path"], False))
+        self.assertEqual(sum(c[:2] == ["repo", "clone"] for c in self.gh.calls()), 1)
+
+    def test_failures_name_the_step(self):
+        with self.assertRaises(PageError) as caught:
+            R.post(self.ctx, "worktree", {"repo": "o/a", "number": 8})
+        self.assertEqual((caught.exception.status, caught.exception.code), (502, "worktree_failed"))
+        self.assertTrue(caught.exception.message.startswith("Fetch failed:"), caught.exception.message)
+        for body, status, code in (({"repo": "o/a", "number": "x"}, 422, "bad_pr"),
+                                   ({"repo": "o/zzz", "number": 7}, 404, "not_pinned")):
+            with self.assertRaises(PageError) as caught:
+                R.post(self.ctx, "worktree", body)
+            self.assertEqual((caught.exception.status, caught.exception.code), (status, code))
+
+    def test_checkouts_of_one_repo_wait_for_each_other(self):
+        # Two PRs of one repo share its mirror's FETCH_HEAD: the second
+        # checkout must not start until the first has finished.
+        lock = R._mirror_lock(self.home, "O/A")
+        lock.acquire()
+        done = []
+        worker = threading.Thread(target=lambda: done.append(
+            R.post(self.ctx, "worktree", {"repo": "o/a", "number": 7})))
+        worker.start()
+        worker.join(0.5)
+        self.assertEqual(done, [])
+        self.assertFalse(any(c[:2] == ["repo", "clone"] for c in self.gh.calls()))
+        lock.release()
+        worker.join(30)
+        self.assertEqual(done[0]["head"], self.head)
+
+    def test_harnesses_are_what_the_hub_can_launch(self):
+        rows = [{"name": "claude", "command": "claude", "display_name": "Claude Code", "tracked": True}]
+        with patch("quiver.remote.catalog.launchable_harnesses", return_value=rows):
+            body = R.get(self.ctx, {"harnesses": "1"})
+        self.assertEqual(body["harnesses"], [{"name": "claude", "display_name": "Claude Code", "tracked": True}])
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
