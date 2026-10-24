@@ -20,9 +20,10 @@ opening by itself, so it has none.)
 
 ``POST /v1/app/setup/apply`` with ``{"starred": [ids], "adopt": path or
 null}`` is ``swe setup --apply --json --starred=a,b [--adopt=<file>]``
-in process (``setup_apply``). Every starred id must be one the page
-lists (a catalog agent or a registered harness), and ``adopt`` one of
-the preview's ``adopt_candidates`` right now; anything else is refused.
+in process (``apply_setup``, which Doctor's setup fix uses too).
+Every starred id must be one the page lists (a catalog agent or a
+registered harness), and ``adopt`` one of the preview's
+``adopt_candidates`` right now; anything else is refused.
 The reply is ``{"applied", "first_run", "starred"}``.
 """
 
@@ -111,13 +112,13 @@ def post(ctx, action: str, body: dict) -> dict:
 
     from quiver.harness.registry import load_registry_readonly, resolve, starred_names
     from quiver.init.commands import agents_file_customised, check_adoptable
-    from quiver.setup.commands import _instructions_preview, setup_apply
-    from quiver.webapp.pages.harness import _WRITE_LOCK as _HARNESS_LOCK
+    from quiver.setup.commands import _instructions_preview, apply_setup
+    from quiver.webapp.pages.harness import REGISTRY_LOCK
 
     home = _home(ctx)
-    # The Harnesses page's star and archive write harness.json too, so
-    # setup waits for them (and they for it).
-    with _LOCK, _HARNESS_LOCK:
+    # The Harnesses page's writes and Doctor's fixes rewrite harness.json
+    # too, under the same registry lock, so setup waits for them.
+    with _LOCK, REGISTRY_LOCK:
         registry = load_registry_readonly()
         for name in starred:
             if name not in PROVIDER_IDS and resolve(registry, name) is None:
@@ -134,7 +135,14 @@ def post(ctx, action: str, body: dict) -> dict:
                 raise PageError(404, "unknown_file",
                                 "That file isn't one setup offers to start AGENTS.md from.")
             source = Path(adopt)
-        applied = setup_apply(home, adopt=source, starred=starred)
+        try:
+            applied = apply_setup(home, adopt=source, starred=starred)
+        except (EOFError, KeyboardInterrupt):
+            raise
+        except Exception as exc:
+            # Discovery failed before anything was written; the steps
+            # after it report their own failures inside ``applied``.
+            raise PageError(503, "setup_failed", f"Setup couldn't look at this machine: {exc}") from exc
         return {
             "applied": applied,
             "first_run": _first_run(home),

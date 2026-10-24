@@ -385,29 +385,23 @@ def setup_preview(home: Path) -> dict:
     return _setup_data(home, apply=False)[0]
 
 
-def setup_apply(home: Path, adopt: Path | None = None,
+def apply_setup(home: Path | None = None, adopt: Path | None = None,
                 starred: list[str] | None = None) -> dict:
-    """``swe setup --apply --json [--adopt=<file>] [--starred=a,b]``, in
-    process: its ``applied`` envelope. Refusals (an ``adopt`` file
-    ``check_adoptable`` turns down) are the caller's to check first, as
-    ``cmd_setup`` does. Unlike ``apply_setup`` (the Doctor page's fix), a
-    failed discovery comes back in ``errors`` rather than raising, as the
-    command's JSON envelope carries it."""
-    return _setup_data(home, apply=True, adopt=adopt, starred=starred)[0]["applied"]
+    """``swe setup --apply --json [--adopt=<file>] [--starred=a,b]``'s
+    ``applied`` document, in process.
 
-
-def apply_setup(home: Path | None = None) -> dict:
-    """``swe setup --apply --json``'s ``applied`` document, in process.
-
-    The web app's Doctor page runs a ``setup`` fix through here, the way
-    the Mac app's Run calls ``swe setup --apply --json``: no --adopt and
-    no --starred, so the stars stay as they are. A step that fails is
-    reported in ``errors`` or ``links.error``, as on the command line; a
-    discovery that fails raises.
+    The web app's Doctor page runs a ``setup`` fix through here with
+    neither, the way the Mac app's Run calls ``swe setup --apply --json``,
+    so the stars stay as they are. The Setup page passes the ticked
+    harnesses and the file AGENTS.md starts from; checking that file
+    (``check_adoptable``) is the caller's job, as ``cmd_setup`` does
+    first. A step that fails is reported in ``errors`` or
+    ``links.error``, as on the command line; a discovery that fails
+    raises.
     """
     home = home or Path.home()
     new_harness, new_mcp, skill_hints = _setup_findings(home)
-    return _apply_all(new_harness, new_mcp, _actionable(skill_hints), home, None, None)
+    return _apply_all(new_harness, new_mcp, _actionable(skill_hints), home, adopt, starred)
 
 
 def _apply_all(new_harness, new_mcp, actionable_skills, home: Path,

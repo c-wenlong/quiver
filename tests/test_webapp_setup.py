@@ -204,6 +204,16 @@ class TestApply(_Home, unittest.TestCase):
         reply = self.post(starred=["ollama", "claude"], adopt=None)
         self.assertEqual(reply["starred"], ["ollama", "claude"])
 
+    def test_a_failed_discovery_is_a_503_and_writes_nothing(self):
+        from quiver.setup import commands as sc
+
+        def broken():
+            raise OSError("PATH unreadable")
+        with patch.object(sc, "discover_harnesses", broken):
+            error = self.refused(starred=["claude"])
+        self.assertEqual((error.status, error.code), (503, "setup_failed"))
+        self.assertIn("PATH unreadable", error.message)
+
     def test_unknown_actions_are_refused(self):
         self.assertEqual(self.refused("run", starred=[]).status, 404)
 

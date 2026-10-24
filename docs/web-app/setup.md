@@ -95,11 +95,12 @@ refresh button reads everything again and starts the steps over.
 `POST /v1/app/setup/apply` with `{"starred": ["claude", "gemini"],
 "adopt": "/home/kai/.claude/CLAUDE.md" | null}` is `swe setup --apply
 --json --starred=claude,gemini [--adopt=<file>]`, in process
-(`setup_apply`), and makes the starred set exactly that list. The page
+(`quiver.setup.commands.apply_setup`, which Doctor's setup fix also
+runs), and makes the starred set exactly that list. The page
 sends the ticks in the grid's order, then any other ticked harness. The
 reply is `{"applied": <the envelope's applied>, "first_run", "starred"}`.
-Runs are serialised by the page's lock and the Harnesses page's
-registry lock.
+Runs are serialised by the page's lock and the registry lock the
+Harnesses page and Doctor's fixes hold.
 
 | Status | Code | When |
 |---|---|---|
@@ -107,6 +108,7 @@ registry lock.
 | 422 | `bad_adopt` | `adopt` is not null or a non-empty path |
 | 404 | `unknown_harness` | a starred name is neither a catalog agent nor in the registry |
 | 404 | `unknown_file` | `adopt` is not one of the preview's `adopt_candidates` right now (no other path is opened) |
+| 503 | `setup_failed` | discovery itself failed, before anything was written |
 | 409 | `not_adoptable` | `adopt` sent once `AGENTS.md` already holds your own text |
 | 404 | `unknown_action` | any action but `apply` |
 | 403 | `bad_origin` | the hub's Origin check, for a cross-site POST |
