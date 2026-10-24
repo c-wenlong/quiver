@@ -379,7 +379,7 @@ private struct PanelIconButton: View {
     var body: some View {
         Button(title, systemImage: symbol, action: action)
             .labelStyle(.iconOnly)
-            .font(.system(size: 14))
+            .font(Theme.font(size: 14))
             .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
             .frame(width: 22, height: 22)
             .contentShape(.rect)

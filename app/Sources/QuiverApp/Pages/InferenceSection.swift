@@ -89,7 +89,7 @@ struct InferenceSection: View {
                                 .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
                             // Already redacted by APIKeysFile: the value never reaches the page.
                             Text(problem.text)
-                                .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
+                                .font(Theme.font(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
                         }
                     }
                     Text("Fix these in an editor; Quiver leaves lines it can't read untouched.")
@@ -370,7 +370,7 @@ private struct InferenceRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(valueText)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(Theme.font(size: 12, design: .monospaced))
                         .foregroundStyle(item.hasKey ? Theme.textSecondary : Theme.textMuted)
                         .lineLimit(1).truncationMode(.middle)
                     if item.hasKey {
@@ -423,7 +423,7 @@ private struct InferenceRow: View {
     private func smallButton(_ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
         Button(title, systemImage: symbol, action: action)
             .labelStyle(.iconOnly)
-            .font(.system(size: 10))
+            .font(Theme.font(size: 10))
             .foregroundStyle(Theme.textMuted)
             .buttonStyle(.plain)
             .frame(width: 16, height: 16)
@@ -494,7 +494,7 @@ private struct PlanKeyEditor: View {
                         HStack(spacing: 10) {
                             Badge(endpoint.region)
                             Text(endpoint.anthropicBaseURL)
-                                .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
+                                .font(Theme.font(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
                                 .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             Link("Get a key", destination: endpoint.console)
@@ -1125,7 +1125,7 @@ private struct KeyEditor: View {
                         .onChange(of: envVarChoice) { saveAnyway = false }
                 } else {
                     Text("saved as \(provider.envVars[0])")
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(Theme.font(size: 12, design: .monospaced))
                         .foregroundStyle(Theme.textSecondary)
                 }
                 Spacer(minLength: 8)

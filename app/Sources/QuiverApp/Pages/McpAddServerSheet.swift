@@ -267,7 +267,7 @@ private struct HarnessTargetsMenu: View {
                 Text(mcpTargetsSummary(targets, of: harnesses))
                     .foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Spacer(minLength: 4)
-                Image(systemName: "chevron.down").font(.system(size: 12))
+                Image(systemName: "chevron.down").font(Theme.font(size: 12))
                     .foregroundStyle(Theme.textSecondary)
             }
             .font(Theme.bodySmall)
@@ -348,7 +348,7 @@ private struct ChecklistRow: View {
         Button(action: toggle) {
             HStack(spacing: 10) {
                 Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(Theme.font(size: 11, weight: .semibold))
                     .foregroundStyle(Theme.accent)
                     .frame(width: 14)
                     .opacity(isOn ? 1 : 0)

@@ -146,7 +146,7 @@ private struct HarnessChips: View {
                     if on { hidden.insert(harness) } else { hidden.remove(harness) }
                 } label: {
                     HStack(spacing: 4) {
-                        if on { Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)) }
+                        if on { Image(systemName: "checkmark").font(Theme.font(size: 9, weight: .bold)) }
                         HarnessMarkView(harness: harness, size: 14)
                     }
                     .font(Theme.control)
@@ -197,7 +197,7 @@ private struct ServerGrid: View {
     /// or the name of a harness with no logo), so it shows whole.
     static func columnWidth(_ harness: String) -> CGFloat {
         let mark = HarnessMark(harness)
-        let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        let font = NSFont.systemFont(ofSize: Theme.scaled(12), weight: .medium)
         let text = mark.word.map { ($0 as NSString).size(withAttributes: [.font: font, .kern: 0.12]).width } ?? 0
         let logo: CGFloat = mark.icon == nil ? 0 : 16 + (mark.word == nil ? 0 : 4)
         return max(cellWidth, ceil(logo + text) + 16)
@@ -299,7 +299,7 @@ private struct ServerRow: View {
                             Text(server.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                             if !server.secretsMissing.isEmpty {
                                 Image(systemName: "exclamationmark.triangle")
-                                    .font(.system(size: 10))
+                                    .font(Theme.font(size: 10))
                                     .foregroundStyle(Theme.warningText)
                                     .hoverTip("Needs a value for \(server.secretsMissing.joined(separator: ", "))")
                             }
@@ -341,7 +341,7 @@ private struct ServerRow: View {
             if !folders.isEmpty {
                 Text("·")
                 Text(folders.map(\.name).joined(separator: ", "))
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(Theme.font(size: 12, design: .monospaced))
                 if folders.count == 1 {
                     Text("·")
                     GitPieces(folder: folders[0])
@@ -363,14 +363,14 @@ private struct Cell: View {
         if let group = server.group(of: harness) {
             if differs {
                 Text(variantLetter(group))
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(Theme.font(size: 11, weight: .semibold))
                     .foregroundStyle(group == 0 ? Theme.textPrimary : Theme.warningText)
                     .frame(width: 20, height: 20)
                     .background(Theme.subtle, in: .rect(cornerRadius: 5))
                     .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.border, lineWidth: 1))
                     .help("Definition \(variantLetter(group))")
             } else {
-                Image(systemName: "checkmark").font(.system(size: 12, weight: .semibold))
+                Image(systemName: "checkmark").font(Theme.font(size: 12, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
             }
         } else {
@@ -438,7 +438,7 @@ private struct ServerSheet: View {
                     Text(server.detail ?? "Healthy").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
             }
-            Text(server.summary).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+            Text(server.summary).font(Theme.font(size: 12, design: .monospaced)).textSelection(.enabled)
                 .foregroundStyle(Theme.textSecondary).lineLimit(3)
             if server.groups.count > 1 {
                 // swe describes a server by the first harness that defines it.
@@ -492,7 +492,7 @@ private struct ServerSheet: View {
             ForEach(server.secretsMissing, id: \.self) { name in
                 HStack(spacing: 8) {
                     Text(name)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(Theme.font(size: 12, design: .monospaced))
                         .foregroundStyle(Theme.textPrimary).lineLimit(1)
                     SecureField("Paste the value",
                                 text: Binding(get: { secretDrafts[name] ?? "" },
@@ -854,7 +854,7 @@ private struct FolderActions: View {
     /// a ButtonStyle and a Menu cannot take it.
     private func actionIcon(_ name: String) -> some View {
         Image(systemName: name)
-            .font(.system(size: 16))
+            .font(Theme.font(size: 16))
             .foregroundStyle(Theme.textNav)
             .frame(width: Theme.iconButton, height: Theme.iconButton)
             .overlay(RoundedRectangle(cornerRadius: Theme.iconButtonRadius).strokeBorder(Theme.border, lineWidth: 1))
@@ -904,7 +904,7 @@ private struct RepoFolderRow: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(folder.name)
-                    .font(.system(size: 14, weight: .medium, design: .monospaced))
+                    .font(Theme.font(size: 14, weight: .medium, design: .monospaced))
                     .foregroundStyle(Theme.textPrimary).lineLimit(1)
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     if let usedBy {
