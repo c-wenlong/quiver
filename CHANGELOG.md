@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote iPhone app: Console.** Console, in the hub menu on
+  Sessions, opens a shell on the hub's machine over SSH, for debugging
+  when chat can't help. It dials the machine's sshd over the tailnet,
+  not the hub, so it still works when the hub is down. The phone's key
+  is a Secure Enclave P-256 key sent to the hub on first use;
+  `swe remote ssh --on` there lets it log in, and until then the console
+  shows that command. The phone trusts only the host keys the hub
+  listed and saves them, so with the hub down it dials with the saved
+  ones and says so. Built on SwiftNIO SSH and SwiftTerm, with its keyboard
+  bar for Esc, Ctrl, Tab and arrows.
+
 - **Remote: SSH keys for the phone's console.** A paired phone can
   post the public half of an SSH key (`POST /v1/ssh/key`), and
   `GET /v1/ssh` tells it the login user, port 22, whether sshd answers,

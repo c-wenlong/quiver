@@ -1,6 +1,21 @@
 name: QuiverRemote
 options:
   bundleIdPrefix: com.quiver
+# The console's SSH and terminal. Exact versions: Package.resolved isn't
+# checked in (it lives in the generated project), so a range would let
+# every regenerate pick up a newer SSH stack unreviewed.
+packages:
+  SwiftNIO:
+    url: https://github.com/apple/swift-nio
+    exactVersion: 2.102.0
+  SwiftNIOSSH:
+    url: https://github.com/apple/swift-nio-ssh
+    exactVersion: 0.15.0
+  # 1.12 and later add a Metal renderer, which needs Xcode's separate
+  # Metal Toolchain download to build; 1.11.2 draws with CoreGraphics.
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    exactVersion: 1.11.2
 targets:
   QuiverRemote:
     type: application
@@ -9,6 +24,17 @@ targets:
     sources:
       - path: Sources/QuiverRemote
       - path: Assets.xcassets
+    dependencies:
+      - package: SwiftNIO
+        product: NIOCore
+      - package: SwiftNIO
+        product: NIOPosix
+      - package: SwiftNIO
+        product: NIOConcurrencyHelpers
+      - package: SwiftNIOSSH
+        product: NIOSSH
+      - package: SwiftTerm
+        product: SwiftTerm
     info:
       path: QuiverRemote-Info.plist
       properties:
@@ -45,6 +71,8 @@ targets:
       - path: Tests/QuiverRemoteTests
     dependencies:
       - target: QuiverRemote
+      - package: SwiftNIOSSH
+        product: NIOSSH
     settings:
       base:
         DEVELOPMENT_TEAM: XXXXXXXXXX
