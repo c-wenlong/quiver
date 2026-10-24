@@ -356,6 +356,19 @@ final class ChatModelTests: XCTestCase {
         XCTAssertFalse(chat.working)
     }
 
+    func testAnEventJustAfterOneWasShownStillWaitsItsTurn() async throws {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        chat.enqueue(say(1))
+        for _ in 0..<100 where chat.items.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertEqual(chat.items.count, 1)
+        // The queue is empty again when the next event arrives.
+        chat.enqueue(say(2))
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertEqual(chat.items.count, 1)
+        for _ in 0..<100 where chat.items.count < 2 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(chat.items.map(\.id), ["m1", "m2"])
+    }
+
     func testAReplayAfterReconnectingLandsAtOnce() async throws {
         let chat = ChatModel(key: "claude:1", app: AppModel())
         for seq in 1...30 { chat.enqueue(say(seq)) }

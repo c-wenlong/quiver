@@ -63,6 +63,8 @@ final class ChatModel {
     /// one at a time instead of as a block.
     private var pending: [Envelope] = []
     private var revealTask: Task<Void, Never>?
+    /// When the last live entry was shown.
+    private var lastReveal: ContinuousClock.Instant?
     /// A send went through and nothing from the agent has come back yet.
     private(set) var awaitingReply = false
     /// Bumped by every start() and stop(), so a start() still fetching
@@ -136,6 +138,12 @@ final class ChatModel {
         pending.append(env)
         guard revealTask == nil else { return }
         revealTask = Task { [weak self] in
+            // Events often arrive a few ms apart, so the queue empties
+            // between them: keep the gap from the last entry shown.
+            if let self, let last = self.lastReveal, let delay = Self.revealDelay(waiting: self.pending.count) {
+                let gap = delay - (ContinuousClock.now - last)
+                if gap > .zero { try? await Task.sleep(for: gap) }
+            }
             while let self, !Task.isCancelled, !self.pending.isEmpty {
                 guard let delay = Self.revealDelay(waiting: self.pending.count) else {
                     self.flushPending()
@@ -146,8 +154,9 @@ final class ChatModel {
                 withAnimation(.easeOut(duration: 0.25)) { self.apply(env) }
                 // Only a new entry earns a pause; a status change or a
                 // result landing on its card goes straight through.
-                if self.items.count > before, !self.pending.isEmpty {
-                    try? await Task.sleep(for: delay)
+                if self.items.count > before {
+                    self.lastReveal = .now
+                    if !self.pending.isEmpty { try? await Task.sleep(for: delay) }
                 }
             }
             // A cancelled pass was already replaced, maybe by a newer one.
