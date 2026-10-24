@@ -78,7 +78,7 @@ Modelled on TokenTracker's Sessions page.
 - [x] Rows grouped by date, with models, duration and project on a second line
 - [x] Resume action: opens the session in your terminal, in its folder and account
 - [x] Session detail sheet
-- [ ] Chat from the local hub, as in the web app: live transcript; composer with Queue/Steer and Stop; Attach and approvals ([#691](https://github.com/c-wenlong/quiver/issues/691))
+- [x] Chat from the local hub, as in the web app: live transcript ([#708](https://github.com/c-wenlong/quiver/pull/708)); composer with Queue/Steer and Stop ([#710](https://github.com/c-wenlong/quiver/pull/710)); Attach and approvals
 
 ### M5. Manage
 - [x] Skills, built on quiver hub: per-harness link chips, link and unlink through `swe skills` ([#144](https://github.com/c-wenlong/quiver/pull/144))

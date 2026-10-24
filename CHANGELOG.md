@@ -84,7 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Shift-Return starts a new line, and Stop ends the turn. Each message
   shows at once and says where it stands (Sending…, Queued until the
   agent is idle, or why it failed) until the transcript echoes it.
-  Attaching follows in its own change.
+  An observed session offers Attach, which asks first (it stops the
+  harness in its terminal and resumes the session under Quiver), and an
+  approval the agent asks for gets Allow, Always and Deny on its card.
 
 - **Mac app: a setup checklist for remote control.** Settings ›
   Integrations › Remote now offers "Set up remote control" until the
