@@ -467,3 +467,82 @@ class TestChatScript(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+SESSIONS_JS = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/sessions.js"
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestTranscriptSearchBox(unittest.TestCase):
+    """sessions.js's search box under node: rows match on details in the
+    browser, and on what was said through the hub's /v1/search."""
+
+    ROWS = [
+        {"key": "k1", "title": "Trim the export queue", "harness": "codex", "last_active_at": 2e9},
+        {"key": "k2", "title": "Dark mode", "harness": "claude", "last_active_at": 2e9},
+        {"key": "k3", "title": "Unrelated", "harness": "claude", "last_active_at": 2e9},
+    ]
+
+    def run_js(self, body, search_answer):
+        prelude = (
+            "const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;')"
+            ".replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n"
+            "const asked = [];\n"
+            "globalThis.api = async (path) => { asked.push(path); return " + json.dumps(search_answer) + "; };\n"
+            "globalThis.document = { getElementById: (id) => id === 'session-search' ? {} : null };\n"
+            "globalThis.setTimeout = (f) => { f(); return 0; }; globalThis.clearTimeout = () => {};\n"
+            "globalThis.Fmt = { logo: () => '', harnessName: (h) => h, tokens: String, dollars: String };\n")
+        script = (prelude + SESSIONS_JS.read_text(encoding="utf-8")
+                  + "\nrepaintKeepingFocus = () => {};\n"
+                  + "sessionsPage.data = { sessions: " + json.dumps(self.ROWS) + " };\n"
+                  + "sessionsPage.window = 'all';\n"
+                  + "(async () => { const out = await (async () => {" + body + "})();"
+                  + " process.stdout.write(JSON.stringify(out)); })();\n")
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(script)
+        self.addCleanup(Path(f.name).unlink)
+        done = subprocess.run(["node", f.name], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    ANSWER = {"status": 200, "data": {"indexed": True, "results": [
+        {"key": "k2", "source": "index", "snippet": "the queue length is 5",
+         "marked_snippet": "the \ue000queue\ue001 length is <5>"},
+    ]}}
+
+    def type_query(self, query):
+        return ("sessionsPage.query = " + json.dumps(query) + "; scheduleTranscriptSearch();"
+                " await new Promise((r) => setImmediate(r));")
+
+    def test_a_transcript_hit_keeps_its_row_with_a_marked_snippet(self):
+        out = self.run_js(self.type_query("queue") + """
+            const kept = filteredSessions().kept.map((r) => r.key);
+            return { kept, asked, row: sessionRow(sessionsPage.data.sessions[1]), note: searchNote(filteredSessions().kept) };
+        """, self.ANSWER)
+        self.assertEqual(out["kept"], ["k1", "k2"])
+        self.assertEqual(out["asked"], ["/v1/search?q=queue&limit=200"])
+        self.assertIn('<span class="session-snippet">the <mark>queue</mark> length is &lt;5&gt;</span>', out["row"])
+        self.assertIn("2 sessions match, 1 of them on what was said.", out["note"])
+
+    def test_an_answer_for_an_older_query_is_ignored(self):
+        out = self.run_js(self.type_query("queue") + """
+            sessionsPage.query = "queue l";
+            return filteredSessions().kept.map((r) => r.key);
+        """, self.ANSWER)
+        self.assertEqual(out, [])
+
+    def test_one_character_never_asks_the_hub(self):
+        out = self.run_js(self.type_query("q") + "return asked;", self.ANSWER)
+        self.assertEqual(out, [])
+
+    def test_a_hub_without_an_index_says_how_to_turn_it_on(self):
+        out = self.run_js(self.type_query("queue") + "return searchNote(filteredSessions().kept);",
+                          {"status": 200, "data": {"indexed": False, "results": []}})
+        self.assertIn("swe session index --on", out)
+
+    def test_a_failed_search_falls_back_to_details(self):
+        out = self.run_js(self.type_query("trim") + """
+            return { kept: filteredSessions().kept.map((r) => r.key), note: searchNote(filteredSessions().kept) };
+        """, {"status": 0, "data": None})
+        self.assertEqual(out["kept"], ["k1"])
+        self.assertIn("Couldn't reach transcript search", out["note"])

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: the Sessions search box matches what was said.** Typing in
+  the box still filters titles, folders and models at once; after a
+  short pause it also asks the hub's `/v1/search`, so a session whose
+  transcript holds the words stays listed, with the matching snippet
+  under its row and the words marked. A hub with no search index says
+  it is matching titles and details only, and how to turn the index on.
+
 - **Remote: `swe remote serve --install` on Linux.** It writes a
   systemd user unit (`~/.config/systemd/user/quiver-remote-hub.service`)
   that starts the hub at boot and restarts it 15 s after it exits, the

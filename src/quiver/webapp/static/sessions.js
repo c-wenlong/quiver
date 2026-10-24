@@ -3,6 +3,11 @@
  * it uses app.js's helpers (api, esc, icon, pageHeader) only when called.
  * A row opens the session's chat (pages/chat.js, #/sessions?chat=<key>),
  * whose Details button shows the sheet this page used to open.
+ *
+ * The search box filters the rows' details in the browser and also asks
+ * the hub's /v1/search, which matches what was said in each transcript
+ * when the hub has a search index. A transcript hit keeps its row and
+ * shows the matching snippet under it.
  */
 "use strict";
 
@@ -10,11 +15,19 @@ const WINDOWS = [["today", "Today"], ["7d", "7 days"], ["30d", "30 days"], ["90d
   ["365d", "365 days"], ["all", "All time"]];
 const DAY_FOLD = 10;
 const STATUS_BADGE = { active: "Active", error: "Error", interrupted: "Interrupted", followup: "Waiting" };
+// Transcript search waits for a pause in typing and a query this long.
+const SEARCH_DEBOUNCE_MS = 250;
+const SEARCH_MIN_CHARS = 2;
+const SEARCH_LIMIT = 200;
 
 const sessionsPage = {
   data: null, gen: 0,
   query: "", tool: "", window: "90d", project: "", model: "",
   showTrivial: false, openDays: new Set(),
+  // /v1/search for `search.query`: key -> { snippet, marked }, whether the
+  // hub has an index, and "pending" / "error" while it has no answer.
+  search: { query: "", hits: new Map(), indexed: null, state: "" },
+  searchTimer: null, searchSeq: 0,
   // Where the list was scrolled when a chat opened, restored on the way back.
   scrollY: null,
 };
@@ -72,6 +85,71 @@ function windowStart(win, now = Date.now() / 1000) {
   return days ? now - days * 86400 : null;
 }
 
+/* The transcript hit for a row, when the answer on hand is for the
+ * query in the box now. */
+function transcriptHit(key) {
+  const s = sessionsPage;
+  if (s.search.query !== s.query.trim()) return null;
+  return s.search.hits.get(key) || null;
+}
+
+/* A snippet with its matched terms in <mark>. The hub wraps them in the
+ * private-use pair U+E000/U+E001, which esc() leaves alone. */
+function markedSnippet(hit) {
+  const text = hit.marked || hit.snippet || "";
+  return esc(text).replace(/\uE000/g, "<mark>").replace(/\uE001/g, "</mark>");
+}
+
+/* Ask /v1/search for the box's query once typing pauses. Only the newest
+ * answer lands; an older one that returns late is dropped. */
+function scheduleTranscriptSearch() {
+  const s = sessionsPage;
+  clearTimeout(s.searchTimer);
+  const q = s.query.trim();
+  if (q.length < SEARCH_MIN_CHARS) {
+    s.search = { query: q, hits: new Map(), indexed: s.search.indexed, state: "" };
+    return;
+  }
+  if (s.search.query === q && s.search.state !== "error") return;
+  s.search = { query: q, hits: new Map(), indexed: s.search.indexed, state: "pending" };
+  const seq = ++s.searchSeq;
+  s.searchTimer = setTimeout(async () => {
+    const { status, data } = await api(`/v1/search?q=${encodeURIComponent(q)}&limit=${SEARCH_LIMIT}`);
+    if (seq !== s.searchSeq || !onSessionsList()) return;
+    const hits = new Map();
+    if (status === 200 && data) {
+      for (const r of data.results || []) {
+        if (r.source === "index" || r.snippet) hits.set(r.key, { snippet: r.snippet, marked: r.marked_snippet });
+      }
+    }
+    s.search = status === 200 && data
+      ? { query: q, hits, indexed: !!data.indexed, state: "" }
+      : { query: q, hits, indexed: s.search.indexed, state: "error" };
+    repaintKeepingFocus();
+  }, SEARCH_DEBOUNCE_MS);
+}
+
+function onSessionsList() {
+  return !!document.getElementById("session-search");
+}
+
+/* The line under the filters while a query is in the box. */
+function searchNote(kept) {
+  const s = sessionsPage, q = s.query.trim();
+  if (q.length < SEARCH_MIN_CHARS || s.search.query !== q) return "";
+  if (s.search.state === "pending") return `<p class="caption search-note">Searching what was said…</p>`;
+  if (s.search.state === "error") {
+    return `<p class="caption search-note">Couldn't reach transcript search, so this matches titles and details only.</p>`;
+  }
+  if (s.search.indexed === false) {
+    return `<p class="caption search-note">Searching titles and details only. Run <code>swe session index --on</code> on the hub to search what was said.</p>`;
+  }
+  const said = kept.filter((r) => transcriptHit(r.key)).length;
+  if (!said) return "";
+  return `<p class="caption search-note">${kept.length.toLocaleString("en-US")} session${kept.length === 1 ? "" : "s"} match, ${
+    said === kept.length ? (said === 1 ? "on" : "all on") : `${said.toLocaleString("en-US")} of them on`} what was said.</p>`;
+}
+
 /* The rows the filters keep, and how many of them are accidental. */
 function filteredSessions() {
   const s = sessionsPage;
@@ -87,7 +165,7 @@ function filteredSessions() {
     if (q) {
       const hay = [r.title, r.cwd, r.project, r.id, r.agent, r.location, r.machine,
         ...(r.usage ? r.usage.models.map((m) => m.model) : [])].join(" ").toLowerCase();
-      if (!hay.includes(q)) continue;
+      if (!hay.includes(q) && !transcriptHit(r.key)) continue;
     }
     if (r.trivial && !s.showTrivial) { trivial++; continue; }
     kept.push(r);
@@ -108,7 +186,7 @@ function paintSessions() {
   const footer = trivial || s.showTrivial ? trivialFooter(trivial) : "";
   document.getElementById("panel").innerHTML = `<div class="page">
     ${sessionsHeader(false)}
-    <div class="stack">${notes}${filterBar()}${summaryStrip(kept)}${body}${footer}</div>
+    <div class="stack">${notes}${filterBar()}${searchNote(kept)}${summaryStrip(kept)}${body}${footer}</div>
   </div>
   <dialog class="sheet" id="session-sheet"></dialog>`;
   bindSessionsHeader();
@@ -213,13 +291,16 @@ function sessionRow(r) {
   const badge = (STATUS_BADGE[r.status] ? `<span class="badge status-${r.status}">${STATUS_BADGE[r.status]}</span>` : "")
     + (r.ownership === "attached" ? '<span class="badge ownership-attached" title="Runs under Quiver: you can send to it">Attached</span>' : "");
   const time = new Date(r.last_active_at * 1000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const hit = sessionsPage.query.trim() ? transcriptHit(r.key) : null;
+  const snippet = hit && (hit.marked || hit.snippet)
+    ? `<span class="session-snippet">${markedSnippet(hit)}</span>` : "";
   const second = [r.project, Fmt.harnessName(r.harness), r.remote ? r.machine : r.location,
     r.usage ? r.usage.models.map((m) => m.model).join(", ") : "", time, duration(r.duration_s)]
     .filter(Boolean).map(esc).join(" · ");
   return `<button class="session-row" data-key="${esc(r.key)}">
     <span class="session-logo" title="${esc(Fmt.harnessName(r.harness))}">${Fmt.logo(r.harness)}</span>
     <span class="session-main"><span class="session-title"><span class="ellipsis">${esc(r.title || r.id || "Untitled")}</span>${badge}</span>
-      <span class="session-sub">${second}</span></span>
+      <span class="session-sub">${second}</span>${snippet}</span>
     <span class="num-col num">${r.usage ? Fmt.tokens(r.usage.tokens) : "–"}</span>
     <span class="num-col num spend">${r.usage ? Fmt.dollars(r.usage.cost_usd) : "–"}</span>
   </button>`;
@@ -313,11 +394,8 @@ function bindSessionControls() {
   if (search) {
     search.oninput = () => {
       s.query = search.value;
-      const at = search.selectionStart;
-      paintSessions();
-      const again = document.getElementById("session-search");
-      again.focus();
-      again.setSelectionRange(at, at);
+      scheduleTranscriptSearch();
+      repaintKeepingFocus();
     };
   }
   for (const [id, key] of [["filter-tool", "tool"], ["filter-window", "window"],
@@ -328,6 +406,7 @@ function bindSessionControls() {
   const clear = document.getElementById("clear-filters");
   if (clear) clear.onclick = () => {
     Object.assign(s, { query: "", tool: "", project: "", model: "", window: "all" });
+    scheduleTranscriptSearch();
     paintSessions();
   };
   const toggle = document.getElementById("toggle-trivial");
@@ -349,6 +428,19 @@ function bindSessionControls() {
       s.scrollY = window.scrollY;
       location.hash = `#/sessions?chat=${encodeURIComponent(r.key)}`;
     };
+  }
+}
+
+/* Repaint without losing the search box's focus and caret. */
+function repaintKeepingFocus() {
+  const box = document.getElementById("session-search");
+  const focused = box && document.activeElement === box;
+  const at = box ? box.selectionStart : null;
+  paintSessions();
+  const again = document.getElementById("session-search");
+  if (again && focused) {
+    again.focus();
+    if (at != null) again.setSelectionRange(at, at);
   }
 }
 
