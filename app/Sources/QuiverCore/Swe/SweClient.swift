@@ -64,10 +64,14 @@ public struct SweClient: Sendable {
     /// `@concurrent`: the envelope decode below runs wherever this is
     /// awaited — the main actor for most models — and a big swe payload
     /// would stall the UI there. Hop off the caller's executor.
+    ///
+    /// `timeout` overrides the runner's own bound for a command known to
+    /// run longer (`remote setup --apply` waits on certificates and launchd).
     @concurrent
     func call<T: Decodable>(_ arguments: [String], input: Data? = nil,
-                            allowFailure: Bool = false) async throws -> T {
-        let result = try await runner.run(arguments, input: input)
+                            allowFailure: Bool = false,
+                            timeout: Duration? = nil) async throws -> T {
+        let result = try await runner.run(arguments, input: input, timeout: timeout)
         // Cancelling stops the child, which then exits with a signal status
         // rather than throwing; that is a cancellation, not a swe failure.
         try Task.checkCancellation()

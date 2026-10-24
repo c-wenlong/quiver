@@ -34,6 +34,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now loads on a retry when launchd answers "Input/output error", and
   every Tailscale call finds the CLI inside Tailscale.app too.
 
+- **Mac app: a setup checklist for remote control.** Settings ›
+  Integrations › Remote now offers "Set up remote control" until the
+  phone path is finished, in place of the old "Run `swe remote serve`"
+  hint. The sheet shows each step of `swe remote setup` with its state
+  and one button: open the page it needs (download Tailscale, sign in,
+  the admin console), open Tailscale, copy a command, or pair a phone.
+  One Set up button does every step Quiver can do itself. The list
+  checks again every 3 seconds while it's open, so a step finished in a
+  browser ticks on its own, and once ready it shows the https address
+  and a Pair a phone button. The first-run wizard ends with an optional
+  Phone access step that opens the checklist when it closes.
+
 - **Remote iPhone app: Console.** Console, in the hub menu on
   Sessions, opens a shell on the hub's machine over SSH, for debugging
   when chat can't help. It dials the machine's sshd over the tailnet,

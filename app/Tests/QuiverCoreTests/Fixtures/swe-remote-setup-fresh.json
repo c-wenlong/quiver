@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "data": {
+    "ready": false,
+    "platform": "darwin",
+    "url": "",
+    "steps": [
+      {
+        "id": "tailscale.installed",
+        "title": "Tailscale installed",
+        "state": "needs_you",
+        "detail": "Your phone reaches this machine over Tailscale, a private network between your own devices. Install it, then come back.",
+        "action": {
+          "kind": "open",
+          "label": "Download Tailscale",
+          "url": "https://tailscale.com/download/mac"
+        }
+      },
+      {
+        "id": "tailscale.signed_in",
+        "title": "Signed in to Tailscale",
+        "state": "blocked",
+        "detail": "Waits for: Tailscale installed",
+        "action": null
+      },
+      {
+        "id": "tailscale.magicdns",
+        "title": "MagicDNS on",
+        "state": "blocked",
+        "detail": "Waits for: Signed in to Tailscale",
+        "action": null
+      },
+      {
+        "id": "tailscale.https",
+        "title": "HTTPS certificates on",
+        "state": "blocked",
+        "detail": "Waits for: MagicDNS on",
+        "action": null
+      },
+      {
+        "id": "tailscale.cert",
+        "title": "Certificate",
+        "state": "blocked",
+        "detail": "Waits for: HTTPS certificates on",
+        "action": null
+      },
+      {
+        "id": "hub.service",
+        "title": "Hub running in the background",
+        "state": "blocked",
+        "detail": "Waits for: Certificate",
+        "action": null
+      },
+      {
+        "id": "hub.reachable",
+        "title": "Reachable over https",
+        "state": "blocked",
+        "detail": "Waits for: Hub running in the background",
+        "action": null
+      },
+      {
+        "id": "phone.paired",
+        "title": "A phone paired",
+        "state": "blocked",
+        "detail": "Waits for: Reachable over https",
+        "action": null
+      }
+    ]
+  }
+}
