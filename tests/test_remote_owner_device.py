@@ -125,6 +125,14 @@ class TestWhoisCache(unittest.TestCase):
         )
 
 
+    def test_cache_stays_bounded(self):
+        state = hub_mod.HubState(None)
+        state.whois = lambda ip: None
+        for i in range(300):
+            state.whois_cached(f"100.64.1.{i}")
+        self.assertLessEqual(len(state._whois_cache), 257)
+        self.assertLessEqual(len(state._whois_ip_locks), 257)
+
     def test_concurrent_callers_share_one_lookup(self):
         state = hub_mod.HubState(None)
         started = threading.Event()
