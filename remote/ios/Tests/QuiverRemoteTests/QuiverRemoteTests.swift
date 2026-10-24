@@ -356,6 +356,51 @@ final class ChatModelTests: XCTestCase {
         XCTAssertFalse(chat.working)
     }
 
+    /// Holds the reveal's pauses until the test lets them go.
+    private final class Gate {
+        var waits: [Duration] = []
+        private var held: [CheckedContinuation<Void, Never>] = []
+        func pause(_ d: Duration) async {
+            waits.append(d)
+            await withCheckedContinuation { held.append($0) }
+        }
+        func release() { held.forEach { $0.resume() }; held = [] }
+    }
+
+    private func settle(_ until: () -> Bool) async {
+        for _ in 0..<200 where !until() { await Task.yield() }
+    }
+
+    func testAnEventJustAfterOneWasShownStillWaitsItsTurn() async {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let gate = Gate()
+        chat.pause = gate.pause
+        chat.enqueue(say(1))
+        await settle { chat.items.count == 1 }
+        XCTAssertTrue(gate.waits.isEmpty)
+        // The queue is empty again when the next event arrives.
+        chat.enqueue(say(2))
+        await settle { !gate.waits.isEmpty }
+        XCTAssertEqual(chat.items.count, 1)
+        XCTAssertGreaterThan(gate.waits.first ?? .zero, .zero)
+        gate.release()
+        await settle { chat.items.count == 2 }
+        XCTAssertEqual(chat.items.map(\.id), ["m1", "m2"])
+    }
+
+    func testAResultJustAfterItsCallLandsWithoutWaiting() async {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let gate = Gate()
+        chat.pause = gate.pause
+        chat.enqueue(env(#"{"type":"message.appended","seq":1,"data":{"kind":"tool_use","text":"","tool":{"name":"Bash","call_id":"t1","args_summary":"Bash · ls"}}}"#))
+        await settle { chat.items.count == 1 }
+        chat.enqueue(env(#"{"type":"message.appended","seq":2,"data":{"kind":"tool_result","text":"a.txt","result_ref":"t1"}}"#))
+        await settle { if case .tool(_, "a.txt"?) = chat.items.first?.kind { true } else { false } }
+        guard case .tool(_, let result) = chat.items.first?.kind else { return XCTFail("expected the call") }
+        XCTAssertEqual(result, "a.txt")
+        XCTAssertTrue(gate.waits.isEmpty)
+    }
+
     func testAReplayAfterReconnectingLandsAtOnce() async throws {
         let chat = ChatModel(key: "claude:1", app: AppModel())
         for seq in 1...30 { chat.enqueue(say(seq)) }
@@ -369,6 +414,25 @@ final class ChatModelTests: XCTestCase {
         chat.stop()
         XCTAssertEqual(chat.items.count, 3)
         XCTAssertFalse(chat.working)
+    }
+
+    private func result(_ json: String) -> CommandResult {
+        try! Hub.decoder.decode(CommandResult.self, from: Data(json.utf8))
+    }
+
+    func testADeliveredSendStopsSayingSending() {
+        let ok = result(#"{"op":"message","ok":true,"note":"sent to tmux pane","client_id":"c1"}"#)
+        // A slash command like /rename never comes back as a user message,
+        // so the result alone has to settle the bubble.
+        XCTAssertEqual(SendState.settled(ok, current: .sending, agentActive: false), .delivered(nil))
+        XCTAssertEqual(SendState.settled(ok, current: .sending, agentActive: true),
+                       .delivered("Delivered. The agent reads it at its next step"))
+        let failed = result(#"{"op":"message","ok":false,"note":"pane unreachable","client_id":"c1"}"#)
+        XCTAssertEqual(SendState.settled(failed, current: .queued("Queued until the agent is idle"), agentActive: false),
+                       .failed("pane unreachable"))
+        // Once settled, a late result doesn't reopen it.
+        XCTAssertNil(SendState.settled(failed, current: .delivered(nil), agentActive: false))
+        XCTAssertNil(SendState.settled(ok, current: .failed("x"), agentActive: false))
     }
 
     func testReopeningAChatReusesItsModel() {
@@ -632,5 +696,48 @@ final class LaunchFlowTests: XCTestCase {
         XCTAssertEqual(fetches, 3)
         guard case .unconfirmed(let message) = flow.phase else { return XCTFail("expected unconfirmed") }
         XCTAssertTrue(message.hasPrefix("Queued."))
+    }
+
+    func testLinkCardsCollectDistinctWebLinksInOrder() {
+        let text = """
+        See [the page](https://claude.ai/code/artifact/abc) and https://example.com/a.
+        Again <https://claude.ai/code/artifact/abc> plus [docs](http://docs.example.org/x).
+        """
+        XCTAssertEqual(LinkCards.urls(in: text).map(\.absoluteString), [
+            "https://claude.ai/code/artifact/abc", "https://example.com/a", "http://docs.example.org/x",
+        ])
+    }
+
+    func testLinkCardsSkipCodeAndNonWebSchemes() {
+        let text = """
+        Use `https://inline.example.com` or [file](/Users/me/x.py), [mail](mailto:a@b.com), [call](tel:123).
+
+        ```
+        curl https://block.example.com
+        ```
+
+        [ftp](ftp://old.example.com) [real](https://real.example.com/p)
+        """
+        XCTAssertEqual(LinkCards.urls(in: text).map(\.absoluteString), ["https://real.example.com/p"])
+    }
+
+    func testLinkCardsHostAndPath() {
+        let url = URL(string: "https://www.claude.ai/code/artifact/abc?x=1")!
+        XCTAssertEqual(LinkCards.host(url), "claude.ai")
+        XCTAssertEqual(LinkCards.path(url), "/code/artifact/abc?x=1")
+        XCTAssertNil(LinkCards.path(URL(string: "https://claude.ai/")!))
+        XCTAssertTrue(LinkCards.isWeb(url))
+        XCTAssertFalse(LinkCards.isWeb(URL(string: "mailto:a@b.com")!))
+    }
+
+    func testLinkCardsReadTableCellsInOrder() {
+        let text = """
+        | Page | Link |
+        |---|---|
+        | a | [one](https://one.example.com) |
+        | b | https://two.example.com/x |
+        """
+        XCTAssertEqual(LinkCards.urls(in: text).map(\.absoluteString),
+                       ["https://one.example.com", "https://two.example.com/x"])
     }
 }
