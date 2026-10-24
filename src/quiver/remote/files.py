@@ -8,10 +8,15 @@ message lands, so only paths leave this module, never file contents.
 Listing, once per working folder and cached for ``CACHE_TTL_S``:
 
 - In a git work tree, ``git ls-files --cached --others --exclude-standard``,
-  so whatever ``.gitignore`` hides stays hidden. Folders are the parents of
-  the files it lists.
+  so whatever ``.gitignore`` hides stays hidden, even when that leaves
+  nothing. Folders are the parents of the files it lists.
 - Elsewhere, a breadth-first walk that skips dot-folders and build or
-  dependency folders (``SKIP_DIRS``) and never descends a symlink.
+  dependency folders (``SKIP_DIRS``) and never descends a symlink: each
+  folder is opened one part at a time with ``O_NOFOLLOW``, and its
+  children are read through that open folder.
+
+Concurrent requests for a folder whose listing is being built wait for
+that build instead of starting another.
 
 Either way at most ``MAX_FILES`` files are kept, and every path must stay
 inside the working folder once symlinks are resolved: a symlink (or a
@@ -218,26 +223,38 @@ def _clean_query(query: str) -> str | None:
 
 def _span(text: str, q: str) -> int | None:
     """Width of the tightest window of ``text`` holding ``q``'s letters in
-    order, or None. Greedy forward to the end, then backward to tighten."""
+    order, or None. Each pass matches greedily forward to an end, walks
+    back to the latest start for that end, then retries just past that
+    start, so a tighter match later in the text is still found."""
+    n, m = len(text), len(q)
+    best = None
     i = 0
-    end = -1
-    for pos, ch in enumerate(text):
-        if ch == q[i]:
-            i += 1
-            if i == len(q):
-                end = pos
+    while i < n:
+        k = 0
+        pos = i
+        while pos < n:
+            if text[pos] == q[k]:
+                k += 1
+                if k == m:
+                    break
+            pos += 1
+        if k < m:
+            break
+        end = pos
+        k = m - 1
+        while True:
+            if text[pos] == q[k]:
+                k -= 1
+                if k < 0:
+                    break
+            pos -= 1
+        width = end - pos + 1
+        if best is None or width < best:
+            best = width
+            if best == m:
                 break
-    if end < 0:
-        return None
-    j = len(q) - 1
-    start = end
-    for pos in range(end, -1, -1):
-        if text[pos] == q[j]:
-            j -= 1
-            if j < 0:
-                start = pos
-                break
-    return end - start + 1
+        i = pos + 1
+    return best
 
 
 def _score(e: _Entry, q: str) -> tuple[int, int] | None:
@@ -268,33 +285,64 @@ def _score(e: _Entry, q: str) -> tuple[int, int] | None:
 # -- listing ----------------------------------------------------------------
 
 
+class _Pending:
+    """One in-progress build that later callers for the same root wait on."""
+
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.listing: _Listing | None = None
+
+
+_building: dict[str, _Pending] = {}
+
+# Test hook: called with each queued folder's relative path just before
+# the walk opens it.
+_before_open = None
+
+
 def _listing(root: str) -> _Listing:
-    now = time.monotonic()
     with _cache_lock:
         hit = _cache.get(root)
-        if hit is not None and now - hit.at < CACHE_TTL_S:
+        if hit is not None and time.monotonic() - hit.at < CACHE_TTL_S:
             _cache.move_to_end(root)
             return hit
-    listing = _build(root)
-    with _cache_lock:
-        _cache[root] = listing
-        _cache.move_to_end(root)
-        while len(_cache) > CACHE_ROOTS:
-            _cache.popitem(last=False)
-    return listing
+        pending = _building.get(root)
+        owner = pending is None
+        if owner:
+            pending = _building[root] = _Pending()
+    if not owner:
+        # Another keystroke is already listing this folder: share it.
+        pending.done.wait(LIST_BUDGET_S + 5.0)
+        if pending.listing is not None:
+            return pending.listing
+        return _build(root)  # that build failed or stalled
+    try:
+        listing = _build(root)
+        pending.listing = listing
+        with _cache_lock:
+            _cache[root] = listing
+            _cache.move_to_end(root)
+            while len(_cache) > CACHE_ROOTS:
+                _cache.popitem(last=False)
+        return listing
+    finally:
+        with _cache_lock:
+            _building.pop(root, None)
+        pending.done.set()
 
 
 def _build(root: str) -> _Listing:
     deadline = time.monotonic() + LIST_BUDGET_S
     got = _git_files(root, deadline)
-    if got is not None and got[0]:
+    if got is not None:
+        # An empty answer is still git's answer (a folder holding only
+        # ignored files): walking instead would list what .gitignore hides.
         rels, truncated = got
-        entries = _from_git(root, rels)
-        return _Listing(tuple(entries), "git", truncated, time.monotonic())
+        entries, cut = _from_git(root, rels, deadline)
+        return _Listing(tuple(entries), "git", truncated or cut,
+                        time.monotonic())
     entries, truncated = _walk(root, deadline)
     return _Listing(tuple(entries), "walk", truncated, time.monotonic())
-
-
 
 
 def _git_files(root: str, deadline: float) -> tuple[list[str], bool] | None:
@@ -332,7 +380,11 @@ def _git_files(root: str, deadline: float) -> tuple[list[str], bool] | None:
             buf += chunk
             *parts, buf = buf.split(b"\0")
             for raw in parts:
-                rel = raw.decode("utf-8", "surrogateescape")
+                try:
+                    rel = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    # Can't go out as JSON, and couldn't be typed as @path.
+                    continue
                 if rel in seen:
                     continue  # unmerged entries repeat once per stage
                 seen.add(rel)
@@ -358,7 +410,24 @@ def _git_files(root: str, deadline: float) -> tuple[list[str], bool] | None:
     return rels, False
 
 
-def _from_git(root: str, rels: list[str]) -> list[_Entry]:
+def _utf8(rel: str) -> bool:
+    """False for a name that only decoded through surrogateescape: it
+    can't be sent as JSON and couldn't be typed as ``@path`` anyway."""
+    try:
+        rel.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _make(rel: str, kind: str, mtime: float) -> _Entry:
+    name = rel.rpartition("/")[2]
+    return _Entry(rel, kind, mtime, rel.casefold(), name.casefold())
+
+
+def _from_git(
+    root: str, rels: list[str], deadline: float
+) -> tuple[list[_Entry], bool]:
     out: list[_Entry] = []
     dirs: dict[str, bool] = {}  # rel dir -> stays inside root
 
@@ -369,8 +438,12 @@ def _from_git(root: str, rels: list[str]) -> list[_Entry]:
             dirs[d] = ok
         return ok
 
-    for rel in rels:
-        if not _safe_rel(rel):
+    cut = False
+    for n, rel in enumerate(rels):
+        if n % 256 == 255 and time.monotonic() > deadline:
+            cut = True
+            break
+        if not _safe_rel(rel) or not _utf8(rel):
             continue
         parent = rel.rpartition("/")[0]
         # Every folder on the way must resolve inside root; walk up so
@@ -392,10 +465,12 @@ def _from_git(root: str, rels: list[str]) -> list[_Entry]:
             entry = _entry(root, d, kind=DIR)
             if entry is not None:
                 out.append(entry)
-    return out
+    return out, cut
 
 
 def _entry(root: str, rel: str, kind: str | None = None) -> _Entry | None:
+    if not _utf8(rel):
+        return None
     full = os.path.join(root, rel)
     try:
         st = os.lstat(full)
@@ -411,47 +486,126 @@ def _entry(root: str, rel: str, kind: str | None = None) -> _Entry | None:
             return None  # dangling
     if kind is None:
         kind = DIR if stat.S_ISDIR(st.st_mode) else FILE
-    name = rel.rpartition("/")[2]
-    return _Entry(rel, kind, st.st_mtime, rel.casefold(), name.casefold())
+    return _make(rel, kind, st.st_mtime)
+
+
+_DIR_FLAGS = (
+    os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    | getattr(os, "O_CLOEXEC", 0)
+)
+
+
+def _open_dir(root: str, rel_dir: str) -> int | None:
+    """An fd for ``root/rel_dir`` opened one part at a time, each relative
+    to the folder before it and refusing a symlink, so a folder swapped
+    for a link after it was queued can't lead the walk outside root."""
+    try:
+        fd = os.open(root, _DIR_FLAGS)
+    except OSError:
+        return None
+    for part in rel_dir.split("/") if rel_dir else ():
+        try:
+            nxt = os.open(part, _DIR_FLAGS, dir_fd=fd)
+        except OSError:
+            os.close(fd)
+            return None
+        os.close(fd)
+        fd = nxt
+    return fd
+
+
+def _read_dir(fd: int, deadline: float) -> tuple[list[tuple], bool]:
+    """``(name, is_dir, is_link)`` for the opened folder, name-sorted, and
+    whether the read was cut short: at most ``MAX_FILES`` names are read,
+    and the deadline is checked while reading, before any sort."""
+    items: list[tuple] = []
+    cut = False
+    try:
+        with os.scandir(fd) as it:
+            for n, d in enumerate(it):
+                if n >= MAX_FILES or (
+                    n % 256 == 255 and time.monotonic() > deadline
+                ):
+                    cut = True
+                    break
+                try:
+                    items.append((d.name, d.is_dir(follow_symlinks=False),
+                                  d.is_symlink()))
+                except OSError:
+                    continue
+    except OSError:
+        return [], False
+    items.sort()
+    return items, cut
+
+
+def _link_entry(
+    root: str, rel: str, fd: int, name: str
+) -> _Entry | None:
+    """A symlink in the opened folder, listed when it resolves inside root
+    (never descended: a link back up would loop). The target reached from
+    the opened folder must be the same file the resolved path names."""
+    real = os.path.realpath(os.path.join(root, rel))
+    if not inside(root, real):
+        return None
+    try:
+        via = os.stat(name, dir_fd=fd)
+        st = os.stat(real)
+    except OSError:
+        return None  # dangling
+    if (via.st_dev, via.st_ino) != (st.st_dev, st.st_ino):
+        return None
+    return _make(rel, DIR if stat.S_ISDIR(st.st_mode) else FILE, st.st_mtime)
 
 
 def _walk(root: str, deadline: float) -> tuple[list[_Entry], bool]:
     out: list[_Entry] = []
     files = 0
     opened = 0
+    truncated = False
     queue: deque[str] = deque([""])
     while queue:
         if opened >= MAX_DIRS or time.monotonic() > deadline:
             return out, True
         rel_dir = queue.popleft()
         opened += 1
-        try:
-            with os.scandir(os.path.join(root, rel_dir)) as it:
-                items = sorted(it, key=lambda d: d.name)
-        except OSError:
+        if _before_open is not None:
+            _before_open(rel_dir)
+        fd = _open_dir(root, rel_dir)
+        if fd is None:
             continue
-        for item in items:
-            rel = f"{rel_dir}/{item.name}" if rel_dir else item.name
-            try:
-                is_dir = item.is_dir(follow_symlinks=False)
-            except OSError:
-                continue
-            if is_dir:
-                if item.name.startswith(".") or item.name in SKIP_DIRS:
+        try:
+            items, cut = _read_dir(fd, deadline)
+            truncated = truncated or cut
+            for name, is_dir, is_link in items:
+                rel = f"{rel_dir}/{name}" if rel_dir else name
+                if not _utf8(rel):
                     continue
-                entry = _entry(root, rel, kind=DIR)
-                if entry is not None:
-                    out.append(entry)
+                if is_dir:
+                    if name.startswith(".") or name in SKIP_DIRS:
+                        continue
+                    try:
+                        st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                    except OSError:
+                        continue
+                    out.append(_make(rel, DIR, st.st_mtime))
                     queue.append(rel)
-                continue
-            # A symlink is listed when it resolves inside root, never
-            # descended (a link back up would loop).
-            entry = _entry(root, rel)
-            if entry is None:
-                continue
-            out.append(entry)
-            if entry.kind == FILE:
-                files += 1
-                if files >= MAX_FILES:
-                    return out, True
-    return out, False
+                    continue
+                if is_link:
+                    entry = _link_entry(root, rel, fd, name)
+                    if entry is None:
+                        continue
+                else:
+                    try:
+                        st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                    except OSError:
+                        continue
+                    entry = _make(rel, FILE, st.st_mtime)
+                out.append(entry)
+                if entry.kind == FILE:
+                    files += 1
+                    if files >= MAX_FILES:
+                        return out, True
+        finally:
+            os.close(fd)
+    return out, truncated

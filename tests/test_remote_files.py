@@ -4,7 +4,10 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -104,6 +107,47 @@ class TestRanking(_Tmp):
                 len(files.search(str(self.root), "f", 99)["entries"]), 3
             )
 
+    def test_span_finds_tightest_match(self):
+        self.assertEqual(files._span("a111b111c_a_b_c.py", "abc"), 5)
+        self.assertEqual(files._span("a__b__c.py", "abc"), 7)
+        self.assertIsNone(files._span("acb", "abc"))
+        _touch(self.root, "a__b__c.py")
+        _touch(self.root, "a111b111c_a_b_c.py")
+        self.assertEqual(_paths(files.search(str(self.root), "abc")),
+                         ["a111b111c_a_b_c.py", "a__b__c.py"])
+
+    def test_concurrent_misses_share_one_build(self):
+        _touch(self.root, "one.txt")
+        real_build = files._build
+        started, release = threading.Event(), threading.Event()
+        calls = []
+
+        def slow_build(root):
+            calls.append(root)
+            started.set()
+            release.wait(5)
+            return real_build(root)
+
+        results = []
+
+        def keystroke(q):
+            results.append(files.search(str(self.root), q))
+
+        with patch.object(files, "_build", slow_build):
+            first = threading.Thread(target=keystroke, args=("o",))
+            first.start()
+            self.assertTrue(started.wait(5))
+            second = threading.Thread(target=keystroke, args=("on",))
+            second.start()
+            time.sleep(0.2)  # let the second keystroke reach the wait
+            release.set()
+            first.join(5)
+            second.join(5)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(results), 2)
+        for body in results:
+            self.assertEqual(_paths(body), ["one.txt"])
+
     def test_listing_cached_between_keystrokes(self):
         _touch(self.root, "one.txt")
         files.search(str(self.root), "o")
@@ -142,6 +186,74 @@ class TestWalk(_Tmp):
         self.assertLess(len(body["entries"]), 6)
 
 
+class TestBudget(_Tmp):
+    def test_folder_read_stops_at_deadline_before_sorting(self):
+        for i in range(600):
+            _touch(self.root, f"f{i:03}.txt")
+        fd = files._open_dir(str(self.root), "")
+        try:
+            items, cut = files._read_dir(fd, time.monotonic() - 1)
+        finally:
+            os.close(fd)
+        self.assertTrue(cut)
+        self.assertLess(len(items), 600)
+
+    def test_folder_read_capped(self):
+        for i in range(10):
+            _touch(self.root, f"f{i}.txt")
+        fd = files._open_dir(str(self.root), "")
+        try:
+            with patch.object(files, "MAX_FILES", 4):
+                items, cut = files._read_dir(fd, time.monotonic() + 60)
+        finally:
+            os.close(fd)
+        self.assertTrue(cut)
+        self.assertEqual(len(items), 4)
+
+    def test_git_collection_stops_at_deadline(self):
+        rels = [f"f{i:03}.txt" for i in range(600)]
+        for rel in rels:
+            _touch(self.root, rel)
+        entries, cut = files._from_git(
+            str(self.root), rels, time.monotonic() - 1
+        )
+        self.assertTrue(cut)
+        self.assertLess(len(entries), 600)
+
+
+class TestWalkSwap(_Tmp):
+    def test_folder_swapped_for_outside_link_is_not_followed(self):
+        outside = self.base / "outside"
+        _touch(outside, "secret.txt")
+        _touch(self.root, "a/inner.txt")
+
+        def swap(rel_dir):
+            if rel_dir == "a":
+                os.rename(self.root / "a", self.base / "a_moved")
+                os.symlink(outside, self.root / "a")
+
+        with patch.object(files, "_before_open", swap):
+            body = files.search(str(self.root), "", limit=50)
+        self.assertEqual(body["source"], "walk")
+        got = _paths(body)
+        self.assertNotIn("a/secret.txt", got)
+        self.assertNotIn("a/inner.txt", got)
+
+    def test_nested_swap_above_queued_folder_is_not_followed(self):
+        outside = self.base / "outside"
+        _touch(outside, "b/secret.txt")
+        _touch(self.root, "a/b/inner.txt")
+
+        def swap(rel_dir):
+            if rel_dir == "a/b":
+                os.rename(self.root / "a", self.base / "a_moved")
+                os.symlink(outside, self.root / "a")
+
+        with patch.object(files, "_before_open", swap):
+            got = _paths(files.search(str(self.root), "", limit=50))
+        self.assertNotIn("a/b/secret.txt", got)
+
+
 @unittest.skipUnless(HAS_GIT, "git not installed")
 class TestGit(_Tmp):
     def _git(self, *args):
@@ -176,6 +288,17 @@ class TestGit(_Tmp):
         self.assertEqual(_paths(body), ["inner/mod.py"])
         self.assertIn("inner",
                       _paths(files.search(str(self.root / "pkg"), "inner")))
+
+    def test_ignored_only_subfolder_stays_empty(self):
+        (self.root / ".gitignore").write_text("*.log\n")
+        _touch(self.root, "pkg/debug.log")
+        _touch(self.root, "pkg/trace.log")
+        body = files.search(str(self.root / "pkg"), "", limit=50)
+        self.assertEqual(body["source"], "git")
+        self.assertEqual(body["entries"], [])
+        self.assertEqual(
+            files.search(str(self.root / "pkg"), "log")["entries"], []
+        )
 
     def test_git_cap_truncates(self):
         for i in range(10):
@@ -313,6 +436,32 @@ class TestRoute(unittest.TestCase):
         status, body = self.get("claude:s3")
         self.assertEqual(status, 422)
         self.assertEqual(body["error"]["code"], "bad_cwd")
+
+    def test_non_utf8_git_name_skipped(self):
+        bad = "bad\udcff.txt"
+        real_lstat = os.lstat
+
+        def lstat(path, *a, **kw):
+            # Pretend the undecodable name exists; macOS can't create one.
+            if str(path).endswith(bad):
+                return real_lstat(str(self.proj / "src" / "hub.py"))
+            return real_lstat(path, *a, **kw)
+
+        with patch.object(files, "_git_files",
+                          return_value=(["src/hub.py", bad], False)), \
+                patch.object(files.os, "lstat", lstat):
+            status, body = self.get("claude:s1", "?q=bad")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["entries"], [])
+
+    @unittest.skipIf(sys.platform == "darwin",
+                     "APFS refuses names that aren't UTF-8")
+    def test_non_utf8_name_on_disk_skipped(self):
+        open(os.path.join(os.fsencode(self.proj), b"bad\xff.txt"),
+             "w").close()
+        status, body = self.get("claude:s1", "?q=bad")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["entries"], [])
 
     def test_satellite_session_unavailable(self):
         home = self.srv.home

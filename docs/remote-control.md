@@ -288,12 +288,16 @@ mtime}]}`, where `path` is relative to the session's working folder,
 The app inserts `@path` into the message and the harness reads the file
 itself; the hub only lists names. In a git work tree the listing is `git
 ls-files --cached --others --exclude-standard` (so `.gitignore` holds,
-with the repo's fsmonitor hook off and no index lock taken); elsewhere a
-breadth-first walk skips dot-folders and dependency or build folders
-(`node_modules`, `venv`, `__pycache__`, `build`, `dist`, `target`, ...)
-and never descends a symlink. A listing keeps at most 20,000 files, opens
+with the repo's fsmonitor hook off and no index lock taken), and an
+empty answer stays empty; outside a work tree a breadth-first walk skips
+dot-folders and dependency or build folders (`node_modules`, `venv`,
+`__pycache__`, `build`, `dist`, `target`, ...) and never descends a
+symlink: it opens each folder one part at a time with `O_NOFOLLOW` and
+reads its children through that open folder, so a folder swapped for a
+link mid-walk is skipped. A listing keeps at most 20,000 files, opens
 at most 5,000 folders, and stops after 3 s (`truncated: true` when any cap
-hit); it is cached per folder for 10 s, so each keystroke only re-ranks.
+hit); it is cached per folder for 10 s, so each keystroke only re-ranks,
+and keystrokes that arrive while it is being built wait for that build.
 Every path must resolve inside the working folder: a symlink, or a
 folder reached through one, that points outside is left out. Ranking is
 case-insensitive, in tiers: the name equals the query (with or without
