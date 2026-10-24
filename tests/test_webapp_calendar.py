@@ -2,6 +2,8 @@
 legend's accounts, and /v1/app/calendar on the hub."""
 
 import json
+import shutil
+import subprocess
 import tempfile
 import unittest
 from datetime import date, datetime, timezone
@@ -76,6 +78,15 @@ class TestRange(unittest.TestCase):
         # Sunday-first: the week holding 1 January is week 1.
         self.assertEqual(cal.week_of_year(date(2026, 12, 27), 7), 1)
         self.assertEqual(cal.week_of_year(date(2026, 10, 18), 7), 43)
+
+    def test_buffer_days_each_side(self):
+        """Whole weeks in week mode, which snaps by week; at least a week
+        otherwise; none for the month, which does not slide."""
+        self.assertEqual(cal.buffer_days("week", 7), 14)
+        self.assertEqual(cal.buffer_days("day", 1), 7)
+        self.assertEqual(cal.buffer_days("days", 3), 7)
+        self.assertEqual(cal.buffer_days("days", 9), 9)
+        self.assertEqual(cal.buffer_days("month", 42), 0)
 
     def test_empty_phrase(self):
         self.assertEqual(cal.empty_noun("week", 7), "this week")
@@ -232,6 +243,9 @@ class TestRoute(HubBase):
                 store.upsert(LedgerRecord(key=f"b{i}", event=_ev("gone", T0 + t, cwd="/tmp/proj")))
             # A one-response probe stays off the calendar.
             store.upsert(LedgerRecord(key="p", event=_ev("probe", T0 + 4000, out=5)))
+            # Eight days later: in the next week's buffer columns only.
+            for i, t in enumerate((0, 600)):
+                store.upsert(LedgerRecord(key=f"c{i}", event=_ev("later", T0 + 8 * 86400 + t, cwd="/tmp/next")))
             store.db.commit()
 
     def test_needs_a_device(self):
@@ -247,8 +261,13 @@ class TestRoute(HubBase):
         self.assertEqual((body["previous"], body["next"]), ("2026-10-13", "2026-10-27"))
         self.assertEqual(body["days"][0]["date"], "2026-10-19")
         self.assertEqual(len(body["days"]), 7)
-        self.assertEqual(len(body["blocks"]), 1)
-        block = body["blocks"][0]
+        # Two weeks of buffer columns each side for the horizontal swipe.
+        render = body["render_days"]
+        self.assertEqual((len(render), render[0]["date"], render[14]), (35, "2026-10-05", body["days"][0]))
+        self.assertEqual(render[-1]["end"], render[0]["start"] + 35 * 86400)
+        # The buffer's blocks come along; the legend counts the visible week only.
+        self.assertEqual(sorted(b["project"] for b in body["blocks"]), ["next", "proj"])
+        block = next(b for b in body["blocks"] if b["project"] == "proj")
         self.assertEqual((block["harness"], block["project"], block["responses"]), ("claude", "proj", 5))
         self.assertEqual(block["end"] - block["start"], 1200)
         refs = {r["id"]: r for r in block["sessions"]}
@@ -269,11 +288,13 @@ class TestRoute(HubBase):
         q = "/v1/app/calendar?mode=month&anchor=2026-10-20&tz=UTC"
         body = json.loads(self.srv.request("GET", q, headers=self.auth())[1])
         self.assertEqual((len(body["days"]), body["subtitle"]), (42, ""))
+        self.assertEqual(body["render_days"], body["days"])
         self.assertEqual(body["totals_range"]["start"],
                          datetime(2026, 10, 1, tzinfo=timezone.utc).timestamp())
         q = "/v1/app/calendar?mode=days&n=3&anchor=2026-11-20&tz=UTC"
         body = json.loads(self.srv.request("GET", q, headers=self.auth())[1])
         self.assertEqual((body["mode"], len(body["days"]), body["blocks"]), ("days", 3, []))
+        self.assertEqual((len(body["render_days"]), body["render_days"][7]), (17, body["days"][0]))
         self.assertEqual(body["empty"], "No harness activity in these 3 days")
 
     def test_bad_arguments_fall_back(self):
@@ -290,10 +311,62 @@ class TestRoute(HubBase):
             status, _ = self.srv.request("GET", "/v1/app/calendar", headers=self.auth())
         self.assertEqual(status, 503)
 
+    def test_a_day_keeps_a_week_of_buffer(self):
+        self.seed()
+        q = "/v1/app/calendar?mode=day&anchor=2026-10-27&tz=UTC"
+        body = json.loads(self.srv.request("GET", q, headers=self.auth())[1])
+        self.assertEqual((len(body["render_days"]), body["render_days"][7]["date"]), (15, "2026-10-27"))
+        # A quiet day still draws the week either side; its legend stays empty.
+        self.assertEqual(sorted(b["project"] for b in body["blocks"]), ["next", "proj"])
+        self.assertEqual(body["legend"], [])
+
     def test_page_script_is_bundled(self):
         status, body = self.srv.request("GET", "/app/pages.js")
         self.assertEqual(status, 200)
         self.assertIn(b'registerPage("calendar"', body)
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestSlidingScript(unittest.TestCase):
+    """pages/calendar.js's sliding-grid arithmetic, run under node with
+    the globals it borrows from app.js stubbed."""
+
+    def run_js(self, body):
+        prelude = ("globalThis.window = { addEventListener() {} };\n"
+                   "globalThis.document = { addEventListener() {} };\n"
+                   "globalThis.location = { hash: '' };\n"
+                   "globalThis.registerPage = () => {};\n")
+        source = (Path(cal.__file__).parent.parent / "static" / "pages" / "calendar.js").read_text(encoding="utf-8")
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(prelude + source + "\nconst T = window.CalendarPage._test;\n"
+                    + "process.stdout.write(JSON.stringify((() => {" + body + "})()));\nprocess.exit(0);\n")
+        self.addCleanup(Path(f.name).unlink)
+        done = subprocess.run(["node", f.name], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_a_swipe_rests_on_the_nearest_day(self):
+        # Day mode: 15 columns of 100px, one visible.
+        out = self.run_js("return [T.restingIndex(700, 100, 1, 15, 1), T.restingIndex(749, 100, 1, 15, 1),"
+                          " T.restingIndex(751, 100, 1, 15, 1), T.restingIndex(-40, 100, 1, 15, 1),"
+                          " T.restingIndex(5000, 100, 1, 15, 1)];")
+        self.assertEqual(out, [7, 7, 8, 0, 14])
+
+    def test_week_mode_rests_on_whole_weeks_inside_the_columns(self):
+        # 35 columns of 60px, seven visible: rests at 0, 7, 14, 21 or 28.
+        out = self.run_js("return [T.restingIndex(840, 60, 7, 35, 7), T.restingIndex(840 + 200, 60, 7, 35, 7),"
+                          " T.restingIndex(840 + 220, 60, 7, 35, 7), T.restingIndex(99999, 60, 7, 35, 7)];")
+        self.assertEqual(out, [14, 14, 21, 28])
+
+    def test_n_days_rest_by_day_and_step_by_n(self):
+        out = self.run_js("return [T.restingIndex(310, 50, 1, 17, 3), T.restingIndex(9999, 50, 1, 17, 3),"
+                          " T.windowDays('days', 3), T.windowDays('week', 7), T.windowDays('day', 1),"
+                          " T.snapDays('week'), T.snapDays('days')];")
+        self.assertEqual(out, [6, 14, 3, 7, 1, 7, 1])
+
+    def test_no_width_yet_rests_at_the_start(self):
+        self.assertEqual(self.run_js("return [T.restingIndex(300, 0, 1, 15, 1), T.restingIndex(0, 60, 1, 7, 7)];"),
+                         [0, 0])
 
 
 if __name__ == "__main__":

@@ -60,7 +60,6 @@
 .set-warning.danger svg { color: var(--danger-text); }
 .set-control { flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .set-mac-only .set-text { opacity: .5; }
-.badge.set-mac { color: var(--text-muted); font-weight: 400; }
 .badge.set-online { color: var(--accent); }
 .badge.set-needs { color: var(--warning-text); }
 .badge.set-failed { color: var(--danger-text); }
