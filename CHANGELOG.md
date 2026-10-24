@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote: edit a queued message in place.** `POST
+  /v1/sessions/{key}/queue` takes `op: "edit"` with a `text`, which
+  replaces a waiting send's text without moving it in the queue and
+  answers `200 {ok, client_id, op, text}`. An edit racing the send
+  either lands before it goes out or answers `409 not_waiting`, so a
+  `200` edit is never followed by the old text.
+
 - **Remote iPhone app: links in replies get a preview card.** A reply
   that links to a web page shows a card under the text with the page's
   host, its path and an Open button (up to three per reply). Tapping the

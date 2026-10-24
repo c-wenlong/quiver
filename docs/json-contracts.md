@@ -72,7 +72,7 @@ replays the journal.
 | `GET /v1/sessions/{key}/events` | SSE of `message.appended`, `session.status`, `notify`, `compaction`; `?last=seq` replays |
 | `GET /v1/sessions/{key}/messages` | `{messages: [events], next_before, has_more}` journal backfill |
 | `GET /v1/sessions/{key}/queue` | `{sends: [{client_id, text, attachments, queued_at}]}`: queue-mode sends with a `client_id` still waiting for idle, oldest first; always empty for a satellite session. `404 unknown_session` |
-| `POST /v1/sessions/{key}/queue` | `{client_id, op: steer\|cancel}` → `200 {ok, client_id, op}`. `404 unknown_send`, `409 not_waiting` (already sent, steered, removed or failed), `409 not_attached` (steer on an observed session), `409 queue_unsupported` (satellite session), `422 bad_command`, `429 backlog_full` (steer queue full) |
+| `POST /v1/sessions/{key}/queue` | `{client_id, op: steer\|cancel\|edit, text?}` → `200 {ok, client_id, op}` (`edit` adds `text`). `404 unknown_send`, `409 not_waiting` (already sent, steered, removed or failed), `409 not_attached` (steer on an observed session), `409 queue_unsupported` (satellite session), `422 bad_command`, `429 backlog_full` (steer queue full) |
 | `GET /v1/events` | global SSE (all sessions + `machine.*`) |
 | `GET /v1/inbox` | `{items: [{key, machine_id, harness, agent, title, cwd, status, last_active_at, request_id?}]}`: pending approvals (`status: approval`, any age), plus sessions in `followup`/`error`/`interrupted` active in the last 3 days, minus rows this device dismissed. `?done=1` adds sessions finished since the hub's local midnight as `status: done` |
 | `POST /v1/inbox/dismiss` | `{key, last_active_at}` → `200 {ok}`; hides the row for this device until its `last_active_at` moves past the given one. `422 bad_dismiss` without a key or a numeric `last_active_at` |
@@ -110,6 +110,9 @@ steer's, `degraded` included), and `cancel` drops it and emits its
 sending"` and `cancelled: true`. `cancelled` appears only on a removed
 send, so a client can tell a removal from a failure. Exactly one
 `command.result` is emitted per send, whichever side wins a race.
+`edit` takes a non-empty `text`, replaces the waiting send's text in
+place and answers `200 {ok, client_id, op, text}`; it emits no event.
+An edit that answers `200` is always the text that goes out.
 
 For sessions owned by a satellite (`key@machine`) the same route returns
 the same `202` shape, except `waiting` is always `false` — the satellite
