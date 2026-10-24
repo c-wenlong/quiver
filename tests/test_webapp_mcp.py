@@ -482,6 +482,58 @@ class TestSync(_SyncHome, unittest.TestCase):
         self.assertEqual(error.status, 409)
         self.assertIn("disk full", error.message)
 
+    def test_sync_writes_the_checked_source_not_a_later_read(self):
+        # An edit to the source landing after the fingerprint check must not
+        # reach a target: the write uses the snapshot that was checked.
+        body = {"server": "linear", "source": "claude", "targets": ["codex"]}
+        fingerprint = self.post("preview", **body)["fingerprint"]
+        real = mcp_cli.servers_for_source
+        tampered = {"linear": {"command": "evil", "args": []}}
+        with patch.object(mcp_cli, "servers_for_source", side_effect=[real("claude"), tampered, tampered]):
+            self.post("sync", **body, fingerprint=fingerprint)
+        codex = self.codex.read_text()
+        self.assertIn('command = "node"', codex)
+        self.assertNotIn("evil", codex)
+
+    def test_a_target_changed_mid_sync_is_left_alone(self):
+        fingerprint = self.post("preview", **LINEAR)["fingerprint"]
+        real = mcp_cli.get_tool_servers
+        calls = {"cursor": 0}
+
+        def reads(target):
+            servers = real(target)
+            if target == "cursor":
+                calls["cursor"] += 1
+                if calls["cursor"] > 1:  # after the check, before its save
+                    servers["linear"] = {"command": "someone-else"}
+            return servers
+
+        with patch.object(mcp_cli, "get_tool_servers", side_effect=reads):
+            reply = self.post("sync", **LINEAR, fingerprint=fingerprint)
+        self.assertEqual([t["name"] for t in reply["report"]["targets"]], ["codex"])
+        self.assertIn("changed while syncing", reply["error"])
+        self.assertEqual(json.loads(self.cursor.read_text())["mcpServers"]["linear"]["args"], ["/old/linear.js"])
+
+    def test_a_save_failing_part_way_keeps_what_was_saved(self):
+        fingerprint = self.post("preview", **LINEAR)["fingerprint"]
+        real = mcp_cli.get_tool_saver
+
+        def saver(target):
+            if target == "cursor":
+                return lambda servers, path: (_ for _ in ()).throw(OSError("read-only file system"))
+            return real(target)
+
+        with patch.object(mcp_cli, "get_tool_saver", side_effect=saver):
+            reply = self.post("sync", **LINEAR, fingerprint=fingerprint)
+        # codex (an add) went first and was saved; cursor's save failed.
+        self.assertEqual(reply["report"]["targets"],
+                         [{"name": "codex", "added": ["linear"], "updated": [], "skipped": [], "pruned": []}])
+        self.assertIn("Sync stopped at cursor: read-only file system", reply["error"])
+        self.assertEqual([(h["harness"], h["outcome"]) for h in reply["harnesses"]],
+                         [("cursor", "not_run"), ("codex", "add")])
+        self.assertEqual(reply["files"], ["~/.codex/config.toml"])
+        self.assertIn("[mcp_servers.linear]", self.codex.read_text())
+
     def test_sources_and_targets_follow_the_mac_model(self):
         row = {"name": "x", "harnesses": ["claude", "cursor"], "variants": [["claude"], ["cursor"]],
                "conflict": True, "in_hub": True}

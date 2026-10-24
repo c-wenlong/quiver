@@ -17,10 +17,11 @@ token swe does not recognise still never reaches the browser.
 Mac app runs it: ``swe mcp sync <source> <targets> --only=<name>
 --no-interactive``, once without ``--force`` for the harnesses that lack
 the server and once with it for those whose own definition it replaces,
-through ``mcp/cli.py``'s ``_sync`` in process. Preview is the dry run plus
+through ``mcp/cli.py``'s ``_sync`` in process. Preview is that dry run plus
 what each harness config gains, changes or loses (names only), and a
-fingerprint of what it read; Sync recomputes that fingerprint and refuses
-with 409 when anything it depends on changed since the preview, so it
+fingerprint of what it read; Sync recomputes that fingerprint, refuses
+with 409 when anything it depends on changed since the preview, and then
+writes the checked snapshot with ``_sync``'s own per-target steps, so it
 writes exactly the plan that was shown. Adding and removing servers and
 setting secret values stay in ``swe mcp`` and the Mac app (see
 docs/web-app/mcp.md).
@@ -164,7 +165,7 @@ def post(ctx, action: str, body: dict) -> dict:
                                    plan["fingerprint"].encode("utf-8")):
             raise PageError(409, "plan_changed",
                             "The configs changed since the preview. Preview again before syncing.")
-        report, error = _run(plan, dry_run=False)
+        report, error = _write(plan)
         if error is not None and not report["targets"]:
             raise PageError(409, "sync_refused", error)
     reply = _plan_reply(plan, report, error)
@@ -323,8 +324,10 @@ def _plan(request: dict) -> dict:
 def _run(plan: dict, dry_run: bool) -> tuple[dict, str | None]:
     """``_sync`` in process, as McpModel.sync runs swe: one call for the
     harnesses that gain the server, one with ``--force`` for those whose
-    definition it replaces. Returns the merged McpSyncReport and, when a
-    call failed, its message; the report keeps what already happened."""
+    definition it replaces. Preview runs it with ``--dry-run``, so swe's
+    own checks and report stand behind the plan; the write is ``_write``.
+    Returns the merged McpSyncReport and, when a call failed, its
+    message."""
     from quiver.console import strip_ansi
     from quiver.mcp import cli as mcp_cli
 
@@ -352,6 +355,42 @@ def _run(plan: dict, dry_run: bool) -> tuple[dict, str | None]:
         merged["selected"] = merged["selected"] or part["selected"]
         merged["targets"] += part["targets"]
     return merged, None
+
+
+def _write(plan: dict) -> tuple[dict, str | None]:
+    """The sync itself: writes the plan that was fingerprinted, never a
+    fresh read of the source. ``_sync`` would load the source again (twice,
+    once per call), so an edit landing after the check could reach a target
+    the user never previewed; this does ``_sync``'s per-target steps on the
+    checked snapshot instead. ``after`` is ``convert_server_for_target``'s
+    copy, merged over the target's own keys with ``_merge_format_keys``
+    for a replace, saved through ``get_tool_saver``: what ``_sync --force``
+    writes. Adds go first, then replacements, as McpModel.sync runs them.
+
+    Each target is read again just before its save, and the sync stops if
+    its entry no longer matches the preview. The report (McpSyncReport)
+    lists only the targets that were saved, so a failure part way shows
+    what already changed."""
+    from quiver.mcp import cli as mcp_cli
+
+    name = plan["server"]
+    report = {"source": plan["source"], "dry_run": False, "selected": [name], "targets": []}
+    entries = sorted(plan["entries"], key=lambda e: e["action"] != "add")
+    for entry in entries:
+        target = entry["harness"]
+        try:
+            servers = mcp_cli.get_tool_servers(target)
+            if servers.get(name) != entry["before"]:
+                return report, (f"{target}'s {name} changed while syncing, so it was left alone. "
+                                "Preview again.")
+            servers[name] = entry["after"]
+            mcp_cli.get_tool_saver(target)(servers, mcp_cli.get_tool_config(target)["path"])
+        except Exception as exc:  # a config that won't parse or save
+            return report, f"Sync stopped at {target}: {str(exc) or exc.__class__.__name__}"
+        added = entry["action"] == "add"
+        report["targets"].append({"name": target, "added": [name] if added else [],
+                                  "updated": [] if added else [name], "skipped": [], "pruned": []})
+    return report, None
 
 
 def _describe(cfg, tool: str, store: dict) -> dict | None:

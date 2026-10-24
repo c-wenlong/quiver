@@ -132,13 +132,20 @@ report says happened to that harness (`add`, `replace`, `skip`, or
 
 How it runs:
 
-- Both actions call `mcp/cli.py`'s `_sync` in process, exactly as the Mac
+- Preview calls `mcp/cli.py`'s `_sync` in process, exactly as the Mac
   app runs swe: `_sync([source, *adding, "--only=<name>",
-  "--no-interactive"])` for the harnesses that lack the server, then the
-  same with `--force` for the ones whose definition is replaced; preview
-  adds `--dry-run`. `--only` gets the name as a glob that matches only
-  itself (`McpServer.onlyPattern`). `_sync`'s printing is captured, never
-  shown, and its last line becomes the error when it refuses.
+  "--no-interactive", "--dry-run"])` for the harnesses that lack the
+  server, then the same with `--force` for the ones whose definition is
+  replaced. `--only` gets the name as a glob that matches only itself
+  (`McpServer.onlyPattern`). `_sync`'s printing is captured, never shown,
+  and its last line becomes the error when it refuses.
+- Sync writes the snapshot the fingerprint was checked against, with
+  `_sync`'s own per-target steps (`convert_server_for_target`,
+  `_merge_format_keys` for a replace, `get_tool_saver`), adds first. It
+  does not call `_sync` for the write, because `_sync` reads the source
+  again, once per call, and an edit landing after the check would reach a
+  target unpreviewed. Each target is read again just before its save and
+  left alone if its entry changed.
 - Everything is checked against what the server reads itself, fresh, under
   one lock: the server must be in the inventory (404 `unknown_server`),
   the source one of its sources (422 `bad_source`), each target a harness
@@ -159,9 +166,10 @@ How it runs:
   notion). Set it on the hub with: swe mcp secret set NOTION_TOKEN"),
   before `_sync` runs, and `_sync` refuses it again on its own. Nothing is
   written as a literal `${NAME}`.
-- A failure part way (a config that won't parse or save) comes back with
-  `error` set and the report of what already happened; if nothing
-  happened it is a 409 `sync_refused`. The page reads the list again after
+- A failure part way (a config that won't parse or save, or a target that
+  changed mid-sync) stops there and comes back with `error` set, and the
+  report lists only the targets that were saved (the rest read
+  `not_run`); if nothing was saved it is a 409 `sync_refused`. The page reads the list again after
   any failed sync.
 
 ## Security
