@@ -199,10 +199,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   table, making `~/.augment`, `~/.kiro`, `~/.pi` and the rest to hold the
   links, and the linking pass then read those new folders as proof the
   harness was installed and registered and linked each one. The skills
-  step now links only into a harness folder that already exists, the
-  rule `swe init` follows. Folders an earlier run made are left in place;
-  `rm` the ones for harnesses you don't use and archive their entries
-  with `swe harness archive <name>`.
+  step now links only harnesses that are installed, by the rules
+  `swe init` follows: the harness folder exists, or its command is on
+  PATH (installed but never run). The web app's Setup page, Doctor's
+  setup fix and the interactive wizard share this code, and the wizard,
+  which never runs `swe init`, still links a never-run install. Folders
+  an earlier run made are left in place; `rm` the ones for harnesses you
+  don't use and archive their entries with `swe harness archive <name>`.
 
 - **Remote: a refused request no longer breaks the next one on the same
   connection.** When the hub answered a POST before reading its body (a

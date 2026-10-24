@@ -9,6 +9,36 @@ from quiver.skills.layout import HARNESS_ROOTS, SHARED_LABEL, SHARED_REL
 SYMLINK_TARGETS = tuple((label, rel) for label, rel in HARNESS_ROOTS if label != SHARED_LABEL)
 
 
+def _may_link(label: str, path: Path, home: Path) -> bool:
+    """Whether a missing skills root ``path`` may be linked.
+
+    Yes when the harness's folder (the root's parent) exists. When it does
+    not, only an install that never ran qualifies: the binary answers on
+    PATH (``init.layout.command_on_path``, the test swe init uses, with
+    the registry's ``command`` honoured) and the harness is not archived,
+    since init leaves archived harnesses alone. A file or broken link
+    where the folder should be is left alone, and so is everything when
+    harness.json will not parse, since the archive cannot be read.
+    """
+    parent = path.parent
+    if parent.is_dir():
+        return True
+    if parent.is_symlink() or parent.exists():
+        return False
+
+    from quiver.configuration import CorruptConfigurationError
+    from quiver.init.layout import command_on_path, load_registry
+
+    try:
+        registry = load_registry(home)
+    except CorruptConfigurationError:
+        return False
+    entry = registry.get(label)
+    if isinstance(entry, dict) and entry.get("state") == "archived":
+        return False
+    return command_on_path(label, registry)
+
+
 @dataclass(frozen=True)
 class SkillsSymlinkHint:
     label: str
@@ -44,11 +74,10 @@ def skills_symlink_hints(home: Path | None = None) -> list[SkillsSymlinkHint]:
     for label, rel in SYMLINK_TARGETS:
         path = home / rel
         if not path.exists():
-            # A missing parent means the harness was never installed, the
-            # same rule `swe init` follows. Making ~/.augment just to hold a
-            # link is litter, and the next init reads that dir as proof the
-            # harness is here and registers it.
-            if not path.parent.is_dir():
+            if not _may_link(label, path, home):
+                # Not installed here. Linking it anyway made ~/.augment,
+                # ~/.pi and the like on every run after the first, and
+                # swe init then registered them and linked AGENTS.md in.
                 continue
             hints.append(
                 SkillsSymlinkHint(
@@ -115,8 +144,9 @@ def skills_symlink_hints(home: Path | None = None) -> list[SkillsSymlinkHint]:
 def apply_skills_symlink_hints(hints: list[SkillsSymlinkHint], home: Path | None = None) -> list[str]:
     """Apply safe symlink hints (mkdir shared, ln -sf when target missing).
 
-    A link goes only into a harness dir that already exists: this never
-    creates a harness's home, whatever hint it is handed.
+    A harness's home folder is created only for an install that never ran
+    (see ``_may_link``). Making one for a harness that is not installed
+    makes it look installed.
     """
     home = home or Path.home()
     applied: list[str] = []
@@ -125,8 +155,13 @@ def apply_skills_symlink_hints(hints: list[SkillsSymlinkHint], home: Path | None
         if hint.action == "create_shared":
             hint.path.mkdir(parents=True, exist_ok=True)
             applied.append(f"mkdir {hint.label}")
-        elif (hint.action == "symlink" and not hint.path.exists()
-              and hint.path.parent.is_dir()):
+        elif hint.action == "symlink" and not hint.path.exists():
+            if not _may_link(hint.label, hint.path, home):
+                continue
+            try:
+                hint.path.parent.mkdir(parents=True, exist_ok=True)
+            except (FileExistsError, NotADirectoryError):
+                continue  # a file further up the path; leave it alone
             hint.path.symlink_to(home / SHARED_REL)
             applied.append(f"symlink {hint.label}")
 
