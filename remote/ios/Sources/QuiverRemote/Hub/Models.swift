@@ -361,3 +361,50 @@ struct FilesResponse: Codable {
     var truncated: Bool? = nil
     let entries: [FileEntry]
 }
+
+/// One entry of `GET /v1/sessions/{id}/commands`.
+struct SlashCommand: Codable, Hashable {
+    let name: String
+    var description: String? = nil
+    /// `builtin`, `user`, `project`, `skill` or `plugin`.
+    var source: String? = nil
+    var argumentHint: String? = nil
+    var argumentRequired: Bool? = nil
+    /// What to put in the prompt box when it isn't `/name ` (Codex
+    /// skills are `$name `).
+    var insert: String? = nil
+
+    /// What the box gets on a pick, always ending in a space.
+    var insertText: String {
+        let text = (insert?.isEmpty == false ? insert! : "/\(name)")
+        return text.last?.isWhitespace == true ? text : text + " "
+    }
+
+    /// How the menu names it: the inserted text without its space.
+    var label: String { insertText.trimmingCharacters(in: .whitespaces) }
+
+    /// The source tag, in sentence case.
+    var sourceLabel: String? {
+        switch source {
+        case nil, "": nil
+        case "builtin": "Built-in"
+        case "user": "User"
+        case "project": "Project"
+        case "skill": "Skill"
+        case "plugin": "Plugin"
+        case let s?: s.prefix(1).uppercased() + s.dropFirst()
+        }
+    }
+}
+
+/// `GET /v1/sessions/{id}/commands`: the prompt box's `/` menu.
+struct CommandsResponse: Codable {
+    var key: String? = nil
+    var harness: String? = nil
+    var channel: String? = nil
+    var attached: Bool? = nil
+    var supported: Bool? = nil
+    var customAvailable: Bool? = nil
+    let commands: [SlashCommand]
+    var note: String? = nil
+}

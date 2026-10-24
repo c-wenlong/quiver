@@ -250,3 +250,158 @@ final class MentionSearch {
         }
     }
 }
+
+/// A `/command` being typed: the box starts with `/` and the caret is
+/// still in that first word.
+struct SlashToken: Equatable {
+    /// Offset just past the first word, which a pick replaces whole.
+    let end: Int
+    /// What's typed between the `/` and the caret.
+    let query: String
+}
+
+enum Slash {
+    static func token(in text: String, cursor: Int?) -> SlashToken? {
+        let chars = Array(text)
+        let caret = Caret.clamp(cursor, in: text)
+        guard caret >= 1, chars.first == "/" else { return nil }
+        guard !chars[0..<caret].contains(where: \.isWhitespace) else { return nil }
+        var end = caret
+        while end < chars.count, !chars[end].isWhitespace { end += 1 }
+        return SlashToken(end: end, query: String(chars[1..<caret]))
+    }
+
+    /// Commands whose name starts with `query`, then those that hold it
+    /// anywhere, case-insensitively; the hub's order within each.
+    static func filter(_ commands: [SlashCommand], query: String) -> [SlashCommand] {
+        let q = query.lowercased()
+        guard !q.isEmpty else { return commands }
+        let prefix = commands.filter { $0.name.lowercased().hasPrefix(q) }
+        let contains = commands.filter { !$0.name.lowercased().hasPrefix(q) && $0.name.lowercased().contains(q) }
+        return prefix + contains
+    }
+
+    /// The box after picking `command`, with the caret after what went in
+    /// (after its space, ready for an argument). An existing space after
+    /// the word is reused.
+    static func insert(_ command: SlashCommand, replacing token: SlashToken, in text: String)
+        -> (text: String, cursor: Int) {
+        var chars = Array(text)
+        let end = min(max(token.end, 0), chars.count)
+        var inserted = command.insertText
+        let reuseSpace = end < chars.count && chars[end].isWhitespace
+        if reuseSpace { inserted = String(inserted.dropLast()) }
+        chars.replaceSubrange(0..<end, with: Array(inserted))
+        return (String(chars), inserted.count + (reuseSpace ? 1 : 0))
+    }
+
+    /// What the menu says besides its rows: the line in place of an empty
+    /// list, and muted footnotes under it.
+    static func notes(_ r: CommandsResponse, harness: String, machine: String, remote: Bool)
+        -> (empty: String?, footnotes: [String]) {
+        let supported = r.supported != false
+        let empty = !supported || r.commands.isEmpty ? "No commands for \(harness)" : nil
+        var footnotes: [String] = []
+        let customMissing = supported && r.customAvailable == false
+        if customMissing {
+            footnotes.append(remote ? "Custom commands from \(machine) aren't available yet"
+                                    : "Custom commands don't work in this session's mode")
+        }
+        if let note = r.note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty,
+           !(customMissing && note.lowercased().contains("custom commands")) {
+            footnotes.append(note.prefix(1).uppercased() + note.dropFirst())
+        }
+        return (empty, footnotes)
+    }
+}
+
+/// The `/` menu's list: fetched once per chat open on the first `/`,
+/// filtered locally as you type, refetched on a pull.
+@MainActor @Observable
+final class CommandMenu {
+    private(set) var token: SlashToken?
+    private(set) var response: CommandsResponse?
+    private(set) var loading = false
+    private(set) var error: String?
+    private var dismissed: SlashToken?
+
+    @ObservationIgnored var fetch: () async throws -> CommandsResponse = { CommandsResponse(commands: []) }
+    @ObservationIgnored private var generation = 0
+
+    var isOpen: Bool { token != nil && token != dismissed }
+
+    /// The commands that match what's typed, best first.
+    var matches: [SlashCommand] { Slash.filter(response?.commands ?? [], query: token?.query ?? "") }
+
+    /// Called whenever the draft, caret or focus changes. Returns the
+    /// fetch it started, if any.
+    @discardableResult
+    func track(_ next: SlashToken?) -> Task<Void, Never>? {
+        let wasOpen = isOpen
+        token = next
+        if next == nil || dismissed != next { dismissed = nil }
+        guard Self.shouldLoad(open: isOpen, opening: !wasOpen, loaded: response != nil,
+                              loading: loading, failed: error != nil) else { return nil }
+        return Task { await load() }
+    }
+
+    /// An open menu fetches when it has no list and no failure to show
+    /// (also mid-typing, after `reset()` dropped the list under it), and
+    /// retries on opening after a failure, even with a list kept from an
+    /// earlier load.
+    static func shouldLoad(open: Bool, opening: Bool, loaded: Bool, loading: Bool, failed: Bool) -> Bool {
+        guard open, !loading else { return false }
+        if failed { return opening }
+        return !loaded
+    }
+
+    /// Fetches the list again (pull to refresh).
+    func refresh() async { await load() }
+
+    /// Back from the background with the menu still open: `stop()` dropped
+    /// the list, and the token may not change to fetch it again.
+    @discardableResult
+    func resume() -> Task<Void, Never>? {
+        guard isOpen, response == nil, !loading else { return nil }
+        return Task { await load() }
+    }
+
+    func dismiss() {
+        guard token != nil else { return }
+        dismissed = token
+    }
+
+    /// Forgets the list, so the next open fetches it again.
+    func reset() {
+        generation += 1
+        response = nil
+        loading = false
+        error = nil
+    }
+
+    private func load() async {
+        generation += 1
+        let gen = generation
+        loading = true
+        do {
+            let body = try await fetch()
+            guard gen == generation else { return }
+            response = body
+            error = nil
+        } catch {
+            guard gen == generation else { return }
+            self.error = Self.message(for: error)
+        }
+        loading = false
+    }
+
+    static func message(for error: Error) -> String {
+        guard let e = error as? HubError else { return "Couldn't load commands" }
+        switch e.code {
+        case "network": return "Can't reach the hub"
+        case "unknown_session": return "The hub doesn't know this session any more"
+        default:
+            return e.status == 404 ? "Update the hub to list commands on the phone" : "Couldn't load commands"
+        }
+    }
+}
