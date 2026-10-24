@@ -31,6 +31,7 @@ import glob
 import hashlib
 import json
 import os
+import dataclasses
 import secrets
 import sqlite3
 import threading
@@ -55,6 +56,10 @@ POLL_IDLE_S = 8.0
 # (see SnapshotSource.hot_poll_s).
 POLL_HOT_S = 0.25
 HOT_WINDOW_S = 15.0
+# A hot session, or one whose transcript just grew, has its status
+# re-probed (one session through sessions/status.py and its tail cache)
+# at most this often, instead of waiting for the 10 s catalog refresh.
+STATUS_PROBE_S = 1.0
 # Tmux-pane approval prompt watch — a subprocess per attached session,
 # so slower than the transcript poll.
 PANE_APPROVAL_S = 3.0
@@ -959,6 +964,10 @@ class Tailer:
             source.start_near_end()
         self.next_poll_at = 0.0
         self._pending_save = False
+        # Whether the last poll moved the source (bytes, rows or
+        # fingerprints read), with or without a message to show: a
+        # turn-ending record that decodes to nothing still moves it.
+        self.moved = False
         # What the cursor file holds now. A poll that leaves the source
         # here writes nothing, so the 0.25 s hot cadence and the 1 s
         # active one cost a read, not a file write, while nothing moves.
@@ -1000,11 +1009,14 @@ class Tailer:
         (duplicates, recoverable) instead of skipping messages forever.
         """
         self.next_poll_at = now + self.interval(active, hot)
+        before = self.source.state()
         out = self.source.poll()
+        after = self.source.state()
+        self.moved = bool(out) or after != before
         # A source can move without emitting (records that decode to
         # nothing, an opencode row still streaming), so compare the
         # state rather than trusting ``out`` alone.
-        if out or self.source.state() != self._saved:
+        if out or after != self._saved:
             self._pending_save = True
         return out
 
@@ -1029,6 +1041,9 @@ class TailManager:
         home: Path | str | None = None,
         journal_has: Callable[[str], bool] | None = None,
         max_sessions: int = TAIL_MAX_SESSIONS,
+        status_of: Callable[[list[Session]], list[str]] | None = None,
+        on_status: Callable[[str, str, float], None] | None = None,
+        read_clock: Callable[[], float] = time.time,
     ) -> None:
         self.emit = emit
         self.machine_id = machine_id
@@ -1055,6 +1070,26 @@ class TailManager:
         self._wake_event = threading.Event()
         self._woken: set[str] = set()
         self._hot_until: dict[str, float] = {}
+        # Status probes between catalog refreshes. ``status_of`` is
+        # ``session_statuses`` (None turns probing off); ``on_status``
+        # tells the catalog so its rows match. ``statuses`` is written
+        # by the catalog thread (``sync``) and the tail thread (probes),
+        # so every write goes through ``_take_status`` under
+        # ``_status_lock``, which also orders the events it emits.
+        # ``_status_at`` is when each key's status was read; an older
+        # read never replaces a newer one. ``_probe_due`` (keys whose
+        # transcript grew since their last probe) and ``_probed_at``
+        # belong to the tail thread alone.
+        self._status_of = status_of
+        self._on_status = on_status
+        # Stamps a probe's read. The tick clock only schedules: a slow
+        # tick would otherwise date a fresh read before a catalog
+        # refresh that it actually followed.
+        self._read_clock = read_clock
+        self._status_lock = threading.RLock()
+        self._status_at: dict[str, float] = {}
+        self._probe_due: set[str] = set()
+        self._probed_at: dict[str, float] = {}
 
     def last_append_at(self, key: str) -> float | None:
         return self.last_append.get(key)
@@ -1117,7 +1152,8 @@ class TailManager:
             key, session, source, self.cursors_dir,
             self._journal_has(key),
         )
-        self.statuses[key] = status
+        with self._status_lock:
+            self.statuses[key] = status
 
     def _source_path(self, source) -> Path | None:
         path = getattr(source, "path", None)
@@ -1141,7 +1177,11 @@ class TailManager:
         tailer.source = source
         tailer.save_cursor()
 
-    def sync(self, rows: list[tuple[str, Session, str]]) -> None:
+    def sync(
+        self,
+        rows: list[tuple[str, Session, str]],
+        as_of: float | None = None,
+    ) -> None:
         """Reconcile tailers with the catalog.
 
         ``rows`` is ``(session_key, session, status)`` newest-first. New
@@ -1149,14 +1189,25 @@ class TailManager:
         drop their tailer; status transitions emit ``session.status``
         and ``notify``. On-demand tailers (``ensure``) outside the top
         slice keep running while their session exists.
+
+        ``as_of`` is when the catalog read these statuses. A key a probe
+        read more recently keeps the probe's status: the catalog's is
+        older news, and taking it would flip the phone back. None means
+        untimed (tests): the catalog's status always applies.
         """
         by_key = {key: (s, st) for key, s, st in rows}
         wanted = rows[: self.max_sessions]
         wanted_keys = {key for key, _s, _st in wanted}
         for key in list(self.tailers):
             if key not in by_key:
-                self.tailers.pop(key, None)
-                self.statuses.pop(key, None)
+                # Under the lock: a probe applies only while its tailer
+                # is still the registered one, checked under this lock.
+                with self._status_lock:
+                    self.tailers.pop(key, None)
+                    self.statuses.pop(key, None)
+                    self._status_at.pop(key, None)
+                self._probe_due.discard(key)
+                self._probed_at.pop(key, None)
         for key, session, status in wanted:
             if key not in self.tailers:
                 source = make_source(session)
@@ -1173,16 +1224,7 @@ class TailManager:
                 tailer = self.tailers[key]
                 tailer.session = session
                 self._reresolve(tailer, session)
-            if self.statuses.get(key) != status:
-                previous = self.statuses.get(key)
-                self.statuses[key] = status
-                if previous is not None or status:
-                    self._emit_status(key, status)
-                # A notify only fires on a real transition; the first
-                # sighting of a session already in error/followup is
-                # state, not news (and would spam push at hub startup).
-                if previous is not None:
-                    self._emit_notify(key, previous, status)
+            self._take_status(key, status, as_of, announce_first=True)
         # On-demand tailers past the cap: refresh session/status but
         # keep them alive while their session still exists.
         for key in self.tailers:
@@ -1193,12 +1235,108 @@ class TailManager:
                 continue
             self.tailers[key].session = session
             self._reresolve(self.tailers[key], session)
-            if self.statuses.get(key) != status:
-                previous = self.statuses.get(key)
-                self.statuses[key] = status
-                if previous is not None:
-                    self._emit_status(key, status)
-                    self._emit_notify(key, previous, status)
+            self._take_status(key, status, as_of, announce_first=False)
+
+    def _take_status(
+        self,
+        key: str,
+        status: str,
+        at: float | None,
+        announce_first: bool,
+    ) -> bool:
+        """Adopt ``status`` for ``key`` unless a newer read exists.
+
+        Returns False only when a newer read won. Emits ``session.status``
+        (and ``notify`` on a real transition) under the lock, so events
+        leave in the order the statuses were taken.
+        """
+        with self._status_lock:
+            if at is not None and self._status_at.get(key, float("-inf")) > at:
+                return False
+            if at is None:
+                self._status_at.pop(key, None)
+            else:
+                self._status_at[key] = at
+            previous = self.statuses.get(key)
+            if previous == status:
+                return True
+            self.statuses[key] = status
+            if previous is not None or (announce_first and status):
+                self._emit_status(key, status)
+            # A notify only fires on a real transition; the first
+            # sighting of a session already in error/followup is
+            # state, not news (and would spam push at hub startup).
+            if previous is not None:
+                self._emit_notify(key, previous, status)
+            return True
+
+    def _probe_session(self, key: str, tailer: "Tailer") -> Session:
+        """The tailer's session with its last-activity time brought up
+        to date. The catalog's copy can be minutes old for a session
+        that was idle until just now, and the status probe calls a
+        mid-turn transcript "interrupted" once that time is over
+        ``ACTIVE_WINDOW_S`` old."""
+        session = tailer.session
+        ts = session.timestamp
+        path = getattr(tailer.source, "path", None)
+        if path:
+            try:
+                ts = max(ts, os.stat(path).st_mtime * 1000)
+            except OSError:
+                pass
+        last = self.last_append.get(key)
+        if last:
+            ts = max(ts, last * 1000)
+        if ts == session.timestamp:
+            return session
+        return dataclasses.replace(session, timestamp=ts)
+
+    def _wants_probe(self, key: str, now: float, hot: bool) -> bool:
+        """Whether ``key`` is owed a status probe this tick: hot or its
+        source moved since the last one, at most every STATUS_PROBE_S."""
+        if self._status_of is None:
+            return False
+        if not hot and key not in self._probe_due:
+            return False
+        if now - self._probed_at.get(key, float("-inf")) < STATUS_PROBE_S:
+            return False
+        self._probed_at[key] = now
+        self._probe_due.discard(key)
+        return True
+
+    def _probe(self, due: list[tuple[str, "Tailer"]]) -> None:
+        """One ``status_of`` call for every session owed a probe.
+
+        ``session_statuses`` reads the live-pid registry, the bg-job
+        table and the status tail cache once per call, so a batch costs
+        about what one session does. A result applies only if its tailer
+        is still the registered one: ``sync`` may drop (or replace) the
+        session while the read runs, and a removed session must not
+        come back as a status event.
+        """
+        if not due:
+            return
+        sessions = [self._probe_session(key, tailer) for key, tailer in due]
+        read_at = self._read_clock()
+        try:
+            got = self._status_of(sessions)
+        except Exception:
+            return
+        for (key, tailer), status in zip(due, got or []):
+            status = str(status or "")
+            with self._status_lock:
+                if self.tailers.get(key) is not tailer:
+                    continue
+                # The catalog hears every accepted probe, changed or
+                # not, so a refresh that read an older state cannot
+                # leave its row disagreeing with the phone.
+                if self._take_status(key, status, read_at,
+                                     announce_first=True) \
+                        and self._on_status is not None:
+                    try:
+                        self._on_status(key, status, read_at)
+                    except Exception:
+                        pass
 
     def _emit_status(self, key: str, status: str) -> None:
         self.emit(
@@ -1232,8 +1370,13 @@ class TailManager:
         now = time.time() if now is None else now
         woken, hot_until = self._take_wakes(now)
         n = 0
+        probe_due: list[tuple[str, Tailer]] = []
         for key, tailer in list(self.tailers.items()):
             if key not in woken and not tailer.due(now):
+                # Not due for a read, but a source that moved since its
+                # last probe still gets one once the gate opens.
+                if self._wants_probe(key, now, key in hot_until):
+                    probe_due.append((key, tailer))
                 continue
             try:
                 messages = tailer.poll(
@@ -1253,7 +1396,12 @@ class TailManager:
                 n += 1
             if messages:
                 self.last_append[key] = now
+            if tailer.moved:
+                self._probe_due.add(key)
             tailer.commit_cursor()
+            if self._wants_probe(key, now, key in hot_until):
+                probe_due.append((key, tailer))
+        self._probe(probe_due)
         self._poll_approvals(now)
         return n
 
