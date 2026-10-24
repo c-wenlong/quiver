@@ -67,6 +67,12 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     "list edit": [
         ("--reset", "Restore default columns and window"),
     ],
+    "session index": [
+        ("--on", "Let the remote hub keep the index current"),
+        ("--off", "Stop the hub keeping the index current"),
+        ("--status", "Show what the index holds, without a pass"),
+        ("--json", "Print the index status as JSON"),
+    ],
     "remote serve": [
         ("--host=", "Bind address (default: this machine's Tailscale IP)"),
         ("--port=", "Port (default 8477)"),
@@ -394,6 +400,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
 # --<TAB>` consults the "mcp sync" table; `swe hs list` shares `swe list`'s.
 _NESTED_FLAGS: dict[str, dict[str, str]] = {
     "list": {"edit": "list edit"},
+    "session": {"index": "session index"},
     "ls": {"edit": "list edit"},
     "harness": {
         "list": "list", "ls": "list",
@@ -571,6 +578,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
     ],
     "session": [
         ("use", "Resume a session by index"),
+        ("index", "Index transcripts for session search"),
     ],
     "remote": [
         ("serve", "Run the hub (REST + SSE for the phone)"),

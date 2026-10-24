@@ -85,8 +85,9 @@ extension SweClient {
 
     /// Mints a one-time pair token the running hub honours for a few
     /// minutes; both the PWA URL and the `quiver://` deep link come back.
-    public func remotePair() async throws -> PairTicket {
-        try await call(["remote", "pair", "--json"])
+    /// `name` is what the device is called once it trades the token.
+    public func remotePair(name: String? = nil) async throws -> PairTicket {
+        try await call(["remote", "pair"] + (name.map { ["--name=\($0)"] } ?? []) + ["--json"])
     }
 
     public func remoteDevices() async throws -> [RemoteStatus.Device] {

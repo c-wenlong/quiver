@@ -606,7 +606,78 @@ def _resume_session(session) -> int:
     return cmd_use(cmd_args)
 
 
+_INDEX_FLAGS = {"--on", "--off", "--status", "--json"}
+
+
+def _index_status_line(body: dict) -> str:
+    if not body.get("exists"):
+        return "No search index on this machine yet."
+    def count(n: int, noun: str) -> str:
+        return f"{n:,} {noun}" + ("" if n == 1 else "s")
+
+    files = body.get("files") or {}
+    line = (f"{count(body.get('sessions', 0), 'session')}, "
+            f"{count(body.get('messages', 0), 'message')} indexed")
+    if files.get("due"):
+        line += f" · {count(files['due'], 'file')} behind"
+    if files.get("failed"):
+        line += f" · {count(files['failed'], 'file')} failed"
+    return line
+
+
+def cmd_session_index(args) -> int:
+    """``swe session index``: run one pass of the transcript search index,
+    or with ``--on``/``--off`` choose whether the hub keeps it current."""
+    from quiver.sessions import search_writer
+
+    args, json_view = take_json_flag(args)
+    out = error_stream(json_view)
+    unknown = [a for a in args if a not in _INDEX_FLAGS]
+    if unknown:
+        print(c("red", f"Unknown option for swe session index: {unknown[0]}"), file=out)
+        return 1
+    if "--on" in args and "--off" in args:
+        print(c("red", "pick one of --on and --off"), file=out)
+        return 1
+    home = Path.home()
+    if "--on" in args or "--off" in args:
+        search_writer.set_enabled(home, "--on" in args)
+    result = None
+    if "--status" not in args and "--off" not in args:
+        try:
+            result = search_writer.run_pass(home)
+        except (search_writer.IndexBusy, search_writer.IndexUnavailable) as exc:
+            print(c("red", f"Search index: {exc}"), file=out)
+            return 1
+    body = search_writer.status(home)
+    if json_view:
+        if result is not None:
+            body["pass"] = result.as_dict()
+        emit(body)
+        return 1 if body.get("error") else 0
+    if result is not None:
+        print(f"Read {result.indexed:,} of {result.files:,} transcripts "
+              f"({result.current:,} already current) in {result.seconds:.1f}s.")
+        if result.failed:
+            print(c("yellow", f"{result.failed:,} transcripts could not be read."))
+    if body.get("error"):
+        print(c("red", f"Couldn't read the search index: {body['error']}"))
+    else:
+        print(_index_status_line(body))
+    if body.get("last_error"):
+        print(c("yellow", f"The hub's last pass failed: {body['last_error'].get('message')}"))
+    state = "on" if body.get("enabled") else "off"
+    print(c("dim", f"Hub keeps it current: {state} (swe session index --on|--off)"))
+    return 1 if body.get("error") else 0
+
+
 def cmd_session(args):
+    if args and args[0] == "index":
+        if any(a in ("-h", "--help", "help") for a in args[1:]):
+            from quiver.help_text import cmd_help
+
+            return cmd_help(["session"]) or 0
+        return cmd_session_index(args[1:])
     # `session --help` mid-listing (`session use --help`, `session -i -h`)
     # still prints help; bare `help` counts only in first position and
     # flag values are skipped, so `--search help` / `--search -h` search.

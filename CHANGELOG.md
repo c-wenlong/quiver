@@ -16,6 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under its row and the words marked. A hub with no search index says
   it is matching titles and details only, and how to turn the index on.
 
+- **Session search without the Mac app: `swe session index`.** swe now
+  writes the transcript search index itself, the same
+  `~/.quiver/data/search/search.sqlite` file and schema the Quiver app
+  writes, so `swe session --search` and the remote hub's `/v1/search`
+  match what was said in Claude Code and Codex sessions on a Linux hub
+  too. `swe session index` runs one pass; `--on` makes the hub keep the
+  index current every two minutes, `--off` stops it, and `--status`
+  shows what it holds. On a Mac both can write the one file: every
+  commit is fenced on the transcript's row, so neither duplicates or
+  undoes the other, and swe never touches an index at another schema
+  version.
+
 - **Web app: the Compute GPU tab draws a line per harness.** Like RAM
   and CPU, it plots each harness that went above the flag with its logo
   at the line's end, instead of one line per GPU device. The hub reads
@@ -55,6 +67,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--json` gives the same list for the Mac app. The hub's LaunchAgent
   now loads on a retry when launchd answers "Input/output error", and
   every Tailscale call finds the CLI inside Tailscale.app too.
+
+- **Mac app: read a session live from Sessions.** A click on a
+  session now opens its chat over the list, as in the web app: the
+  transcript from this Mac's hub, tool calls that open to their
+  arguments and output, approvals and how they were answered, then each
+  new message as the agent writes it, with a Live dot and the session's
+  status and ownership. ⌘[ or Sessions goes back; Details and the
+  context menu still open the details sheet, which is also what a click
+  opens for cloud sessions, ones the hub doesn't list, and any while the
+  hub is down. The first chat pairs the app with the hub on its own: it
+  lists as "Quiver for Mac" in Settings › Remote and keeps its
+  credential in `~/.quiver/secrets/remote/app-device.json`. Sending and
+  attaching follow in their own changes.
 
 - **Mac app: a setup checklist for remote control.** Settings ›
   Integrations › Remote now offers "Set up remote control" until the
@@ -294,6 +319,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Web app and remote PWA: the Quiver icon replaces the "W"
+  placeholder.** The favicon, home-screen icon, sidebar brand, setup
+  screen and Pricing's Quiver logo showed a placeholder zigzag that read
+  as a "W". `icon-192.png` and `icon-512.png` are now the Mac app's
+  light icon (`app/Icons/AppIcon-light.png`), and the hub no longer
+  serves `icon.svg`.
+
 - **Web app: Calendar scrolls sideways across dates.** The day, week
   and N-day grids only moved with the arrow keys or the chevrons. They
   now slide like the Mac app's: a trackpad swipe, shift-scroll or a
@@ -303,6 +335,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`render_days`), and once a swipe comes to rest the page loads the
   range starting there and re-centres on it, keeping the hour. Keys and
   chevrons scroll the same grid one step at a time.
+
+- **Models and Pricing: Devin's `MODEL_PRIVATE_11` shows as Claude
+  Haiku 4.5.** Devin CLI logs that opaque id for Claude Haiku 4.5, so
+  both apps listed it under "Other" with no logo or price. The price
+  supplement now aliases it to `claude-haiku-4-5`, brand lookup follows
+  the supplement's aliases before matching a name, and the Models and
+  Pricing rows (web and Mac) show the real name with the logged id
+  muted beside it. On the Mac, the id also matches its Artificial
+  Analysis model through the alias.
 
 - **Web app: Menu bar and Widgets say "Mac app only" and stay put.** The
   two sidebar items wear the same "Mac app only" pill as Settings' Mac-only

@@ -26,6 +26,10 @@ private struct SessionsContent: View {
     @Environment(AppModel.self) private var app
     @Bindable var model: SessionsModel
     @State private var detail: SessionsModel.Row?
+    /// The session whose chat is swapped in over the list.
+    @State private var chat: SessionsModel.Row?
+    /// The newest click, so a slower lookup for an older one can't land.
+    @State private var opening: UUID?
     @State private var actionError: String?
     /// Rows a day's group shows before folding behind a Show more row.
     private static let foldLimit = 10
@@ -47,6 +51,24 @@ private struct SessionsContent: View {
     }
 
     var body: some View {
+        Group {
+            if let chat {
+                SessionChatPage(row: chat, onBack: { self.chat = nil }, onDetails: { detail = chat },
+                                onMissing: {
+                                    self.chat = nil
+                                    detail = chat
+                                })
+                    .onChange(of: app.navReselects) { self.chat = nil }
+            } else {
+                listPage
+            }
+        }
+        .quiverSheet(item: $detail) { row in
+            SessionDetail(row: row, resume: { resume(row) }, close: { detail = nil })
+        }
+    }
+
+    private var listPage: some View {
         Page(title: "Sessions", subtitle: "Local and cloud sessions, usage and estimated cost.") {
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task {
@@ -117,8 +139,10 @@ private struct SessionsContent: View {
         // Opening the page again within a minute shows the same list.
         .task(id: app.swePath) {
             async let keyStatus: Void = app.services.reload()
+            async let hubKeys: Void = app.hub.refreshKeys()
             await model.loadIfStale(for: app.swePath)
             await keyStatus
+            await hubKeys
         }
         // New usage from a scan, a feed import or a price change, without
         // listing the sessions again. A visit with none since the last
@@ -127,8 +151,22 @@ private struct SessionsContent: View {
             await model.refreshUsage(afterScans: app.overview?.completedScans ?? 0,
                                      ledgerRevision: app.overview?.revision ?? 0)
         }
-        .quiverSheet(item: $detail) { row in
-            SessionDetail(row: row, resume: { resume(row) }, close: { detail = nil })
+    }
+
+    /// A click opens the session's chat when this Mac's hub can show it,
+    /// else its details: cloud sessions, ones the hub doesn't list, or
+    /// any while the hub is down.
+    private func open(_ row: SessionsModel.Row) {
+        let click = UUID()
+        opening = click
+        guard row.location == .local else { return detail = row }
+        let key = HubSessionRow.key(harness: row.session.harness, id: row.session.id)
+        if app.hub.opensChat(key) { return chat = row }
+        // The list may predate a session started since.
+        Task {
+            await app.hub.refreshKeys()
+            guard opening == click else { return }
+            if app.hub.opensChat(key) { chat = row } else { detail = row }
         }
     }
 
@@ -177,7 +215,8 @@ private struct SessionsContent: View {
                         ForEach(shown) { row in
                             SessionRow(row: row, project: model.project(for: row.session),
                                        match: model.searchHit(for: row.session.id),
-                                       open: { detail = row }, resume: { resume(row) })
+                                       open: { open(row) }, showDetails: { detail = row },
+                                       resume: { resume(row) })
                             Divider().overlay(Theme.border)
                         }
                         if RowFold.hiddenCount(total: group.rows.count, limit: Self.foldLimit) > 0 {
@@ -446,7 +485,9 @@ private struct SessionRow: View {
     /// The transcript hit this row surfaced on, for the snippet line; nil
     /// when it matched on metadata or content search is off.
     var match: SearchHit?
+    /// The chat, or the details when the hub can't show it.
     var open: () -> Void
+    var showDetails: () -> Void
     var resume: () -> Void
     @State private var hovering = false
     @FocusState private var resumeFocused: Bool
@@ -504,11 +545,12 @@ private struct SessionRow: View {
         .background(hovering ? Theme.panelHover : .clear, in: .rect(cornerRadius: Theme.controlRadius))
         .contentShape(.rect)
         .onHover { hovering = $0 }
-        // A double-click opens the session; a selection would take it.
+        // A click opens the session; a selection would take it.
         .textSelection(.disabled)
-        .onTapGesture(count: 2, perform: open)
+        .onTapGesture(perform: open)
         .contextMenu {
-            Button("Details…", action: open)
+            Button("Open chat", action: open)
+            Button("Details…", action: showDetails)
             if s.opensInBrowser {
                 Button("Open in Devin", action: resume)
             } else {
@@ -523,7 +565,8 @@ private struct SessionRow: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityAction(named: "Details", open)
+        .accessibilityAction(named: "Open chat", open)
+        .accessibilityAction(named: "Details", showDetails)
         .accessibilityAction(named: "Resume", resume)
     }
 

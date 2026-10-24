@@ -371,6 +371,7 @@ class HubState:
         targets: list = [
             (self._catalog_loop, "remote-catalog"),
             (self._tail_loop, "remote-tail"),
+            (self._search_index_loop, "remote-search-index"),
         ]
         if notify.load_config(self.home).get("enabled"):
             notifier = notify.Notifier(
@@ -530,6 +531,28 @@ class HubState:
             except Exception:
                 pass
             self._stop.wait(catalog_mod.REFRESH_INTERVAL_S)
+
+    def _search_index_loop(self) -> None:
+        """Keep this machine's transcript search index current while
+        ``swe session index --on`` says so. The setting is read every
+        cycle, so turning it on or off needs no restart."""
+        from quiver.sessions import search_writer
+
+        while not self._stop.is_set():
+            if search_writer.is_enabled(self.home):
+                try:
+                    search_writer.run_pass(self.home, should_stop=self._stop.is_set)
+                except search_writer.IndexBusy:
+                    pass  # a `swe session index` run has it; next cycle
+                except Exception as exc:
+                    # A newer schema or a locked file: kept for
+                    # `swe session index --status` and the Settings row,
+                    # and the next cycle tries again.
+                    try:
+                        search_writer.record_error(self.home, str(exc) or type(exc).__name__)
+                    except OSError:
+                        pass
+            self._stop.wait(search_writer.INDEX_INTERVAL_S)
 
     def _refresh_launchable(self) -> None:
         """Keep this machine's ``launchable`` current: Provider visibility
@@ -2477,7 +2500,6 @@ class _Handler(BaseHTTPRequestHandler):
             "/app.js": "app.js",
             "/styles.css": "styles.css",
             "/manifest.webmanifest": "manifest.webmanifest",
-            "/icon.svg": "icon.svg",
             "/icon-192.png": "icon-192.png",
             "/icon-512.png": "icon-512.png",
         }.get(path)

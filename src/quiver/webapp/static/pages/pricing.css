@@ -48,7 +48,7 @@
 .qp-name { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .qp-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .qp-harnesses { display: flex; gap: 2px; flex: none; }
-.qp-tier { white-space: nowrap; flex: none; }
+.qp-tier, .qp-raw { white-space: nowrap; flex: none; }
 .qp-src-caption { display: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .qp-symbol { display: grid; place-items: center; width: 16px; height: 16px; color: var(--text-secondary); }
 .qp-symbol svg, .qp-warn svg { width: 15px; height: 15px; }
