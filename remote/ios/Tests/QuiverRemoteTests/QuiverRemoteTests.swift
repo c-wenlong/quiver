@@ -633,4 +633,36 @@ final class LaunchFlowTests: XCTestCase {
         guard case .unconfirmed(let message) = flow.phase else { return XCTFail("expected unconfirmed") }
         XCTAssertTrue(message.hasPrefix("Queued."))
     }
+
+    func testLinkCardsCollectDistinctWebLinksInOrder() {
+        let text = """
+        See [the page](https://claude.ai/code/artifact/abc) and https://example.com/a.
+        Again <https://claude.ai/code/artifact/abc> plus [docs](http://docs.example.org/x).
+        """
+        XCTAssertEqual(LinkCards.urls(in: text).map(\.absoluteString), [
+            "https://claude.ai/code/artifact/abc", "https://example.com/a", "http://docs.example.org/x",
+        ])
+    }
+
+    func testLinkCardsSkipCodeAndNonWebSchemes() {
+        let text = """
+        Use `https://inline.example.com` or [file](/Users/me/x.py), [mail](mailto:a@b.com), [call](tel:123).
+
+        ```
+        curl https://block.example.com
+        ```
+
+        [ftp](ftp://old.example.com) [real](https://real.example.com/p)
+        """
+        XCTAssertEqual(LinkCards.urls(in: text).map(\.absoluteString), ["https://real.example.com/p"])
+    }
+
+    func testLinkCardsHostAndPath() {
+        let url = URL(string: "https://www.claude.ai/code/artifact/abc?x=1")!
+        XCTAssertEqual(LinkCards.host(url), "claude.ai")
+        XCTAssertEqual(LinkCards.path(url), "/code/artifact/abc?x=1")
+        XCTAssertNil(LinkCards.path(URL(string: "https://claude.ai/")!))
+        XCTAssertTrue(LinkCards.isWeb(url))
+        XCTAssertFalse(LinkCards.isWeb(URL(string: "mailto:a@b.com")!))
+    }
 }
