@@ -121,6 +121,7 @@ remote/
   tail.py        # byte-offset transcript readers → events (read path)
   inject.py      # per-harness send/approval/interrupt registry (write path)
   supervise.py   # tmux lifecycle for attached sessions
+  fork.py        # fork a session: per-harness fork command lines, the route
   journal.py     # per-session seq-numbered event log (replay on reconnect)
   hub.py         # http.server ThreadingHTTPServer: REST + SSE, device auth
   files.py       # @-mention paths under a session's folder (/v1/sessions/{id}/files)
@@ -242,6 +243,7 @@ POST /v1/sessions/{id}/pin           {pinned: bool} → pin or unpin on the hub
 POST /v1/sessions/{id}/title         {title: string} → display name, "" clears it
 POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill
 POST /v1/sessions                    new session {machine, harness, cwd, prompt} → launch_id
+POST /v1/sessions/{id}/fork          {prompt?} new session from this one's history → launch_id
 GET  /v1/folders?path=                subfolders of one folder on the hub machine (new-session browser)
 GET  /v1/sessions/{id}/files?q=     paths under the session's folder for the prompt box's @ menu
 GET  /v1/launches/{launch_id}        pending|started|failed; started carries the session key
@@ -346,6 +348,61 @@ skip the transcript as history already sent). `GET /v1/launches/{launch_id}` the
 phone can open the chat straight away; a satellite's failed `launch`
 command (`command.result` echoing `launch_id`) turns it `failed` with the
 note. The hub keeps launches in memory for a day.
+
+`POST /v1/sessions/{id}/fork {prompt?}` (`fork.py`) starts a new run of
+the session's harness that continues from its history, in the session's
+folder under tmux, and leaves the original as it was. The source can be
+attached or only watched; the fork never writes to it, and attaching the
+source later never stops a fork (`_local_writer_pids` skips a process
+carrying a fork flag, unless it names the attached session as its own
+output with `--session-id`). The answer is the same `202 {launch_id, state:
+"pending", note}` as a new-session launch, followed through `GET
+/v1/launches/{launch_id}`. `prompt` is optional and typed in once the TUI
+is up; with none, the pane is still booted past the trust prompt, and the
+launch stays pending until the harness writes the fork's transcript.
+Session rows carry `can_fork`, so the app offers Fork only where it
+works. Errors: `404 unknown_session`, `409 fork_unsupported` (the harness
+has no fork command line, or its session has no id to pass), `422
+bad_cwd` (the session's folder is gone from the hub), `409 fork_pending`
+(see below), `422 not_installed`,
+`422 launch_failed` (tmux missing), `422 bad_command`, `429 backlog_full`.
+
+Each harness's fork command line, read off the installed binary's
+`--help` on 2026-10-24:
+
+| Harness | Version checked | Command line |
+|---|---|---|
+| Claude Code | 2.1.308 | `claude --resume <id> --fork-session --session-id <new uuid>` |
+| Codex | 0.163.0 | `codex fork <thread uuid>` |
+| Kilo | 7.8.15 | `kilo --session <id> --fork` |
+| Pi | 1.3.0 | `pi --fork <id>` |
+| Droid | 0.219.0 | `droid --fork <id>` |
+
+Everything else answers `409 fork_unsupported`. opencode 2.1.3 has
+`--fork` only on the one-shot `opencode run`, not the TUI; devin,
+cursor-agent and cline have no fork option.
+
+Adoption must claim the fork, never its source. Claude Code takes the
+new session's id on the command line, so the pending marker carries it
+as `expect_id` and adoption waits for exactly that id. The other
+harnesses pick their own id: the marker excludes the source's id along
+with every same-folder session that existed at the fork, and `fork_of`
+also keeps out a codex resume of the source (a new rollout file under
+the same thread uuid). That leaves only the folder and creation time, so
+two such forks waiting in one folder could take each other's
+transcripts: a fork of these harnesses is refused with `409
+fork_pending` while another launch of that harness is still waiting for
+adoption in the folder (its marker is under a minute old or its pane is
+alive). The marker is written under the registry lock before the pane
+starts, so two requests at once can't both pass. An id a Claude fork
+named is never claimed by any other pending launch. A satellite's session gets a `fork` command in
+its journal, like `launch`; the satellite runs it on its own thread, so
+booting the pane never delays the commands behind it. It checks its own
+folder, its
+failed `command.result` (echoing `launch_id`) turns the launch `failed`,
+and its `session.launched` names the new key. The hub refuses a
+satellite row without `can_fork`, which covers satellites too old to
+send the field or run the op.
 
 `GET /v1/folders?path=` lists one folder's subfolders on the hub machine
 for the phone's folder browser: `{path, parent, folders: [{name, path}],
