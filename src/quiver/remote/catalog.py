@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Callable
 
 from quiver.paths import atomic_write_text, remote_dir_for
-from quiver.remote import protocol
+from quiver.remote import protocol, sessionmeta
 from quiver.sessions.models import Session, SessionRow
 from quiver.sessions.resume import resume_json
 
@@ -409,12 +409,22 @@ class Catalog:
                 str(row.get("key") or ""), None, row,
                 str(row.get("status") or ""),
             ))
+        meta = sessionmeta.load(self.home)
+        for key, _s, row, _st in rows:
+            sessionmeta.apply(row, meta.get(key))
         self._rows = rows
         self._refreshed_at = time.time()
         return [row for _key, _s, row, _st in rows]
 
     def rows(self) -> list[dict]:
         return [row for _key, _s, row, _st in self._rows]
+
+    def reapply_meta(self, key: str) -> dict | None:
+        """Re-overlay one row's pin and title after a write; returns the row."""
+        row = self.row_for(key)
+        if row is not None:
+            sessionmeta.apply(row, sessionmeta.get(self.home, key))
+        return row
 
     def tail_rows(self) -> list[tuple[str, Session, str]]:
         """``(key, Session, status)`` for the tail manager, newest first."""
