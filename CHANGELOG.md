@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   log in. The console dials sshd directly, so it still works when the
   hub is down.
 
+- **Mac app: View › Zoom In / Zoom Out / Actual Size (⌘+ / ⌘− / ⌘0).**
+  Text on every page grows or shrinks in steps from 75% to 150%, like a
+  browser's zoom, so a smaller window still shows a whole page. ⌘= works
+  without Shift. Zooming out stops at 75% and never takes text under
+  9pt (text designed smaller keeps its size until you zoom in). The zoom is kept across
+  launches and also applies to the menu bar panel.
+
 - **Remote iPhone app: paired with more than one hub.** Pairing the
   app with another machine, such as a home server's hub, used to
   replace the hub it was paired with. Now the new hub joins a list: the

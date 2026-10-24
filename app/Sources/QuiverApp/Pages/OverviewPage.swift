@@ -404,9 +404,9 @@ private struct TotalCard: View {
     }
 
     // The AppKit fonts behind `Theme.caption`, `.display` and `.figure`.
-    static let captionDigitsFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-    static let displayFont = NSFont.monospacedDigitSystemFont(ofSize: 72, weight: .bold)
-    static let figureFont = NSFont.monospacedDigitSystemFont(ofSize: 20, weight: .bold)
+    static var captionDigitsFont: NSFont { .monospacedDigitSystemFont(ofSize: Theme.scaled(12), weight: .regular) }
+    static var displayFont: NSFont { .monospacedDigitSystemFont(ofSize: Theme.scaled(72), weight: .bold) }
+    static var figureFont: NSFont { .monospacedDigitSystemFont(ofSize: Theme.scaled(20), weight: .bold) }
 
     /// One logo per harness: the pointer on one focuses it, and so does a
     /// click or Space for the keyboard. One centred row while they fit,
@@ -717,7 +717,7 @@ private struct ActivityCard: View {
                     Color.clear.frame(width: 24, height: 1)
                     ForEach(Array(weeks.enumerated()), id: \.offset) { index, column in
                         Text(Self.monthLabel(Array(weeks), index) ?? "")
-                            .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                            .font(Theme.font(size: 10)).foregroundStyle(Theme.textSecondary)
                             .fixedSize()
                             .frame(width: Theme.heatmapCell, alignment: .leading)
                     }
@@ -728,7 +728,7 @@ private struct ActivityCard: View {
                 ForEach(0..<7, id: \.self) { weekday in
                     HStack(spacing: 3) {
                         Text(weekday % 2 == 1 ? Self.weekdayName(weekday) : "")
-                            .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                            .font(Theme.font(size: 10)).foregroundStyle(Theme.textSecondary)
                             .frame(width: 24, alignment: .leading)
                         ForEach(Array(weeks.enumerated()), id: \.offset) { _, column in
                             if let cell = column[weekday] {

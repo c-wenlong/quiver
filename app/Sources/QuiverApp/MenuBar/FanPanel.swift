@@ -16,7 +16,7 @@ struct PanelFanButton: View {
         Button(fans.isHolding ? "Fans: manual" : "Fans",
                systemImage: fans.isHolding ? "fan.fill" : "fan") { showing = true }
             .labelStyle(.iconOnly)
-            .font(.system(size: 14))
+            .font(Theme.font(size: 14))
             .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
             .frame(width: 22, height: 22)
             .contentShape(.rect)

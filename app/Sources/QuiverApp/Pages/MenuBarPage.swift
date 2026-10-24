@@ -109,7 +109,7 @@ private struct MenuBarPreview: View {
                 HStack(spacing: 4) {
                     icon
                     if !text.isEmpty {
-                        Text(text).font(.system(size: 12, weight: .medium).monospacedDigit())
+                        Text(text).font(Theme.font(size: 12, weight: .medium).monospacedDigit())
                             .foregroundStyle(Theme.textPrimary)
                     }
                 }
@@ -118,7 +118,7 @@ private struct MenuBarPreview: View {
                 .background(Theme.selected, in: .rect(cornerRadius: 5))
             }
             Text(Date.now, format: .dateTime.weekday(.abbreviated).hour().minute())
-                .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                .font(Theme.font(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
         }
         .padding(.horizontal, 14)
         .frame(height: 36)
@@ -250,7 +250,7 @@ private struct PopupTabsSettings: View {
                                             set: { app.popupTabs.setShown($0, tab) }),
                               locked: !app.popupTabs.canHide(tab)) {
                         Image(systemName: tab.symbol)
-                            .font(.system(size: 13))
+                            .font(Theme.font(size: 13))
                             .foregroundStyle(Theme.textNav)
                             .frame(width: 16)
                     }
@@ -460,7 +460,7 @@ private struct WindowChip: View {
     var body: some View {
         Button { isOn.toggle() } label: {
             HStack(spacing: 5) {
-                Image(systemName: isOn ? "checkmark" : "minus").font(.system(size: 10, weight: .semibold))
+                Image(systemName: isOn ? "checkmark" : "minus").font(Theme.font(size: 10, weight: .semibold))
                 Text(title).font(Theme.caption)
             }
             .foregroundStyle(isOn ? Theme.textPrimary : Theme.textMuted)

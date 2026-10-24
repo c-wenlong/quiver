@@ -434,7 +434,7 @@ private struct SourceMark: View {
     }
 
     private func symbol(_ name: String, _ color: Color) -> some View {
-        Image(systemName: name).font(.system(size: 13)).foregroundStyle(color)
+        Image(systemName: name).font(Theme.font(size: 13)).foregroundStyle(color)
             .frame(width: Self.size, height: Self.size)
     }
 

@@ -138,7 +138,7 @@ private struct HarnessRow: View {
                     }
                     // The name is for people; the command is what runs.
                     Text(harness.command)
-                        .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
+                        .font(Theme.font(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
                         .lineLimit(1).truncationMode(.middle)
                     ForEach(harness.aliases, id: \.self) { Badge($0) }
                 }

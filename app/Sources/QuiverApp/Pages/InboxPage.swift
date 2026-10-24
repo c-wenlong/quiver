@@ -120,7 +120,7 @@ private struct NotificationRow: View {
                     .frame(width: 8, height: 8)
                     .padding(.top, 5)
                 Image(systemName: icon)
-                    .font(.system(size: 15))
+                    .font(Theme.font(size: 15))
                     .foregroundStyle(iconColor)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(note.title)
