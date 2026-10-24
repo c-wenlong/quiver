@@ -97,7 +97,10 @@ private struct ChatBody: View {
         .modifier(LoadsEarlierAtRest(model: model, oldest: entries.first?.id))
         .scrollDismissesKeyboard(.interactively)
         // A tap in the transcript closes the prompt box's menu.
-        .simultaneousGesture(TapGesture().onEnded { model.mentions.dismiss() })
+        .simultaneousGesture(TapGesture().onEnded {
+            model.mentions.dismiss()
+            model.commands.dismiss()
+        })
         .safeAreaInset(edge: .bottom) { bottomBar }
     }
 
@@ -858,10 +861,16 @@ private struct Composer: View {
         focused ? Mention.token(in: model.draft, cursor: cursor) : nil
     }
 
+    /// The `/command` being typed at the start of the box, while it has focus.
+    private var slash: SlashToken? {
+        focused ? Slash.token(in: model.draft, cursor: cursor) : nil
+    }
+
     var body: some View {
         let tray = model.tray
         let editing = model.editingId != nil
         let mentions = model.mentions
+        let commands = model.commands
         VStack(spacing: 8) {
             if !tray.isEmpty {
                 QueuedTray(sends: tray, note: model.trayNote, editingId: model.editingId,
@@ -875,7 +884,9 @@ private struct Composer: View {
                 EditBar(editing: editing, saving: model.savingEdit, note: model.editNote) { model.cancelEdit() }
                     .transition(arrival)
             }
-            if mentions.isOpen {
+            if commands.isOpen {
+                commandMenu(commands).transition(arrival)
+            } else if mentions.isOpen {
                 MentionMenu(entries: mentions.entries, answered: mentions.answered, error: mentions.error) { pick($0) }
                     .transition(arrival)
             }
@@ -898,15 +909,38 @@ private struct Composer: View {
         .animation(.easeOut(duration: 0.2), value: tray.isEmpty)
         .animation(.easeOut(duration: 0.2), value: editing)
         .animation(.easeOut(duration: 0.15), value: mentions.isOpen)
+        .animation(.easeOut(duration: 0.15), value: commands.isOpen)
         .onChange(of: model.editingId) { _, id in
             // The queued message's text replaced the draft: caret to its end.
             cursor = nil
             if id != nil { focused = true }
         }
         .onChange(of: mention, initial: true) { _, token in mentions.track(token) }
+        .onChange(of: slash, initial: true) { _, token in commands.track(token) }
         .padding(.horizontal, Theme.gutter)
         .padding(.top, 10)
         .padding(.bottom, 8)
+    }
+
+    private func commandMenu(_ commands: CommandMenu) -> some View {
+        let row = model.row
+        let notes = commands.response.map {
+            Slash.notes($0, harness: row?.harnessName ?? "this harness", machine: model.machineName,
+                        remote: row?.remote == true)
+        }
+        return CommandMenuView(commands: commands.matches, loading: commands.response == nil, error: commands.error,
+                               empty: notes?.empty, footnotes: notes?.footnotes ?? [],
+                               query: commands.token?.query ?? "",
+                               refresh: { await commands.refresh() }) { pick($0) }
+    }
+
+    /// Puts the picked command in place of the `/word` at the start.
+    private func pick(_ command: SlashCommand) {
+        guard let token = slash else { return }
+        let next = Slash.insert(command, replacing: token, in: model.draft)
+        model.draft = next.text
+        cursor = next.cursor
+        moveCaret = next.cursor
     }
 
     /// Puts the picked path in place of the `@token`.

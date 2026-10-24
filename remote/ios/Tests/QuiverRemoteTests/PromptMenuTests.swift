@@ -227,3 +227,171 @@ final class MentionSearchTests: XCTestCase {
         XCTAssertEqual(body.source, "git")
     }
 }
+
+final class SlashTokenTests: XCTestCase {
+    func testOnlyAtTheVeryStartWhileTheFirstWordIsTyped() {
+        XCTAssertEqual(Slash.token(in: "/", cursor: nil), SlashToken(end: 1, query: ""))
+        XCTAssertEqual(Slash.token(in: "/rev", cursor: nil), SlashToken(end: 4, query: "rev"))
+        XCTAssertNil(Slash.token(in: "/review ", cursor: nil))
+        XCTAssertNil(Slash.token(in: " /review", cursor: nil))
+        XCTAssertNil(Slash.token(in: "see /review", cursor: nil))
+        XCTAssertNil(Slash.token(in: "", cursor: nil))
+    }
+
+    func testCaretInsideTheFirstWord() {
+        // "/review the diff", caret after "/re".
+        XCTAssertEqual(Slash.token(in: "/review the diff", cursor: 3), SlashToken(end: 7, query: "re"))
+        // Caret in the argument: closed.
+        XCTAssertNil(Slash.token(in: "/review the diff", cursor: 10))
+        XCTAssertNil(Slash.token(in: "/review", cursor: 0))
+    }
+}
+
+final class SlashFilterTests: XCTestCase {
+    private let commands = [
+        SlashCommand(name: "compact", source: "builtin"),
+        SlashCommand(name: "review", source: "builtin"),
+        SlashCommand(name: "demo:preview", source: "plugin"),
+        SlashCommand(name: "Reset-cache", source: "project"),
+        SlashCommand(name: "release", source: "user"),
+    ]
+
+    func testPrefixBeforeContainsKeepingHubOrder() {
+        XCTAssertEqual(Slash.filter(commands, query: "re").map(\.name), ["review", "Reset-cache", "release", "demo:preview"])
+        XCTAssertEqual(Slash.filter(commands, query: "view").map(\.name), ["review", "demo:preview"])
+    }
+
+    func testEmptyQueryKeepsEverythingAndCaseIsIgnored() {
+        XCTAssertEqual(Slash.filter(commands, query: "").count, 5)
+        XCTAssertEqual(Slash.filter(commands, query: "RESET").map(\.name), ["Reset-cache"])
+        XCTAssertEqual(Slash.filter(commands, query: "zzz"), [])
+    }
+}
+
+final class SlashInsertTests: XCTestCase {
+    func testDefaultInsertIsSlashNameAndASpace() {
+        let token = Slash.token(in: "/rev", cursor: nil)!
+        let r = Slash.insert(SlashCommand(name: "review"), replacing: token, in: "/rev")
+        XCTAssertEqual(r.text, "/review ")
+        XCTAssertEqual(r.cursor, 8)
+        XCTAssertNil(Slash.token(in: r.text, cursor: r.cursor))
+    }
+
+    func testInsertTextReplacesTheDefault() {
+        let token = Slash.token(in: "/dep", cursor: nil)!
+        let skill = SlashCommand(name: "deploy-docs", source: "skill", insert: "$deploy-docs ")
+        XCTAssertEqual(Slash.insert(skill, replacing: token, in: "/dep").text, "$deploy-docs ")
+        XCTAssertEqual(skill.label, "$deploy-docs")
+        // An insert without its space still gets one.
+        XCTAssertEqual(SlashCommand(name: "x", insert: "$x").insertText, "$x ")
+    }
+
+    func testArgumentRequiredLeavesTheCaretReadyForIt() {
+        let token = Slash.token(in: "/mo", cursor: nil)!
+        let model = SlashCommand(name: "model", argumentHint: "<name>", argumentRequired: true)
+        let r = Slash.insert(model, replacing: token, in: "/mo")
+        XCTAssertEqual(r.text, "/model ")
+        XCTAssertEqual(r.cursor, r.text.count)
+    }
+
+    func testWholeFirstWordGoesAndTheRestStays() {
+        let text = "/rev the diff"
+        let token = Slash.token(in: text, cursor: 3)!
+        let r = Slash.insert(SlashCommand(name: "review"), replacing: token, in: text)
+        XCTAssertEqual(r.text, "/review the diff")
+        XCTAssertEqual(r.cursor, 8)
+    }
+
+    func testSourceLabels() {
+        XCTAssertEqual(SlashCommand(name: "a", source: "builtin").sourceLabel, "Built-in")
+        XCTAssertEqual(SlashCommand(name: "a", source: "project").sourceLabel, "Project")
+        XCTAssertEqual(SlashCommand(name: "a", source: "plugin").sourceLabel, "Plugin")
+        XCTAssertNil(SlashCommand(name: "a").sourceLabel)
+    }
+}
+
+final class SlashNotesTests: XCTestCase {
+    func testUnsupportedOrEmptySaysSo() {
+        let r = CommandsResponse(supported: false, customAvailable: false, commands: [])
+        let notes = Slash.notes(r, harness: "Gemini", machine: "studio", remote: false)
+        XCTAssertEqual(notes.empty, "No commands for Gemini")
+        XCTAssertEqual(notes.footnotes, [])
+        XCTAssertEqual(Slash.notes(CommandsResponse(supported: true, commands: []), harness: "Codex", machine: "m",
+                                   remote: false).empty, "No commands for Codex")
+    }
+
+    func testSatelliteWithoutCustomCommandsGetsOneFootnote() {
+        let r = CommandsResponse(supported: true, customAvailable: false, commands: [SlashCommand(name: "compact")],
+                                 note: "custom commands aren't available for this machine yet")
+        let notes = Slash.notes(r, harness: "Claude Code", machine: "studio", remote: true)
+        XCTAssertNil(notes.empty)
+        XCTAssertEqual(notes.footnotes, ["Custom commands from studio aren't available yet"])
+    }
+
+    func testOtherNotesShowCapitalized() {
+        let r = CommandsResponse(supported: true, customAvailable: true, commands: [SlashCommand(name: "a")],
+                                 note: "built-ins checked last spring")
+        XCTAssertEqual(Slash.notes(r, harness: "x", machine: "m", remote: false).footnotes, ["Built-ins checked last spring"])
+    }
+
+    func testDecodesTheCommandsRoute() throws {
+        let json = #"{"key":"k","harness":"claude","channel":"tmux","attached":true,"supported":true,"custom_available":false,"commands":[{"name":"model","description":"Switch model","source":"builtin","argument_hint":"<name>","argument_required":true},{"name":"demo-skill","description":"A skill","source":"skill","insert":"$demo-skill "}],"note":"n"}"#
+        let body = try Hub.decoder.decode(CommandsResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(body.customAvailable, false)
+        XCTAssertEqual(body.commands[0].argumentHint, "<name>")
+        XCTAssertEqual(body.commands[0].argumentRequired, true)
+        XCTAssertEqual(body.commands[1].insert, "$demo-skill ")
+    }
+}
+
+@MainActor
+final class CommandMenuTests: XCTestCase {
+    func testFetchesOnceOnOpenAndFiltersLocally() async {
+        let menu = CommandMenu()
+        var calls = 0
+        menu.fetch = {
+            calls += 1
+            return CommandsResponse(commands: [SlashCommand(name: "compact"), SlashCommand(name: "review")])
+        }
+        await menu.track(SlashToken(end: 1, query: ""))?.value
+        XCTAssertNil(menu.track(SlashToken(end: 3, query: "re")))
+        XCTAssertEqual(menu.matches.map(\.name), ["review"])
+        menu.track(nil)
+        XCTAssertNil(menu.track(SlashToken(end: 1, query: "")))
+        XCTAssertEqual(calls, 1)
+        await menu.refresh()
+        XCTAssertEqual(calls, 2)
+        // The chat closed: the next open fetches again.
+        menu.reset()
+        menu.track(nil)
+        await menu.track(SlashToken(end: 1, query: ""))?.value
+        XCTAssertEqual(calls, 3)
+    }
+
+    func testErrorRetriesOnTheNextOpen() async {
+        let menu = CommandMenu()
+        var fail = true
+        menu.fetch = {
+            if fail { throw HubError(status: 0, code: "network", message: "") }
+            return CommandsResponse(commands: [SlashCommand(name: "a")])
+        }
+        await menu.track(SlashToken(end: 1, query: ""))?.value
+        XCTAssertEqual(menu.error, "Can't reach the hub")
+        fail = false
+        menu.track(nil)
+        await menu.track(SlashToken(end: 1, query: ""))?.value
+        XCTAssertNil(menu.error)
+        XCTAssertEqual(menu.matches.map(\.name), ["a"])
+    }
+
+    func testDismissHoldsUntilTheTokenChanges() async {
+        let menu = CommandMenu()
+        await menu.track(SlashToken(end: 1, query: ""))?.value
+        menu.dismiss()
+        XCTAssertFalse(menu.isOpen)
+        menu.track(SlashToken(end: 1, query: ""))
+        XCTAssertFalse(menu.isOpen)
+        menu.track(SlashToken(end: 2, query: "c"))
+        XCTAssertTrue(menu.isOpen)
+    }
+}

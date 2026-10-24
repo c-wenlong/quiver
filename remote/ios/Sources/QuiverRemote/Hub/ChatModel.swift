@@ -152,6 +152,8 @@ final class ChatModel {
 
     /// The prompt box's `@` menu.
     let mentions = MentionSearch()
+    /// The prompt box's `/` menu.
+    let commands = CommandMenu()
 
     init(key: String, app: AppModel) {
         self.key = key
@@ -161,6 +163,10 @@ final class ChatModel {
             return try await client.files(self.key, query: query, limit: MentionSearch.limit)
         }
         mentions.machine = { [weak self] in self?.machineName ?? "that machine" }
+        commands.fetch = { [weak self] in
+            guard let self, let client = self.app?.client else { throw HubError.network(CancellationError()) }
+            return try await client.commands(self.key)
+        }
     }
 
     var row: SessionRow? { app?.session(key) }
@@ -209,6 +215,8 @@ final class ChatModel {
         streamTask?.cancel()
         streamTask = nil
         mentions.reset()
+        // Fetched again on the first "/" after the chat reopens.
+        commands.reset()
         flushPending()
         live = false
     }

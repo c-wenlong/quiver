@@ -54,29 +54,50 @@ struct PromptField: View {
 
 /// The card both prompt menus sit in, just above the prompt box: rows
 /// on `Theme.card` with a hairline border; past `visibleRows` it scrolls.
+/// With `refresh` it always scrolls, so a pull can reload it.
 struct PromptMenuCard<Rows: View>: View {
     let count: Int
     let rowHeight: CGFloat
     var visibleRows = 6
+    /// Muted lines under the rows.
+    var footnotes: [String] = []
+    var refresh: (() async -> Void)? = nil
     @ViewBuilder let rows: () -> Rows
 
     var body: some View {
-        Group {
-            if count > visibleRows {
-                ScrollView(.vertical) { VStack(spacing: 0) { rows() } }
-                    // The chat anchors its scroll views at the bottom; the
-                    // menu starts at its best match.
-                    .defaultScrollAnchor(.top)
-                    .scrollDismissesKeyboard(.never)
-                    .frame(height: CGFloat(visibleRows) * rowHeight)
+        VStack(spacing: 0) {
+            if let refresh {
+                scroller.frame(height: CGFloat(max(1, min(count, visibleRows))) * rowHeight)
+                    .refreshable { await refresh() }
+            } else if count > visibleRows {
+                scroller.frame(height: CGFloat(visibleRows) * rowHeight)
             } else {
                 VStack(spacing: 0) { rows() }
+            }
+            if !footnotes.isEmpty {
+                Rectangle().fill(Theme.border).frame(height: 1).padding(.top, 4)
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(footnotes, id: \.self) {
+                        Text($0).font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 4)
             }
         }
         .padding(.vertical, 4)
         .background(Theme.card, in: .rect(cornerRadius: Theme.blockRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
         .clipShape(.rect(cornerRadius: Theme.blockRadius))
+    }
+
+    private var scroller: some View {
+        ScrollView(.vertical) { VStack(spacing: 0) { rows() } }
+            // The chat anchors its scroll views at the bottom; the menu
+            // starts at its best match.
+            .defaultScrollAnchor(.top)
+            .scrollDismissesKeyboard(.never)
     }
 }
 
@@ -85,6 +106,7 @@ struct PromptMenuCard<Rows: View>: View {
 struct PromptMenuNote: View {
     let text: String
     var icon: String? = nil
+    var height: CGFloat = MentionMenu.rowHeight
 
     var body: some View {
         HStack(spacing: 10) {
@@ -96,7 +118,7 @@ struct PromptMenuNote: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 14)
-        .frame(minHeight: MentionMenu.rowHeight)
+        .frame(minHeight: height)
     }
 }
 
@@ -161,5 +183,80 @@ struct PromptRowStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .background(configuration.isPressed ? Theme.pressed : .clear)
+    }
+}
+
+/// The `/` menu: the commands this session's harness will run, filtered
+/// by what's typed after the `/`.
+struct CommandMenuView: View {
+    let commands: [SlashCommand]
+    /// The list hasn't come back yet.
+    let loading: Bool
+    let error: String?
+    /// In place of an empty list, e.g. "No commands for Codex".
+    let empty: String?
+    var footnotes: [String] = []
+    let query: String
+    var refresh: (() async -> Void)? = nil
+    var onPick: (SlashCommand) -> Void = { _ in }
+
+    static let rowHeight: CGFloat = 54
+
+    var body: some View {
+        PromptMenuCard(count: max(1, commands.count), rowHeight: Self.rowHeight, visibleRows: 5,
+                       footnotes: error == nil ? footnotes : [], refresh: refresh) {
+            if let error {
+                PromptMenuNote(text: error, icon: "exclamationmark.circle", height: Self.rowHeight)
+            } else if loading && commands.isEmpty {
+                PromptMenuNote(text: "Loading commands", height: Self.rowHeight)
+            } else if let empty {
+                PromptMenuNote(text: empty, height: Self.rowHeight)
+            } else if commands.isEmpty {
+                PromptMenuNote(text: "No command matches /\(query)", height: Self.rowHeight)
+            } else {
+                ForEach(commands, id: \.self) { command in
+                    Button { onPick(command) } label: { CommandRow(command: command) }
+                        .buttonStyle(PromptRowStyle())
+                }
+            }
+        }
+    }
+}
+
+private struct CommandRow: View {
+    let command: SlashCommand
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(command.label).font(Theme.body).foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1).truncationMode(.middle)
+                        .layoutPriority(1)
+                    if let hint = command.argumentHint, !hint.isEmpty {
+                        Text(hint).font(Theme.caption).foregroundStyle(Theme.textMuted)
+                            .lineLimit(1).truncationMode(.tail)
+                    }
+                }
+                if let description = command.description, !description.isEmpty {
+                    Text(description).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1).truncationMode(.tail)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if let tag = command.sourceLabel {
+                Text(tag).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 7).frame(height: 20)
+                    .background(Theme.subtle, in: .capsule)
+                    .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
+                    .fixedSize()
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: CommandMenuView.rowHeight)
+        .contentShape(.rect)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel([command.label, command.argumentHint, command.description, command.sourceLabel]
+            .compactMap { $0?.isEmpty == false ? $0 : nil }.joined(separator: ", "))
     }
 }

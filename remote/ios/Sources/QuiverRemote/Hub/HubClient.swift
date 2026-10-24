@@ -192,6 +192,12 @@ struct HubClient: Sendable {
                                query: ["q": query, "limit": "\(limit)"]))
     }
 
+    /// The slash commands this session's harness will run, for the prompt
+    /// box's `/` menu.
+    func commands(_ key: String) async throws -> CommandsResponse {
+        try await send(request("GET", "/v1/sessions/\(Self.encodeKey(key))/commands"))
+    }
+
     /// Returns true when the hub queued it for a satellite (202), so the
     /// outcome arrives later as `command.result` or `session.ownership`.
     @discardableResult
