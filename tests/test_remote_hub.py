@@ -2060,6 +2060,14 @@ class TestServeEntry(unittest.TestCase):
         finally:
             signal.signal(signal.SIGTERM, prev)
 
+    def test_tail_manager_probes_through_state_status_of(self):
+        state = HubState(Path(tempfile.mkdtemp()))
+        state.status_of = lambda sessions: ["active"] * len(sessions)
+        self.assertEqual(state.tail_manager._status_of([object()]),
+                         ["active"])
+        self.assertEqual(state.tail_manager._on_status,
+                         state.catalog.note_status)
+
     def test_state_start_stop(self):
         state = HubState(Path(tempfile.mkdtemp()))
         state.start()

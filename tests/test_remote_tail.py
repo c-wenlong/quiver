@@ -1119,5 +1119,132 @@ class TestTailWake(unittest.TestCase):
         inner.send.assert_called_once_with("sess", {"text": "x"}, "done")
 
 
+class TestStatusProbe(unittest.TestCase):
+    """Hot or growing sessions get their status re-probed between
+    catalog refreshes, and a stale catalog read cannot undo it."""
+
+    KEY = "claude:s1"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.events = []
+        self.noted = []
+        self.probed = []
+        self.live = "done"
+        self.path = self.tmp / "s.jsonl"
+        self.path.write_text(json.dumps(_claude_user("old")) + "\n")
+        self.sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                            session_id=str(self.path), tool_name="claude")
+
+        def status_of(sessions):
+            self.probed.append(sessions[0])
+            return [self.live]
+
+        self.mgr = tail.TailManager(
+            lambda key, ev: self.events.append(ev), "mbp", home=self.tmp,
+            status_of=status_of,
+            on_status=lambda *a: self.noted.append(a),
+        )
+        self.t0 = 1_000_000.0
+        self.mgr.sync([(self.KEY, self.sess, "done")], as_of=self.t0 - 5)
+        self.mgr.tick(self.t0)
+        self.events.clear()
+
+    def _append(self, rec):
+        with open(self.path, "a") as fh:
+            fh.write(json.dumps(rec) + "\n")
+
+    def _statuses(self):
+        return [e["data"]["status"] for e in self.events
+                if e["type"] == "session.status"]
+
+    def _notifies(self):
+        return [e["data"]["kind"] for e in self.events
+                if e["type"] == "notify"]
+
+    def _go_active(self):
+        self.live = "active"
+        self.mgr.wake(self.KEY, now=self.t0 + 2)
+        self._append(_claude_user("hi"))
+        self.mgr.tick(self.t0 + 2)
+
+    def test_send_to_idle_session_flips_active_within_hot_window(self):
+        self._go_active()
+        self.assertEqual(self.mgr.statuses[self.KEY], "active")
+        self.assertEqual(self._statuses(), ["active"])
+        self.assertEqual(self.noted[-1], (self.KEY, "active", self.t0 + 2))
+        # Active now, so the cadence stays fast after the window too.
+        self.assertTrue(self.mgr.tailers[self.KEY].next_poll_at
+                        <= self.t0 + 2 + tail.POLL_HOT_S)
+
+    def test_stale_catalog_sync_does_not_revert_it(self):
+        self._go_active()
+        # A refresh that read its statuses before the probe says done.
+        self.mgr.sync([(self.KEY, self.sess, "done")], as_of=self.t0 + 1)
+        self.assertEqual(self.mgr.statuses[self.KEY], "active")
+        self.assertEqual(self._statuses(), ["active"])
+        # One that read after it wins.
+        self.mgr.sync([(self.KEY, self.sess, "done")], as_of=self.t0 + 3)
+        self.assertEqual(self.mgr.statuses[self.KEY], "done")
+        self.assertEqual(self._statuses(), ["active", "done"])
+
+    def test_turn_ending_flips_back_promptly(self):
+        self._go_active()
+        self.live = "done"
+        self._append(_claude_assistant([{"type": "text", "text": "ok"}]))
+        # Read at once on the hot cadence; the probe gate is still shut.
+        self.mgr.tick(self.t0 + 2 + tail.POLL_HOT_S)
+        self.assertEqual(self.mgr.statuses[self.KEY], "active")
+        # The growth is owed a probe, which runs once the gate opens.
+        self.mgr.tick(self.t0 + 2 + tail.STATUS_PROBE_S)
+        self.assertEqual(self.mgr.statuses[self.KEY], "done")
+        self.assertEqual(self._statuses(), ["active", "done"])
+        self.assertEqual(self._notifies(), ["finished"])
+
+    def test_growth_after_the_window_is_still_probed_when_not_due(self):
+        self._go_active()
+        later = self.t0 + 2 + tail.HOT_WINDOW_S + 5
+        self.mgr.tick(later)  # window over; active cadence
+        self.live = "done"
+        self._append(_claude_assistant([{"type": "text", "text": "ok"}]))
+        self.mgr.tick(later + tail.POLL_ACTIVE_S)  # reads the reply
+        self.assertEqual(self.mgr.statuses[self.KEY], "done")
+
+    def test_probes_are_bounded(self):
+        before = len(self.probed)
+        # Hot but unchanged: at most one probe per STATUS_PROBE_S.
+        self.mgr.wake(self.KEY, now=self.t0 + 2)
+        for i in range(8):
+            self.mgr.tick(self.t0 + 2 + i * tail.POLL_HOT_S)
+        self.assertEqual(len(self.probed) - before, 2)
+        # Neither hot nor growing: no probes at all.
+        quiet = self.t0 + 100
+        before = len(self.probed)
+        for i in range(5):
+            self.mgr.tick(quiet + i * tail.POLL_IDLE_S)
+        self.assertEqual(len(self.probed), before)
+        # An unchanged accepted probe still reaches the catalog.
+        self.assertTrue(all(n[1] == "done" for n in self.noted))
+
+    def test_probe_sees_the_transcript_mtime_not_the_catalog_time(self):
+        self._go_active()
+        mtime_ms = self.path.stat().st_mtime * 1000
+        self.assertGreaterEqual(self.probed[-1].timestamp, mtime_ms)
+        # The catalog's Session object itself is left alone.
+        self.assertEqual(self.sess.timestamp, 0)
+
+    def test_untimed_sync_always_applies(self):
+        self._go_active()
+        self.mgr.sync([(self.KEY, self.sess, "done")])
+        self.assertEqual(self.mgr.statuses[self.KEY], "done")
+
+    def test_no_status_of_means_no_probes(self):
+        mgr = tail.TailManager(lambda k, e: None, "mbp", home=self.tmp)
+        mgr.sync([(self.KEY, self.sess, "done")], as_of=self.t0)
+        mgr.wake(self.KEY, now=self.t0)
+        mgr.tick(self.t0)
+        self.assertEqual(mgr.statuses[self.KEY], "done")
+
+
 if __name__ == "__main__":
     unittest.main()

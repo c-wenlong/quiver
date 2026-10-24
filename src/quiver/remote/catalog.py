@@ -380,6 +380,16 @@ class Catalog:
         self.max_rows = max_rows
         self._rows: list[tuple[str, Session | None, dict, str]] = []
         self._refreshed_at = 0.0
+        # Statuses a tailer probed after this catalog's own read, keyed
+        # by session: ``(status, probed_at)``. A refresh that started
+        # before ``probed_at`` keeps these instead of its own (older)
+        # verdict; one that started after drops them. ``_status_as_of``
+        # is when the current rows' statuses were read. The lock makes
+        # "record + patch" (note_status) and "apply + swap" (refresh)
+        # atomic against each other.
+        self._lock = threading.Lock()
+        self._fresh: dict[str, tuple[str, float]] = {}
+        self._status_as_of = 0.0
 
     @property
     def refreshed_at(self) -> float:
@@ -387,6 +397,7 @@ class Catalog:
 
     def refresh(self) -> list[dict]:
         """Re-list sessions, reclassify statuses, rebuild rows."""
+        started = time.time()
         try:
             sessions = self._fetch()
         except Exception:
@@ -409,9 +420,42 @@ class Catalog:
                 str(row.get("key") or ""), None, row,
                 str(row.get("status") or ""),
             ))
-        self._rows = rows
-        self._refreshed_at = time.time()
+        with self._lock:
+            # Fresher-wins: a tailer probe newer than this read stays.
+            self._fresh = {
+                k: v for k, v in self._fresh.items() if v[1] > started
+            }
+            for i, (key, session, row, _st) in enumerate(rows):
+                fresh = self._fresh.get(key)
+                if fresh is not None and session is not None:
+                    row["status"] = fresh[0] or None
+                    rows[i] = (key, session, row, fresh[0])
+            self._rows = rows
+            self._status_as_of = started
+            self._refreshed_at = time.time()
         return [row for _key, _s, row, _st in rows]
+
+    def note_status(self, key: str, status: str, at: float) -> None:
+        """A tailer probed ``key`` at ``at``; patch its row now.
+
+        Ignored when the catalog's own read is newer. Otherwise the row
+        changes in place and the next refresh keeps this status unless
+        that refresh started after ``at``.
+        """
+        with self._lock:
+            if at <= self._status_as_of:
+                return
+            self._fresh[key] = (status, at)
+            for i, (k, session, row, _st) in enumerate(self._rows):
+                if k == key and session is not None:
+                    row["status"] = status or None
+                    self._rows[i] = (k, session, row, status)
+                    break
+
+    def tail_snapshot(self) -> tuple[list[tuple[str, Session, str]], float]:
+        """``tail_rows()`` plus when their statuses were read, together."""
+        with self._lock:
+            return self.tail_rows(), self._status_as_of
 
     def rows(self) -> list[dict]:
         return [row for _key, _s, row, _st in self._rows]

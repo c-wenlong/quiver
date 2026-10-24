@@ -164,8 +164,14 @@ class RemoteAgent:
         self._last_cmd_seq = self._load_cmd_cursor()
         self._done_cmd_seq = self._last_cmd_seq
         self._done_set: set[int] = set()
+        from quiver.sessions.status import session_statuses
+        # Same status re-probe as the hub: the satellite's tailer emits
+        # session.status itself, and its catalog push carries the
+        # fresher of the two.
         self.tail_manager = tail.TailManager(
             emit=self._capture, machine_id=self.machine_id, home=self.home,
+            status_of=session_statuses,
+            on_status=self.catalog.note_status,
         )
         # Requeue uplink events the hub never acknowledged — the
         # transcript cursor is saved on read, so an in-memory buffer
@@ -535,7 +541,8 @@ class RemoteAgent:
         while not self._stop.is_set():
             try:
                 self._push_catalog()
-                self.tail_manager.sync(self.catalog.tail_rows())
+                rows, as_of = self.catalog.tail_snapshot()
+                self.tail_manager.sync(rows, as_of=as_of)
             except Exception:
                 pass
             self._stop.wait(CATALOG_PUSH_S)

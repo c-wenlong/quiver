@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Remote: a session's status follows a send within a second.** The
+  hub re-read every session's status only on its 10 second catalog
+  refresh, so after a send the phone could show the session idle while
+  the reply was already streaming, and showed it working for up to 10
+  seconds after the turn ended. Now a session that was just written to,
+  or whose transcript grew, has its own status checked about once a
+  second, and the change goes to the phone at once. An older catalog
+  read can no longer flip it back. Satellites do the same.
+
 - **Remote: a malformed write body gets an answer.** A list or object
   as a message's `mode`, an approval's `decision` or a control `op` made
   the hub drop the connection with no response. It now answers `422

@@ -140,6 +140,10 @@ class HubState:
             machine_id=self.machine_id,
             home=self.home,
             journal_has=self._journal_has,
+            # Hot or growing sessions get their status re-probed between
+            # catalog refreshes; the catalog keeps the fresher of the two.
+            status_of=lambda sessions: self.status_of(sessions),
+            on_status=self.catalog.note_status,
         )
         # The web app's page data (/v1/app/*): its ledger opens on the
         # first request, so a hub nobody browses never scans.
@@ -445,7 +449,8 @@ class HubState:
                                 {"ownership": new_own},
                             ),
                         )
-                self.tail_manager.sync(self.catalog.tail_rows())
+                rows, as_of = self.catalog.tail_snapshot()
+                self.tail_manager.sync(rows, as_of=as_of)
             except Exception:
                 pass
             self._stop.wait(catalog_mod.REFRESH_INTERVAL_S)
