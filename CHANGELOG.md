@@ -150,6 +150,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Sync on the MCP servers page.** A server's sheet copies it
+  from one harness (or the Quiver hub) to the harnesses you switch on, as
+  the Mac app's Sync does: Preview shows, per harness, the file it writes,
+  the command line it gets and the env var and header names it gains,
+  loses or changes (values never leave the hub), and Sync asks inline,
+  naming every file, before writing exactly the previewed plan. It runs
+  `swe mcp sync`'s own code in process, refuses with 409 if any config
+  changed since the preview, and refuses a hub server whose `${NAME}` has
+  no value rather than writing it literally.
+
 - **Web app: Fix and Fix all on the Plugins page's Health tab.** Each
   finding swe can fix has a Fix button that opens an inline confirm with
   the exact command it will run; Fix all first lists every finding and
