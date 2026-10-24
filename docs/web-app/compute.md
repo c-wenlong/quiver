@@ -21,9 +21,9 @@ In the Mac page's order:
    utilisation and memory.
 3. The trend card: RAM, CPU, GPU and Temperature tabs with the interval
    picker (every 3 s, 10 s, 30 s, minute, 5 minutes; 120 intervals per
-   window). RAM and CPU draw one line per harness that has gone above the
-   flag threshold, with its icon at the line's end, the dashed "Flag
-   above" line on RAM, and a hover rule with a readout. Temperature draws
+   window). RAM, CPU and GPU draw one line per harness that has gone
+   above the flag threshold, with its icon at the line's end, the dashed
+   "Flag above" line on RAM, and a hover rule with a readout. Temperature draws
    one line per sensor component (CPU, GPU, Memory, SSD, Battery) with the
    legend chips that switch lines on and off and the "Fans up" shading.
 4. A card per running starred harness: figures in the header, a row per
@@ -73,13 +73,17 @@ sample taken at most every two seconds.
             "memory_used_bytes": 0, "memory_total_bytes": 0, "temperature_c": 45.0, "power_watts": 10.7}],
   "temperatures": {"cpu": 55.9, "gpu": 45.0}, "fans": null,
   "trend": {"interval": 10, "window": 120, "last_tick": 1792780571.9,
-            "harnesses": {"claude": [[1792780571.9, 1343664128, 12.5]]},
-            "peaks": {"claude": 1343664128},
-            "gpus": [{"index": 0, "name": "…", "points": [[1792780571.9, 0.0]]}], "gpu_available": true,
+            "harnesses": {"claude": [[1792780571.9, 1343664128, 12.5, 3.0]]},
+            "peaks": {"claude": 1343664128}, "gpu_available": true,
             "temperatures": [{"at": 1792780571.9, "values": {"cpu": 55.9}, "fans": null}],
             "temperature_available": true}
 }
 ```
+
+A harness point is `[at, memory bytes, CPU %, GPU %]`. GPU % is `null`
+when `nvidia-smi pmon` gave no reading at that tick, and the chart skips
+the point rather than draw a zero; `gpu_available` turns true once it
+has answered.
 
 On a hub that is not Linux the answer is `{"supported": false, "os":
 "Darwin", "message": "…"}` and the page shows the message.
@@ -95,7 +99,8 @@ On a hub that is not Linux the answer is `{"supported": false, "os":
 | Machine CPU, memory, load | `/proc/stat`, `/proc/meminfo`, `/proc/loadavg` | not shown |
 | Temperatures | `/sys/class/hwmon` (k10temp, coretemp, zenpower → CPU; amdgpu, nouveau → GPU; jc42, spd5118 → Memory; nvme, drivetemp → SSD; BAT → Battery), then `/sys/class/thermal` zones for what hwmon left out, then `nvidia-smi` for the GPU. Each component is the mean of its plausible (10 to 150 °C) sensors | SMC keys, HID sensors |
 | Fans | `fan*_input` and `fan*_min` in hwmon; "up" is 15% over the minimum | SMC |
-| GPU | `nvidia-smi --query-gpu=…` with a 3 s timeout, when installed | IOKit per-process GPU time |
+| GPU per device (machine line) | `nvidia-smi --query-gpu=…` with a 3 s timeout, when installed | not shown |
+| GPU % per harness | `nvidia-smi pmon -c 1 -s u` with a 3 s timeout: each pid's SM utilisation, summed over its GPUs, then over the harness's processes | IOKit per-process GPU time |
 
 Which processes belong to a harness follows `ProcessAttribution`: the
 starred, unarchived harnesses in registry order (`swe list`'s), each with
@@ -135,10 +140,11 @@ history again, as an app relaunch does.
   counterpart, so the page has no fan button and no "Fans up above"
   threshold line. Fan readings still shade the Temperature chart when
   hwmon reports them.
-- **GPU** is per device (whole-GPU utilisation from `nvidia-smi`), not per
-  harness: Linux has no cheap per-process GPU time without accounting
-  mode. Without `nvidia-smi` the GPU tab says GPU readings aren't
-  available.
+- **GPU** per harness is the driver's per-process SM utilisation from
+  `nvidia-smi pmon`, a share of each GPU's compute over its last sample,
+  where the Mac reads cumulative GPU time. A process doing no GPU work
+  reads 0. Without `nvidia-smi`, or on a GPU whose driver has no process
+  monitoring, the GPU tab says GPU readings aren't available.
 - **Memory** is private memory (`RssAnon` + `VmSwap`), the nearest Linux
   figure to the Mac's physical footprint. It reads lower than `top`'s RES,
   which counts shared pages.
