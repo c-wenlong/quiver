@@ -59,14 +59,22 @@ public final class AgentsModel {
         }
     }
 
-    /// Runs `swe init`, then checks again.
-    public func link(swe: SweClient) async {
+    /// Runs `swe init` (`--force` when `force`, which backs up and replaces
+    /// real files in the way), then checks again.
+    public func link(swe: SweClient, force: Bool = false) async {
         guard !linking else { return }
+        // A project file being edited can be one of the real files --force
+        // replaces; its edits would then be cut off from the editor, and the
+        // backup holds only what was saved.
+        if force && projectHasUnsavedChanges {
+            linkError = Self.saveFirst
+            return
+        }
         linking = true
         linkError = nil
         defer { linking = false }
         do {
-            try await swe.runInit()
+            try await swe.runInit(force: force)
         } catch {
             linkError = error.localizedDescription
         }
@@ -74,6 +82,9 @@ public final class AgentsModel {
         // swe init seeds a missing AGENTS.md; show it unless there are edits.
         checkDisk()
     }
+
+    /// Why Replace and back up waits.
+    public static let saveFirst = "Save or revert your project edits first: Replace and back up can replace the file you're editing."
 
     public var projectHasUnsavedChanges: Bool {
         projectDocuments.values.contains { $0.isDirty }

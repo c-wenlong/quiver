@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: AGENTS.md and Doctor link with a button.** The AGENTS.md
+  page's Global tab has "Link with swe init" where it used to say to run
+  `swe init` on the hub, and "Replace and back up…" where it said to run
+  `swe init --force` in Terminal. Replace asks first and lists every path
+  it will copy to `~/.quiver/backups` and link over. Doctor offers the
+  same Replace after a Run that left a real file in the way. The Mac app's
+  AGENTS.md page gets Replace and back up too, behind a confirmation.
+
 - **`swe session index` reads Grok, Kiro and Hermes.** Grok's
   `summary.json` and Kiro's `<uuid>.json` read together with the
   transcript beside them (`chat_history.jsonl`, `<uuid>.jsonl`), so a

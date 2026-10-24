@@ -14,6 +14,7 @@ from quiver.webapp.pages import PageError
 from quiver.webapp.pages import agents as page
 
 from tests.test_remote_hub import HubBase
+from tests.test_webapp_doctor import _TempHome
 
 
 class TestCheckDocument(unittest.TestCase):
@@ -79,6 +80,47 @@ class TestSuggestions(unittest.TestCase):
         self.assertEqual(page.suggestions(SimpleNamespace(state=state), home), [str(a)])
 
 
+class TestLink(_TempHome, unittest.TestCase):
+    """Link with swe init and Replace and back up, run for real in a temp home."""
+
+    def setUp(self):
+        super().setUp()
+        self.seed({"claude": {"command": "claude"}, "codex": {"command": "codex"}})
+        (self.home / ".claude").mkdir()
+        (self.home / ".codex").mkdir()
+        (self.home / ".codex" / "AGENTS.md").write_text("mine\n")
+
+    def states(self, view):
+        return {h["name"]: h["instructions"]["state"] for h in view["harnesses"] if h["instructions"]}
+
+    def test_the_global_tab_lists_what_replace_would_replace(self):
+        view = page.get(self.ctx, {})
+        self.assertEqual(self.states(view)["codex"], "conflict")
+        self.assertIn("~/.codex/AGENTS.md", view["blocked"])
+
+    def test_link_links_and_leaves_the_real_file(self):
+        reply = page.post(self.ctx, "link", {})
+        self.assertEqual((reply["ran"], reply["error"]), ("link", None))
+        self.assertEqual(self.states(reply)["claude"], "linked")
+        self.assertEqual((self.home / ".codex" / "AGENTS.md").read_text(), "mine\n")
+        self.assertIn("~/.codex/AGENTS.md", reply["blocked"])
+
+    def test_replace_backs_up_the_real_file_and_links(self):
+        reply = page.post(self.ctx, "replace", {})
+        self.assertEqual((reply["ran"], reply["error"]), ("replace", None))
+        self.assertEqual(self.states(reply)["codex"], "linked")
+        self.assertEqual(reply["blocked"], [])
+        backups = list((self.home / ".quiver" / "backups").iterdir())
+        self.assertEqual([b.read_text() for b in backups], ["mine\n"])
+
+    def test_unknown_actions_are_refused(self):
+        for action in ("init", "force", ""):
+            with self.assertRaises(PageError) as refused:
+                page.post(self.ctx, action, {})
+            self.assertEqual(refused.exception.status, 404, action)
+        self.assertEqual((self.home / ".codex" / "AGENTS.md").read_text(), "mine\n")
+
+
 class TestRoute(HubBase):
     def test_global_shows_the_file_and_its_links(self):
         self.assertEqual(self.srv.request("GET", "/v1/app/agents")[0], 401)
@@ -94,6 +136,16 @@ class TestRoute(HubBase):
         self.assertEqual(body["text"], "# Shared")
         self.assertEqual(body["harnesses"][0]["instructions"]["state"], "linked")
         self.assertEqual(body["machine"], self.srv.state.machine["name"])
+
+    def test_link_through_the_hub(self):
+        origin = {"Origin": f"http://127.0.0.1:{self.srv.port}"}
+        self.assertEqual(self.srv.request("POST", "/v1/app/agents/link", body={}, headers=origin)[0], 401)
+        with patch("quiver.webapp.pages.doctor._run_init", return_value=None) as ran:
+            status, data = self.srv.request("POST", "/v1/app/agents/replace", body={},
+                                            headers={**self.auth(), **origin})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(ran.call_args.kwargs, {"force": True})
+        self.assertEqual(json.loads(data)["ran"], "replace")
 
     def test_project_route_refuses_outside_home(self):
         status, data = self.srv.request("GET", "/v1/app/agents?folder=" + quote("/etc"), headers=self.auth())

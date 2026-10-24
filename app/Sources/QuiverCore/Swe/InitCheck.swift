@@ -67,7 +67,7 @@ public struct LinkState: RawRepresentable, Decodable, Sendable, Hashable {
     public var initFixes: Bool { [.create, .relink, .absorb].contains(self) }
 
     /// A real file or folder is in the way; only `swe init --force` would
-    /// replace it, which the app never runs.
+    /// replace it, which the app runs only after asking.
     public var isBlocked: Bool { [.conflict, .keep].contains(self) }
 
     /// Sentence-case words for the state, as the page shows it.
@@ -94,8 +94,10 @@ extension SweClient {
     /// A plain `swe init`: links what the check said it would. Without a
     /// terminal it leaves newly found harnesses alone rather than asking.
     /// The app never writes a symlink itself; this is the only way it links.
-    public func runInit() async throws {
-        _ = try await runPlain(["init"])
+    /// `force` is `swe init --force`: each real file or folder in the way is
+    /// copied to ~/.quiver/backups, then replaced with a link.
+    public func runInit(force: Bool = false) async throws {
+        _ = try await runPlain(force ? ["init", "--force"] : ["init"])
     }
 
     /// Runs a swe command whose output is text, for commands that write and
