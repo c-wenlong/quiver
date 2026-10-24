@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: your own devices open it without pairing.** A browser on a
+  device signed in to the hub owner's Tailscale account loads `/app/`
+  straight away; the hub knows it from `tailscale whois` (cached a
+  minute per address). Pairing stays for tagged nodes, other people's
+  devices, phones' remote control and satellites.
+
 - **Remote: pin a session and give it a name.** `POST
   /v1/sessions/{key}/pin` and `/title` keep a pin and a display name on
   the hub, so the phone and the web app agree and watched or satellite

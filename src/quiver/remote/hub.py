@@ -75,6 +75,13 @@ _LOOPBACK = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
 # this often until it settles.
 _OWNER_RETRY_S = 30.0
 
+# The owner's own devices skip pairing, so every page load asks who the
+# caller is. ``tailscale whois`` is a subprocess; its answer per IP is
+# kept this long (a miss for less, so a device that just joined the
+# tailnet isn't locked out for long).
+_WHOIS_TTL_S = 60.0
+_WHOIS_MISS_TTL_S = 10.0
+
 # Journal bucket for non-session events (machine.online, hub-level notify).
 GLOBAL_KEY = "_global"
 
@@ -169,6 +176,11 @@ class HubState:
         self.status_of = session_statuses
         # Tailscale identity lookup for pair requests; tests stub it.
         self.whois = tsid.whois
+        self._whois_cache: dict[str, tuple[float, dict | None]] = {}
+        self._whois_lock = threading.Lock()
+        # One lookup in flight per IP: a page firing several requests at
+        # once waits on the first instead of forking its own whois.
+        self._whois_ip_locks: dict[str, threading.Lock] = {}
         # The hub owner's tailnet login — set by serve() from whois of
         # the bind address; "" means owner-identity approval is off.
         self.owner_login = ""
@@ -246,6 +258,37 @@ class HubState:
                 and self.catalog.row_for(view["key"]) is None:
             view["state"] = "pending"
         return view
+
+    def _whois_hit(self, ip: str) -> tuple[bool, dict | None]:
+        with self._whois_lock:
+            hit = self._whois_cache.get(ip)
+            if hit is not None and hit[0] > time.time():
+                return True, hit[1]
+        return False, None
+
+    def whois_cached(self, ip: str) -> dict | None:
+        """``whois(ip)``, remembered for _WHOIS_TTL_S (a miss for
+        _WHOIS_MISS_TTL_S). Concurrent callers for one IP share a single
+        lookup; different IPs look up in parallel."""
+        found, peer = self._whois_hit(ip)
+        if found:
+            return peer
+        with self._whois_lock:
+            if len(self._whois_ip_locks) > 256:
+                self._whois_ip_locks.clear()
+            ip_lock = self._whois_ip_locks.setdefault(ip, threading.Lock())
+        with ip_lock:
+            # Whoever held the lock may have just filled the cache.
+            found, peer = self._whois_hit(ip)
+            if found:
+                return peer
+            peer = self.whois(ip)
+            ttl = _WHOIS_TTL_S if peer is not None else _WHOIS_MISS_TTL_S
+            with self._whois_lock:
+                if len(self._whois_cache) > 256:
+                    self._whois_cache.clear()
+                self._whois_cache[ip] = (time.time() + ttl, peer)
+        return peer
 
     def owner(self) -> str:
         """The hub owner's tailnet login, retrying a lookup that failed
@@ -593,6 +636,26 @@ class _Handler(BaseHTTPRequestHandler):
             return None
         return str(peer.get("node_id") or "") or None
 
+    def _owner_device(self) -> str | None:
+        """A device id for the hub owner's own tailnet device, which needs
+        no pairing: tailnet login is the identity the Mac app's owner
+        already has. Held to the approval path's gate (custom header,
+        known Host, matching Origin), so a page on another site can't
+        borrow the owner's network identity. Tagged nodes and other
+        logins still pair."""
+        if not self._identity_ok() or self._bad_origin():
+            return None
+        node = self._approver_node(self._state.whois_cached(self._client_ip()))
+        return f"tailnet:{node}" if node else None
+
+    def _caller(self, path: str) -> str | None:
+        """The paired device, else the owner's own device. Satellite
+        routes stay bearer-only: a satellite is a paired machine."""
+        device_id = self._device()
+        if device_id is None and not path.startswith("/v1/agent/"):
+            device_id = self._owner_device()
+        return device_id
+
     def _proxied(self) -> bool:
         """True when ``tailscale serve`` relayed this request: the hub
         trusts its proxy and the TCP peer is this machine."""
@@ -915,10 +978,11 @@ class _Handler(BaseHTTPRequestHandler):
             )
             return
 
-        # Everything else under /v1 wants a paired device credential.
+        # Everything else under /v1 wants a paired device credential, or
+        # the owner's own tailnet device.
         device_id = None
         if path.startswith("/v1/"):
-            device_id = self._device()
+            device_id = self._caller(path)
             if device_id is None:
                 self._send_error(401, "unauthorized", "pair this device first")
                 return
@@ -1139,7 +1203,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._pair_decide(path.endswith("/approve"))
             return
 
-        device_id = self._device()
+        device_id = self._caller(path)
         if device_id is None:
             self._send_error(401, "unauthorized", "pair this device first")
             return
