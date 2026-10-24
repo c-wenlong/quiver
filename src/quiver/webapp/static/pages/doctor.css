@@ -1,0 +1,62 @@
+/* Doctor (pages/doctor.js): the DoctorSection rows. Scoped to doctor-*,
+ * since this file loads on every page. */
+.doctor-back { text-decoration: none; padding: 6px 8px; border-radius: 8px; }
+.doctor-back:hover { color: var(--text-primary); background: var(--hover); }
+.doctor-state { align-items: flex-start; }
+.doctor-state .empty, .doctor-state .error { margin: 0; }
+.doctor-clear { flex-direction: row; align-items: center; gap: 10px; flex-wrap: wrap; }
+.doctor-clear .empty { flex: 1; min-width: 160px; }
+.doctor-seal { color: var(--accent); display: grid; place-items: center; }
+.doctor-seal svg { width: 18px; height: 18px; }
+.doctor-card { gap: 0; padding: 16px 20px 8px; }
+.doctor-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 8px; }
+.doctor-row { display: flex; gap: 10px; align-items: flex-start; padding: 12px 0; border-top: 1px solid var(--border); }
+.doctor-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; background: var(--text-muted); }
+.doctor-dot.error { background: var(--danger); }
+.doctor-dot.warning { background: var(--warning); }
+.doctor-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.doctor-message { display: flex; align-items: flex-start; gap: 6px; font-size: 13px; color: var(--text-primary); }
+.doctor-logo { flex: none; display: grid; place-items: center; margin-top: 1px; }
+.doctor-logo .logo { width: 16px; height: 16px; }
+.doctor-check, .doctor-command {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; line-height: 16px;
+}
+.doctor-check, .doctor-command { background: transparent; padding: 0; border-radius: 0; }
+.doctor-check { color: var(--text-secondary); align-self: flex-start; }
+.doctor-fix {
+  display: flex; align-items: center; gap: 8px; margin-top: 4px; padding: 6px 6px 6px 12px;
+  background: var(--subtle); border: 1px solid var(--border); border-radius: 8px;
+}
+.doctor-command { flex: 1; min-width: 0; color: var(--text-primary); white-space: pre-wrap; word-break: break-word;
+  user-select: text; line-height: 18px; }
+.doctor-copy { width: 30px; height: 30px; border-radius: 8px; flex: none; color: var(--text-secondary); }
+.doctor-button {
+  height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border-strong); flex: none;
+  background: var(--card); color: var(--text-primary); font-size: 13px; cursor: pointer; white-space: nowrap;
+}
+.doctor-button:hover:not(:disabled) { background: var(--hover); }
+.doctor-button.primary { background: var(--text-primary); color: var(--card); border-color: var(--text-primary); }
+.doctor-button.primary:hover:not(:disabled) { background: var(--text-primary); opacity: .9; }
+.doctor-button:disabled { opacity: .45; cursor: default; }
+.doctor-button:focus-visible, .doctor-copy:focus-visible, .doctor-back:focus-visible {
+  outline: 2px solid var(--accent-fill); outline-offset: 2px;
+}
+.doctor-running { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); flex: none; }
+.doctor-spinner {
+  width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--border-strong);
+  border-top-color: var(--text-secondary); animation: spin 1s linear infinite;
+}
+.doctor-confirm {
+  display: flex; flex-direction: column; gap: 10px; margin-top: 4px; padding: 12px 14px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--card);
+}
+.doctor-confirm .caption { margin: 0; line-height: 1.5; }
+.doctor-confirm-buttons { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.doctor-run-error { margin: 0; padding-left: 12px; font-size: 12px; }
+.doctor-fold { align-self: center; margin: 4px 0; }
+.doctor-card .doctor-fold { display: block; width: 100%; border-top: 1px solid var(--border); padding: 10px 0 6px; border-radius: 0; }
+@media (max-width: 720px) {
+  .doctor-fix { flex-wrap: wrap; }
+  .doctor-command { flex: 1 1 160px; }
+}
+.doctor-lost .error { margin: 0; }

@@ -150,12 +150,33 @@ final class ChatModel {
     /// was ~850 KB and took seconds to lay out on the phone.
     static let pageSize = 100
 
+    /// The prompt box's `@` menu.
+    let mentions = MentionSearch()
+    /// The prompt box's `/` menu.
+    let commands = CommandMenu()
+
     init(key: String, app: AppModel) {
         self.key = key
         self.app = app
+        mentions.fetch = { [weak self] query in
+            guard let self, let client = self.app?.client else { throw HubError.network(CancellationError()) }
+            return try await client.files(self.key, query: query, limit: MentionSearch.limit)
+        }
+        mentions.machine = { [weak self] in self?.machineName ?? "that machine" }
+        commands.fetch = { [weak self] in
+            guard let self, let client = self.app?.client else { throw HubError.network(CancellationError()) }
+            return try await client.commands(self.key)
+        }
     }
 
     var row: SessionRow? { app?.session(key) }
+
+    /// The name of the machine the session runs on, as the Sessions list
+    /// shows it.
+    var machineName: String {
+        let id = row?.machineId
+        return app?.machines.first { $0.id == id }?.displayName ?? id ?? "that machine"
+    }
 
     /// First open loads history; a resume (back from the background) keeps
     /// what's on screen and replays events after `cursor`.
@@ -173,6 +194,9 @@ final class ChatModel {
         let sends = try? await client.queue(key)
         guard gen == generation else { return }
         if let sends { mergeQueue(sends.sends) }
+        // The prompt box's menu may still be open from before stop().
+        mentions.resume()
+        commands.resume()
         streamTask = Task { [weak self, cursor] in
             for await event in EventStream.events(client: client, key: self?.key ?? "", last: cursor) {
                 guard let self else { return }
@@ -193,6 +217,9 @@ final class ChatModel {
         generation += 1
         streamTask?.cancel()
         streamTask = nil
+        mentions.reset()
+        // Fetched again on the first "/" after the chat reopens.
+        commands.reset()
         flushPending()
         live = false
     }
@@ -399,6 +426,9 @@ final class ChatModel {
         case "session.ownership":
             app?.patch(key, ownership: env.decode(OwnershipData.self)?.ownership)
             attachQueued = false
+        case "session.meta":
+            // A pin or rename from any device.
+            if let meta = env.decode(SessionMeta.self) { app?.patch(key, meta: meta) }
         case "approval.requested":
             guard let req = env.decode(ApprovalRequested.self), let rid = req.requestId else { return }
             if let i = items.firstIndex(where: { $0.id == "approval-\(rid)" }) {
@@ -561,6 +591,13 @@ final class ChatModel {
                 attachQueued = false
                 attachError = r.note ?? "Attach failed"
             }
+            return
+        }
+        if r.op == "detach" {
+            // A detach from the Sessions list that waited for the turn.
+            app?.detachSettled(key)
+            if r.cancelled == true || r.ok != false { return }
+            items.append(ChatItem(id: UUID().uuidString, kind: .system("Didn't detach: \(r.note ?? "unknown error")")))
             return
         }
         if r.op == "approval", let rid = r.requestId {

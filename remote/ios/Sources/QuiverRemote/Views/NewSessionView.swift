@@ -182,7 +182,7 @@ struct NewSessionView: View {
             Button { launch = Task { await start(machine) } } label: {
                 HStack(spacing: 8) {
                     if flow.busy { ProgressView().controlSize(.small).tint(Theme.primaryForeground) }
-                    Text(flow.phase == .waiting ? "Waiting for the session" : flow.busy ? "Starting" : "Start session")
+                    Text(flow.phase == .waiting ? "Waiting for the session" : flow.opening ? "Opening the chat" : flow.busy ? "Starting" : "Start session")
                 }
             }
             .primaryButton()
