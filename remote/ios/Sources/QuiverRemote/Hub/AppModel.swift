@@ -61,7 +61,17 @@ final class AppModel {
             async let i = client.inbox()
             let (sessionsBody, inboxBody) = try await (s, i)
             guard hub == pairedAtStart else { return }
-            sessions = sessionsBody.sessions
+            var fetched = sessionsBody.sessions
+            for (key, pinned) in pinWrites {
+                guard let i = fetched.firstIndex(where: { $0.key == key }), fetched[i].isPinned != pinned else { continue }
+                fetched[i].pinned = pinned
+                fetched[i].pinnedAt = pinned ? Date().timeIntervalSince1970 : nil
+            }
+            sessions = fetched
+            let now = Date()
+            pendingDetaches = pendingDetaches.filter { key, at in
+                now.timeIntervalSince(at) < Self.detachWaitCap && fetched.first { $0.key == key }?.isAttached != false
+            }
             machines = sessionsBody.machines ?? machines
             inbox = inboxBody.items
             refreshedAt = Date()
@@ -87,13 +97,105 @@ final class AppModel {
         guard !waiting.isEmpty else { return sessions }
         return sessions.map { r in
             guard waiting.contains(r.key) else { return r }
-            return SessionRow(key: r.key, harness: r.harness, agent: r.agent, cwd: r.cwd, title: r.title,
-                              lastActiveAt: r.lastActiveAt, status: "approval", machineId: r.machineId,
-                              ownership: r.ownership, attachable: r.attachable, remote: r.remote)
+            var row = r
+            row.status = "approval"
+            return row
         }
     }
 
     func session(_ key: String) -> SessionRow? { sessions.first { $0.key == key } }
+
+    // MARK: Row actions
+
+    /// `when_idle` detaches the hub is still waiting on, by key, with when
+    /// they were asked for. One clears when the row stops being attached,
+    /// when its `command.result` arrives in an open chat, or after the
+    /// hub's 30 min cap.
+    private(set) var pendingDetaches: [String: Date] = [:]
+    static let detachWaitCap: TimeInterval = 31 * 60
+    /// Pins still on their way to the hub, so a list fetched before the
+    /// write landed doesn't flip the row back for a poll.
+    private var pinWrites: [String: Bool] = [:]
+
+    func isDetachPending(_ key: String, now: Date = Date()) -> Bool {
+        guard let at = pendingDetaches[key] else { return false }
+        return now.timeIntervalSince(at) < Self.detachWaitCap
+    }
+
+    /// The detach a chat heard the result of (`command.result`, op detach).
+    func detachSettled(_ key: String) { pendingDetaches[key] = nil }
+
+    /// Pins or unpins at once, then tells the hub. Returns what to say
+    /// when the hub refused it and the row went back. `animate` wraps the
+    /// moves between sections, both ways.
+    func setPinned(_ key: String, _ pinned: Bool,
+                   animate: (() -> Void) -> Void = { $0() }) async -> String? {
+        guard let client, let i = sessions.firstIndex(where: { $0.key == key }) else { return nil }
+        let before = sessions[i]
+        animate {
+            sessions[i].pinned = pinned
+            sessions[i].pinnedAt = pinned ? Date().timeIntervalSince1970 : nil
+        }
+        pinWrites[key] = pinned
+        do {
+            let meta = try await client.pin(key, pinned: pinned)
+            if pinWrites[key] == pinned { pinWrites[key] = nil }
+            patch(key, meta: meta)
+            return nil
+        } catch {
+            guard pinWrites[key] == pinned else { return nil }
+            pinWrites[key] = nil
+            if let j = sessions.firstIndex(where: { $0.key == key }) {
+                animate {
+                    sessions[j].pinned = before.pinned
+                    sessions[j].pinnedAt = before.pinnedAt
+                }
+            }
+            let reason = (error as? HubError)?.message ?? error.localizedDescription
+            return "\(pinned ? "Couldn't pin it" : "Couldn't unpin it"). \(reason)"
+        }
+    }
+
+    /// An empty `title` goes back to the harness's own name.
+    func rename(_ key: String, title: String) async throws {
+        guard let client else { return }
+        let meta = try await client.rename(key, title: title)
+        patch(key, meta: meta)
+    }
+
+    /// Returns true when the hub queued it for a satellite (202).
+    @discardableResult
+    func attach(_ key: String) async throws -> Bool {
+        guard let client else { return false }
+        let queued = try await client.control(key, op: "attach")
+        // An attach also cancels a detach waiting on the turn.
+        pendingDetaches[key] = nil
+        if !queued { patch(key, ownership: "attached") }
+        return queued
+    }
+
+    enum DetachOutcome: Equatable {
+        /// Handed back already.
+        case done
+        /// A `when_idle` detach the hub runs once the turn ends.
+        case waiting
+        /// Forwarded to a satellite, which reports back later.
+        case forwarded
+    }
+
+    func detach(_ key: String, mode: DetachMode) async throws -> DetachOutcome {
+        guard let client else { return .done }
+        let accepted = try await client.detach(key, mode: mode)
+        if mode == .whenIdle {
+            pendingDetaches[key] = Date()
+            return .waiting
+        }
+        // A now or keep detach replaces a waiting one.
+        pendingDetaches[key] = nil
+        if accepted { return .forwarded }
+        patch(key, ownership: "observed")
+        return .done
+    }
 
     // MARK: Chats
 
@@ -119,10 +221,18 @@ final class AppModel {
     /// the cached row so the list agrees before the next poll.
     func patch(_ key: String, status: String? = nil, ownership: String? = nil) {
         guard let i = sessions.firstIndex(where: { $0.key == key }) else { return }
-        let r = sessions[i]
-        sessions[i] = SessionRow(key: r.key, harness: r.harness, agent: r.agent, cwd: r.cwd, title: r.title,
-                                 lastActiveAt: r.lastActiveAt, status: status ?? r.status, machineId: r.machineId,
-                                 ownership: ownership ?? r.ownership, attachable: r.attachable, remote: r.remote)
+        if let status { sessions[i].status = status }
+        if let ownership {
+            sessions[i].ownership = ownership
+            // Handed back: a detach waiting for the turn to end is done.
+            if ownership != "attached" { pendingDetaches[key] = nil }
+        }
+    }
+
+    /// A pin or rename answered or announced (`session.meta`).
+    func patch(_ key: String, meta: SessionMeta) {
+        guard let i = sessions.firstIndex(where: { $0.key == key }) else { return }
+        sessions[i].apply(meta)
     }
 
     // MARK: Inbox
@@ -149,6 +259,8 @@ final class AppModel {
         self.hub = hub
         sessions = []
         inbox = []
+        pendingDetaches = [:]
+        pinWrites = [:]
         dropChats()
         loadedOnce = false
         connection = .connecting
@@ -163,6 +275,8 @@ final class AppModel {
         sessions = []
         machines = []
         inbox = []
+        pendingDetaches = [:]
+        pinWrites = [:]
         dropChats()
         loadedOnce = false
     }

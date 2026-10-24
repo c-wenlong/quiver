@@ -399,6 +399,9 @@ final class ChatModel {
         case "session.ownership":
             app?.patch(key, ownership: env.decode(OwnershipData.self)?.ownership)
             attachQueued = false
+        case "session.meta":
+            // A pin or rename from any device.
+            if let meta = env.decode(SessionMeta.self) { app?.patch(key, meta: meta) }
         case "approval.requested":
             guard let req = env.decode(ApprovalRequested.self), let rid = req.requestId else { return }
             if let i = items.firstIndex(where: { $0.id == "approval-\(rid)" }) {
@@ -561,6 +564,13 @@ final class ChatModel {
                 attachQueued = false
                 attachError = r.note ?? "Attach failed"
             }
+            return
+        }
+        if r.op == "detach" {
+            // A detach from the Sessions list that waited for the turn.
+            app?.detachSettled(key)
+            if r.cancelled == true || r.ok != false { return }
+            items.append(ChatItem(id: UUID().uuidString, kind: .system("Didn't detach: \(r.note ?? "unknown error")")))
             return
         }
         if r.op == "approval", let rid = r.requestId {
