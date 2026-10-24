@@ -287,6 +287,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Web app: Calendar scrolls sideways across dates.** The day, week
+  and N-day grids only moved with the arrow keys or the chevrons. They
+  now slide like the Mac app's: a trackpad swipe, shift-scroll or a
+  touch swipe moves through days, snapping to a day (a whole week in
+  week mode), with the day header and hour axis pinned as the columns
+  move. The hub sends a week or two of buffer days each side
+  (`render_days`), and once a swipe comes to rest the page loads the
+  range starting there and re-centres on it, keeping the hour. Keys and
+  chevrons scroll the same grid one step at a time.
+
 - **Models and Pricing: Devin's `MODEL_PRIVATE_11` shows as Claude
   Haiku 4.5.** Devin CLI logs that opaque id for Claude Haiku 4.5, so
   both apps listed it under "Other" with no logo or price. The price
