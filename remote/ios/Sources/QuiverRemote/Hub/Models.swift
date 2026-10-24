@@ -84,6 +84,8 @@ struct SessionRow: Codable, Identifiable, Hashable {
     let machineId: String?
     let ownership: String?
     let attachable: Bool?
+    /// A satellite's session, which the hub forwards to that machine.
+    var remote: Bool? = nil
 
     var id: String { key }
     var displayTitle: String { (title?.isEmpty == false ? title : nil) ?? "Untitled session" }
@@ -91,6 +93,9 @@ struct SessionRow: Codable, Identifiable, Hashable {
     var sessionStatus: SessionStatus { SessionStatus(raw: status) }
     var isAttached: Bool { ownership == "attached" }
     var canAttach: Bool { !isAttached && attachable == true && sessionStatus != .active }
+    /// The hub can hold a send until this session goes idle. A satellite
+    /// delivers on arrival or refuses a busy session, so it can't.
+    var holdsQueuedSends: Bool { remote != true }
 
     /// Waiting on you right now: an approval, or a recent follow-up.
     var needsYouNow: Bool {
@@ -172,6 +177,9 @@ struct CommandResult: Decodable {
     let degraded: Bool?
     let clientId: String?
     let requestId: String?
+    /// A queued send removed before it went out (`POST .../queue` cancel):
+    /// `ok` is false, but nothing failed.
+    var cancelled: Bool? = nil
 }
 
 /// `/v1/pair` and the approved pair-request poll both answer with this.
@@ -211,6 +219,18 @@ struct PendingPairRequest: Decodable, Identifiable, Hashable {
 struct PairRequestsResponse: Decodable { let requests: [PendingPairRequest] }
 
 struct SendAccepted: Decodable { let ok: Bool?; let waiting: Bool? }
+
+/// One queue-mode send the hub still holds until the session goes idle,
+/// from `GET /v1/sessions/{key}/queue`.
+struct WaitingSend: Decodable, Equatable {
+    let clientId: String
+    let text: String?
+    /// Attachment refs as sent; kept raw, the tray only shows the text.
+    var attachments: [JSONValue]? = nil
+    var queuedAt: Double? = nil
+}
+
+struct QueueResponse: Decodable { let sends: [WaitingSend] }
 
 /// `GET /v1/folders`: one folder's subfolders on the hub machine.
 struct FolderListing: Decodable, Equatable {
