@@ -67,12 +67,19 @@ already do, through satellites; that is a later step.
 1. Overview (tokens, cost, harness split, daily activity, top models). Shipped.
 2. Sessions (the hub's catalog, with tokens and cost per session from the
    ledger). Shipped. Differences from the app: Resume becomes "Copy resume
-   command" (the browser may be on another machine), transcript full-text
-   search and the Claude desktop "Started from" label are left out, the model
+   command" (the browser may be on another machine), the Claude desktop
+   "Started from" label is left out, the model
    filter counts tokens of the sessions in the chosen window rather than the
    app's daily rows, and usage joins only for sessions on the hub machine
    (a satellite's rows list without tokens). Sessions only in a Quiver
    account profile's home, and Devin cloud sessions, are not listed yet.
+   The search box filters each row's details in the browser and, after a
+   250 ms pause, asks `/v1/search` for what was said: a session whose
+   transcript matches stays in the list with the matching snippet under
+   it. That needs a search index on the hub (the Mac app's, or
+   `swe session index --on`); without one the page says it is matching
+   titles and details only. The index covers the hub machine, so a
+   satellite's sessions match on their details.
    A row opens the session's chat, the remote PWA's remote control
    (docs/web-app/sessions.md); its Details button is the old sheet.
 3. Harnesses and Accounts limits. Shipped, read only. Harnesses lists

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: the Sessions search box matches what was said.** Typing in
+  the box still filters titles, folders and models at once; after a
+  short pause it also asks the hub's `/v1/search`, so a session whose
+  transcript holds the words stays listed, with the matching snippet
+  under its row and the words marked. A hub with no search index says
+  it is matching titles and details only, and how to turn the index on.
+
 - **Session search without the Mac app: `swe session index`.** swe now
   writes the transcript search index itself, the same
   `~/.quiver/data/search/search.sqlite` file and schema the Quiver app
