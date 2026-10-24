@@ -1158,6 +1158,8 @@ public actor Ledger {
                 // answers `.append`; a whole read covers either case.
                 break
             }
+            // The fence is the row as it stood before the read.
+            let before = try? indexer.store.fileRow(for: path)
             do {
                 let messages = try SearchOpenCode.messages(in: source, sessionID: session.id)
                 let fields = SearchSessionFields(
@@ -1167,7 +1169,7 @@ public actor Ledger {
                     createdAt: SearchOpenCode.iso(ms: session.timeCreatedMs),
                     updatedAt: SearchOpenCode.iso(ms: session.lastActivityMs),
                     messageCount: messages.count)
-                if try indexer.finishSession(path: path, stat: stat,
+                if try indexer.finishSession(path: path, stat: stat, fileRow: before,
                                              fields: fields, messages: messages) {
                     report.filesIndexed += 1
                 }
@@ -1197,6 +1199,9 @@ public actor Ledger {
         _ url: URL, indexer: SearchIndexer, recentLimit: Int?, report: inout ScanReport
     ) throws {
         let dbPath = url.resolvingSymlinksInPath().path
+        // Retirement candidates come from before the listing: a row another
+        // writer adds for a session created after it is no candidate.
+        let indexed = (try? indexer.store.files(withPrefix: dbPath + "#")) ?? []
         let source: SQLiteDatabase
         let sessions: [SearchDevin.Session]
         do {
@@ -1220,6 +1225,8 @@ public actor Ledger {
             case .append, .whole:
                 break
             }
+            // The fence is the row as it stood before the read.
+            let before = try? indexer.store.fileRow(for: path)
             do {
                 let read = try SearchDevin.messages(in: source, session: session)
                 let fields = SearchSessionFields(
@@ -1229,7 +1236,7 @@ public actor Ledger {
                     createdAt: SearchOpenCode.iso(ms: session.createdMs),
                     updatedAt: SearchOpenCode.iso(ms: session.lastActivityMs),
                     messageCount: read.messages.count)
-                if try indexer.finishSession(path: path, stat: stat,
+                if try indexer.finishSession(path: path, stat: stat, fileRow: before,
                                              fields: fields, messages: read.messages) {
                     report.filesIndexed += 1
                 }
@@ -1239,7 +1246,6 @@ public actor Ledger {
             }
         }
         if recentLimit.map({ sessions.count < $0 }) ?? true {
-            let indexed = (try? indexer.store.files(withPrefix: dbPath + "#")) ?? []
             retireStaleSyntheticSessions(
                 dbPath: dbPath, indexed: indexed, live: live, indexer: indexer, report: &report)
         }

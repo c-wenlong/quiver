@@ -157,6 +157,26 @@ import Testing
         #expect(try f.store.status().sessionCount == 1)
     }
 
+    @Test func aCommitFencesOnTheRowFromBeforeTheRead() async throws {
+        let f = try Fixture()
+        try f.seed()
+        await f.attach()
+        _ = try await f.scan()
+        // Another writer (swe) committed while this read ran: a commit that
+        // started from no row must not replace the newer one.
+        let indexer = SearchIndexer(store: f.store)
+        let path = f.dbPath + "#brave-otter"
+        let fields = SearchSessionFields(
+            agent: "devin", sessionID: "brave-otter", filePath: path, title: "stale",
+            cwd: nil, cwdKey: nil, createdAt: nil, updatedAt: nil, messageCount: 0)
+        #expect(try !indexer.finishSession(
+            path: path, stat: SearchFileStat(mtimeMs: 1, sizeBytes: 1), fileRow: nil,
+            fields: fields, messages: []))
+        let row = try #require(try f.store.fileRow(for: path))
+        let rowID = try #require(row.sessionRowID)
+        #expect(try f.store.sessionRow(rowID)?.fields.title == "find the walrus config")
+    }
+
     @Test func aRealTitleWinsAndHeadlessSessionsWalkFromTheNewestNode() throws {
         let f = try Fixture()
         try f.addSession("calm-lynx", title: "Lynx deploy", head: nil,

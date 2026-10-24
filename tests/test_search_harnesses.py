@@ -12,6 +12,7 @@ import os
 import sqlite3
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from quiver.sessions import search_containers as containers
 from quiver.sessions import search_decode as decode
@@ -193,6 +194,28 @@ class DevinTests(_Home):
                          [("brave-otter", 6)])
         self.assertEqual(search_index.search(self.home, "herons"), [])
         self.assertEqual(len(search_index.search(self.home, "narwhal")), 1)
+
+    def test_a_session_the_app_adds_during_the_listing_is_never_retired(self):
+        self.seed()
+        self.run_pass()
+        listing = containers.devin_sessions
+
+        def app_indexes_a_new_session(conn):
+            # The app lists after this side and commits a session this
+            # side's listing never saw.
+            out = listing(conn)
+            index = sqlite3.connect(search_index.index_path(self.home))
+            index.execute("INSERT INTO files(path, byte_offset, mtime_ms) VALUES (?, 0, 0)",
+                          (self.db_path + "#brand-new",))
+            index.commit()
+            index.close()
+            return out
+
+        self.source.execute("UPDATE sessions SET last_activity_at = 1791300200")
+        with mock.patch.object(containers, "devin_sessions", app_indexes_a_new_session):
+            self.run_pass()
+        self.assertIsNotNone(self.db().execute(
+            "SELECT 1 FROM files WHERE path = ?", (self.db_path + "#brand-new",)).fetchone())
 
     def test_a_real_title_wins_and_a_headless_session_walks_from_the_newest_node(self):
         self.add_session("calm-lynx", "Lynx deploy", None, 1_791_300_000, 0)

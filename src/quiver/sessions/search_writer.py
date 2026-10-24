@@ -932,6 +932,9 @@ def _index_devin(indexer: "Indexer", db_path: Path, result: "PassResult", should
     except sqlite3.Error:
         return
     try:
+        # Retirement candidates come from before the listing: a row the app
+        # adds for a session created after it is no candidate.
+        candidates = indexer.store.files_with_prefix(resolved + "#")
         try:
             sessions = containers.devin_sessions(conn)
         except sqlite3.Error:
@@ -960,7 +963,7 @@ def _index_devin(indexer: "Indexer", db_path: Path, result: "PassResult", should
         # Only a complete, non-empty listing retires anything: an empty one
         # proves nothing about the ids the index holds.
         if live:
-            for path in indexer.store.files_with_prefix(resolved + "#"):
+            for path in candidates:
                 if path not in live:
                     indexer.store.remove_file(path)
     finally:
