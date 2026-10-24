@@ -44,7 +44,7 @@ struct ComputePage: View {
             .overlay(alignment: .topTrailing) {
                 if !model.cleanup.isEmpty {
                     Text("\(model.cleanup.count)")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(Theme.font(size: 10, weight: .medium))
                         .monospacedDigit()
                         .foregroundStyle(Theme.textLabel)
                         .padding(.horizontal, 4)
@@ -361,7 +361,7 @@ private struct HarnessCard: View {
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
                 .lineLimit(1).truncationMode(.tail)
             Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                .font(.system(size: 11, weight: .semibold))
+                .font(Theme.font(size: 11, weight: .semibold))
                 .foregroundStyle(Theme.textMuted)
         }
         .contentShape(.rect)
@@ -424,7 +424,7 @@ private struct ProcessRowView: View {
                 }
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.system(size: 12))
+                    .font(Theme.font(size: 12))
                     .foregroundStyle(Theme.textSecondary)
                     .frame(width: 24, height: 24)
                     .contentShape(.rect)
@@ -684,13 +684,13 @@ private struct CleanupSheet: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: expanded.contains(group.id) ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(Theme.font(size: 10, weight: .semibold))
                         .foregroundStyle(Theme.textMuted)
                     if let harness = group.harness {
                         HarnessIcon(harness: harness, size: 16)
                     } else {
                         Image(systemName: "circle.dashed")
-                            .font(.system(size: 16))
+                            .font(Theme.font(size: 16))
                             .foregroundStyle(Theme.textNav)
                     }
                     Text(group.harness.map(UsageFormat.harness) ?? "Orphaned")

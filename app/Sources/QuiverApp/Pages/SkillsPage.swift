@@ -233,13 +233,13 @@ private struct PluginSkillsNote: View {
     var body: some View {
         Button(action: open) {
             HStack(spacing: 6) {
-                Image(systemName: "puzzlepiece.extension").font(.system(size: 12))
+                Image(systemName: "puzzlepiece.extension").font(Theme.font(size: 12))
                 Text(count == 1 ? "1 skill ships inside a plugin;" : "\(count) skills ship inside plugins;")
                     .monospacedDigit()
                 Text(count == 1 ? "see it under Plugins" : "see them under Plugins")
                     .foregroundStyle(hovering ? Theme.textPrimary : Theme.textLabel)
                     .underline(hovering)
-                Image(systemName: "arrow.right").font(.system(size: 10, weight: .semibold))
+                Image(systemName: "arrow.right").font(Theme.font(size: 10, weight: .semibold))
             }
             .font(Theme.caption)
             .foregroundStyle(Theme.textSecondary)
@@ -265,12 +265,12 @@ private struct HarnessLinksSummary: View {
         let blocked = roots.contains { $0.link == .blocked }
         Button { open = true } label: {
             HStack(spacing: 6) {
-                Image(systemName: "link").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                Image(systemName: "link").font(Theme.font(size: 12)).foregroundStyle(Theme.textSecondary)
                 Text("Harness links").foregroundStyle(Theme.textPrimary)
                 Text(roots.isEmpty ? "None found" : "\(linked) of \(roots.count) linked")
                     .foregroundStyle(Theme.textSecondary).monospacedDigit()
                 if blocked { LinkDot(link: .blocked) }
-                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+                Image(systemName: "chevron.down").font(Theme.font(size: 10, weight: .semibold))
                     .foregroundStyle(Theme.textMuted)
             }
             .font(Theme.caption)
@@ -376,7 +376,7 @@ private struct RootDetail: View {
                 Badge(root.link.title)
             }
             Text(displayPath(root.path))
-                .font(.system(size: 12, design: .monospaced))
+                .font(Theme.font(size: 12, design: .monospaced))
                 .foregroundStyle(Theme.textSecondary)
                 .textSelection(.enabled)
             Text(root.explanation)
@@ -427,7 +427,7 @@ private struct LinkChipLabel: View {
                 LinkDot(link: link)
             }
             HarnessMarkView(harness: name, size: compact ? 12 : 14)
-                .font(.system(size: compact ? 11 : 12, weight: .medium))
+                .font(Theme.font(size: compact ? 11 : 12, weight: .medium))
                 .foregroundStyle(link == .linked ? Theme.textPrimary : Theme.textSecondary)
         }
         .padding(.horizontal, compact ? 8 : 10)
@@ -495,7 +495,7 @@ private struct SkillRow: View {
                         .monospacedDigit()
                         .frame(minWidth: 86, alignment: .trailing)
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(Theme.font(size: 11, weight: .semibold))
                         .foregroundStyle(Theme.textMuted)
                 }
             }

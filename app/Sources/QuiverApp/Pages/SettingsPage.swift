@@ -63,7 +63,7 @@ private struct SettingsSubNav: View {
             ForEach(SettingsGroup.allCases) { group in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(group.title)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(Theme.font(size: 11, weight: .medium))
                         .foregroundStyle(Theme.textMuted)
                         .padding(.horizontal, 12)
                         .padding(.bottom, 4)
@@ -100,8 +100,8 @@ private struct SubNavItem: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                Image(systemName: section.symbol).font(.system(size: 14)).frame(width: 16)
-                Text(section.title).font(.system(size: 14, weight: .medium))
+                Image(systemName: section.symbol).font(Theme.font(size: 14)).frame(width: 16)
+                Text(section.title).font(Theme.font(size: 14, weight: .medium))
                 Spacer(minLength: 0)
             }
             .foregroundStyle(isSelected ? Theme.textStrong : hovering ? Theme.textLabel : Theme.textSecondary)

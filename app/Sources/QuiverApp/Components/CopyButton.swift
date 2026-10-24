@@ -25,7 +25,7 @@ struct CopyButton: View {
                 Text(copied ? "Copied" : title)
             } icon: {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .font(iconSize.map { .system(size: $0, weight: copied ? .bold : .regular) })
+                    .font(iconSize.map { Theme.font(size: $0, weight: copied ? .bold : .regular) })
                     .foregroundStyle(copied ? AnyShapeStyle(Theme.success) : AnyShapeStyle(.foreground))
                     .contentTransition(.symbolEffect(.replace))
             }

@@ -14,7 +14,7 @@ struct SearchField: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 14))
+                .font(Theme.font(size: 14))
                 .foregroundStyle(Theme.textMuted)
             TextField(prompt, text: $text)
                 .textFieldStyle(.plain)
@@ -23,7 +23,7 @@ struct SearchField: View {
             if !text.isEmpty {
                 Button("Clear", systemImage: "xmark") { text = "" }
                     .labelStyle(.iconOnly)
-                    .font(.system(size: 11))
+                    .font(Theme.font(size: 11))
                     .foregroundStyle(Theme.textMuted)
                     .plainButton(cornerRadius: Theme.smallRadius)
                     .help("Clear")
@@ -116,7 +116,7 @@ struct SelectMenu<Value: Hashable>: View {
                 if let currentIcon { HarnessIcon(harness: currentIcon, size: 16) }
                 Text(current).foregroundStyle(Theme.textPrimary).lineLimit(1).truncationMode(.tail)
                 Spacer(minLength: 4)
-                Image(systemName: "chevron.down").font(.system(size: 12))
+                Image(systemName: "chevron.down").font(Theme.font(size: 12))
                     .foregroundStyle(Theme.textSecondary)
             }
             .font(Theme.bodySmall)
@@ -174,7 +174,7 @@ struct PopoverSelect<Value: Hashable>: View {
                 if let icon = current.icon, HarnessIcon.exists(for: icon) { HarnessIcon(harness: icon, size: 16) }
                 Text(current.title).foregroundStyle(Theme.textPrimary).lineLimit(1).truncationMode(.tail)
                 Spacer(minLength: 4)
-                Image(systemName: "chevron.down").font(.system(size: 12))
+                Image(systemName: "chevron.down").font(Theme.font(size: 12))
                     .foregroundStyle(Theme.textSecondary)
             }
             .font(Theme.bodySmall)
@@ -252,7 +252,7 @@ struct PopoverSelect<Value: Hashable>: View {
                 .frame(width: 16, height: 16)
                 Text(option.title).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Spacer(minLength: 12)
-                Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold))
+                Image(systemName: "checkmark").font(Theme.font(size: 11, weight: .semibold))
                     .foregroundStyle(Theme.accent)
                     .opacity(on ? 1 : 0)
             }
@@ -303,7 +303,7 @@ struct MultiSelectMenu<Value: Hashable>: View {
                 }
                 Text(current).foregroundStyle(Theme.textPrimary).lineLimit(1).truncationMode(.tail)
                 Spacer(minLength: 4)
-                Image(systemName: "chevron.down").font(.system(size: 12))
+                Image(systemName: "chevron.down").font(Theme.font(size: 12))
                     .foregroundStyle(Theme.textSecondary)
             }
             .font(Theme.bodySmall)

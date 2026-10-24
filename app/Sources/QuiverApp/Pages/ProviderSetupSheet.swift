@@ -137,14 +137,14 @@ struct ProviderSetupSheet: View {
                 if let logo = method.logo {
                     HarnessIcon(harness: logo, size: 16)
                 } else {
-                    Image(systemName: "terminal").font(.system(size: 13)).foregroundStyle(Theme.textPrimary)
+                    Image(systemName: "terminal").font(Theme.font(size: 13)).foregroundStyle(Theme.textPrimary)
                 }
             }
             .frame(width: 20, height: 20)
             .help(method.managerTitle)
             .accessibilityLabel(method.managerTitle)
             Text(method.command)
-                .font(.system(size: 12, design: .monospaced))
+                .font(Theme.font(size: 12, design: .monospaced))
                 .foregroundStyle(Theme.textSecondary)
                 .lineLimit(1).truncationMode(.middle)
                 .textSelection(.enabled)

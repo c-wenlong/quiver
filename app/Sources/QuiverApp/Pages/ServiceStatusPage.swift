@@ -98,7 +98,7 @@ private struct AddServiceSheet: View {
             Tabs(options: [(.providers, "AI providers"), (.infrastructure, "Infrastructure")],
                  selection: $group)
             Text("AI providers also show in the menu bar when they have an incident.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(Theme.font(size: 10)).foregroundStyle(.secondary)
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
@@ -195,7 +195,7 @@ private struct ServiceCard: View {
     @State private var expanded = false
     @Environment(\.openURL) private var openURL
 
-    private static let nameFont = Font.system(size: 16, weight: .medium)
+    private static var nameFont: Font { Theme.font(size: 16, weight: .medium) }
     private static let componentLimit = 5
     private static let incidentLimit = 3
 
@@ -394,7 +394,7 @@ private struct IncidentView: View {
                     Button("Open incident", systemImage: "arrow.up.right") { openURL(url) }
                         .labelStyle(.iconOnly)
                         .plainButton(cornerRadius: Theme.smallRadius)
-                        .font(.system(size: 11))
+                        .font(Theme.font(size: 11))
                         .foregroundStyle(Theme.textSecondary)
                         .help(url.absoluteString)
                 }
@@ -476,7 +476,7 @@ struct ServiceStatusMenuLine: View {
                     }
                     Text(line).font(Theme.caption).foregroundStyle(Theme.textPrimary).lineLimit(1)
                     Spacer(minLength: 0)
-                    Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(Theme.textMuted)
+                    Image(systemName: "chevron.right").font(Theme.font(size: 10)).foregroundStyle(Theme.textMuted)
                 }
                 .contentShape(.rect)
             }

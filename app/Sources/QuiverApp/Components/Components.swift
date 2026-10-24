@@ -256,7 +256,7 @@ private struct IconButtonBody: View {
     var body: some View {
         configuration.label
             .labelStyle(.iconOnly)
-            .font(.system(size: 16))
+            .font(Theme.font(size: 16))
             .foregroundStyle(hovering && isEnabled ? Theme.textStrong : Theme.textNav)
             .frame(width: Theme.iconButton, height: Theme.iconButton)
             .background(hovering && isEnabled ? Theme.selected : .clear,
@@ -474,7 +474,7 @@ struct Badge: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 12, weight: .medium))
+            .font(Theme.font(size: 12, weight: .medium))
             .foregroundStyle(Theme.textLabel)
             .lineLimit(1)
             .padding(.horizontal, 8)
@@ -540,7 +540,7 @@ private struct QuiverField: ViewModifier {
     func body(content: Content) -> some View {
         content
             .textFieldStyle(.plain)
-            .font(monospaced ? .system(size: 13, design: .monospaced) : Theme.bodySmall)
+            .font(monospaced ? Theme.font(size: 13, design: .monospaced) : Theme.bodySmall)
             .foregroundStyle(Theme.textPrimary)
             .focused($focused)
             .padding(.horizontal, 12)
@@ -588,7 +588,7 @@ struct ExpandRow: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(Theme.font(size: 12, weight: .semibold))
                 Text(isExpanded ? "Show less" : collapsedTitle ?? (hidden == 1 ? "Show 1 more" : "Show \(hidden) more"))
                     .font(Theme.control)
                 if let note {

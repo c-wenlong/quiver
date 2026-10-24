@@ -11,9 +11,14 @@ struct MarkdownTextView: NSViewRepresentable {
     /// Increment to ask the editor to take focus (a view switch).
     var focusToken = 0
     var accessibilityLabel: String?
+    /// Read in the parent's body, so a zoom change rebuilds this view and
+    /// `updateNSView` restyles at the new size.
+    var zoom = TextZoomModel.shared.zoom
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, isFocused: $isFocused)
+        let coordinator = Coordinator(text: $text, isFocused: $isFocused)
+        coordinator.zoom = zoom
+        return coordinator
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -85,6 +90,10 @@ struct MarkdownTextView: NSViewRepresentable {
             coordinator.restyle(textView)
             coordinator.isProgrammatic = false
         }
+        if coordinator.zoom != zoom {
+            coordinator.zoom = zoom
+            coordinator.restyle(textView)
+        }
         if coordinator.seenFocusToken != focusToken {
             coordinator.seenFocusToken = focusToken
             DispatchQueue.main.async { scrollView.window?.makeFirstResponder(textView) }
@@ -96,6 +105,7 @@ struct MarkdownTextView: NSViewRepresentable {
         var isFocused: Binding<Bool>
         var isProgrammatic = false
         var seenFocusToken = 0
+        var zoom = TextZoom.standard
         weak var textView: NSTextView?
 
         init(text: Binding<String>, isFocused: Binding<Bool>) {
@@ -114,22 +124,25 @@ struct MarkdownTextView: NSViewRepresentable {
         /// attributes without a view.
         func restyle(_ textView: NSTextView) {
             guard let storage = textView.textStorage else { return }
-            MarkdownStyleSpans.apply(to: storage, palette: MarkdownTextView.palette)
+            MarkdownStyleSpans.apply(to: storage, palette: MarkdownTextView.palette(zoom: zoom))
         }
     }
 
-    private static let palette = MarkdownStylePalette(
-        bodyFont: .systemFont(ofSize: 13),
-        codeFont: .monospacedSystemFont(ofSize: 12, weight: .regular),
-        headingFonts: [22, 18, 16, 14, 13, 13].map { NSFont.systemFont(ofSize: $0, weight: .semibold) },
-        textPrimary: NSColor(Theme.textPrimary),
-        textSecondary: NSColor(Theme.textSecondary),
-        textMuted: NSColor(Theme.textMuted),
-        accent: NSColor(Theme.accent),
-        codeBackground: NSColor(Theme.code),
-        lineSpacing: 4,
-        headingSpacingBefore: 10,
-        subheadingSpacingBefore: 6)
+    private static func palette(zoom: Double) -> MarkdownStylePalette {
+        func size(_ points: CGFloat) -> CGFloat { TextZoom.pointSize(points, at: zoom) }
+        return MarkdownStylePalette(
+            bodyFont: .systemFont(ofSize: size(13)),
+            codeFont: .monospacedSystemFont(ofSize: size(12), weight: .regular),
+            headingFonts: [22, 18, 16, 14, 13, 13].map { NSFont.systemFont(ofSize: size($0), weight: .semibold) },
+            textPrimary: NSColor(Theme.textPrimary),
+            textSecondary: NSColor(Theme.textSecondary),
+            textMuted: NSColor(Theme.textMuted),
+            accent: NSColor(Theme.accent),
+            codeBackground: NSColor(Theme.code),
+            lineSpacing: 4,
+            headingSpacingBefore: 10,
+            subheadingSpacingBefore: 6)
+    }
 }
 
 /// Reports first-responder changes, which NSTextViewDelegate has no

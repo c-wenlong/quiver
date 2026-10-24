@@ -504,7 +504,7 @@ struct PartsCard: View {
                 HStack(spacing: 8) {
                     if entry.isFolder {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(Theme.font(size: 9, weight: .semibold))
                             .foregroundStyle(Theme.textMuted)
                             .rotationEffect(.degrees(expanded.contains(entry.path) ? 90 : 0))
                             .frame(width: 10)
@@ -523,7 +523,7 @@ struct PartsCard: View {
             // not the user's to trash.
             if editable, inside.contains(entry.path) {
                 Button { trashEntry = entry } label: {
-                    Image(systemName: "trash").font(.system(size: 11))
+                    Image(systemName: "trash").font(Theme.font(size: 11))
                 }
                 .secondaryButton()
             }
@@ -663,7 +663,7 @@ struct PrimitiveFileSheet: View {
             case .some(false):
                 HStack {
                     Text(displayPath(url))
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(Theme.font(size: 12, design: .monospaced))
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
                     Spacer(minLength: 8)
@@ -865,12 +865,12 @@ struct PluginDetailView: View {
                         if editable {
                             TextField("Name", text: $name, onCommit: saveName)
                                 .textFieldStyle(.roundedBorder)
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(Theme.font(size: 16, weight: .semibold))
                                 .frame(maxWidth: 320)
                         } else {
                             Text(app.primitiveNames.name(forPlugin: plugin.ref)
                                  ?? plugin.displayName ?? plugin.name)
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(Theme.font(size: 16, weight: .semibold))
                         }
                         if let version = plugin.version {
                             Text("v\(version)").font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -883,7 +883,7 @@ struct PluginDetailView: View {
                             .secondaryButton()
                         }
                     }
-                    Text(plugin.ref).font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
+                    Text(plugin.ref).font(Theme.font(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
                     HStack(spacing: 8) {
                         Text(app.primitiveNames.name(forMarketplace: market.name) ?? market.name)
                             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -896,7 +896,7 @@ struct PluginDetailView: View {
                                     HarnessIcon(harness: harness, size: 12)
                                     Text("\(HarnessMark(harness).name) · \(state.status.title)")
                                 }
-                                .font(.system(size: 12, weight: .medium))
+                                .font(Theme.font(size: 12, weight: .medium))
                                 .foregroundStyle(Theme.textLabel)
                                 .lineLimit(1)
                                 .padding(.horizontal, 8)
@@ -1002,7 +1002,7 @@ struct SkillDetailView: View {
             Card {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
-                        Text(skill.name).font(.system(size: 16, weight: .semibold))
+                        Text(skill.name).font(Theme.font(size: 16, weight: .semibold))
                         Badge(skill.source.title)
                         Spacer()
                         Button { NSWorkspace.shared.activateFileViewerSelecting([root]) } label: {
@@ -1010,7 +1010,7 @@ struct SkillDetailView: View {
                         }
                         .secondaryButton()
                     }
-                    Text(displayPath(skill.path)).font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
+                    Text(displayPath(skill.path)).font(Theme.font(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
                     if !skill.description.isEmpty {
                         Text(skill.description).font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
