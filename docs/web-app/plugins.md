@@ -1,7 +1,8 @@
 # Plugins
 
-The Mac app's Plugins page (`PluginsPage.swift`, `PluginExplorer.swift`),
-read only, at `/app/#/plugins`. Module `quiver/webapp/pages/plugins.py`,
+The Mac app's Plugins page (`PluginsPage.swift`, `PluginExplorer.swift`)
+at `/app/#/plugins`: both tabs, with Health's Fix and Fix all. Explore is
+read only. Module `quiver/webapp/pages/plugins.py`,
 script and styles `static/pages/plugins.js` and `plugins.css`.
 
 ## What it shows
@@ -10,10 +11,21 @@ Same title and subtitle as the app, and its two tabs.
 
 - **Health**: `swe find plugins --json`. One card per harness with drift,
   in report order; each finding has its ref, kind badge (Not installed,
-  Out of date, ...), detail, the differing files (stale only), the fix
-  swe would run with a copy button, and its fix id. A card folds after 8
-  findings. Empty states as in the app: nothing in `~/.quiver/plugins`, or
-  every harness runs what it holds.
+  Out of date, ...), detail, the differing files (stale only), and the
+  fix swe would run with a copy button. A finding swe can fix has a
+  **Fix** button; one that is an edit to make by hand says so instead.
+  A card folds after 8 findings. Empty states as in the app: nothing in
+  `~/.quiver/plugins`, or every harness runs what it holds.
+- **Fix** opens an inline confirm under the finding, the app's "Run this
+  fix?": "swe will check the finding still applies, then run:" and the
+  exact command(s). **Run** posts it; Escape or Cancel closes it.
+- **Fix all** (in the header while any finding is fixable) opens a confirm
+  card above the findings, "Run N fixes?", listing every finding it will
+  fix with its command. **Run all** sends exactly those ids. While a fix
+  runs, every Fix, Fix all and Refresh is off and the running row shows a
+  spinner. Afterwards the cards repaint from the hub's answer, under a
+  banner as in the app: "Ran <command>" or "Ran N fixes", or the error
+  ("Ran 1 fix, then stopped. <error>" when Fix all got partway).
 - **Explore**: `swe plugins catalog --json` placed the way
   `PluginExploreIndex` places it: Local (the hub), then each harness in
   swe's order, then Not registered. Each marketplace is a card that opens
@@ -54,12 +66,44 @@ Both carry `view`, `built_at` (epoch seconds the view was read) and
 Each view is kept in the page module for 60 s (the app's snapshot age),
 one read per view at a time; Refresh passes `refresh=1`.
 
+### Fixes
+
+`POST /v1/app/plugins/fix` with `{"id": "<fix id>"}`, and
+`POST /v1/app/plugins/fix_all` with `{"ids": ["<fix id>", ...]}` (the ids
+the confirm listed). Behind the device bearer and the Origin check, like
+every page write.
+
+The hub reads the findings again and refuses unless every id is one
+Health lists right now (404 `unknown_finding`) and one swe can run (422
+`not_runnable`); a malformed body is 422, and a second fix while one runs
+is 409 `busy` (one fix at a time across the hub). It then calls
+`quiver.find.plugin_drift.apply_fix`, the function behind
+`swe find plugins --fix=<id>`, in process: the commands are the ones that
+module builds from the finding, run without a shell, with `HOME` set to
+the hub's home. Fix all follows `PluginsModel.fixAll`: report order, the
+next fix picked from a fresh read so one an earlier fix cleared is
+skipped, only the listed ids (a finding a fix newly exposes waits for its
+own confirm), stopping at the first failure. Both cached views are
+dropped, and the answer is
+
+```json
+{"action": "fix_all", "ran": 1,
+ "results": [{"id": "...", "status": "fixed", "fixed": {...FixedDrift row...}, "error": null},
+             {"id": "...", "status": "failed", "fixed": null, "error": "codex plugin remove tool@mk failed: ..."},
+             {"id": "...", "status": "not-run", "fixed": null, "error": null}],
+ "health": {"sources": 1, "drift": [...], "view": "health", "built_at": 0, "machine": "box"}}
+```
+
+with `status` one of `fixed`, `failed`, `gone` (cleared before its turn)
+or `not-run` (after a failure). `fixed` is the finding as `FixedDrift`
+(`swe find plugins --fix=<id> --json`) carries it. A command that fails
+or is missing from the hub's `PATH` is a `failed` result, not an HTTP
+error, so the page still gets the fresh findings.
+
 ## Differences from the Mac app
 
-Writes are left out; they stay in `swe` and the Mac app:
+Explore's writes are left out; they stay in `swe` and the Mac app:
 
-- Health's **Fix** and **Fix all** (`swe find plugins --fix=<id>`). The
-  web shows the fix and its id to run by hand.
 - Explore's per-harness **Install**, **Uninstall**, **Enable** and
   **Disable** menus (`swe plugins <verb> <ref> --harness=<h>`). The chips
   show the state only.
@@ -76,5 +120,12 @@ Also different:
   copy). The app also folds in installed copies `swe skills` finds inside
   the plugin and drops one shown on the Skills page; that placement waits
   for the Skills page.
-- The app's last-result and error banners for actions do not exist, since
-  there are no actions.
+- Fix all is one request, so its button reads "Fixing N findings…" for
+  the whole run rather than the app's "Fixing 2 of 5…". The fixes run on
+  the hub; closing the tab does not stop them.
+- The confirms are inline (a panel under the finding, a card above the
+  findings) where the app uses confirmation dialogs.
+- A fix does not refresh the Skills page's data; Explore reads again the
+  next time it opens.
+- The app's last-result and error banners for Explore's actions do not
+  exist, since Explore has no actions here.

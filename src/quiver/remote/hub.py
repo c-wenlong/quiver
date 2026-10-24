@@ -40,6 +40,7 @@ from quiver.remote import (
     protocol,
     search as search_mod,
     sendq,
+    slash,
     supervise,
     tail,
     tsid,
@@ -72,6 +73,13 @@ _LOOPBACK = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
 # started at login can ask for before Tailscale is up; it retries on use
 # this often until it settles.
 _OWNER_RETRY_S = 30.0
+
+# The owner's own devices skip pairing, so every page load asks who the
+# caller is. ``tailscale whois`` is a subprocess; its answer per IP is
+# kept this long (a miss for less, so a device that just joined the
+# tailnet isn't locked out for long).
+_WHOIS_TTL_S = 60.0
+_WHOIS_MISS_TTL_S = 10.0
 
 # Journal bucket for non-session events (machine.online, hub-level notify).
 GLOBAL_KEY = "_global"
@@ -167,6 +175,11 @@ class HubState:
         self.status_of = session_statuses
         # Tailscale identity lookup for pair requests; tests stub it.
         self.whois = tsid.whois
+        self._whois_cache: dict[str, tuple[float, dict | None]] = {}
+        self._whois_lock = threading.Lock()
+        # One lookup in flight per IP: a page firing several requests at
+        # once waits on the first instead of forking its own whois.
+        self._whois_ip_locks: dict[str, threading.Lock] = {}
         # The hub owner's tailnet login — set by serve() from whois of
         # the bind address; "" means owner-identity approval is off.
         self.owner_login = ""
@@ -245,6 +258,37 @@ class HubState:
             view["state"] = "pending"
         return view
 
+    def _whois_hit(self, ip: str) -> tuple[bool, dict | None]:
+        with self._whois_lock:
+            hit = self._whois_cache.get(ip)
+            if hit is not None and hit[0] > time.time():
+                return True, hit[1]
+        return False, None
+
+    def whois_cached(self, ip: str) -> dict | None:
+        """``whois(ip)``, remembered for _WHOIS_TTL_S (a miss for
+        _WHOIS_MISS_TTL_S). Concurrent callers for one IP share a single
+        lookup; different IPs look up in parallel."""
+        found, peer = self._whois_hit(ip)
+        if found:
+            return peer
+        with self._whois_lock:
+            if len(self._whois_ip_locks) > 256:
+                self._whois_ip_locks.clear()
+            ip_lock = self._whois_ip_locks.setdefault(ip, threading.Lock())
+        with ip_lock:
+            # Whoever held the lock may have just filled the cache.
+            found, peer = self._whois_hit(ip)
+            if found:
+                return peer
+            peer = self.whois(ip)
+            ttl = _WHOIS_TTL_S if peer is not None else _WHOIS_MISS_TTL_S
+            with self._whois_lock:
+                if len(self._whois_cache) > 256:
+                    self._whois_cache.clear()
+                self._whois_cache[ip] = (time.time() + ttl, peer)
+        return peer
+
     def owner(self) -> str:
         """The hub owner's tailnet login, retrying a lookup that failed
         at start-up (behind serve, before Tailscale was up)."""
@@ -315,6 +359,7 @@ class HubState:
 
     def stop(self) -> None:
         self._stop.set()
+        self.tail_manager.interrupt()
         # Fail every accepted-but-not-yet-started send honestly; the
         # in-flight one sees _stop and reports the same note.
         self.waiting.wake_all()
@@ -496,7 +541,8 @@ class HubState:
                     attachments.sweep(self.home)
                 except Exception:
                     pass
-            self._stop.wait(0.25)
+            # A write to a session (tail_manager.wake) cuts this short.
+            self.tail_manager.wait(0.25)
 
 
 def _json_bytes(payload) -> bytes:
@@ -588,6 +634,26 @@ class _Handler(BaseHTTPRequestHandler):
         ):
             return None
         return str(peer.get("node_id") or "") or None
+
+    def _owner_device(self) -> str | None:
+        """A device id for the hub owner's own tailnet device, which needs
+        no pairing: tailnet login is the identity the Mac app's owner
+        already has. Held to the approval path's gate (custom header,
+        known Host, matching Origin), so a page on another site can't
+        borrow the owner's network identity. Tagged nodes and other
+        logins still pair."""
+        if not self._identity_ok() or self._bad_origin():
+            return None
+        node = self._approver_node(self._state.whois_cached(self._client_ip()))
+        return f"tailnet:{node}" if node else None
+
+    def _caller(self, path: str) -> str | None:
+        """The paired device, else the owner's own device. Satellite
+        routes stay bearer-only: a satellite is a paired machine."""
+        device_id = self._device()
+        if device_id is None and not path.startswith("/v1/agent/"):
+            device_id = self._owner_device()
+        return device_id
 
     def _proxied(self) -> bool:
         """True when ``tailscale serve`` relayed this request: the hub
@@ -911,10 +977,11 @@ class _Handler(BaseHTTPRequestHandler):
             )
             return
 
-        # Everything else under /v1 wants a paired device credential.
+        # Everything else under /v1 wants a paired device credential, or
+        # the owner's own tailnet device.
         device_id = None
         if path.startswith("/v1/"):
-            device_id = self._device()
+            device_id = self._caller(path)
             if device_id is None:
                 self._send_error(401, "unauthorized", "pair this device first")
                 return
@@ -1057,6 +1124,9 @@ class _Handler(BaseHTTPRequestHandler):
             stem = path[len("/v1/sessions/"):]
             key_part, sep, action = stem.rpartition("/")
             key = unquote(key_part if sep else stem)
+            if sep and action == "commands":
+                self._slash_commands(key)
+                return
             if sep and action in {"events", "messages"}:
                 if self._state.catalog.row_for(key) is None:
                     self._send_error(
@@ -1132,7 +1202,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._pair_decide(path.endswith("/approve"))
             return
 
-        device_id = self._device()
+        device_id = self._caller(path)
         if device_id is None:
             self._send_error(401, "unauthorized", "pair this device first")
             return
@@ -1204,6 +1274,8 @@ class _Handler(BaseHTTPRequestHandler):
                 for k in before
             }
             catalog_mod.merge_remote_rows(self._state.home, mid, rows)
+            stored = "slash" in body and slash.save_satellite(
+                self._state.home, mid, body["slash"])
             self._state.catalog.refresh()
             for hub_key, ownership in before.items():
                 if ownership and ownership != old.get(hub_key):
@@ -1215,7 +1287,9 @@ class _Handler(BaseHTTPRequestHandler):
                             {"ownership": ownership},
                         ),
                     )
-            self._send_json(200, {"ok": True, "rows": len(rows)})
+            self._send_json(200, {
+                "ok": True, "rows": len(rows), "slash": bool(stored),
+            })
             return
 
         if path == "/v1/agent/usage":
@@ -1434,11 +1508,12 @@ class _Handler(BaseHTTPRequestHandler):
     def _injector(self, key: str):
         meta = supervise.meta_for(self._state.home, key)
         # emit + machine let tier-A channels raise approval events from
-        # their server streams, same path the tmux watcher uses.
-        return inject.injector_for(
+        # their server streams, same path the tmux watcher uses. Every
+        # write through it wakes the session's tailer.
+        return self._state.tail_manager.waking(key, inject.injector_for(
             self._state.home, key, meta,
             emit=self._state.emit, machine=self._state.machine_id,
-        )
+        ))
 
     def _forward(
         self, key: str, mid: str, action: str, row: dict
@@ -1964,6 +2039,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not ok:
             self._send_error(409, "not_idle", note)
             return
+        self._state.tail_manager.wake(key)
         row["ownership"] = protocol.OWNERSHIP_ATTACHED
         self._emit_ownership(key)
         self._send_json(200, {"ok": True, "note": note})
@@ -2016,6 +2092,21 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(422, "bad_attachment", err or "stage failed")
             return
         self._send_json(200, payload)
+
+    def _slash_commands(self, key: str) -> None:
+        """``GET /v1/sessions/{key}/commands``: the "/" menu (``slash.py``)."""
+        row = self._state.catalog.row_for(key)
+        if row is None:
+            self._send_error(404, "unknown_session", "no such session")
+            return
+        if row.get("remote"):
+            body = slash.for_remote_row(self._state.home, key, row)
+        else:
+            body = slash.for_local_session(
+                self._state.home, key, row,
+                self._state.catalog.session_for(key),
+            )
+        self._send_json(200, body)
 
     def _messages(self, key: str, args) -> None:
         before = _int_arg(args.get("before"), 0)

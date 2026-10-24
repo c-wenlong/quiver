@@ -1,6 +1,8 @@
 /* Quiver web app: the Mac app's pages, served by the hub under /app/.
- * No build step, no deps. Data comes from /v1/app/*, authorised by the
- * device credential the hub's PWA (at /) pairs and keeps in localStorage.
+ * No build step, no deps. Data comes from /v1/app/*. The hub owner's own
+ * tailnet devices need no pairing (the hub knows them from Tailscale);
+ * any other browser uses the device credential the hub's PWA (at /)
+ * pairs and keeps in localStorage.
  */
 "use strict";
 
@@ -8,6 +10,14 @@ const credential = () => {
   try { return (JSON.parse(localStorage.getItem("quiver.remote") || "null") || {}).credential || ""; }
   catch { return ""; }
 };
+
+/* X-Quiver-Pair marks the request as this page's own: a page on another
+ * site can't send a custom header without the hub's CORS consent, so the
+ * hub only honours the owner's tailnet identity with it. */
+function authHeaders(extra = {}) {
+  const cred = credential();
+  return { "X-Quiver-Pair": "1", ...(cred ? { Authorization: `Bearer ${cred}` } : {}), ...extra };
+}
 
 const esc = (s) => String(s == null ? "" : s)
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -17,7 +27,7 @@ const esc = (s) => String(s == null ? "" : s)
 async function api(path) {
   let resp;
   try {
-    resp = await fetch(path, { headers: { Authorization: `Bearer ${credential()}` } });
+    resp = await fetch(path, { headers: authHeaders() });
   } catch {
     return { status: 0, data: null };
   }
@@ -96,10 +106,14 @@ function pageHeader(title, subtitle, actions = "") {
     <div class="page-actions">${actions}</div></div>`;
 }
 
+/* Only a device the hub can't place reaches this: the owner's own tailnet
+ * devices are let in without pairing. */
 function renderGate(message) {
+  const lead = credential() ? message
+    : "This device isn't signed in to the hub owner's Tailscale account, so it needs pairing.";
   document.getElementById("panel").innerHTML = `<div class="page"><div class="card gate">
     <div class="card-title">Pair this browser</div>
-    <p>${esc(message)}</p>
+    <p>${esc(lead)}</p>
     <p class="caption">Open <a href="/">this hub's remote page</a> and pair with a token from
       <code>swe remote pair</code> on the hub, then come back to <a href="/app/">/app/</a>.</p>
   </div></div>`;
@@ -125,7 +139,6 @@ function route() {
   harnessesPage.gen++;
   accountsPage.gen++;
   renderSidebar(id);
-  if (!credential()) return renderGate("This browser has no device credential for this hub yet.");
   (PAGES[id] || renderSoon)(id);
 }
 

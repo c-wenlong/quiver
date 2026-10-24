@@ -31,10 +31,17 @@ service: it is at `https://<host>:<hub port>/app/`.
 
 ## Auth
 
-The pages call `/v1/app/*` with the device credential the hub's PWA already
-pairs (`Authorization: Bearer`, kept in `localStorage` under the hub's
-origin). `/app/` and `/` share that origin, so a browser paired for the PWA
-is already paired for the web app; an unpaired one is sent to `/` to pair.
+The hub owner's own devices need no pairing: open the hub's URL and the
+app loads. The hub identifies the caller with `tailscale whois` (behind
+`tailscale serve`, on the client serve forwards for) and lets in a node
+whose login is the hub owner's, as long as the request carries
+`X-Quiver-Pair: 1`, names a Host the hub answers to, and has no foreign
+`Origin`. That is the approval page's gate: a page on another site can't
+send the header, so it can't borrow the owner's network identity. Tagged
+nodes and other people's logins still pair, with the device credential the
+hub's PWA pairs (`Authorization: Bearer`, kept in `localStorage` under the
+hub's origin); `/app/` and `/` share that origin. Satellite routes
+(`/v1/agent/*`) always want a bearer.
 Behind `tailscale serve`, run the hub with `--public-url=https://…` so it
 reads the tailnet client from Serve's headers: "Pair with Tailscale" then
 works, and the Origin check accepts the `https://` origin Serve presents.
