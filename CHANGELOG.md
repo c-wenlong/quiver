@@ -9,15 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Remote iPhone app: type / for the session's commands.** A `/` at
-  the start of the prompt box opens the commands this session's harness
-  will run, from the hub's per-session list: each shows its name, a
-  short description, any argument it takes and where it comes from
-  (Built-in, Project, User, Skill, Plugin). Typing filters by name, and
-  tapping one puts `/name ` (or a Codex skill's `$name `) in the box,
-  ready for an argument. The list loads once per chat open and reloads
-  on a pull. A harness with no commands says so, and a satellite
-  session notes that its custom commands aren't available yet.
+- **Web app: Doctor, and the Harnesses page's editor, Detect and Add.**
+  `#/doctor` shows the `swe doctor` report as the Mac app's Settings ›
+  Doctor does: each finding with its fix command, a copy button, and Run
+  where swe can make the fix itself (`swe setup --apply`, `swe init`,
+  `swe harness discover --apply`). Run asks first, saying what it will do
+  on which machine; the hub runs the fix the finding names, never a
+  command sent from the browser. On Harnesses, a click on a row opens the
+  app's editor (name, command, description, version, aliases, tags,
+  notes; an alias another harness uses is refused), Detect scans the hub
+  for coding CLIs and registers the ticked ones, and Add harness adds a
+  custom one without overwriting anything.
+
+- **Web app: Settings, with remote pairing.** The Settings page from the
+  Mac app, for the hub machine. Integrations › Remote shows the hub,
+  the paired devices with "This device" marked and a Revoke that asks
+  first (signing out the browser you're on needs its own confirm), and
+  Pair a device, which mints a one-time code and shows the browser link
+  and the `quiver://pair` app link as QR codes. The hub draws those
+  itself with a small stdlib encoder (a port of Nayuki's MIT QR
+  generator), since the web app loads no library. Appearance and which
+  pages the sidebar lists are kept per browser; the API keys show
+  masked and read only; the GitHub CLI and the hub's paths are listed;
+  "Set up this machine" and Doctor link to their pages. Rows that set
+  up the Mac app itself (Dock, login item, terminal, notifications,
+  updates, Keychain services) are greyed out as "Mac app only".
 
 - **Remote iPhone app: type @ to mention a file.** Typing `@` in the
   prompt box opens a list of files and folders from the session's
@@ -28,6 +44,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for that machine yet. A path with spaces goes in quoted,
   `@"My Documents/notes.txt"`, as Claude Code writes it. On iOS 17 the
   menu follows the end of the text rather than the caret.
+
+- **Remote iPhone app: type / for the session's commands.** A `/` at
+  the start of the prompt box opens the commands this session's harness
+  will run, from the hub's per-session list: each shows its name, a
+  short description, any argument it takes and where it comes from
+  (Built-in, Project, User, Skill, Plugin). Typing filters by name, and
+  tapping one puts `/name ` (or a Codex skill's `$name `) in the box,
+  ready for an argument. The list loads once per chat open and reloads
+  on a pull. A harness with no commands says so, and a satellite
+  session notes that its custom commands aren't available yet.
 
 - **Web app: your own devices open it without pairing.** A browser on a
   device signed in to the hub owner's Tailscale account loads `/app/`
@@ -47,6 +73,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Queue/Steer picker is gone. On a hub too old to edit, an edit
   removes the message and queues the new text at the end, and says so.
 
+- **Remote: pin a session and give it a name.** `POST
+  /v1/sessions/{key}/pin` and `/title` keep a pin and a display name on
+  the hub, so the phone and the web app agree and watched or satellite
+  sessions work too. Every session row gains `pinned`, `pinned_at` and
+  `harness_title`, and `title` shows your name when you set one. Open
+  clients hear about a change as a `session.meta` event.
+
+- **Remote: fork a session from the phone.** `POST
+  /v1/sessions/{id}/fork` starts a new run that continues from a
+  session's history under tmux, leaves the original untouched, and is
+  tracked like a new-session launch so the phone can open it. Claude
+  Code, Codex, Kilo, Pi and Droid can fork, on the hub or a satellite;
+  session rows carry `can_fork` so the app shows Fork only for those.
+
+- **Remote: detach can wait for the turn to end or keep tmux running.**
+  The control route's `detach` takes a `mode`. `now` is today's
+  behaviour and stays the default. `when_idle` answers at once and
+  detaches when the session stops working, unless an attach or another
+  detach cancels it first. `keep` stops supervising but leaves the tmux
+  session running for `tmux attach` on the Mac; attaching from the phone
+  later takes that same tmux session back instead of starting a second
+  run, and the hub closes a kept session nobody has used for 12 hours.
+  Satellites support all three.
+
+- **Remote: edit a queued message in place.** `POST
+  /v1/sessions/{key}/queue` takes `op: "edit"` with a `text`, which
+  replaces a waiting send's text without moving it in the queue and
+  answers `200 {ok, client_id, op, text}`. An edit racing the send
+  either lands before it goes out or answers `409 not_waiting`, so a
+  `200` edit is never followed by the old text.
+
 - **Remote iPhone app: links in replies get a preview card.** A reply
   that links to a web page shows a card under the text with the page's
   host, its path and an Open button (up to three per reply). Tapping the
@@ -62,6 +119,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   harness's share. Pull to refresh asks the hub for new readings.
 
 ### Fixed
+
+- **Remote: a session's status follows a send within a second.** The
+  hub re-read every session's status only on its 10 second catalog
+  refresh, so after a send the phone could show the session idle while
+  the reply was already streaming, and showed it working for up to 10
+  seconds after the turn ended. Now a session that was just written to,
+  or whose transcript grew, has its own status checked about once a
+  second, and the change goes to the phone at once. An older catalog
+  read can no longer flip it back. Satellites do the same.
 
 - **Remote: a malformed write body gets an answer.** A list or object
   as a message's `mode`, an approval's `decision` or a control `op` made
@@ -115,6 +181,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and skipped; the pages around it still load.
 
 ### Added
+
+- **Web app: Sync on the MCP servers page.** A server's sheet copies it
+  from one harness (or the Quiver hub) to the harnesses you switch on, as
+  the Mac app's Sync does: Preview shows, per harness, the file it writes,
+  the command line it gets and the env var and header names it gains,
+  loses or changes (values never leave the hub), and Sync asks inline,
+  naming every file, before writing exactly the previewed plan. It runs
+  `swe mcp sync`'s own code in process, refuses with 409 if any config
+  changed since the preview, and refuses a hub server whose `${NAME}` has
+  no value rather than writing it literally.
 
 - **Web app: Fix and Fix all on the Plugins page's Health tab.** Each
   finding swe can fix has a Fix button that opens an inline confirm with

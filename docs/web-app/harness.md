@@ -1,9 +1,9 @@
-# Harnesses: star, archive, restore
+# Harnesses: star, archive, restore, edit, Detect, Add
 
 The web app's first writes. The Harnesses page (sidebar id `harnesses`,
 drawn by `static/manage.js`) lists rows from `GET /v1/app/harnesses`; this
-plugin, `quiver/webapp/pages/harness.py`, changes one row's state. It has
-no `GET` of its own.
+plugin, `quiver/webapp/pages/harness.py`, changes them. Its one `GET` is
+Detect's scan.
 
 ## What the page does
 
@@ -20,9 +20,23 @@ old one. A refusal or a lost connection shows in an error card above the
 list (the Mac app's `actionError`), and an archive that failed keeps its
 form open with the reason still typed.
 
+The header has the app's Detect, Add harness and Refresh buttons. Each of
+the app's three sheets is a `<dialog>` over the list:
+
+| Sheet | Opens from | What it does | Request |
+|---|---|---|---|
+| Edit {name} | a click anywhere on a row but its buttons (or its name, for the keyboard) | The app's `HarnessEditor`: the row's state, PATH and 100-day count, then Name, Command, Description, Version, Aliases, Tags and Notes with the app's placeholders and hints. Save stays off until something changed and while Command is empty; only the changed fields are sent, as `HarnessEdit.flags` does. | `POST /v1/app/harness/edit` |
+| Detect harnesses | Detect, or the Detect button on an empty registry | "Scanning PATH and ~/ for coding CLIs…", then the new matches as a tick-list (name, command, confidence badge, path with `~` for the hub's home), high-confidence ones ticked. Register (N) registers exactly the ticked ones, then says "Registered …" and "Skipped name: reason" for any refused. | `GET /v1/app/harness?view=discover`, then `POST /v1/app/harness/register` |
+| Add harness | Add harness | The app's `AddHarnessSheet`: Name (checked as you type: the name rule, and not a registered name), Command, Description, Aliases, Tags. Add stays off until both are valid. | `POST /v1/app/harness/add` |
+
+While a sheet's request runs its fields and buttons are off and Esc does
+nothing; a refusal shows in red in the sheet, which stays open with what
+was typed. On success the editor and Add close and the row changes from
+the reply; Detect's list repaints from the rows the reply carries.
+
 ## Payload
 
-Every action takes a JSON body `{"name": "<harness or alias>"}`; `archive`
+Every state action takes a JSON body `{"name": "<harness or alias>"}`; `archive`
 also takes `"reason"`. The reply is `{"name": <canonical name>, "harness":
 HarnessRow | null}`, the row in the `/v1/app/harnesses` shape, or `null`
 when the change left nothing for that name in the registry (a row that
@@ -42,14 +56,62 @@ held only an archive record).
 
 The device bearer is required as on every `/v1` route.
 
+### The sheets
+
+`edit` takes `{"name": "<harness or alias>", "fields": {...}}` where each
+key is one of `display_name`, `command`, `description`, `version`,
+`aliases`, `tags`, `notes` and each value is the text `swe edit
+--<field>=` would get: lists comma-separated, an empty value clears the
+field. It runs `harness.commands.edit_harness`, the body of `swe edit
+<name> … --json`, and replies with that command's `{"name", "changes",
+"harness"}` (`changes` lists the fields that changed; empty, and nothing
+written, when none did).
+
+`GET /v1/app/harness?view=discover` is `swe harness discover --json`'s
+findings (`DiscoveryRow`), each with `short_path` added. It writes nothing.
+
+`register` takes `{"names": [...]}`, each a match the scan finds as new
+now; it runs `apply_findings(…, names=…)`, as `swe harness discover
+--apply <names> --json` does, and replies `{"applied": {"added",
+"skipped"}, "harnesses": [rows]}`.
+
+`add` takes `{"name", "command", "description", "aliases", "tags"}`
+(aliases and tags as a list or comma-separated text). It runs
+`harness.commands.add_harness(…, no_replace=True)`, the body of `swe add
+<name> <command> … --no-replace --json`: an empty description, alias or
+tag list is left off, so a new entry gets swe's default tags (agentic,
+coding). The reply is `swe add`'s `{"name", "command", "action",
+"installed", "aliases", "tags"}` plus `harness`, the new row.
+
+| Status | Code | When |
+|---|---|---|
+| 400 | `bad_names` | `names` is not a list of short strings |
+| 404 | `unknown_harness` | edit: the name (or alias) is not in the registry |
+| 404 | `not_new` | register: a name that is not a new match now |
+| 404 | `unknown_view` | `GET` without `?view=discover` |
+| 409 | `alias_taken` | edit or add: an alias another harness answers to (`swe edit`'s refusal, "Alias 'x' already used by 'y'") |
+| 409 | `already_registered` | add: the name or an alias is registered (never overwritten) |
+| 422 | `no_changes` | edit with no fields |
+| 422 | `bad_field` | a field the editor doesn't have, a value that isn't text, or a newline in a one-line field |
+| 422 | `too_long` | a field over its cap (notes 10000, description 4000, command and lists 1000, name 200, version 100) |
+| 422 | `command_required` | an empty command |
+| 422 | `bad_command` | add: a command starting with `-`, or over one line |
+| 422 | `bad_name` | add: a name that isn't letters, digits, then `. _ -` |
+| 422 | `nothing_ticked` | register with an empty list |
+| 422 | `refused` | any other edit `swe edit` refuses |
+
 ## How it writes
 
 The same functions `swe harness star|archive --json` call: `stars.star` /
 `stars.unstar` and `archive.archive` / `archive.unarchive`, the shims over
-`registry.py`, which is the only module that writes harness.json. One lock
-runs the page's writes in turn, since each reads harness.json, changes a
-row and writes it back (the Mac app's `SerialGate` does the same for its
-`swe` calls).
+`registry.py`, which is the only module that writes harness.json. The
+sheets call the bodies of `swe edit`, `swe harness discover --apply` and
+`swe add`, split out of their `cmd_*` handlers so both share them
+(`edit_harness`, `add_harness`, `discover_harnesses` + `apply_findings`).
+One lock (`REGISTRY_LOCK`) runs the page's writes in turn, since each
+reads harness.json, changes a row and writes it back (the Mac app's
+`SerialGate` does the same for its `swe` calls); the Doctor page's fixes
+take it too.
 
 ## Differences from the Mac app and the CLI
 
@@ -64,5 +126,11 @@ row and writes it back (the Mac app's `SerialGate` does the same for its
   spaces, and it is capped at 500 characters.
 - The archive popover is a form under the row, since a browser popover
   would not fit a phone.
-- Clicking a row does not open the editor, and Detect and Add harness are
-  not here: editing stays in `swe` and the Mac app.
+- The editor doesn't edit the colour (`primary_color`), as the app's
+  sheet doesn't.
+- Add harness can't say "Not on PATH yet" while you type the command: the
+  browser can't see the hub's PATH. The new row says Installed or Not on
+  PATH once it is added.
+- Detect says "Every harness on {machine} is already registered" rather
+  than "on this Mac", and a Register that added nothing says "Nothing was
+  registered." rather than an empty "Registered .".
