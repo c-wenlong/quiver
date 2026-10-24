@@ -17,7 +17,8 @@ from pathlib import Path
 _APPSTORE_EXE = Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale")
 
 
-def _exe() -> str | None:
+def tailscale_exe() -> str | None:
+    """The Tailscale CLI: on PATH, else inside Tailscale.app."""
     found = shutil.which("tailscale")
     if found:
         return found
@@ -26,7 +27,7 @@ def _exe() -> str | None:
 
 def whois(ip: str) -> dict | None:
     """Node identity for ``ip``, or None when it isn't a tailnet peer."""
-    exe = _exe()
+    exe = tailscale_exe()
     if exe is None:
         return None
     try:
