@@ -4,6 +4,11 @@
  * Data from /v1/app/calendar (quiver/webapp/pages/calendar.py); the lane
  * layout (CalendarLayout), month cells (MonthLayout) and the legend's
  * hidden toggles live here. Read only.
+ *
+ * Day, week and N-day grids slide sideways like the app's slidingGrid:
+ * buffer days render each side of the visible range, a horizontal
+ * scroll snaps to days (weeks in week mode), and once it comes to rest
+ * the page fetches the range starting there and re-centres on it.
  */
 "use strict";
 
@@ -32,6 +37,11 @@
     panelCollapsed: !!load("panelCollapsed", false),
     mini: null, miniFor: null, scrolledKey: null, keepHour: false,
     blocks: new Map(), chips: new Map(),
+    // The sliding grid: the day a swipe or step came to rest on (until
+    // its range arrives), the column it rests at, a key step's column
+    // still animating, the last scrollLeft seen, a response held back
+    // while a swipe is moving, and when a hand (or a step) last moved it.
+    lead: null, restIndex: 0, stepTarget: null, left: 0, scrolling: false, pending: null, armedAt: 0,
   };
 
   function persist() {
@@ -96,6 +106,10 @@
       document.getElementById("panel").innerHTML = `<div class="page cal-page">${header()}
         <div class="card"><p class="empty">Reading activity…</p></div></div>`;
       bindHeader();
+    } else if (S.lead) {
+      // A swipe landed: the grid already shows where it rests.
+      const spin = document.getElementById("page-refresh");
+      if (spin) spin.classList.add("spinning");
     } else {
       paint();
     }
@@ -110,6 +124,12 @@
       S.data = null;
       return pageError(header(), status, data, () => render("calendar"));
     }
+    // Repainting under a moving swipe would yank it back; settle() paints.
+    if (S.scrolling && data.mode !== "month") { S.pending = data; return; }
+    apply(data);
+  }
+
+  function apply(data) {
     S.data = data;
     S.anchor = data.anchor;
     if (S.miniFor !== data.anchor) {
@@ -121,13 +141,34 @@
   }
 
   function go(change, keepHour = false) {
+    S.lead = null;
     Object.assign(S, change);
     S.keepHour = keepHour;
     persist();
     render("calendar");
   }
 
-  const step = (dir) => S.data && go({ anchor: dir < 0 ? S.data.previous : S.data.next }, true);
+  /* A key or chevron step scrolls the grid one window, as a swipe
+   * would, and lands when the scroll comes to rest. Past the buffer (a
+   * fast run of presses before the last landing re-centred) it jumps. */
+  function step(dir) {
+    if (!S.data) return;
+    if (!slides() || !document.getElementById("cal-scroll")) {
+      return go({ anchor: dir < 0 ? S.data.previous : S.data.next }, true);
+    }
+    const days = renderDays(), span = S.data.days.length;
+    const base = S.stepTarget != null ? S.stepTarget : S.restIndex;
+    const target = base + dir * windowDays(S.data.mode, S.data.n);
+    if (target >= 0 && target <= days.length - span) {
+      S.stepTarget = target;
+      S.armedAt = Date.now();
+      slideTo(target);
+      return;
+    }
+    const lead = ISO(addDays(D(days[base].date), dir * windowDays(S.data.mode, S.data.n)));
+    halt();
+    go({ anchor: lead, lead }, true);
+  }
   const setMode = (mode, n) => {
     if (mode === "days" && n <= 1) mode = "day";
     go({ mode, n: mode === "days" ? Math.min(n, 9) : S.n });
@@ -212,24 +253,143 @@
     bindCards();
     if (d.mode === "month") layoutMonth(); else layoutColumns();
     scrollGrid(scrollTop);
+    if (slides()) {
+      const days = renderDays();
+      let i = S.lead ? days.findIndex((day) => day.date === S.lead) : -1;
+      if (i < 0) i = days.findIndex((day) => day.date === d.days[0].date);
+      S.stepTarget = null;
+      place(Math.max(0, i));
+      bindSlide();
+    }
+  }
+
+  /* ------------------------------------------------------------ sliding */
+
+  const slides = () => !!S.data && S.data.mode !== "month";
+  const renderDays = () => S.data.render_days || S.data.days;
+  /* Days one step moves, and days one snap target spans. */
+  const windowDays = (mode, n) => (mode === "week" ? 7 : mode === "days" ? n : 1);
+  const snapDays = (mode) => (mode === "week" ? 7 : 1);
+
+  /* CalendarModel.settledLeadingDay: the column a horizontal scroll
+   * rests on, the nearest snap target that keeps the visible span
+   * inside the rendered columns. */
+  function restingIndex(left, width, unit, count, span) {
+    if (!(width > 0) || count <= span) return 0;
+    const i = Math.round(left / (width * unit)) * unit;
+    return Math.max(0, Math.min(count - span, i));
+  }
+
+  const colWidth = (scroll) => {
+    const col = scroll.querySelector(".cal-col");
+    return col ? col.getBoundingClientRect().width : 0;
+  };
+  const reduceMotion = () => window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* Puts column i at the leading edge without counting as a swipe. */
+  function place(i) {
+    const scroll = document.getElementById("cal-scroll");
+    if (!scroll) return;
+    S.restIndex = i;
+    scroll.scrollLeft = i * colWidth(scroll);
+    S.left = scroll.scrollLeft;
+  }
+
+  function slideTo(i) {
+    const scroll = document.getElementById("cal-scroll");
+    if (scroll) scroll.scrollTo({ left: i * colWidth(scroll), behavior: reduceMotion() ? "auto" : "smooth" });
+  }
+
+  let settleTimer = 0;
+
+  /* Stops a step's smooth scroll where it is and drops its landing, so
+   * a jump past the buffer is not overtaken by the older step. */
+  function halt() {
+    const scroll = document.getElementById("cal-scroll");
+    if (scroll) {
+      scroll.scrollTo({ left: scroll.scrollLeft, behavior: "auto" });
+      S.left = scroll.scrollLeft;
+    }
+    clearTimeout(settleTimer);
+    Object.assign(S, { scrolling: false, stepTarget: null, armedAt: 0, pending: null });
+  }
+
+  function bindSlide() {
+    const scroll = document.getElementById("cal-scroll");
+    const rest = () => { clearTimeout(settleTimer); settle(); };
+    // A hand on the grid takes over from a key step still animating.
+    const arm = () => { S.armedAt = Date.now(); S.stepTarget = null; };
+    for (const type of ["wheel", "touchstart", "pointerdown"]) scroll.addEventListener(type, arm, { passive: true });
+    scroll.addEventListener("scroll", () => {
+      if (scroll.scrollLeft === S.left) return;   // the hours, or the page's own place()
+      S.left = scroll.scrollLeft;
+      if (!S.scrolling && S.stepTarget == null && Date.now() - S.armedAt > 1000) {
+        // The browser moved it (a re-snap after a layout change): no swipe to land.
+        S.restIndex = restingIndex(scroll.scrollLeft, colWidth(scroll), snapDays(S.data.mode),
+          renderDays().length, S.data.days.length);
+        return;
+      }
+      S.scrolling = true;
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(rest, 150);         // Safari before scrollend
+    });
+    scroll.addEventListener("scrollend", () => { if (S.scrolling) rest(); });
+  }
+
+  /* The swipe came to rest: its leading column becomes the anchor and
+   * the range starting there loads, the hour kept. A response that
+   * arrived mid-swipe paints now, on the column the swipe rests at. */
+  function settle() {
+    if (!S.scrolling) return;
+    const scroll = document.getElementById("cal-scroll");
+    // A key step lands where it was headed, not on a pause mid-way; one
+    // that never gets there lands where it stopped.
+    if (scroll && S.stepTarget != null
+        && Math.abs(scroll.scrollLeft - S.stepTarget * colWidth(scroll)) > colWidth(scroll) / 4) {
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => { S.stepTarget = null; settle(); }, 1000);
+      return;
+    }
+    S.scrolling = false;
+    S.stepTarget = null;
+    if (!scroll || !slides()) return;
+    const days = renderDays();
+    const i = restingIndex(scroll.scrollLeft, colWidth(scroll), snapDays(S.data.mode),
+      days.length, S.data.days.length);
+    const lead = days[i].date;
+    S.restIndex = i;
+    if (S.pending) {
+      const data = S.pending;
+      S.pending = null;
+      S.lead = lead;
+      apply(data);
+    }
+    // Compared with the range on its way too: swiping back to the shown
+    // range before the next one arrives must replace that request.
+    const wanted = S.loading && S.lead ? S.lead : S.data.days[0].date;
+    if (lead !== wanted) go({ anchor: lead, lead }, true);
   }
 
   /* ------------------------------------------------------------ week grid */
 
   function timeGrid() {
-    const d = S.data, today = d.today;
-    const heads = d.days.map((day) => {
+    const d = S.data, today = d.today, days = renderDays(), unit = snapDays(d.mode);
+    const heads = days.map((day) => {
       const now = day.date === today ? " today" : "";
       return `<div class="cal-dayhead${now}"><span class="wd">${weekdayName(day.date, "short")}</span>
         <span class="wdn">${weekdayName(day.date, "narrow")}</span><span class="dn">${D(day.date).getUTCDate()}</span></div>`;
     }).join("");
     const hours = Array.from({ length: 24 }, (_, h) => `<span class="cal-hour">${pad(h)}:00</span>`).join("");
-    const cols = d.days.map((_, i) => `<div class="cal-col" data-i="${i}"></div>`).join("");
-    return `<div class="cal-time" style="--cols:${d.days.length}">
-      <div class="cal-head"><div class="cal-axis-gap"></div><div class="cal-heads" id="cal-heads">${heads}</div></div>
+    const cols = days.map((_, i) => `<div class="cal-col${i % unit ? "" : " snap"}" data-i="${i}"></div>`).join("");
+    // One scroller both ways: the header row sticks to the top and the
+    // hour axis to the left, so both track the columns' offsets.
+    return `<div class="cal-time" style="--cols:${days.length};--span:${d.days.length}">
       <div class="cal-scroll" id="cal-scroll"><div class="cal-canvas">
-        <div class="cal-axis">${hours}<span class="cal-now-pill" id="cal-now-pill" hidden></span></div>
-        <div class="cal-cols" id="cal-cols">${cols}</div>
+        <div class="cal-head"><div class="cal-axis-gap"></div><div class="cal-heads" id="cal-heads">${heads}</div></div>
+        <div class="cal-grid">
+          <div class="cal-axis">${hours}<span class="cal-now-pill" id="cal-now-pill" hidden></span></div>
+          <div class="cal-cols" id="cal-cols">${cols}</div>
+        </div>
       </div></div></div>`;
   }
 
@@ -331,7 +491,7 @@
     const multi = multiAccount();
     const pos = (lane, count, top, height) => `top:${top}px;height:${height}px;`
       + `left:calc(${lane} * 100% / ${count} + 1px);width:calc(100% / ${count} - 2px)`;
-    S.data.days.forEach((day, i) => {
+    renderDays().forEach((day, i) => {
       const { segments, overflows } = layoutDay(shown, day, (MIN_HEIGHT / HOUR) * 3600, maxLanes);
       const y = (t) => clockOffset(t, day) * HOUR;
       const parts = segments.map((s) => {
@@ -360,15 +520,16 @@
     const now = Date.now() / 1000;
     const pill = document.getElementById("cal-now-pill");
     if (!pill) return;
-    const i = S.data.days.findIndex((d) => d.start <= now && now < d.end);
+    const days = renderDays();
+    const i = days.findIndex((d) => d.start <= now && now < d.end);
     document.querySelectorAll(".cal-now").forEach((line, k) => {
       line.hidden = k !== i;
-      if (k === i) line.style.top = `${clockOffset(now, S.data.days[i]) * HOUR}px`;
+      if (k === i) line.style.top = `${clockOffset(now, days[i]) * HOUR}px`;
     });
     pill.hidden = i < 0;
     if (i >= 0) {
       pill.textContent = clock(now);
-      pill.style.top = `${clockOffset(now, S.data.days[i]) * HOUR - 9}px`;
+      pill.style.top = `${clockOffset(now, days[i]) * HOUR - 9}px`;
     }
   }
 
@@ -796,7 +957,7 @@
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
       hideCard();
-      if (S.data.mode === "month") layoutMonth(); else layoutColumns();
+      if (S.data.mode === "month") layoutMonth(); else { layoutColumns(); place(S.restIndex); }
     }, 100);
   });
   const localDate = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
@@ -817,4 +978,5 @@
   }, 60 * 1000);
 
   registerPage("calendar", render);
+  window.CalendarPage = { _test: { restingIndex, windowDays, snapDays } };
 })();
