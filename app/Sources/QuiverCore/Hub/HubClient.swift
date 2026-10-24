@@ -129,6 +129,15 @@ public struct HubClient: Sendable {
         return status == 202
     }
 
+    /// Answers approval `requestId` with `allow`, `always` or `deny`.
+    /// Returns true when the hub queued it for a satellite (202), whose
+    /// `command.result` follows.
+    public func approve(_ key: String, requestId: String, decision: String) async throws -> Bool {
+        let (_, status) = try await raw(request("POST", Self.sessionPath(key, "approval"),
+                                                body: ["request_id": requestId, "decision": decision]))
+        return status == 202
+    }
+
     /// Trades a one-time token from `swe remote pair` for a credential.
     public func pair(token: String, name: String) async throws -> HubCredential {
         try await send(request("POST", "/v1/pair", body: ["token": token, "name": name]))

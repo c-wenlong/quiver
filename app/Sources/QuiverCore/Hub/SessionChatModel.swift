@@ -11,8 +11,7 @@ public struct HubChatItem: Identifiable, Equatable, Sendable {
         case assistant(String)
         case thinking(String)
         case tool(HubToolCall, result: String?)
-        /// `decision` is nil while the approval is still open.
-        case approval(requestId: String, prompt: String, decision: String?, resolved: Bool)
+        case approval(requestId: String, prompt: String, state: HubApprovalState)
         case compaction
         case system(String)
         case error(String)
@@ -24,6 +23,27 @@ public struct HubChatItem: Identifiable, Equatable, Sendable {
     public init(id: String, kind: Kind) {
         self.id = id
         self.kind = kind
+    }
+}
+
+/// Where an approval the agent asked for stands.
+public enum HubApprovalState: Equatable, Sendable {
+    case open
+    /// An answer from here is on its way to the hub.
+    case submitting
+    /// The hub passed the answer to a satellite; its result settles it.
+    case queued
+    case failed(String)
+    /// Answered, from here or anywhere else: `allow`, `always`, `deny`,
+    /// or nil when the hub didn't say.
+    case resolved(String?)
+
+    /// Still waiting for an answer from someone.
+    public var answerable: Bool {
+        switch self {
+        case .open, .failed: true
+        case .submitting, .queued, .resolved: false
+        }
     }
 }
 
@@ -85,6 +105,7 @@ public final class SessionChatModel {
     public var awaitingReply: Bool { !awaiting.isEmpty }
     /// A Stop is on its way to the hub.
     public private(set) var stopping = false
+    public private(set) var attaching = false
 
     /// Messages per `/messages` page.
     public static let pageSize = 100
@@ -118,6 +139,10 @@ public final class SessionChatModel {
     private var sentAt: [String: Double] = [:]
     /// The user messages a history load added: echoes of sends it carries.
     private var loadedUsers: [(id: String, text: String, ts: Double?)] = []
+    /// Each approval's state once answered from here, and the decision
+    /// sent: a satellite's result doesn't repeat it.
+    private var answers: [String: HubApprovalState] = [:]
+    private var decisions: [String: String] = [:]
 
     struct Orphan: Equatable {
         var seq: Int
@@ -164,7 +189,7 @@ public final class SessionChatModel {
             if let rid = try? await hub.withClient({ [key] in try await $0.pendingApproval(key) }),
                gen == generation, !hasApproval(rid) {
                 items.append(HubChatItem(id: "approval-\(rid)", kind: .approval(
-                    requestId: rid, prompt: "Approval requested", decision: nil, resolved: false)))
+                    requestId: rid, prompt: "Approval requested", state: answerState(rid))))
                 replayFloor = cursor
             }
         } catch is CancellationError {
@@ -335,19 +360,20 @@ public final class SessionChatModel {
             guard let req = env.decode(HubApprovalRequested.self), let rid = req.requestId else { return }
             let prompt = req.prompt ?? "Approval requested"
             if let i = items.firstIndex(where: { $0.id == "approval-\(rid)" }) {
-                if case .approval(_, _, let decision, let resolved) = items[i].kind {
-                    items[i].kind = .approval(requestId: rid, prompt: prompt, decision: decision, resolved: resolved)
+                // The placeholder for a waiting approval learns its prompt.
+                if case .approval(_, _, let state) = items[i].kind {
+                    items[i].kind = .approval(requestId: rid, prompt: prompt, state: state)
                 }
                 return
             }
-            items.append(HubChatItem(id: "approval-\(rid)",
-                                     kind: .approval(requestId: rid, prompt: prompt, decision: nil, resolved: false)))
+            items.append(HubChatItem(id: "approval-\(rid)", kind: .approval(requestId: rid, prompt: prompt,
+                                                                             state: answerState(rid))))
         case "approval.resolved":
             let res = env.decode(HubApprovalResolved.self)
             for i in items.indices {
-                guard case .approval(let rid, let prompt, _, _) = items[i].kind else { continue }
+                guard case .approval(let rid, let prompt, _) = items[i].kind else { continue }
                 if (res?.requestId ?? "").isEmpty || res?.requestId == rid {
-                    items[i].kind = .approval(requestId: rid, prompt: prompt, decision: res?.decision, resolved: true)
+                    items[i].kind = .approval(requestId: rid, prompt: prompt, state: .resolved(res?.decision))
                 }
             }
         default:
@@ -362,19 +388,18 @@ public final class SessionChatModel {
         switch env.type {
         case "approval.requested":
             guard let req = env.decode(HubApprovalRequested.self), let rid = req.requestId else { return }
-            var resolved = (decision: String?.none, done: false)
+            var state = answerState(rid)
             if let i = items.firstIndex(where: { $0.id == "approval-\(rid)" }) {
-                if case .approval(_, _, let decision, let done) = items[i].kind { resolved = (decision, done) }
+                if case .approval(_, _, let shown) = items[i].kind { state = shown }
                 items.remove(at: i)
             }
             insert(HubChatItem(id: "approval-\(rid)", kind: .approval(
-                requestId: rid, prompt: req.prompt ?? "Approval requested",
-                decision: resolved.decision, resolved: resolved.done)), seq: seq)
+                requestId: rid, prompt: req.prompt ?? "Approval requested", state: state)), seq: seq)
         case "approval.resolved":
             let res = env.decode(HubApprovalResolved.self)
             guard let rid = res?.requestId, let i = items.firstIndex(where: { $0.id == "approval-\(rid)" }),
-                  case .approval(_, let prompt, _, _) = items[i].kind else { return }
-            items[i].kind = .approval(requestId: rid, prompt: prompt, decision: res?.decision, resolved: true)
+                  case .approval(_, let prompt, _) = items[i].kind else { return }
+            items[i].kind = .approval(requestId: rid, prompt: prompt, state: .resolved(res?.decision))
         default:
             break
         }
@@ -466,6 +491,16 @@ public final class SessionChatModel {
             }
             return
         }
+        if r.op == "approval", let rid = r.requestId {
+            setApproval(rid) { state in
+                guard case .resolved = state else {
+                    return r.ok == false ? .failed("Approval failed: \(r.note ?? "the satellite rejected it")")
+                        : .resolved(decisions[rid])
+                }
+                return state
+            }
+            return
+        }
         guard r.op != "message", r.ok == false || r.degraded == true else { return }
         let op = r.op.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Command"
         items.append(HubChatItem(id: "result-\(UUID().uuidString)",
@@ -514,6 +549,73 @@ public final class SessionChatModel {
             items.append(HubChatItem(id: "stop-\(UUID().uuidString)",
                                      kind: .error("Stop failed: \(error.localizedDescription)")))
         }
+    }
+
+    /// Answers an approval: `allow`, `always` or `deny`.
+    public func decide(_ requestId: String, _ decision: String) async {
+        guard let i = items.firstIndex(where: { $0.id == "approval-\(requestId)" }),
+              case .approval(_, _, let state) = items[i].kind, state.answerable else { return }
+        decisions[requestId] = decision
+        setApproval(requestId) { _ in .submitting }
+        do {
+            let queued = try await hub.withClient { [key] in
+                try await $0.approve(key, requestId: requestId, decision: decision)
+            }
+            // An approval.resolved or command.result that raced the
+            // answer already settled it: theirs wins.
+            setApproval(requestId) { state in
+                guard state == .submitting else { return state }
+                return queued ? .queued : .resolved(decision)
+            }
+        } catch {
+            setApproval(requestId) { state in
+                guard state == .submitting else { return state }
+                return .failed("Approval failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func setApproval(_ rid: String, _ next: (HubApprovalState) -> HubApprovalState) {
+        guard let i = items.firstIndex(where: { $0.id == "approval-\(rid)" }),
+              case .approval(_, let prompt, let state) = items[i].kind else { return }
+        let new = next(state)
+        items[i].kind = .approval(requestId: rid, prompt: prompt, state: new)
+        answers[rid] = new
+    }
+
+    /// A card drawn again (a history reload rebuilds the transcript) keeps
+    /// the answer given from here.
+    private func answerState(_ rid: String) -> HubApprovalState {
+        answers[rid] ?? .open
+    }
+
+    /// Takes an observed session over: the hub stops the harness in its
+    /// terminal and resumes it under Quiver, so it takes messages here.
+    public func attach() async {
+        guard row?.isAttached == false, !attaching else { return }
+        attaching = true
+        defer { attaching = false }
+        do {
+            let queued = try await hub.withClient { [key] in try await $0.control(key, op: "attach") }
+            if queued {
+                items.append(HubChatItem(id: "attach-\(UUID().uuidString)",
+                                         kind: .system("Attach queued: waiting for the satellite")))
+            } else {
+                // The hub also emits session.ownership; its answer is
+                // enough to open the composer now.
+                row?.ownership = "attached"
+            }
+        } catch {
+            items.append(HubChatItem(id: "attach-\(UUID().uuidString)",
+                                     kind: .error("Attach failed: \(error.localizedDescription)")))
+        }
+    }
+
+    /// Attach can take this session now: observed, resumable, and not
+    /// mid-turn (the hub refuses that with not_idle).
+    public var canAttach: Bool {
+        guard let row else { return false }
+        return !row.isAttached && row.attachable == true && row.status != "active"
     }
 
     /// The hub says the session is observed now: its word wins.
