@@ -103,7 +103,11 @@ struct SwipeRow<Content: View>: View {
             }
             .clipped()
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-        .modifier(HorizontalSwipe(onChange: changed, onEnd: ended, onCancel: cancelled))
+        .modifier(HorizontalSwipe(onChange: changed, onEnd: ended, onCancel: cancelled, onVertical: {
+            // iOS 17 has no scroll phase to watch: a vertical drag on any
+            // row closes an open one, as a scroll does on iOS 18.
+            if coordinator.openKey != nil { coordinator.openKey = nil }
+        }))
         .sensoryFeedback(trigger: armed) { _, now in now ? .impact(weight: .medium) : nil }
         .animation(.spring(response: 0.28, dampingFraction: 0.9), value: armed)
         .onChange(of: coordinator.openKey) { _, open in
@@ -202,6 +206,7 @@ private struct HorizontalSwipe: ViewModifier {
     var onChange: (CGFloat) -> Void
     var onEnd: (CGFloat, CGFloat) -> Void
     var onCancel: () -> Void
+    var onVertical: () -> Void
 
     @State private var axis: Axis?
 
@@ -213,7 +218,10 @@ private struct HorizontalSwipe: ViewModifier {
                 DragGesture(minimumDistance: 12)
                     .onChanged { value in
                         let t = value.translation
-                        if axis == nil { axis = abs(t.width) > abs(t.height) ? .horizontal : .vertical }
+                        if axis == nil {
+                            axis = abs(t.width) > abs(t.height) ? .horizontal : .vertical
+                            if axis == .vertical { onVertical() }
+                        }
                         if axis == .horizontal { onChange(t.width) }
                     }
                     .onEnded { value in

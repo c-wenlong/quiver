@@ -24,6 +24,11 @@ final class AppModel {
         hub = PairingStore.load()
     }
 
+    /// A model on `hub` without reading the Keychain, for tests.
+    init(hub: PairedHub?) {
+        self.hub = hub
+    }
+
     var client: HubClient? {
         hub.map { HubClient(baseURL: $0.baseURL, credential: $0.credential.credential) }
     }
@@ -56,17 +61,13 @@ final class AppModel {
         // A re-pair can land while this is in flight; answers from the old
         // hub must not overwrite (or unpair) the new one.
         let pairedAtStart = hub
+        let pinMark = pins.mark
         do {
             async let s = client.sessions()
             async let i = client.inbox()
             let (sessionsBody, inboxBody) = try await (s, i)
             guard hub == pairedAtStart else { return }
-            var fetched = sessionsBody.sessions
-            for (key, pinned) in pinWrites {
-                guard let i = fetched.firstIndex(where: { $0.key == key }), fetched[i].isPinned != pinned else { continue }
-                fetched[i].pinned = pinned
-                fetched[i].pinnedAt = pinned ? Date().timeIntervalSince1970 : nil
-            }
+            let fetched = pins.overlay(sessionsBody.sessions, fetchedFrom: pinMark)
             sessions = fetched
             let now = Date()
             pendingDetaches = pendingDetaches.filter { key, at in
@@ -113,9 +114,8 @@ final class AppModel {
     /// hub's 30 min cap.
     private(set) var pendingDetaches: [String: Date] = [:]
     static let detachWaitCap: TimeInterval = 31 * 60
-    /// Pins still on their way to the hub, so a list fetched before the
-    /// write landed doesn't flip the row back for a poll.
-    private var pinWrites: [String: Bool] = [:]
+    /// Pins chosen here that a list fetched too early must not undo.
+    private(set) var pins = PinLedger()
 
     func isDetachPending(_ key: String, now: Date = Date()) -> Bool {
         guard let at = pendingDetaches[key] else { return false }
@@ -125,26 +125,39 @@ final class AppModel {
     /// The detach a chat heard the result of (`command.result`, op detach).
     func detachSettled(_ key: String) { pendingDetaches[key] = nil }
 
+    /// Runs `call` against the hub paired now. Nil when a re-pair landed
+    /// while it was out: its answer, or its error, belongs to a hub this
+    /// phone no longer shows.
+    func onSameHub<T>(_ call: (HubClient) async throws -> T) async throws -> T? {
+        guard let client, let start = hub else { return nil }
+        do {
+            let value = try await call(client)
+            return hub == start ? value : nil
+        } catch {
+            guard hub == start else { return nil }
+            throw error
+        }
+    }
+
     /// Pins or unpins at once, then tells the hub. Returns what to say
     /// when the hub refused it and the row went back. `animate` wraps the
     /// moves between sections, both ways.
     func setPinned(_ key: String, _ pinned: Bool,
                    animate: (() -> Void) -> Void = { $0() }) async -> String? {
-        guard let client, let i = sessions.firstIndex(where: { $0.key == key }) else { return nil }
+        guard let i = sessions.firstIndex(where: { $0.key == key }) else { return nil }
         let before = sessions[i]
+        let version = pins.choose(key, pinned: pinned, now: Date().timeIntervalSince1970)
         animate {
             sessions[i].pinned = pinned
-            sessions[i].pinnedAt = pinned ? Date().timeIntervalSince1970 : nil
+            sessions[i].pinnedAt = pins.choices[key]?.pinnedAt
         }
-        pinWrites[key] = pinned
         do {
-            let meta = try await client.pin(key, pinned: pinned)
-            if pinWrites[key] == pinned { pinWrites[key] = nil }
-            patch(key, meta: meta)
+            guard let meta = try await onSameHub({ try await $0.pin(key, pinned: pinned) }) else { return nil }
+            // A newer choice on this row is still out: this answer is stale.
+            if pins.answered(key, version: version) { patch(key, meta: meta) }
             return nil
         } catch {
-            guard pinWrites[key] == pinned else { return nil }
-            pinWrites[key] = nil
+            guard pins.refused(key, version: version) else { return nil }
             if let j = sessions.firstIndex(where: { $0.key == key }) {
                 animate {
                     sessions[j].pinned = before.pinned
@@ -158,16 +171,14 @@ final class AppModel {
 
     /// An empty `title` goes back to the harness's own name.
     func rename(_ key: String, title: String) async throws {
-        guard let client else { return }
-        let meta = try await client.rename(key, title: title)
+        guard let meta = try await onSameHub({ try await $0.rename(key, title: title) }) else { return }
         patch(key, meta: meta)
     }
 
     /// Returns true when the hub queued it for a satellite (202).
     @discardableResult
     func attach(_ key: String) async throws -> Bool {
-        guard let client else { return false }
-        let queued = try await client.control(key, op: "attach")
+        guard let queued = try await onSameHub({ try await $0.control(key, op: "attach") }) else { return false }
         // An attach also cancels a detach waiting on the turn.
         pendingDetaches[key] = nil
         if !queued { patch(key, ownership: "attached") }
@@ -177,15 +188,16 @@ final class AppModel {
     enum DetachOutcome: Equatable {
         /// Handed back already.
         case done
-        /// A `when_idle` detach the hub runs once the turn ends.
+        /// A `when_idle` detach the hub runs once it sees the turn over.
         case waiting
         /// Forwarded to a satellite, which reports back later.
         case forwarded
+        /// The phone paired with another hub while it was out.
+        case stale
     }
 
     func detach(_ key: String, mode: DetachMode) async throws -> DetachOutcome {
-        guard let client else { return .done }
-        let accepted = try await client.detach(key, mode: mode)
+        guard let accepted = try await onSameHub({ try await $0.detach(key, mode: mode) }) else { return .stale }
         if mode == .whenIdle {
             pendingDetaches[key] = Date()
             return .waiting
@@ -232,7 +244,7 @@ final class AppModel {
     /// A pin or rename answered or announced (`session.meta`).
     func patch(_ key: String, meta: SessionMeta) {
         guard let i = sessions.firstIndex(where: { $0.key == key }) else { return }
-        sessions[i].apply(meta)
+        sessions[i].apply(pins.overlay(meta, key: key))
     }
 
     // MARK: Inbox
@@ -260,7 +272,7 @@ final class AppModel {
         sessions = []
         inbox = []
         pendingDetaches = [:]
-        pinWrites = [:]
+        pins = PinLedger()
         dropChats()
         loadedOnce = false
         connection = .connecting
@@ -276,7 +288,7 @@ final class AppModel {
         machines = []
         inbox = []
         pendingDetaches = [:]
-        pinWrites = [:]
+        pins = PinLedger()
         dropChats()
         loadedOnce = false
     }

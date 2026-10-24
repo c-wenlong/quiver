@@ -57,16 +57,18 @@ enum DetachMode: String, CaseIterable {
     case keep
 }
 
-/// How a Detach from the list goes: an idle session detaches at once
-/// (with Undo); a working one asks first, since `now` would cut its turn.
+/// How a Detach from the list goes. A row the app knows is working asks
+/// first, since `now` would cut its turn. Any other row detaches with
+/// `when_idle`, never `now`: the cached status can be a poll old, and the
+/// hub detaches at once when it sees the session idle and waits otherwise.
 enum DetachPlan: Equatable {
-    case immediately
+    case detach(DetachMode)
     case ask
 
     static func of(_ row: SessionRow) -> DetachPlan {
         switch row.sessionStatus {
         case .active, .approval: .ask
-        default: .immediately
+        default: .detach(.whenIdle)
         }
     }
 
@@ -75,20 +77,29 @@ enum DetachPlan: Equatable {
 }
 
 /// The rename sheet's rules, matching `sessionmeta.parse_title` on the hub:
-/// one line, spaces collapsed, at most 120 characters.
+/// one line, spaces collapsed, at most 120 characters. The hub counts
+/// Unicode code points (a flag is two, an accented letter written with a
+/// combining mark is two), so these do too.
 enum RenameRules {
     static let maxLength = 120
+
+    /// The length the hub measures.
+    static func length(_ text: String) -> Int { text.unicodeScalars.count }
 
     /// What the field holds after a keystroke or paste: newlines become
     /// spaces and anything past the limit is cut.
     static func clamp(_ text: String) -> String {
         let oneLine = text.replacingOccurrences(of: "\n", with: " ")
-        return oneLine.count > maxLength ? String(oneLine.prefix(maxLength)) : oneLine
+        return prefix(oneLine, maxLength)
     }
 
-    /// What Save sends: runs of whitespace collapsed, trimmed.
+    /// What Save sends: runs of whitespace collapsed, cut to the limit,
+    /// trailing space dropped, as the hub would store it.
     static func normalized(_ text: String) -> String {
-        String(text.split(whereSeparator: \.isWhitespace).joined(separator: " ").prefix(maxLength))
+        let collapsed = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        var cut = prefix(collapsed, maxLength)
+        while cut.last?.isWhitespace == true { cut.removeLast() }
+        return cut
     }
 
     /// Save is on once the name is non-empty and differs from the current
@@ -96,6 +107,83 @@ enum RenameRules {
     static func canSave(_ text: String, current: String?) -> Bool {
         let name = normalized(text)
         return !name.isEmpty && name != (current ?? "")
+    }
+
+    private static func prefix(_ text: String, _ n: Int) -> String {
+        guard text.unicodeScalars.count > n else { return text }
+        var scalars = String.UnicodeScalarView()
+        scalars.append(contentsOf: text.unicodeScalars.prefix(n))
+        return String(scalars)
+    }
+}
+
+/// Pins chosen on this phone that the hub may not reflect yet. Each choice
+/// gets a version; a reply counts only for the latest choice on its key,
+/// and a list fetched before the latest choice was answered keeps the
+/// choice instead of the hub's older answer.
+struct PinLedger {
+    struct Choice: Equatable {
+        var pinned: Bool
+        var pinnedAt: Double?
+        var version: Int
+        /// The clock when the hub answered it; nil while it is out.
+        var answeredAt: Int?
+    }
+
+    private(set) var clock = 0
+    private(set) var choices: [String: Choice] = [:]
+
+    /// Records a choice; returns its version.
+    mutating func choose(_ key: String, pinned: Bool, now: Double) -> Int {
+        clock += 1
+        choices[key] = Choice(pinned: pinned, pinnedAt: pinned ? now : nil, version: clock, answeredAt: nil)
+        return clock
+    }
+
+    /// The hub took `version`. False when a newer choice replaced it, so
+    /// its reply must not be applied.
+    mutating func answered(_ key: String, version: Int) -> Bool {
+        guard choices[key]?.version == version else { return false }
+        clock += 1
+        choices[key]?.answeredAt = clock
+        return true
+    }
+
+    /// The hub refused `version`. True when it was still the latest
+    /// choice, so the row goes back.
+    mutating func refused(_ key: String, version: Int) -> Bool {
+        guard choices[key]?.version == version else { return false }
+        choices[key] = nil
+        return true
+    }
+
+    /// Mark taken when a list fetch starts.
+    var mark: Int { clock }
+
+    /// A list fetched from `mark` on: rows whose latest choice was not yet
+    /// answered when the fetch started keep that choice. Choices the
+    /// fetch already reflects are forgotten.
+    mutating func overlay(_ rows: [SessionRow], fetchedFrom mark: Int) -> [SessionRow] {
+        var out = rows
+        for (key, choice) in choices {
+            if let at = choice.answeredAt, at <= mark {
+                choices[key] = nil
+                continue
+            }
+            guard let i = out.firstIndex(where: { $0.key == key }) else { continue }
+            out[i].pinned = choice.pinned
+            out[i].pinnedAt = choice.pinned ? (choice.pinnedAt ?? out[i].pinnedAt) : nil
+        }
+        return out
+    }
+
+    /// A `session.meta` event, with the pin a still-unanswered choice holds.
+    func overlay(_ meta: SessionMeta, key: String) -> SessionMeta {
+        guard let choice = choices[key], choice.answeredAt == nil else { return meta }
+        var m = meta
+        m.pinned = choice.pinned
+        m.pinnedAt = choice.pinnedAt
+        return m
     }
 }
 
@@ -110,5 +198,15 @@ extension SessionGrouping {
         let rest = groups(rows.filter { !$0.isPinned }, machines: machines, now: now)
         guard !pinned.isEmpty else { return rest }
         return [SessionGroup(id: "pinned", title: "Pinned", rows: pinned)] + rest
+    }
+
+    /// Where a pinned row runs, since no folder heading says it: the
+    /// folder, after the machine's name when sessions come from more
+    /// than one machine.
+    static func pinnedPlace(_ row: SessionRow, rows: [SessionRow], machines: [Machine]) -> String {
+        let folder = shortDir(row.cwd)
+        guard Set(rows.map { $0.machineId ?? "local" }).count > 1 else { return folder }
+        let machine = machines.first { $0.id == row.machineId }?.displayName ?? row.machineId ?? "local"
+        return "\(machine) · \(folder)"
     }
 }

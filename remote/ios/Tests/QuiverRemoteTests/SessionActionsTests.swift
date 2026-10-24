@@ -54,9 +54,11 @@ final class SessionActionsTests: XCTestCase {
         XCTAssertNotEqual(unpinned[0].id, "pinned")
     }
 
-    func testIdleDetachesAtOnceAndWorkingAsks() {
-        XCTAssertEqual(DetachPlan.of(row("i", ownership: "attached")), .immediately)
-        XCTAssertEqual(DetachPlan.of(row("f", status: "followup", ownership: "attached")), .immediately)
+    func testASwipeDetachNeverCutsATurnAndAWorkingRowAsks() {
+        // The row's status can be a poll old, so even an idle-looking row
+        // detaches with when_idle, which the hub runs at once if it's idle.
+        XCTAssertEqual(DetachPlan.of(row("i", ownership: "attached")), .detach(.whenIdle))
+        XCTAssertEqual(DetachPlan.of(row("f", status: "followup", ownership: "attached")), .detach(.whenIdle))
         XCTAssertEqual(DetachPlan.of(row("a", status: "active", ownership: "attached")), .ask)
         XCTAssertEqual(DetachPlan.of(row("q", status: "approval", ownership: "attached")), .ask)
         XCTAssertEqual(DetachPlan.choices.map(\.rawValue), ["when_idle", "keep", "now"], "the default first")
@@ -70,6 +72,102 @@ final class SessionActionsTests: XCTestCase {
         XCTAssertFalse(RenameRules.canSave(" Old ", current: "Old"), "no change")
         XCTAssertTrue(RenameRules.canSave("New name", current: "Old"))
         XCTAssertTrue(RenameRules.canSave("New name", current: nil))
+    }
+
+    func testRenameCountsCodePointsAsTheHubDoes() {
+        // A flag is two code points; "e" plus a combining acute is two.
+        let flag = "\u{1F1F8}\u{1F1EC}"
+        let accent = "e\u{0301}"
+        XCTAssertEqual(RenameRules.length(flag), 2)
+        XCTAssertEqual(RenameRules.length(accent), 2)
+        let flags = String(repeating: flag, count: 70)
+        XCTAssertEqual(flags.count, 70, "70 characters")
+        XCTAssertEqual(RenameRules.length(RenameRules.clamp(flags)), 120, "but cut at 120 code points")
+        XCTAssertEqual(RenameRules.clamp(flags), String(repeating: flag, count: 60))
+        let accents = String(repeating: accent, count: 61)
+        XCTAssertEqual(RenameRules.normalized(accents).unicodeScalars.count, 120)
+        // Cut where the hub cuts, then trailing space dropped like rstrip.
+        let spaced = String(repeating: "a", count: 119) + " b"
+        XCTAssertEqual(RenameRules.normalized(spaced), String(repeating: "a", count: 119))
+    }
+
+    func testPinChoicesOutliveStaleListsAndStaleReplies() {
+        func list(_ pinned: Bool) -> [SessionRow] { [row("k", pinnedAt: pinned ? 1 : nil)] }
+        var ledger = PinLedger()
+
+        // A list fetched before the pin was answered keeps the pin, even
+        // when it lands after the answer.
+        let before = ledger.mark
+        let v1 = ledger.choose("k", pinned: true, now: 50)
+        XCTAssertTrue(ledger.answered("k", version: v1))
+        XCTAssertTrue(ledger.overlay(list(false), fetchedFrom: before)[0].isPinned)
+        // One fetched after the answer is the hub's word, and the choice is forgotten.
+        let after = ledger.mark
+        XCTAssertFalse(ledger.overlay(list(false), fetchedFrom: after)[0].isPinned)
+        XCTAssertNil(ledger.choices["k"])
+
+        // Pin, then unpin before the pin's reply: the pin's reply is stale.
+        let pin = ledger.choose("k", pinned: true, now: 60)
+        let unpin = ledger.choose("k", pinned: false, now: 61)
+        XCTAssertFalse(ledger.answered("k", version: pin), "an older reply is not applied")
+        XCTAssertFalse(ledger.refused("k", version: pin), "nor does an older refusal revert the row")
+        XCTAssertFalse(ledger.overlay(list(true), fetchedFrom: ledger.mark)[0].isPinned, "the unpin still holds")
+        XCTAssertEqual(ledger.overlay(SessionMeta(title: "k", harnessTitle: "k", pinned: true, pinnedAt: 60), key: "k").pinned,
+                       false, "an event can't undo a choice still out")
+        XCTAssertTrue(ledger.refused("k", version: unpin))
+        XCTAssertNil(ledger.choices["k"])
+    }
+
+    @MainActor
+    func testAReplyFromAHubThisPhoneLeftIsDropped() async throws {
+        let cred = Credential(deviceId: "d", credential: "c", name: nil)
+        let app = AppModel(hub: PairedHub(baseURL: URL(string: "http://hub-a.test:8477")!, credential: cred))
+        let same = try await app.onSameHub { _ in 1 }
+        XCTAssertEqual(same, 1)
+        let moved = try await app.onSameHub { _ -> Int in
+            app.unpair()
+            return 2
+        }
+        XCTAssertNil(moved, "paired elsewhere while it was out")
+
+        let other = AppModel(hub: PairedHub(baseURL: URL(string: "http://hub-b.test:8477")!, credential: cred))
+        let failed = try await other.onSameHub { _ -> Int in
+            other.unpair()
+            throw HubError(status: 409, code: "x", message: "old hub")
+        }
+        XCTAssertNil(failed, "nor is its error shown")
+    }
+
+    @MainActor
+    func testAStartedLaunchCantBeStartedAgain() async {
+        let flow = LaunchFlow()
+        var posts = 0
+        let post: () async throws -> LaunchStatus = {
+            posts += 1
+            return LaunchStatus(launchId: "l1", state: "started", key: "claude:fork", note: nil, queued: nil)
+        }
+        let fetch: (String) async throws -> LaunchStatus = { _ in
+            LaunchStatus(launchId: "l1", state: "started", key: "claude:fork", note: nil, queued: nil)
+        }
+        let key = await flow.run(post: post, fetch: fetch, interval: .zero)
+        XCTAssertEqual(key, "claude:fork")
+        XCTAssertTrue(flow.busy, "still busy while the sheet refreshes and closes")
+        XCTAssertTrue(flow.opening)
+        let again = await flow.run(post: post, fetch: fetch, interval: .zero)
+        XCTAssertNil(again)
+        XCTAssertEqual(posts, 1, "a second Start posts nothing")
+    }
+
+    func testPinnedRowsNameTheirMachineWhenThereAreSeveral() {
+        let a = row("a", cwd: "/Users/demo/projects/api")
+        var b = row("b", cwd: "/Users/demo/projects/web")
+        let machines = [Machine(id: "m1", name: "studio.local", os: nil, online: true, lastSeenAt: nil, harnesses: nil),
+                        Machine(id: "m2", name: "laptop", os: nil, online: true, lastSeenAt: nil, harnesses: nil)]
+        XCTAssertEqual(SessionGrouping.pinnedPlace(a, rows: [a, b], machines: machines), "projects/api")
+        b = SessionRow(key: "b", harness: "claude", agent: nil, cwd: "/Users/demo/projects/web", title: "b", lastActiveAt: 1,
+                       status: "done", machineId: "m2", ownership: "observed", attachable: true)
+        XCTAssertEqual(SessionGrouping.pinnedPlace(a, rows: [a, b], machines: machines), "studio · projects/api")
+        XCTAssertEqual(SessionGrouping.pinnedPlace(b, rows: [a, b], machines: machines), "laptop · projects/web")
     }
 
     func testCustomTitleIsAnOverrideOfTheHarnessTitle() {

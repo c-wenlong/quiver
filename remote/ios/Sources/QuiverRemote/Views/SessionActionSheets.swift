@@ -20,7 +20,7 @@ struct RenameSheet: View {
     var body: some View {
         NavigationStack {
             PageScroll {
-                GroupLabel(text: "Name", trailing: "\(text.count)/\(RenameRules.maxLength)")
+                GroupLabel(text: "Name", trailing: "\(RenameRules.length(text))/\(RenameRules.maxLength)")
                 TextField(row.harnessTitle.flatMap { $0.isEmpty ? nil : $0 } ?? "Name this session", text: $text)
                     .quiverField()
                     .focused($focused)
@@ -170,7 +170,7 @@ struct ForkFields: View {
             Button(action: start) {
                 HStack(spacing: 8) {
                     if busy { ProgressView().controlSize(.small).tint(Theme.primaryForeground) }
-                    Text(phase == .waiting ? "Waiting for the fork" : busy ? "Starting" : "Start")
+                    Text(phase == .waiting ? "Waiting for the fork" : busy && phase != .starting ? "Opening the chat" : busy ? "Starting" : "Start")
                 }
             }
             .primaryButton()

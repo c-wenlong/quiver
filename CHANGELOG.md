@@ -26,9 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Remote iPhone app: swipe a session to attach, detach, pin, rename or
   fork it.** Swipe right on a Sessions row to attach it, or to detach
   one you hold; swipe left to pin, rename or fork it. A full swipe runs
-  the first action, and a long press shows them all in a menu. An idle
-  session detaches at once with Undo; a working one asks whether to
-  detach when the turn ends, keep it running in tmux, or detach now.
+  the first action, and a long press shows them all in a menu. A
+  session that looks idle detaches once the hub sees it idle, with Undo;
+  a working one asks whether to detach when the turn ends, keep it
+  running in tmux, or detach now.
   Pinned sessions sit in a Pinned section at the top. Fork asks for the
   new session's first message and opens its chat once it starts.
 

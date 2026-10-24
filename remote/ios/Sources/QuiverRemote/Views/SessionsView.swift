@@ -44,7 +44,9 @@ struct SessionsView: View {
                         SwipeRow(key: row.key, leading: SessionAction.leading(row), trailing: SessionAction.trailing(row),
                                  coordinator: swipes, perform: { act($0, on: row) }) {
                             NavigationLink(value: Route.chat(row.key)) {
-                                SessionRowView(row: row, showsFolder: group.id == "pinned",
+                                SessionRowView(row: row,
+                                               place: group.id == "pinned"
+                                                   ? SessionGrouping.pinnedPlace(row, rows: app.sessions, machines: app.machines) : nil,
                                                detachPending: app.isDetachPending(row.key))
                             }
                             .buttonStyle(RowButtonStyle())
@@ -171,10 +173,9 @@ struct SessionsView: View {
                 await app.refresh()
             }
         case .detach:
-            if DetachPlan.of(row) == .ask {
-                detachAsk = row
-            } else {
-                Task { await detach(row, mode: .now) }
+            switch DetachPlan.of(row) {
+            case .ask: detachAsk = row
+            case .detach(let mode): Task { await detach(row, mode: mode, offerUndo: true) }
             }
         case .pin, .unpin:
             Task {
@@ -190,21 +191,32 @@ struct SessionsView: View {
         }
     }
 
-    private func detach(_ row: SessionRow, mode: DetachMode) async {
+    /// `offerUndo` is the swipe on a row that looked idle: Undo attaches
+    /// it again, which also cancels the detach if the hub is still waiting.
+    private func detach(_ row: SessionRow, mode: DetachMode, offerUndo: Bool = false) async {
         do {
-            switch try await app.detach(row.key, mode: mode) {
-            case .done where mode == .keep:
-                show("Detached. It keeps running in tmux on \(machineName(row)).")
-            case .done:
-                // Idle when it went, so nothing was cut short: offer it back.
+            let outcome = try await app.detach(row.key, mode: mode)
+            if offerUndo, outcome != .stale {
                 let key = row.key
-                show(ListToast(message: "Detached \(row.displayTitle)", actionTitle: "Undo") {
+                show(ListToast(message: "Detaching \(row.displayTitle)", actionTitle: "Undo") {
                     Task {
                         do { try await app.attach(key) } catch { show(Self.message(error)) }
                         await app.refresh()
                     }
                 })
-            case .waiting:
+                // The hub checks every 2 s and detaches an idle session then.
+                Task {
+                    try? await Task.sleep(for: .seconds(3))
+                    await app.refresh()
+                }
+                return
+            }
+            switch outcome {
+            case .done where mode == .keep:
+                show("Detached. It keeps running in tmux on \(machineName(row)).")
+            case .done:
+                show("Detached \(row.displayTitle)")
+            case .waiting, .stale:
                 break
             case .forwarded:
                 show("Detaching on \(machineName(row))")
@@ -244,8 +256,9 @@ struct SessionsView: View {
 
 struct SessionRowView: View {
     var row: SessionRow
-    /// In the Pinned section, where no folder heading says where it runs.
-    var showsFolder = false
+    /// In the Pinned section, where no folder heading says where it runs:
+    /// the folder, and the machine when there is more than one.
+    var place: String?
     /// A detach is waiting for the current turn to end.
     var detachPending = false
 
@@ -263,7 +276,7 @@ struct SessionRowView: View {
                     Text(status.label).foregroundStyle(waiting ? Theme.warningText : Theme.textSecondary)
                     let when = RelativeTime.short(row.lastActiveAt)
                     if !when.isEmpty { Text("· \(when)") }
-                    if showsFolder { Text("· \(SessionGrouping.shortDir(row.cwd))").truncationMode(.head) }
+                    if let place { Text("· \(place)").truncationMode(.head) }
                 }
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 if detachPending {
