@@ -20,7 +20,7 @@ from pathlib import Path
 from quiver import paths
 from quiver.console import c, sanitize, truncate
 from quiver.flags import expand_value_flags
-from quiver.github import catalog, gh, repos
+from quiver.github import catalog, gh, manage, repos
 from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.table import Table
 
@@ -849,16 +849,13 @@ def _cmd_repo(args: list[str], json_view: bool) -> int:
         if env.status != "ok":
             print(c("red", f"  {_env_error(env)}"), file=err)
             return 1
-        check = gh.run_json(
-            ["repo", "view", name, "--json", "nameWithOwner"])
-        if check.status != "ok" or not isinstance(check.data, dict):
-            print(c("red", f"Cannot reach {name}: "
-                           f"{check.error or check.status}"), file=err)
+        added = manage.add_repo(name)
+        if added.status != "ok":
+            print(c("red", added.error), file=err)
             return 1
-        name = check.data.get("nameWithOwner") or name
-        pinned = repos.add_pinned(name)
+        name = added.data["repo"]
         if json_view:
-            return emit({"repo": name, "pinned": [r["name"] for r in pinned]})
+            return emit(added.data)
         print(f"Pinned {c('cyan', name)}.")
         return 0
 
@@ -883,47 +880,24 @@ def _cmd_repo(args: list[str], json_view: bool) -> int:
 
     if sub == "search":
         query = " ".join(pos)
-        limit = _limit(opts, 15)
-        # The synced catalog answers locally first — a query it misses
-        # falls through to the live scoped search so a repo created
-        # since the last sync is still findable.
-        if not opts["all"] and catalog.status() is not None:
-            found = catalog.search(query, limit)
-            if found:
-                if json_view:
-                    return emit({"query": query, "results": found,
-                                 "source": "catalog"})
-                _print_repo_hits(
-                    found, "repos — sync in Settings refreshes the "
-                           "catalog, or search all of GitHub with --all")
-                return 0
-        env = gh.probe_env()
-        if env.status != "ok":
-            print(c("red", f"  {_env_error(env)}"), file=err)
+        found = manage.search_repos(query, _limit(opts, 15), gh.probe_env,
+                                    everywhere=bool(opts["all"]))
+        if found["status"] != "ok":
+            indent = "  " if found["env_blocked"] else ""
+            print(c("red", indent + found["error"]), file=err)
             return 1
-        args = ["search", "repos", query,
-                "--limit", str(limit),
-                "--json", "fullName,description,stargazersCount,updatedAt"]
-        owners, _ = ([], None) if opts["all"] else _search_owners(env)
-        for owner in owners:
-            args += ["--owner", owner]
-        result = gh.run_json(args)
-        if result.status != "ok":
-            print(c("red", result.error or result.status), file=err)
-            return 1
-        found = [
-            {"name": r.get("fullName"), "description": r.get("description"),
-             "stars": r.get("stargazersCount"),
-             "updated_at": r.get("updatedAt"),
-             "url": f"https://github.com/{r.get('fullName')}"}
-            for r in (result.data or []) if isinstance(r, dict)]
         if json_view:
-            return emit({"query": query, "results": found,
-                         "source": "github"})
-        hint = ("repos — add one with `swe gh repo add <name>`, or "
-                "search all of GitHub with --all" if owners
-                else "repos — add one with `swe gh repo add <name>`")
-        _print_repo_hits(found, hint)
+            return emit({"query": query, "results": found["results"],
+                         "source": found["source"]})
+        if found["source"] == "catalog":
+            hint = ("repos — sync in Settings refreshes the catalog, or "
+                    "search all of GitHub with --all")
+        elif found["scoped"]:
+            hint = ("repos — add one with `swe gh repo add <name>`, or "
+                    "search all of GitHub with --all")
+        else:
+            hint = "repos — add one with `swe gh repo add <name>`"
+        _print_repo_hits(found["results"], hint)
         return 0
 
     if sub != "list":
@@ -959,13 +933,6 @@ def _print_repo_hits(found: list[dict], hint: str) -> None:
 
 # -------------------------------------------------------------- gh sync
 
-# `gh repo list` rows per owner; past this an org's tail is dropped, which
-# beats a second paginated call for catalogs this size.
-_SYNC_REPO_LIMIT = 1000
-_SYNC_FIELDS = ("nameWithOwner,description,stargazerCount,"
-                "updatedAt,isPrivate")
-
-
 def _cmd_sync(rest: list[str], json_view: bool) -> int:
     err = error_stream(json_view)
     if rest:
@@ -975,59 +942,27 @@ def _cmd_sync(rest: list[str], json_view: bool) -> int:
     if env.status != "ok":
         print(c("red", f"  {_env_error(env)}"), file=err)
         return 1
-    owners, owners_error = _search_owners(env)
-    if not owners:
-        print(c("red", "  Could not resolve the account or its orgs."),
-              file=err)
+    summary = manage.sync_catalog(env)
+    if summary["error"]:
+        print(c("red", f"  {summary['error']}"), file=err)
         return 1
-
-    def fetch(owner: str) -> dict:
-        result = gh.run_json(
-            ["repo", "list", owner, "--limit", str(_SYNC_REPO_LIMIT),
-             "--json", _SYNC_FIELDS], timeout=60)
-        # A non-list reply on a clean exit is a failure too — counting it
-        # as a synced owner would prune that owner's rows on write.
-        if result.status != "ok" or not isinstance(result.data, list):
-            return {"owner": owner,
-                    "status": (result.status if result.status != "ok"
-                               else "upstream-error"),
-                    "error": result.error
-                             or "gh returned an invalid repository list",
-                    "rows": []}
-        return {"owner": owner, "status": "ok", "rows": [
-            {"full_name": r["nameWithOwner"], "owner": owner,
-             "description": r.get("description"),
-             "stars": r.get("stargazerCount"),
-             "updated_at": r.get("updatedAt"),
-             "is_private": bool(r.get("isPrivate"))}
-            for r in result.data
-            if isinstance(r, dict) and r.get("nameWithOwner")]}
-
-    entries = _fan(owners, fetch)
-    ok = [e for e in entries if e["status"] == "ok"]
-    failed = [{"owner": e["owner"], "error": e["error"]}
-              for e in entries if e["status"] != "ok"]
-    if owners_error:
-        failed.insert(0, {"owner": "<orgs>", "error": owners_error})
-    summary = catalog.write(
-        [r for e in ok for r in e["rows"]], [e["owner"] for e in ok],
-        login=env.login)
+    failed = summary["failed"]
     if json_view:
-        return emit({"repos": summary.get("repos", 0),
-                     "synced_at": summary.get("synced_at"),
-                     "owners": summary.get("owners", []),
+        return emit({"repos": summary["repos"],
+                     "synced_at": summary["synced_at"],
+                     "owners": summary["owners"],
                      "failed": failed})
     print()
-    if owners_error:
+    if failed and failed[0]["owner"] == "<orgs>":
         print(f"  {c('red', '●')} {c('cyan', '<orgs>'.ljust(40)[:40])} "
-              f"{owners_error}")
-    for e in entries:
+              f"{failed[0]['error']}")
+    for e in summary["listed"]:
         fine = e["status"] == "ok"
-        detail = (f"{len(e['rows'])} repos" if fine
+        detail = (f"{e['repos']} repos" if fine
                   else e["error"] or e["status"])
         dot = c("green" if fine else "red", "●")
         print(f"  {dot} {c('cyan', e['owner'])}  {c('dim', detail)}")
-    print(c("dim", f"\n  {summary.get('repos', 0)} repos in the catalog"
+    print(c("dim", f"\n  {summary['repos']} repos in the catalog"
                    " — `swe gh repo search` reads it now.\n"))
     return 0 if not failed else 1
 
@@ -1048,83 +983,7 @@ def _open_web(kind: str, targets: list[str]) -> None:
     webbrowser.open(url)
 
 
-# Org membership barely moves, and the sheet re-searches on every typing
-# pause — each `swe` run would otherwise re-fetch `user/orgs`. Cached per
-# login under ~/.quiver/cache so an `gh auth switch` can't leak scopes.
-_OWNERS_TTL = 600
-
-
-def _search_owners(env: gh.GhEnv) -> tuple[list[str], str | None]:
-    """Who a repo search may hit: the login itself plus every org the
-    account belongs to, so results are repos the user can actually pin
-    rather than all of public GitHub. Returns ``(owners, error)`` — the
-    error is why the org list is missing; the search path ignores it
-    (scoping to the login is still useful) but sync reports it so a
-    partial sync doesn't look clean.
-    """
-    cached = _cached_owners(env.login)
-    if cached is not None:
-        return cached, None
-    owners = [env.login] if env.login else []
-    orgs = gh.run_gh(["api", "user/orgs", "--paginate",
-                      "--jq", ".[].login"])
-    if orgs.status == "ok" and isinstance(orgs.data, str):
-        for line in orgs.data.splitlines():
-            name = line.strip()
-            if name and name not in owners:
-                owners.append(name)
-        # Only a successful orgs read may cache — a transient failure
-        # would otherwise hide org repos until the TTL ran out.
-        _cache_owners(env.login, owners)
-        return owners, None
-    return owners, orgs.error or "gh could not list organizations"
-
-
-def _cached_owners(login: str) -> list[str] | None:
-    """The owner list under the TTL, keyed by login — ``None`` on a
-    miss, a stale entry or an unreadable file."""
-    if not login:
-        return None
-    try:
-        data = json.loads(paths.GITHUB_OWNERS_CACHE.read_text(
-            encoding="utf-8"))
-        entry = data.get("logins", {}).get(login, {})
-        if time.time() - float(entry.get("fetched_at", 0)) < _OWNERS_TTL:
-            owners = entry.get("owners")
-            if isinstance(owners, list):
-                return [str(o) for o in owners]
-    except (OSError, ValueError, TypeError):
-        pass
-    return None
-
-
-def _cache_owners(login: str, owners: list[str]) -> None:
-    """Best-effort write; a cache that can't persist just means the
-    next search re-fetches."""
-    if not login:
-        return
-    try:
-        data = json.loads(paths.GITHUB_OWNERS_CACHE.read_text(
-            encoding="utf-8"))
-        if not isinstance(data, dict):
-            data = {}
-    except (OSError, ValueError):
-        data = {}
-    data.setdefault("logins", {})[login] = {
-        "owners": owners, "fetched_at": time.time()}
-    try:
-        paths.atomic_write_text(paths.GITHUB_OWNERS_CACHE,
-                                json.dumps(data))
-    except OSError:
-        pass
-
-
-def _env_error(env: gh.GhEnv) -> str:
-    if not env.installed:
-        return "gh is not installed: brew install gh"
-    if env.error:
-        return f"gh is not responding ({env.error})"
-    return "gh is not authenticated: run `gh auth login`"
+_env_error = gh.env_error
 
 
 def _env_payload(env: gh.GhEnv) -> dict:
