@@ -15,6 +15,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   minute per address). Pairing stays for tagged nodes, other people's
   devices, phones' remote control and satellites.
 
+- **Remote iPhone app: queued messages wait in a tray above the prompt
+  box.** A message sent while the agent works no longer sits in the
+  transcript, where new output pushed it off screen: it joins a tray
+  pinned above the prompt box ("3 messages queued"). Each row has three
+  icons: edit puts the text back in the prompt box to change it in place,
+  remove drops it before the agent sees it, and send now writes it into
+  the running turn. The header's remove button clears them all after
+  asking. A message leaves the tray and lands in the transcript once it
+  goes out. The tray reloads from the hub when you reopen the chat, and
+  the Queue/Steer picker is gone. On a hub too old to edit, an edit
+  removes the message and queues the new text at the end, and says so.
+
+- **Remote: pin a session and give it a name.** `POST
+  /v1/sessions/{key}/pin` and `/title` keep a pin and a display name on
+  the hub, so the phone and the web app agree and watched or satellite
+  sessions work too. Every session row gains `pinned`, `pinned_at` and
+  `harness_title`, and `title` shows your name when you set one. Open
+  clients hear about a change as a `session.meta` event.
+
 - **Remote: detach can wait for the turn to end or keep tmux running.**
   The control route's `detach` takes a `mode`. `now` is today's
   behaviour and stays the default. `when_idle` answers at once and
