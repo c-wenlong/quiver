@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Remote iPhone app: links in replies get a preview card.** A reply
+  that links to a web page shows a card under the text with the page's
+  host, its path and an Open button (up to three per reply). Tapping the
+  card, or the link in the text, opens the page in an in-app browser, so
+  closing it brings you back to the chat.
+
 ### Fixed
 
 - **Remote: a send from the phone shows up within a second.** The hub
@@ -32,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   settles it. A message steered into a running turn says the agent
   reads it at its next step, since Claude Code takes mid-turn input
   between tool calls.
+
+- **Remote iPhone app: the working indicator shows which agent is working.**
+  While a session runs, the bar under the last message shows the
+  harness's logo with the pulsing dots beside it, and new messages land
+  above it.
 
 - **Remote iPhone app: chats stream in instead of landing in blocks.**
   Messages that reach the phone together are shown one at a time with a
