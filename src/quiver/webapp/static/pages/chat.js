@@ -730,6 +730,13 @@ const SessionChat = (() => {
         return;
       }
     }
+    if (ev.type === "journal.truncated" && chat.seq) {
+      // The hub's ring dropped events past where this view stopped (a long
+      // disconnect on a busy session): say so rather than look complete.
+      const stick = nearBottom();
+      appendMessage({ kind: "system", text: "Some events were missed while the connection was down. Reopen this chat to load the full transcript." }, true);
+      if (stick) scrollBottom();
+    }
     if (ev.type === "journal.truncated" || ev.type === "journal.caught-up") {
       if (ev.seq && !chat.pending.length) remember(ev.seq);
       return;
