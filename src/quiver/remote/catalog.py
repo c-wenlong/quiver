@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Callable
 
 from quiver.paths import atomic_write_text, remote_dir_for
-from quiver.remote import protocol
+from quiver.remote import protocol, sessionmeta
 from quiver.sessions.models import Session, SessionRow
 from quiver.sessions.resume import resume_json
 
@@ -380,14 +380,19 @@ class Catalog:
         self.max_rows = max_rows
         self._rows: list[tuple[str, Session | None, dict, str]] = []
         self._refreshed_at = 0.0
+        # One lock for every write to the rows after they are built:
+        # refresh's overlay-and-swap, reapply_meta (pins and titles) and
+        # note_status (tail probes). Each takes it for its whole
+        # read-modify-write, so none is lost to another's older read.
+        self._meta_lock = threading.Lock()
+        self._lock = self._meta_lock
+        # Test seam: runs between refresh's metadata read and row swap.
+        self._after_meta_read: Callable[[], None] | None = None
         # Statuses a tailer probed after this catalog's own read, keyed
         # by session: ``(status, probed_at)``. A refresh that started
         # before ``probed_at`` keeps these instead of its own (older)
         # verdict; one that started after drops them. ``_status_as_of``
-        # is when the current rows' statuses were read. The lock makes
-        # "record + patch" (note_status) and "apply + swap" (refresh)
-        # atomic against each other.
-        self._lock = threading.Lock()
+        # is when the current rows' statuses were read.
         self._fresh: dict[str, tuple[str, float]] = {}
         self._status_as_of = 0.0
 
@@ -420,12 +425,20 @@ class Catalog:
                 str(row.get("key") or ""), None, row,
                 str(row.get("status") or ""),
             ))
-        with self._lock:
+        # Read the pins, overlay them, keep fresher probed statuses and
+        # swap the rows under one lock: reapply_meta and note_status take
+        # it too, so a pin saved or a status probed meanwhile is applied
+        # to the new rows, never lost to this older read.
+        with self._meta_lock:
+            meta = sessionmeta.load(self.home)
+            if self._after_meta_read is not None:
+                self._after_meta_read()
             # Fresher-wins: a tailer probe newer than this read stays.
             self._fresh = {
                 k: v for k, v in self._fresh.items() if v[1] > started
             }
-            for i, (key, session, row, _st) in enumerate(rows):
+            for i, (key, session, row, status) in enumerate(rows):
+                sessionmeta.apply(row, meta.get(key))
                 fresh = self._fresh.get(key)
                 if fresh is not None and session is not None:
                     row["status"] = fresh[0] or None
@@ -459,6 +472,14 @@ class Catalog:
 
     def rows(self) -> list[dict]:
         return [row for _key, _s, row, _st in self._rows]
+
+    def reapply_meta(self, key: str) -> dict | None:
+        """Re-overlay one row's pin and title after a write; returns the row."""
+        with self._meta_lock:
+            row = self.row_for(key)
+            if row is not None:
+                sessionmeta.apply(row, sessionmeta.get(self.home, key))
+            return row
 
     def tail_rows(self) -> list[tuple[str, Session, str]]:
         """``(key, Session, status)`` for the tail manager, newest first."""
