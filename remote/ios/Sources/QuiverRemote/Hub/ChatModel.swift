@@ -96,6 +96,10 @@ final class ChatModel {
     /// being removed stay here, hidden, until the hub confirms; the tray
     /// shows `tray`.
     private(set) var queued: [QueuedSend] = []
+    /// Sends that left the hub's queue while the chat was closed (no longer
+    /// in its list). Hidden; kept so a replayed result or echo can still
+    /// show them in the transcript, e.g. a slash command that never echoes.
+    private var departed: [QueuedSend] = []
     /// Client ids of sends that left the tray (went out, failed or were
     /// removed): a queue list fetched before that can't bring them back.
     private var settledSends = Set<String>()
@@ -148,10 +152,12 @@ final class ChatModel {
         let gen = generation
         streamTask?.cancel()
         streamTask = nil
-        // The tray survives the app closing: the hub holds the sends.
-        async let waiting = try? client.queue(key)
         if items.isEmpty || loadError != nil { await backfill(client) }
-        let sends = await waiting
+        guard gen == generation else { return }
+        // The tray survives the app closing: the hub holds the sends. Read
+        // after history, so the list is no older than what's shown; a send
+        // that leaves after this has its echo and result in the replay.
+        let sends = try? await client.queue(key)
         guard gen == generation else { return }
         if let sends { mergeQueue(sends.sends) }
         streamTask = Task { [weak self, cursor] in
@@ -413,6 +419,8 @@ final class ChatModel {
                     return
                 }
                 items.remove(at: i)
+            } else if !replayingHistory, let j = departed.firstIndex(where: { Self.echoes(text, $0.text) }) {
+                settledSends.insert(departed.remove(at: j).clientId)
             } else if !replayingHistory, let j = queued.firstIndex(where: { Self.echoes(text, $0.text) }) {
                 // A queued send went out: it leaves the tray and the echo
                 // lands in the transcript where it really is.
@@ -465,10 +473,17 @@ final class ChatModel {
         }
     }
 
-    /// The transcript's user message `echo` is the send `sent` coming back
-    /// (attachments prefix "@path ").
+    /// The transcript's user message `echo` is the send `sent` coming back:
+    /// the same text, or with the hub's attachment prefix, one "@path "
+    /// per attachment (`TmuxInjector.send`). Nothing else, so another
+    /// device's "please run tests" isn't taken for a waiting "run tests".
     static func echoes(_ echo: String, _ sent: String) -> Bool {
-        echo == sent || echo.hasSuffix(sent)
+        if echo == sent { return true }
+        guard echo.hasSuffix(" " + sent) else { return false }
+        let prefix = echo.dropLast(sent.count)
+        return prefix.split(separator: " ", omittingEmptySubsequences: false).dropLast().allSatisfy {
+            $0.count > 1 && $0.first == "@"
+        } && prefix.hasPrefix("@")
     }
 
     private func hasApproval(_ rid: String) -> Bool {
@@ -483,13 +498,11 @@ final class ChatModel {
     private func settle(_ r: CommandResult) {
         if r.op == "message", let cid = r.clientId, let i = queued.firstIndex(where: { $0.clientId == cid }) {
             let entry = queued.remove(at: i)
-            settledSends.insert(cid)
-            // Removed before it went out: gone, and not a failure.
-            if r.cancelled == true { return }
-            // It went out (or failed): show it in the transcript as any
-            // send, settled by the existing rules.
-            let next = SendState.settled(r, current: .sending, agentActive: row?.sessionStatus == .active)
-            items.append(ChatItem(id: "send-\(cid)", kind: .user(text: entry.text, send: next ?? .delivered(nil))))
+            showSettled(entry, r)
+            return
+        }
+        if r.op == "message", let cid = r.clientId, let i = departed.firstIndex(where: { $0.clientId == cid }) {
+            showSettled(departed.remove(at: i), r)
             return
         }
         if r.op == "message", r.cancelled == true {
@@ -501,6 +514,25 @@ final class ChatModel {
             }
             return
         }
+        settleShown(r)
+    }
+
+    /// A queued send's result: into the transcript as a settled send,
+    /// or, when it was removed, gone without a failure.
+    private func showSettled(_ entry: QueuedSend, _ r: CommandResult) {
+        let cid = entry.clientId
+        settledSends.insert(cid)
+        // Removed before it went out: gone, and not a failure.
+        if r.cancelled == true { return }
+        // It went out (or failed): show it in the transcript as any send,
+        // settled by the existing rules.
+        let next = SendState.settled(r, current: .sending, agentActive: row?.sessionStatus == .active)
+        items.append(ChatItem(id: "send-\(cid)", kind: .user(text: entry.text, send: next ?? .delivered(nil))))
+    }
+
+    /// A result for something already in the transcript: a send's bubble,
+    /// an attach, an approval, or another command.
+    private func settleShown(_ r: CommandResult) {
         if r.op == "message", let cid = r.clientId, let i = items.firstIndex(where: { $0.id == "send-\(cid)" }),
            case .user(let text, let send?) = items[i].kind {
             // An echo already settled it if `send` is nil.
@@ -550,15 +582,28 @@ final class ChatModel {
         await send(text)
     }
 
-    /// Every send is queue mode: it goes out at once when the agent is
-    /// idle, else the hub holds it and the tray shows it. Send now on a
-    /// tray row is the steer.
+    /// Where a send goes and in which mode.
+    struct SendRoute: Equatable {
+        let toTray: Bool
+        let mode: String
+    }
+
+    /// Queue mode: it goes out at once when the agent is idle, else the hub
+    /// holds it and the tray shows it (Send now on a tray row is the steer).
+    /// A satellite's session can't be held, and a queue-mode send to it
+    /// mid-turn is refused, so mid-turn it steers straight in, no tray.
+    static func route(agentActive: Bool, holdsSends: Bool) -> SendRoute {
+        guard agentActive else { return SendRoute(toTray: false, mode: "queue") }
+        return holdsSends ? SendRoute(toTray: true, mode: "queue") : SendRoute(toTray: false, mode: "steer")
+    }
+
     private func send(_ text: String) async {
         guard let client = app?.client else { return }
         let cid = UUID().uuidString
-        stage(text, clientId: cid, toTray: row?.sessionStatus == .active)
+        let route = Self.route(agentActive: row?.sessionStatus == .active, holdsSends: row?.holdsQueuedSends ?? true)
+        stage(text, clientId: cid, toTray: route.toTray)
         do {
-            let accepted = try await client.sendMessage(key, text: text, mode: "queue", clientId: cid)
+            let accepted = try await client.sendMessage(key, text: text, mode: route.mode, clientId: cid)
             posted(cid, waiting: accepted.waiting == true)
         } catch {
             postFailed(cid, error)
@@ -629,16 +674,18 @@ final class ChatModel {
         var known = settledSends
         for item in items where item.id.hasPrefix("send-") { known.insert(String(item.id.dropFirst(5))) }
         let merged = Self.mergeQueue(local: queued, hub: sends, settled: known)
-        guard merged != queued else { return }
-        withAnimation(.easeOut(duration: 0.25)) { queued = merged }
+        departed += merged.departed.filter { d in !departed.contains { $0.clientId == d.clientId } }
+        guard merged.queued != queued else { return }
+        withAnimation(.easeOut(duration: 0.25)) { queued = merged.queued }
     }
 
     /// The hub's list wins: what it holds shows in its order (keeping what
-    /// this phone knows about each), and what it no longer holds leaves,
-    /// except a send whose POST hasn't been answered yet. `settled` are
-    /// sends already shown elsewhere or gone, which an older list can't
-    /// bring back.
-    static func mergeQueue(local: [QueuedSend], hub: [WaitingSend], settled: Set<String>) -> [QueuedSend] {
+    /// this phone knows about each), and what it no longer holds leaves the
+    /// tray for `departed`, except a send whose POST hasn't been answered
+    /// yet. `settled` are sends already shown elsewhere or gone (their
+    /// echo or result seen), which a list can't bring back.
+    static func mergeQueue(local: [QueuedSend], hub: [WaitingSend], settled: Set<String>)
+        -> (queued: [QueuedSend], departed: [QueuedSend]) {
         var out: [QueuedSend] = []
         for send in hub where !settled.contains(send.clientId) && !out.contains(where: { $0.clientId == send.clientId }) {
             if let mine = local.first(where: { $0.clientId == send.clientId }) {
@@ -647,10 +694,15 @@ final class ChatModel {
                 out.append(QueuedSend(clientId: send.clientId, text: send.text ?? "", phase: .waiting))
             }
         }
-        for mine in local where mine.phase == .posting && !out.contains(where: { $0.clientId == mine.clientId }) {
-            out.append(mine)
+        var departed: [QueuedSend] = []
+        for mine in local where !out.contains(where: { $0.clientId == mine.clientId }) {
+            if mine.phase == .posting {
+                out.append(mine)
+            } else if !settled.contains(mine.clientId) {
+                departed.append(mine)
+            }
         }
-        return out
+        return (out, departed)
     }
 
     /// Send now: the hub stops holding it and writes it into the running
@@ -731,7 +783,7 @@ final class ChatModel {
         guard let e = error as? HubError else { return "Something went wrong" }
         switch e.code {
         case "not_waiting":
-            let why = e.message.lowercased()
+            let why = (e.reason ?? e.message).lowercased()
             if why.contains("removed") { return "Already removed" }
             if why.contains("failed") { return "Already failed" }
             return "Already sent"

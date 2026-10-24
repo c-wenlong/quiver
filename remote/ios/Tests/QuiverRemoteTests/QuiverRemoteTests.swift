@@ -618,17 +618,84 @@ final class ChatModelTests: XCTestCase {
             QueuedSend(clientId: "new", text: "posting", phase: .posting),
         ]
         let merged = ChatModel.mergeQueue(local: local, hub: body.sends, settled: [])
-        XCTAssertEqual(merged.map(\.clientId), ["a", "b", "new"])
-        XCTAssertEqual(merged[0], QueuedSend(clientId: "a", text: "from before", phase: .waiting))
-        XCTAssertEqual(merged[1].phase, .sendingNow)
-        // A list fetched before a send settled can't bring it back.
-        XCTAssertEqual(ChatModel.mergeQueue(local: [], hub: body.sends, settled: ["a"]).map(\.clientId), ["b"])
+        XCTAssertEqual(merged.queued.map(\.clientId), ["a", "b", "new"])
+        XCTAssertEqual(merged.queued[0], QueuedSend(clientId: "a", text: "from before", phase: .waiting))
+        XCTAssertEqual(merged.queued[1].phase, .sendingNow)
+        // What the hub no longer holds leaves the tray but is kept for its result.
+        XCTAssertEqual(merged.departed.map(\.clientId), ["gone"])
+        // A send whose echo or result was already seen (while history
+        // loaded, say) is neither restored nor kept.
+        let stale = ChatModel.mergeQueue(local: [QueuedSend(clientId: "b", text: "mine", phase: .waiting)],
+                                         hub: body.sends, settled: ["a", "b"])
+        XCTAssertTrue(stale.queued.isEmpty)
+        XCTAssertTrue(stale.departed.isEmpty)
 
         // On the model: a send already in the transcript isn't added twice.
         let chat = ChatModel(key: "claude:1", app: AppModel())
         chat.stage("mine", clientId: "b", toTray: false)
         chat.mergeQueue(body.sends)
         XCTAssertEqual(chat.tray.map(\.clientId), ["a"])
+    }
+
+    func testOnlyTheSameTextOrAnAttachmentPrefixIsAnEcho() {
+        XCTAssertTrue(ChatModel.echoes("run tests", "run tests"))
+        XCTAssertTrue(ChatModel.echoes("@/tmp/a.png run tests", "run tests"))
+        XCTAssertTrue(ChatModel.echoes("@/tmp/b.txt @/tmp/a.png run tests", "run tests"))
+        XCTAssertFalse(ChatModel.echoes("please run tests", "run tests"))
+        XCTAssertFalse(ChatModel.echoes("@/tmp/a.png please run tests", "run tests"))
+        XCTAssertFalse(ChatModel.echoes("@ run tests", "run tests"))
+        XCTAssertFalse(ChatModel.echoes("  run tests", "run tests"))
+
+        // Another device's message ending in the same words leaves the row.
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        chat.stage("run tests", clientId: "c1", toTray: true)
+        chat.posted("c1", waiting: true)
+        chat.apply(user(1, "please run tests"))
+        XCTAssertEqual(chat.tray.map(\.clientId), ["c1"])
+        XCTAssertEqual(chat.items.count, 1)
+    }
+
+    func testSatelliteSessionsSteerMidTurnInsteadOfQueueing() {
+        XCTAssertEqual(ChatModel.route(agentActive: true, holdsSends: true), .init(toTray: true, mode: "queue"))
+        XCTAssertEqual(ChatModel.route(agentActive: true, holdsSends: false), .init(toTray: false, mode: "steer"))
+        XCTAssertEqual(ChatModel.route(agentActive: false, holdsSends: true), .init(toTray: false, mode: "queue"))
+        XCTAssertEqual(ChatModel.route(agentActive: false, holdsSends: false), .init(toTray: false, mode: "queue"))
+        let row = try! Hub.decoder.decode(SessionRow.self, from: Data(#"{"key":"claude:1@mini","status":"active","remote":true}"#.utf8))
+        XCTAssertFalse(row.holdsQueuedSends)
+        let local = try! Hub.decoder.decode(SessionRow.self, from: Data(#"{"key":"claude:1","status":"active"}"#.utf8))
+        XCTAssertTrue(local.holdsQueuedSends)
+    }
+
+    func testASendThatLeftWhileAwayStillShowsItsReplayedResult() {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        chat.stage("/compact", clientId: "c1", toTray: true)
+        chat.stage("/rename later", clientId: "c2", toTray: true)
+        chat.posted("c1", waiting: true)
+        chat.posted("c2", waiting: true)
+        // Reopened: the hub no longer holds either.
+        chat.mergeQueue([])
+        XCTAssertTrue(chat.tray.isEmpty)
+        XCTAssertTrue(chat.items.isEmpty)
+        // The replay brings their results.
+        chat.apply(commandResult(#"{"op":"message","ok":true,"note":"sent to tmux pane","client_id":"c1"}"#))
+        chat.apply(commandResult(#"{"op":"message","ok":false,"note":"session stayed busy for 30 min; message not sent","client_id":"c2"}"#))
+        XCTAssertEqual(chat.items.map(\.kind), [
+            .user(text: "/compact", send: .delivered(nil)),
+            .user(text: "/rename later", send: .failed("session stayed busy for 30 min; message not sent")),
+        ])
+    }
+
+    func testANotWaitingRefusalKeepsTheHubsReason() {
+        func note(_ reason: String) -> String {
+            let body = Data(#"{"error":{"code":"not_waiting","message":""#.utf8) + Data(reason.utf8) + Data(#""}}"#.utf8)
+            let error = HubClient.error(status: 409, body: body)
+            XCTAssertEqual(error.code, "not_waiting")
+            return ChatModel.queueNote(error)
+        }
+        XCTAssertEqual(note("that message already went out"), "Already sent")
+        XCTAssertEqual(note("that message was already sent now"), "Already sent")
+        XCTAssertEqual(note("that message was already removed"), "Already removed")
+        XCTAssertEqual(note("that message already failed"), "Already failed")
     }
 
     func testChatCacheDropsTheLeastRecentlyOpened() {

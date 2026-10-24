@@ -84,6 +84,8 @@ struct SessionRow: Codable, Identifiable, Hashable {
     let machineId: String?
     let ownership: String?
     let attachable: Bool?
+    /// A satellite's session, which the hub forwards to that machine.
+    var remote: Bool? = nil
 
     var id: String { key }
     var displayTitle: String { (title?.isEmpty == false ? title : nil) ?? "Untitled session" }
@@ -91,6 +93,9 @@ struct SessionRow: Codable, Identifiable, Hashable {
     var sessionStatus: SessionStatus { SessionStatus(raw: status) }
     var isAttached: Bool { ownership == "attached" }
     var canAttach: Bool { !isAttached && attachable == true && sessionStatus != .active }
+    /// The hub can hold a send until this session goes idle. A satellite
+    /// delivers on arrival or refuses a busy session, so it can't.
+    var holdsQueuedSends: Bool { remote != true }
 
     /// Waiting on you right now: an approval, or a recent follow-up.
     var needsYouNow: Bool {
