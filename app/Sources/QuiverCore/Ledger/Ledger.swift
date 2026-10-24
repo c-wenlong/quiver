@@ -393,10 +393,10 @@ public actor Ledger {
             let fileLists: [[URL]] = claudeFiles.map(\.1) + codexFiles.map(\.1) + piFiles.map(\.1)
                 + droidFiles.map(\.1) + clineFiles.map(\.1) + indexJobs.map(\.files)
                 + [devinTranscripts]
-            // OpenCode databases are visited twice with an indexer: once to
-            // index their sessions, once for tokens.
+            // OpenCode and Devin databases are visited twice with an
+            // indexer: once to index their sessions, once for tokens.
             let total: Int = fileLists.reduce(0) { $0 + $1.count }
-                + openCodeDatabases.count * (indexer == nil ? 1 : 2) + devinDatabases.count
+                + (openCodeDatabases.count + devinDatabases.count) * (indexer == nil ? 1 : 2)
             progressState.withLock { $0 = ScanProgress(filesDone: 0, filesTotal: total) }
         }
         defer {
@@ -448,6 +448,14 @@ public actor Ledger {
             advanceProgress(owner)
         }
         if let indexer {
+            // Every Devin turn lives in `sessions.db`; each session indexes
+            // under a synthetic `<db>#<id>` path like OpenCode's.
+            for database in devinDatabases {
+                try indexDevinSessions(database, indexer: indexer,
+                                       recentLimit: recentLimit, report: &report)
+                advanceProgress(owner)
+                await Task.yield()
+            }
             for file in devinTranscripts {
                 if Task.isCancelled { throw CancellationError() }
                 indexWholeFile(file, harness: .devin, indexer: indexer, report: &report)
@@ -1174,6 +1182,64 @@ public actor Ledger {
         // A limited enumeration is not a census: a truncated list proves
         // nothing about the sessions past the cap, so nothing retires.
         if recentLimit.map({ sessions.count < $0 }) ?? true {
+            retireStaleSyntheticSessions(
+                dbPath: dbPath, indexed: indexed, live: live, indexer: indexer, report: &report)
+        }
+    }
+
+    /// Devin's sessions live inside `sessions.db`: each indexes under a
+    /// synthetic `<dbPath>#<sessionId>` path whose stat is the session's
+    /// last-activity time and node count (`SearchDevin.Session.stat`), read
+    /// whole whenever that moves. Opened read-only once per pass; a
+    /// database that will not enumerate becomes one note, and a session
+    /// that fails its own read is held out after three failures like a file.
+    private func indexDevinSessions(
+        _ url: URL, indexer: SearchIndexer, recentLimit: Int?, report: inout ScanReport
+    ) throws {
+        let dbPath = url.resolvingSymlinksInPath().path
+        let source: SQLiteDatabase
+        let sessions: [SearchDevin.Session]
+        do {
+            source = try DatabaseSources.openReadOnly(at: url.path)
+            sessions = try SearchDevin.sessions(in: source, limit: recentLimit)
+        } catch {
+            report.notes.append(
+                "Skipped \(HarnessMark("devin").name)'s database (\(url.path)): \(error.localizedDescription)")
+            return
+        }
+        var live: Set<String> = []
+        live.reserveCapacity(sessions.count)
+        for session in sessions {
+            if Task.isCancelled { throw CancellationError() }
+            let path = SearchOpenCode.syntheticPath(dbPath: dbPath, sessionID: session.id)
+            live.insert(path)
+            let stat = session.stat
+            switch indexer.readNeed(path: path, stat: stat, ledgerOffset: nil) {
+            case .current, .skip:
+                continue
+            case .append, .whole:
+                break
+            }
+            do {
+                let read = try SearchDevin.messages(in: source, session: session)
+                let fields = SearchSessionFields(
+                    agent: "devin", sessionID: session.id, filePath: path,
+                    title: SearchDevin.title(of: session, promptTitle: read.promptTitle),
+                    cwd: session.directory, cwdKey: session.directory,
+                    createdAt: SearchOpenCode.iso(ms: session.createdMs),
+                    updatedAt: SearchOpenCode.iso(ms: session.lastActivityMs),
+                    messageCount: read.messages.count)
+                if try indexer.finishSession(path: path, stat: stat,
+                                             fields: fields, messages: read.messages) {
+                    report.filesIndexed += 1
+                }
+            } catch {
+                indexer.failFile(path: path, mtimeMs: stat.mtimeMs)
+                report.notes.append("Index failed \(path): \(error.localizedDescription)")
+            }
+        }
+        if recentLimit.map({ sessions.count < $0 }) ?? true {
+            let indexed = (try? indexer.store.files(withPrefix: dbPath + "#")) ?? []
             retireStaleSyntheticSessions(
                 dbPath: dbPath, indexed: indexed, live: live, indexer: indexer, report: &report)
         }

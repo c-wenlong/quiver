@@ -672,7 +672,7 @@ function experimentalSection() {
         '<span class="badge">Experimental</span>'),
     ]);
   }
-  const detail = "Index the text of Claude Code and Codex transcripts on the hub, so search can match what was said, not only titles and paths.";
+  const detail = "Index the text of agent transcripts on the hub, so search can match what was said, not only titles and paths.";
   const problem = p.searchError || (ss.error ? `Couldn't read the index: ${ss.error}`
     : ss.last_error ? `The last pass failed: ${ss.last_error.message}` : "");
   const status = `<div class="set-search-status">${esc(searchStatusLine(ss))}</div>`;
