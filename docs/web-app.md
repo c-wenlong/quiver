@@ -51,6 +51,9 @@ Writes are `POST /v1/app/<page>/<action>` with the same bearer and the
 same Origin check the PWA's writes use. The first is the Harnesses page's
 star, archive and restore (docs/web-app/harness.md).
 
+Doctor (`#/doctor`, docs/web-app/doctor.md) is a page with no sidebar
+entry, as in the app, where it is a Settings section.
+
 ## Data on the hub machine
 
 The web app shows the machine the hub runs on. Its ledger lives in
@@ -79,8 +82,8 @@ already do, through satellites; that is a later step.
    card per starred harness from `/v1/usage`, per machine (hub and each
    satellite), with the app's limit bars, plan badge, on-demand and extra
    usage rows and status lines. Harnesses can star, unstar, archive (with
-   a reason) and restore (docs/web-app/harness.md); edit, Detect and Add
-   stay in `swe` and the Mac app. Quiver's own Claude and Codex account
+   a reason) and restore, edit a row, Detect and Add harness
+   (docs/web-app/harness.md). Quiver's own Claude and Codex account
    profiles, history, and Open app / Terminal are Mac-only.
 4. Skills, AGENTS.md, MCP servers, Plugins, Doctor: read-only first, from the
    `swe … --json` builders.
