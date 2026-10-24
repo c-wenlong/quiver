@@ -353,6 +353,8 @@ private struct UserBubble: View {
             switch send {
             case .sending?: Text("Sending").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
             case .queued(let note)?: Text(note).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+            case .delivered(let note?)?: Text(note).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+            case .delivered(nil)?: EmptyView()
             case .failed(let note)?:
                 Button(action: retry) {
                     Label("\(note). Tap to retry", systemImage: "arrow.clockwise").font(.system(size: 11))

@@ -22,6 +22,27 @@ struct ChatItem: Identifiable, Equatable {
 
 enum SendState: Equatable {
     case sending, queued(String), failed(String)
+    /// The machine took it, but the transcript may never echo it (a slash
+    /// command such as /rename isn't a user message), so don't wait for that.
+    case delivered(String?)
+
+    /// Still on its way: a late reply to the send may change it.
+    var inFlight: Bool {
+        switch self {
+        case .sending, .queued: true
+        case .failed, .delivered: false
+        }
+    }
+
+    /// What a `command.result` for this send turns it into; nil leaves it.
+    static func settled(_ r: CommandResult, current: SendState, agentActive: Bool) -> SendState? {
+        guard current.inFlight else { return nil }
+        if r.ok == false { return .failed(r.note ?? "Send failed") }
+        if r.degraded == true { return .queued(r.note ?? "Queued: mid-turn input isn't supported here") }
+        // Mid-turn input waits for the agent's next step (Claude Code reads
+        // it between tool calls), so say so rather than look ignored.
+        return .delivered(agentActive ? "Delivered. The agent reads it at its next step" : nil)
+    }
 }
 
 enum ApprovalState: Equatable {
@@ -204,7 +225,10 @@ final class ChatModel {
                 case .approval(_, _, let state):
                     if case .resolved = state { return false }
                     return true
-                case .user(_, let send): return send != nil
+                case .user(_, let send?):
+                    // Delivered ones are in history (or never will be).
+                    if case .delivered = send { return false }
+                    return true
                 default: return false
                 }
             }
@@ -390,15 +414,11 @@ final class ChatModel {
 
     private func settle(_ r: CommandResult) {
         if r.op == "message", let cid = r.clientId, let i = items.firstIndex(where: { $0.id == "send-\(cid)" }),
-           case .user(let text, let send) = items[i].kind {
-            // Already echoed back as delivered.
-            guard send != nil else { return }
-            if r.ok == false {
-                awaitingReply = false
-                items[i].kind = .user(text: text, send: .failed(r.note ?? "Send failed"))
-            } else if r.degraded == true {
-                items[i].kind = .user(text: text, send: .queued(r.note ?? "Queued: mid-turn input isn't supported here"))
-            }
+           case .user(let text, let send?) = items[i].kind {
+            // An echo already settled it if `send` is nil.
+            guard let next = SendState.settled(r, current: send, agentActive: row?.sessionStatus == .active) else { return }
+            if case .failed = next { awaitingReply = false }
+            items[i].kind = .user(text: text, send: next)
             return
         }
         if r.op == "attach" || (r.op == "control" && attachQueued) {
@@ -466,7 +486,7 @@ final class ChatModel {
     /// The bubble of a send the hub hasn't echoed yet. An echoed one keeps
     /// its id but is delivered, so a late reply to the POST leaves it alone.
     private func pendingSend(_ id: String) -> Int? {
-        items.firstIndex { if case .user(_, let s) = $0.kind, s != nil { $0.id == id } else { false } }
+        items.firstIndex { if case .user(_, let s?) = $0.kind, s.inFlight { $0.id == id } else { false } }
     }
 
     func retry(_ item: ChatItem) async {
