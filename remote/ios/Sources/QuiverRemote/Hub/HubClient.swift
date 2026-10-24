@@ -135,6 +135,8 @@ struct HubClient: Sendable {
         case "fork_unsupported": "This session can't be forked: its harness has no fork command, or the session has no id yet."
         case "not_installed": "That harness isn't installed on the machine any more."
         case "unknown_session": "The hub doesn't know this session any more. Pull to refresh."
+        case "needs_pairing": "Pair this phone with the hub to use the console."
+        case "bad_key": "The hub didn't accept this phone's SSH key. Update the hub."
         default: fallback ?? "The hub answered with an error (\(status))."
         }
     }
@@ -261,6 +263,14 @@ struct HubClient: Sendable {
         var query = ["machine": machine]
         if let path { query["path"] = path }
         return try await send(request("GET", "/v1/folders", query: query))
+    }
+
+    /// The console's setup on the hub's machine: login user, port, host keys.
+    func ssh() async throws -> SSHInfo { try await send(request("GET", "/v1/ssh")) }
+
+    /// Stores this phone's SSH public key on the hub ("" clears it).
+    func registerSSHKey(_ publicKey: String) async throws -> SSHInfo {
+        try await send(request("POST", "/v1/ssh/key", body: ["public_key": publicKey]))
     }
 
     func pair(token: String, name: String) async throws -> Credential {

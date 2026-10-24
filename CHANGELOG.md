@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote iPhone app: Console.** Console, in the hub menu on
+  Sessions, opens a shell on the hub's machine over SSH, for debugging
+  when chat can't help. It dials the machine's sshd over the tailnet,
+  not the hub, so it still works when the hub is down. The phone's key
+  is a Secure Enclave P-256 key sent to the hub on first use;
+  `swe remote ssh --on` there lets it log in, and until then the console
+  shows that command. The phone trusts only the host keys the hub
+  listed and saves them, so with the hub down it dials with the saved
+  ones and says so. Built on SwiftNIO SSH and SwiftTerm, with its keyboard
+  bar for Esc, Ctrl, Tab and arrows.
+
 - **Mac app: View › Zoom In / Zoom Out / Actual Size (⌘+ / ⌘− / ⌘0).**
   Text on every page grows or shrinks in steps from 75% to 150%, like a
   browser's zoom, so a smaller window still shows a whole page. ⌘= works
