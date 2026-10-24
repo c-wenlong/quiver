@@ -31,8 +31,10 @@ panel under the block that says what will happen on which machine
 says "Running…" and every other Run is off, since the app runs one repair
 at a time. The report then repaints from the hub's answer. A failure shows
 under its row; when the fix made the finding go away but still reported a
-failure (a `swe init` that left a real file alone), it shows in an error
-card above the list instead.
+failure, it shows in an error card above the list instead. A setup or init
+that left a real file or folder alone lists those paths in a card above
+the list with "Replace and back up…", which asks first and then runs
+`swe init --force`.
 
 ## Payload
 
@@ -59,17 +61,26 @@ names in `action`, in process:
 | `discover` | `discover_harnesses()` then `apply_findings(min_confidence="high")` | `swe harness discover --apply --json` |
 
 Nothing in the body says what to run. The reply is `{"ran", "error",
-"report"}`: the action, what went wrong (`null` when nothing did) and the
-report read again, since even a failed run may have fixed something. A
-setup whose linking pass stopped reports `links.error`; an init that left
-paths blocked reports them with `swe init`'s own advice.
+"blocked", "report"}`: the action, what went wrong (`null` when nothing
+did), the `~/`-relative paths a real file or folder still holds after a
+setup or init (`[]` after discover) and the report read again, since even
+a failed run may have fixed something. A setup whose linking pass stopped
+reports `links.error`. A real file left in the way is not an error; it is
+in `blocked`.
+
+`POST /v1/app/doctor/replace` takes no body and runs
+`run_init(home, force=True, quiet=True, ask=False)`, `swe init --force`:
+each blocked path is copied to `~/.quiver/backups`, then replaced with a
+link. Its reply has the same shape, with `ran: "replace"`; `error` names
+any path it still left alone (one resolving outside the home or into
+`~/.quiver`, which `--force` never touches).
 
 | Status | Code | When |
 |---|---|---|
 | 400 | `bad_finding` | `check` or `message` missing, not text, or over 4000 characters |
 | 404 | `unknown_finding` | that finding is not in the report now |
-| 404 | `unknown_action` | any action but `run` |
-| 409 | `busy` | another fix is running (one at a time, not queued) |
+| 404 | `unknown_action` | any action but `run` and `replace` |
+| 409 | `busy` | another fix is running (one at a time, not queued; the AGENTS.md page's Link and Replace count) |
 | 422 | `no_action` | the finding has no fix swe can run itself |
 | 403 | `bad_origin` | the hub's Origin check |
 | 503 | `page_unavailable` | the report can't be built (a corrupt harness.json) |
@@ -85,6 +96,8 @@ since all three can rewrite harness.json.
   browser can't open a terminal on the hub. The copy button stays.
 - `init` never opens the new-skills-folder picker, even if the hub was
   started from a terminal: new folders wait, as in the app's run.
+- Replace and back up (`swe init --force`) after a run that hit a real
+  file. The app has it on the AGENTS.md page only.
 - A setup step that failed outright (`applied.errors`) is shown as well as
   a stopped linking pass; the app shows only the latter.
 - An error whose finding went away is shown above the list; the app keys

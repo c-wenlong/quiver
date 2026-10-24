@@ -2,8 +2,12 @@
 ``swe init --check --json`` says it is linked, and one project folder's
 AGENTS.md and CLAUDE.md.
 
-Read only. Saving, and linking with ``swe init``, stay in ``swe`` and the
-Mac app; see docs/web-app/agents.md.
+Saving stays in ``swe`` and the Mac app; see docs/web-app/agents.md.
+``POST /v1/app/agents/link`` is Link with swe init and
+``POST /v1/app/agents/replace`` is Replace and back up (``swe init
+--force``), both run in process as the Doctor page's fixes are and one at
+a time with them. Each answers the Global tab read again, plus ``ran``
+and ``error``.
 
 ``GET /v1/app/agents`` is the Global tab. ``?folder=<path>`` is the
 Project tab for that folder, which must be a folder under the hub's home;
@@ -32,13 +36,29 @@ def get(ctx, args: dict) -> dict:
     return global_view(ctx, home)
 
 
-def global_view(ctx, home: Path) -> dict:
-    from quiver.init.commands import check_document
+def post(ctx, action: str, body: dict) -> dict:
+    from quiver.webapp.pages.doctor import run_init_now
 
-    report = check_document(home)
+    force = {"link": False, "replace": True}.get(action)
+    if force is None:
+        raise PageError(404, "unknown_action", f"unknown AGENTS.md action: {action}")
+    home = Path(ctx.home) if ctx.home is not None else Path.home()
+    error = run_init_now(home, force=force)
+    return {"ran": action, "error": error, **global_view(ctx, home)}
+
+
+def global_view(ctx, home: Path) -> dict:
+    from quiver.init.commands import check_document, run_init
+    from quiver.webapp.pages.doctor import blocked_paths
+
+    run = run_init(home, check_only=True, quiet=True)
+    report = check_document(home, run)
     agents = Path(report["agents_file"])
     return {
         **report,
+        # Every path Replace and back up would replace: instructions,
+        # skills and hooks alike, not only the rows the strip shows.
+        "blocked": blocked_paths(run, home),
         "machine": ctx.machine.get("name"),
         "home": str(home),
         "text": read_text(agents) if report["agents_file_exists"] else None,

@@ -60,3 +60,7 @@
   .doctor-command { flex: 1 1 160px; }
 }
 .doctor-lost .error { margin: 0; }
+.doctor-blocked { display: flex; flex-direction: column; gap: 10px; }
+.doctor-blocked p { margin: 0; }
+.doctor-blocked-text { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.doctor-button.primary.danger { background: var(--danger); border-color: var(--danger); color: #fff; }

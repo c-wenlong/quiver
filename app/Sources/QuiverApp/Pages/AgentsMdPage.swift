@@ -81,6 +81,7 @@ private struct Strip<Content: View>: View {
 private struct LinksStrip: View {
     @Environment(AppModel.self) private var app
     var report: InitCheck
+    @State private var confirmingReplace = false
 
     var body: some View {
         let model = app.agentsMd
@@ -110,9 +111,17 @@ private struct LinksStrip: View {
                 }
             }
             if report.instructionRows.contains(where: { $0.instructions?.state.isBlocked == true }) {
-                Text("A real file is in the way for some harnesses. swe init leaves those alone; swe init --force in Terminal replaces them.")
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 12) {
+                    Text("A real file is in the way for some harnesses. swe init leaves those alone.")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("Replace and back up…") { confirmingReplace = true }
+                        .secondaryButton()
+                        .disabled(model.linking || model.projectHasUnsavedChanges)
+                        .help(model.projectHasUnsavedChanges ? AgentsModel.saveFirst
+                              : "Runs swe init --force, which copies each real file in the way to ~/.quiver/backups before linking over it.")
+                }
             }
             if let error = model.linkError {
                 // swe init can fail with pages of output; bounded, so the
@@ -125,6 +134,13 @@ private struct LinksStrip: View {
                 .frame(maxHeight: 64)
                 .fixedSize(horizontal: false, vertical: true)
             }
+        }
+        .confirmationDialog("Replace the real files with links?", isPresented: $confirmingReplace) {
+            Button("Replace and back up", role: .destructive) {
+                Task { await model.link(swe: app.swe, force: true) }
+            }
+        } message: {
+            Text("This runs swe init --force. Each real file or folder in the way is copied to ~/.quiver/backups, then replaced with a link to the shared copy.")
         }
     }
 }

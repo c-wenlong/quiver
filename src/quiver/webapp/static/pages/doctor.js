@@ -4,7 +4,9 @@
  * with its fix command, and Run where swe can make the fix itself
  * (the finding's action): POST /v1/app/doctor/run names the finding, the
  * hub runs the fix it lists for it. Run asks first, inline, since setup
- * and init link files into the harnesses' own folders.
+ * and init link files into the harnesses' own folders. When one leaves a
+ * real file in the way (the reply's blocked), a card offers Replace and
+ * back up: POST /v1/app/doctor/replace, swe init --force, after a confirm.
  */
 "use strict";
 
@@ -13,6 +15,9 @@ const doctorPage = {
   // The finding whose Run is in flight, the one asking to confirm, and the
   // last failure per finding (DoctorModel.running / runErrors).
   running: null, confirming: null, runErrors: {}, lostError: null,
+  // Paths the last setup or init left alone, and Replace and back up's
+  // own confirm and failure.
+  blocked: [], confirmingReplace: false, replaceError: null,
 };
 const DOCTOR_FOLD = 8;
 
@@ -67,11 +72,11 @@ function paintDoctor() {
   } else if (p.state !== "loaded" || !p.data) {
     body = `<div class="card doctor-state"><p class="empty">Running checks…</p></div>`;
   } else if (!p.data.findings.length) {
-    body = `${doctorLostError()}<div class="card doctor-state doctor-clear">
+    body = `${doctorLostError()}${doctorBlocked()}<div class="card doctor-state doctor-clear">
       <span class="doctor-seal">${doctorIcon("seal")}</span><p class="empty">Everything checks out.</p>
       <button class="doctor-button" data-doctor="reload">Check again</button></div>`;
   } else {
-    body = `${doctorLostError()}${doctorFindings(p.data.findings)}`;
+    body = `${doctorLostError()}${doctorBlocked()}${doctorFindings(p.data.findings)}`;
   }
   document.getElementById("panel").innerHTML = `<div class="page">${doctorHeader()}<div class="stack">${body}</div></div>`;
   bindDoctor();
@@ -82,6 +87,29 @@ function paintDoctor() {
 function doctorLostError() {
   const e = doctorPage.lostError;
   return e ? `<div class="card doctor-lost"><p class="error" role="alert">${esc(e)}</p></div>` : "";
+}
+
+/* What a setup or init left alone, with swe init --force behind a confirm:
+ * it copies each path to ~/.quiver/backups before replacing it. */
+function doctorBlocked() {
+  const p = doctorPage, blocked = p.blocked;
+  const replacing = p.running === "replace";
+  if (!blocked.length && !replacing && !p.replaceError) return "";
+  const machine = (p.data && p.data.machine) || "the hub";
+  const list = blocked.map((path) => `<code>${esc(path)}</code>`).join(", ");
+  const button = replacing
+    ? `<span class="doctor-running" role="status"><span class="doctor-spinner" aria-hidden="true"></span>Replacing…</span>`
+    : blocked.length ? `<button class="doctor-button" data-doctor="replace-ask" aria-expanded="${p.confirmingReplace}"${p.running ? " disabled" : ""}>Replace and back up…</button>` : "";
+  const confirm = p.confirmingReplace && !replacing ? `<div class="doctor-confirm" role="group" aria-label="Run swe init --force?">
+      <p class="caption">This runs swe init --force on ${esc(machine)}: each of these is copied to ~/.quiver/backups, then replaced with a link to the shared copy.</p>
+      <div class="doctor-confirm-buttons">
+        <button class="doctor-button" data-doctor="replace-cancel">Cancel</button>
+        <button class="doctor-button primary danger" data-doctor="replace-go">Replace and back up</button>
+      </div></div>` : "";
+  return `<div class="card doctor-blocked">
+    ${blocked.length ? `<p class="doctor-blocked-text">A real file or folder is in the way, so swe init left ${blocked.length === 1 ? "it" : "them"} alone: ${list}.</p>` : ""}
+    ${button ? `<div>${button}</div>` : ""}${confirm}
+    ${p.replaceError ? `<p class="error" role="alert">${esc(p.replaceError)}</p>` : ""}</div>`;
 }
 
 function doctorFindings(findings) {
@@ -141,7 +169,13 @@ function bindDoctor() {
     const finding = row && p.data ? doctorVisible()[Number(row.dataset.index)] : null;
     btn.onclick = () => {
       const act = btn.dataset.doctor;
-      if (act === "reload") { p.lostError = null; renderDoctor(); }
+      if (act === "reload") { p.lostError = null; p.blocked = []; p.replaceError = null; renderDoctor(); }
+      else if (act === "replace-ask" || act === "replace-cancel") {
+        p.confirmingReplace = act === "replace-ask" ? !p.confirmingReplace : false;
+        paintDoctor();
+        const next = document.querySelector(`[data-doctor="${p.confirmingReplace ? "replace-go" : "replace-ask"}"]`);
+        if (next) next.focus();
+      } else if (act === "replace-go") doctorReplace();
       else if (act === "fold") { p.showsAll = !p.showsAll; paintDoctor(); }
       else if (act === "copy" && finding) doctorCopy(finding.fix, btn);
       else if (act === "run" && finding) {
@@ -156,7 +190,7 @@ function bindDoctor() {
       } else if (act === "go" && finding) doctorRun(finding);
     };
   }
-  const confirm = document.querySelector(".doctor-confirm");
+  const confirm = document.querySelector(".doctor-row .doctor-confirm");
   if (confirm) {
     confirm.onkeydown = (event) => {
       if (event.key !== "Escape") return;
@@ -165,6 +199,16 @@ function bindDoctor() {
       p.confirming = null;
       paintDoctor();
       doctorFocus(finding, "run");
+    };
+  }
+  const replace = document.querySelector(".doctor-blocked .doctor-confirm");
+  if (replace) {
+    replace.onkeydown = (event) => {
+      if (event.key !== "Escape") return;
+      p.confirmingReplace = false;
+      paintDoctor();
+      const ask = document.querySelector('[data-doctor="replace-ask"]');
+      if (ask) ask.focus();
     };
   }
 }
@@ -203,6 +247,9 @@ async function doctorRun(finding) {
     p.data = data.report;
     p.state = "loaded";
     error = data.error;
+    p.blocked = data.blocked || [];
+    p.confirmingReplace = false;
+    p.replaceError = null;
   } else {
     error = (data && data.error && data.error.message)
       || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
@@ -215,6 +262,37 @@ async function doctorRun(finding) {
   if (!onDoctorPage()) return;
   paintDoctor();
   doctorFocus(finding, "run");
+}
+
+/* Replace and back up: swe init --force on the hub. The answer carries the
+ * report and whatever is still in the way. */
+async function doctorReplace() {
+  const p = doctorPage;
+  if (p.running) return;
+  p.running = "replace";
+  p.confirmingReplace = false;
+  p.replaceError = null;
+  if (onDoctorPage()) paintDoctor();
+  const { status, data } = await apiPost("/v1/app/doctor/replace", {});
+  p.running = null;
+  if (status === 401) {
+    if (onDoctorPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    return;
+  }
+  if (status === 200 && data && data.report) {
+    p.gen++;
+    p.data = data.report;
+    p.state = "loaded";
+    p.blocked = data.blocked || [];
+    p.replaceError = data.error || null;
+  } else {
+    p.replaceError = (data && data.error && data.error.message)
+      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+  }
+  if (!onDoctorPage()) return;
+  paintDoctor();
+  const ask = document.querySelector('[data-doctor="replace-ask"]');
+  if (ask) ask.focus();
 }
 
 function onDoctorPage() {
