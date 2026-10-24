@@ -58,7 +58,9 @@ Conventions that keep the suite working:
 
 ### Python coverage
 
-Same command as CI (see `.github/workflows/ci.yml`):
+The same measurement CI makes (see `.github/workflows/ci.yml`). CI splits
+the run across two jobs with `scripts/run_test_shard.py` and combines their
+data in its Coverage job; locally one run does it all:
 
 ```bash
 test_home="$(mktemp -d)"
