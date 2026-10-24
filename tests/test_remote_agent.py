@@ -1099,6 +1099,8 @@ class TestAgentEdges(unittest.TestCase):
         launched = [e for e in ag.outbox if e["type"] == "session.launched"]
         self.assertEqual(launched[0]["session"], "claude:new")
         self.assertEqual(launched[0]["data"]["launch_id"], "l7")
+        # A launched or forked session starts mid-turn: tail it hot.
+        self.assertTrue(ag.tail_manager.is_hot("claude:new"))
 
     def test_visibility_change_re_registers(self):
         ag = self._agent()

@@ -48,6 +48,7 @@ from quiver.remote import (
     tsid,
     usage as usage_mod,
 )
+from quiver.remote import fork as fork_mod
 from quiver.remote.journal import Journal
 from quiver.webapp import (
     api as webapp_api,
@@ -326,7 +327,8 @@ class HubState:
                     lid, state="started",
                     key=str(event.get("session") or key),
                 )
-            elif lid and data.get("op") == "launch" and not data.get("ok"):
+            elif lid and data.get("op") in {"launch", "fork"} \
+                    and not data.get("ok"):
                 self.settle_launch(
                     lid, state="failed", note=str(data.get("note") or "")
                 )
@@ -524,6 +526,9 @@ class HubState:
             # rows carry ownership: attached.
             self.catalog.refresh()
         for key in adopted:
+            # A launch or fork starts with its first turn: its tailer
+            # (created on the next sync) starts hot and status-probed.
+            self.tail_manager.wake(key)
             lid = (supervise.meta_for(self.home, key) or {}).get("launch_id")
             if lid:
                 # Global stream only: anything in the session's own
@@ -1352,6 +1357,10 @@ class _Handler(BaseHTTPRequestHandler):
             row = self._state.catalog.row_for(key)
             if row is None:
                 self._send_error(404, "unknown_session", "no such session")
+                return
+            if action == "fork":  # hub or satellite: fork.py routes it
+                self._send_json(*fork_mod.request(
+                    self._state, key, row, self._read_body()))
                 return
             if action in sessionmeta.ACTIONS:
                 self._session_meta(key, action)

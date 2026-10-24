@@ -821,6 +821,8 @@ class TestHubWriteRoutes(unittest.TestCase):
             self.srv.state._adopt_launches()
         self.assertEqual(self.srv.state.journal.last_seq("claude:new"), 0)
         self.assertEqual(self.srv.state.launches[lid]["key"], "claude:new")
+        # A launched or forked session starts mid-turn: tail it hot.
+        self.assertTrue(self.srv.state.tail_manager.is_hot("claude:new"))
 
     def test_folders_lists_subfolders_only(self):
         root = Path(tempfile.mkdtemp())
