@@ -657,6 +657,55 @@ class TestPin(_Base):
         self.assertEqual(caught.exception.message, "x/y is not pinned on the hub.")
 
 
+class TestManagePins(_Base):
+    """The gear popover's Unpin and the rail's drag: ``post("remove")``
+    and ``post("reorder")`` on the hub's own pin file, with no ``gh``."""
+
+    def setUp(self):
+        super().setUp()
+        _pin(self.home, "o/a", "o/b", "x/c")
+        self.gh = FakeGh(self)
+
+    def pins(self):
+        return [r["name"] for r in G.pinned(self.home)]
+
+    def refused(self, action, body, status, code):
+        with self.assertRaises(PageError) as caught:
+            R.post(self.ctx, action, body)
+        self.assertEqual((caught.exception.status, caught.exception.code), (status, code), body)
+
+    def test_unpin_answers_the_pins_and_drops_the_repos_views(self):
+        G.CACHE.get(("board", G.home_key(self.home), "o/b"), lambda: "board")
+        G.CACHE.get(("board", G.home_key(self.home), "o/a"), lambda: "kept")
+        body = R.post(self.ctx, "remove", {"repo": "O/B"})
+        self.assertEqual(body["repo"], "o/b")
+        self.assertEqual([r["name"] for r in body["repos"]], ["o/a", "x/c"])
+        self.assertEqual(self.pins(), ["o/a", "x/c"])
+        self.assertEqual(G.CACHE.get(("board", G.home_key(self.home), "o/b"), lambda: "fresh")[0], "fresh")
+        self.assertEqual(G.CACHE.get(("board", G.home_key(self.home), "o/a"), lambda: "fresh")[0], "kept")
+        self.assertEqual(self.gh.calls(), [])
+
+    def test_unpin_refusals(self):
+        self.refused("remove", {"repo": "o/zzz"}, 404, "not_pinned")
+        self.refused("remove", {"repo": "nope"}, 422, "bad_repo")
+        self.refused("remove", {}, 422, "bad_repo")
+        self.assertEqual(self.pins(), ["o/a", "o/b", "x/c"])
+
+    def test_reorder_takes_the_named_order_and_keeps_the_rest(self):
+        body = R.post(self.ctx, "reorder", {"order": ["x/c", "o/a", "o/b"]})
+        self.assertEqual([r["name"] for r in body["repos"]], ["x/c", "o/a", "o/b"])
+        # A partial list moves those to the front; a pin it doesn't name
+        # (one added from another tab meanwhile) keeps its place after them.
+        body = R.post(self.ctx, "reorder", {"order": ["o/b", "gone/repo"]})
+        self.assertEqual(self.pins(), ["o/b", "x/c", "o/a"])
+        self.assertEqual(self.gh.calls(), [])
+
+    def test_reorder_refusals(self):
+        for order in (None, "o/a", [1], [""], ["o/a"] * (R.REORDER_MAX + 1)):
+            self.refused("reorder", {"order": order}, 422, "bad_order")
+        self.assertEqual(self.pins(), ["o/a", "o/b", "x/c"])
+
+
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestMarkdown(unittest.TestCase):
     """GhUI.markdown, run under node with the two globals it borrows."""
@@ -809,6 +858,20 @@ class TestRoute(HubBase):
         self.assertEqual(fake.calls(), [])
         status, data = self.srv.request("POST", "/v1/app/repositories/add", body={"repo": "o/b"},
                                         headers={**auth, "Origin": self.origin()})
+        self.assertEqual(status, 200, data)
+        self.assertEqual([r["name"] for r in G.pinned(self.srv.home)], ["o/b"])
+
+    def test_unpin_and_reorder_through_the_hub(self):
+        _pin(self.srv.home, "o/a", "o/b")
+        auth = {**self.auth(), "Origin": self.origin()}
+        status, _ = self.srv.request("POST", "/v1/app/repositories/reorder", body={"order": ["o/b"]},
+                                     headers={**auth, "Origin": "https://evil.example"})
+        self.assertEqual(status, 403)
+        status, data = self.srv.request("POST", "/v1/app/repositories/reorder", body={"order": ["o/b"]},
+                                        headers=auth)
+        self.assertEqual(status, 200, data)
+        status, data = self.srv.request("POST", "/v1/app/repositories/remove", body={"repo": "o/a"},
+                                        headers=auth)
         self.assertEqual(status, 200, data)
         self.assertEqual([r["name"] for r in G.pinned(self.srv.home)], ["o/b"])
 
