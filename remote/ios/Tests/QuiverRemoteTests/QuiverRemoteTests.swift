@@ -416,6 +416,25 @@ final class ChatModelTests: XCTestCase {
         XCTAssertFalse(chat.working)
     }
 
+    private func result(_ json: String) -> CommandResult {
+        try! Hub.decoder.decode(CommandResult.self, from: Data(json.utf8))
+    }
+
+    func testADeliveredSendStopsSayingSending() {
+        let ok = result(#"{"op":"message","ok":true,"note":"sent to tmux pane","client_id":"c1"}"#)
+        // A slash command like /rename never comes back as a user message,
+        // so the result alone has to settle the bubble.
+        XCTAssertEqual(SendState.settled(ok, current: .sending, agentActive: false), .delivered(nil))
+        XCTAssertEqual(SendState.settled(ok, current: .sending, agentActive: true),
+                       .delivered("Delivered. The agent reads it at its next step"))
+        let failed = result(#"{"op":"message","ok":false,"note":"pane unreachable","client_id":"c1"}"#)
+        XCTAssertEqual(SendState.settled(failed, current: .queued("Queued until the agent is idle"), agentActive: false),
+                       .failed("pane unreachable"))
+        // Once settled, a late result doesn't reopen it.
+        XCTAssertNil(SendState.settled(failed, current: .delivered(nil), agentActive: false))
+        XCTAssertNil(SendState.settled(ok, current: .failed("x"), agentActive: false))
+    }
+
     func testReopeningAChatReusesItsModel() {
         let app = AppModel()
         let first = app.chat("claude:1")
