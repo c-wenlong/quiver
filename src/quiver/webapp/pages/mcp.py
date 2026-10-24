@@ -22,9 +22,13 @@ what each harness config gains, changes or loses (names only), and a
 fingerprint of what it read; Sync recomputes that fingerprint, refuses
 with 409 when anything it depends on changed since the preview, and then
 writes the checked snapshot with ``_sync``'s own per-target steps, so it
-writes exactly the plan that was shown. Adding and removing servers and
-setting secret values stay in ``swe mcp`` and the Mac app (see
-docs/web-app/mcp.md).
+writes exactly the plan that was shown.
+
+``POST /v1/app/mcp/remove`` is the sheet's Remove: ``swe mcp remove
+<name> --from=<places>`` (``remove_places`` + ``remove_server``) for the
+places the confirm named, each of which must still hold the server.
+Adding servers and setting secret values stay in ``swe mcp`` and the Mac
+app (see docs/web-app/mcp.md).
 """
 
 from __future__ import annotations
@@ -134,7 +138,7 @@ def probe_all(pairs: list[tuple[dict, object]],
 # McpModel.sync/targets/sources): one server, copied from one source to the
 # harnesses picked, through the same ``_sync`` that ``swe mcp sync`` runs.
 
-ACTIONS = ("preview", "sync")
+ACTIONS = ("preview", "sync", "remove")
 HUB = "quiver"
 NAME_MAX = 200
 
@@ -153,6 +157,8 @@ _FINGERPRINT_KEY = secrets.token_bytes(32)
 def post(ctx, action: str, body: dict) -> dict:
     if action not in ACTIONS:
         raise PageError(404, "unknown_action", f"unknown MCP action: {action}")
+    if action == "remove":
+        return _remove(ctx, body)
     request = _sync_request(body, action == "sync")
     with _WRITE_LOCK:
         plan = _plan(request)
@@ -172,6 +178,42 @@ def post(ctx, action: str, body: dict) -> dict:
     # The page repaints from this: the list as it is now, after the write.
     reply["page"] = get(ctx, {})
     return reply
+
+
+def _remove(ctx, body: dict) -> dict:
+    """Remove: ``{"server", "from": [places]}``, the places the confirm
+    listed ("quiver" for the hub). Every one must hold the server now; a
+    place it has since spread to is left alone, since the confirm didn't
+    name it. The reply is ``{"removed", "absent", "page"}``."""
+    from quiver.harness.registry import load_registry_readonly
+    from quiver.mcp.cli import RemoveRefused, remove_places, remove_server
+
+    if not isinstance(body, dict):
+        raise PageError(422, "bad_body", "expected a JSON object")
+    name, places = body.get("server"), body.get("from")
+    if not isinstance(name, str) or not name or len(name) > NAME_MAX:
+        raise PageError(422, "bad_server", "server must be a server name")
+    if (not isinstance(places, list) or not places or len(places) > 100
+            or not all(isinstance(p, str) and 0 < len(p) <= NAME_MAX for p in places)):
+        raise PageError(422, "bad_from", "from must list the places to remove the server from")
+    with _WRITE_LOCK:
+        _, pairs = inventory()
+        row = next((r for r, _ in pairs if r["name"] == name), None)
+        if row is None:
+            raise PageError(404, "unknown_server", f"No server named {name}. Refresh and try again.")
+        holds = set(row.get("harnesses") or []) | ({HUB} if row.get("in_hub") else set())
+        gone = [p for p in places if p not in holds]
+        if gone:
+            raise PageError(409, "state_changed",
+                            f"{name} is no longer in {', '.join(gone)}. Refresh and try again.")
+        try:
+            targets = remove_places(load_registry_readonly(), name, list(dict.fromkeys(places)))
+            removed, absent = remove_server(name, targets)
+        except RemoveRefused as exc:
+            raise PageError(422, "remove_refused", str(exc)) from exc
+        except (OSError, ValueError) as exc:
+            raise PageError(409, "remove_failed", str(exc) or exc.__class__.__name__) from exc
+    return {"server": name, "removed": removed, "absent": absent, "page": get(ctx, {})}
 
 
 def _sync_request(body: dict, needs_fingerprint: bool) -> dict:

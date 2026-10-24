@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Remove an MCP server.** The MCP server sheet has the Mac
+  app's Remove…, which asks first, names `swe mcp remove <name>
+  --from=…` and the places it goes from, and runs it on the hub.
+  `swe mcp remove`'s body is now `remove_places` and `remove_server`,
+  which the CLI and the web app share.
+
 - **Web app: Install buttons for missing agents.** Setup's Install sheet
   for an agent that isn't on the hub has an Install button beside each
   package manager's command, which runs `swe install <name> --via=<method>`

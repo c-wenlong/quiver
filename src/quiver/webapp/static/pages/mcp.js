@@ -20,6 +20,8 @@ const mcpPage = {
   filter: "all", opened: new Set(), hidden: mcpLoadHidden(),
   // The open sheet's sync state (mcpSheetState), kept across a repaint.
   sheet: null,
+  // What the last Remove did, until the list is read again.
+  notice: null,
 };
 
 function mcpLoadHidden() {
@@ -62,6 +64,7 @@ async function renderMcp() {
 async function mcpLoad(health) {
   const seq = ++mcpPage.seq;
   mcpPage.loading = true;
+  mcpPage.notice = null;
   mcpPage.checking = health;
   if (mcpOnPage() && (mcpPage.data || mcpPage.failure)) paintMcp();
   const { status, data } = await api(`/v1/app/mcp${health ? "?health=1" : ""}`);
@@ -191,6 +194,7 @@ function paintMcp() {
     const msg = (data && data.error && data.error.message) || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then refresh.");
     parts.push(`<div class="card"><p class="error">${esc(msg)}</p></div>`);
   }
+  if (p.notice) parts.push(`<div class="card mcp-notice"><p role="status">${mcpSvg("check")}<span>${esc(p.notice)}</span></p></div>`);
   if (d.error) {
     parts.push(`<div class="card"><p class="error">${esc(d.error)}</p></div>`);
     parts.push(mcpFolderOnly(folders, false));
@@ -400,7 +404,7 @@ function mcpSheetState(s) {
   let st = mcpPage.sheet;
   if (!st || st.name !== s.name) {
     st = mcpPage.sheet = { name: s.name, source: null, chosen: new Set(), replace: new Set(),
-      preview: null, done: null, error: null, running: false, confirming: false };
+      preview: null, done: null, error: null, running: false, confirming: false, removing: false };
   }
   const sources = mcpSources(s);
   if (!sources.includes(st.source)) {
@@ -510,6 +514,50 @@ async function mcpSync(s) {
   st.done = data;
   st.preview = null;
   st.error = data.error || null;
+  mcpAdopt(data.page);
+  if (mcpOnPage()) paintMcp();
+}
+
+/* Where Remove takes the server out of: every harness that has it, and the
+ * hub (McpServersPage.removeServer). The hub refuses if any has changed. */
+const mcpRemovePlaces = (s) => [...s.harnesses, ...(s.in_hub ? ["quiver"] : [])];
+
+function mcpRemoveConfirm(s) {
+  const places = mcpRemovePlaces(s);
+  const where = (mcpPage.data && mcpPage.data.machine) || "the hub";
+  const names = places.map((p) => (p === "quiver" ? "Quiver hub" : mcpMark(p).name)).join(", ");
+  return `<div class="mcp-confirm mcp-remove-confirm" role="group" aria-label="Remove ${esc(s.name)}?">
+    <p>Remove ${esc(s.name)}? It goes from ${esc(names)} on ${esc(where)}.</p>
+    <pre class="command">swe mcp remove ${esc(s.name)} --from=${esc(places.join(","))}</pre>
+    <div class="sheet-actions"><button type="button" class="mcp-sheet-button" id="mcp-remove-cancel">Cancel</button>
+      <button type="button" class="mcp-sheet-button primary danger" id="mcp-remove-go">Remove</button></div></div>`;
+}
+
+/* swe mcp remove on the hub; the sheet closes on success, as the app's
+ * does, and the page repaints from the answer. */
+async function mcpRemove(s) {
+  const st = mcpPage.sheet;
+  st.running = true;
+  st.error = null;
+  mcpOpenSheet(s);
+  const { status, data } = await mcpPost("remove", { server: s.name, from: mcpRemovePlaces(s) });
+  st.running = false;
+  st.removing = false;
+  if (status === 401) {
+    if (mcpOnPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    return;
+  }
+  if (status !== 200 || !data) {
+    st.error = mcpFailure(status, data);
+    if (mcpPage.sheet === st) mcpRepaintSheet(s);
+    // Most refusals mean the configs moved on: read them again.
+    if (status) mcpLoad(mcpHasHealth());
+    return;
+  }
+  const sheet = document.getElementById("mcp-sheet");
+  if (sheet && sheet.open && sheet.dataset.server === s.name) sheet.close();
+  if (mcpPage.sheet === st) mcpPage.sheet = null;
+  mcpPage.notice = `Removed ${s.name} from ${data.removed.map((p) => (p === "quiver" ? "Quiver hub" : mcpMark(p).name)).join(", ")}.`;
   mcpAdopt(data.page);
   if (mcpOnPage()) paintMcp();
 }
@@ -648,7 +696,9 @@ function mcpOpenSheet(s) {
   const error = st.error ? `<p class="error">${esc(st.error)}</p>` : "";
   const confirm = st.confirming && st.preview ? mcpConfirmHtml(s, st) : "";
   const disabled = !chosenAny || st.running || blocked;
-  const actions = `<div class="sheet-actions mcp-sync-actions">
+  const removeConfirm = st.removing && !st.running ? mcpRemoveConfirm(s) : "";
+  const actions = `${removeConfirm}<div class="sheet-actions mcp-sync-actions">
+      ${st.done ? "" : `<button type="button" class="mcp-sheet-button mcp-remove" id="mcp-remove" aria-expanded="${st.removing}"${st.running ? " disabled" : ""}>Remove…</button>`}
       ${st.running ? `<span class="caption">Working…</span>` : ""}
       ${blocked ? `<span class="caption warn">Set the values above first.</span>` : ""}
       <span class="mcp-spacer"></span>
@@ -671,7 +721,7 @@ function mcpOpenSheet(s) {
     <div class="card-title">Sync</div>
     ${form}${result}${error}${confirm}
     ${actions}
-    <p class="caption mcp-muted">Add server, Remove and secret values stay in swe and the Mac app.</p>
+    <p class="caption mcp-muted">Add server and secret values stay in swe and the Mac app.</p>
   </form>`;
   sheet.dataset.server = s.name;
   mcpBindSheet(sheet, s, st);
@@ -708,6 +758,18 @@ function mcpBindSheet(sheet, s, st) {
       else mcpPreview(s, true);
     };
   }
+  const remove = sheet.querySelector("#mcp-remove");
+  if (remove) remove.onclick = () => {
+    st.removing = !st.removing;
+    st.confirming = false;
+    mcpOpenSheet(s);
+    const next = sheet.querySelector(st.removing ? "#mcp-remove-go" : "#mcp-remove");
+    if (next) next.focus();
+  };
+  const removeCancel = sheet.querySelector("#mcp-remove-cancel");
+  if (removeCancel) removeCancel.onclick = () => { st.removing = false; mcpOpenSheet(s); sheet.querySelector("#mcp-remove").focus(); };
+  const removeGo = sheet.querySelector("#mcp-remove-go");
+  if (removeGo) removeGo.onclick = () => mcpRemove(s);
   const cancel = sheet.querySelector("#mcp-confirm-cancel");
   if (cancel) cancel.onclick = () => { st.confirming = false; mcpOpenSheet(s); };
   const go = sheet.querySelector("#mcp-confirm-go");
