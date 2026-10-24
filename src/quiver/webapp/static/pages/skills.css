@@ -8,6 +8,11 @@
   color: var(--text-primary); font-size: 13px; cursor: pointer; text-decoration: none; display: inline-flex;
   align-items: center; white-space: nowrap; flex: none; }
 .sk-button:hover { background: var(--tab-hover); }
+.sk-button.primary { background: var(--text-primary); color: var(--card); border-color: var(--text-primary); }
+.sk-button.primary:hover:not(:disabled) { background: var(--text-primary); opacity: .9; }
+.sk-button:disabled { cursor: default; opacity: .45; }
+.sk-button:disabled:hover { background: var(--card); }
+.sk-button.primary:disabled:hover { background: var(--text-primary); }
 
 /* Header: "Harness links  13 of 14 linked" and its popover */
 .sk-links-wrap { position: relative; }
@@ -26,6 +31,14 @@
 .sk-back-small:hover { color: var(--text-primary); }
 .sk-root-head { display: flex; align-items: center; gap: 8px; }
 .sk-root-head .name { font-weight: 500; }
+.sk-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.sk-confirm { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--subtle); }
+.sk-confirm .sk-actions { justify-content: flex-end; }
+.sk-summary, .sk-popover-error { overflow-wrap: anywhere; }
+.sk-action-error p { margin: 0; overflow-wrap: anywhere; }
+.sk-spin { width: 9px; height: 9px; border-radius: 50%; flex: none; display: inline-block;
+  border: 1.5px solid var(--text-muted); border-top-color: transparent; animation: spin 1s linear infinite; }
 .sk-none { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--text-secondary); }
 
 /* Link chips and dots */
