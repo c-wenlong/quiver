@@ -121,7 +121,9 @@ const GhUI = (() => {
    * app's do. The hub caches gh replies for that long, so a poll costs
    * at most one round. A tab in the background skips its ticks; coming
    * back after a minute or more reads at once instead of waiting up to
-   * a minute for the next tick, as the app reloads a page it shows. */
+   * a minute for the next tick, as the app reloads a page it shows.
+   * ``fn`` returns false when it skipped the read (a sheet open, a read
+   * already running), so only a real read counts as the last one. */
   const POLL_MS = 60000;
   const polls = {};
   const route = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
@@ -135,8 +137,7 @@ const GhUI = (() => {
     if (!entry) return;
     if (route() !== page) return stopPoll(page);
     if (document.hidden) return;
-    entry.last = Date.now();
-    entry.fn();
+    if (entry.fn() !== false) entry.last = Date.now();
   }
   let watching = false;
   function poll(page, fn) {

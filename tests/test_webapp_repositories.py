@@ -672,7 +672,8 @@ global.document = { get hidden() { return hidden; },
 global.esc = (s) => String(s); global.Fmt = { ago: () => "" };
 GITHUB_JS
 const runs = [];
-const read = () => runs.push(now);
+let busy = false; // a sheet open: the page skips the read and says so
+const read = () => { if (busy) return false; runs.push(now); };
 GhUI.poll("repositories", read);
 const step = (ms, h) => { now += ms; if (h !== undefined) hidden = h; };
 step(60000); tick();                     // on screen: the minute tick reads
@@ -680,6 +681,9 @@ step(30000, true);                       // the tab goes to the background
 step(30000); tick();                     // hidden: the tick is skipped
 step(50000, false); onShow();            // back 2m10s after the last read: reads at once
 step(20000); onShow();                   // back again 20s later: nothing yet
+step(40000, false); busy = true; tick(); // a tick the page skips (a sheet open)...
+step(5000, true); busy = false;
+step(25000, false); onShow();            // ...doesn't count: back 90s after the read, it reads
 step(5000); hash = "#/inbox"; tick();    // another page: the poll stops
 process.stdout.write(JSON.stringify({ runs: runs.map((t) => t - 1000000), stopped: tick === null }));
 """
@@ -688,7 +692,7 @@ process.stdout.write(JSON.stringify({ runs: runs.map((t) => t - 1000000), stoppe
         script = self.SCRIPT.replace("GITHUB_JS", (STATIC / "github.js").read_text())
         done = _node(script)
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(json.loads(done.stdout), {"runs": [60000, 170000], "stopped": True})
+        self.assertEqual(json.loads(done.stdout), {"runs": [60000, 170000, 260000], "stopped": True})
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")

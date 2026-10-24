@@ -1112,12 +1112,14 @@
     if (repo) {
       renderFocus(repo);
       GhUI.poll("repositories", () => {
-        if (page.focus && !page.focus.loading && !page.focus.unpinned && !sheetOpen()) renderFocus(page.focus.repo);
+        if (!page.focus || page.focus.loading || page.focus.unpinned || sheetOpen()) return false;
+        renderFocus(page.focus.repo);
       });
     } else {
       renderDashboard();
       GhUI.poll("repositories", () => {
-        if (!page.loading && !sheetOpen()) renderDashboard();
+        if (page.loading || sheetOpen()) return false;
+        renderDashboard();
       });
     }
   }
