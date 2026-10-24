@@ -19,10 +19,11 @@ enum LinkCards {
         }
         for block in Markdown.parse(text) {
             for source in sources(of: block) {
-                for run in RichText.inline(source).runs {
+                let inline = RichText.inline(source)
+                for run in inline.runs {
                     if let link = run.link { add(link); continue }
                     if run.inlinePresentationIntent?.contains(.code) == true { continue }
-                    for url in bareURLs(in: String(RichText.inline(source)[run.range].characters)) { add(url) }
+                    for url in bareURLs(in: String(inline[run.range].characters)) { add(url) }
                 }
             }
         }
@@ -50,6 +51,7 @@ enum LinkCards {
         switch block {
         case .heading(_, let text), .paragraph(let text), .quote(let text): [text]
         case .listItem(_, _, let text): [text]
+        case .table(let table): table.header + table.rows.flatMap { $0 }
         default: []
         }
     }

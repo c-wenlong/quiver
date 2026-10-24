@@ -710,4 +710,15 @@ final class LaunchFlowTests: XCTestCase {
         XCTAssertTrue(LinkCards.isWeb(url))
         XCTAssertFalse(LinkCards.isWeb(URL(string: "mailto:a@b.com")!))
     }
+
+    func testLinkCardsReadTableCellsInOrder() {
+        let text = """
+        | Page | Link |
+        |---|---|
+        | a | [one](https://one.example.com) |
+        | b | https://two.example.com/x |
+        """
+        XCTAssertEqual(LinkCards.urls(in: text).map(\.absoluteString),
+                       ["https://one.example.com", "https://two.example.com/x"])
+    }
 }
