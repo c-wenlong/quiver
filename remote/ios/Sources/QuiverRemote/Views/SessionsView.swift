@@ -11,10 +11,16 @@ struct SessionsView: View {
     @State private var startedKey: String?
     @State private var confirmUnpair = false
     @State private var search = SessionSearch()
+    @State private var swipes = SwipeCoordinator()
+    @State private var renaming: SessionRow?
+    @State private var forking: SessionRow?
+    @State private var forkedKey: String?
+    @State private var detachAsk: SessionRow?
+    @State private var toast: ListToast?
 
     var body: some View {
         let rows = app.displaySessions.filter(filter.includes)
-        let groups = SessionGrouping.groups(rows, machines: app.machines)
+        let groups = SessionGrouping.groupsWithPins(rows, machines: app.machines)
         PageScroll {
             if search.isActive {
                 searchResults
@@ -35,12 +41,34 @@ struct SessionsView: View {
                 ForEach(groups) { group in
                     GroupLabel(text: group.title, trailing: group.id == "earlier" ? "\(group.rows.count)" : nil)
                     CardList(data: group.rows) { row in
-                        NavigationLink(value: Route.chat(row.key)) { SessionRowView(row: row) }
+                        SwipeRow(key: row.key, leading: SessionAction.leading(row), trailing: SessionAction.trailing(row),
+                                 coordinator: swipes, perform: { act($0, on: row) }) {
+                            NavigationLink(value: Route.chat(row.key)) {
+                                SessionRowView(row: row,
+                                               place: group.id == "pinned"
+                                                   ? SessionGrouping.pinnedPlace(row, rows: app.sessions, machines: app.machines) : nil,
+                                               detachPending: app.isDetachPending(row.key))
+                            }
                             .buttonStyle(RowButtonStyle())
+                            .contentShape(.contextMenuPreview, .rect(cornerRadius: Theme.blockRadius))
+                            .contextMenu { menu(for: row) }
+                        }
                     }
                 }
             }
         }
+        .modifier(CloseSwipesOnScroll(swipes: swipes))
+        .overlay(alignment: .bottom) {
+            if let toast {
+                ToastView(toast: toast) { self.toast = nil }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .task(id: toast.id) {
+                        try? await Task.sleep(for: toast.duration)
+                        if self.toast?.id == toast.id { withAnimation { self.toast = nil } }
+                    }
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.9), value: toast)
         .refreshable { await app.refresh() }
         .searchable(text: $search.query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search sessions")
         .textInputAutocapitalization(.never)
@@ -77,6 +105,23 @@ struct SessionsView: View {
         }) {
             NewSessionView { startedKey = $0 }
         }
+        .sheet(item: $renaming) { RenameSheet(row: $0) }
+        .sheet(item: $forking, onDismiss: {
+            if let key = forkedKey { path.append(.chat(key)) }
+            forkedKey = nil
+        }) { row in
+            ForkSheet(row: row) { forkedKey = $0 }
+        }
+        .confirmationDialog(detachAsk.map { "Detach \($0.displayTitle)?" } ?? "Detach?",
+                            isPresented: Binding(get: { detachAsk != nil }, set: { if !$0 { detachAsk = nil } }),
+                            titleVisibility: .visible, presenting: detachAsk) { row in
+            Button("Detach when it finishes") { Task { await detach(row, mode: .whenIdle) } }
+            Button("Keep it running in tmux") { Task { await detach(row, mode: .keep) } }
+            Button("Detach now", role: .destructive) { Task { await detach(row, mode: .now) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("It's working right now. Detaching now stops the turn; keeping it lets you attach to it from the Mac with tmux.")
+        }
         .confirmationDialog("Unpair this device?", isPresented: $confirmUnpair, titleVisibility: .visible) {
             Button("Unpair", role: .destructive) { app.unpair() }
         } message: {
@@ -108,6 +153,94 @@ struct SessionsView: View {
         }
     }
 
+    // MARK: Row actions
+
+    @ViewBuilder private func menu(for row: SessionRow) -> some View {
+        ForEach(SessionAction.menu(row)) { action in
+            Button { act(action, on: row) } label: { Label(action.title, systemImage: action.symbol) }
+        }
+    }
+
+    private func act(_ action: SessionAction, on row: SessionRow) {
+        switch action {
+        case .attach:
+            Task {
+                do {
+                    if try await app.attach(row.key) { show("Attaching on \(machineName(row))") }
+                } catch {
+                    show(Self.message(error))
+                }
+                await app.refresh()
+            }
+        case .detach:
+            switch DetachPlan.of(row) {
+            case .ask: detachAsk = row
+            case .detach(let mode): Task { await detach(row, mode: mode, offerUndo: true) }
+            }
+        case .pin, .unpin:
+            Task {
+                let note = await app.setPinned(row.key, action == .pin) { change in
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { change() }
+                }
+                if let note { show(note) }
+            }
+        case .rename:
+            renaming = row
+        case .fork:
+            forking = row
+        }
+    }
+
+    /// `offerUndo` is the swipe on a row that looked idle: Undo attaches
+    /// it again, which also cancels the detach if the hub is still waiting.
+    private func detach(_ row: SessionRow, mode: DetachMode, offerUndo: Bool = false) async {
+        do {
+            let outcome = try await app.detach(row.key, mode: mode)
+            if offerUndo, outcome != .stale {
+                let key = row.key
+                show(ListToast(message: "Detaching \(row.displayTitle)", actionTitle: "Undo") {
+                    Task {
+                        do { try await app.attach(key) } catch { show(Self.message(error)) }
+                        await app.refresh()
+                    }
+                })
+                // The hub checks every 2 s and detaches an idle session then.
+                Task {
+                    try? await Task.sleep(for: .seconds(3))
+                    await app.refresh()
+                }
+                return
+            }
+            switch outcome {
+            case .done where mode == .keep:
+                show("Detached. It keeps running in tmux on \(machineName(row)).")
+            case .done:
+                show("Detached \(row.displayTitle)")
+            case .waiting, .stale:
+                break
+            case .forwarded:
+                show("Detaching on \(machineName(row))")
+            }
+        } catch let error as HubError where mode == .keep && error.code == "control_failed"
+                    && (error.reason ?? error.message).contains("no tmux session") {
+            show("This session doesn't run in tmux, so it can't keep running. Detach when it finishes or now instead.")
+        } catch {
+            show(Self.message(error))
+        }
+        await app.refresh()
+    }
+
+    private func machineName(_ row: SessionRow) -> String {
+        app.machines.first { $0.id == row.machineId }?.displayName ?? "the machine"
+    }
+
+    private func show(_ message: String) { show(ListToast(message: message)) }
+    private func show(_ t: ListToast) { toast = t }
+
+    private static func message(_ error: Error) -> String {
+        (error as? HubError)?.message ?? error.localizedDescription
+    }
+
     private var filterBar: some View {
         HStack(spacing: 6) {
             ForEach(SessionFilter.allCases) { f in
@@ -123,6 +256,11 @@ struct SessionsView: View {
 
 struct SessionRowView: View {
     var row: SessionRow
+    /// In the Pinned section, where no folder heading says where it runs:
+    /// the folder, and the machine when there is more than one.
+    var place: String?
+    /// A detach is waiting for the current turn to end.
+    var detachPending = false
 
     var body: some View {
         let status = row.sessionStatus
@@ -138,8 +276,14 @@ struct SessionRowView: View {
                     Text(status.label).foregroundStyle(waiting ? Theme.warningText : Theme.textSecondary)
                     let when = RelativeTime.short(row.lastActiveAt)
                     if !when.isEmpty { Text("· \(when)") }
+                    if let place { Text("· \(place)").truncationMode(.head) }
                 }
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                if detachPending {
+                    Label("Detaching when it finishes", systemImage: "clock")
+                        .labelStyle(.titleAndIcon)
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Image(systemName: row.isAttached ? "link" : "eye")
@@ -226,4 +370,19 @@ struct SearchResultRow: View {
 private struct SearchTrigger: Equatable {
     var query: String
     var refreshedAt: Date?
+}
+
+/// A scroll of the list closes a swiped-open row, as `List` does.
+private struct CloseSwipesOnScroll: ViewModifier {
+    let swipes: SwipeCoordinator
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollPhaseChange { _, phase in
+                if phase == .interacting, swipes.openKey != nil { swipes.openKey = nil }
+            }
+        } else {
+            content
+        }
+    }
 }

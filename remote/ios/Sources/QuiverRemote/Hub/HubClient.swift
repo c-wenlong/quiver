@@ -130,6 +130,11 @@ struct HubClient: Sendable {
         case "not_waiting": "That message already left the queue."
         case "unknown_send": "The hub doesn't know that message."
         case "queue_unsupported": "Queued messages can't be changed on this machine."
+        case "too_many_pins": "Too many sessions are pinned. Unpin one first."
+        case "fork_pending": "Another fork in this folder is still starting. Try again once it shows up."
+        case "fork_unsupported": "This session can't be forked: its harness has no fork command, or the session has no id yet."
+        case "not_installed": "That harness isn't installed on the machine any more."
+        case "unknown_session": "The hub doesn't know this session any more. Pull to refresh."
         default: fallback ?? "The hub answered with an error (\(status))."
         }
     }
@@ -198,6 +203,31 @@ struct HubClient: Sendable {
     func control(_ key: String, op: String) async throws -> Bool {
         let (_, status) = try await raw(request("POST", "/v1/sessions/\(Self.encodeKey(key))/control", body: ["op": op]))
         return status == 202
+    }
+
+    /// Hands an attached session back. Returns true on a 202: a
+    /// `when_idle` detach waiting for the turn to end, or any mode
+    /// forwarded to a satellite.
+    @discardableResult
+    func detach(_ key: String, mode: DetachMode) async throws -> Bool {
+        let (_, status) = try await raw(request("POST", "/v1/sessions/\(Self.encodeKey(key))/control",
+                                                body: ["op": "detach", "mode": mode.rawValue]))
+        return status == 202
+    }
+
+    func pin(_ key: String, pinned: Bool) async throws -> SessionMeta {
+        try await send(request("POST", "/v1/sessions/\(Self.encodeKey(key))/pin", body: ["pinned": pinned]))
+    }
+
+    /// An empty title clears the name, so the harness's own shows again.
+    func rename(_ key: String, title: String) async throws -> SessionMeta {
+        try await send(request("POST", "/v1/sessions/\(Self.encodeKey(key))/title", body: ["title": title]))
+    }
+
+    /// Starts a new session from this one's history with `prompt` as its
+    /// first message; poll `launch(_:)` for the new key, as for a new session.
+    func fork(_ key: String, prompt: String) async throws -> LaunchStatus {
+        try await send(request("POST", "/v1/sessions/\(Self.encodeKey(key))/fork", body: ["prompt": prompt]))
     }
 
     /// Returns true when the hub queued it for a satellite (202): the
