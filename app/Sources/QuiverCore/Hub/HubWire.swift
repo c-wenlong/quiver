@@ -131,6 +131,22 @@ struct HubStatusData: Decodable { let status: String? }
 struct HubOwnershipData: Decodable { let ownership: String? }
 struct HubApprovalRequested: Decodable { let requestId: String?; let prompt: String? }
 struct HubApprovalResolved: Decodable { let requestId: String?; let decision: String? }
+/// What a command came to, after the hub (or a satellite) ran it: a
+/// send, a stop, an attach or an approval.
+struct HubCommandResult: Decodable {
+    let op: String?
+    let ok: Bool?
+    let note: String?
+    let degraded: Bool?
+    let clientId: String?
+    let requestId: String?
+    /// A queued send removed before it went out: `ok` is false, but
+    /// nothing failed.
+    var cancelled: Bool? = nil
+}
+/// `POST .../message` answers 202 with this; `waiting` says the hub
+/// holds the send until the agent's turn ends.
+struct HubSendAccepted: Decodable { let waiting: Bool? }
 
 /// `POST /v1/pair`: a pair token traded for this app's device credential.
 public struct HubCredential: Codable, Sendable, Equatable {
@@ -178,6 +194,7 @@ public struct HubError: LocalizedError, Equatable, Sendable {
         case "not_idle": "The session is mid-turn. Attach once it's idle."
         case "not_attachable": "This harness can't be attached."
         case "backlog_full": "Too many messages are waiting. Try again shortly."
+        case "duplicate_client_id": "That message is already queued."
         default: fallback.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "The hub answered with an error (\(status))."
         }
     }

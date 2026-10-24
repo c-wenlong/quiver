@@ -5,7 +5,9 @@ import Observation
 /// output sits on its call, an approval carries its outcome.
 public struct HubChatItem: Identifiable, Equatable, Sendable {
     public enum Kind: Equatable, Sendable {
-        case user(String)
+        /// `send` is set on a message typed here until the transcript
+        /// echoes it (and stays when it failed, or went out degraded).
+        case user(String, send: HubSendState?)
         case assistant(String)
         case thinking(String)
         case tool(HubToolCall, result: String?)
@@ -22,6 +24,38 @@ public struct HubChatItem: Identifiable, Equatable, Sendable {
     public init(id: String, kind: Kind) {
         self.id = id
         self.kind = kind
+    }
+}
+
+/// Where a message typed in the chat stands.
+public enum HubSendState: Equatable, Sendable {
+    case sending
+    /// The hub took it; `waiting` while it holds it for the turn to end.
+    case accepted(waiting: Bool)
+    /// It went out, but not the way it was asked (a steer queued because
+    /// the harness can't take input mid-turn): the note stays.
+    case degraded(String)
+    case failed(String)
+    /// It went out; the transcript's echo, if any, replaces it. A slash
+    /// command never echoes, so it may stay like this.
+    case delivered
+
+    /// Still on its way: its echo or result may settle it.
+    public var inFlight: Bool {
+        switch self {
+        case .sending, .accepted: true
+        case .degraded, .failed, .delivered: false
+        }
+    }
+
+    /// The line under the bubble.
+    public var note: String {
+        switch self {
+        case .sending: "Sending…"
+        case .accepted(let waiting): waiting ? "Queued until the agent is idle" : "Sent"
+        case .degraded(let note), .failed(let note): note
+        case .delivered: ""
+        }
     }
 }
 
@@ -47,6 +81,10 @@ public final class SessionChatModel {
     /// The hub doesn't list the session (an older one, or one it never
     /// read): the page opens its details instead.
     public private(set) var missing = false
+    /// A send went out and nothing from the agent has come back yet.
+    public var awaitingReply: Bool { !awaiting.isEmpty }
+    /// A Stop is on its way to the hub.
+    public private(set) var stopping = false
 
     /// Messages per `/messages` page.
     public static let pageSize = 100
@@ -67,6 +105,19 @@ public final class SessionChatModel {
     /// Bumped by every start() and stop(), so a start() still fetching
     /// history doesn't open a stream after the chat was closed.
     private var generation = 0
+    /// History is being loaded: its user messages are old, never the
+    /// echo of a send.
+    private var replaying = false
+    /// Sends still waiting for the agent's first reply, by client id.
+    private var awaiting = Set<String>()
+    /// The entry each send became once the transcript echoed it, by client
+    /// id: its result can land after the echo.
+    private var echoed: [String: String] = [:]
+    /// When each send was typed, so a reload takes only a history message
+    /// from after it as its echo.
+    private var sentAt: [String: Double] = [:]
+    /// The user messages a history load added: echoes of sends it carries.
+    private var loadedUsers: [(id: String, text: String, ts: Double?)] = []
 
     struct Orphan: Equatable {
         var seq: Int
@@ -78,8 +129,12 @@ public final class SessionChatModel {
         self.hub = hub
     }
 
-    /// The agent is mid-turn.
-    public var working: Bool { row?.status == "active" }
+    /// The agent is mid-turn, or a send waits for its first reply.
+    public var working: Bool { row?.status == "active" || awaitingReply }
+
+    /// Only an attached session takes messages; an observed one belongs to
+    /// its terminal.
+    public var canSend: Bool { row?.isAttached == true }
 
     /// Loads the row and history, then follows the live stream until
     /// `stop()`.
@@ -164,6 +219,10 @@ public final class SessionChatModel {
 
     /// Replaces what's shown with the newest page of history.
     func load(_ page: HubMessagesPage) {
+        // Sends not yet echoed aren't in history: they carry over.
+        let unsent = items.filter {
+            if case .user(_, let send?) = $0.kind { send.inFlight || send == .delivered } else { false }
+        }
         items = []
         seen = []
         toolCards = [:]
@@ -172,7 +231,11 @@ public final class SessionChatModel {
         // Before the messages: whether a result without its call can still
         // find it on an older page.
         hasEarlier = page.hasMore ?? false
+        loadedUsers = []
+        replaying = true
         for env in page.messages { apply(env) }
+        replaying = false
+        items += unsent.filter { !echoedInHistory($0) }
         nextBefore = page.nextBefore ?? page.messages.first?.seq
         showOrphans()
     }
@@ -256,11 +319,16 @@ public final class SessionChatModel {
         switch env.type {
         case "message.appended":
             if let msg = env.decode(HubMessage.self) {
-                Self.add(msg, seq: env.seq ?? 0, to: &items, cards: &toolCards, orphans: &orphanResults)
+                append(msg, seq: env.seq ?? 0)
                 showOrphans()
             }
         case "session.status":
-            row?.status = env.decode(HubStatusData.self)?.status ?? ""
+            let status = env.decode(HubStatusData.self)?.status ?? ""
+            row?.status = status
+            // The turn ended (or stopped to ask) without a message to show.
+            if !replaying, !status.isEmpty, status != "active" { awaiting.removeAll() }
+        case "command.result":
+            if let result = env.decode(HubCommandResult.self) { settle(result) }
         case "session.ownership":
             if let ownership = env.decode(HubOwnershipData.self)?.ownership { row?.ownership = ownership }
         case "approval.requested":
@@ -312,6 +380,147 @@ public final class SessionChatModel {
         }
     }
 
+    private func append(_ msg: HubMessage, seq: Int) {
+        if replaying, msg.kind == "user", let text = msg.text { loadedUsers.append(("m\(seq)", text, msg.ts)) }
+        var echoOf: String?
+        var carried: HubSendState?
+        if !replaying, msg.kind == "user", let text = msg.text,
+           let i = items.lastIndex(where: {
+               guard $0.id.hasPrefix("send-"), case .user(let sent, let send?) = $0.kind, !Self.isFailed(send)
+               else { return false }
+               return Self.echoes(text, sent)
+           }), case .user(_, let send?) = items[i].kind {
+            // The hub echoes a send back as a user message: it replaces the
+            // bubble drawn when it was typed. A degraded send keeps its note.
+            let cid = String(items[i].id.dropFirst("send-".count))
+            echoOf = cid
+            if case .degraded = send { carried = send }
+            if i == items.count - 1 {
+                // Still the newest entry: settle it where it is.
+                items[i].kind = .user(text, send: carried)
+                echoed[cid] = items[i].id
+                return
+            }
+            items.remove(at: i)
+        } else if !replaying, msg.kind != "user", msg.kind != "tool_result" {
+            awaiting.removeAll()
+        }
+        let before = items.count
+        Self.add(msg, seq: seq, to: &items, cards: &toolCards, orphans: &orphanResults)
+        if let cid = echoOf, items.count > before, case .user(let text, _) = items[items.count - 1].kind {
+            echoed[cid] = items[items.count - 1].id
+            items[items.count - 1].kind = .user(text, send: carried)
+        }
+    }
+
+    /// A send carried over a history reload whose echo is in that history
+    /// (it landed while the stream was down): the echo stands for it.
+    private func echoedInHistory(_ item: HubChatItem) -> Bool {
+        guard case .user(let text, let send?) = item.kind else { return false }
+        let cid = String(item.id.dropFirst("send-".count))
+        let typed = sentAt[cid] ?? 0
+        let claimed = Set(echoed.values)
+        guard let hit = loadedUsers.last(where: {
+            !claimed.contains($0.id) && Self.echoes($0.text, text) && ($0.ts ?? .infinity) >= typed - 5
+        }) else { return false }
+        echoed[cid] = hit.id
+        if case .degraded = send, let i = items.firstIndex(where: { $0.id == hit.id }) {
+            items[i].kind = .user(hit.text, send: send)
+        }
+        return true
+    }
+
+    /// The transcript's user message `echo` is the send `sent` coming
+    /// back: the same text, or with the hub's attachment prefix, one
+    /// "@path " per attachment.
+    static func echoes(_ echo: String, _ sent: String) -> Bool {
+        if echo == sent { return true }
+        guard echo.hasSuffix(" " + sent) else { return false }
+        let prefix = echo.dropLast(sent.count)
+        return prefix.hasPrefix("@") && prefix.split(separator: " ").allSatisfy { $0.count > 1 && $0.first == "@" }
+    }
+
+    private static func isFailed(_ send: HubSendState) -> Bool {
+        if case .failed = send { return true }
+        return false
+    }
+
+    /// A command's outcome: a send's bubble settles; any other failure, or
+    /// a degraded result, gets a line of its own.
+    private func settle(_ r: HubCommandResult) {
+        if r.op == "message", let cid = r.clientId {
+            // Its bubble, or the entry the echo turned it into.
+            guard let i = items.firstIndex(where: { $0.id == (echoed[cid] ?? "send-\(cid)") }),
+                  case .user(let text, let send) = items[i].kind else { return }
+            // Failed or degraded already: that outcome stands.
+            if let send, !send.inFlight, send != .delivered { return }
+            if r.ok == false {
+                items[i].kind = .user(text, send: .failed(r.cancelled == true ? "Removed before sending"
+                                                          : r.note ?? "Send failed"))
+                awaiting.remove(cid)
+            } else if r.degraded == true {
+                items[i].kind = .user(text, send: .degraded(r.note ?? "Sent (queued: mid-turn input isn't supported here)"))
+            } else if echoed[cid] == nil {
+                // Kept as a send, so its echo still replaces it.
+                items[i].kind = .user(text, send: .delivered)
+            }
+            return
+        }
+        guard r.op != "message", r.ok == false || r.degraded == true else { return }
+        let op = r.op.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Command"
+        items.append(HubChatItem(id: "result-\(UUID().uuidString)",
+                                 kind: .system(r.ok == false ? "\(op) failed: \(r.note ?? "unknown error")"
+                                               : r.note ?? "Queued")))
+    }
+
+    // MARK: Actions
+
+    /// Sends `text` in `mode` (`queue` or `steer`), drawn at once as a
+    /// bubble the hub's answer, echo and result then settle.
+    public func send(_ text: String, mode: String) async {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, canSend else { return }
+        let cid = UUID().uuidString
+        let id = "send-\(cid)"
+        items.append(HubChatItem(id: id, kind: .user(text, send: .sending)))
+        awaiting.insert(cid)
+        sentAt[cid] = Date().timeIntervalSince1970
+        do {
+            let waiting = try await hub.withClient { [key] in
+                try await $0.sendMessage(key, text: text, mode: mode, clientId: cid)
+            }
+            // An echo or result may already have settled it.
+            if let i = items.firstIndex(where: { $0.id == id }), case .user(_, .sending?) = items[i].kind {
+                items[i].kind = .user(text, send: .accepted(waiting: waiting))
+            }
+        } catch {
+            refusal(error)
+            awaiting.remove(cid)
+            if let i = items.firstIndex(where: { $0.id == id }), case .user(_, let send?) = items[i].kind, send.inFlight {
+                items[i].kind = .user(text, send: .failed(error.localizedDescription))
+            }
+        }
+    }
+
+    /// Stops the agent's turn.
+    public func interrupt() async {
+        guard canSend, !stopping else { return }
+        stopping = true
+        defer { stopping = false }
+        do {
+            _ = try await hub.withClient { [key] in try await $0.control(key, op: "interrupt") }
+        } catch {
+            refusal(error)
+            items.append(HubChatItem(id: "stop-\(UUID().uuidString)",
+                                     kind: .error("Stop failed: \(error.localizedDescription)")))
+        }
+    }
+
+    /// The hub says the session is observed now: its word wins.
+    private func refusal(_ error: Error) {
+        if (error as? HubError)?.code == "not_attached" { row?.ownership = "observed" }
+    }
+
     /// Adds one message to the end of `list`. A tool result lands on its
     /// call's card; one whose call is on an older page not loaded yet
     /// waits in `orphans` until that page brings the call.
@@ -321,7 +530,7 @@ public final class SessionChatModel {
         let text = msg.text ?? ""
         switch msg.kind ?? "assistant" {
         case "user":
-            list.append(HubChatItem(id: id, kind: .user(text)))
+            list.append(HubChatItem(id: id, kind: .user(text, send: nil)))
         case "thinking":
             list.append(HubChatItem(id: id, kind: .thinking(text)))
         case "tool_use":
