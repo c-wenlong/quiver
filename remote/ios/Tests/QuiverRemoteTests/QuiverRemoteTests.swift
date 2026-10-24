@@ -698,6 +698,102 @@ final class ChatModelTests: XCTestCase {
         XCTAssertEqual(note("that message already failed"), "Already failed")
     }
 
+    private func queuedChat(_ texts: [String]) -> ChatModel {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        for (i, text) in texts.enumerated() {
+            chat.stage(text, clientId: "c\(i + 1)", toTray: true)
+            chat.posted("c\(i + 1)", waiting: true)
+        }
+        return chat
+    }
+
+    func testEditPutsTheTextInThePromptBoxAndCancelPutsTheDraftBack() {
+        let chat = queuedChat(["lint", "deploy"])
+        chat.draft = "half typed"
+        XCTAssertTrue(chat.beginEdit("c2"))
+        XCTAssertEqual(chat.editingId, "c2")
+        XCTAssertEqual(chat.draft, "deploy")
+        // Switching rows keeps the original draft to come back to.
+        XCTAssertTrue(chat.beginEdit("c1"))
+        XCTAssertEqual(chat.draft, "lint")
+        XCTAssertEqual(ChatModel.composerAction(draft: "", agentWorking: true, editing: true), .disabled)
+        XCTAssertEqual(ChatModel.composerAction(draft: "lint", agentWorking: true, editing: true), .send)
+        chat.cancelEdit()
+        XCTAssertNil(chat.editingId)
+        XCTAssertEqual(chat.draft, "half typed")
+        // Only a send the hub still holds can be edited.
+        XCTAssertTrue(chat.markSendingNow("c1"))
+        XCTAssertFalse(chat.beginEdit("c1"))
+        chat.stage("pending", clientId: "c9", toTray: true)
+        XCTAssertFalse(chat.beginEdit("c9"))
+    }
+
+    func testASavedEditUpdatesTheRowInPlace() {
+        let chat = queuedChat(["lint", "deploy"])
+        chat.draft = "typing"
+        chat.beginEdit("c1")
+        chat.draft = "lint --fix"
+        chat.editSaved("c1", text: "lint --fix")
+        XCTAssertEqual(chat.tray.map(\.text), ["lint --fix", "deploy"])
+        XCTAssertNil(chat.editingId)
+        XCTAssertEqual(chat.draft, "typing")
+        // Its echo is the edited text.
+        chat.apply(user(1, "lint --fix"))
+        XCTAssertEqual(chat.tray.map(\.text), ["deploy"])
+    }
+
+    func testWhatARefusedEditMeans() {
+        func outcome(_ status: Int, _ json: String) -> ChatModel.EditOutcome {
+            ChatModel.editOutcome(HubClient.error(status: status, body: Data(json.utf8)))
+        }
+        // An older hub doesn't know the op: remove and queue again.
+        XCTAssertEqual(outcome(422, #"{"error":{"code":"bad_command","message":"unknown op 'edit'"}}"#), .requeue)
+        XCTAssertEqual(outcome(400, #"{"error":{"code":"bad_request","message":"op must be steer or cancel"}}"#), .requeue)
+        XCTAssertEqual(outcome(409, #"{"error":{"code":"not_waiting","message":"that message already went out"}}"#), .wentOut)
+        XCTAssertEqual(outcome(409, #"{"error":{"code":"not_attached","message":"x"}}"#), .failed("Attach to send now"))
+        XCTAssertEqual(ChatModel.editOutcome(HubError(status: 0, code: "network", message: "x")), .failed("Can't reach the hub"))
+    }
+
+    func testAnEditThatCameTooLateKeepsTheTextToSendAgain() {
+        let chat = queuedChat(["lint"])
+        chat.beginEdit("c1")
+        chat.draft = "lint everything"
+        chat.editRefused("c1", text: "lint everything",
+                         HubClient.error(status: 409, body: Data(#"{"error":{"code":"not_waiting","message":"that message already went out"}}"#.utf8)))
+        XCTAssertNil(chat.editingId)
+        XCTAssertEqual(chat.draft, "lint everything")
+        XCTAssertEqual(chat.editNote, "That message already went out")
+        XCTAssertEqual(chat.tray.first?.phase, .left)
+    }
+
+    func testAnEditAnOlderHubRefusesIsQueuedAgainAtTheEnd() {
+        let chat = queuedChat(["lint", "deploy"])
+        chat.beginEdit("c1")
+        chat.draft = "lint --fix"
+        let old = HubClient.error(status: 422, body: Data(#"{"error":{"code":"bad_command","message":"unknown op"}}"#.utf8))
+        chat.editRefused("c1", text: "lint --fix", old)
+        // Still editing until the remove goes through.
+        XCTAssertEqual(chat.editingId, "c1")
+        XCTAssertNil(chat.editNote)
+        chat.markRemoving("c1")
+        chat.requeued("c1")
+        XCTAssertNil(chat.editingId)
+        XCTAssertEqual(chat.trayNote, ChatModel.requeuedNote)
+        chat.stage("lint --fix", clientId: "c3", toTray: true)
+        chat.posted("c3", waiting: true)
+        XCTAssertEqual(chat.tray.map(\.text), ["deploy", "lint --fix"])
+        // Any other refusal keeps the edit open with a note.
+        chat.beginEdit("c2")
+        chat.editRefused("c2", text: "deploy now", HubError(status: 0, code: "network", message: "x"))
+        XCTAssertEqual(chat.editingId, "c2")
+        XCTAssertEqual(chat.editNote, "Can't reach the hub")
+    }
+
+    func testTrayHeaderCountsMessages() {
+        XCTAssertEqual(QueuedTray.countLabel(1), "1 message queued")
+        XCTAssertEqual(QueuedTray.countLabel(5), "5 messages queued")
+    }
+
     func testChatCacheDropsTheLeastRecentlyOpened() {
         let app = AppModel()
         let oldest = app.chat("claude:0")

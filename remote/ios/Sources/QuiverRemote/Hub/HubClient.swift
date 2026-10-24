@@ -176,11 +176,13 @@ struct HubClient: Sendable {
         try await send(request("GET", "/v1/sessions/\(Self.encodeKey(key))/queue"))
     }
 
-    /// Acts on one waiting send: `steer` sends it now, `cancel` drops it.
-    /// The outcome of a steer arrives later as its `command.result`.
-    func queueAction(_ key: String, clientId: String, op: String) async throws {
-        _ = try await raw(request("POST", "/v1/sessions/\(Self.encodeKey(key))/queue",
-                                  body: ["client_id": clientId, "op": op]))
+    /// Acts on one waiting send: `steer` sends it now, `cancel` drops it,
+    /// `edit` replaces its text in place. The outcome of a steer arrives
+    /// later as its `command.result`.
+    func queueAction(_ key: String, clientId: String, op: String, text: String? = nil) async throws {
+        var body: [String: Any] = ["client_id": clientId, "op": op]
+        if let text { body["text"] = text }
+        _ = try await raw(request("POST", "/v1/sessions/\(Self.encodeKey(key))/queue", body: body))
     }
 
     /// Returns true when the hub queued it for a satellite (202), so the

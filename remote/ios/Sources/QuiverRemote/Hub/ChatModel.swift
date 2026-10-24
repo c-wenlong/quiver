@@ -63,7 +63,8 @@ struct QueuedSend: Identifiable, Equatable {
     }
 
     let clientId: String
-    let text: String
+    /// Changes when the message is edited in place.
+    var text: String
     var phase: Phase
     /// Why the last action on it didn't go through, shown under the text.
     var note: String?
@@ -100,6 +101,18 @@ final class ChatModel {
     /// in its list). Hidden; kept so a replayed result or echo can still
     /// show them in the transcript, e.g. a slash command that never echoes.
     private var departed: [QueuedSend] = []
+    /// The queued send whose text is in the prompt box to be edited; the
+    /// send button saves it instead of sending.
+    private(set) var editingId: String?
+    /// What was typed before Edit took over the prompt box; Cancel and
+    /// Save put it back.
+    private var draftBeforeEdit = ""
+    private(set) var savingEdit = false
+    /// A short note in the bar above the prompt box: why an edit didn't save.
+    private(set) var editNote: String?
+    /// A short note under the tray's header, e.g. that an edit moved the
+    /// message to the end.
+    private(set) var trayNote: String?
     /// Client ids of sends that left the tray (went out, failed or were
     /// removed): a queue list fetched before that can't bring them back.
     private var settledSends = Set<String>()
@@ -197,8 +210,10 @@ final class ChatModel {
 
     /// What the button beside the prompt box does: send whatever is typed,
     /// stop the agent when nothing is typed and it's working, else nothing.
-    static func composerAction(draft: String, agentWorking: Bool) -> ComposerAction {
+    static func composerAction(draft: String, agentWorking: Bool, editing: Bool = false) -> ComposerAction {
         if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .send }
+        // An emptied edit has nothing to save; stop stays out of the way.
+        if editing { return .disabled }
         return agentWorking ? .stop : .disabled
     }
 
@@ -576,9 +591,12 @@ final class ChatModel {
     // MARK: Actions
 
     func send() async {
+        if editingId != nil { return await saveEdit() }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         draft = ""
+        editNote = nil
+        trayNote = nil
         await send(text)
     }
 
@@ -709,6 +727,8 @@ final class ChatModel {
     /// turn. It shows "Sending now" until its result or echo arrives.
     func sendNow(_ cid: String) async {
         guard let client = app?.client, markSendingNow(cid) else { return }
+        trayNote = nil
+        if editingId == cid { cancelEdit() }
         do {
             try await client.queueAction(key, clientId: cid, op: "steer")
         } catch {
@@ -744,6 +764,8 @@ final class ChatModel {
             break
         }
         guard let client = app?.client else { return }
+        trayNote = nil
+        if editingId == cid { cancelEdit() }
         markRemoving(cid)
         do {
             try await client.queueAction(key, clientId: cid, op: "cancel")
@@ -795,6 +817,124 @@ final class ChatModel {
         default: return e.message
         }
     }
+
+    /// Remove all: every row the hub still holds, each as its own remove.
+    func removeAllQueued() {
+        for send in tray { Task { await remove(send.clientId) } }
+    }
+
+    // MARK: Editing a queued send
+
+    /// Edit: the message's text goes into the prompt box, and the send
+    /// button saves it back. Only a send the hub still holds can be edited.
+    @discardableResult
+    func beginEdit(_ cid: String) -> Bool {
+        guard let send = queued.first(where: { $0.clientId == cid }), send.phase == .waiting else { return false }
+        if editingId == nil { draftBeforeEdit = draft }
+        editingId = cid
+        draft = send.text
+        editNote = nil
+        return true
+    }
+
+    func cancelEdit() {
+        guard editingId != nil else { return }
+        editingId = nil
+        draft = draftBeforeEdit
+        draftBeforeEdit = ""
+        editNote = nil
+    }
+
+    /// What a refused `edit` means for the edit.
+    enum EditOutcome: Equatable {
+        /// The hub doesn't know the op (an older hub): remove it and queue
+        /// the new text instead, at the end.
+        case requeue
+        /// It went out before the edit landed.
+        case wentOut
+        /// Keep editing, with this note.
+        case failed(String)
+    }
+
+    static func editOutcome(_ error: Error) -> EditOutcome {
+        guard let e = error as? HubError else { return .failed(queueNote(error)) }
+        if e.code == "not_waiting" { return .wentOut }
+        if e.status == 400 || e.status == 422 { return .requeue }
+        return .failed(queueNote(e))
+    }
+
+    func saveEdit() async {
+        guard let cid = editingId, !savingEdit else { return }
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        guard queued.contains(where: { $0.clientId == cid && $0.phase == .waiting }) else { return editWentOut(cid, text: text) }
+        guard let client = app?.client else { return }
+        savingEdit = true
+        defer { savingEdit = false }
+        do {
+            try await client.queueAction(key, clientId: cid, op: "edit", text: text)
+            editSaved(cid, text: text)
+        } catch {
+            editRefused(cid, text: text, error)
+            if Self.editOutcome(error) == .requeue { await requeueEdit(cid, text: text) }
+        }
+    }
+
+    /// The hub took the edit: the row keeps its place with the new text.
+    func editSaved(_ cid: String, text: String) {
+        if let i = queued.firstIndex(where: { $0.clientId == cid }) {
+            queued[i].text = text
+            queued[i].note = nil
+        }
+        if editingId == cid { cancelEdit() }
+    }
+
+    /// The hub refused the edit. A requeue is left to the caller, which
+    /// has the network; the rest is settled here.
+    func editRefused(_ cid: String, text: String, _ error: Error) {
+        switch Self.editOutcome(error) {
+        case .requeue: break
+        case .wentOut: editWentOut(cid, text: text)
+        case .failed(let note): editNote = note
+        }
+    }
+
+    /// Too late to edit: the new text stays in the prompt box to send as a
+    /// new message.
+    func editWentOut(_ cid: String, text: String) {
+        if let i = queued.firstIndex(where: { $0.clientId == cid }), queued[i].phase == .waiting {
+            queued[i].phase = .left
+            queued[i].note = "Already sent"
+        }
+        editingId = nil
+        draftBeforeEdit = ""
+        draft = text
+        editNote = "That message already went out"
+    }
+
+    /// An older hub can't edit in place: remove the message, then queue the
+    /// new text, which lands at the end.
+    private func requeueEdit(_ cid: String, text: String) async {
+        guard let client = app?.client else { return }
+        do {
+            try await client.queueAction(key, clientId: cid, op: "cancel")
+        } catch {
+            editRefused(cid, text: text, error)
+            if Self.editOutcome(error) == .requeue { editNote = Self.queueNote(error) }
+            return
+        }
+        dropQueued(cid)
+        requeued(cid)
+        await send(text)
+    }
+
+    /// The old message is gone; its replacement goes to the end.
+    func requeued(_ cid: String) {
+        if editingId == cid { cancelEdit() }
+        trayNote = Self.requeuedNote
+    }
+
+    static let requeuedNote = "Edited. It moved to the end of the queue"
 
     /// The bubble of a send the hub hasn't echoed yet. An echoed one keeps
     /// its id but is delivered, so a late reply to the POST leaves it alone.

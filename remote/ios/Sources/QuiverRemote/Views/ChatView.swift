@@ -846,83 +846,140 @@ private struct Composer: View {
     @FocusState private var focused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private var arrival: AnyTransition { reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8)) }
+
     var body: some View {
         let tray = model.tray
+        let editing = model.editingId != nil
         VStack(spacing: 8) {
             if !tray.isEmpty {
-                QueuedTray(sends: tray,
+                QueuedTray(sends: tray, note: model.trayNote, editingId: model.editingId,
+                           onEdit: { cid in model.beginEdit(cid) },
+                           onRemove: { cid in Task { await model.remove(cid) } },
                            onSendNow: { cid in Task { await model.sendNow(cid) } },
-                           onRemove: { cid in Task { await model.remove(cid) } })
-                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8)))
+                           onRemoveAll: { model.removeAllQueued() })
+                    .transition(arrival)
+            }
+            if editing || model.editNote != nil {
+                EditBar(editing: editing, saving: model.savingEdit, note: model.editNote) { model.cancelEdit() }
+                    .transition(arrival)
             }
             HStack(alignment: .bottom, spacing: 8) {
-                TextField("Message the session", text: $model.draft, axis: .vertical)
+                TextField(editing ? "Edit the queued message" : "Message the session", text: $model.draft, axis: .vertical)
                     .font(Theme.body)
                     .lineLimit(1...5)
                     .focused($focused)
                     .padding(.horizontal, 14).padding(.vertical, 11)
                     .background(Theme.field, in: .rect(cornerRadius: 22))
                     .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(Theme.border, lineWidth: 1))
-                SendOrStopButton(action: ChatModel.composerAction(draft: model.draft, agentWorking: model.canInterrupt),
+                SendOrStopButton(action: ChatModel.composerAction(draft: model.draft, agentWorking: model.canInterrupt,
+                                                                  editing: editing),
                                  onSend: { Task { await model.send() } },
                                  onStop: { Task { await model.interrupt() } })
+                    .disabled(model.savingEdit)
             }
         }
         .animation(.easeOut(duration: 0.2), value: tray.isEmpty)
+        .animation(.easeOut(duration: 0.2), value: editing)
+        .onChange(of: model.editingId) { _, id in if id != nil { focused = true } }
         .padding(.horizontal, Theme.gutter)
         .padding(.top, 10)
         .padding(.bottom, 8)
     }
 }
 
+/// Above the prompt box while a queued message is being edited, or to
+/// say why an edit didn't save.
+private struct EditBar: View {
+    let editing: Bool
+    let saving: Bool
+    let note: String?
+    let cancel: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if editing {
+                Image(systemName: "pencil").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Editing queued message").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    if let note { Text(note).font(.system(size: 11)).foregroundStyle(Theme.dangerText).lineLimit(1) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if saving { ProgressView().controlSize(.mini) }
+                Button("Cancel", action: cancel)
+                    .font(Theme.control).foregroundStyle(Theme.textPrimary)
+                    .frame(minHeight: 32)
+                    .disabled(saving)
+            } else if let note {
+                Text(note).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+}
+
 /// Sends made while the agent works, pinned above the prompt box until
-/// they go out: each can be sent now (written into the running turn) or
-/// removed before the agent sees it.
+/// they go out. Each can be edited, removed, or sent now (written into
+/// the running turn); the header's button removes them all.
 struct QueuedTray: View {
     let sends: [QueuedSend]
-    var onSendNow: (String) -> Void = { _ in }
+    var note: String? = nil
+    var editingId: String? = nil
+    var onEdit: (String) -> Void = { _ in }
     var onRemove: (String) -> Void = { _ in }
+    var onSendNow: (String) -> Void = { _ in }
+    var onRemoveAll: () -> Void = {}
+    /// Rows shown before the card scrolls.
+    var visibleRows = 3
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var confirmRemoveAll = false
 
     static let rowHeight: CGFloat = 44
-    /// Rows shown before the card scrolls.
-    static let visibleRows = 3
+
+    static func countLabel(_ n: Int) -> String { n == 1 ? "1 message queued" : "\(n) messages queued" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 0) {
-                Text("Queued").foregroundStyle(Theme.textPrimary).fontWeight(.medium)
-                Text(" · \(sends.count) · sends when the agent finishes").foregroundStyle(Theme.textSecondary)
+                Text(Self.countLabel(sends.count)).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                TrayIconButton(symbol: "xmark", label: "Remove all") { confirmRemoveAll = true }
             }
-            .font(.system(size: 12))
-            .lineLimit(1)
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
-            .accessibilityElement(children: .combine)
-            if sends.count > Self.visibleRows {
+            .padding(.leading, 14)
+            .padding(.trailing, 2)
+            if let note {
+                Text(note).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                    .padding(.horizontal, 14).padding(.bottom, 4)
+            }
+            if sends.count > visibleRows {
                 ScrollView(.vertical) { rows }
                     // The chat anchors its scroll views at the bottom; the
                     // tray starts at its oldest send.
                     .defaultScrollAnchor(.top)
-                    .frame(height: CGFloat(Self.visibleRows) * Self.rowHeight)
+                    .frame(height: CGFloat(visibleRows) * Self.rowHeight)
             } else {
                 rows
             }
         }
+        .padding(.bottom, 6)
         .background(Theme.card, in: .rect(cornerRadius: Theme.blockRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
         .clipShape(.rect(cornerRadius: Theme.blockRadius))
         .animation(.easeOut(duration: 0.2), value: sends.map(\.id))
+        .confirmationDialog(sends.count == 1 ? "Remove 1 queued message?" : "Remove \(sends.count) queued messages?",
+                            isPresented: $confirmRemoveAll, titleVisibility: .visible) {
+            Button("Remove all", role: .destructive, action: onRemoveAll)
+        }
     }
 
     private var rows: some View {
         VStack(spacing: 0) {
             ForEach(sends) { send in
-                QueuedRow(send: send, onSendNow: { onSendNow(send.clientId) }, onRemove: { onRemove(send.clientId) })
-                    .overlay(alignment: .top) {
-                        if send.id != sends.first?.id { Rectangle().fill(Theme.border).frame(height: 1) }
-                    }
+                QueuedRow(send: send, editing: send.id == editingId,
+                          onEdit: { onEdit(send.clientId) },
+                          onRemove: { onRemove(send.clientId) },
+                          onSendNow: { onSendNow(send.clientId) })
                     .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
             }
         }
@@ -931,63 +988,85 @@ struct QueuedTray: View {
 
 private struct QueuedRow: View {
     let send: QueuedSend
-    let onSendNow: () -> Void
+    let editing: Bool
+    let onEdit: () -> Void
     let onRemove: () -> Void
+    let onSendNow: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(send.text.replacingOccurrences(of: "\n", with: " "))
-                    .font(Theme.body).foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1).truncationMode(.tail)
-                if let note = send.note {
-                    Text(note).font(.system(size: 11))
-                        .foregroundStyle(send.phase == .left ? Theme.textMuted : Theme.dangerText)
-                        .lineLimit(1)
+        HStack(spacing: 10) {
+            Group {
+                if send.phase == .sendingNow {
+                    SendingSpinner()
+                } else {
+                    Image(systemName: editing ? "pencil.circle" : "circle.dashed")
+                        .font(.system(size: 15))
+                        .foregroundStyle(Theme.textMuted)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .opacity(send.phase == .posting ? 0.6 : 1)
-            switch send.phase {
-            case .sendingNow:
-                Text("Sending now").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
-            case .waiting, .posting:
-                Button("Send now", action: onSendNow)
-                    .buttonStyle(SendNowStyle())
-                    .disabled(send.phase == .posting)
-            case .left, .removing:
-                EmptyView()
-            }
-            if send.phase != .sendingNow {
-                Button(action: onRemove) {
-                    Image(systemName: "xmark").font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Theme.textSecondary)
-                        .frame(width: 32, height: QueuedTray.rowHeight)
-                        .contentShape(.rect)
+            .frame(width: 18)
+            Text(send.text.replacingOccurrences(of: "\n", with: " "))
+                .font(Theme.body).foregroundStyle(editing ? Theme.textSecondary : Theme.textPrimary)
+                .lineLimit(1).truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .opacity(send.phase == .posting ? 0.6 : 1)
+            if let note = send.note {
+                Text(note).font(Theme.caption)
+                    .foregroundStyle(send.phase == .left ? Theme.textMuted : Theme.dangerText)
+                    .lineLimit(1)
+                    .padding(.trailing, 12)
+                // A send that already left can still be cleared from the tray.
+                if send.phase == .left { TrayIconButton(symbol: "xmark", label: "Remove", action: onRemove) }
+            } else if send.phase == .sendingNow {
+                Text("Sending now").font(Theme.caption).foregroundStyle(Theme.textMuted).padding(.trailing, 12)
+            } else {
+                HStack(spacing: 0) {
+                    TrayIconButton(symbol: "pencil", label: "Edit", action: onEdit)
+                    TrayIconButton(symbol: "xmark", label: "Remove", action: onRemove)
+                    TrayIconButton(symbol: "return", label: "Send now", action: onSendNow)
                 }
-                .buttonStyle(.plain)
                 .disabled(send.phase == .posting)
-                .accessibilityLabel("Remove")
             }
         }
-        .padding(.leading, 12)
-        .padding(.trailing, send.phase == .sendingNow ? 12 : 2)
+        .padding(.leading, 14)
+        .padding(.trailing, 2)
         .frame(height: QueuedTray.rowHeight)
     }
 }
 
-/// A small primary pill, shorter than the compact primary button so it
-/// sits inside a tray row.
-private struct SendNowStyle: ButtonStyle {
+/// A bare muted glyph about 15 pt, with a 44 pt square to hit.
+private struct TrayIconButton: View {
+    let symbol: String
+    let label: String
+    let action: () -> Void
     @Environment(\.isEnabled) private var enabled
 
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(Theme.primaryForeground)
-            .padding(.horizontal, 10)
-            .frame(height: 26)
-            .background(Theme.primaryBackground, in: .capsule)
-            .opacity(configuration.isPressed ? 0.85 : enabled ? 1 : 0.45)
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 15))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 44, height: 44)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .opacity(enabled ? 1 : 0.4)
+        .accessibilityLabel(label)
+    }
+}
+
+/// A thin turning arc the size of the dashed circle it replaces while a
+/// row is being sent now; still under Reduce Motion.
+private struct SendingSpinner: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.animation(paused: reduceMotion)) { context in
+            let turns = context.date.timeIntervalSinceReferenceDate / 0.9
+            Circle().trim(from: 0, to: 0.7)
+                .stroke(Theme.textSecondary, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                .frame(width: 14, height: 14)
+                .rotationEffect(.degrees(reduceMotion ? 0 : turns.truncatingRemainder(dividingBy: 1) * 360))
+        }
+        .accessibilityLabel("Sending now")
     }
 }
