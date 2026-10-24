@@ -644,6 +644,10 @@ to use their own login state and environment."""
                                             LaunchAgent: starts at login,
                                             restarts if it exits. --uninstall
                                             stops and removes it.
+  {c('cyan', 'swe remote setup [--apply]')}             Check every step to a paired phone:
+                                            Tailscale, MagicDNS, HTTPS, the
+                                            certificate, the hub, tailscale
+                                            serve. --apply does Quiver's part.
   {c('cyan', 'swe remote pair [--name=N]')}             Mint a one-time pairing token;
                                             prints the URL to open on the phone
                                             (and a QR when qrencode is installed).

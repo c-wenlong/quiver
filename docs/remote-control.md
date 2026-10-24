@@ -44,6 +44,36 @@ servers; we don't need to). v1 is tailnet-only: the hub binds its
 Tailscale IP, never `0.0.0.0`. A TLS fallback with a cert pinned at
 pairing is deferred until a non-tailnet device actually needs in.
 
+### Setting it up — `setup.py`
+
+`swe remote setup` checks every step from nothing to a paired phone, in
+order, and says for each whether it is done, something Quiver does
+itself, or something a person must do, with the page to open. The Mac
+app's Settings › Remote shows the same list from `--json`.
+
+| Step | Checked by | When it isn't done |
+|---|---|---|
+| Tailscale installed | the CLI on PATH or inside Tailscale.app | link to the download page |
+| Signed in | `BackendState` in `tailscale status --json` | the `AuthURL` Tailscale reports, else open the app (Mac) or `sudo tailscale up` (Linux) |
+| MagicDNS on | `CurrentTailnet.MagicDNSEnabled` and the node's `DNSName` | link to the admin console's DNS page; only an admin can turn it on |
+| HTTPS certificates on | the node's name in `CertDomains` | the same DNS page, Enable HTTPS |
+| Certificate | `tailscale cert` into a temp folder, removed at once (tailscaled keeps its own copy) | the reason, in plain words: a DNS lookup timeout says to add a reachable DNS server or turn on Override DNS servers |
+| Hub running in the background | the LaunchAgent runs `serve --host=127.0.0.1 --public-url=https://<name>:<port>` and answers on loopback | `--apply` installs it; on Linux, the `serve --public-url` command to run under systemd |
+| Reachable over https | `tailscale serve status --json` proxies `:<port>` to the hub, and `https://<name>:<port>/v1/status` answers | `--apply` runs `tailscale serve --bg --https=<port> http://127.0.0.1:<port>`; on Linux a refused serve gives `sudo tailscale set --operator=$USER` |
+| A phone paired | `devices.json` | Pair a phone |
+
+A step waits (`blocked`) until the ones before it are done. `--apply`
+loops look, act, look again, and stops at the first step that needs a
+person or failed, reporting what it found rather than what it hoped.
+The certificate is fetched before the hub moves: a hub moved behind
+`tailscale serve` without one is unreachable from every device (the TLS
+handshake hangs), while the hub it replaced, on the tailnet IP, worked.
+A fetch that worked is cached for a day and one that failed for a
+minute (`data/remote/setup-cert.json`), so polling the list stays
+quick; `--recheck` fetches again. Installing the LaunchAgent retries
+`launchctl bootstrap` when it fails with "Input/output error", which it
+does while launchd is still tearing the old job down.
+
 ### Behind `tailscale serve`
 
 `swe remote serve --public-url=https://box.tailnet.ts.net:8477` runs the
@@ -129,6 +159,7 @@ remote/
   agent.py       # satellite daemon: dial hub, run local tail/inject
   notify.py      # needs-you/finished/error fan-out via self-hosted ntfy
   launchd.py     # serve --install: the hub as a per-user LaunchAgent
+  setup.py       # swe remote setup: every step to a paired phone, --apply
   commands.py    # swe remote serve|agent|pair|attach|status — argv + print
 ```
 

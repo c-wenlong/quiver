@@ -102,6 +102,12 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--token=", "One-time pair token from swe remote pair"),
         ("--name=", "Device name recorded on pair"),
     ],
+    "remote setup": [
+        ("--apply", "Do every step Quiver can do itself"),
+        ("--recheck", "Fetch the certificate again instead of the cached result"),
+        ("--port=", "Hub port (default 8477)"),
+        ("--json", "Print the steps as JSON"),
+    ],
     "remote notify": [
         ("--ntfy=", "ntfy base URL (e.g. https://ntfy.example.com)"),
         ("--topic=", "ntfy topic to publish to"),
@@ -449,7 +455,7 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
         "serve": "remote serve", "pair": "remote pair",
         "status": "remote status", "devices": "remote devices",
         "attach": "remote attach", "agent": "remote agent",
-        "notify": "remote notify",
+        "notify": "remote notify", "setup": "remote setup",
     },
     "report": {
         "daily": "report", "weekly": "report", "followups": "report followups",
@@ -568,6 +574,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("devices", "List or revoke paired devices"),
         ("attach", "Move an observed session under supervision"),
         ("notify", "Configure ntfy push notifications"),
+        ("setup", "Check every step to a paired phone; --apply does Quiver's part"),
     ],
     "mcp": [
         ("discover", "Find MCP servers across tool configs"),

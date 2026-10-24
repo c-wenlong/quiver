@@ -24,6 +24,7 @@ import os
 import plistlib
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -93,9 +94,16 @@ def build_plist(program: list[str], log_path: Path, path_env: str) -> dict:
     }
 
 
+# bootstrap right after bootout can fail with "5: Input/output error"
+# while launchd is still tearing the old job down; it loads on a retry.
+BOOTSTRAP_TRIES = 4
+BOOTSTRAP_RETRY_S = 1.5
+
+
 def install(program: list[str], log_path: Path, path_env: str,
             home: Path | None = None,
-            run: Runner = subprocess.run) -> Path:
+            run: Runner = subprocess.run,
+            sleep: Callable[[float], None] = time.sleep) -> Path:
     """Write the plist and (re)load it. Reinstalling restarts the hub.
 
     Raises RuntimeError with launchctl's message when loading fails.
@@ -108,12 +116,16 @@ def install(program: list[str], log_path: Path, path_env: str,
     # a "not loaded" failure here is the normal first-install case.
     run(["launchctl", "bootout", f"{_domain()}/{LABEL}"],
         capture_output=True, text=True, stdin=subprocess.DEVNULL)
-    res = run(["launchctl", "bootstrap", _domain(), str(path)],
-              capture_output=True, text=True, stdin=subprocess.DEVNULL)
-    if res.returncode != 0:
+    for attempt in range(BOOTSTRAP_TRIES):
+        res = run(["launchctl", "bootstrap", _domain(), str(path)],
+                  capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        if res.returncode == 0:
+            return path
         msg = (res.stderr or res.stdout or "").strip()
-        raise RuntimeError(msg or f"launchctl bootstrap exited {res.returncode}")
-    return path
+        if "input/output error" not in msg.lower() or attempt == BOOTSTRAP_TRIES - 1:
+            break
+        sleep(BOOTSTRAP_RETRY_S)
+    raise RuntimeError(msg or f"launchctl bootstrap exited {res.returncode}")
 
 
 def uninstall(home: Path | None = None, run: Runner = subprocess.run) -> bool:

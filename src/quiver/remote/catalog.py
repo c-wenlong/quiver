@@ -182,7 +182,9 @@ def launch_command(harness: str) -> str | None:
 
 def tailscale_ip() -> str:
     """This machine's tailnet IPv4, or '' when Tailscale is absent."""
-    exe = shutil.which("tailscale")
+    from quiver.remote.tsid import tailscale_exe
+
+    exe = tailscale_exe()
     if not exe:
         return ""
     import subprocess

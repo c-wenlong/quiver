@@ -28,6 +28,7 @@ from quiver.paths import remote_dir_for
 from quiver.remote import agent as agent_mod
 from quiver.remote import catalog as catalog_mod
 from quiver.remote import launchd, notify, pairing, protocol, supervise, tail
+from quiver.remote import setup as setup_mod
 from quiver.remote.hub import (
     DEFAULT_PORT,
     HubState,
@@ -37,7 +38,7 @@ from quiver.remote.hub import (
 )
 
 _SUBCOMMANDS = {"serve", "pair", "status", "devices", "attach", "agent",
-                "notify"}
+                "notify", "setup"}
 
 _VALUE_FLAGS = {
     "--host", "--port", "--name", "--tail-days", "--revoke", "--mode",
@@ -45,13 +46,15 @@ _VALUE_FLAGS = {
     "--approve", "--deny", "--public-url",
 }
 _BOOL_FLAGS = {"--on", "--off", "--app", "--requests", "--install",
-               "--uninstall", "--tailnet"}
+               "--uninstall", "--tailnet", "--apply", "--recheck"}
 
 _USAGE = f"""\
   {c('cyan', 'swe remote serve [--host=H] [--port=N]')}   Run the hub (REST + SSE)
   {c('cyan', 'swe remote serve --public-url=URL')}      Run behind tailscale serve (binds 127.0.0.1)
   {c('cyan', 'swe remote serve --install | --uninstall')}
                                   Keep the hub running as a LaunchAgent
+  {c('cyan', 'swe remote setup [--apply] [--recheck] [--json]')}
+                                  Check every step to a paired phone; --apply does Quiver's part
   {c('cyan', 'swe remote agent --hub=URL [--token=T]')}   Satellite: dial out to the hub
   {c('cyan', 'swe remote pair [--name=N] [--host=H] [--port=N] [--app] [--json]')}
                                   Print a pairing URL + token for a phone
@@ -198,6 +201,34 @@ def _cmd_serve(flags: dict) -> int:
     return rc
 
 
+def hub_program(host: str, port: int | None, public_url: str) -> tuple[list[str], str | None]:
+    """The LaunchAgent's command line, or an error saying why it can't run.
+
+    It runs Quiver.app's bundled swe when the app is installed, else this
+    swe, unless that sits where macOS keeps launchd agents out. ``port``
+    is left off the command line when None (the default port).
+    """
+    bundled = launchd.bundled_swe()
+    swe = str(bundled) if bundled else os.path.abspath(sys.argv[0])
+    if not bundled:
+        if not os.access(swe, os.X_OK):
+            return [], (f"cannot find the swe executable ({sys.argv[0]}); "
+                        "run this as `swe remote serve --install`")
+        folder = launchd.protected_dir(swe)
+        if folder:
+            return [], (f"{swe} is in ~/{folder}, which macOS blocks a LaunchAgent "
+                        "from reading, so the hub would fail at every start. Install "
+                        "Quiver.app (app/script/install-app.sh) and run --install "
+                        "again: the agent then runs the app's bundled swe.")
+    program = [swe, "remote", "serve"]
+    program += [f"--host={host}"] if host else ["--tailnet"]
+    if port is not None and port != DEFAULT_PORT:
+        program.append(f"--port={port}")
+    if public_url:
+        program.append(f"--public-url={public_url}")
+    return program, None
+
+
 def _cmd_serve_launchd(flags: dict) -> int:
     if sys.platform != "darwin":
         print(c("red", "--install and --uninstall manage a macOS LaunchAgent; "
@@ -223,28 +254,10 @@ def _cmd_serve_launchd(flags: dict) -> int:
         return 1
     if public_url and not host:
         host = "127.0.0.1"
-    bundled = launchd.bundled_swe()
-    swe = str(bundled) if bundled else os.path.abspath(sys.argv[0])
-    if not bundled:
-        if not os.access(swe, os.X_OK):
-            print(c("red", f"cannot find the swe executable ({sys.argv[0]}); "
-                           "run this as `swe remote serve --install`"),
-                  file=sys.stderr)
-            return 1
-        folder = launchd.protected_dir(swe)
-        if folder:
-            print(c("red", f"{swe} is in ~/{folder}, which macOS blocks a LaunchAgent "
-                           "from reading, so the hub would fail at every start. Install "
-                           "Quiver.app (app/script/install-app.sh) and run --install "
-                           "again: the agent then runs the app's bundled swe."),
-                  file=sys.stderr)
-            return 1
-    program = [swe, "remote", "serve"]
-    program += [f"--host={host}"] if host else ["--tailnet"]
-    if flags.get("--port"):
-        program.append(f"--port={port}")
-    if public_url:
-        program.append(f"--public-url={public_url}")
+    program, err = hub_program(host, port if flags.get("--port") else None, public_url)
+    if err:
+        print(c("red", err), file=sys.stderr)
+        return 1
     # A hub started from a shell would keep the port, and launchd's copy
     # would fail to bind on every retry.
     probe_host = host or _tailscale_ip() or "127.0.0.1"
@@ -585,6 +598,55 @@ def _cmd_notify(flags: dict, json_view: bool) -> int:
     return 0
 
 
+_SETUP_MARK = {
+    setup_mod.OK: ("green", "✓"),
+    setup_mod.TODO: ("cyan", "○"),
+    setup_mod.NEEDS_YOU: ("yellow", "!"),
+    setup_mod.FAILED: ("red", "✗"),
+    setup_mod.BLOCKED: ("dim", "·"),
+}
+
+
+def _cmd_setup(flags: dict, json_view: bool) -> int:
+    """``swe remote setup``: every step from nothing to a paired phone."""
+    try:
+        port = int(flags["--port"]) if flags.get("--port") else None
+    except ValueError:
+        print(c("red", "--port must be a number"), file=error_stream(json_view))
+        return 1
+    if flags.get("--apply"):
+        say = (lambda _m: None) if json_view else (lambda m: print(c("dim", f"… {m}"), flush=True))
+        report = setup_mod.apply(port=port, log=say)
+    else:
+        report = setup_mod.evaluate(setup_mod.gather(
+            port=port, fetch_cert=bool(flags.get("--recheck")),
+            fresh_cert=bool(flags.get("--recheck"))))
+    if json_view:
+        return emit(report)
+    for step in report["steps"]:
+        color, mark = _SETUP_MARK.get(step["state"], ("dim", "?"))
+        line = f"  {c(color, mark)} {step['title']}"
+        if step["detail"]:
+            line += c("dim", f"  {step['detail']}")
+        print(line)
+        action = step.get("action") or {}
+        if step["state"] in {setup_mod.NEEDS_YOU, setup_mod.FAILED}:
+            if action.get("url"):
+                print(c("dim", f"      open {action['url']}"))
+            elif action.get("command"):
+                print(c("dim", f"      run  {action['command']}"))
+            elif action.get("kind") == "launch":
+                print(c("dim", f"      open the {action.get('app')} app"))
+            elif action.get("kind") == "pair":
+                print(c("dim", "      run  swe remote pair --app"))
+    if report["ready"]:
+        print(c("green", f"\nReady: phones reach this hub at {report['url']}"))
+        return 0
+    if any(s["state"] == setup_mod.TODO for s in report["steps"]):
+        print(c("dim", "\nRun `swe remote setup --apply` to do the steps marked ○."))
+    return 0 if not flags.get("--apply") else 1
+
+
 def cmd_remote(args: list[str]) -> int:
     try:
         sub, flags, rest, json_view = _parse_flags(list(args))
@@ -622,6 +684,11 @@ def cmd_remote(args: list[str]) -> int:
                   file=sys.stderr)
             return 1
         return _cmd_agent(flags)
+    if sub == "setup":
+        if rest:
+            print(c("red", f"unexpected args: {' '.join(rest)}"), file=sys.stderr)
+            return 1
+        return _cmd_setup(flags, json_view)
     if sub == "notify":
         if rest:
             print(c("red", f"unexpected args: {' '.join(rest)}"), file=sys.stderr)

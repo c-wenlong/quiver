@@ -529,8 +529,14 @@ class TestNotifyCmd(unittest.TestCase):
 
 class TestTailscaleIp(unittest.TestCase):
     def test_no_binary(self):
+        from pathlib import Path
+
+        from quiver.remote import tsid
+
+        # Neither on PATH nor inside Tailscale.app.
         with patch.object(commands.catalog_mod.shutil, "which",
-                          return_value=None):
+                          return_value=None), \
+             patch.object(tsid, "_APPSTORE_EXE", Path("/nonexistent/Tailscale")):
             self.assertEqual(commands.catalog_mod.tailscale_ip(), "")
 
     def test_first_ipv4_line(self):
