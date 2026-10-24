@@ -320,22 +320,6 @@ function bindSkillsHeader() {
 
 /* ---------------------------------------------------------------- writes */
 
-async function skillsPost(action, body) {
-  let resp;
-  try {
-    resp = await fetch(`/v1/app/skills/${action}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${credential()}`, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  } catch {
-    return { status: 0, data: null };
-  }
-  let data = null;
-  try { data = await resp.json(); } catch { /* empty body */ }
-  return { status: resp.status, data };
-}
-
 const skillsOnRoute = () => /^#\/skills(\?|$)/.test(location.hash);
 const skillsRoutePath = () => new URLSearchParams(location.hash.split("?")[1] || "").get("skill");
 
@@ -368,7 +352,7 @@ async function skillsWrite(c) {
   p.actionError = null;
   for (const x of paths) p.busy.add(x);
   skillsRepaint();
-  const { status, data } = await skillsPost(action, body);
+  const { status, data } = await apiPost(`/v1/app/skills/${action}`, body);
   for (const x of paths) p.busy.delete(x);
   if (status === 401) {
     if (skillsOnRoute()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");

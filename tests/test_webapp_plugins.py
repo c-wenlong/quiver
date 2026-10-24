@@ -1,7 +1,11 @@
 """The Plugins page: Health (drift) and Explore (the catalog as the app
-places it), each cached for a short while, and the route with auth."""
+places it), each cached for a short while, Health's Fix and Fix all, and
+the routes with auth. Every harness CLI call a fix makes goes to a fake
+runner that records it and makes the change it would have made."""
 
 import json
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -11,11 +15,11 @@ from quiver.webapp.pages import plugins as page
 
 try:  # `unittest discover -s tests` puts tests/ itself on sys.path
     from test_plugin_catalog import _CatalogHome
-    from test_plugin_drift import _write
+    from test_plugin_drift import _codex_copy, _FakeHome, _write
     from test_remote_hub import HubBase
 except ImportError:  # `python -m unittest tests.test_webapp_plugins`
     from tests.test_plugin_catalog import _CatalogHome
-    from tests.test_plugin_drift import _write
+    from tests.test_plugin_drift import _codex_copy, _FakeHome, _write
     from tests.test_remote_hub import HubBase
 
 
@@ -211,6 +215,290 @@ class TestRoute(HubBase):
         self.assertEqual(status, 200)
         self.assertIn(b'registerPage("plugins"', body)
         self.assertIn(b".pl-market", self.srv.request("GET", "/app/pages.css")[1])
+
+
+# ---------------------------------------------------------------- Fixes
+
+
+class _Runner:
+    """Stands in for subprocess.run: records each argv and the HOME it ran
+    under, and for the commands it knows makes the change the harness CLI
+    would, on the fake home. ``fail`` names an argv[0:3] to fail."""
+
+    def __init__(self, fake, fail=None, also=None):
+        self.fake, self.fail, self.also = fake, fail, also
+        self.calls, self.homes = [], []
+
+    def __call__(self, argv, **kw):
+        self.calls.append(list(argv))
+        self.homes.append(kw["env"]["HOME"])
+        if self.fail and tuple(argv[:3]) == self.fail:
+            return subprocess.CompletedProcess(argv, 1, "", "Error: marketplace is busy\n")
+        f = self.fake
+        if argv[:3] == ["claude", "plugin", "install"]:
+            f.installed["plugins"]["tool@mk"] = [
+                {"scope": "user", "installPath": str(f.claude_copy), "version": "1.0.0"}]
+            f._write_claude()
+        elif argv[:4] == ["claude", "plugin", "marketplace", "add"]:
+            f.known = {"mk": {"source": {"source": "directory", "path": argv[4]},
+                              "installLocation": argv[4]}}
+            f._write_claude()
+        elif argv[:4] == ["codex", "plugin", "marketplace", "add"]:
+            f._write_codex(register=True)
+        elif argv[:3] == ["codex", "plugin", "add"]:
+            _codex_copy(f.plugin, f.codex_copy)
+        if self.also:
+            self.also()
+        return subprocess.CompletedProcess(argv, 0, "ok\n", "")
+
+
+class _Ctx:
+    machine = {"name": "box"}
+
+
+class TestFix(_FakeHome, unittest.TestCase):
+    """post() against a real temp HOME: _FakeHome's marketplace ``mk`` with
+    plugin ``tool`` installed in claude and codex, broken per test."""
+
+    def setUp(self):
+        super().setUp()
+        page.clear_cache()
+        self.addCleanup(page.clear_cache)
+        self.ctx = PageContext(home=self.home, state=_Ctx())
+
+    def run_with(self, runner, action, body):
+        with patch.object(page, "_run", runner):
+            return page.post(self.ctx, action, body)
+
+    def refused(self, action, body, runner=None):
+        runner = runner or _Runner(self)
+        with self.assertRaises(PageError) as raised:
+            self.run_with(runner, action, body)
+        self.assertEqual(runner.calls, [], "a refusal must run nothing")
+        return raised.exception
+
+    def uninstall_claude(self):
+        self.installed["plugins"] = {}
+        self._write_claude()
+        return "claude:not-installed:tool@mk"
+
+    def unregister_codex(self):
+        self._write_codex(register=False)
+        return f"codex:unregistered:{self.market}"
+
+    def test_fix_runs_the_findings_commands_and_answers_the_fresh_view(self):
+        fid = self.uninstall_claude()
+        runner = _Runner(self)
+        body = self.run_with(runner, "fix", {"id": fid})
+        self.assertEqual(runner.calls, [["claude", "plugin", "install", "tool@mk"]])
+        # The harness CLI acts on the hub's home, not the caller's shell.
+        self.assertEqual(runner.homes, [str(self.home)])
+        self.assertEqual(body["action"], "fix")
+        self.assertEqual(body["ran"], 1)
+        [result] = body["results"]
+        self.assertEqual((result["id"], result["status"], result["error"]), (fid, "fixed", None))
+        # FixedDrift's "fixed": the finding as swe find plugins --json lists it.
+        self.assertEqual(result["fixed"]["fix"], "claude plugin install tool@mk")
+        self.assertTrue(result["fixed"]["runnable"])
+        health = body["health"]
+        self.assertEqual((health["view"], health["machine"], health["drift"]), ("health", "box", []))
+        self.assertIsInstance(health["built_at"], float)
+
+    def test_a_fix_drops_both_cached_views(self):
+        fid = self.uninstall_claude()
+        old = page.cached("health", self.home)
+        self.assertEqual([f["id"] for f in old[0]["drift"]], [fid])
+        page._cache[("explore", str(self.home))] = ({"old": True}, old[1])
+        self.run_with(_Runner(self), "fix", {"id": fid})
+        self.assertNotIn(("explore", str(self.home)), page._cache)
+        # The next GET reads the fixed state, not the 60 s old one.
+        body = page.get(self.ctx, {})
+        self.assertEqual(body["drift"], [])
+
+    def test_a_failed_command_is_reported_with_the_fresh_view(self):
+        fid = self.uninstall_claude()
+        runner = _Runner(self, fail=("claude", "plugin", "install"))
+        body = self.run_with(runner, "fix", {"id": fid})
+        [result] = body["results"]
+        self.assertEqual(result["status"], "failed")
+        self.assertIsNone(result["fixed"])
+        self.assertIn("claude plugin install tool@mk failed: Error: marketplace is busy", result["error"])
+        self.assertEqual(body["ran"], 0)
+        self.assertEqual([f["id"] for f in body["health"]["drift"]], [fid])
+
+    def test_a_harness_cli_missing_from_path_is_a_failed_result(self):
+        fid = self.uninstall_claude()
+
+        def missing(argv, **kw):
+            raise FileNotFoundError(argv[0])
+
+        body = self.run_with(missing, "fix", {"id": fid})
+        self.assertEqual(body["results"][0]["error"], "claude is not on PATH")
+
+    def test_fix_all_runs_in_report_order_one_at_a_time(self):
+        claude = self.uninstall_claude()
+        codex = self.unregister_codex()
+        runner = _Runner(self)
+        # The page sends what its confirmation listed; report order wins.
+        body = self.run_with(runner, "fix_all", {"ids": [codex, claude]})
+        self.assertEqual(runner.calls, [["claude", "plugin", "install", "tool@mk"],
+                                        ["codex", "plugin", "marketplace", "add", str(self.market)]])
+        self.assertEqual([(r["id"], r["status"]) for r in body["results"]],
+                         [(claude, "fixed"), (codex, "fixed")])
+        self.assertEqual((body["action"], body["ran"], body["health"]["drift"]), ("fix_all", 2, []))
+
+    def test_fix_all_skips_one_an_earlier_fix_cleared(self):
+        claude = self.uninstall_claude()
+        codex = self.unregister_codex()
+        # Installing in claude happens to register codex too.
+        runner = _Runner(self, also=lambda: self._write_codex(register=True))
+        body = self.run_with(runner, "fix_all", {"ids": [claude, codex]})
+        self.assertEqual(len(runner.calls), 1)
+        self.assertEqual([(r["id"], r["status"]) for r in body["results"]],
+                         [(claude, "fixed"), (codex, "gone")])
+        self.assertEqual(body["ran"], 1)
+
+    def test_fix_all_stops_at_the_first_failure(self):
+        claude = self.uninstall_claude()
+        codex = self.unregister_codex()
+        runner = _Runner(self, fail=("claude", "plugin", "install"))
+        body = self.run_with(runner, "fix_all", {"ids": [claude, codex]})
+        self.assertEqual(runner.calls, [["claude", "plugin", "install", "tool@mk"]])
+        self.assertEqual([(r["id"], r["status"]) for r in body["results"]],
+                         [(claude, "failed"), (codex, "not-run")])
+        self.assertEqual({f["id"] for f in body["health"]["drift"]}, {claude, codex})
+
+    def test_fix_all_never_runs_a_finding_a_fix_exposed(self):
+        # Codex has neither the marketplace nor the copy: registering it
+        # reveals "not installed", which waits for its own confirmation.
+        shutil.rmtree(self.codex_copy.parent)
+        codex = self.unregister_codex()
+        runner = _Runner(self)
+        body = self.run_with(runner, "fix_all", {"ids": [codex]})
+        self.assertEqual(runner.calls, [["codex", "plugin", "marketplace", "add", str(self.market)]])
+        self.assertEqual([f["id"] for f in body["health"]["drift"]], ["codex:not-installed:tool@mk"])
+
+    def test_only_ids_health_lists_now_are_accepted(self):
+        self.uninstall_claude()
+        error = self.refused("fix", {"id": "claude:stale:tool@mk"})
+        self.assertEqual((error.status, error.code), (404, "unknown_finding"))
+        # No command from the client is ever taken, whatever it looks like.
+        error = self.refused("fix", {"id": "claude plugin install tool@mk; rm -rf ~"})
+        self.assertEqual(error.status, 404)
+        error = self.refused("fix_all", {"ids": ["claude:not-installed:tool@mk", "codex:stale:tool@mk"]})
+        self.assertEqual((error.status, error.code), (404, "unknown_finding"))
+
+    def test_a_hand_edit_is_refused(self):
+        self.codex_enabled = "false"
+        self._write_codex()
+        error = self.refused("fix", {"id": "codex:disabled-here:tool@mk"})
+        self.assertEqual((error.status, error.code), (422, "not_runnable"))
+        self.assertIn("enabled = true", error.message)
+
+    def test_bad_bodies_are_refused(self):
+        fid = self.uninstall_claude()
+        for action, body in (
+            ("fix", {}), ("fix", {"id": 3}), ("fix", {"id": ""}), ("fix", {"id": "x" * 5000}),
+            ("fix", {"ids": [fid]}),
+            ("fix_all", {}), ("fix_all", {"ids": []}), ("fix_all", {"ids": fid}),
+            ("fix_all", {"ids": [fid, fid]}), ("fix_all", {"ids": [fid, None]}),
+            ("fix_all", {"ids": [f"{fid}{i}" for i in range(page.IDS_MAX + 1)]}),
+        ):
+            error = self.refused(action, body)
+            self.assertEqual(error.status, 422, (action, body))
+        self.assertEqual(self.refused("fix", ["not", "an", "object"]).status, 422)
+
+    def test_unknown_actions_are_refused(self):
+        fid = self.uninstall_claude()
+        for action in ("install", "enable", "add_marketplace", "FIX", ""):
+            error = self.refused(action, {"id": fid})
+            self.assertEqual((error.status, error.code), (404, "unknown_action"))
+
+    def test_one_fix_at_a_time(self):
+        fid = self.uninstall_claude()
+        page._WRITE_LOCK.acquire()
+        try:
+            error = self.refused("fix", {"id": fid})
+        finally:
+            page._WRITE_LOCK.release()
+        self.assertEqual((error.status, error.code), (409, "busy"))
+        # Free again once the other fix is done.
+        self.assertEqual(self.run_with(_Runner(self), "fix", {"id": fid})["ran"], 1)
+
+
+class _Fixture(_FakeHome, unittest.TestCase):
+    def runTest(self):
+        pass
+
+
+class TestFixRoute(HubBase):
+    """POST /v1/app/plugins/<action> through the hub, on a _FakeHome laid
+    out in the hub's own home."""
+
+    def setUp(self):
+        super().setUp()
+        page.clear_cache()
+        self.addCleanup(page.clear_cache)
+        self.fake = _Fixture()
+        self.addCleanup(self.fake.doCleanups)
+        with patch("tempfile.mkdtemp", return_value=str(self.srv.home)):
+            self.fake.setUp()
+        self.fake.installed["plugins"] = {}
+        self.fake._write_claude()
+        self.fid = "claude:not-installed:tool@mk"
+        self.runner = _Runner(self.fake)
+        patcher = patch.object(page, "_run", self.runner)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def origin(self):
+        return f"http://127.0.0.1:{self.srv.port}"
+
+    def test_needs_a_device(self):
+        status, _ = self.srv.request("POST", "/v1/app/plugins/fix", body={"id": self.fid})
+        self.assertEqual(status, 401)
+        self.assertEqual(self.runner.calls, [])
+
+    def test_a_cross_site_origin_is_refused(self):
+        status, data = self.srv.request("POST", "/v1/app/plugins/fix", body={"id": self.fid},
+                                        headers={**self.auth(), "Origin": "https://evil.example"})
+        self.assertEqual(status, 403)
+        self.assertIn("bad_origin", data.decode())
+        self.assertEqual(self.runner.calls, [])
+
+    def test_fix_through_the_hub(self):
+        auth = self.auth()
+        _, data = self.srv.request("GET", "/v1/app/plugins", headers=auth)
+        self.assertEqual([f["id"] for f in json.loads(data)["drift"]], [self.fid])
+        status, data = self.srv.request("POST", "/v1/app/plugins/fix", body={"id": self.fid},
+                                        headers={**auth, "Origin": self.origin()})
+        self.assertEqual(status, 200, data)
+        body = json.loads(data)
+        self.assertEqual(body["results"][0]["status"], "fixed")
+        self.assertEqual(body["health"]["drift"], [])
+        self.assertEqual(self.runner.calls, [["claude", "plugin", "install", "tool@mk"]])
+        # The read route sees the change at once, cache or not.
+        _, data = self.srv.request("GET", "/v1/app/plugins", headers=auth)
+        self.assertEqual(json.loads(data)["drift"], [])
+
+    def test_fix_all_through_the_hub(self):
+        status, data = self.srv.request("POST", "/v1/app/plugins/fix_all", body={"ids": [self.fid]},
+                                        headers=self.auth())
+        self.assertEqual(status, 200, data)
+        self.assertEqual(json.loads(data)["ran"], 1)
+
+    def test_refusals_carry_their_status(self):
+        auth = self.auth()
+        for action, body, want in (
+            ("fix", {"id": "claude:stale:tool@mk"}, 404),
+            ("fix", {"id": 7}, 422),
+            ("fix_all", {"ids": []}, 422),
+            ("install", {"id": self.fid}, 404),
+        ):
+            status, data = self.srv.request("POST", f"/v1/app/plugins/{action}", body=body, headers=auth)
+            self.assertEqual(status, want, (action, data))
+            self.assertIn("message", json.loads(data)["error"])
+        self.assertEqual(self.runner.calls, [])
 
 
 if __name__ == "__main__":
