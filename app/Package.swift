@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .executable(name: "Quiver", targets: ["QuiverApp"]),
         .executable(name: "QuiverWidgets", targets: ["QuiverWidgets"]),
+        .executable(name: "QuiverFanHelper", targets: ["QuiverFanHelper"]),
     ],
     dependencies: [
         // In-app updates. Pinned exactly: this framework ships signed inside
@@ -44,6 +45,10 @@ let package = Package(
             dependencies: ["QuiverCore", "QuiverWidgetsUI"],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain"])]
         ),
+        // The root fan helper the fan popover installs. Its own executable
+        // with QuiverCore only: it runs from /Library/PrivilegedHelperTools,
+        // where the app's Sparkle rpath finds nothing.
+        .executableTarget(name: "QuiverFanHelper", dependencies: ["QuiverCore"]),
         .testTarget(
             name: "QuiverCoreTests",
             dependencies: ["QuiverCore"],
