@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Session search without the Mac app: `swe session index`.** swe now
+  writes the transcript search index itself, the same
+  `~/.quiver/data/search/search.sqlite` file and schema the Quiver app
+  writes, so `swe session --search` and the remote hub's `/v1/search`
+  match what was said in Claude Code and Codex sessions on a Linux hub
+  too. `swe session index` runs one pass; `--on` makes the hub keep the
+  index current every two minutes, `--off` stops it, and `--status`
+  shows what it holds. On a Mac both can write the one file: every
+  commit is fenced on the transcript's row, so neither duplicates or
+  undoes the other, and swe never touches an index at another schema
+  version.
+
 - **Remote: `swe remote serve --install` on Linux.** It writes a
   systemd user unit (`~/.config/systemd/user/quiver-remote-hub.service`)
   that starts the hub at boot and restarts it 15 s after it exits, the
