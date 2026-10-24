@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: set your own model prices.** A Pricing row opens the Mac
+  app's price form: price applies to, input, output and cache rates per
+  1M tokens, Save, and Remove your price on a row priced by you. It writes
+  `~/.quiver/config/pricing.json` on the hub, in the app's shape, and the
+  page reprices at once. The footer and the unpriced help used to say to
+  set prices in the Mac app.
+
 - **Web app: New skill.** The Skills page has a New skill button (and one
   in the empty list, which used to name `swe skills new <name>`). It opens
   the Mac app's form, name and description, and writes
