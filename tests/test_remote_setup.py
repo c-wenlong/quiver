@@ -3,9 +3,12 @@
 import contextlib
 import io
 import json
+import plistlib
 import subprocess
 import tempfile
+import time
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -287,22 +290,22 @@ class CertCheckTest(unittest.TestCase):
         self.home = Path(tempfile.mkdtemp())
         self.runs = []
 
-    def run(self, rc, err=""):
+    def tailscale(self, rc, err=""):
         def fake(argv, **_kw):
             self.runs.append(argv)
             return subprocess.CompletedProcess(argv, rc, stdout="", stderr=err)
         return fake
 
     def test_a_good_fetch_is_cached_for_a_day(self):
-        ok = setup.check_cert("/ts", NAME, self.home, self.run(0), now=1000)
+        ok = setup.check_cert("/ts", NAME, self.home, self.tailscale(0), now=1000)
         self.assertEqual(ok, (True, ""))
         self.assertEqual(self.runs[0][:2], ["/ts", "cert"])
         self.assertEqual(self.runs[0][-1], NAME)
-        setup.check_cert("/ts", NAME, self.home, self.run(0), now=1000 + 3600)
+        setup.check_cert("/ts", NAME, self.home, self.tailscale(0), now=1000 + 3600)
         self.assertEqual(len(self.runs), 1, "served from the cache")
 
     def test_a_failure_is_retried_after_a_minute(self):
-        fail = self.run(1, "lookup acme: i/o timeout")
+        fail = self.tailscale(1, "lookup acme: i/o timeout")
         self.assertEqual(setup.check_cert("/ts", NAME, self.home, fail, now=1000)[0], False)
         setup.check_cert("/ts", NAME, self.home, fail, now=1030)
         self.assertEqual(len(self.runs), 1)
@@ -310,10 +313,32 @@ class CertCheckTest(unittest.TestCase):
         self.assertEqual(len(self.runs), 2)
 
     def test_recheck_skips_the_cache(self):
-        setup.check_cert("/ts", NAME, self.home, self.run(0), now=1000)
-        setup.check_cert("/ts", NAME, self.home, self.run(0), now=1001, fresh=True)
+        setup.check_cert("/ts", NAME, self.home, self.tailscale(0), now=1000)
+        setup.check_cert("/ts", NAME, self.home, self.tailscale(0), now=1001, fresh=True)
         self.assertEqual(len(self.runs), 2)
 
+
+    def test_a_tailscale_that_cannot_run_is_a_failure(self):
+        def broken(argv, **_kw):
+            raise subprocess.TimeoutExpired(argv, 30)
+
+        ok, err = setup.check_cert("/ts", NAME, self.home, broken, now=1000)
+        self.assertFalse(ok)
+        self.assertIn("timed out", err)
+
+    def test_the_cache_is_read_for_status_only_while_fresh(self):
+        self.assertIsNone(setup._cached_cert(self.home, NAME))
+        setup.check_cert("/ts", NAME, self.home, self.tailscale(0), now=time.time())
+        self.assertEqual(setup._cached_cert(self.home, NAME), (True, ""))
+        self.assertIsNone(setup._cached_cert(self.home, "other.ts.net"))
+        setup.check_cert("/ts", NAME, self.home, self.tailscale(1, "no"), now=time.time() - 3600, fresh=True)
+        self.assertIsNone(setup._cached_cert(self.home, NAME), "a failure an hour old is stale")
+
+    def test_advice_names_the_cause(self):
+        self.assertIn("DNS server", setup.cert_advice("lookup acme-v02: i/o timeout"))
+        self.assertIn("HTTPS certificates are off", setup.cert_advice("your tailnet does not have HTTPS enabled; not enabled"))
+        self.assertEqual(setup.cert_advice(""), "Tailscale couldn't get a certificate: unknown error")
+        self.assertEqual(setup.cert_advice("a\nboom"), "Tailscale couldn't get a certificate: boom")
 
 class GatherTest(unittest.TestCase):
     """gather reads tailscale, the service, the hub and devices.json."""
@@ -420,6 +445,73 @@ class DefaultActionsTest(unittest.TestCase):
              patch.object(setup.launchd, "install", side_effect=RuntimeError("EIO")):
             err = setup.default_actions(Path(tempfile.mkdtemp())).install_hub(URL, 8477)
         self.assertIn("EIO", err)
+
+
+class HelpersTest(unittest.TestCase):
+    def test_run_json_reports_each_failure(self):
+        def raises(argv, **_kw):
+            raise OSError("no such file")
+
+        def code(rc, out):
+            return lambda argv, **_kw: subprocess.CompletedProcess(argv, rc, stdout=out, stderr="bad")
+
+        self.assertEqual(setup._run_json(raises, ["ts"]), (None, "no such file"))
+        self.assertEqual(setup._run_json(code(1, ""), ["ts"]), (None, "bad"))
+        self.assertEqual(setup._run_json(code(0, "{nope"), ["ts"]), (None, "unreadable JSON"))
+        self.assertEqual(setup._run_json(code(0, "[]"), ["ts"]), (None, ""))
+
+    def test_get_says_why_it_failed(self):
+        from quiver.remote import agent
+
+        def refuse(req, timeout):
+            raise urllib.error.URLError("connection refused")
+
+        with patch.object(agent, "_urlopen", refuse):
+            self.assertEqual(setup._get("http://127.0.0.1:1/v1/status", 1), (False, "connection refused"))
+
+    def test_agent_reads_the_plist_and_launchd(self):
+        home = Path(tempfile.mkdtemp())
+        self.assertEqual(setup._agent(home, run=lambda *a, **k: self.fail("no plist")), (None, False))
+        path = setup.launchd.plist_path(home)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(plistlib.dumps({"ProgramArguments": GOOD_ARGS}))
+        with patch.object(setup.launchd, "loaded_pid", return_value=(True, 42)):
+            self.assertEqual(setup._agent(home, run=None), (GOOD_ARGS, True))
+
+    def test_state_survives_a_bad_file(self):
+        home = Path(tempfile.mkdtemp())
+        self.assertEqual(setup.load_state(home), {})
+        setup._state_file(home).parent.mkdir(parents=True, exist_ok=True)
+        setup._state_file(home).write_text("[1]")
+        self.assertEqual(setup.load_state(home), {})
+
+    def test_serve_fix_only_for_a_permission_error(self):
+        self.assertIsNone(setup.serve_fix("listener already in use"))
+        self.assertEqual(setup.serve_fix("Access denied")["command"], "sudo tailscale set --operator=$USER")
+
+
+class DefaultActionsMoreTest(unittest.TestCase):
+    def test_a_program_that_cannot_be_built_is_reported(self):
+        with patch.object(commands, "hub_program", return_value=(None, "swe isn't installed")):
+            err = setup.default_actions(Path(tempfile.mkdtemp())).install_hub(URL, 8477)
+        self.assertEqual(err, "swe isn't installed")
+
+    def test_serve_that_cannot_run_or_says_nothing(self):
+        def raises(argv, **_kw):
+            raise OSError("not found")
+
+        acts = setup.default_actions(Path(tempfile.mkdtemp()), run=raises)
+        self.assertEqual(acts.start_serve("/ts", 8477), "not found")
+        quiet = setup.default_actions(Path(tempfile.mkdtemp()),
+                                      run=lambda argv, **_kw: subprocess.CompletedProcess(argv, 3, "", ""))
+        self.assertEqual(quiet.start_serve("/ts", 8477), "tailscale serve exited 3")
+
+    def test_wait_hub_polls_until_the_hub_answers(self):
+        answers = iter([(False, "down"), (True, "")])
+        with patch.object(setup, "_get", lambda url, t: next(answers)), patch.object(setup.time, "sleep"):
+            self.assertTrue(setup.default_actions(Path(tempfile.mkdtemp())).wait_hub(8477))
+        with patch.object(setup, "_get", lambda url, t: (False, "down")), patch.object(setup.time, "sleep"):
+            self.assertFalse(setup.default_actions(Path(tempfile.mkdtemp())).wait_hub(8477))
 
 
 class CommandTest(unittest.TestCase):
