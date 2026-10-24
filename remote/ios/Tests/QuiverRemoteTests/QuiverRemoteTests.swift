@@ -356,6 +356,51 @@ final class ChatModelTests: XCTestCase {
         XCTAssertFalse(chat.working)
     }
 
+    /// Holds the reveal's pauses until the test lets them go.
+    private final class Gate {
+        var waits: [Duration] = []
+        private var held: [CheckedContinuation<Void, Never>] = []
+        func pause(_ d: Duration) async {
+            waits.append(d)
+            await withCheckedContinuation { held.append($0) }
+        }
+        func release() { held.forEach { $0.resume() }; held = [] }
+    }
+
+    private func settle(_ until: () -> Bool) async {
+        for _ in 0..<200 where !until() { await Task.yield() }
+    }
+
+    func testAnEventJustAfterOneWasShownStillWaitsItsTurn() async {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let gate = Gate()
+        chat.pause = gate.pause
+        chat.enqueue(say(1))
+        await settle { chat.items.count == 1 }
+        XCTAssertTrue(gate.waits.isEmpty)
+        // The queue is empty again when the next event arrives.
+        chat.enqueue(say(2))
+        await settle { !gate.waits.isEmpty }
+        XCTAssertEqual(chat.items.count, 1)
+        XCTAssertGreaterThan(gate.waits.first ?? .zero, .zero)
+        gate.release()
+        await settle { chat.items.count == 2 }
+        XCTAssertEqual(chat.items.map(\.id), ["m1", "m2"])
+    }
+
+    func testAResultJustAfterItsCallLandsWithoutWaiting() async {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let gate = Gate()
+        chat.pause = gate.pause
+        chat.enqueue(env(#"{"type":"message.appended","seq":1,"data":{"kind":"tool_use","text":"","tool":{"name":"Bash","call_id":"t1","args_summary":"Bash · ls"}}}"#))
+        await settle { chat.items.count == 1 }
+        chat.enqueue(env(#"{"type":"message.appended","seq":2,"data":{"kind":"tool_result","text":"a.txt","result_ref":"t1"}}"#))
+        await settle { if case .tool(_, "a.txt"?) = chat.items.first?.kind { true } else { false } }
+        guard case .tool(_, let result) = chat.items.first?.kind else { return XCTFail("expected the call") }
+        XCTAssertEqual(result, "a.txt")
+        XCTAssertTrue(gate.waits.isEmpty)
+    }
+
     func testAReplayAfterReconnectingLandsAtOnce() async throws {
         let chat = ChatModel(key: "claude:1", app: AppModel())
         for seq in 1...30 { chat.enqueue(say(seq)) }
