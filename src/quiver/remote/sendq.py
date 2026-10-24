@@ -218,6 +218,22 @@ class Waiting:
                 return send, ""
             return None, self._gone.get((key, client_id), "unknown")
 
+    def update(
+        self, key: str, client_id: str, change: Callable[[QueuedSend], None]
+    ) -> tuple[QueuedSend | None, str]:
+        """Run ``change`` on the waiting send named ``client_id``.
+
+        It runs under the lock, so it lands before the send's job claims
+        it to inject, or not at all. Returns ``(send, "")``, else
+        ``(None, why)`` like ``take``.
+        """
+        with self._lock:
+            send = self._by_key.get(key, {}).get(client_id)
+            if send is not None and send.state == "waiting":
+                change(send)
+                return send, ""
+            return None, self._gone.get((key, client_id), "unknown")
+
     def wake_all(self) -> None:
         """Cut every waiting job's poll short (the hub is stopping)."""
         with self._lock:
