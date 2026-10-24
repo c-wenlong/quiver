@@ -92,8 +92,9 @@ badge.
 - Stop shows a refusal instead of ignoring it, and an answered approval
   says what was decided.
 - A reconnect that finds the hub's journal trimmed past where the view
-  stopped (`journal.truncated`) adds a notice to reopen the chat, where
-  the PWA carries on as if nothing were missing.
+  stopped (`journal.truncated`) adds a notice that some events were
+  missed and are gone from the journal, where the PWA carries on as if
+  nothing were missing.
 - Not ported: the PWA has no attachments, waiting-sends tray, slash
   commands or "load earlier" either, so neither does this (the hub's
   `queue` and `attachments` routes are unused here). Starting a new
