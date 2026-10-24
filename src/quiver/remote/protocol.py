@@ -230,7 +230,8 @@ def parse_queue_action(body: dict) -> dict:
     ):
         raise ValueError("queue.client_id must be 1-64 chars of [A-Za-z0-9_-]")
     op = body.get("op")
-    if op not in QUEUE_OPS:
+    # A list or object op is unhashable: check the type before ``in``.
+    if not isinstance(op, str) or op not in QUEUE_OPS:
         raise ValueError(f"queue.op must be one of {sorted(QUEUE_OPS)}")
     return {"client_id": client_id, "op": op}
 

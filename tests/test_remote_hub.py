@@ -1567,6 +1567,11 @@ class TestQueuedSends(unittest.TestCase):
             {"client_id": "bad id!", "op": "cancel"},
             {"client_id": "x" * 65, "op": "cancel"},
             {"op": "cancel"},
+            # Unhashable values must 422, not drop the connection.
+            {"client_id": "q-1", "op": []},
+            {"client_id": "q-1", "op": {}},
+            {"client_id": ["q-1"], "op": "cancel"},
+            {"client_id": {}, "op": "cancel"},
         ):
             status, data = self.srv.request(
                 "POST", f"/v1/sessions/{self.key}/queue",
@@ -1576,6 +1581,28 @@ class TestQueuedSends(unittest.TestCase):
             self.assertEqual(
                 json.loads(data)["error"]["code"], "bad_command"
             )
+
+    def test_removed_and_steered_sends_free_their_backlog_slots(self):
+        from quiver.remote import hub as hub_mod
+        with patch.object(hub_mod, "MAX_SEND_BACKLOG", 4):
+            for i in range(4):
+                self.assertEqual(self._send(f"m{i}", f"q-{i}")[0], 202)
+            status, data = self._send("full", "q-full")
+            self.assertEqual(status, 429, data)
+            # q-0's job is parked polling; q-1..q-3 sit behind it.
+            self.assertEqual(self._act("q-1", "cancel")[0], 200)
+            self.assertEqual(self._act("q-2", "cancel")[0], 200)
+            self.assertEqual(self._act("q-3", "steer")[0], 200)
+            for _ in range(3):
+                self._result()
+            for i in range(4, 7):
+                status, data = self._send(f"m{i}", f"q-{i}")
+                self.assertEqual(status, 202, data)
+            self.assertEqual(self._send("full", "q-full")[0], 429)
+        self.assertEqual(
+            [s["client_id"] for s in self._list()],
+            ["q-0", "q-4", "q-5", "q-6"],
+        )
 
     def test_duplicate_client_id_while_waiting_is_409(self):
         self.assertEqual(self._send("one", "q-1")[0], 202)

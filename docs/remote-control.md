@@ -247,7 +247,8 @@ steers already queued for that session; it then degrades and reports
 exactly like a steer message, and needs the session attached (`409
 not_attached`). `cancel` drops it and emits its `command.result` with
 `ok: false`, `note: "removed before sending"` and `cancelled: true`.
-Both answer `200 {ok, client_id, op}`. A send leaves the waiting state
+Both answer `200 {ok, client_id, op}`. Either frees the send's slot in the
+session's 20-send backlog at once. A send leaves the waiting state
 exactly once, under a lock, and whoever moves it reports it: the job
 (to inject, or to fail it on timeout or restart) or this route. So a
 cancel racing the job's start either wins, and nothing is sent, or

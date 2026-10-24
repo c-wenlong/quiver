@@ -20,7 +20,14 @@ import time
 from collections import OrderedDict
 from typing import Callable
 
-Job = tuple[Callable[[], None], Callable[[], None]]
+# (run, cancel, alive): ``alive`` False means the job will do nothing
+# when it runs (its send was steered or removed), so it no longer holds
+# a backlog slot.
+Job = tuple[Callable[[], None], Callable[[], None], Callable[[], bool]]
+
+
+def _always() -> bool:
+    return True
 
 
 class SendQueue:
@@ -38,11 +45,13 @@ class SendQueue:
         key: str,
         run: Callable[[], None],
         cancel: Callable[[], None],
+        alive: Callable[[], bool] | None = None,
     ) -> None:
         start = False
         with self._lock:
             if not self._closed:
-                self._queues.setdefault(key, []).append((run, cancel))
+                self._queues.setdefault(key, []).append(
+                    (run, cancel, alive or _always))
                 self._running[key] = self._running.get(key, 0) + 1
                 if key not in self._working:
                     self._working.add(key)
@@ -58,9 +67,13 @@ class SendQueue:
             ).start()
 
     def pending(self, key: str) -> int:
-        """Queued plus in-flight jobs for ``key``."""
+        """Queued plus in-flight jobs for ``key``, minus dead queued ones."""
         with self._lock:
-            return self._running.get(key, 0)
+            dead = sum(
+                1 for _run, _cancel, alive in self._queues.get(key, ())
+                if not alive()
+            )
+            return self._running.get(key, 0) - dead
 
     def close(self) -> None:
         """Cancel every not-yet-started job; refuse later submits."""
@@ -75,7 +88,7 @@ class SendQueue:
                 else:
                     self._running.pop(key, None)
             self._queues.clear()
-        for _run, cancel in jobs:
+        for _run, cancel, _alive in jobs:
             cancel()
 
     def _drain(self, key: str) -> None:
@@ -86,7 +99,7 @@ class SendQueue:
                     self._queues.pop(key, None)
                     self._working.discard(key)
                     return
-                run, _cancel = jobs.pop(0)
+                run, _cancel, _alive = jobs.pop(0)
             try:
                 run()
             except Exception:
@@ -131,6 +144,9 @@ class QueuedSend:
         self.payload = payload
         self.state = "waiting"
         self.wake = threading.Event()
+
+    def is_waiting(self) -> bool:
+        return self.state == "waiting"
 
     def view(self) -> dict:
         return {

@@ -1618,6 +1618,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "too many messages waiting for this session",
             )
             return
+        alive = None
         if cmd["mode"] == "queue":
             send = sendq.QueuedSend(
                 client_id, cmd["text"], refs,
@@ -1626,6 +1627,9 @@ class _Handler(BaseHTTPRequestHandler):
             added = state.waiting.add(key, send)
             if added:
                 job, cancel = self._queue_job(key, send)
+                # A steered or removed send frees its backlog slot now,
+                # not when its parked job finally reaches the front.
+                alive = send.is_waiting
         else:
             added = not state.waiting.has(key, client_id)
             if added:
@@ -1638,7 +1642,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "a send with this client_id is still queued",
             )
             return
-        state.sendq.submit(qkey, job, cancel)
+        state.sendq.submit(qkey, job, cancel, alive)
         self._send_json(202, {
             "ok": True, "queued": True, "client_id": client_id,
             "waiting": waiting,
