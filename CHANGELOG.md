@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: New skill.** The Skills page has a New skill button (and one
+  in the empty list, which used to name `swe skills new <name>`). It opens
+  the Mac app's form, name and description, and writes
+  `~/.quiver/skills/<name>/SKILL.md` on the hub, then offers to open it.
+
 - **Web app: AGENTS.md and Doctor link with a button.** The AGENTS.md
   page's Global tab has "Link with swe init" where it used to say to run
   `swe init` on the hub, and "Replace and back up…" where it said to run
