@@ -193,6 +193,27 @@ class TestHubWriteRoutes(unittest.TestCase):
         row = self.srv.state.catalog.row_for("claude:s1")
         self.assertEqual(row["ownership"], "attached")
 
+
+    def test_unhashable_body_fields_answer_422(self):
+        # These used to raise TypeError in the handler, which dropped
+        # the connection with no response at all.
+        for action, body in (
+            ("message", {"text": "hi", "mode": []}),
+            ("message", {"text": "hi", "mode": {}}),
+            ("approval", {"request_id": "r1", "decision": []}),
+            ("approval", {"request_id": "r1", "decision": {}}),
+            ("control", {"op": []}),
+            ("control", {"op": {}}),
+        ):
+            with self.subTest(action=action, body=body):
+                status, data = self.srv.request(
+                    "POST", f"/v1/sessions/claude:s1/{action}",
+                    body=body, headers=self.hdr,
+                )
+                self.assertEqual(status, 422, data)
+                self.assertEqual(
+                    json.loads(data)["error"]["code"], "bad_command"
+                )
     def test_message_success(self):
         from quiver.remote import inject
         q = self.srv.state.bus.subscribe("claude:s1")
@@ -1088,6 +1109,22 @@ class TestSendQueue(unittest.TestCase):
         # Same event is durable: replaying the journal sees it.
         evs, _ = self.srv.state.journal.read_since(self.key, 0)
         self.assertEqual(evs[-1]["type"], "command.result")
+
+    def test_send_wakes_the_session_tailer(self):
+        from quiver.remote import inject
+        fake = self._injector()
+        mgr = self.srv.state.tail_manager
+        self.assertFalse(mgr.is_hot(self.key))
+        q = self.srv.state.bus.subscribe(self.key)
+        with patch.object(inject, "injector_for", return_value=fake):
+            status, data = self._post({"text": "hi", "mode": "steer"})
+            self.assertEqual(status, 202, data)
+            q.get(timeout=5)
+        fake.send.assert_called_once()
+        self.assertTrue(mgr.is_hot(self.key))
+        # The tail loop is told to poll it now, not on its next tick.
+        self.assertIn(self.key, mgr._woken)
+        self.assertTrue(mgr.wait(0))
 
     def test_queue_waits_for_idle(self):
         from quiver.remote import hub as hub_mod

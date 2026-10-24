@@ -934,5 +934,190 @@ class TestApprovalPromptLine(unittest.TestCase):
         self.assertEqual(tail._approval_prompt_line(""), "Approval requested")
 
 
+class TestTailWake(unittest.TestCase):
+    """A write to a session wakes its tailer and polls it fast a while."""
+
+    KEY = "claude:s1"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.events = []
+        self.path = self.tmp / "s.jsonl"
+        self.path.write_text(json.dumps(_claude_user("old")) + "\n")
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id=str(self.path), tool_name="claude")
+        self.mgr = tail.TailManager(
+            lambda key, ev: self.events.append(ev), "mbp", home=self.tmp)
+        self.mgr.sync([(self.KEY, sess, "done")])
+        self.t0 = 1_000_000.0
+        self.mgr.tick(self.t0)  # first poll; idle from here on
+        self.tailer = self.mgr.tailers[self.KEY]
+
+    def _append(self, text):
+        with open(self.path, "a") as fh:
+            fh.write(json.dumps(_claude_user(text)) + "\n")
+
+    def _texts(self):
+        return [e["data"]["text"] for e in self.events
+                if e["type"] == "message.appended"]
+
+    def test_idle_session_waits_out_its_interval_without_a_wake(self):
+        self.assertEqual(self.tailer.next_poll_at, self.t0 + tail.POLL_IDLE_S)
+        self._append("hi")
+        self.mgr.tick(self.t0 + 1)
+        self.assertNotIn("hi", self._texts())
+
+    def test_send_to_idle_session_polls_now_then_fast(self):
+        self._append("hi")
+        self.mgr.wake(self.KEY, now=self.t0 + 1)
+        self.mgr.tick(self.t0 + 1)
+        self.assertIn("hi", self._texts())
+        self.assertEqual(self.tailer.next_poll_at,
+                         self.t0 + 1 + tail.POLL_HOT_S)
+        self.assertLess(tail.POLL_HOT_S, tail.POLL_ACTIVE_S)
+        # The reply lands a moment later and is picked up on the fast
+        # cadence, not 8 s on.
+        self._append("reply")
+        self.mgr.tick(self.t0 + 1 + tail.POLL_HOT_S)
+        self.assertIn("reply", self._texts())
+
+    def test_unchanged_hot_poll_writes_no_cursor(self):
+        self.mgr.statuses[self.KEY] = "active"
+        self.mgr.wake(self.KEY, now=self.t0)
+        with patch.object(self.tailer, "save_cursor",
+                          wraps=self.tailer.save_cursor) as save:
+            for i in range(8):
+                self.mgr.tick(self.t0 + i * tail.POLL_HOT_S)
+            save.assert_not_called()
+            # A real append moves the cursor and is saved once.
+            self._append("hi")
+            self.mgr.tick(self.t0 + 8 * tail.POLL_HOT_S)
+            self.assertEqual(save.call_count, 1)
+            self.mgr.tick(self.t0 + 9 * tail.POLL_HOT_S)
+            self.assertEqual(save.call_count, 1)
+        self.assertIn("hi", self._texts())
+
+    def test_window_expires_back_to_normal_cadence(self):
+        self.mgr.wake(self.KEY, now=self.t0)
+        self.mgr.tick(self.t0)
+        self.assertTrue(self.mgr.is_hot(self.KEY, self.t0))
+        later = self.t0 + tail.HOT_WINDOW_S + 0.01
+        self.mgr.tick(later)
+        self.assertFalse(self.mgr.is_hot(self.KEY, later))
+        self.assertEqual(self.tailer.next_poll_at, later + tail.POLL_IDLE_S)
+        # Expired windows are dropped, not kept forever.
+        self.assertEqual(self.mgr._hot_until, {})
+        # An active session falls back to the active cadence instead.
+        self.mgr.statuses[self.KEY] = "active"
+        self.mgr.wake(self.KEY, now=later)
+        self.mgr.tick(later + tail.HOT_WINDOW_S + 1)
+        self.assertEqual(self.tailer.next_poll_at,
+                         later + tail.HOT_WINDOW_S + 1 + tail.POLL_ACTIVE_S)
+
+    def test_each_write_rearms_the_window(self):
+        self.mgr.wake(self.KEY, now=self.t0)
+        self.mgr.wake(self.KEY, now=self.t0 + 10)
+        # Past the first window, inside the second.
+        self.mgr.tick(self.t0 + 20)
+        self.assertEqual(self.tailer.next_poll_at,
+                         self.t0 + 20 + tail.POLL_HOT_S)
+        # An older wake arriving late never shortens the window.
+        self.mgr.wake(self.KEY, now=self.t0 + 1)
+        self.assertTrue(self.mgr.is_hot(self.KEY, self.t0 + 24))
+        self.mgr.tick(self.t0 + 26)
+        self.assertEqual(self.tailer.next_poll_at,
+                         self.t0 + 26 + tail.POLL_IDLE_S)
+
+    def test_wake_interrupts_a_parked_loop(self):
+        import threading
+        got = []
+        t = threading.Thread(target=lambda: got.append(self.mgr.wait(30)))
+        t.start()
+        self.mgr.wake(self.KEY)
+        t.join(timeout=5)
+        self.assertFalse(t.is_alive())
+        self.assertEqual(got, [True])
+        # The next tick consumes the wake; the loop parks again after.
+        self.mgr.tick(self.t0 + 1)
+        self.assertFalse(self.mgr.wait(0))
+
+    def test_wake_landing_mid_tick_is_not_lost(self):
+        mgr = self.mgr
+        real = self.tailer.source.poll
+        calls = []
+
+        def poll():
+            calls.append(1)
+            if len(calls) == 1:
+                # The harness reacts while this poll is reading.
+                mgr.wake(self.KEY, now=self.t0 + 1)
+            return real()
+
+        self.tailer.source.poll = poll
+        mgr.wake(self.KEY, now=self.t0 + 1)
+        mgr.tick(self.t0 + 1)
+        self.assertEqual(len(calls), 1)
+        # The mid-tick wake keeps the event set, so the loop does not
+        # park, and the next tick polls again although nothing is due.
+        self.assertTrue(mgr.wait(0))
+        mgr.tick(self.t0 + 1.01)
+        self.assertEqual(len(calls), 2)
+
+    def test_interrupt_wakes_without_a_poll(self):
+        self.mgr.interrupt()
+        self.assertTrue(self.mgr.wait(0))
+        self._append("hi")
+        self.mgr.tick(self.t0 + 1)
+        self.assertNotIn("hi", self._texts())
+
+    def test_wake_before_tailer_exists_starts_it_hot(self):
+        self.mgr.wake("claude:new", now=self.t0)
+        path = self.tmp / "n.jsonl"
+        path.write_text(json.dumps(_claude_user("first")) + "\n")
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id=str(path), tool_name="claude")
+        self.mgr.ensure("claude:new", sess, "done")
+        self.mgr.tick(self.t0 + 1)
+        self.assertIn("first", self._texts())
+        self.assertEqual(self.mgr.tailers["claude:new"].next_poll_at,
+                         self.t0 + 1 + tail.POLL_HOT_S)
+
+    def test_snapshot_sources_stay_at_active_cadence_when_hot(self):
+        sess = Session(timestamp=0, agent="Devin", path="/tmp",
+                       session_id="d1", tool_name="devin")
+        tailer = tail.Tailer("devin:d1", sess, tail.SnapshotSource(sess),
+                             self.tmp / "cursors", has_journal=True)
+        self.assertEqual(tailer.interval(active=False, hot=True),
+                         tail.POLL_ACTIVE_S)
+        self.assertEqual(tailer.interval(active=False, hot=False),
+                         tail.POLL_IDLE_S)
+        self.assertEqual(self.tailer.interval(active=True, hot=True),
+                         tail.POLL_HOT_S)
+
+    def test_waking_injector_wakes_around_writes_only(self):
+        from unittest.mock import MagicMock
+        inner = MagicMock()
+        order = []
+        inner.send.side_effect = lambda *a: order.append("send") or "ok"
+        inner.control.side_effect = RuntimeError("boom")
+        inner.mode = "tmux"
+        wrapped = self.mgr.waking(self.KEY, inner)
+        with patch.object(self.mgr, "wake",
+                          side_effect=lambda k: order.append(f"wake:{k}")):
+            self.assertEqual(wrapped.send("sess", {"text": "x"}, "done"),
+                             "ok")
+            self.assertEqual(order, [f"wake:{self.KEY}", "send",
+                                     f"wake:{self.KEY}"])
+            order.clear()
+            # A failed write still re-arms: it may have half landed.
+            with self.assertRaises(RuntimeError):
+                wrapped.control("sess", "interrupt", "")
+            self.assertEqual(order, [f"wake:{self.KEY}", f"wake:{self.KEY}"])
+            order.clear()
+            self.assertEqual(wrapped.mode, "tmux")
+            self.assertEqual(order, [])
+        inner.send.assert_called_once_with("sess", {"text": "x"}, "done")
+
+
 if __name__ == "__main__":
     unittest.main()
