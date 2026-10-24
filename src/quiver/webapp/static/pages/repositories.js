@@ -1,7 +1,8 @@
 /* Repositories: ports of the Mac app's RepositoriesPage (the dashboard of
  * pinned repos with its rail), RepoDetailPage (one repo, every state, at
  * #/repositories?repo=owner/name) and PrDetailSheet (a pull request's
- * checks, reviews and body). Read only: merging, re-running, pinning,
+ * checks, reviews and body, and its one write: merge with a strategy or
+ * arm auto-merge, behind an inline confirm). Re-running, pinning,
  * reordering and PR worktrees stay in swe and the Mac app. */
 "use strict";
 
@@ -26,7 +27,7 @@
     data: null, error: null, loading: false,
     tab: "pulls", shown: null, filter: "",
     expanded: new Set(), openQuiet: new Set(),
-    focus: null, sheet: null, observer: null,
+    focus: null, sheet: null, observer: null, seq: 0,
   };
 
   const BATCH = 10; // rows each scroll fill reveals on the focus page
@@ -323,10 +324,13 @@
 
   async function renderDashboard(refresh = false) {
     const gen = routeGen;
+    // Only the newest read paints: one begun before a merge must not put
+    // the merged row back over the read the merge started.
+    const seq = ++page.seq;
     page.loading = true;
     GhUI.keepFocus("gh-search", paintDashboard);
     const { status, data } = await api(`/v1/app/repositories${refresh ? "?refresh=1" : ""}`);
-    if (gen !== routeGen) return;
+    if (gen !== routeGen || seq !== page.seq) return;
     page.loading = false;
     if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
     if (status !== 200 || !data) {
@@ -484,7 +488,7 @@
   /* ---------------------------------------------------------- focus page */
 
   function newFocus(repo) {
-    return { repo, data: null, error: null, loading: false, tab: "pulls", filter: "",
+    return { repo, seq: 0, data: null, error: null, loading: false, tab: "pulls", filter: "",
       shown: {}, limits: {}, defaults: {}, exhausted: new Set(), fetching: new Set(), stalled: new Set(), maxLimit: 200 };
   }
 
@@ -505,11 +509,12 @@
     const gen = routeGen;
     if (!page.focus || page.focus.repo !== repo) page.focus = newFocus(repo);
     const f = page.focus;
+    const seq = ++f.seq; // newest read wins, as on the dashboard
     f.loading = true;
     paintFocus();
     const q = `repo=${encodeURIComponent(repo)}`;
     const { status, data } = await api(`/v1/app/repositories?${q}${refresh ? "&refresh=1" : ""}`);
-    if (gen !== routeGen || page.focus !== f) return;
+    if (gen !== routeGen || page.focus !== f || seq !== f.seq) return;
     f.loading = false;
     if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
     if (status !== 200 || !data) {
@@ -648,7 +653,8 @@
   }
 
   function openPr(repo, number) {
-    page.sheet = { repo, number: String(number), data: null, status: 0, checksOpen: false };
+    page.sheet = { repo, number: String(number), data: null, status: 0, checksOpen: false,
+      method: "squash", confirm: null, merging: false, mergeError: null, seq: 0 };
     const dlg = sheetEl();
     paintSheet();
     if (!dlg.open) dlg.showModal();
@@ -658,12 +664,13 @@
   async function loadPr(refresh) {
     const s = page.sheet;
     if (!s) return;
+    const seq = ++s.seq; // a merge's answer or a newer read supersedes this one
     s.busy = true;
     paintSheet();
     const q = new URLSearchParams({ repo: s.repo, pr: s.number });
     if (refresh) q.set("refresh", "1");
     const { status, data } = await api(`/v1/app/repositories?${q}`);
-    if (page.sheet !== s) return;
+    if (page.sheet !== s || seq !== s.seq) return;
     s.busy = false;
     s.status = status;
     s.data = data;
@@ -730,6 +737,107 @@
     return `${header}${checks}${reviewHtml}${description}`;
   }
 
+  /* PrDetailSheet's strategy menu, in its order and words. */
+  const METHODS = [
+    { value: "squash", title: "Squash and merge" },
+    { value: "rebase", title: "Rebase and merge" },
+    { value: "merge", title: "Create a merge commit" },
+  ];
+  const methodTitle = (m) => (METHODS.find((x) => x.value === m) || METHODS[0]).title;
+
+  /* Why the app's Merge / Auto-merge buttons are off, in its hover words;
+   * null when the button is live. The hub refuses the same cases. */
+  function mergeBlock(pr) {
+    if (pr.draft) return "Draft PRs can't merge";
+    if (pr.mergeable === "conflicting") return "Resolve the conflicts first";
+    return null;
+  }
+  function autoBlock(pr) {
+    if (pr.draft) return "Draft PRs can't merge";
+    if (pr.auto_merge) return "Auto-merge is already armed";
+    return null;
+  }
+
+  /* The merge controls for an open PR, or the confirm that names exactly
+   * what will happen once one is pressed. */
+  function mergeControls(s, pr) {
+    if (!pr || pr.state !== "open") return "";
+    const off = s.merging || !!s.confirm;
+    const mb = mergeBlock(pr), ab = autoBlock(pr);
+    return `<select class="field gh-method" id="gh-merge-method" aria-label="Merge strategy"${off ? " disabled" : ""}>${
+        METHODS.map((m) => `<option value="${m.value}"${m.value === s.method ? " selected" : ""}>${m.title}</option>`).join("")}</select>
+      <button type="button" class="gh-button gh-primary" id="gh-merge"${off || mb ? " disabled" : ""}
+        title="${esc(mb || "Merge now with the selected strategy")}">Merge</button>
+      <button type="button" class="gh-button" id="gh-auto-merge"${off || ab ? " disabled" : ""}
+        title="${esc(ab || "Arm auto-merge — merges when checks pass")}">Auto-merge</button>`;
+  }
+
+  function confirmPanel(s, pr) {
+    if (!s.confirm || !pr || pr.state !== "open") return "";
+    const what = `<strong>#${esc(pr.number)} ${esc(pr.title)}</strong>`;
+    const method = `<strong>${esc(methodTitle(s.method))}</strong>`;
+    const text = s.confirm === "auto"
+      ? `Arm auto-merge for ${what} in <strong>${esc(pr.repo)}</strong> with ${method}? GitHub merges it into <code>${esc(pr.base)}</code> once its checks pass.`
+      : `Merge ${what} into <code>${esc(pr.base)}</code> of <strong>${esc(pr.repo)}</strong> with ${method}? This happens on GitHub now and can't be undone from here.`;
+    const go = s.confirm === "auto" ? (s.merging ? "Arming…" : "Arm auto-merge") : (s.merging ? "Merging…" : `Merge #${esc(pr.number)}`);
+    return `<div class="gh-confirm" role="group" aria-label="Confirm">
+      <div class="gh-confirm-text">${text}</div>
+      <div class="gh-confirm-buttons">
+        <button type="button" class="gh-button" id="gh-confirm-cancel"${s.merging ? " disabled" : ""}>Cancel</button>
+        <button type="button" class="gh-button gh-primary" id="gh-confirm-go"${s.merging ? " disabled" : ""}>${go}</button>
+      </div></div>`;
+  }
+
+  /* POST the merge. The sheet repaints only from the hub's answer: the PR
+   * as GitHub shows it after the write. */
+  async function runMerge() {
+    const s = page.sheet;
+    const pr = s && s.data && s.data.pr;
+    if (!s || !pr || s.merging || !s.confirm) return;
+    const auto = s.confirm === "auto";
+    s.merging = true;
+    s.mergeError = null;
+    paintSheet();
+    const { status, data } = await GhUI.post("/v1/app/repositories/merge",
+      { repo: s.repo, number: Number(s.number), method: s.method, auto });
+    if (status === 200 && data) {
+      // The page behind the sheet reads the repo again, even if the sheet
+      // was closed meanwhile: the hub dropped its cached board, so a
+      // merged row leaves the list.
+      const here = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+      const focusRepo = GhUI.hashParams().get("repo");
+      if (here === "repositories" && !focusRepo) renderDashboard();
+      else if (here === "repositories" && page.focus && page.focus.repo === focusRepo) renderFocus(focusRepo);
+    }
+    if (page.sheet !== s) return;
+    s.merging = false;
+    if (status === 401) {
+      s.mergeError = "The hub doesn't know this browser's credential. It may have been revoked.";
+    } else if (status !== 200 || !data) {
+      s.mergeError = GhUI.failMessage(status, data);
+      // A state refusal means the sheet is out of date: read the PR
+      // again so it shows what the hub saw (the error card stays).
+      if (status === 409 || status === 404) {
+        paintSheet();
+        return loadPr(true);
+      }
+    } else {
+      s.confirm = null;
+      if (data.pr) {
+        // Reads begun before the merge answered are older than this.
+        s.seq++;
+        s.busy = false;
+        s.data = { github: data.github, repo: data.repo, status: "ok", pr: data.pr,
+          fetched_at: data.fetched_at, machine: data.machine };
+        s.status = 200;
+      }
+      if (!data.pr) return loadPr(true);
+    }
+    paintSheet();
+    const focus = document.getElementById(s.mergeError ? "gh-confirm-go" : "gh-sheet-done");
+    if (focus && !focus.disabled) focus.focus();
+  }
+
   function paintSheet() {
     const s = page.sheet;
     const dlg = document.getElementById("gh-pr-sheet");
@@ -751,16 +859,41 @@
       content = `<div class="gh-sheet-scroll">${sheetBody(pr)}</div>`;
     }
     const url = pr ? pr.url : `https://github.com/${s.repo}/pull/${s.number}`;
-    const hint = pr && pr.state === "open"
-      ? `<span class="caption gh-muted gh-ellipsis" title="Merging is a write the web app leaves out">Merge with <code>swe gh pr merge ${esc(s.number)} --repo=${esc(s.repo)}</code> or in the Mac app.</span>` : "";
-    dlg.innerHTML = `<div class="sheet-body">${content}
-      <div class="gh-sheet-actions">${hint}<span class="gh-spacer"></span>
+    // A refetch that shows the PR no longer open (or blocked) drops a
+    // pending confirm, so it never names a merge that can't happen.
+    if (s.confirm && (!pr || pr.state !== "open" || (s.confirm === "auto" ? autoBlock(pr) : mergeBlock(pr)))) s.confirm = null;
+    const mergeErr = s.mergeError ? `<div class="card gh-merge-error" role="alert"><span class="error">${esc(s.mergeError)}</span></div>` : "";
+    dlg.innerHTML = `<div class="sheet-body">${content}${mergeErr}${confirmPanel(s, pr)}
+      <div class="gh-sheet-actions">${mergeControls(s, pr)}<span class="gh-spacer"></span>
         <a class="icon-button" href="${esc(url)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ico("external")}</a>
         <button type="button" class="icon-button${s.busy && d ? " spinning" : ""}" data-sheet-refresh title="Fetch again" aria-label="Fetch again">${icon("rescan")}</button>
         <button type="button" class="gh-button" id="gh-sheet-done">Done</button>
       </div></div>`;
     for (const btn of dlg.querySelectorAll("[data-sheet-refresh]")) btn.onclick = () => loadPr(true);
     dlg.querySelector("#gh-sheet-done").onclick = () => dlg.close();
+    const methodSel = dlg.querySelector("#gh-merge-method");
+    if (methodSel) methodSel.onchange = () => { s.method = methodSel.value; };
+    const ask = (which) => () => {
+      s.confirm = which;
+      s.mergeError = null;
+      paintSheet();
+      const cancel = dlg.querySelector("#gh-confirm-cancel");
+      if (cancel) cancel.focus();
+    };
+    const mergeBtn = dlg.querySelector("#gh-merge");
+    if (mergeBtn) mergeBtn.onclick = ask("merge");
+    const autoBtn = dlg.querySelector("#gh-auto-merge");
+    if (autoBtn) autoBtn.onclick = ask("auto");
+    const cancelBtn = dlg.querySelector("#gh-confirm-cancel");
+    if (cancelBtn) cancelBtn.onclick = () => {
+      const was = s.confirm;
+      s.confirm = null;
+      paintSheet();
+      const back = dlg.querySelector(was === "auto" ? "#gh-auto-merge" : "#gh-merge");
+      if (back && !back.disabled) back.focus();
+    };
+    const goBtn = dlg.querySelector("#gh-confirm-go");
+    if (goBtn) goBtn.onclick = runMerge;
     const toggle = dlg.querySelector("#gh-checks-toggle");
     if (toggle) toggle.onclick = () => { s.checksOpen = !s.checksOpen; paintSheet(); };
     GhUI.bindSetup(() => loadPr(true));

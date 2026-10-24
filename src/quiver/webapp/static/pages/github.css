@@ -29,7 +29,21 @@
   cursor: pointer; text-decoration: none; white-space: nowrap;
 }
 .gh-button:hover { background: var(--tab-hover); }
+.gh-button:disabled { opacity: .5; cursor: default; }
+.gh-button:disabled:hover { background: var(--card); }
+/* The app's successButton: the one green, outward-facing action. */
+.gh-button.gh-primary { background: var(--accent-fill); border-color: var(--accent-fill); color: #fff; font-weight: 500; }
+.gh-button.gh-primary:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); }
+.gh-button.gh-primary:disabled:hover { background: var(--accent-fill); }
+
+/* An inline confirm naming exactly what a write will do. */
+.gh-confirm { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--border-strong); border-radius: 12px; padding: 12px 14px; background: var(--subtle); }
+.card.gh-confirm { background: var(--card); }
+.gh-confirm-text { font-size: 13px; color: var(--text-primary); line-height: 1.45; overflow-wrap: anywhere; }
+.gh-confirm-text code { font-size: 12px; }
+.gh-confirm-buttons { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 a.icon-button { color: inherit; }
+.gh-page .icon-button:disabled, .gh-sheet .icon-button:disabled { opacity: .5; cursor: default; }
 
 /* Setup card (GhSetupCard) */
 .gh-setup-title { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary); }
@@ -201,6 +215,9 @@ dialog.gh-sheet { width: min(680px, calc(100vw - 32px)); }
 .gh-sheet-actions { display: flex; align-items: center; gap: 10px; }
 .gh-sheet-actions .icon-button { width: 32px; height: 32px; }
 .gh-sheet-actions code { white-space: nowrap; }
+select.field.gh-method { height: 32px; width: 180px; flex: 0 1 180px; }
+.gh-merge-error { padding: 10px 14px; }
+.gh-merge-error .error { overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* PR body markdown */
 .gh-md { font-size: 13px; color: var(--text-secondary); line-height: 1.5; padding: 10px 14px; overflow-wrap: anywhere; }
@@ -236,12 +253,19 @@ dialog.gh-sheet { width: min(680px, calc(100vw - 32px)); }
 .gh-switch input:checked + .gh-switch-track::after { transform: translateX(14px); }
 .gh-switch input:focus-visible + .gh-switch-track { outline: 2px solid var(--text-primary); outline-offset: 2px; }
 .card.gh-inbox { gap: 0; padding: 8px 14px 14px; }
-.gh-note {
-  display: flex; align-items: flex-start; gap: 12px; padding: 10px 6px; border-radius: 8px; color: inherit;
-  text-decoration: none; border-top: 1px solid var(--row-divider);
-}
+.gh-note { display: flex; align-items: center; gap: 4px; border-radius: 8px; border-top: 1px solid var(--row-divider); }
 .gh-note:first-child { border-top: 0; }
 .gh-note:hover { background: var(--row-hover); }
+.gh-note-link {
+  display: flex; align-items: flex-start; gap: 12px; padding: 10px 6px; flex: 1; min-width: 0;
+  color: inherit; text-decoration: none; border-radius: 8px;
+}
+/* Mark as read: the app's context-menu item, as a row button that shows
+ * on hover or focus (always on touch screens). */
+.gh-note-read { width: 30px; height: 30px; flex: none; margin-right: 4px; opacity: 0; transition: opacity .15s; }
+.gh-note:hover .gh-note-read, .gh-note-read:focus-visible, .gh-note-read.spinning { opacity: 1; }
+.gh-note-read .gh-ico { width: 15px; height: 15px; }
+@media (hover: none) { .gh-note-read { opacity: 1; } }
 .gh-note-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex: none; }
 .gh-note.unread .gh-note-dot { background: var(--accent); }
 .gh-note-title {
