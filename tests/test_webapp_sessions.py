@@ -524,12 +524,48 @@ class TestTranscriptSearchBox(unittest.TestCase):
         self.assertIn('<span class="session-snippet">the <mark>queue</mark> length is &lt;5&gt;</span>', out["row"])
         self.assertIn("2 sessions match, 1 of them on what was said.", out["note"])
 
-    def test_an_answer_for_an_older_query_is_ignored(self):
-        out = self.run_js(self.type_query("queue") + """
-            sessionsPage.query = "queue l";
-            return filteredSessions().kept.map((r) => r.key);
+    def test_a_late_answer_for_an_older_query_never_lands(self):
+        # Two searches in flight; the older one answers last.
+        out = self.run_js("""
+            const pending = [];
+            api = (path) => new Promise((resolve) => pending.push({ path, resolve }));
+            const hit = (key) => ({ status: 200, data: { indexed: true, results: [
+                { key, source: "index", snippet: "s", marked_snippet: "s" }] } });
+            sessionsPage.query = "queue"; scheduleTranscriptSearch();
+            sessionsPage.query = "queue length"; scheduleTranscriptSearch();
+            pending[1].resolve(hit("k2"));
+            await new Promise((r) => setImmediate(r));
+            pending[0].resolve(hit("k3"));
+            await new Promise((r) => setImmediate(r));
+            return { asked: pending.map((p) => p.path), query: sessionsPage.search.query,
+                     hits: [...sessionsPage.search.hits.keys()] };
         """, self.ANSWER)
-        self.assertEqual(out, [])
+        self.assertEqual(out["asked"], ["/v1/search?q=queue&limit=200",
+                                        "/v1/search?q=queue%20length&limit=200"])
+        self.assertEqual((out["query"], out["hits"]), ("queue length", ["k2"]))
+
+    def test_a_trailing_space_keeps_the_search(self):
+        out = self.run_js("""
+            let timers = 0;
+            setTimeout = (f) => { timers++; return 0; };
+            sessionsPage.query = "queue"; scheduleTranscriptSearch();
+            sessionsPage.query = "queue "; scheduleTranscriptSearch();
+            return { timers, state: sessionsPage.search.state };
+        """, self.ANSWER)
+        self.assertEqual(out, {"timers": 1, "state": "pending"})
+
+    def test_an_answer_after_leaving_is_asked_again_on_return(self):
+        out = self.run_js("""
+            document.getElementById = () => null;
+            sessionsPage.query = "queue"; scheduleTranscriptSearch();
+            await new Promise((r) => setImmediate(r));
+            const left = sessionsPage.search.query;
+            document.getElementById = (id) => id === "session-search" ? {} : null;
+            scheduleTranscriptSearch();
+            await new Promise((r) => setImmediate(r));
+            return { left, asked: asked.length, hits: [...sessionsPage.search.hits.keys()] };
+        """, self.ANSWER)
+        self.assertEqual(out, {"left": "", "asked": 2, "hits": ["k2"]})
 
     def test_one_character_never_asks_the_hub(self):
         out = self.run_js(self.type_query("q") + "return asked;", self.ANSWER)

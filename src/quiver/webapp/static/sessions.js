@@ -50,6 +50,7 @@ async function renderSessions(_id, rescan = false) {
   } else {
     paintSessions();
     if (sessionsPage.scrollY != null) window.scrollTo(0, sessionsPage.scrollY);
+    scheduleTranscriptSearch();
   }
   sessionsPage.scrollY = null;
   const { status, data } = await api(`/v1/app/sessions${rescan ? "?rescan=1" : ""}`);
@@ -64,6 +65,7 @@ async function renderSessions(_id, rescan = false) {
   }
   sessionsPage.data = data;
   paintSessions();
+  scheduleTranscriptSearch();
 }
 
 function sessionsHeader(busy) {
@@ -104,18 +106,26 @@ function markedSnippet(hit) {
  * answer lands; an older one that returns late is dropped. */
 function scheduleTranscriptSearch() {
   const s = sessionsPage;
-  clearTimeout(s.searchTimer);
   const q = s.query.trim();
+  // The same trimmed query (a trailing space, a page coming back) keeps
+  // the request or answer it already has.
+  if (s.search.query === q && s.search.state !== "error") return;
+  clearTimeout(s.searchTimer);
+  const seq = ++s.searchSeq;
   if (q.length < SEARCH_MIN_CHARS) {
     s.search = { query: q, hits: new Map(), indexed: s.search.indexed, state: "" };
     return;
   }
-  if (s.search.query === q && s.search.state !== "error") return;
   s.search = { query: q, hits: new Map(), indexed: s.search.indexed, state: "pending" };
-  const seq = ++s.searchSeq;
   s.searchTimer = setTimeout(async () => {
     const { status, data } = await api(`/v1/search?q=${encodeURIComponent(q)}&limit=${SEARCH_LIMIT}`);
-    if (seq !== s.searchSeq || !onSessionsList()) return;
+    if (seq !== s.searchSeq) return;
+    if (!onSessionsList()) {
+      // Left for a chat or another page: forget the request, so the list
+      // asks again when it opens.
+      s.search = { query: "", hits: new Map(), indexed: s.search.indexed, state: "" };
+      return;
+    }
     const hits = new Map();
     if (status === 200 && data) {
       for (const r of data.results || []) {
@@ -434,16 +444,16 @@ function bindSessionControls() {
   }
 }
 
-/* Repaint without losing the search box's focus and caret. */
+/* Repaint without losing the search box's focus or selection. */
 function repaintKeepingFocus() {
   const box = document.getElementById("session-search");
   const focused = box && document.activeElement === box;
-  const at = box ? box.selectionStart : null;
+  const sel = box ? [box.selectionStart, box.selectionEnd, box.selectionDirection] : null;
   paintSessions();
   const again = document.getElementById("session-search");
   if (again && focused) {
     again.focus();
-    if (at != null) again.setSelectionRange(at, at);
+    if (sel && sel[0] != null) again.setSelectionRange(sel[0], sel[1], sel[2] || "none");
   }
 }
 
