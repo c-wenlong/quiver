@@ -3,8 +3,9 @@
  * #/repositories?repo=owner/name) and PrDetailSheet (a pull request's
  * checks, reviews and body, and its one write: merge with a strategy or
  * arm auto-merge, behind an inline confirm) and AddRepoSheet (search the
- * hub's synced catalog or GitHub, then pin). Re-running, unpinning,
- * reordering and PR worktrees stay in swe and the Mac app. */
+ * hub's synced catalog or GitHub, then pin), with the rail's gear
+ * popover (RepoManager: open or unpin each pin) and drag to reorder.
+ * Re-running and PR worktrees stay in swe and the Mac app. */
 "use strict";
 
 (() => {
@@ -30,6 +31,12 @@
     expanded: new Set(), openQuiet: new Set(),
     focus: null, sheet: null, observer: null, seq: 0,
     add: null, // the Add repository sheet's state while it is open
+    // Pin writes: the gear popover, the one unpin or reorder in flight
+    // (one at a time, as GitHubModel's mutating set), a newer drop queued
+    // behind it, the last failure, and a drag in progress.
+    managing: false, mutating: null, queuedOrder: null, pinError: null,
+    pinGen: 0, // bumped as each pin write starts and ends
+    dragging: null, repaintAfterDrag: false,
   };
 
   const BATCH = 10; // rows each scroll fill reveals on the focus page
@@ -329,11 +336,15 @@
     // Only the newest read paints: one begun before a merge must not put
     // the merged row back over the read the merge started.
     const seq = ++page.seq;
+    const pinGen = page.pinGen;
     page.loading = true;
     GhUI.keepFocus("gh-search", paintDashboard);
     const { status, data } = await api(`/v1/app/repositories${refresh ? "?refresh=1" : ""}`);
     if (gen !== routeGen || seq !== page.seq) return;
     page.loading = false;
+    // A read that began before an unpin or reorder, or lands while one
+    // runs, may list the pins as they were: the page's own list wins.
+    if (data && data.repos && page.data && (page.mutating || pinGen !== page.pinGen)) data.repos = page.data.repos;
     if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
     if (status !== 200 || !data) {
       // Keep the last good rows under the error, as the app does.
@@ -364,7 +375,7 @@
       <input class="field gh-search" id="gh-search" type="search" placeholder="Search" value="${esc(page.filter)}" autocomplete="off"
         spellcheck="false" aria-label="Search" title="Search titles, branches, authors and states like failing or draft (⌘K)">
     </div>`;
-    const error = page.error ? errorCard(page.error) : "";
+    const error = (page.pinError ? errorCard(page.pinError) : "") + (page.error ? errorCard(page.error) : "");
     const repos = listedRepos().filter((p) => rowCount(p.name, page.tab) !== 0);
     let list;
     if (!repos.length) {
@@ -405,11 +416,14 @@
     }
     const total = visibleRepos().reduce((n, p) => n + (rowCount(p.name, page.tab) || 0), 0);
     const dot = (state) => `<span class="gh-dot gh-dot-${state || "none"}"></span>`;
-    const row = (pin, quiet) => {
+    // Each run (an owner's active repos, or its quiet ones) reorders on
+    // its own, as in the app: a drop never moves a repo past another run.
+    const row = (pin, quiet, run) => {
       const count = rowCount(pin.name, page.tab);
       return `<button type="button" class="gh-rail-row${page.shown === pin.name ? " selected" : ""}${quiet ? " quiet" : ""}"
-          data-shown="${esc(pin.name)}" title="${esc(pin.name)}">
-        ${dot(ciState(pin.name))}<span class="gh-rail-name">${esc(pin.name.split("/").pop())}</span>
+          data-shown="${esc(pin.name)}" data-drag="${esc(pin.name)}" data-run="${esc(run)}" draggable="true"
+          title="${esc(pin.name)}. Drag to reorder.">
+        ${ico("grip", "gh-grip")}${dot(ciState(pin.name))}<span class="gh-rail-name">${esc(pin.name.split("/").pop())}</span>
         <span class="gh-spacer"></span>${count ? `<span class="caption num gh-muted">${count}</span>` : ""}</button>`;
     };
     const body = groups.map((owner) => {
@@ -417,13 +431,15 @@
       const active = list.filter((p) => rowCount(p.name, page.tab) !== 0);
       const quiet = list.filter((p) => rowCount(p.name, page.tab) === 0);
       const open = page.openQuiet.has(owner);
-      return `<div class="gh-owner">${esc(owner)}</div>${active.map((p) => row(p, false)).join("")}
+      return `<div class="gh-owner">${esc(owner)}</div>${active.map((p) => row(p, false, `${owner}:active`)).join("")}
         ${quiet.length ? `<button type="button" class="gh-quiet-toggle${open ? " open" : ""}" data-quiet="${esc(owner)}"
           title="${open ? "Hide repos with nothing on this tab" : "Show repos with nothing on this tab"}">${ico("chevronRight")}<span>${quiet.length} quiet</span></button>
-          <div class="gh-quiet${open ? " open" : ""}">${quiet.map((p) => row(p, true)).join("")}</div>` : ""}`;
+          <div class="gh-quiet${open ? " open" : ""}">${quiet.map((p) => row(p, true, `${owner}:quiet`)).join("")}</div>` : ""}`;
     }).join("");
     return `<aside class="gh-rail" aria-label="Pinned repos">
       <div class="gh-rail-head"><span class="caption gh-muted">Pinned repos</span><span class="gh-spacer"></span>
+        <button type="button" class="gh-rail-btn${page.managing ? " active" : ""}" id="gh-manage" title="Manage pinned repositories"
+          aria-label="Manage pinned repositories" aria-haspopup="dialog" aria-expanded="${page.managing}">${ico("gear")}</button>
         <button type="button" class="gh-rail-btn${page.loading ? " spinning" : ""}" id="page-refresh" title="Fetch again" aria-label="Fetch again">${ico("refresh")}</button></div>
       <div class="gh-rail-list">
         <button type="button" class="gh-rail-row${page.shown ? "" : " selected"}" data-shown="">${ico("stack")}<span>All repos</span>
@@ -434,7 +450,175 @@
     </aside>`;
   }
 
+  /* RepoManager: every pin grouped by owner (a header only when there is
+   * more than one), each with Open on GitHub and Unpin, then the add path. */
+  function managerHtml() {
+    const byOwner = new Map();
+    for (const pin of pins()) {
+      const owner = pin.name.split("/")[0];
+      if (!byOwner.has(owner)) byOwner.set(owner, []);
+      byOwner.get(owner).push(pin);
+    }
+    const owners = [...byOwner.keys()].sort();
+    const many = owners.length > 1;
+    const rows = owners.map((owner) => `${many ? `<div class="gh-manage-owner caption gh-muted">${esc(owner)}</div>` : ""}${
+      byOwner.get(owner).slice().sort((a, b) => a.name.localeCompare(b.name)).map((pin) => `<div class="gh-manage-row">
+        <span class="gh-manage-name">${esc(many ? pin.name.split("/").pop() : pin.name)}</span>
+        <a class="gh-manage-btn" href="https://github.com/${esc(pin.name)}" target="_blank" rel="noopener" title="Open on GitHub"
+          aria-label="Open ${esc(pin.name)} on GitHub">${ico("external")}</a>
+        ${page.mutating === pin.name ? ico("running", "gh-muted gh-spin gh-manage-busy")
+          : `<button type="button" class="gh-manage-btn gh-danger-text" data-unpin="${esc(pin.name)}" title="Unpin ${esc(pin.name)}"
+            aria-label="Unpin ${esc(pin.name)}"${page.mutating ? " disabled" : ""}>${ico("minusCircle")}</button>`}
+      </div>`).join("")}`).join("");
+    return `<div class="gh-manage" id="gh-manage-pop" role="dialog" aria-label="Pinned repositories">
+      <div class="gh-manage-title">Pinned repositories</div>
+      ${pins().length ? rows : '<div class="caption gh-muted">Nothing pinned yet.</div>'}
+      ${page.pinError ? `<div class="caption gh-danger-text" role="alert">${esc(page.pinError)}</div>` : ""}
+      <div class="gh-manage-divider"></div>
+      <button type="button" class="gh-manage-add" data-add-repo>${ico("plus")}<span>Add repository…</span></button>
+    </div>`;
+  }
+
+  /* The popover hangs under the gear. It lives outside the rail, which
+   * scrolls and would clip it, so it is placed against the viewport. */
+  function placeManager() {
+    const pop = document.getElementById("gh-manage-pop");
+    const gear = document.getElementById("gh-manage");
+    if (!pop || !gear) return;
+    const r = gear.getBoundingClientRect();
+    const width = pop.offsetWidth;
+    pop.style.top = `${Math.round(r.bottom + 6)}px`;
+    pop.style.left = `${Math.round(Math.max(8, Math.min(r.right - width, window.innerWidth - width - 8)))}px`;
+  }
+
+  async function unpin(name) {
+    if (page.mutating) return;
+    page.mutating = name;
+    page.pinGen++;
+    page.pinError = null;
+    paintDashboard();
+    const { status, data } = await GhUI.post("/v1/app/repositories/remove", { repo: name });
+    page.mutating = null;
+    page.pinGen++;
+    if (status === 200 && data && page.data) {
+      page.data.repos = data.repos;
+      delete page.data.boards[name];
+      if (page.shown === name) page.shown = null;
+    } else if (status === 404 && data && data.error && data.error.code === "not_pinned") {
+      // Unpinned elsewhere already: the list is what's out of date.
+      if (onDashboard()) renderDashboard(true);
+      return;
+    } else {
+      page.pinError = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+    }
+    if (onDashboard()) paintDashboard();
+  }
+
+  /* PinOrder.move: the full pin order after moving `id` to sit before
+   * `before` (null: the end) inside `group`; the group's members are
+   * written back into the slots they held, so every other pin stays. */
+  function movePin(id, before, group, all) {
+    const reordered = group.filter((n) => n !== id);
+    const at = before == null ? -1 : reordered.indexOf(before);
+    if (at >= 0) reordered.splice(at, 0, id); else reordered.push(id);
+    const members = new Set(group);
+    let i = 0;
+    return all.map((n) => (members.has(n) ? reordered[i++] : n));
+  }
+
+  /* Show the new order at once, then save it. A drop while a save runs
+   * is queued and sent when that one answers, so it lands rather than
+   * being lost; a failed save reads the stored order back. */
+  async function saveOrder(order) {
+    const lookup = new Map(pins().map((p) => [p.name, p]));
+    page.data.repos = order.map((n) => lookup.get(n)).filter(Boolean);
+    page.pinError = null;
+    paintDashboard();
+    if (page.mutating) { page.queuedOrder = order; return; }
+    page.mutating = "<reorder>";
+    page.pinGen++;
+    let next = order;
+    while (next) {
+      const { status, data } = await GhUI.post("/v1/app/repositories/reorder", { order: next });
+      next = page.queuedOrder;
+      page.queuedOrder = null;
+      if (status !== 200 || !data) {
+        page.pinError = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+        next = null;
+        page.mutating = null;
+        page.pinGen++;
+        // Read the stored order back, but only onto this page.
+        if (onDashboard()) renderDashboard(true);
+        return;
+      }
+      if (!next && page.data) page.data.repos = data.repos;
+    }
+    page.mutating = null;
+    page.pinGen++;
+    if (onDashboard()) paintDashboard();
+  }
+
+  const onDashboard = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "repositories"
+    && !GhUI.hashParams().get("repo");
+
+  function bindDrag(panel) {
+    const runOf = (run) => [...panel.querySelectorAll("[data-run]")].filter((r) => r.dataset.run === run);
+    const clearMarks = () => {
+      for (const r of panel.querySelectorAll(".drop-before, .drop-after")) r.classList.remove("drop-before", "drop-after");
+    };
+    // Rows run across in the narrow layout's chip strip, down otherwise.
+    // Asked of the rail's list: a quiet row's own parent is display:
+    // contents there and keeps its column direction.
+    const across = (row) => getComputedStyle(row.closest(".gh-rail-list")).flexDirection === "row";
+    const after = (row, e) => {
+      const r = row.getBoundingClientRect();
+      return across(row) ? e.clientX > r.left + r.width / 2 : e.clientY > r.top + r.height / 2;
+    };
+    for (const row of panel.querySelectorAll("[data-drag]")) {
+      row.ondragstart = (e) => {
+        if (page.mutating && page.mutating !== "<reorder>") { e.preventDefault(); return; }
+        page.dragging = { name: row.dataset.drag, run: row.dataset.run };
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", row.dataset.drag);
+        row.classList.add("dragging");
+      };
+      row.ondragend = () => {
+        page.dragging = null;
+        clearMarks();
+        row.classList.remove("dragging");
+        // A repaint that came in mid-drag waited for the drop.
+        if (page.repaintAfterDrag) { page.repaintAfterDrag = false; paintDashboard(); }
+      };
+      row.ondragover = (e) => {
+        const d = page.dragging;
+        if (!d || d.run !== row.dataset.run) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        clearMarks();
+        if (row.dataset.drag !== d.name) row.classList.add(after(row, e) ? "drop-after" : "drop-before");
+      };
+      row.ondrop = (e) => {
+        const d = page.dragging;
+        if (!d || d.run !== row.dataset.run) return;
+        e.preventDefault();
+        const run = runOf(d.run).map((r) => r.dataset.drag);
+        let before = row.dataset.drag;
+        if (after(row, e)) {
+          const at = run.indexOf(row.dataset.drag);
+          before = at + 1 < run.length ? run[at + 1] : null;
+        }
+        page.dragging = null;
+        clearMarks();
+        if (before === d.name) return;
+        const order = movePin(d.name, before, run, pins().map((p) => p.name));
+        if (order.join("\n") !== pins().map((p) => p.name).join("\n")) saveOrder(order);
+      };
+    }
+  }
+
   function paintDashboard() {
+    // Repainting mid-drag would drop the row being dragged.
+    if (page.dragging) { page.repaintAfterDrag = true; return; }
     const d = page.data;
     const rail = d && !GhUI.envSetup(d.github) && pins().length;
     document.getElementById("panel").innerHTML = `<div class="page gh-page">
@@ -442,7 +626,9 @@
         <div class="gh-head">${HEADER(!rail)}</div>
         ${rail ? railHtml() : ""}
         <div class="gh-body stack">${dashboardContent()}</div>
-      </div></div>`;
+      </div>${rail && page.managing ? managerHtml() : ""}</div>`;
+    if (!rail) page.managing = false;
+    placeManager();
     bindDashboard();
   }
 
@@ -468,7 +654,11 @@
       };
     }
     bindRows(panel, paintDashboard);
-    for (const btn of panel.querySelectorAll("[data-add-repo]")) btn.onclick = () => openAdd();
+    for (const btn of panel.querySelectorAll("[data-add-repo]")) btn.onclick = () => { page.managing = false; paintDashboard(); openAdd(); };
+    const gear = document.getElementById("gh-manage");
+    if (gear) gear.onclick = () => { page.managing = !page.managing; paintDashboard(); };
+    for (const btn of panel.querySelectorAll("[data-unpin]")) btn.onclick = () => unpin(btn.dataset.unpin);
+    bindDrag(panel);
     const search = document.getElementById("gh-search");
     if (search) {
       search.oninput = () => { page.filter = search.value; GhUI.keepFocus("gh-search", paintDashboard); };
@@ -1121,6 +1311,25 @@
       });
     }
   }
+
+  window.addEventListener("resize", () => { if (page.managing) placeManager(); });
+  document.addEventListener("scroll", () => { if (page.managing) placeManager(); }, true);
+
+  /* The gear popover closes on a click outside it or on Escape. */
+  document.addEventListener("click", (e) => {
+    if (!page.managing || !onDashboard()) return;
+    if (e.target.closest && (e.target.closest("#gh-manage-pop") || e.target.closest("#gh-manage"))) return;
+    page.managing = false;
+    paintDashboard();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && page.managing && onDashboard() && !sheetOpen()) {
+      page.managing = false;
+      paintDashboard();
+      const gear = document.getElementById("gh-manage");
+      if (gear) gear.focus();
+    }
+  });
 
   /* ⌘K / Ctrl+K focuses the search, as in the app. */
   document.addEventListener("keydown", (e) => {
