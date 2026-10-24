@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: your own devices open it without pairing.** A browser on a
+  device signed in to the hub owner's Tailscale account loads `/app/`
+  straight away; the hub knows it from `tailscale whois` (cached a
+  minute per address). Pairing stays for tagged nodes, other people's
+  devices, phones' remote control and satellites.
+
 - **Remote iPhone app: links in replies get a preview card.** A reply
   that links to a web page shows a card under the text with the page's
   host, its path and an Open button (up to three per reply). Tapping the
