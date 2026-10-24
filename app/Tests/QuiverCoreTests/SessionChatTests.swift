@@ -497,6 +497,10 @@ extension HubStubbed {
         chat.apply(event("approval.requested", #"{"request_id": "r2", "prompt": "Edit?"}"#))
         await chat.decide("r2", "allow")
         #expect(chat.items.last?.kind == .approval(requestId: "r2", prompt: "Edit?", state: .queued))
+        // A reload rebuilds the card with its answer still on its way.
+        chat.load(HubMessagesPage(messages: [], nextBefore: nil, hasMore: false))
+        chat.apply(event("approval.requested", #"{"request_id": "r2", "prompt": "Edit?"}"#))
+        #expect(chat.items.last?.kind == .approval(requestId: "r2", prompt: "Edit?", state: .queued))
         chat.apply(event("command.result", #"{"op": "approval", "request_id": "r2", "ok": false, "note": "prompt closed"}"#))
         #expect(chat.items.last?.kind == .approval(requestId: "r2", prompt: "Edit?",
                                                    state: .failed("Approval failed: prompt closed")))
@@ -514,6 +518,14 @@ extension HubStubbed {
         }
         #expect(state == .failed("Approval failed: No such prompt"))
         #expect(state.answerable)
+    }
+
+    @Test func aSatellitesConfirmationKeepsTheChoice() async throws {
+        let chat = try await opened(ownership: "attached", approval: (202, Data(#"{"queued": true}"#.utf8)))
+        chat.apply(event("approval.requested", #"{"request_id": "r4", "prompt": "Run?"}"#))
+        await chat.decide("r4", "deny")
+        chat.apply(event("command.result", #"{"op": "approval", "request_id": "r4", "ok": true}"#))
+        #expect(chat.items.last?.kind == .approval(requestId: "r4", prompt: "Run?", state: .resolved("deny")))
     }
 }
 }

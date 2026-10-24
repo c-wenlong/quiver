@@ -139,6 +139,10 @@ public final class SessionChatModel {
     private var sentAt: [String: Double] = [:]
     /// The user messages a history load added: echoes of sends it carries.
     private var loadedUsers: [(id: String, text: String, ts: Double?)] = []
+    /// Each approval's state once answered from here, and the decision
+    /// sent: a satellite's result doesn't repeat it.
+    private var answers: [String: HubApprovalState] = [:]
+    private var decisions: [String: String] = [:]
 
     struct Orphan: Equatable {
         var seq: Int
@@ -185,7 +189,7 @@ public final class SessionChatModel {
             if let rid = try? await hub.withClient({ [key] in try await $0.pendingApproval(key) }),
                gen == generation, !hasApproval(rid) {
                 items.append(HubChatItem(id: "approval-\(rid)", kind: .approval(
-                    requestId: rid, prompt: "Approval requested", state: .open)))
+                    requestId: rid, prompt: "Approval requested", state: answerState(rid))))
                 replayFloor = cursor
             }
         } catch is CancellationError {
@@ -362,7 +366,8 @@ public final class SessionChatModel {
                 }
                 return
             }
-            items.append(HubChatItem(id: "approval-\(rid)", kind: .approval(requestId: rid, prompt: prompt, state: .open)))
+            items.append(HubChatItem(id: "approval-\(rid)", kind: .approval(requestId: rid, prompt: prompt,
+                                                                             state: answerState(rid))))
         case "approval.resolved":
             let res = env.decode(HubApprovalResolved.self)
             for i in items.indices {
@@ -383,7 +388,7 @@ public final class SessionChatModel {
         switch env.type {
         case "approval.requested":
             guard let req = env.decode(HubApprovalRequested.self), let rid = req.requestId else { return }
-            var state = HubApprovalState.open
+            var state = answerState(rid)
             if let i = items.firstIndex(where: { $0.id == "approval-\(rid)" }) {
                 if case .approval(_, _, let shown) = items[i].kind { state = shown }
                 items.remove(at: i)
@@ -490,7 +495,7 @@ public final class SessionChatModel {
             setApproval(rid) { state in
                 guard case .resolved = state else {
                     return r.ok == false ? .failed("Approval failed: \(r.note ?? "the satellite rejected it")")
-                        : .resolved(nil)
+                        : .resolved(decisions[rid])
                 }
                 return state
             }
@@ -550,6 +555,7 @@ public final class SessionChatModel {
     public func decide(_ requestId: String, _ decision: String) async {
         guard let i = items.firstIndex(where: { $0.id == "approval-\(requestId)" }),
               case .approval(_, _, let state) = items[i].kind, state.answerable else { return }
+        decisions[requestId] = decision
         setApproval(requestId) { _ in .submitting }
         do {
             let queued = try await hub.withClient { [key] in
@@ -572,7 +578,15 @@ public final class SessionChatModel {
     private func setApproval(_ rid: String, _ next: (HubApprovalState) -> HubApprovalState) {
         guard let i = items.firstIndex(where: { $0.id == "approval-\(rid)" }),
               case .approval(_, let prompt, let state) = items[i].kind else { return }
-        items[i].kind = .approval(requestId: rid, prompt: prompt, state: next(state))
+        let new = next(state)
+        items[i].kind = .approval(requestId: rid, prompt: prompt, state: new)
+        answers[rid] = new
+    }
+
+    /// A card drawn again (a history reload rebuilds the transcript) keeps
+    /// the answer given from here.
+    private func answerState(_ rid: String) -> HubApprovalState {
+        answers[rid] ?? .open
     }
 
     /// Takes an observed session over: the hub stops the harness in its
