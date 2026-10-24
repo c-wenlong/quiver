@@ -114,3 +114,20 @@
 @media (max-width: 440px) {
   .setup-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Step 3: look */
+.setup-looks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.setup-look {
+  display: flex; flex-direction: column; gap: 12px; padding: 12px; min-width: 0; text-align: left;
+  border: 1px solid var(--border); border-radius: 14px; background: var(--card);
+  cursor: pointer; color: var(--text-primary); font-size: 13px;
+}
+.setup-look.on { background: var(--hover); border-color: var(--text-secondary); }
+.setup-sketch-wrap { position: relative; display: block; }
+.setup-sketch { display: block; width: 100%; height: 110px; border-radius: 8px; border: 1px solid var(--border); }
+.setup-sketch-wrap .setup-check { position: absolute; top: 8px; right: 8px; }
+.setup-look-label { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.setup-look-label .caption { margin: 0; }
+@media (max-width: 720px) {
+  .setup-looks { grid-template-columns: minmax(0, 1fr); }
+}

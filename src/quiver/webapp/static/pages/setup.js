@@ -1,14 +1,22 @@
 /* First-run setup: a port of the Mac app's FirstRunSetupSheet (and
  * QuiverCore's FirstRunSetupModel) for the machine the hub runs on, at
  * #/setup. Not in the sidebar. The page opens on a "Set up this machine"
- * card; its steps are the sheet's first two, the agents you use and one
- * AGENTS.md, skills folder and MCP list for all of them. The look and
- * notifications steps are the Mac's own and are left out.
+ * card; its steps are the sheet's first three: the agents you use, one
+ * AGENTS.md, skills folder and MCP list for all of them, and the look
+ * (kept per browser, under the key Settings › General uses). The
+ * notifications step is the Mac's own and is left out.
  * Data: GET /v1/app/setup (swe setup --json in process); the one write
  * is POST /v1/app/setup/apply (swe setup --apply --json). */
 "use strict";
 
-const STEPS = ["agents", "links"];
+const STEPS = ["agents", "links", "look"];
+// Settings › General's appearance, in this browser: absent means System.
+const APPEARANCE_KEY = "quiver.appearance";
+const LOOKS = [
+  ["system", "System", "Matches this browser"],
+  ["light", "Light", "Bright and clear"],
+  ["dark", "Dark", "Easy on the eyes"],
+];
 // SetupPreview.LinkRow.isLeftAlone
 const LEFT_ALONE = new Set(["blocked", "protected", "conflict", "keep", "would-conflict", "would-keep"]);
 
@@ -161,8 +169,8 @@ async function next() {
       if (!onPage()) return;
       if (page.applyError || needsReading(page.outcome)) return paint();
     }
-    return finish();
   }
+  if (page.step === STEPS.length - 1) return finish();
   page.step += 1;
   paint();
 }
@@ -273,13 +281,14 @@ const TITLES = {
     "Quiver shows usage, limits and sessions for every coding agent. The ones you pick go on Accounts. Change them any time on Harnesses."],
   links: ["One setup for all of them",
     "Quiver keeps one AGENTS.md, one skills folder and one list of MCP servers, and links them into each agent."],
+  look: ["Pick a look", "Change it later in Settings › General. It's kept in this browser."],
 };
 
 function paintWizard() {
   const step = STEPS[page.step];
   const [title, subtitle] = TITLES[step];
   const dots = STEPS.map((_, i) => `<span class="setup-dot${i === page.step ? " on" : ""}"></span>`).join("");
-  const body = step === "agents" ? agentsStep() : linksStep();
+  const body = step === "agents" ? agentsStep() : step === "links" ? linksStep() : lookStep();
   paintShell(`<section class="card setup-sheet" aria-labelledby="setup-title">
     <div class="setup-head">
       <div class="setup-brand"><img src="/icon-192.png" alt=""><span>Quiver</span></div>
@@ -314,10 +323,11 @@ function continueDisabled() {
 }
 
 function continueTitle() {
+  if (page.step === STEPS.length - 1) return "Start using Quiver";
   if (STEPS[page.step] !== "links") return "Continue";
   if (page.applying) return "Setting up…";
   if (needsApply()) return "Set up";
-  return "Start using Quiver";
+  return "Continue";
 }
 
 function focusTitle() {
@@ -446,6 +456,54 @@ function doneCard(outcome) {
   </div>`;
 }
 
+/* ---------------------------------------------------------- step 3: look */
+
+function readLook() {
+  let mode = null;
+  try { mode = localStorage.getItem(APPEARANCE_KEY); } catch { /* storage off */ }
+  return mode === "light" || mode === "dark" ? mode : "system";
+}
+
+/* What Settings › General does: Light and Dark set data-theme on <html>,
+ * System removes it and follows the browser. */
+function setLook(mode) {
+  try {
+    if (mode === "system") localStorage.removeItem(APPEARANCE_KEY); else localStorage.setItem(APPEARANCE_KEY, mode);
+  } catch { /* storage off: the choice lasts until reload */ }
+  const root = document.documentElement;
+  if (mode === "light" || mode === "dark") root.dataset.theme = mode; else delete root.dataset.theme;
+}
+
+/* WindowSketch: a tiny Quiver window in light, dark, or both halves for
+ * System. Fixed colours on purpose: it shows the mode, whatever is on now. */
+function sketch(mode) {
+  const win = (dark) => {
+    const wash = dark ? "#171717" : "#f5f5f5", panel = dark ? "#212121" : "#ffffff", line = dark ? "#424242" : "#dbdbdb";
+    return `<rect width="200" height="110" fill="${wash}"/>
+      <rect x="10" y="10" width="30" height="4" rx="2" fill="#10b981"/>
+      ${[0, 1, 2].map((i) => `<rect x="10" y="${20 + i * 10}" width="38" height="4" rx="2" fill="${line}"/>`).join("")}
+      <rect x="64" y="0" width="136" height="110" fill="${panel}"/>
+      <rect x="74" y="10" width="50" height="6" rx="3" fill="${line}"/>
+      <rect x="74" y="23" width="116" height="4" rx="2" fill="${line}"/>
+      <rect x="74" y="33" width="80" height="4" rx="2" fill="${line}"/>
+      <rect x="74" y="84" width="116" height="16" rx="4" fill="${line}"/>`;
+  };
+  const both = mode === "system"
+    ? `<clipPath id="setup-half"><rect x="90" width="110" height="110"/></clipPath><g clip-path="url(#setup-half)">${win(false)}</g>` : "";
+  return `<svg class="setup-sketch" viewBox="0 0 200 110" preserveAspectRatio="none" aria-hidden="true">${win(mode !== "light")}${both}</svg>`;
+}
+
+function lookStep() {
+  const current = readLook();
+  return `<div class="setup-looks" role="radiogroup" aria-label="Appearance">${LOOKS.map(([id, title, blurb]) => {
+    const on = id === current;
+    return `<button class="setup-look${on ? " on" : ""}" role="radio" aria-checked="${on}" data-look="${id}">
+      <span class="setup-sketch-wrap">${sketch(id)}${on ? CHECK : ""}</span>
+      <span class="setup-look-label"><span class="strong">${esc(title)}</span><span class="caption">${esc(blurb)}</span></span>
+    </button>`;
+  }).join("")}</div>`;
+}
+
 /* --------------------------------------------------------------- events */
 
 function bindWizard() {
@@ -460,6 +518,14 @@ function bindWizard() {
   if ($("setup-more")) $("setup-more").onclick = () => { page.showingMore = !page.showingMore; paint(); $("setup-more").focus(); };
   if ($("setup-start-from")) $("setup-start-from").onchange = (e) => { page.start = e.target.value; paint(); $("setup-start-from").focus(); };
   bindRetry();
+  for (const card of document.querySelectorAll("[data-look]")) {
+    card.onclick = () => {
+      setLook(card.dataset.look);
+      paint();
+      const again = document.querySelector(`[data-look="${card.dataset.look}"]`);
+      if (again) again.focus();
+    };
+  }
   for (const tile of document.querySelectorAll(".setup-tile")) {
     tile.onclick = () => {
       const id = tile.dataset.agent;

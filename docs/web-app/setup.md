@@ -17,7 +17,7 @@ The page opens on one card:
 
 The button reads the machine afresh (as the sheet loads its preview each
 time it opens), then starts the sheet's steps, in a card laid out like the sheet:
-the Quiver mark, the step bars and "1 of 2", the step's title and
+the Quiver mark, the step bars and "1 of 3", the step's title and
 subtitle, and a footer with Skip setup, Back and Continue.
 
 1. **Pick the agents you use.** "Found on {machine}" with a count and a
@@ -39,6 +39,15 @@ subtitle, and a footer with Skip setup, Back and Continue.
    the sheet. A failure shows in an error card and Set up runs again.
    Going Back and changing the ticks runs setup again (without adopting a
    second time), as the sheet does.
+
+3. **Pick a look.** System, Light and Dark, each drawn as a small Quiver
+   window, with the Mac app's blurbs ("Matches this browser" for System).
+   A click applies it at once and saves it in this browser under
+   `quiver.appearance`, the key Settings › General uses, so the two stay
+   in step. Start using Quiver finishes.
+
+After setting up, Continue moves to the look; when setup left something
+to read it stays on step 2 first, as the sheet does.
 
 Finishing (or Skip setup) returns to the card, which then says what
 changed and links the AGENTS.md, Skills and MCP servers pages. The
@@ -108,9 +117,6 @@ page shows them.
 
 ## Not ported, and why
 
-- **Step 3, Pick a look.** The web app follows the browser's light or
-  dark setting and has no theme choice of its own yet, so there is
-  nothing to pick. The steps read "1 of 2".
 - **Step 4, notifications.** macOS notification permission and the limit
   alerts are the Mac app's own.
 - **Opening at first launch.** The Mac app opens the sheet when it starts
@@ -128,6 +134,7 @@ page shows them.
 ## Differences from the Mac app
 
 - "Found on this Mac" names the hub machine instead.
+- The look is kept per browser, not per machine, as Settings keeps it.
 - The tiles are in the catalog's order. The Mac app uses the order you
   dragged in Settings › Providers, which the web app doesn't have.
 - On a machine swe has never seen the registry is empty, so `swe list`

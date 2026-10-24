@@ -263,6 +263,8 @@ class TestRoute(_Home, HubBase):
         _, js = self.srv.request("GET", "/app/pages.js")
         self.assertIn(b'registerPage("setup"', js)
         self.assertIn(b"/v1/app/setup/apply", js)
+        # The look step saves where Settings › General reads it.
+        self.assertIn(b'"quiver.appearance"', js)
         _, css = self.srv.request("GET", "/app/pages.css")
         self.assertIn(b".setup-sheet", css)
 
