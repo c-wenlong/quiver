@@ -55,7 +55,16 @@ class WebApp:
             body = overview_mod.build(self._store, self._catalog, period, tz_name)
             body["scanned_at"] = self._scanned_at
             body["notes"] = self._notes()
+            body["first_run"] = self._first_run()
             return body
+
+    def _first_run(self) -> bool:
+        """The Setup page's ``first_run``: no shared AGENTS.md on this
+        machine yet, so Overview can offer setup without building the
+        setup preview."""
+        from quiver.webapp.pages.setup import _first_run
+
+        return _first_run(self.home or Path.home())
 
     def sessions(self, rows: list[dict], hub_machine_id: str, machines: dict,
                  rescan: bool = False) -> dict:

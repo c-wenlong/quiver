@@ -15,8 +15,9 @@ for the hub machine, at ``#/setup``.
 
 ``first_run`` is the Mac app's launch check, ``FirstRun.shouldOffer``:
 no shared ``~/.quiver/AGENTS.md`` yet. (The Mac app also remembers a
-per-Mac "finished or skipped" flag; the web app shows a card rather than
-opening by itself, so it has none.)
+per-Mac "finished or skipped" flag. The web app keeps its own per browser:
+a bare ``/app/`` opens ``#/setup`` once, and Overview shows a card linking
+here for as long as ``first_run`` holds; see ``app.js``.)
 
 ``POST /v1/app/setup/apply`` with ``{"starred": [ids], "adopt": path or
 null}`` is ``swe setup --apply --json --starred=a,b [--adopt=<file>]``
