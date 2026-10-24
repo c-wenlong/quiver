@@ -117,11 +117,14 @@ remote/
   pairing.py     # QR payload, one-time token → device credential
   catalog.py     # session registry: local + satellite rows, machine-scoped
   dismissals.py  # per-device inbox dismissals (inbox_dismissals.json, 0600)
+  sessionmeta.py # pins and display names, hub-wide (session_meta.json, 0600)
   tail.py        # byte-offset transcript readers → events (read path)
   inject.py      # per-harness send/approval/interrupt registry (write path)
   supervise.py   # tmux lifecycle for attached sessions
+  fork.py        # fork a session: per-harness fork command lines, the route
   journal.py     # per-session seq-numbered event log (replay on reconnect)
   hub.py         # http.server ThreadingHTTPServer: REST + SSE, device auth
+  files.py       # @-mention paths under a session's folder (/v1/sessions/{id}/files)
   agent.py       # satellite daemon: dial hub, run local tail/inject
   notify.py      # needs-you/finished/error fan-out via self-hosted ntfy
   launchd.py     # serve --install: the hub as a per-user LaunchAgent
@@ -131,7 +134,7 @@ remote/
 Layering: `remote` may import `sessions`, `reports`, `paths`, `console`,
 `flags`; nothing imports `remote` back. State under
 `~/.quiver/data/remote/` (`devices.json` 0600, `inbox_dismissals.json`
-0600, `cursors/`, `journal/`) —
+0600, `session_meta.json` 0600, `cursors/`, `journal/`) —
 gitignored like the rest of `data/`. New commands run the usual
 checklist: `completion.py`, `help_text.py`, `docs/json-contracts.md`.
 
@@ -236,9 +239,13 @@ GET  /v1/sessions/{id}/queue         queue-mode sends still waiting for idle
 POST /v1/sessions/{id}/queue         {client_id, op: steer|cancel} on one waiting send
 POST /v1/sessions/{id}/attachments   multipart upload → staged file, returns ref
 POST /v1/sessions/{id}/approval      {request_id, decision}
+POST /v1/sessions/{id}/pin           {pinned: bool} → pin or unpin on the hub
+POST /v1/sessions/{id}/title         {title: string} → display name, "" clears it
 POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill
 POST /v1/sessions                    new session {machine, harness, cwd, prompt} → launch_id
+POST /v1/sessions/{id}/fork          {prompt?} new session from this one's history → launch_id
 GET  /v1/folders?path=                subfolders of one folder on the hub machine (new-session browser)
+GET  /v1/sessions/{id}/files?q=     paths under the session's folder for the prompt box's @ menu
 GET  /v1/launches/{launch_id}        pending|started|failed; started carries the session key
 GET  /v1/machines · /v1/usage · /v1/search?q=
 GET  /v1/inbox                       pending decisions; ?done=1 adds finished-today
@@ -251,7 +258,8 @@ POST /v1/pair                        QR payload → device credential
 ```
 
 Events: `message.appended`, `message.delta` (tier A only),
-`session.status`, `approval.requested|resolved`, `compaction`,
+`session.status`, `session.meta` (title, harness_title, pinned,
+pinned_at after a pin or rename), `approval.requested|resolved`, `compaction`,
 `machine.online|offline`, `notify` (needs_you|finished|error|limit).
 
 `queue|steer` is the OpenAI Remote distinction: queue waits for idle;
@@ -259,6 +267,14 @@ steer injects mid-turn where the channel allows (codex turn input, tmux
 send-keys), else degrades to queue with a UI hint. `SessionRow.to_json`
 is reused verbatim so phone and macOS app share semantics —
 `docs/json-contracts.md` gains a section rather than a parallel dialect.
+
+Pins and names are kept on the hub in `session_meta.json`, keyed by
+session key, so the phone, the web app and satellite sessions agree.
+Each session row carries `pinned`, `pinned_at` (epoch seconds or
+`null`; sort the Pinned section by it), `title` (the name set with
+`POST /v1/sessions/{id}/title`, else the harness's own) and
+`harness_title` (always the harness's own). Both routes answer those
+fields and emit `session.meta` so open clients update.
 
 The phone shows queue-mode sends that are still waiting in a tray above
 the prompt box. `GET /v1/sessions/{id}/queue` lists them, oldest first:
@@ -333,6 +349,61 @@ phone can open the chat straight away; a satellite's failed `launch`
 command (`command.result` echoing `launch_id`) turns it `failed` with the
 note. The hub keeps launches in memory for a day.
 
+`POST /v1/sessions/{id}/fork {prompt?}` (`fork.py`) starts a new run of
+the session's harness that continues from its history, in the session's
+folder under tmux, and leaves the original as it was. The source can be
+attached or only watched; the fork never writes to it, and attaching the
+source later never stops a fork (`_local_writer_pids` skips a process
+carrying a fork flag, unless it names the attached session as its own
+output with `--session-id`). The answer is the same `202 {launch_id, state:
+"pending", note}` as a new-session launch, followed through `GET
+/v1/launches/{launch_id}`. `prompt` is optional and typed in once the TUI
+is up; with none, the pane is still booted past the trust prompt, and the
+launch stays pending until the harness writes the fork's transcript.
+Session rows carry `can_fork`, so the app offers Fork only where it
+works. Errors: `404 unknown_session`, `409 fork_unsupported` (the harness
+has no fork command line, or its session has no id to pass), `422
+bad_cwd` (the session's folder is gone from the hub), `409 fork_pending`
+(see below), `422 not_installed`,
+`422 launch_failed` (tmux missing), `422 bad_command`, `429 backlog_full`.
+
+Each harness's fork command line, read off the installed binary's
+`--help` on 2026-10-24:
+
+| Harness | Version checked | Command line |
+|---|---|---|
+| Claude Code | 2.1.308 | `claude --resume <id> --fork-session --session-id <new uuid>` |
+| Codex | 0.163.0 | `codex fork <thread uuid>` |
+| Kilo | 7.8.15 | `kilo --session <id> --fork` |
+| Pi | 1.3.0 | `pi --fork <id>` |
+| Droid | 0.219.0 | `droid --fork <id>` |
+
+Everything else answers `409 fork_unsupported`. opencode 2.1.3 has
+`--fork` only on the one-shot `opencode run`, not the TUI; devin,
+cursor-agent and cline have no fork option.
+
+Adoption must claim the fork, never its source. Claude Code takes the
+new session's id on the command line, so the pending marker carries it
+as `expect_id` and adoption waits for exactly that id. The other
+harnesses pick their own id: the marker excludes the source's id along
+with every same-folder session that existed at the fork, and `fork_of`
+also keeps out a codex resume of the source (a new rollout file under
+the same thread uuid). That leaves only the folder and creation time, so
+two such forks waiting in one folder could take each other's
+transcripts: a fork of these harnesses is refused with `409
+fork_pending` while another launch of that harness is still waiting for
+adoption in the folder (its marker is under a minute old or its pane is
+alive). The marker is written under the registry lock before the pane
+starts, so two requests at once can't both pass. An id a Claude fork
+named is never claimed by any other pending launch. A satellite's session gets a `fork` command in
+its journal, like `launch`; the satellite runs it on its own thread, so
+booting the pane never delays the commands behind it. It checks its own
+folder, its
+failed `command.result` (echoing `launch_id`) turns the launch `failed`,
+and its `session.launched` names the new key. The hub refuses a
+satellite row without `can_fork`, which covers satellites too old to
+send the field or run the op.
+
 `GET /v1/folders?path=` lists one folder's subfolders on the hub machine
 for the phone's folder browser: `{path, parent, folders: [{name, path}],
 truncated}`, names only, dot-folders hidden, at most 500. No `path` means
@@ -395,6 +466,38 @@ empty list with `supported: false`.
   agent never sent one gets built-ins only, `custom_available: false`
   and a note saying custom commands aren't available for that machine
   yet.
+
+`GET /v1/sessions/{id}/files?q=&limit=` (`files.py`) feeds the prompt
+box's `@` menu: `{cwd, query, source, truncated, entries: [{path, kind,
+mtime}]}`, where `path` is relative to the session's working folder,
+`kind` is `file` or `dir`, and `source` says how the folder was listed.
+The app inserts `@path` into the message and the harness reads the file
+itself; the hub only lists names. In a git work tree the listing is `git
+ls-files --cached --others --exclude-standard` (so `.gitignore` holds,
+with the repo's fsmonitor hook off and no index lock taken), and an
+empty answer stays empty; outside a work tree a breadth-first walk skips
+dot-folders and dependency or build folders (`node_modules`, `venv`,
+`__pycache__`, `build`, `dist`, `target`, ...) and never descends a
+symlink: it opens each folder one part at a time with `O_NOFOLLOW` and
+reads its children through that open folder, so a folder swapped for a
+link mid-walk is skipped. A listing keeps at most 20,000 files, opens
+at most 5,000 folders, and stops after 3 s (`truncated: true` when any cap
+hit); it is cached per folder for 10 s, so each keystroke only re-ranks,
+and keystrokes that arrive while it is being built wait for that build.
+Every path must resolve inside the working folder: a symlink, or a
+folder reached through one, that points outside is left out. Ranking is
+case-insensitive, in tiers: the name equals the query (with or without
+its extension), starts with it, holds it; the whole path starts with it,
+holds it; the name, then the path, holds its letters in order. Within a
+tier the tighter match, then the shorter path, then the more recently
+modified one leads. An empty `q` gives the most recently modified files.
+A query that is absolute, starts with `~`, or has a `..` part matches
+nothing. `limit` defaults to 50, at most 200. Errors: `404
+unknown_session`, `422 bad_cwd` (the session has no absolute working
+folder), `422 cwd_missing` (it no longer exists or isn't a folder), `403
+not_readable`, and `422 files_unavailable` for a satellite's session,
+whose disk the hub can't read and whose command journal has no way to
+answer a request yet.
 
 `GET /v1/search?q=&limit=` (`search.py`) puts each matching session in
 the first tier it qualifies for: its title holds the query (whole, or
