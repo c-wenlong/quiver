@@ -27,10 +27,27 @@ enum Caret {
         guard index < text.endIndex else { return text.count }
         return text[..<index].count
     }
+
+    /// The caret to keep after a pick put it at `offset`. Only a field
+    /// that reports its caret (iOS 18) can hold a fixed offset: iOS 17's
+    /// never updates it as you type, so there it stays nil and detection
+    /// keeps following the end of the draft.
+    static func afterPick(_ offset: Int, tracksCaret: Bool) -> Int? {
+        tracksCaret ? offset : nil
+    }
+
+    /// Whether this iOS reports the prompt box's caret.
+    static var tracked: Bool {
+        if #available(iOS 18, *) { return true }
+        return false
+    }
 }
 
 /// An `@path` being typed: the `@` sits at the start of the text or after
-/// whitespace, and runs to the caret with no whitespace in between.
+/// whitespace, and runs to the caret with no whitespace in between. A
+/// path with spaces is quoted, `@"My Documents/notes.txt"`, as Claude
+/// Code writes it; while a folder is being browsed the quote stays open
+/// (`@"My Documents/`).
 struct MentionToken: Equatable {
     /// Offset of the `@`.
     let start: Int
@@ -47,6 +64,7 @@ enum Mention {
     static func token(in text: String, cursor: Int?) -> MentionToken? {
         let chars = Array(text)
         let caret = Caret.clamp(cursor, in: text)
+        if let quoted = quotedToken(chars, caret: caret) { return quoted }
         var start = caret
         while start > 0, !chars[start - 1].isWhitespace { start -= 1 }
         guard start < caret, chars[start] == "@" else { return nil }
@@ -55,21 +73,45 @@ enum Mention {
         return MentionToken(start: start, end: end, query: String(chars[(start + 1)..<caret]))
     }
 
+    /// `@"` at the start of the text or after whitespace, with no quote or
+    /// newline between it and the caret. It runs to its closing quote, or,
+    /// left open, to the end of the word the caret is in.
+    private static func quotedToken(_ chars: [Character], caret: Int) -> MentionToken? {
+        var q = caret - 1
+        while q >= 0, chars[q] != "\"", !chars[q].isNewline { q -= 1 }
+        guard q >= 1, chars[q] == "\"", chars[q - 1] == "@" else { return nil }
+        let start = q - 1
+        guard start == 0 || chars[start - 1].isWhitespace else { return nil }
+        var end = caret
+        while end < chars.count, chars[end] != "\"", !chars[end].isNewline { end += 1 }
+        if end < chars.count, chars[end] == "\"" {
+            end += 1
+        } else {
+            end = caret
+            while end < chars.count, !chars[end].isWhitespace { end += 1 }
+        }
+        return MentionToken(start: start, end: end, query: String(chars[(q + 1)..<caret]))
+    }
+
     /// The draft after picking `path`, and where the caret goes. A file
     /// becomes `@path ` with the caret after the space (an existing space
     /// is reused); a folder becomes `@path/` with the caret after the
-    /// slash, so the menu stays open to pick inside it.
+    /// slash, so the menu stays open to pick inside it. A path with
+    /// whitespace is quoted, `@"a b.txt" `, and a folder's quote is left
+    /// open, `@"a b/`, until a file closes it.
     static func insert(_ path: String, isDir: Bool, replacing token: MentionToken, in text: String)
         -> (text: String, cursor: Int) {
         var chars = Array(text)
         let start = min(token.start, chars.count)
         let end = min(max(token.end, start), chars.count)
         let clean = trimmedSlash(path)
-        var inserted = "@" + clean
+        let quoted = clean.contains(where: \.isWhitespace)
+        var inserted = (quoted ? "@\"" : "@") + clean
         if isDir {
             inserted += "/"
-        } else if end >= chars.count || !chars[end].isWhitespace {
-            inserted += " "
+        } else {
+            if quoted { inserted += "\"" }
+            if end >= chars.count || !chars[end].isWhitespace { inserted += " " }
         }
         chars.replaceSubrange(start..<end, with: Array(inserted))
         var cursor = start + inserted.count
@@ -136,6 +178,14 @@ final class MentionSearch {
             return nil
         }
         guard query != before || (answered == nil && !loading && error == nil) else { return nil }
+        return search(query)
+    }
+
+    /// Back from the background with the menu still open: `stop()` reset
+    /// its search, and the token hasn't changed to start another.
+    @discardableResult
+    func resume() -> Task<Void, Never>? {
+        guard isOpen, let query = token?.query, !loading, answered == nil, error == nil else { return nil }
         return search(query)
     }
 
@@ -296,6 +346,14 @@ final class CommandMenu {
 
     /// Fetches the list again (pull to refresh).
     func refresh() async { await load() }
+
+    /// Back from the background with the menu still open: `stop()` dropped
+    /// the list, and the token hasn't changed to fetch it again.
+    @discardableResult
+    func resume() -> Task<Void, Never>? {
+        guard isOpen, response == nil, !loading else { return nil }
+        return Task { await load() }
+    }
 
     func dismiss() {
         guard token != nil else { return }
