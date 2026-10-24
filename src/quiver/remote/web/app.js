@@ -275,18 +275,34 @@ const STATUS_LABEL = {
 };
 
 function renderSessions() {
+  // A re-render mid-swipe would drop the row under the finger; the
+  // swipe draws the list once it lets go.
+  if (acts.drag && acts.drag.locked) { acts.renderLater = true; return; }
+  acts.renderLater = false;
   const root = el("session-groups");
+  // Pinned rows sit in their own section, in the order they were
+  // pinned, and leave their folder groups. No folder heading says where
+  // they run, so the row does: the folder, after the machine's name
+  // when sessions come from more than one machine.
+  const pinned = state.sessions.filter((r) => r.pinned).sort((a, b) =>
+    (a.pinned_at ?? Infinity) - (b.pinned_at ?? Infinity) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const machines = new Set(state.sessions.map((r) => r.machine_id || "local"));
+  let html = "";
+  if (pinned.length) {
+    html += `<div class="group pinned"><h2>Pinned</h2>`;
+    for (const r of pinned) {
+      const place = (machines.size > 1 ? `${machineLabel(r.machine_id || "local")} · ` : "") + shortDir(r.cwd);
+      html += sessionRowHtml(r, place);
+    }
+    html += "</div>";
+  }
   const byMachine = new Map();
   for (const row of state.sessions) {
+    if (row.pinned) continue;
     const m = row.machine_id || "local";
     if (!byMachine.has(m)) byMachine.set(m, []);
     byMachine.get(m).push(row);
   }
-  const machineName = (id) => {
-    const m = state.machines.find((x) => x.id === id);
-    return m ? (m.name || id) : id;
-  };
-  let html = "";
   for (const [mid, rows] of byMachine) {
     const byCwd = new Map();
     for (const r of rows) {
@@ -295,26 +311,45 @@ function renderSessions() {
       byCwd.get(dir).push(r);
     }
     for (const [cwd, list] of byCwd) {
-      html += `<div class="group"><h2><span class="mach">${esc(machineName(mid))}</span> · ${esc(shortDir(cwd))}</h2>`;
-      for (const r of list) {
-        const st = r.status || "";
-        const when = r.last_active_at ? relTime(r.last_active_at) : "";
-        html += `<div class="srow" data-key="${esc(r.key)}">
-          <div class="dot st ${esc(st)}"></div>
-          <div class="body">
-            <div class="t">${esc(r.title || "(untitled)")}</div>
-            <div class="sub">${esc(r.agent || r.harness)} · ${esc(STATUS_LABEL[st] || st || "idle")} · ${esc(when)}</div>
-          </div>
-          <div class="own">${esc(r.ownership || "observed")}</div>
-        </div>`;
-      }
+      html += `<div class="group"><h2><span class="mach">${esc(machineLabel(mid))}</span> · ${esc(shortDir(cwd))}</h2>`;
+      for (const r of list) html += sessionRowHtml(r);
       html += "</div>";
     }
   }
   root.innerHTML = html || `<p class="dim">No sessions found on this machine yet.</p>`;
-  root.querySelectorAll(".srow").forEach((row) => {
-    row.addEventListener("click", () => openChat(row.dataset.key));
-  });
+  restoreOpenRow();
+  if (acts.flashKey) {
+    const moved = rowWrap(acts.flashKey);
+    if (moved) moved.classList.add("arrive");
+    acts.flashKey = null;
+  }
+}
+
+/* One row: the card, with its swipe actions behind it (a right swipe
+ * shows `lead`, a left swipe `trail`) and a ⋯ button that opens the
+ * same actions in a sheet. Taps, swipes and the menu are wired once on
+ * the list, under "session row actions". */
+function sessionRowHtml(r, place) {
+  const st = r.status || "";
+  const when = r.last_active_at ? relTime(r.last_active_at) : "";
+  // Hidden from assistive tech: the ⋯ button offers the same actions.
+  const pane = (side, list) => list.length
+    ? `<div class="swipe-acts ${side}" aria-hidden="true">${list.map((a) =>
+      `<button type="button" tabindex="-1" class="act-${a}" data-act="${a}">${ROW_ACTION_LABEL[a]}</button>`).join("")}</div>`
+    : "";
+  return `<div class="swipe" data-key="${escAttr(r.key)}">
+    ${pane("lead", leadingActions(r))}${pane("trail", trailingActions(r))}
+    <div class="srow">
+      <div class="dot st ${esc(st)}"></div>
+      <div class="body">
+        <div class="t">${esc(r.title || "(untitled)")}</div>
+        <div class="sub">${esc(r.agent || r.harness)} · ${esc(STATUS_LABEL[st] || st || "idle")} · ${esc(when)}${place ? ` · ${esc(place)}` : ""}</div>
+        ${detachPending(r.key) ? `<div class="sub note">Detaching when it finishes</div>` : ""}
+      </div>
+      <div class="own">${esc(r.ownership || "observed")}</div>
+      <button type="button" class="row-more" aria-haspopup="dialog" aria-label="Actions for ${escAttr(rowTitle(r))}">⋯</button>
+    </div>
+  </div>`;
 }
 
 function shortDir(p) {
@@ -332,13 +367,821 @@ function relTime(ts) {
 }
 
 async function loadSessions() {
+  // The poll, Back, the tabs and the row actions all reload; only the
+  // newest answer draws, so an older list never replaces a newer one.
+  const gen = ++acts.listGen;
+  const mark = acts.pins.clock;
   const { status, data } = await api("/v1/sessions");
+  if (gen !== acts.listGen) return;
   if (status === 401) { store.cred = null; boot(); return; }
   if (status !== 200 || !data) { setConn("err"); return; }
-  state.sessions = data.sessions || [];
+  state.sessions = overlayPins(data.sessions || [], mark);
   state.machines = data.machines || [];
+  settleDetaches();
   setConn(true);
   if (state.view === "sessions") renderSessions();
+}
+
+/* ── session row actions ─────────────────────────────────────
+   The iPhone app's swipe actions: swipe right to Attach or Detach,
+   left to Pin or Unpin, Rename and Fork. A long press, a right-click or
+   the ⋯ button shows the same actions in a sheet. The hub keeps pins
+   and names (POST .../pin, .../title), so every device agrees. */
+
+const acts = {
+  // The row swiped open, and which side ("lead" or "trail").
+  openKey: null,
+  openSide: null,
+  // The pointer on a row right now (see onRowPointerDown).
+  drag: null,
+  renderLater: false,
+  // A swipe or long press ends in a click the row must not act on.
+  suppressUntil: 0,
+  listGen: 0,
+  // A row that just moved between sections, to flash once drawn.
+  flashKey: null,
+  // when_idle detaches the hub is still waiting on: key → ms asked.
+  // One clears when the row stops being attached, when an open chat
+  // hears the detach's command.result, or past the hub's 30 min cap.
+  detaching: new Map(),
+  // Pins chosen here that the hub may not reflect yet. Each choice gets
+  // a version; a reply counts only for the latest choice on its key,
+  // and a list fetched before that choice was answered keeps it.
+  pins: { clock: 0, choices: new Map() },
+  sheet: null,
+  sheetGen: 0,
+  toastTimer: null,
+};
+
+const ROW_ACTION_LABEL = {
+  attach: "Attach", detach: "Detach", pin: "Pin", unpin: "Unpin",
+  rename: "Rename", fork: "Fork",
+};
+const SWIPE_BUTTON = 76; // px per action, as on the iPhone
+const SWIPE_SLOP = 8;
+const LONG_PRESS_MS = 500;
+const DETACH_WAIT_CAP_MS = 31 * 60 * 1000;
+const TITLE_MAX = 120;
+const FORK_POLLS = 90;
+
+const HUB_ERROR_TEXT = {
+  too_many_pins: "Too many sessions are pinned. Unpin one first.",
+  fork_pending: "Another fork in this folder is still starting. Try again once it shows up.",
+  fork_unsupported: "This session can't be forked: its harness has no fork command, or the session has no id yet.",
+  not_attachable: "This harness can't be attached from here.",
+  backlog_full: "Too many messages are waiting. Try again shortly.",
+  bad_cwd: "That folder doesn't exist on this machine.",
+  not_installed: "That harness isn't installed on the machine any more.",
+  unknown_session: "The hub doesn't know this session any more.",
+  unknown_launch: "The hub lost track of this launch. Check Sessions in a moment.",
+};
+
+function rowErrorText(status, data, fallback) {
+  const err = data && data.error;
+  if (err && HUB_ERROR_TEXT[err.code]) return HUB_ERROR_TEXT[err.code];
+  if (err && err.message) return err.message;
+  if (status === 0) return "Couldn't reach the hub.";
+  return fallback || `The hub answered with an error (${status}).`;
+}
+
+/* esc() leaves quotes alone, which is fine in text but not inside an
+ * attribute: a title can hold a `"`. */
+function escAttr(s) { return esc(s).replace(/"/g, "&quot;"); }
+function findRow(key) { return state.sessions.find((r) => r.key === key); }
+function rowTitle(r) { return (r && r.title) || "Untitled session"; }
+function machineLabel(id, fallback) {
+  const m = state.machines.find((x) => x.id === id);
+  return m ? (m.name || id) : (fallback || id);
+}
+function renderIfList() { if (state.view === "sessions") renderSessions(); }
+function refreshList() { return loadSessions().catch(() => setConn("err")); }
+
+/* Swipe right: take the session over, or hand it back. The hub refuses
+ * an attach mid-turn, so a working row offers none. */
+function leadingActions(r) {
+  if (r.ownership === "attached") return ["detach"];
+  if (r.attachable && r.status !== "active") return ["attach"];
+  return [];
+}
+
+/* Swipe left, the first at the row's edge (a full swipe runs it). */
+function trailingActions(r) {
+  const out = [r.pinned ? "unpin" : "pin", "rename"];
+  if (r.can_fork === true) out.push("fork");
+  return out;
+}
+
+function runRowAction(action, key) {
+  const row = findRow(key);
+  closeOpenRow();
+  if (!row) return;
+  if (action === "attach") attachRow(row);
+  else if (action === "detach") {
+    // A row known to be working asks first, since `now` would cut its
+    // turn. Any other detaches with when_idle, never now: the status
+    // can be a poll old, and the hub detaches at once when it sees the
+    // session idle.
+    if (row.status === "active" || row.status === "approval") openDetachSheet(row);
+    else detachRow(row, "when_idle", true);
+  } else if (action === "pin" || action === "unpin") setPinned(key, action === "pin");
+  else if (action === "rename") openRenameSheet(row);
+  else if (action === "fork") openForkSheet(row);
+}
+
+function control(key, body) {
+  return api(`/v1/sessions/${encodeURIComponent(key)}/control`,
+    { method: "POST", body: JSON.stringify(body) });
+}
+
+async function attachRow(row) {
+  const key = row.key;
+  let status = 0, data = null;
+  try { ({ status, data } = await control(key, { op: "attach" })); } catch { status = 0; }
+  if (status === 200 || status === 202) {
+    // An attach also cancels a detach waiting on the turn.
+    acts.detaching.delete(key);
+    if (status === 202) {
+      toast(`Attaching on ${machineLabel(row.machine_id, "the machine")}`);
+    } else {
+      const now = findRow(key);
+      if (now) now.ownership = "attached";
+      renderIfList();
+    }
+  } else {
+    toast(rowErrorText(status, data, "Couldn't attach it."));
+  }
+  refreshList();
+}
+
+/* `offerUndo` is the swipe on a row that looked idle: Undo attaches it
+ * again, which also cancels the detach if the hub is still waiting. */
+async function detachRow(row, mode, offerUndo = false) {
+  const key = row.key;
+  const title = rowTitle(row);
+  const where = machineLabel(row.machine_id, "the machine");
+  let status = 0, data = null;
+  try { ({ status, data } = await control(key, { op: "detach", mode })); } catch { status = 0; }
+  if (status === 200 || status === 202) {
+    if (mode === "when_idle") {
+      acts.detaching.set(key, Date.now());
+    } else {
+      // A now or keep detach replaces a waiting one.
+      acts.detaching.delete(key);
+      const now = findRow(key);
+      if (status === 200 && now) now.ownership = "observed";
+    }
+    renderIfList();
+    if (offerUndo) {
+      toast(`Detaching ${title}`, {
+        label: "Undo",
+        run: () => attachRow(findRow(key) || row),
+      });
+      // The hub checks every 2 s and detaches an idle session then.
+      setTimeout(refreshList, 3000);
+      return;
+    }
+    if (mode === "when_idle") { /* the row says "Detaching when it finishes" */ }
+    else if (status === 202) toast(`Detaching on ${where}`);
+    else if (mode === "keep") toast(`Detached. It keeps running in tmux on ${where}.`);
+    else toast(`Detached ${title}`);
+  } else if (mode === "keep" && status === 409 && data && data.error &&
+             data.error.code === "control_failed" && /no tmux session/.test(data.error.message || "")) {
+    toast("This session doesn't run in tmux, so it can't keep running. Detach when it finishes or now instead.");
+  } else {
+    toast(rowErrorText(status, data, "Couldn't detach it."));
+  }
+  refreshList();
+}
+
+function detachPending(key) {
+  const at = acts.detaching.get(key);
+  if (at === undefined) return false;
+  if (Date.now() - at < DETACH_WAIT_CAP_MS) return true;
+  acts.detaching.delete(key);
+  return false;
+}
+
+/* A fresh list: a row no longer attached has been handed back. */
+function settleDetaches() {
+  for (const key of [...acts.detaching.keys()]) {
+    const row = findRow(key);
+    if (!row || row.ownership !== "attached") acts.detaching.delete(key);
+  }
+}
+
+/* ── pins ── */
+
+function pinChoose(key, pinned) {
+  const p = acts.pins;
+  p.clock += 1;
+  p.choices.set(key, {
+    pinned, pinnedAt: pinned ? Date.now() / 1000 : null, version: p.clock, answeredAt: null,
+  });
+  return p.clock;
+}
+
+/* The hub took `version`. False when a newer choice replaced it, so its
+ * reply must not be applied. */
+function pinAnswered(key, version) {
+  const c = acts.pins.choices.get(key);
+  if (!c || c.version !== version) return false;
+  acts.pins.clock += 1;
+  c.answeredAt = acts.pins.clock;
+  return true;
+}
+
+/* The hub refused `version`. True when it was still the latest choice,
+ * so the row goes back. */
+function pinRefused(key, version) {
+  const c = acts.pins.choices.get(key);
+  if (!c || c.version !== version) return false;
+  acts.pins.choices.delete(key);
+  return true;
+}
+
+/* A list fetched from `mark` on: rows whose latest choice was not yet
+ * answered when the fetch started keep that choice. Choices the fetch
+ * already reflects are forgotten. */
+function overlayPins(rows, mark) {
+  for (const [key, c] of acts.pins.choices) {
+    if (c.answeredAt !== null && c.answeredAt <= mark) { acts.pins.choices.delete(key); continue; }
+    const row = rows.find((r) => r.key === key);
+    if (!row) continue;
+    row.pinned = c.pinned;
+    row.pinned_at = c.pinned ? (c.pinnedAt ?? row.pinned_at) : null;
+  }
+  return rows;
+}
+
+/* A pin or rename answered by the hub or announced (session.meta), with
+ * the pin a still-unanswered choice holds. */
+function patchMeta(key, meta) {
+  const row = findRow(key);
+  if (!row || !meta) return;
+  const c = acts.pins.choices.get(key);
+  const pinned = c && c.answeredAt === null ? c.pinned : !!meta.pinned;
+  const pinnedAt = c && c.answeredAt === null ? c.pinnedAt : meta.pinned_at;
+  if (typeof meta.title === "string") row.title = meta.title;
+  if (typeof meta.harness_title === "string") row.harness_title = meta.harness_title;
+  row.pinned = pinned;
+  row.pinned_at = pinned ? pinnedAt : null;
+}
+
+/* Pins or unpins at once, then tells the hub; a refusal moves the row
+ * back with a note. */
+async function setPinned(key, pinned) {
+  const row = findRow(key);
+  if (!row) return;
+  const before = { pinned: row.pinned, pinned_at: row.pinned_at };
+  const version = pinChoose(key, pinned);
+  row.pinned = pinned;
+  row.pinned_at = acts.pins.choices.get(key).pinnedAt;
+  acts.flashKey = key;
+  renderIfList();
+  let status = 0, data = null;
+  try {
+    ({ status, data } = await api(`/v1/sessions/${encodeURIComponent(key)}/pin`,
+      { method: "POST", body: JSON.stringify({ pinned }) }));
+  } catch { status = 0; }
+  if (status === 200 && data) {
+    if (pinAnswered(key, version)) { patchMeta(key, data); renderIfList(); }
+    return;
+  }
+  if (!pinRefused(key, version)) return;
+  const now = findRow(key);
+  if (now) {
+    now.pinned = before.pinned;
+    now.pinned_at = before.pinned_at;
+    acts.flashKey = key;
+  }
+  renderIfList();
+  toast(`${pinned ? "Couldn't pin it" : "Couldn't unpin it"}. ${rowErrorText(status, data)}`);
+}
+
+/* Events in an open chat's stream that change the row: a pin or rename
+ * (session.meta), and the end of a detach that waited on the turn. */
+function noteRowEvent(ev) {
+  const d = ev.data || {};
+  if (ev.type === "session.meta") {
+    patchMeta(ev.session, d);
+    if (state.view === "chat" && ev.session === state.currentKey) el("title").textContent = chatTitle();
+  } else if (ev.type === "session.ownership" && d.ownership && d.ownership !== "attached") {
+    acts.detaching.delete(ev.session);
+  } else if (ev.type === "command.result" && d.op === "detach") {
+    // A replayed result from an earlier detach must not settle this one.
+    const at = acts.detaching.get(ev.session);
+    if (at !== undefined && (!ev.ts || ev.ts * 1000 >= at - 2000)) acts.detaching.delete(ev.session);
+  }
+}
+
+/* ── swipe ──
+   Pointer events on the list. The row has touch-action: pan-y, so a
+   drag that starts up or down scrolls the page as usual (the browser
+   cancels the pointer); one that starts sideways locks to the row. The
+   numbers follow the iPhone app's SwipeMath. */
+
+function rowWrap(key) {
+  return el("session-groups").querySelector(`.swipe[data-key="${CSS.escape(key)}"]`);
+}
+
+function swipeMath(wrap) {
+  return {
+    width: wrap.getBoundingClientRect().width,
+    lead: wrap.querySelectorAll(".swipe-acts.lead button").length,
+    trail: wrap.querySelectorAll(".swipe-acts.trail button").length,
+  };
+}
+
+/* Free up to the row's width on a side with actions, then a stiff
+ * rubber band; a side with none barely moves. */
+function swipeOffset(m, raw) {
+  const hasSide = raw > 0 ? m.lead > 0 : m.trail > 0;
+  const limit = hasSide ? m.width : 0;
+  const span = Math.max(m.width, 1);
+  const mag = Math.abs(raw);
+  const bounded = mag <= limit ? mag : limit + (1 - 1 / ((mag - limit) * 0.55 / span + 1)) * span * 0.25;
+  return raw < 0 ? -bounded : bounded;
+}
+
+/* Past this the edge action stretches across and runs on release. */
+function fullSwipe(m, open) { return Math.max(open + 64, m.width * 0.55); }
+
+function swipeArmed(m, x) {
+  if (x > 0) return m.lead > 0 && x >= fullSwipe(m, m.lead * SWIPE_BUTTON);
+  if (x < 0) return m.trail > 0 && -x >= fullSwipe(m, m.trail * SWIPE_BUTTON);
+  return false;
+}
+
+/* Letting go at `x` moving at `v` px/s: a flick carries the row on. */
+function swipeRelease(m, x, v) {
+  if (swipeArmed(m, x)) return x > 0 ? "runLead" : "runTrail";
+  const projected = x + v * 0.12;
+  if (x > 0 && m.lead > 0 && projected > (m.lead * SWIPE_BUTTON) / 2) return "openLead";
+  if (x < 0 && m.trail > 0 && -projected > (m.trail * SWIPE_BUTTON) / 2) return "openTrail";
+  return "close";
+}
+
+function setSwipe(wrap, x, animate) {
+  wrap.classList.toggle("dragging", !animate);
+  wrap.querySelector(".srow").style.transform = x ? `translateX(${x}px)` : "";
+  const lead = wrap.querySelector(".swipe-acts.lead");
+  const trail = wrap.querySelector(".swipe-acts.trail");
+  if (lead) lead.style.width = `${Math.max(0, x)}px`;
+  if (trail) trail.style.width = `${Math.max(0, -x)}px`;
+  wrap.dataset.offset = String(x);
+}
+
+function settleSwipe(wrap, x) {
+  wrap.classList.remove("armed");
+  setSwipe(wrap, x, true);
+  const key = wrap.dataset.key;
+  if (x) {
+    acts.openKey = key;
+    acts.openSide = x > 0 ? "lead" : "trail";
+  } else if (acts.openKey === key) {
+    acts.openKey = null;
+  }
+}
+
+function closeOpenRow() {
+  const key = acts.openKey;
+  if (!key) return;
+  acts.openKey = null;
+  const wrap = rowWrap(key);
+  if (wrap) settleSwipe(wrap, 0);
+}
+
+/* A re-render keeps an open row open, if it still has that side. */
+function restoreOpenRow() {
+  const key = acts.openKey;
+  if (!key) return;
+  const wrap = rowWrap(key);
+  const m = wrap && swipeMath(wrap);
+  const n = m ? (acts.openSide === "lead" ? m.lead : m.trail) : 0;
+  if (!n) { acts.openKey = null; return; }
+  setSwipe(wrap, acts.openSide === "lead" ? n * SWIPE_BUTTON : -n * SWIPE_BUTTON, false);
+  requestAnimationFrame(() => wrap.classList.remove("dragging"));
+}
+
+function suppressClick() { acts.suppressUntil = performance.now() + 400; }
+
+function onRowPointerDown(e) {
+  if (e.pointerType === "mouse" && e.button !== 0) return;
+  if (e.target.closest(".row-more, .swipe-acts")) return;
+  const wrap = e.target.closest(".swipe");
+  if (!wrap) return;
+  // A second finger leaves a swipe under way alone. An unlocked press
+  // whose mouse-up landed outside the list is simply replaced.
+  if (acts.drag && acts.drag.locked) return;
+  if (acts.drag) clearTimeout(acts.drag.timer);
+  const base = Number(wrap.dataset.offset || 0);
+  const d = {
+    wrap, m: swipeMath(wrap), id: e.pointerId, x0: e.clientX, y0: e.clientY,
+    base, x: base, locked: false, lastX: e.clientX, lastT: e.timeStamp, v: 0, timer: null,
+  };
+  // A mouse has right-click and the ⋯ button for the menu.
+  if (e.pointerType !== "mouse") {
+    d.timer = setTimeout(() => {
+      d.timer = null;
+      if (acts.drag !== d || d.locked) return;
+      acts.drag = null;
+      suppressClick();
+      openRowMenu(wrap.dataset.key);
+    }, LONG_PRESS_MS);
+  }
+  acts.drag = d;
+}
+
+function onRowPointerMove(e) {
+  const d = acts.drag;
+  if (!d || e.pointerId !== d.id) return;
+  const dx = e.clientX - d.x0, dy = e.clientY - d.y0;
+  if (!d.locked) {
+    if (Math.abs(dx) < SWIPE_SLOP && Math.abs(dy) < SWIPE_SLOP) return;
+    clearTimeout(d.timer);
+    d.timer = null;
+    // Up or down first: the page scrolls and the row stays put.
+    if (Math.abs(dy) >= Math.abs(dx)) { acts.drag = null; return; }
+    d.locked = true;
+    try { d.wrap.querySelector(".srow").setPointerCapture(d.id); } catch { /* already gone */ }
+    // Opening one row closes the others.
+    if (acts.openKey && acts.openKey !== d.wrap.dataset.key) closeOpenRow();
+  }
+  e.preventDefault();
+  const dt = e.timeStamp - d.lastT;
+  if (dt > 0) {
+    d.v = 0.8 * ((e.clientX - d.lastX) / dt) * 1000 + 0.2 * d.v;
+    d.lastX = e.clientX;
+    d.lastT = e.timeStamp;
+  }
+  d.x = swipeOffset(d.m, d.base + dx);
+  setSwipe(d.wrap, d.x, false);
+  const armed = swipeArmed(d.m, d.x);
+  if (armed !== d.wrap.classList.contains("armed")) {
+    d.wrap.classList.toggle("armed", armed);
+    if (armed && navigator.vibrate) navigator.vibrate(10);
+  }
+}
+
+function onRowPointerUp(e) {
+  const d = acts.drag;
+  if (!d || e.pointerId !== d.id) return;
+  clearTimeout(d.timer);
+  acts.drag = null;
+  if (!d.locked) return;
+  suppressClick();
+  const { wrap, m } = d;
+  // The browser took the pointer back (a system gesture): nobody let
+  // go, so nothing runs and the row goes back to where it started.
+  if (e.type === "pointercancel") {
+    settleSwipe(wrap, d.base);
+    if (acts.renderLater) renderSessions();
+    return;
+  }
+  // A finger that rested before lifting carries no flick.
+  const v = e.timeStamp - d.lastT > 100 ? 0 : d.v;
+  const key = wrap.dataset.key;
+  const edge = (side) => {
+    const b = wrap.querySelector(`.swipe-acts.${side} button`);
+    return b && b.dataset.act;
+  };
+  switch (swipeRelease(m, d.x, v)) {
+    case "runLead": settleSwipe(wrap, 0); runRowAction(edge("lead"), key); break;
+    case "runTrail": settleSwipe(wrap, 0); runRowAction(edge("trail"), key); break;
+    case "openLead": settleSwipe(wrap, m.lead * SWIPE_BUTTON); break;
+    case "openTrail": settleSwipe(wrap, -m.trail * SWIPE_BUTTON); break;
+    default: settleSwipe(wrap, 0);
+  }
+  if (acts.renderLater) renderSessions();
+}
+
+function onRowClick(e) {
+  if (performance.now() < acts.suppressUntil) {
+    acts.suppressUntil = 0;
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
+  const wrap = e.target.closest(".swipe");
+  if (!wrap) return;
+  const key = wrap.dataset.key;
+  const button = e.target.closest(".swipe-acts button");
+  if (button) { runRowAction(button.dataset.act, key); return; }
+  if (e.target.closest(".row-more")) { openRowMenu(key); return; }
+  // A tap while a row is open closes it instead of opening a chat.
+  if (acts.openKey) { closeOpenRow(); return; }
+  openChat(key);
+}
+
+(() => {
+  const root = el("session-groups");
+  root.addEventListener("pointerdown", onRowPointerDown);
+  root.addEventListener("pointermove", onRowPointerMove);
+  root.addEventListener("pointerup", onRowPointerUp);
+  root.addEventListener("pointercancel", onRowPointerUp);
+  root.addEventListener("click", onRowClick, true);
+  root.addEventListener("contextmenu", (e) => {
+    const wrap = e.target.closest(".swipe");
+    if (!wrap) return;
+    e.preventDefault();
+    if (acts.drag) { clearTimeout(acts.drag.timer); acts.drag = null; }
+    openRowMenu(wrap.dataset.key);
+  });
+  // Scrolling the list closes an open row, as on the iPhone.
+  document.querySelector("main").addEventListener("scroll", () => {
+    if (acts.openKey && !acts.drag) closeOpenRow();
+  }, { passive: true });
+  // The toast's live region exists from the start, so a screen reader
+  // announces the first note too.
+  const t = document.createElement("div");
+  t.id = "row-toast";
+  t.className = "toast hidden";
+  t.setAttribute("role", "status");
+  document.body.appendChild(t);
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (acts.sheet) { if (!acts.sheet.busy) closeSheet(); }
+    else closeOpenRow();
+  });
+})();
+
+/* ── sheets and the toast ── */
+
+/* One sheet at a time: the row menu and the detach choice come up from
+ * the bottom, the rename and fork forms sit at the top so the keyboard
+ * doesn't cover them. `build(body, gen)` fills it; work it starts checks
+ * `gen === acts.sheetGen`, which a close bumps. */
+function openSheet(title, build, form = false) {
+  closeSheet();
+  const gen = ++acts.sheetGen;
+  const back = document.createElement("div");
+  back.className = "sheet-back" + (form ? " form" : "");
+  back.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <h2 id="sheet-title" class="sheet-title"></h2><div class="sheet-body"></div></div>`;
+  back.querySelector(".sheet-title").textContent = title;
+  const sheet = { el: back, gen, busy: false, openedAt: performance.now(), focus: document.activeElement };
+  acts.sheet = sheet;
+  build(back.querySelector(".sheet-body"), gen);
+  // The lift that ends a long press lands on whatever is under the
+  // finger once the sheet is up; it must not pick an action.
+  back.addEventListener("click", (e) => {
+    if (performance.now() - sheet.openedAt < 400) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
+  back.addEventListener("click", (e) => {
+    if (e.target === back && !sheet.busy) closeSheet();
+  });
+  document.body.appendChild(back);
+  // Modal for real: everything behind the sheet goes inert, so Tab
+  // can't reach the tabs or the list while it is up.
+  sheet.inert = [...document.body.children].filter((n) => n !== back && !n.inert && n.tagName !== "SCRIPT");
+  for (const n of sheet.inert) n.inert = true;
+  const first = back.querySelector("input, textarea, .sheet-actions button");
+  if (first) first.focus({ preventScroll: true });
+  return gen;
+}
+
+function closeSheet() {
+  const s = acts.sheet;
+  if (!s) return;
+  acts.sheet = null;
+  acts.sheetGen += 1;
+  for (const n of s.inert || []) n.inert = false;
+  s.el.remove();
+  if (s.focus && s.focus.focus && document.contains(s.focus)) s.focus.focus({ preventScroll: true });
+}
+
+function sheetBusy(on) { if (acts.sheet) acts.sheet.busy = on; }
+
+function openRowMenu(key) {
+  const row = findRow(key);
+  if (!row || acts.sheet) return;
+  closeOpenRow();
+  const list = leadingActions(row).concat(trailingActions(row));
+  openSheet(rowTitle(row), (body) => {
+    body.innerHTML = `<div class="sheet-actions">${list.map((a) =>
+      `<button type="button" data-act="${a}">${ROW_ACTION_LABEL[a]}</button>`).join("")}
+      <button type="button" class="sheet-cancel">Cancel</button></div>`;
+    body.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => {
+      closeSheet();
+      runRowAction(b.dataset.act, key);
+    }));
+    body.querySelector(".sheet-cancel").addEventListener("click", closeSheet);
+  });
+}
+
+function openDetachSheet(row) {
+  const key = row.key;
+  openSheet(`Detach ${rowTitle(row)}?`, (body) => {
+    body.innerHTML = `<p class="dim sheet-note">It's working right now. Detaching now stops the turn; keeping it lets you attach to it from the Mac with tmux.</p>
+      <div class="sheet-actions">
+        <button type="button" data-mode="when_idle">Detach when it finishes</button>
+        <button type="button" data-mode="keep">Keep it running in tmux</button>
+        <button type="button" class="danger" data-mode="now">Detach now</button>
+        <button type="button" class="sheet-cancel">Cancel</button>
+      </div>`;
+    body.querySelectorAll("[data-mode]").forEach((b) => b.addEventListener("click", () => {
+      closeSheet();
+      detachRow(findRow(key) || row, b.dataset.mode);
+    }));
+    body.querySelector(".sheet-cancel").addEventListener("click", closeSheet);
+  });
+}
+
+/* The hub's rules (sessionmeta.parse_title): one line, spaces collapsed,
+ * at most 120 characters. It counts code points, and so does [...s]. */
+function clampTitle(text) {
+  const oneLine = text.replace(/[\r\n]+/g, " ");
+  const points = [...oneLine];
+  return points.length > TITLE_MAX ? points.slice(0, TITLE_MAX).join("") : oneLine;
+}
+function normalTitle(text) {
+  return [...text.split(/\s+/).filter(Boolean).join(" ")].slice(0, TITLE_MAX).join("").trimEnd();
+}
+
+function openRenameSheet(row) {
+  const key = row.key;
+  const current = row.title || "";
+  const custom = row.harness_title != null && !!row.title && row.title !== row.harness_title;
+  openSheet("Rename", (body, gen) => {
+    body.innerHTML = `
+      <label class="sheet-label"><span>Name</span><span class="rename-count"></span></label>
+      <input class="rename-input" type="text" autocomplete="off" spellcheck="false" enterkeyhint="done">
+      <p class="dim sheet-note">Every device paired with this hub shows this name.</p>
+      ${custom ? `<button type="button" class="rename-reset">Use the original name</button>
+        ${row.harness_title ? `<p class="dim sheet-note">Original: ${esc(row.harness_title)}</p>` : ""}` : ""}
+      <p class="error sheet-error"></p>
+      <div class="sheet-row">
+        <button type="button" class="sheet-cancel">Cancel</button>
+        <button type="button" class="primary rename-save">Save</button>
+      </div>`;
+    const input = body.querySelector(".rename-input");
+    const count = body.querySelector(".rename-count");
+    const save = body.querySelector(".rename-save");
+    const reset = body.querySelector(".rename-reset");
+    const cancel = body.querySelector(".sheet-cancel");
+    const error = body.querySelector(".sheet-error");
+    input.setAttribute("aria-label", "Name");
+    input.placeholder = row.harness_title || "Name this session";
+    input.value = clampTitle(current);
+    // Save is on once the name is non-empty and differs from the
+    // current one; clearing it goes through "Use the original name".
+    const canSave = () => { const n = normalTitle(input.value); return !!n && n !== current; };
+    const sync = () => {
+      count.textContent = `${[...input.value].length}/${TITLE_MAX}`;
+      save.disabled = !canSave();
+    };
+    const submit = async (title) => {
+      sheetBusy(true);
+      for (const b of [input, save, reset, cancel]) if (b) b.disabled = true;
+      save.textContent = "Saving";
+      error.textContent = "";
+      let status = 0, data = null;
+      try {
+        ({ status, data } = await api(`/v1/sessions/${encodeURIComponent(key)}/title`,
+          { method: "POST", body: JSON.stringify({ title }) }));
+      } catch { status = 0; }
+      if (status === 200 && data) {
+        patchMeta(key, data);
+        if (gen === acts.sheetGen) closeSheet();
+        renderIfList();
+        return;
+      }
+      if (gen !== acts.sheetGen) return;
+      sheetBusy(false);
+      for (const b of [input, reset, cancel]) if (b) b.disabled = false;
+      save.textContent = "Save";
+      sync();
+      error.textContent = rowErrorText(status, data, "Couldn't rename it.");
+    };
+    input.addEventListener("input", () => {
+      const clamped = clampTitle(input.value);
+      if (clamped !== input.value) input.value = clamped;
+      sync();
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.isComposing && canSave()) submit(normalTitle(input.value));
+    });
+    save.addEventListener("click", () => submit(normalTitle(input.value)));
+    if (reset) reset.addEventListener("click", () => submit(""));
+    cancel.addEventListener("click", closeSheet);
+    sync();
+  }, true);
+}
+
+/* Fork: a new session that continues from this one's history, with a
+ * first message, tracked like a new-session launch; its chat opens once
+ * the hub names it. Cancel stops the polling. */
+function openForkSheet(row) {
+  const key = row.key;
+  openSheet(`Fork ${rowTitle(row)}`, (body, gen) => {
+    body.innerHTML = `
+      <label class="sheet-label">What should the fork do?</label>
+      <textarea class="fork-prompt" rows="4" placeholder="Its first message" aria-label="What should the fork do?"></textarea>
+      <p class="dim sheet-note">The fork starts from this session's history and leaves the original as it is. It needs a first message: the harness writes nothing until it gets one.</p>
+      <p class="sheet-error"></p>
+      <div class="sheet-row">
+        <button type="button" class="sheet-cancel">Cancel</button>
+        <button type="button" class="primary fork-start" disabled>Start</button>
+      </div>
+      <p class="dim sheet-note">Runs under tmux in ${esc(shortDir(row.cwd))}. The chat opens once the fork shows up.</p>`;
+    const prompt = body.querySelector(".fork-prompt");
+    const start = body.querySelector(".fork-start");
+    const cancel = body.querySelector(".sheet-cancel");
+    const note = body.querySelector(".sheet-error");
+    const alive = () => gen === acts.sheetGen;
+    // started: the fork is running, so Start stays off and Cancel closes.
+    let started = false;
+    const phase = (label) => {
+      sheetBusy(!!label);
+      prompt.disabled = !!label || started;
+      start.disabled = !!label || started || !prompt.value.trim();
+      start.textContent = label || "Start";
+    };
+    const stop = (text, failed) => {
+      note.className = failed ? "sheet-error error" : "sheet-error dim";
+      note.textContent = text;
+      if (!failed) { started = true; cancel.textContent = "Close"; }
+      phase(null);
+    };
+    prompt.addEventListener("input", () => { if (acts.sheet && !acts.sheet.busy) phase(null); });
+    cancel.addEventListener("click", closeSheet);
+    start.addEventListener("click", async () => {
+      const text = prompt.value.trim();
+      if (!text) return;
+      note.textContent = "";
+      phase("Starting");
+      let status = 0, data = null;
+      try {
+        ({ status, data } = await api(`/v1/sessions/${encodeURIComponent(key)}/fork`,
+          { method: "POST", body: JSON.stringify({ prompt: text }) }));
+      } catch { status = 0; }
+      if (!alive()) return;
+      if ((status !== 202 && status !== 200) || !data || !data.launch_id) {
+        stop(rowErrorText(status, data, "Couldn't start the fork."), true);
+        return;
+      }
+      phase("Waiting for the fork");
+      let launch = data;
+      for (let polls = 0; ; polls++) {
+        if (launch.state === "started" && launch.key) {
+          phase("Opening the chat");
+          // A poll that started first can win the race and drop this
+          // answer (listGen); one more fetch finds the row.
+          await refreshList();
+          if (alive() && !findRow(launch.key)) await refreshList();
+          if (!alive()) return;
+          closeSheet();
+          openChat(launch.key);
+          return;
+        }
+        if (launch.state === "untracked") {
+          stop("Started. Quiver can't read this harness's sessions yet, so there's no chat to open. It keeps running under tmux on the machine.", false);
+          return;
+        }
+        if (launch.state === "failed") {
+          stop(launch.note ? `The session didn't start: ${launch.note}` : "The session didn't start.", true);
+          return;
+        }
+        if (polls === FORK_POLLS) break;
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (!alive()) return;
+        let s = 0, d = null;
+        try { ({ status: s, data: d } = await api(`/v1/launches/${encodeURIComponent(data.launch_id)}`)); } catch { s = 0; }
+        if (!alive()) return;
+        if (s === 404) { stop(rowErrorText(s, d), true); return; }
+        // A dropped poll is retried until the attempts run out.
+        if (s === 200 && d) launch = d;
+      }
+      stop(data.queued
+        ? "Queued. It starts when that machine is online, then shows up in Sessions."
+        : "It started but hasn't shown up yet. It'll appear in Sessions when it does.", false);
+    });
+  }, true);
+}
+
+/* A short note above the tabs, with an optional action such as Undo.
+ * It goes away by itself after a few seconds. */
+function toast(message, action) {
+  const t = el("row-toast");
+  clearTimeout(acts.toastTimer);
+  t.innerHTML = `<span class="toast-text">${esc(message)}</span>` +
+    (action ? `<button type="button" class="toast-act">${esc(action.label)}</button>` : "");
+  if (action) {
+    t.querySelector(".toast-act").addEventListener("click", () => {
+      hideToast();
+      action.run();
+    });
+  }
+  t.classList.remove("hidden", "arrive");
+  void t.offsetWidth; // restart the arrive animation
+  t.classList.add("arrive");
+  acts.toastTimer = setTimeout(hideToast, 4000);
+}
+
+function hideToast() {
+  clearTimeout(acts.toastTimer);
+  const t = el("row-toast");
+  if (t) t.classList.add("hidden");
 }
 
 /* ── chat ────────────────────────────────────────────────── */
@@ -407,6 +1250,7 @@ async function backfill(key, gen) {
 }
 
 function appendEvent(ev, live = true) {
+  noteRowEvent(ev);
   if (ev.type === "message.appended") {
     appendMessage(ev.data || {}, ev.seq, live);
   } else if (ev.type === "session.status") {
