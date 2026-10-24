@@ -1,9 +1,11 @@
-/* AGENTS.md: a port of the Mac app's AgentsMdPage. Read only: saving and
- * "Link with swe init" stay in swe and the Mac app. Global shows the
- * shared ~/.quiver/AGENTS.md and where swe init --check says it is linked;
- * Project shows one folder's AGENTS.md and CLAUDE.md. Data:
- * /v1/app/agents (pages/agents.py). The bundle runs each page script in
- * its own scope, so nothing here comes from skills.js (its CSS classes do). */
+/* AGENTS.md: a port of the Mac app's AgentsMdPage. Saving stays in swe and
+ * the Mac app. Global shows the shared ~/.quiver/AGENTS.md and where
+ * swe init --check says it is linked, with Link with swe init and, for
+ * real files in the way, Replace and back up (swe init --force, after an
+ * inline confirm); Project shows one folder's AGENTS.md and CLAUDE.md.
+ * Data: /v1/app/agents, POST /v1/app/agents/link|replace
+ * (pages/agents.py). The bundle runs each page script in its own scope, so
+ * nothing here comes from skills.js (its CSS classes do). */
 "use strict";
 
 /* `~/…` for a path under the hub's home. */
@@ -31,8 +33,13 @@ function agentsMark(h) {
 const agentsPage = {
   scope: "global", data: null, globalError: null, seq: 0,
   folder: null, project: null, projectError: null, file: "AGENTS.md",
+  // The init in flight ("link" or "replace"), whether Replace is asking
+  // to confirm, and the last run's failure (AgentsModel.linking/linkError).
+  running: null, confirming: false, runError: null,
 };
 const AGENTS_FOLDER_KEY = "quiver.agentsProjectFolder";
+// The app's "link" SF Symbol.
+const AGENTS_LINK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.2 1.2"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.2-1.2"/></svg>';
 
 /* LinkState.title */
 const AGENT_STATE_TITLE = {
@@ -103,6 +110,28 @@ function paintAgents(loading) {
   for (const tab of document.querySelectorAll("[data-file]")) {
     tab.onclick = () => { p.file = tab.dataset.file; paintAgents(false); };
   }
+  for (const btn of document.querySelectorAll("[data-agents]")) {
+    btn.onclick = () => {
+      const act = btn.dataset.agents;
+      if (act === "link" || act === "replace") agentsRun(act);
+      else if (act === "ask" || act === "cancel") {
+        p.confirming = act === "ask" ? !p.confirming : false;
+        paintAgents(false);
+        const next = document.querySelector(`[data-agents="${p.confirming ? "replace" : "ask"}"]`);
+        if (next) next.focus();
+      }
+    };
+  }
+  const confirm = document.querySelector(".ag-confirm");
+  if (confirm) {
+    confirm.onkeydown = (event) => {
+      if (event.key !== "Escape") return;
+      p.confirming = false;
+      paintAgents(false);
+      const ask = document.querySelector('[data-agents="ask"]');
+      if (ask) ask.focus();
+    };
+  }
   const form = document.getElementById("ag-folder-form");
   if (form) form.onsubmit = (e) => { e.preventDefault(); agentsOpenFolder(document.getElementById("ag-folder").value); };
 }
@@ -114,22 +143,71 @@ function agentsDoc(title, subtitle, inner) {
 }
 
 function agentsGlobal(d) {
+  const p = agentsPage;
   const rows = d.harnesses.filter((h) => h.instructions);
   const linked = rows.filter((h) => h.instructions.state === "linked").length;
+  const blocked = d.blocked || [];
+  const needsInit = rows.some((h) => agentInitFixes(h.instructions.state)) || !d.agents_file_exists;
+  const link = needsInit || p.running === "link"
+    ? `<button class="sk-button primary ag-run" data-agents="link"${p.running ? " disabled" : ""}
+        title="Runs swe init on the hub, which links what is missing and never replaces a real file.">${
+        p.running === "link" ? '<span class="ag-spinner" aria-hidden="true"></span>Linking…' : `${AGENTS_LINK_ICON}Link with swe init`}</button>` : "";
+  const replace = blocked.length || p.running === "replace" ? `<div class="ag-blocked">
+      <p class="caption">A real file or folder is in the way for some harnesses. swe init leaves those alone.</p>
+      <button class="sk-button ag-run" data-agents="ask" aria-expanded="${p.confirming}"${p.running ? " disabled" : ""}>${
+        p.running === "replace" ? '<span class="ag-spinner" aria-hidden="true"></span>Replacing…' : "Replace and back up…"}</button></div>
+    ${p.confirming && !p.running ? agentsConfirm(d, blocked) : ""}` : "";
   const strip = `<div class="ag-strip"><div class="ag-strip-row">
       <span class="card-title" title="From swe init --check">Harnesses</span>
-      <div class="ag-links">${rows.map((h) => agentsLinkRow(h, d.home)).join("")}</div></div>
-    ${rows.some((h) => agentBlocked(h.instructions.state))
-      ? '<p class="caption">A real file is in the way for some harnesses. swe init leaves those alone; swe init --force in Terminal replaces them.</p>' : ""}
-    ${rows.some((h) => agentInitFixes(h.instructions.state))
-      ? '<p class="caption">Run <code>swe init</code> on the hub to link the rest. It never replaces a real file.</p>' : ""}
+      <div class="ag-links">${rows.map((h) => agentsLinkRow(h, d.home)).join("")}</div>${link}</div>
+    ${replace}
+    ${p.runError ? `<p class="error ag-run-error" role="alert">${esc(p.runError)}</p>` : ""}
   </div>`;
   let inner;
-  if (!d.agents_file_exists) inner = `<p class="empty">${esc(agentsPath(d.agents_file, d.home))} doesn't exist yet. <code>swe init</code> on the hub writes it.</p>`;
+  if (!d.agents_file_exists) inner = `<p class="empty">${esc(agentsPath(d.agents_file, d.home))} doesn't exist yet. Link with swe init writes it.</p>`;
   else if (d.text == null) inner = '<p class="caption">Can\'t preview this file.</p>';
   else inner = `<pre class="sk-text ag-text">${esc(d.text)}</pre>`;
   return strip + agentsDoc(agentsPath(d.agents_file, d.home),
     linked === 1 ? "Linked into 1 harness" : `Linked into ${linked} harnesses`, inner);
+}
+
+/* Replace and back up asks first: it deletes real files after copying them. */
+function agentsConfirm(d, blocked) {
+  const machine = d.machine || "the hub";
+  return `<div class="ag-confirm" role="group" aria-label="Run swe init --force?">
+    <p class="caption">This runs swe init --force on ${esc(machine)}. Each of these is copied to ~/.quiver/backups, then replaced with a link to the shared copy:</p>
+    <ul class="ag-confirm-paths">${blocked.map((path) => `<li><code>${esc(path)}</code></li>`).join("")}</ul>
+    <div class="ag-confirm-buttons">
+      <button class="sk-button" data-agents="cancel">Cancel</button>
+      <button class="sk-button danger" data-agents="replace">Replace and back up</button>
+    </div></div>`;
+}
+
+/* AgentsModel.link: one init at a time; the hub answers with the Global
+ * tab read again, whether the run worked or not. */
+async function agentsRun(action) {
+  const p = agentsPage, gen = routeGen;
+  if (p.running) return;
+  p.running = action;
+  p.confirming = false;
+  p.runError = null;
+  paintAgents(false);
+  const { status, data } = await apiPost(`/v1/app/agents/${action}`, {});
+  p.running = null;
+  if (gen !== routeGen) return;
+  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 200 && data) {
+    // A load still in flight read the links before this run: drop it.
+    p.seq++;
+    p.data = data;
+    p.globalError = null;
+    p.runError = data.error || null;
+  } else {
+    p.runError = agentsErrorText({ status, data });
+  }
+  paintAgents(false);
+  const again = document.querySelector(`[data-agents="${action === "replace" ? "ask" : "link"}"]`);
+  if (again) again.focus();
 }
 
 function agentsLinkRow(h, home) {

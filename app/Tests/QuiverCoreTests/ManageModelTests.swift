@@ -83,6 +83,19 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         #expect(!after.instructionsNeedInit)
     }
 
+    @Test func replaceRunsInitWithForce() async throws {
+        let folder = try TempFolder()
+        let agents = try folder.write("AGENTS.md", "x")
+        let runner = RoutingRunner([
+            (["init", "--check", "--json"], check(agentsFile: agents.path)),
+            (["init", "--force"], CommandResult(status: 0, stdout: Data(), stderr: "")),
+        ])
+        let model = AgentsModel()
+        await model.link(swe: SweClient(runner: runner), force: true)
+        #expect(runner.calls == [["init", "--force"], ["init", "--check", "--json"]])
+        #expect(model.linkError == nil)
+    }
+
     @Test func aFailedInitIsShownAndTheCheckStillRefreshes() async throws {
         let folder = try TempFolder()
         let agents = try folder.write("AGENTS.md", "x")

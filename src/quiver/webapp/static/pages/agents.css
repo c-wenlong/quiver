@@ -25,3 +25,19 @@
   .ag-folder { flex-wrap: wrap; }
   .ag-text { max-height: 70vh; }
 }
+/* Link with swe init / Replace and back up (swe init --force). */
+.ag-run { gap: 6px; }
+.ag-run svg { width: 14px; height: 14px; }
+.sk-button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.sk-button.danger:hover { background: var(--danger); opacity: .9; }
+.ag-blocked { display: flex; align-items: center; gap: 12px; }
+.ag-blocked .caption { flex: 1; min-width: 0; }
+.ag-spinner { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--border-strong);
+  border-top-color: var(--text-secondary); animation: spin 1s linear infinite; }
+.ag-confirm { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--border);
+  border-radius: 10px; background: var(--subtle); }
+.ag-confirm .caption { line-height: 1.5; }
+.ag-confirm-paths { margin: 0; padding-left: 18px; font-size: 12px; overflow-wrap: anywhere; }
+.ag-confirm-buttons { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.ag-run-error { margin: 0; font-size: 12px; max-height: 64px; overflow: auto; white-space: pre-wrap; }
+@media (max-width: 720px) { .ag-blocked { flex-wrap: wrap; } }

@@ -108,15 +108,35 @@ class TestRun(_TempHome, unittest.TestCase):
         self.assertEqual(link.resolve(), (self.home / ".quiver" / "AGENTS.md").resolve())
         self.assertNotIn("setup.unlinked", self.checks(reply["report"]))
 
-    def test_init_leaves_a_real_file_and_says_so(self):
+    def test_init_leaves_a_real_file_and_lists_it(self):
         self.seed({"claude": {"command": "claude"}, "codex": {"command": "codex"}})
         (self.home / ".claude").mkdir()
         (self.home / ".codex").mkdir()
         (self.home / ".codex" / "AGENTS.md").write_text("mine\n")
         reply = self.fix(self.finding("setup.unlinked"))
         self.assertEqual((self.home / ".codex" / "AGENTS.md").read_text(), "mine\n")
-        self.assertIn("~/.codex/AGENTS.md", reply["error"])
-        self.assertIn("--force", reply["error"])
+        # Not a failure: the page offers Replace and back up for it.
+        self.assertIsNone(reply["error"])
+        self.assertIn("~/.codex/AGENTS.md", reply["blocked"])
+
+    def test_replace_backs_up_and_links(self):
+        self.seed({"codex": {"command": "codex"}})
+        (self.home / ".codex").mkdir()
+        (self.home / ".codex" / "AGENTS.md").write_text("mine\n")
+        reply = doctor_page.post(self.ctx, "replace", {})
+        self.assertEqual((reply["ran"], reply["error"]), ("replace", None))
+        self.assertNotIn("~/.codex/AGENTS.md", reply["blocked"])
+        link = self.home / ".codex" / "AGENTS.md"
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.resolve(), (self.home / ".quiver" / "AGENTS.md").resolve())
+        backups = list((self.home / ".quiver" / "backups").iterdir())
+        self.assertEqual([b.read_text() for b in backups], ["mine\n"])
+        self.assertIn("report", reply)
+
+    def test_discover_lists_nothing_blocked(self):
+        self.seed()
+        with patch.dict(doctor_page.RUNNERS, {"discover": lambda home: None}):
+            self.assertEqual(self.fix(self.finding("setup.registry"))["blocked"], [])
 
     def test_init_never_asks(self):
         self.seed({"claude": {"command": "claude"}})
@@ -156,8 +176,8 @@ class TestRefusals(_TempHome, unittest.TestCase):
                 doctor_page.post(self.ctx, action, body)
         return caught.exception
 
-    def test_only_run(self):
-        for action in ("fix", "setup", ""):
+    def test_only_run_and_replace(self):
+        for action in ("fix", "setup", "init", ""):
             error = self.refused(action, {"check": "setup.hub", "message": "x"})
             self.assertEqual((error.status, error.code), (404, "unknown_action"))
 
@@ -200,6 +220,9 @@ class TestRefusals(_TempHome, unittest.TestCase):
                 with self.assertRaises(PageError) as caught:
                     self.fix(finding)
                 self.assertEqual((caught.exception.status, caught.exception.code), (409, "busy"))
+                with self.assertRaises(PageError) as caught:
+                    doctor_page.post(self.ctx, "replace", {})
+                self.assertEqual(caught.exception.status, 409)
             finally:
                 release.set()
                 first.join(5)

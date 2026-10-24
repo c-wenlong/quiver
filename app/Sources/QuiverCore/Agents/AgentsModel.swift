@@ -59,14 +59,15 @@ public final class AgentsModel {
         }
     }
 
-    /// Runs `swe init`, then checks again.
-    public func link(swe: SweClient) async {
+    /// Runs `swe init` (`--force` when `force`, which backs up and replaces
+    /// real files in the way), then checks again.
+    public func link(swe: SweClient, force: Bool = false) async {
         guard !linking else { return }
         linking = true
         linkError = nil
         defer { linking = false }
         do {
-            try await swe.runInit()
+            try await swe.runInit(force: force)
         } catch {
             linkError = error.localizedDescription
         }
