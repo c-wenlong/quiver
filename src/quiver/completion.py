@@ -115,6 +115,11 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--on", "Enable push notifications"),
         ("--off", "Disable push notifications"),
     ],
+    "remote ssh": [
+        ("--on", "Let paired phones' SSH keys log in here"),
+        ("--off", "Remove every phone key from authorized_keys"),
+        ("--json", "Print the SSH setup as JSON"),
+    ],
     "session": [
         ("--search=", "Filter sessions"), ("-q", "Short for --search"),
         ("--grep=", "Alias for --search"),
@@ -456,6 +461,7 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
         "status": "remote status", "devices": "remote devices",
         "attach": "remote attach", "agent": "remote agent",
         "notify": "remote notify", "setup": "remote setup",
+        "ssh": "remote ssh",
     },
     "report": {
         "daily": "report", "weekly": "report", "followups": "report followups",
@@ -575,6 +581,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("attach", "Move an observed session under supervision"),
         ("notify", "Configure ntfy push notifications"),
         ("setup", "Check every step to a paired phone; --apply does Quiver's part"),
+        ("ssh", "Phone SSH console: keys and host keys"),
     ],
     "mcp": [
         ("discover", "Find MCP servers across tool configs"),

@@ -327,6 +327,8 @@ GET  /v1/app/harnesses               the web app's Harnesses: swe list --scope=a
 GET  /app/                           the web app's pages, static
 POST /v1/inbox/dismiss               {key, last_active_at} → cleared for this device
 POST /v1/pair                        QR payload → device credential
+GET  /v1/ssh                         SSH console setup: user, port, listening, host_keys, this device's key
+POST /v1/ssh/key                     {public_key} ("" clears) → stored on the device, authorized_keys synced
 ```
 
 Events: `message.appended`, `message.delta` (tier A only),
@@ -800,6 +802,18 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   swaps in the `quiver://` deep link) stays as the fallback for devices
   `whois` can't identify. Either way, only a tailnet device can reach
   the pairing routes at all.
+- SSH console: the phone's terminal dials the machine's own sshd over
+  the tailnet, never the hub, so it works while the hub is down. Its
+  key is a Secure Enclave P-256 key; the hub only stores the public
+  half on the device's row and, once `swe remote ssh --on` is set,
+  writes it into `~/.ssh/authorized_keys` as
+  `no-agent-forwarding,no-X11-forwarding <key> quiver-remote:<device id>`
+  (`sshkeys.py`). Those lines are rebuilt from `devices.json` on every
+  change, so a revoke removes the device's login with its credential.
+  The phone pins the host keys `GET /v1/ssh` returned over the paired
+  channel instead of trusting sshd's first answer. Tailscale SSH is not
+  used: its server side needs the open-source `tailscaled` on macOS,
+  not Tailscale.app.
 - Threat model for the README: the hub executes on your machines by
   design; the credential gates the app layer on top of the tailnet —
   per-device revocation is what "revoke my lost phone" means without

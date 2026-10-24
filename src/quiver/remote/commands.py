@@ -1,4 +1,4 @@
-"""``swe remote serve|pair|status|devices|attach`` — argv + print only.
+"""``swe remote serve|pair|status|devices|attach|ssh`` — argv + print only.
 
 The serve command runs the hub in the foreground; ``serve --install``
 hands it to a LaunchAgent that restarts it after a crash or a reboot
@@ -27,7 +27,9 @@ from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.paths import remote_dir_for
 from quiver.remote import agent as agent_mod
 from quiver.remote import catalog as catalog_mod
-from quiver.remote import launchd, notify, pairing, protocol, supervise, tail
+from quiver.remote import (
+    launchd, notify, pairing, protocol, sshkeys, supervise, tail,
+)
 from quiver.remote import setup as setup_mod
 from quiver.remote.hub import (
     DEFAULT_PORT,
@@ -38,7 +40,7 @@ from quiver.remote.hub import (
 )
 
 _SUBCOMMANDS = {"serve", "pair", "status", "devices", "attach", "agent",
-                "notify", "setup"}
+                "notify", "setup", "ssh"}
 
 _VALUE_FLAGS = {
     "--host", "--port", "--name", "--tail-days", "--revoke", "--mode",
@@ -65,6 +67,7 @@ _USAGE = f"""\
                                   Move an observed session under supervision
   {c('cyan', 'swe remote notify [--ntfy=URL --topic=T] [--on|--off]')}
                                   Configure ntfy push notifications
+  {c('cyan', 'swe remote ssh [--on|--off] [--json]')}     Let paired phones' SSH keys log in here
 """
 
 
@@ -443,7 +446,17 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
         return 0
     revoke = flags.get("--revoke")
     if revoke:
-        ok = pairing.revoke_device(None, revoke)
+        try:
+            ok = pairing.revoke_device(None, revoke)
+        except sshkeys.KeysNotSynced as exc:
+            print(c("red", f"revoked {revoke}, but its SSH key is still in "
+                           f"~/.ssh/authorized_keys: {exc}"),
+                  file=error_stream(json_view))
+            return 1
+        except OSError as exc:
+            print(c("red", f"could not revoke {revoke}: {exc}"),
+                  file=error_stream(json_view))
+            return 1
         if json_view:
             return emit({"revoked": revoke, "ok": ok})
         if ok:
@@ -651,6 +664,76 @@ def _cmd_setup(flags: dict, json_view: bool) -> int:
     return 0 if not flags.get("--apply") else 1
 
 
+def _cmd_ssh(flags: dict, json_view: bool) -> int:
+    """The phone SSH console's setup on this machine: on/off, sshd,
+    host keys, and which devices' keys are in authorized_keys."""
+    if "--on" in flags and "--off" in flags:
+        print(c("red", "pick one of --on and --off"),
+              file=error_stream(json_view))
+        return 1
+    try:
+        if "--on" in flags or "--off" in flags:
+            sshkeys.set_enabled(None, "--on" in flags)
+        else:
+            sshkeys.sync(None)
+    except OSError as exc:
+        print(c("red", f"could not update ~/.ssh/authorized_keys: {exc}"),
+              file=error_stream(json_view))
+        return 1
+    view = sshkeys.view(None, None)
+    devices = pairing.load_devices()
+    keyed = [
+        {
+            "id": did,
+            "name": row.get("name") or "device",
+            "fingerprint": sshkeys.fingerprint(key),
+            "installed": sshkeys.installed_line(None, did),
+            "revoked": bool(row.get("revoked_at")),
+        }
+        for did, row in devices.items()
+        if (key := sshkeys.normalize_public_key(row.get("ssh_public_key")))
+    ]
+    if json_view:
+        return emit({
+            "enabled": view["enabled"],
+            "user": view["user"],
+            "port": view["port"],
+            "listening": view["listening"],
+            "host_keys": [
+                {"key": k, "fingerprint": sshkeys.fingerprint(k)}
+                for k in view["host_keys"]
+            ],
+            "devices": keyed,
+        })
+    state = c("green", "on") if view["enabled"] else c("dim", "off")
+    print(f"phone ssh {state}  logs in as {view['user']} on port "
+          f"{view['port']}")
+    if not view["enabled"]:
+        print(c("dim", "  turn on: swe remote ssh --on"))
+    if not view["listening"]:
+        hint = ("System Settings, General, Sharing, Remote Login"
+                if sys.platform == "darwin" else "start sshd")
+        print(c("yellow", f"  nothing listens on port {view['port']}: {hint}"))
+    if not view["host_keys"]:
+        print(c("yellow", f"  no ed25519 or ecdsa host key in "
+                         f"{sshkeys.HOST_KEY_DIR}: the phone has nothing to pin"))
+    for key in view["host_keys"]:
+        print(c("dim", f"  host key {sshkeys.fingerprint(key)} "
+                       f"({key.split()[0]})"))
+    if not keyed:
+        print(c("dim", "  no device has sent a key yet: open the console "
+                       "in Quiver Remote"))
+    for row in keyed:
+        if row["revoked"]:
+            mark = c("red", "revoked")
+        elif row["installed"]:
+            mark = c("green", "installed")
+        else:
+            mark = c("dim", "not installed")
+        print(f"  {row['id']}  {row['name']}  {mark}  {row['fingerprint']}")
+    return 0
+
+
 def cmd_remote(args: list[str]) -> int:
     try:
         sub, flags, rest, json_view = _parse_flags(list(args))
@@ -698,4 +781,9 @@ def cmd_remote(args: list[str]) -> int:
             print(c("red", f"unexpected args: {' '.join(rest)}"), file=sys.stderr)
             return 1
         return _cmd_notify(flags, json_view)
+    if sub == "ssh":
+        if rest:
+            print(c("red", f"unexpected args: {' '.join(rest)}"), file=sys.stderr)
+            return 1
+        return _cmd_ssh(flags, json_view)
     return 0

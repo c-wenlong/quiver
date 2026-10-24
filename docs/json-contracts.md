@@ -129,6 +129,7 @@ The CLI side of remote also speaks `--json`:
 | `swe remote pair --json` | `{host, port, token, name, url, deep_link, expires_in_s}` — `url` opens the PWA, `deep_link` is the `quiver://pair?…` form for the iOS shell; `expires_in_s` is the token TTL |
 | `swe remote setup --json` | `{ready, platform, url, steps: [SetupStep]}` in order: `tailscale.installed`, `tailscale.signed_in`, `tailscale.magicdns`, `tailscale.https`, `tailscale.cert`, `hub.service`, `hub.reachable`, `phone.paired`. `SetupStep` is `{id, title, state, detail, action}`; `state` is `ok`, `todo` (Quiver does it with `--apply`), `needs_you`, `failed` or `blocked` (waits for an earlier step). `action` is null or `{kind, label, url? , app?, command?}` with `kind` `open` (a URL), `launch` (a macOS app), `command` (to copy), `apply` (run `swe remote setup --apply`) or `pair`. `url` is the https address phones reach, or `""` before MagicDNS. `--apply` emits the report after doing every `todo` it can; `--recheck` fetches the certificate again instead of using the cached result |
 | `swe remote notify --json` | `{notify: {url?, topic?, ntfy_token?, enabled, action_credential?}}` with credential fields redacted to `***` |
+| `swe remote ssh --json` | `{enabled, user, port, listening, host_keys: [{key, fingerprint}], devices: [{id, name, fingerprint, installed, revoked}]}`; `--on`/`--off` apply first, and `devices` lists only devices that sent a key |
 
 `DeviceRow`: `{id, name, created_at, last_seen_at, revoked}`.
 

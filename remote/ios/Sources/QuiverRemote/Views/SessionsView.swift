@@ -7,6 +7,7 @@ struct SessionsView: View {
     @Binding var path: [Route]
     @State private var filter: SessionFilter = .all
     @State private var showDevices = false
+    @State private var showConsole = false
     @State private var showNewSession = false
     @State private var startedKey: String?
     @State private var confirmUnpair = false
@@ -100,6 +101,7 @@ struct SessionsView: View {
                     }
                     Section(app.hub?.address ?? "") {
                         Button { showDevices = true } label: { Label("Pair requests and devices", systemImage: "iphone.and.arrow.forward") }
+                        Button { showConsole = true } label: { Label("Console", systemImage: "terminal") }
                         Button { Task { await app.refresh() } } label: { Label("Refresh", systemImage: "arrow.clockwise") }
                     }
                     Button(role: .destructive) { confirmUnpair = true } label: { Label("Unpair from \(app.hubName)", systemImage: "xmark.circle") }
@@ -109,6 +111,7 @@ struct SessionsView: View {
             }
         }
         .sheet(isPresented: $showDevices) { NavigationStack { DevicesView() } }
+        .fullScreenCover(isPresented: $showConsole) { ConsoleView() }
         .sheet(isPresented: $pairingAnother, onDismiss: { app.cancelPairing() }) { WelcomeView(addingHub: true) }
         // The chat opens after the sheet is gone, so the push isn't lost
         // under the dismiss animation.
