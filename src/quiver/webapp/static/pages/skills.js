@@ -11,6 +11,7 @@ const skillsPage = {
   // Writes: folders waiting on the hub, the confirm on show ({kind, path}
   // or {kind: "link_all", paths}), the last failure and Link all's summary.
   busy: new Set(), confirm: null, actionError: null, summary: null,
+  newToken: 0,            // the New skill form on show; older replies are stale
   detail: {},             // folder -> detail payload
   fmShowsAll: false, treeShowsAll: false, open: new Set(),
 };
@@ -364,6 +365,8 @@ function openNewSkill() {
   $("sk-new-desc").oninput = () => { $("sk-new-error").hidden = true; };
   $("sk-new-close").onclick = () => sheet.close();
   $("sk-new-form").onsubmit = (e) => { e.preventDefault(); createSkill(sheet); };
+  // A reply to a form closed and opened again since must not touch this one.
+  sheet.dataset.token = String(++skillsPage.newToken);
   sheet.dataset.working = "";
   sync();
   if (!sheet.open) sheet.showModal();
@@ -374,13 +377,30 @@ async function createSkill(sheet) {
   const p = skillsPage, $ = (id) => document.getElementById(id);
   const name = $("sk-new-name").value.trim(), description = $("sk-new-desc").value.trim();
   if (newSkillProblem(name) || sheet.dataset.working === "1") return;
+  const token = sheet.dataset.token;
   sheet.dataset.working = "1";
   $("sk-new-create").disabled = true;
   $("sk-new-create").textContent = "Creating…";
   const { status, data } = await apiPost("/v1/app/skills/new", { name, description });
-  sheet.dataset.working = "";
-  if (!sheet.open || !document.getElementById("sk-new-form")) return;
-  if (status === 401) { sheet.close(); return renderGate("The hub doesn't know this browser's credential. It may have been revoked."); }
+  const current = sheet.dataset.token === token && sheet.open && !!document.getElementById("sk-new-form");
+  if (current) sheet.dataset.working = "";
+  if (status === 401) {
+    if (current) sheet.close();
+    if (skillsOnRoute()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    return;
+  }
+  // The skill exists whatever happened to the form: show it in the list.
+  if (status === 200 && data) {
+    p.data = data;
+    p.detail = {};
+    if (document.getElementById("sk-list")) {
+      const menus = skillFilterOptions();
+      document.getElementById("sk-harness").innerHTML = menus.harness;
+      document.getElementById("sk-source").innerHTML = menus.source;
+      paintSkillRows();
+    }
+  }
+  if (!current) return;
   if (status !== 200 || !data) {
     $("sk-new-create").textContent = "Create";
     $("sk-new-create").disabled = false;
@@ -390,9 +410,6 @@ async function createSkill(sheet) {
     err.hidden = false;
     return;
   }
-  p.data = data;
-  p.detail = {};
-  if (document.getElementById("sk-list")) paintSkillRows();
   const open = data.skill ? `<a class="sk-button" href="#/skills?skill=${esc(encodeURIComponent(data.skill.path))}" id="sk-new-open">Open it</a>` : "";
   $("sk-new-form").innerHTML = `<div class="sheet-title">New skill</div>
     <p class="caption">Created ${esc(skillsPath(data.created))}</p>
@@ -547,13 +564,22 @@ function visibleSkills() {
     .map(([s]) => s);
 }
 
-function paintSkills() {
-  const p = skillsPage, d = p.data, listed = listedSkills(d), moved = movedSkillCount(d);
+/* The harness and source menus, from what the list holds now. */
+function skillFilterOptions() {
+  const p = skillsPage, listed = listedSkills(p.data);
   // dropMissingFilters: a filter the list no longer offers would hide every row.
   if (p.harness && !listed.some((s) => s.harnesses.includes(p.harness))) p.harness = "";
   if (p.source && !listed.some((s) => s.source === p.source)) p.source = "";
   const harnesses = [...new Set(listed.flatMap((s) => s.harnesses))].sort();
   const sources = SKILL_SOURCES.filter(([id]) => listed.some((s) => s.source === id));
+  return {
+    harness: options([["", "All harnesses"], ...harnesses.map((h) => [h, Fmt.harnessName(h)])], p.harness),
+    source: options([["", "All sources"], ...sources], p.source),
+  };
+}
+
+function paintSkills() {
+  const p = skillsPage, d = p.data, moved = movedSkillCount(d), menus = skillFilterOptions();
   const note = moved > 0 ? `<a class="sk-plugin-note" href="#/plugins"
       title="Open Plugins, where each plugin lists the skills it ships">${icon("plugins")}
       <span class="num">${moved === 1 ? "1 skill ships inside a plugin;" : `${moved} skills ship inside plugins;`}</span>
@@ -562,9 +588,8 @@ function paintSkills() {
     <div class="stack">
       ${skillsActionCard()}
       <div class="filters">
-        <select class="field" id="sk-harness" aria-label="Harness">${options(
-          [["", "All harnesses"], ...harnesses.map((h) => [h, Fmt.harnessName(h)])], p.harness)}</select>
-        <select class="field" id="sk-source" aria-label="Source">${options([["", "All sources"], ...sources], p.source)}</select>
+        <select class="field" id="sk-harness" aria-label="Harness">${menus.harness}</select>
+        <select class="field" id="sk-source" aria-label="Source">${menus.source}</select>
         <input class="field search" id="sk-search" type="search" placeholder="Filter skills"
           value="${esc(p.query)}" autocomplete="off" spellcheck="false">
         <span class="caption count num" id="sk-count"></span>
