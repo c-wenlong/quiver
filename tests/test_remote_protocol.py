@@ -96,6 +96,21 @@ class TestCommandValidation(unittest.TestCase):
         with self.assertRaises(ValueError):
             protocol.parse_control_command({"op": "detonate"})
 
+    def test_unhashable_values_are_value_errors(self):
+        # A JSON list or object in a field checked against a set must
+        # raise ValueError (the route's 422), never TypeError.
+        cases = [
+            (protocol.parse_message_command, {"text": "hi"}, "mode"),
+            (protocol.parse_approval_command, {"request_id": "r1"},
+             "decision"),
+            (protocol.parse_control_command, {}, "op"),
+        ]
+        for parse, base, field in cases:
+            for bad in ([], ["queue"], {}, {"a": 1}):
+                with self.subTest(field=field, value=bad):
+                    with self.assertRaises(ValueError):
+                        parse({**base, field: bad})
+
     def test_launch(self):
         out = protocol.parse_launch_command(
             {"harness": "codex", "cwd": "/srv/app", "prompt": "go"})
