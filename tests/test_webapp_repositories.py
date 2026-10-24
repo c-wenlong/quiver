@@ -90,6 +90,12 @@ if args[:1] == ["api"] and "--method" in args:
 if args[:1] == ["api"] and args[1].startswith("notifications"):
     print(json.dumps(state["notes"]))
     sys.exit(0)
+if args[:2] == ["run", "rerun"]:
+    if args[2] not in state.get("runs", []):
+        fail("HTTP 404: Not Found (https://api.github.com/repos/o/a/actions/runs/" + args[2] + ")")
+    if state.get("rerun_error"):
+        fail(state["rerun_error"])
+    sys.exit(0)
 # Pinning, repo search and the catalog sync. "repos" maps a name, as
 # typed in lower case, to how GitHub spells it; "orgs" is the login's
 # orgs (None fails the call); "lists" maps an owner to its repo names.
@@ -157,9 +163,9 @@ class FakeGh:
         return [json.loads(line) for line in self.log_file.read_text().splitlines()]
 
     def writes(self) -> list[list[str]]:
-        """The calls that change GitHub: merges and non-GET api calls."""
+        """The calls that change GitHub: merges, re-runs and non-GET api calls."""
         return [c for c in self.calls()
-                if c[:2] == ["pr", "merge"] or (c[:1] == ["api"] and "--method" in c)]
+                if c[:2] in (["pr", "merge"], ["run", "rerun"]) or (c[:1] == ["api"] and "--method" in c)]
 
 
 def gh_pr(number=7, **over) -> dict:
@@ -543,7 +549,7 @@ class TestMerge(_Base):
         self.refused(404, "not_pinned", repo="o/elsewhere")
         self.refused(404, "unknown_pr", number=99)
         with self.assertRaises(PageError) as caught:
-            R.post(self.ctx, "rerun", {"repo": "o/a", "number": 7})
+            R.post(self.ctx, "approve", {"repo": "o/a", "number": 7})
         self.assertEqual(caught.exception.status, 404)
         self.assertEqual(self.gh.writes(), [])
 
@@ -704,6 +710,55 @@ class TestManagePins(_Base):
         for order in (None, "o/a", [1], [""], ["o/a"] * (R.REORDER_MAX + 1)):
             self.refused("reorder", {"order": order}, 422, "bad_order")
         self.assertEqual(self.pins(), ["o/a", "o/b", "x/c"])
+
+
+class TestRerun(_Base):
+    """An Actions row's Re-run: ``post("rerun")`` against a fake ``gh``."""
+
+    def setUp(self):
+        super().setUp()
+        _pin(self.home, "o/a")
+        self.gh = FakeGh(self, runs=["4242"])
+
+    def refused(self, status, code, **body):
+        with self.assertRaises(PageError) as caught:
+            R.post(self.ctx, "rerun", {"repo": "o/a", "run": 4242, **body})
+        self.assertEqual((caught.exception.status, caught.exception.code), (status, code),
+                         caught.exception.message)
+        return caught.exception
+
+    def test_failed_jobs_and_all_jobs(self):
+        body = R.post(self.ctx, "rerun", {"repo": "O/A", "run": 4242, "failed": True})
+        self.assertEqual(body, {"repo": "o/a", "run": 4242, "failed_only": True, "rerun": True,
+                                "machine": "hub-box"})
+        R.post(self.ctx, "rerun", {"repo": "o/a", "run": "4242"})
+        self.assertEqual(self.gh.writes(), [["run", "rerun", "4242", "--repo", "o/a", "--failed"],
+                                            ["run", "rerun", "4242", "--repo", "o/a"]])
+
+    def test_a_rerun_drops_the_repos_cached_views(self):
+        hk = G.home_key(self.home)
+        G.CACHE.get(("board", hk, "o/a"), lambda: "old runs")
+        R.post(self.ctx, "rerun", {"repo": "o/a", "run": 4242})
+        self.assertEqual(G.CACHE.get(("board", hk, "o/a"), lambda: "fresh")[0], "fresh")
+
+    def test_refusals(self):
+        for body, code in (({"run": "12a"}, "bad_run"), ({"run": True}, "bad_run"), ({"run": 0}, "bad_run"),
+                           ({"run": "9" * 21}, "bad_run"), ({"failed": "yes"}, "bad_failed"),
+                           ({"repo": ""}, "bad_repo")):
+            with self.subTest(body=body):
+                self.refused(422, code, **body)
+        self.refused(404, "not_pinned", repo="o/elsewhere")
+        self.assertEqual(self.gh.calls(), [])
+        self.refused(404, "unknown_run", run=99)
+        self.gh.update(rerun_error="run 4242 cannot be rerun; This workflow is already running")
+        err = self.refused(502, "rerun_failed")
+        self.assertIn("already running", err.message)
+
+    def test_a_signed_out_gh_is_refused_with_the_setup_words(self):
+        self.gh.update(signed_out=True)
+        err = self.refused(409, "gh_auth_required")
+        self.assertIn("gh auth login", err.message)
+        self.assertEqual(self.gh.writes(), [])
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")

@@ -26,6 +26,9 @@ Writes, ``POST /v1/app/repositories/<action>``, in process:
   ``{"repo"}``. See ``remove``.
 - ``reorder``: the rail's drag, ``swe gh repo reorder --json``,
   ``{"order": [names]}``. See ``reorder``.
+- ``rerun``: an Actions row's Re-run failed jobs / Re-run all jobs,
+  ``swe gh run rerun --json``, ``{"repo", "run", "failed"}``. See
+  ``rerun``.
 """
 
 from __future__ import annotations
@@ -240,14 +243,9 @@ def remove(ctx, body: dict) -> dict:
     hold ``G.WRITE_LOCK``. Answers ``{"repo", "repos", "machine"}``; a
     repo that is not pinned is a 404 ``not_pinned``."""
     raw = body.get("repo")
-    if not isinstance(raw, str) or not raw.strip() or len(raw) > SEARCH_MAX:
+    if isinstance(raw, str) and len(raw) > SEARCH_MAX:
         raise PageError(422, "bad_repo", "repo must be owner/name")
-    try:
-        name = G.pinned_name(ctx.home, raw)
-    except PageError as exc:
-        if exc.status == 400:
-            raise PageError(422, exc.code, exc.message) from exc
-        raise
+    name = _pinned_arg(ctx.home, raw)
     kept, _removed = repos.remove_pinned(name, manage.pins_file(ctx.home))
     _drop_repo(ctx.home, name)
     return {"repo": name, "repos": kept, "machine": (ctx.machine or {}).get("name")}
@@ -272,6 +270,47 @@ def reorder(ctx, body: dict) -> dict:
     return {"repos": pinned, "machine": (ctx.machine or {}).get("name")}
 
 
+# ---------------------------------------------------------------- rerun
+
+def _rerun_args(home, body: dict) -> tuple[str, str, bool]:
+    repo = _pinned_arg(home, body.get("repo"))
+    run = body.get("run")
+    if isinstance(run, bool) or not isinstance(run, (int, str)):
+        raise PageError(422, "bad_run", "run must be a workflow run id")
+    run = str(run).strip()
+    # Run ids are about eleven digits today; twenty is room to grow and
+    # keeps int() off absurd strings.
+    if not run.isdigit() or not run.isascii() or len(run) > 20 or int(run) < 1:
+        raise PageError(422, "bad_run", "run must be a workflow run id")
+    failed = body.get("failed", False)
+    if not isinstance(failed, bool):
+        raise PageError(422, "bad_failed", "failed must be true or false")
+    return repo, str(int(run)), failed
+
+
+def rerun(ctx, repo: str, run: str, failed: bool) -> dict:
+    """Re-run a workflow run's failed jobs, or all of them, as ``swe gh
+    run rerun``. GitHub decides what can re-run (a run still going, or
+    one with nothing failed, is refused there) and its words come back
+    as a 502 ``rerun_failed``. Success drops the repo's cached views so
+    the next look reads the run's new state. Callers hold
+    ``G.WRITE_LOCK``. Answers ``{"repo", "run", "failed_only", "rerun",
+    "machine"}``, ``rerun`` always true."""
+    env = G.probe(ctx.home)
+    if env.status != "ok":
+        env = G.probe(ctx.home, refresh=True)
+    if env.status != "ok":
+        raise PageError(409, "gh_" + env.status.replace("-", "_"), gh.env_error(env))
+    result = ghcli.rerun_run(repo, run, failed)
+    if result.status == "not-found":
+        raise PageError(404, "unknown_run", f"No workflow run {run} in {repo}.")
+    if result.status != "ok":
+        raise PageError(502, "rerun_failed", result.error or result.status)
+    _drop_repo(ctx.home, repo)
+    return {"repo": repo, "run": int(run), "failed_only": failed, "rerun": True,
+            "machine": (ctx.machine or {}).get("name")}
+
+
 # ---------------------------------------------------------------- merge
 
 METHODS = ("squash", "rebase", "merge")  # PrDetailSheet's menu, in order
@@ -288,6 +327,10 @@ def post(ctx, action: str, body: dict) -> dict:
     if action in PIN_WRITES:
         with G.WRITE_LOCK:
             return PIN_WRITES[action](ctx, body)
+    if action == "rerun":
+        repo, run, failed = _rerun_args(ctx.home, body)
+        with G.WRITE_LOCK:
+            return rerun(ctx, repo, run, failed)
     if action != "merge":
         raise PageError(404, "unknown_action",
                         f"unknown repositories action: {action}")
@@ -296,16 +339,21 @@ def post(ctx, action: str, body: dict) -> dict:
         return merge(ctx, repo, number, method, auto)
 
 
-def _merge_args(home, body: dict) -> tuple[str, str, str, bool]:
-    raw = body.get("repo")
+def _pinned_arg(home, raw) -> str:
+    """A write's ``repo``: a pin, spelled as pinned. Malformed is a 422,
+    not pinned a 404."""
     if not isinstance(raw, str) or not raw.strip():
         raise PageError(422, "bad_repo", "repo must be owner/name")
     try:
-        repo = G.pinned_name(home, raw)
+        return G.pinned_name(home, raw)
     except PageError as exc:
         if exc.status == 400:  # malformed, as opposed to not pinned
             raise PageError(422, exc.code, exc.message) from exc
         raise
+
+
+def _merge_args(home, body: dict) -> tuple[str, str, str, bool]:
+    repo = _pinned_arg(home, body.get("repo"))
     number = body.get("number")
     if isinstance(number, bool) or not isinstance(number, (int, str)):
         raise PageError(422, "bad_pr", "number must be a pull request number")

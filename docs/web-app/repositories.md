@@ -3,13 +3,13 @@
 The two GitHub pages: Repositories (sidebar id `repositories`, the Mac
 app's `RepositoriesPage`, `RepoDetailPage` and `PrDetailSheet`) and Inbox
 (id `inbox`, `InboxPage`). Repositories merges pull requests from the
-PR sheet and manages the pins: the Add repository sheet
+PR sheet, re-runs workflow runs from Actions rows, and manages the pins: the Add repository sheet
 (`AddRepoSheet`), Unpin in the rail's gear popover (`RepoManager`), and
 drag to reorder. Inbox marks notifications read.
 
 | File | What |
 |---|---|
-| `src/quiver/webapp/pages/repositories.py` | `GET /v1/app/repositories`, `POST /v1/app/repositories/merge`, `/add`, `/remove` and `/reorder` |
+| `src/quiver/webapp/pages/repositories.py` | `GET /v1/app/repositories`, `POST /v1/app/repositories/merge`, `/rerun`, `/add`, `/remove` and `/reorder` |
 | `src/quiver/webapp/pages/inbox.py` | `GET /v1/app/inbox`, `POST /v1/app/inbox/read` |
 | `src/quiver/webapp/pages/_github.py` | Shared: the `gh` cache, the write lock, the hub's pins, the env payload. The leading underscore keeps it off `/v1/app/`. |
 | `src/quiver/webapp/static/pages/github.js`, `github.css` | Shared by both scripts: `GhUI` (icons, the gh setup card, the minute poll, the writes' POST, the PR body's markdown) and the styles. |
@@ -45,8 +45,8 @@ is not kept, so the next look reads GitHub again.
 ## Writes
 
 They go through the functions `swe` itself calls, in the hub process
-(`quiver.github.cli.merge_pr`, `mark_threads_read`, `mark_all_read`,
-`quiver.github.manage.add_repo`),
+(`quiver.github.cli.merge_pr`, `rerun_run`, `mark_threads_read`,
+`mark_all_read`, `quiver.github.manage.add_repo`),
 with the hub's `gh` login. Nothing a browser sends reaches a shell: the
 repo must be a pin, the number and ids digits, the method one of three
 words. Writes run one at a time per hub (`_github.WRITE_LOCK`), behind
@@ -157,6 +157,23 @@ it runs the buttons are off. The sheet repaints from the answer (the PR
 shows merged, or the Auto-merge badge), and the page behind it reads the
 repo again so a merged row leaves the list. A refusal shows in an error
 card in the sheet, with the confirm still open to retry or cancel.
+
+**Re-run** (`POST /v1/app/repositories/rerun`), `swe gh run rerun <id>
+--repo=R [--failed] --json` in process: `{"repo": "owner/name", "run":
+4242, "failed": true}`. `failed` re-runs only the failed jobs (default
+false: all jobs). GitHub decides what can re-run: a run still going, or
+one with nothing failed, comes back as a 502 `rerun_failed` in gh's own
+words; an id GitHub doesn't know is a 404 `unknown_run`, a repo that
+isn't a pin a 404 `not_pinned`, a bad id or flag a 422, a missing or
+signed-out `gh` a 409. Success drops the repo's cached views. Answers
+`{"repo", "run", "failed_only", "rerun": true, "machine"}`.
+
+An Actions row has a ⋯ button at its end (the app's context menu;
+shown on hover or focus, always on touch screens) with Re-run failed
+jobs (failed runs only, as in the app), Re-run all jobs and Open on
+GitHub. While the request runs the row's badge is a spinner; then the
+view reads the repo again, and the run's row changes once GitHub starts
+it. A refusal shows in an error card above the list.
 
 **Search** (`search=<text>`), the Add repository sheet's droplist.
 `swe gh repo search <text> --json` in process: the hub's synced catalog
@@ -270,7 +287,6 @@ Left out because they write (they stay in `swe` and the Mac app):
 
 | Write | Where it lives |
 |---|---|
-| Re-run failed or all jobs of a workflow run | `swe gh run rerun`, Actions row menu in the Mac app |
 | Open a PR in a session (PR worktree) | `swe gh pr worktree`, the PR row's context menu |
 
 Also different:
