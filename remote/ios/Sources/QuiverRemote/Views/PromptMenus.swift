@@ -203,12 +203,15 @@ struct CommandMenuView: View {
     static let rowHeight: CGFloat = 54
 
     var body: some View {
-        PromptMenuCard(count: max(1, commands.count), rowHeight: Self.rowHeight, visibleRows: 5,
-                       footnotes: error == nil ? footnotes : [], refresh: refresh) {
+        // A failed load shows above whatever list is kept from before.
+        let shown = loading ? 0 : max(1, commands.count)
+        PromptMenuCard(count: max(1, shown + (error == nil ? 0 : 1)), rowHeight: Self.rowHeight, visibleRows: 5,
+                       footnotes: footnotes, refresh: refresh) {
             if let error {
                 PromptMenuNote(text: error, icon: "exclamationmark.circle", height: Self.rowHeight)
-            } else if loading && commands.isEmpty {
-                PromptMenuNote(text: "Loading commands", height: Self.rowHeight)
+            }
+            if loading {
+                if error == nil { PromptMenuNote(text: "Loading commands", height: Self.rowHeight) }
             } else if let empty {
                 PromptMenuNote(text: empty, height: Self.rowHeight)
             } else if commands.isEmpty {

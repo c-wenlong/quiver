@@ -487,3 +487,58 @@ final class CommandMenuResumeTests: XCTestCase {
         XCTAssertEqual(Mention.token(in: next.text + "@sr", cursor: nil)?.query, "sr")
     }
 }
+
+@MainActor
+final class CommandMenuReviewFixTests: XCTestCase {
+    func testOpenMenuReloadsAfterResetWhileFocused() async {
+        let menu = CommandMenu()
+        var calls = 0
+        menu.fetch = { calls += 1; return CommandsResponse(commands: [SlashCommand(name: "compact")]) }
+        await menu.track(SlashToken(end: 1, query: ""))?.value
+        // stop() while the box kept focus: the list is gone, the menu open.
+        menu.reset()
+        XCTAssertTrue(menu.isOpen)
+        // Typing recovers on its own...
+        await menu.track(SlashToken(end: 2, query: "c"))?.value
+        XCTAssertEqual(calls, 2)
+        XCTAssertEqual(menu.matches.map(\.name), ["compact"])
+        // ...and so does start() through resume(), with nothing typed.
+        menu.reset()
+        await menu.resume()?.value
+        XCTAssertEqual(calls, 3)
+        XCTAssertNotNil(menu.response)
+    }
+
+    func testFailedRefreshKeepsTheListAndReopenRetries() async {
+        let menu = CommandMenu()
+        var fail = false
+        var calls = 0
+        menu.fetch = {
+            calls += 1
+            if fail { throw HubError(status: 0, code: "network", message: "") }
+            return CommandsResponse(commands: [SlashCommand(name: "review")])
+        }
+        await menu.track(SlashToken(end: 1, query: ""))?.value
+        fail = true
+        await menu.refresh()
+        XCTAssertEqual(menu.error, "Can't reach the hub")
+        XCTAssertEqual(menu.matches.map(\.name), ["review"])
+        // Typing on doesn't hammer the hub.
+        XCTAssertNil(menu.track(SlashToken(end: 2, query: "r")))
+        // Reopening retries, and success clears the error.
+        fail = false
+        menu.track(nil)
+        await menu.track(SlashToken(end: 1, query: ""))?.value
+        XCTAssertEqual(calls, 3)
+        XCTAssertNil(menu.error)
+    }
+
+    func testShouldLoad() {
+        XCTAssertFalse(CommandMenu.shouldLoad(open: false, opening: false, loaded: false, loading: false, failed: false))
+        XCTAssertTrue(CommandMenu.shouldLoad(open: true, opening: false, loaded: false, loading: false, failed: false))
+        XCTAssertFalse(CommandMenu.shouldLoad(open: true, opening: true, loaded: true, loading: false, failed: false))
+        XCTAssertFalse(CommandMenu.shouldLoad(open: true, opening: true, loaded: false, loading: true, failed: false))
+        XCTAssertTrue(CommandMenu.shouldLoad(open: true, opening: true, loaded: true, loading: false, failed: true))
+        XCTAssertFalse(CommandMenu.shouldLoad(open: true, opening: false, loaded: false, loading: false, failed: true))
+    }
+}

@@ -333,22 +333,33 @@ final class CommandMenu {
     /// The commands that match what's typed, best first.
     var matches: [SlashCommand] { Slash.filter(response?.commands ?? [], query: token?.query ?? "") }
 
-    /// Called whenever the draft, caret or focus changes. Opening the menu
-    /// with nothing loaded fetches the list; returns that fetch, if any.
+    /// Called whenever the draft, caret or focus changes. Returns the
+    /// fetch it started, if any.
     @discardableResult
     func track(_ next: SlashToken?) -> Task<Void, Never>? {
         let wasOpen = isOpen
         token = next
         if next == nil || dismissed != next { dismissed = nil }
-        guard isOpen, !wasOpen, response == nil, !loading else { return nil }
+        guard Self.shouldLoad(open: isOpen, opening: !wasOpen, loaded: response != nil,
+                              loading: loading, failed: error != nil) else { return nil }
         return Task { await load() }
+    }
+
+    /// An open menu fetches when it has no list and no failure to show
+    /// (also mid-typing, after `reset()` dropped the list under it), and
+    /// retries on opening after a failure, even with a list kept from an
+    /// earlier load.
+    static func shouldLoad(open: Bool, opening: Bool, loaded: Bool, loading: Bool, failed: Bool) -> Bool {
+        guard open, !loading else { return false }
+        if failed { return opening }
+        return !loaded
     }
 
     /// Fetches the list again (pull to refresh).
     func refresh() async { await load() }
 
     /// Back from the background with the menu still open: `stop()` dropped
-    /// the list, and the token hasn't changed to fetch it again.
+    /// the list, and the token may not change to fetch it again.
     @discardableResult
     func resume() -> Task<Void, Never>? {
         guard isOpen, response == nil, !loading else { return nil }
