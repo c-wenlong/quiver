@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (fade only with reduced motion), and three pulsing dots under the
   last message show the agent is working or a send is waiting.
 
+- **Remote iPhone app: a delivered message stops saying "Sending".** A
+  send settled only when the transcript echoed it back as a user
+  message, so a slash command such as `/rename`, which never appears as
+  one, kept "Sending" under it forever. The machine's confirmation now
+  settles it. A message steered into a running turn says the agent
+  reads it at its next step, since Claude Code takes mid-turn input
+  between tool calls.
+
 - **Remote iPhone app: the working indicator shows which agent is working.**
   While a session runs, the bar under the last message shows the
   harness's logo with the pulsing dots beside it, and new messages land
