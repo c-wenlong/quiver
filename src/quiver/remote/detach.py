@@ -98,6 +98,18 @@ class PendingDetaches:
         entry.report(False, note, True)
         return "cancelled"
 
+    def nudge(self, key: str) -> None:
+        """Re-check ``key``'s status now instead of at the next poll.
+
+        The tail thread calls this when a status probe finds the session
+        has left ``active``, so the detach fires within a second of the
+        turn ending rather than up to WHEN_IDLE_POLL_S later.
+        """
+        with self._lock:
+            entry = self._pending.get(key)
+            if entry is not None and entry.state == "waiting":
+                entry.wake.set()
+
     def close(self) -> None:
         """Wake every waiter; with ``stop`` set they report and exit."""
         with self._lock:
@@ -150,6 +162,9 @@ class PendingDetaches:
                         )
                     return
                 entry.wake.wait(WHEN_IDLE_POLL_S)
+                # A nudge only asks for one early check. A cancel or close
+                # that set it is seen at the top of the loop (state, stop).
+                entry.wake.clear()
             if not self._claim(key, entry, "firing"):
                 return
             try:

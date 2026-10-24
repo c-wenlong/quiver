@@ -152,6 +152,10 @@ class HubState:
             machine_id=self.machine_id,
             home=self.home,
             journal_has=self._journal_has,
+            # Hot or growing sessions get their status re-probed between
+            # catalog refreshes; the catalog keeps the fresher of the two.
+            status_of=lambda sessions: self.status_of(sessions),
+            on_status=self._on_probed_status,
         )
         # The web app's page data (/v1/app/*): its ledger opens on the
         # first request, so a hub nobody browses never scans.
@@ -305,6 +309,13 @@ class HubState:
                 if self.owner_retry():
                     self.owner_retry = None
         return self.owner_login
+
+    def _on_probed_status(self, key: str, status: str, at: float) -> None:
+        """A tail probe read ``key``'s status: patch the catalog row, and
+        let a pending ``when_idle`` detach act once the turn is over."""
+        self.catalog.note_status(key, status, at)
+        if status != "active":
+            self.detaches.nudge(key)
 
     def _journal_has(self, key: str) -> bool:
         return self.journal.last_seq(key) > 0
@@ -492,6 +503,11 @@ class HubState:
                 for row in self.catalog.rows():
                     new_own = row.get("ownership")
                     if prev_own.get(row["key"]) not in (None, new_own):
+                        if new_own == protocol.OWNERSHIP_ATTACHED:
+                            # Attached outside HTTP (`swe remote attach`,
+                            # a kept tmux session taken back): same hot
+                            # window as an attach through the hub.
+                            self.tail_manager.wake(row["key"])
                         self.emit(
                             row["key"],
                             protocol.event(
@@ -500,7 +516,8 @@ class HubState:
                                 {"ownership": new_own},
                             ),
                         )
-                self.tail_manager.sync(self.catalog.tail_rows())
+                rows, as_of = self.catalog.tail_snapshot()
+                self.tail_manager.sync(rows, as_of=as_of)
                 supervise.reap_kept(self.home, self.catalog.session_for)
             except Exception:
                 pass
@@ -529,6 +546,9 @@ class HubState:
             # rows carry ownership: attached.
             self.catalog.refresh()
         for key in adopted:
+            # A launch or fork starts with its first turn: its tailer
+            # (created on the next sync) starts hot and status-probed.
+            self.tail_manager.wake(key)
             lid = (supervise.meta_for(self.home, key) or {}).get("launch_id")
             if lid:
                 # Global stream only: anything in the session's own
