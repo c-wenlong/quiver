@@ -439,6 +439,8 @@ function appendEvent(ev, live = true) {
         } else {
           b.classList.add("failed");
           if (note) note.textContent = d.note || "send failed";
+          state.awaitingReply = false;
+          updateWorking();
         }
       }
     }
@@ -507,7 +509,7 @@ function revealNext() {
   if (delay === null) { flushPending(); return; }
   const log = el("chat-log");
   const before = log.childElementCount;
-  appendEvent(state.pending.shift());
+  showLive(state.pending.shift());
   updateWorking();
   // Only a new entry earns a pause; a status change or a result landing
   // on its card goes straight through.
@@ -521,8 +523,13 @@ function flushPending() {
   state.revealTimer = null;
   const all = state.pending;
   state.pending = [];
-  for (const ev of all) appendEvent(ev);
+  for (const ev of all) showLive(ev);
   updateWorking();
+}
+
+function showLive(ev) {
+  appendEvent(ev);
+  if (ev.seq && state.currentKey) rememberSeq(state.currentKey, ev.seq);
 }
 
 function dropPending() {
@@ -842,14 +849,17 @@ function handleFrame(key, frame) {
   if (!data.trim()) return;
   let ev;
   try { ev = JSON.parse(data); } catch { return; }
-  if (ev.seq) rememberSeq(key, ev.seq);
-  if (ev.type === "journal.truncated" || ev.type === "journal.caught-up") return;
+  if (ev.type === "journal.truncated" || ev.type === "journal.caught-up") {
+    if (ev.seq && !state.pending.length) rememberSeq(key, ev.seq);
+    return;
+  }
+  // The cursor advances as each event is shown (showLive), so events
+  // still waiting when the stream drops are replayed on reconnect.
   if (state.currentKey === key) enqueue(ev);
 }
 
 function closeStream() {
   dropPending();
-  state.awaitingReply = false;
   if (state.stream) {
     try { state.stream.reader.cancel(); } catch {}
     state.stream = null;
@@ -1152,6 +1162,7 @@ el("composer").addEventListener("submit", async (e) => {
   const mode = el("composer-mode").value;
   const clientId = newClientId();
   const bubble = appendOptimistic(text, clientId);
+  const gen = state.openGen;
   state.awaitingReply = true;
   updateWorking();
   let status = 0, data = null;
@@ -1176,8 +1187,11 @@ el("composer").addEventListener("submit", async (e) => {
         : "sent";
     }
   } else {
-    state.awaitingReply = false;
-    updateWorking();
+    // Another chat may be open by now; its dots aren't ours to clear.
+    if (gen === state.openGen) {
+      state.awaitingReply = false;
+      updateWorking();
+    }
     failBubble(
       bubble,
       (data && data.error && data.error.message)
