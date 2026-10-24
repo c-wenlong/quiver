@@ -69,7 +69,7 @@ Runner = Callable[..., subprocess.CompletedProcess]
 class Facts:
     """What ``gather`` found; ``evaluate`` reads nothing else."""
 
-    platform: str = sys.platform
+    platform: str = field(default_factory=lambda: sys.platform)
     port: int = DEFAULT_PORT
     exe: str | None = None
     version: str = ""

@@ -337,9 +337,9 @@ class GatherTest(unittest.TestCase):
                    "b": {"created_at": 600.0, "revoked_at": 700.0}}
         with patch.object(setup, "tailscale_exe", return_value="/ts"), \
              patch.object(pairing, "load_devices", return_value=devices), \
-             patch.object(setup, "_agent", return_value=(GOOD_ARGS, True)):
+             patch.object(setup, "_agent", return_value=(GOOD_ARGS, True)), \
+             patch.object(setup.sys, "platform", "darwin"):
             f = setup.gather(home=self.home, run=self.fake_run, get=lambda url, _t: (True, ""))
-        f.platform = "darwin"
         self.assertEqual(f.version, "1.102.4")
         self.assertEqual(f.dns_name, NAME)
         self.assertEqual(f.serve, SERVE)
