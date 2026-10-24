@@ -43,6 +43,7 @@ from quiver.remote import (
     sessionmeta,
     sendq,
     slash,
+    sshkeys,
     supervise,
     tail,
     tsid,
@@ -1162,6 +1163,10 @@ class _Handler(BaseHTTPRequestHandler):
             })
             return
 
+        if path == "/v1/ssh":
+            self._send_json(200, sshkeys.view(self._state.home, device_id))
+            return
+
         if path == "/v1/search":
             query = (args.get("q") or [""])[0]
             self._send_json(200, search_mod.search(
@@ -1357,6 +1362,10 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/v1/app/"):
             self._page_post(path[len("/v1/app/"):], device_id)
+            return
+
+        if path == "/v1/ssh/key":
+            self._ssh_key(device_id)
             return
 
         if path == "/v1/inbox/dismiss":
@@ -2505,6 +2514,39 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_asset(webapp_static.STATIC_DIR / name)
 
     # -- web app page plugins (quiver/webapp/pages) ------------------------
+
+    def _ssh_key(self, device_id: str) -> None:
+        """``POST /v1/ssh/key`` ``{public_key}``: store this device's SSH
+        key ("" clears it) and bring ``authorized_keys`` in line."""
+        body = self._read_body()
+        if body is None:
+            self._send_error(400, "bad_body", "unreadable JSON body")
+            return
+        raw = body.get("public_key")
+        key = None
+        if raw != "":
+            key = sshkeys.normalize_public_key(raw)
+            if key is None:
+                self._send_error(
+                    422, "bad_key",
+                    "public_key must be one ed25519 or ecdsa OpenSSH key",
+                )
+                return
+        try:
+            sshkeys.set_device_key(self._state.home, device_id, key)
+        except KeyError:
+            # The owner's own tailnet devices have no devices.json row
+            # to keep a key on.
+            self._send_error(
+                409, "needs_pairing",
+                "pair this device to give it an SSH key",
+            )
+            return
+        except OSError as exc:
+            self._send_error(500, "store_failed",
+                             f"could not update authorized_keys: {exc}")
+            return
+        self._send_json(200, sshkeys.view(self._state.home, device_id))
 
     def _page_context(self, device_id: str | None):
         return webapp_pages.PageContext(
