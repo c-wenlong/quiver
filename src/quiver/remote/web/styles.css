@@ -137,17 +137,73 @@ details.tool pre {
 pre.code { background: var(--panel2); border-radius: 8px; padding: 8px; overflow-x: auto; }
 code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .92em; }
 
-/* composer */
-#composer {
+/* composer: the Queued tray, the edit bar, then the prompt box */
+#composer-dock {
   position: sticky; bottom: calc(env(safe-area-inset-bottom) + 60px);
-  display: flex; gap: 8px; padding: 8px 0;
-  background: var(--bg);
+  padding: 8px 0; background: var(--bg);
 }
-#composer input { flex: 1; }
-#composer button { width: auto; margin: 0; }
-#composer select {
-  width: auto; margin: 0; padding: 0.45rem 0.3rem;
-  background: var(--panel2); color: var(--dim);
+#composer { display: flex; gap: 8px; align-items: center; }
+#composer input { flex: 1; margin: 0; }
+/* One round button: ↑ sends (queues while the agent works); with the
+   box empty and the agent working it turns into a red stop. */
+.send-btn {
+  flex: 0 0 40px; width: 40px; height: 40px; padding: 0; margin: 0;
+  border-radius: 50%; border: none; background: var(--accent);
+  display: grid; place-items: center;
+}
+.send-btn::before {
+  content: ""; width: 10px; height: 10px;
+  border: solid #08111f; border-width: 2.5px 0 0 2.5px;
+  transform: translateY(2px) rotate(45deg);
+}
+.send-btn:disabled { opacity: .35; cursor: default; }
+.send-btn.stop { background: var(--red); }
+.send-btn.stop::before {
+  width: 12px; height: 12px; border: none; border-radius: 2px;
+  background: #fff; transform: none;
+}
+#queued-tray {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; margin-bottom: 8px; padding-bottom: 4px;
+  animation: arrive .2s ease-out;
+}
+.tray-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 2px 2px 0 12px; font-size: .78rem; color: var(--dim);
+}
+.tray-note { padding: 0 12px 4px; font-size: .72rem; color: var(--dim); }
+/* Three rows show; more scroll inside the tray. */
+.tray-rows { max-height: calc(3 * 40px); overflow-y: auto; }
+.tray-row { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 2px 0 12px; }
+.tray-row.posting .tray-text { opacity: .6; }
+.tray-row.editing .tray-text { color: var(--dim); }
+.tray-mark {
+  flex: 0 0 14px; height: 14px; border-radius: 50%;
+  border: 1.5px dashed var(--dim); font-size: .7rem; line-height: 11px;
+  text-align: center; color: var(--dim);
+}
+.tray-row.editing .tray-mark { border-style: solid; }
+.tray-mark.spin { border-style: solid; border-color: var(--dim) transparent var(--dim) var(--dim); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.tray-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.tray-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tray-row-note.sub { max-width: none; padding: 0; font-size: .72rem; line-height: 1.2; }
+.tray-row-note { flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; font-size: .75rem; color: var(--red); white-space: nowrap; padding-right: 8px; }
+.tray-row-note.left { color: var(--dim); }
+.tray-btn {
+  flex: 0 0 auto; min-width: 36px; height: 36px; padding: 0 8px; margin: 0;
+  background: none; border: none; border-radius: 8px;
+  color: var(--dim); font-size: .95rem; width: auto;
+}
+.tray-btn:hover:not(:disabled) { color: var(--text); background: var(--panel2); }
+.tray-btn:disabled { opacity: .35; cursor: default; }
+.tray-btn.arming { color: var(--red); font-size: .78rem; }
+.tray-btn.text { color: var(--text); font-size: .85rem; }
+#edit-bar { display: flex; align-items: center; gap: 8px; padding: 0 2px 6px 4px; font-size: .8rem; color: var(--dim); }
+.edit-label { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.edit-note { color: var(--red); font-size: .72rem; }
+@media (prefers-reduced-motion: reduce) {
+  .tray-mark.spin { animation: none; }
 }
 .banner { display: flex; align-items: center; gap: 0.6rem; }
 .banner button { width: auto; margin: 0; margin-left: auto; padding: 0.35rem 0.9rem; }
