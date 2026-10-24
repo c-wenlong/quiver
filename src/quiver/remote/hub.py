@@ -40,6 +40,7 @@ from quiver.remote import (
     protocol,
     search as search_mod,
     sendq,
+    slash,
     supervise,
     tail,
     tsid,
@@ -1059,6 +1060,9 @@ class _Handler(BaseHTTPRequestHandler):
             stem = path[len("/v1/sessions/"):]
             key_part, sep, action = stem.rpartition("/")
             key = unquote(key_part if sep else stem)
+            if sep and action == "commands":
+                self._slash_commands(key)
+                return
             if sep and action in {"events", "messages"}:
                 if self._state.catalog.row_for(key) is None:
                     self._send_error(
@@ -1206,6 +1210,8 @@ class _Handler(BaseHTTPRequestHandler):
                 for k in before
             }
             catalog_mod.merge_remote_rows(self._state.home, mid, rows)
+            stored = "slash" in body and slash.save_satellite(
+                self._state.home, mid, body["slash"])
             self._state.catalog.refresh()
             for hub_key, ownership in before.items():
                 if ownership and ownership != old.get(hub_key):
@@ -1217,7 +1223,9 @@ class _Handler(BaseHTTPRequestHandler):
                             {"ownership": ownership},
                         ),
                     )
-            self._send_json(200, {"ok": True, "rows": len(rows)})
+            self._send_json(200, {
+                "ok": True, "rows": len(rows), "slash": bool(stored),
+            })
             return
 
         if path == "/v1/agent/usage":
@@ -2020,6 +2028,21 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(422, "bad_attachment", err or "stage failed")
             return
         self._send_json(200, payload)
+
+    def _slash_commands(self, key: str) -> None:
+        """``GET /v1/sessions/{key}/commands``: the "/" menu (``slash.py``)."""
+        row = self._state.catalog.row_for(key)
+        if row is None:
+            self._send_error(404, "unknown_session", "no such session")
+            return
+        if row.get("remote"):
+            body = slash.for_remote_row(self._state.home, key, row)
+        else:
+            body = slash.for_local_session(
+                self._state.home, key, row,
+                self._state.catalog.session_for(key),
+            )
+        self._send_json(200, body)
 
     def _messages(self, key: str, args) -> None:
         before = _int_arg(args.get("before"), 0)
