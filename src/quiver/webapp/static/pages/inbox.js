@@ -61,10 +61,14 @@
         // Flip only what this answer marked, on the rows as they are now:
         // two marks in flight can answer in either order, and a whole
         // listing from the earlier one would bring the later one's row back.
-        const done = new Set((data.marked || []).map(String));
-        const every = done.has("*");
+        // A mark-all covers the rows the hub listed when it marked; a row
+        // a refresh brought in since may be newer than the write, so it
+        // keeps its own state.
+        const marked = (data.marked || []).map(String);
+        const done = new Set(marked.includes("*")
+          ? (data.notifications || []).map((n) => String(n.id)) : marked);
         inbox.data.notifications = (inbox.data.notifications || []).map((n) =>
-          (every || done.has(String(n.id)) ? { ...n, unread: false } : n));
+          (done.has(String(n.id)) ? { ...n, unread: false } : n));
         inbox.data.github = data.github || inbox.data.github;
       } else {
         // The last read failed (or none landed): the answer carries the

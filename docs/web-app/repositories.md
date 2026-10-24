@@ -173,9 +173,12 @@ everything (`PUT notifications` with `last_read_at` now). Not both, not
 neither (422). The answer is `{"github", "all", "marked", "failed",
 "notifications", "machine"}`: `marked` is the ids GitHub accepted
 (`["*"]` for all), `failed` is `[{"id", "error"}]`, and `notifications`
-is the listing with the marked rows' `unread` off, which the page
-repaints from (GitHub can take a moment to show a mark-all). A failed
-mark-all is a 502.
+is the listing with the marked rows' `unread` off (GitHub can take a
+moment to show a mark-all). The page turns off only the rows the answer
+marked (for a mark-all, the rows in the answer's listing), so two marks
+answering out of order, or a notification a refresh brought in since,
+keep their own state; after a failed read the answer's listing becomes
+the page's rows. A failed mark-all is a 502.
 
 An unread row has a Mark as read button at its end (the app's context
 menu item; it shows on hover or focus, always on touch screens). The
