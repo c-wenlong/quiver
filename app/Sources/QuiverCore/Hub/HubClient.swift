@@ -97,6 +97,13 @@ public struct HubClient: Sendable {
         try await send(request("GET", "/v1/sessions"), as: HubSessionsResponse.self).sessions
     }
 
+    /// The request id of the approval the hub still waits on for `key`.
+    public func pendingApproval(_ key: String) async throws -> String? {
+        let inbox = try await send(request("GET", "/v1/inbox"), as: HubInboxResponse.self)
+        return inbox.items.first { $0.key == key && $0.status == "approval" && $0.requestId?.isEmpty == false }?
+            .requestId
+    }
+
     /// The newest `limit` messages, or with `before` the `limit` just
     /// older than that seq.
     public func messages(_ key: String, limit: Int, before: Int? = nil) async throws -> HubMessagesPage {

@@ -14,6 +14,8 @@ struct SessionChatPage: View {
     var row: SessionsModel.Row
     var onBack: () -> Void
     var onDetails: () -> Void
+    /// The hub turned out not to list it (found only once paired).
+    var onMissing: () -> Void
     @State private var model: SessionChatModel?
 
     private var key: String { HubSessionRow.key(harness: row.session.harness, id: row.session.id) }
@@ -45,6 +47,9 @@ struct SessionChatPage: View {
             await chat.start()
         }
         .onDisappear { model?.stop() }
+        .onChange(of: model?.missing == true) { _, missing in
+            if missing { onMissing() }
+        }
     }
 
     /// harness · folder, as the web app's chat bar has it.

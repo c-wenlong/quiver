@@ -59,6 +59,13 @@ struct HubSessionsResponse: Decodable {
     let sessions: [HubSessionRow]
 }
 
+/// `GET /v1/inbox`: sessions waiting on someone, with the approval's
+/// request id when that's what they wait on.
+struct HubInboxResponse: Decodable {
+    struct Item: Decodable { let key: String; let status: String?; let requestId: String? }
+    let items: [Item]
+}
+
 public struct HubToolCall: Codable, Sendable, Equatable {
     public var name: String
     public var callId: String?

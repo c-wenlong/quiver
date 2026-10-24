@@ -156,26 +156,31 @@ public final class LocalHub {
     /// is paired the keys stay unknown and a click opens the chat, which
     /// pairs.
     public func refreshKeys() async {
-        do {
-            if current == nil {
-                guard let address = try await locator.hubAddress(), let base = Self.baseURL(address) else {
-                    keys = .unavailable
-                    return
-                }
-                guard let saved = store.credential(for: address) else {
-                    keys = .unknown
-                    return
-                }
-                current = makeClient(base, saved)
+        let client: HubClient
+        if let current {
+            client = current
+        } else {
+            guard let address = try? await locator.hubAddress(), let base = Self.baseURL(address) else {
+                keys = .unavailable
+                return
             }
-            guard let client = current else { return }
+            guard let saved = store.credential(for: address) else {
+                keys = .unknown
+                return
+            }
+            client = current ?? makeClient(base, saved)
+            current = client
+        }
+        do {
             keys = .known(Set(try await client.sessions().map(\.key)))
         } catch let error as HubError where error.isUnauthorized {
-            if let current { refused(current) }
+            // Only this client's credential: another call may have paired
+            // again meanwhile.
+            refused(client)
             keys = .unknown
         } catch let error as HubError where error.code == "network" {
             // A hub that stopped since: forget the address with the client.
-            current = nil
+            if current?.credential == client.credential { current = nil }
             keys = .unavailable
         } catch {
             keys = .unknown

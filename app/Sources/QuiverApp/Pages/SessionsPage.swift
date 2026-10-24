@@ -28,6 +28,8 @@ private struct SessionsContent: View {
     @State private var detail: SessionsModel.Row?
     /// The session whose chat is swapped in over the list.
     @State private var chat: SessionsModel.Row?
+    /// The newest click, so a slower lookup for an older one can't land.
+    @State private var opening: UUID?
     @State private var actionError: String?
     /// Rows a day's group shows before folding behind a Show more row.
     private static let foldLimit = 10
@@ -51,7 +53,11 @@ private struct SessionsContent: View {
     var body: some View {
         Group {
             if let chat {
-                SessionChatPage(row: chat, onBack: { self.chat = nil }, onDetails: { detail = chat })
+                SessionChatPage(row: chat, onBack: { self.chat = nil }, onDetails: { detail = chat },
+                                onMissing: {
+                                    self.chat = nil
+                                    detail = chat
+                                })
                     .onChange(of: app.navReselects) { self.chat = nil }
             } else {
                 listPage
@@ -151,12 +157,15 @@ private struct SessionsContent: View {
     /// else its details: cloud sessions, ones the hub doesn't list, or
     /// any while the hub is down.
     private func open(_ row: SessionsModel.Row) {
+        let click = UUID()
+        opening = click
         guard row.location == .local else { return detail = row }
         let key = HubSessionRow.key(harness: row.session.harness, id: row.session.id)
         if app.hub.opensChat(key) { return chat = row }
         // The list may predate a session started since.
         Task {
             await app.hub.refreshKeys()
+            guard opening == click else { return }
             if app.hub.opensChat(key) { chat = row } else { detail = row }
         }
     }

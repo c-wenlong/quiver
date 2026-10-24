@@ -86,8 +86,13 @@ final class FakeLocator: HubLocating, @unchecked Sendable {
     }
 }
 
+/// Every suite that answers through `HubStub`, one test at a time: they
+/// share its handler.
+@Suite(.serialized) struct HubStubbed {}
+
+extension HubStubbed {
 @MainActor
-@Suite(.serialized) struct LocalHubTests {
+@Suite struct LocalHubTests {
     let dir = FileManager.default.temporaryDirectory.appending(path: "hub-\(UUID().uuidString)")
     var store: HubDeviceStore { HubDeviceStore(url: dir.appending(path: "remote/app-device.json")) }
 
@@ -161,6 +166,8 @@ final class FakeLocator: HubLocating, @unchecked Sendable {
     }
 }
 
+}
+
 @MainActor
 @Suite struct SessionChatModelTests {
     func model() -> SessionChatModel {
@@ -216,4 +223,74 @@ final class FakeLocator: HubLocating, @unchecked Sendable {
         #expect(chat.items.first?.kind == .tool(HubToolCall(name: "Read", callId: "c9"), result: "done"))
         #expect(!chat.hasEarlier)
     }
+
+    @Test func outputWhoseCallTheHubDroppedShowsOnItsOwn() {
+        let chat = model()
+        chat.load(HubMessagesPage(messages: [
+            message(10, #"{"kind": "tool_result", "text": "done", "result_ref": "gone"}"#),
+            message(11, #"{"kind": "assistant", "text": "next"}"#),
+        ], nextBefore: nil, hasMore: false))
+        #expect(chat.items.map(\.id) == ["m10", "m11"])
+        #expect(chat.items.first?.kind == .tool(HubToolCall(name: "Tool output"), result: "done"))
+    }
+}
+
+extension HubStubbed {
+@MainActor
+@Suite struct SessionChatOpenTests {
+    let dir = FileManager.default.temporaryDirectory.appending(path: "hub-\(UUID().uuidString)")
+
+    func opened(sessions: String, inbox: String = #"{"items": []}"#) async throws -> SessionChatModel {
+        let store = HubDeviceStore(url: dir.appending(path: "app-device.json"))
+        try store.save(HubCredential(deviceId: "d1", credential: "secret"), for: "127.0.0.1:8477")
+        HubStub.handler = { req in
+            switch req.url?.path {
+            case "/v1/sessions": return (200, Data(sessions.utf8))
+            case "/v1/inbox": return (200, Data(inbox.utf8))
+            case "/v1/sessions/claude:s1/messages":
+                return (200, Data(#"""
+                {"messages": [
+                  {"type": "message.appended", "seq": 1, "data": {"kind": "user", "text": "go"}},
+                  {"type": "message.appended", "seq": 3, "data": {"kind": "assistant", "text": "done"}}
+                ], "has_more": false}
+                """#.utf8))
+            default: return (404, Data())
+            }
+        }
+        let hub = LocalHub(locator: FakeLocator(address: "127.0.0.1:8477"), store: store) {
+            HubClient(baseURL: $0, credential: $1, session: HubStub.session(), streamSession: HubStub.session())
+        }
+        let chat = SessionChatModel(key: "claude:s1", hub: hub)
+        await chat.start()
+        chat.stop()
+        return chat
+    }
+
+    func event(_ type: String, seq: Int, _ data: String) -> HubEnvelope {
+        HubEnvelope(type: type, session: "claude:s1", seq: seq,
+                    data: try! HubWire.decoder.decode(HubJSON.self, from: Data(data.utf8)))
+    }
+
+    @Test func aSessionTheHubDoesntListIsMissing() async throws {
+        let chat = try await opened(sessions: #"{"sessions": [{"key": "claude:other"}]}"#)
+        #expect(chat.missing)
+        #expect(chat.loadError == "The hub doesn't list this session.")
+    }
+
+    @Test func aWaitingApprovalGoesWhereItWasAsked() async throws {
+        let chat = try await opened(sessions: #"{"sessions": [{"key": "claude:s1", "status": "approval"}]}"#,
+                                    inbox: #"{"items": [{"key": "claude:s1", "status": "approval", "request_id": "r1"}]}"#)
+        #expect(chat.items.map(\.id) == ["m1", "m3", "approval-r1"])
+        // The replay from the start: history already shown is skipped,
+        // the ask lands before the message that followed it.
+        chat.apply(event("message.appended", seq: 1, #"{"kind": "user", "text": "go"}"#))
+        chat.apply(event("approval.requested", seq: 2, #"{"request_id": "r1", "prompt": "Run make?"}"#))
+        chat.apply(event("message.appended", seq: 3, #"{"kind": "assistant", "text": "done"}"#))
+        #expect(chat.items.map(\.id) == ["m1", "approval-r1", "m3"])
+        #expect(chat.items[1].kind == .approval(requestId: "r1", prompt: "Run make?", decision: nil, resolved: false))
+        // Live again past the history.
+        chat.apply(event("message.appended", seq: 4, #"{"kind": "assistant", "text": "more"}"#))
+        #expect(chat.items.map(\.id) == ["m1", "approval-r1", "m3", "m4"])
+    }
+}
 }
