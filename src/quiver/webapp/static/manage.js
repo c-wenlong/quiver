@@ -722,6 +722,13 @@ const accountsPage = { data: null, gen: 0, machine: null };
 // Harnesses whose limits swe reads (HarnessAccess); others have none to show.
 const LIMIT_HARNESSES = new Set(["claude", "codex", "copilot", "cursor", "devin", "droid", "freebuff"]);
 const STALE_S = 20 * 60;
+// The command that signs each one in (HarnessAccess.loginCommand, plus
+// Claude and Codex, which the Mac app signs in per account). Droid signs
+// in from inside its own TUI.
+const LOGIN_COMMANDS = {
+  claude: "claude auth login", codex: "codex login", copilot: "gh auth login",
+  cursor: "cursor-agent login", devin: "devin auth login", freebuff: "freebuff login",
+};
 
 async function renderAccounts(_id, refresh = false) {
   const panel = document.getElementById("panel");
@@ -822,8 +829,17 @@ function accountCard(h, machine) {
   const skew = machine.hub ? 0 : (machine.received_at || 0) - (machine.reported_at || machine.received_at || 0);
   const now = Date.now() / 1000 - skew;
   const plan = rl ? Fmt.planTitle(rl.plan_type) : "";
-  let body = "", status;
-  if (!rl) {
+  let body = "", status, statusHTML = "";
+  if (!rl && h.no_reading === "signed_out") {
+    // Credentials live on the machine the reading comes from, so name it.
+    const where = (machine.machine && machine.machine.name) || "this machine";
+    const login = LOGIN_COMMANDS[h.name];
+    statusHTML = login
+      ? `Not signed in on ${esc(where)}. Run <code>${esc(login)}</code> there.`
+      : `Not signed in on ${esc(where)}. Sign in from ${esc(Fmt.harnessName(h.name))} there.`;
+  } else if (!rl && h.no_reading === "error") {
+    status = "Couldn't fetch usage. Refresh to try again.";
+  } else if (!rl) {
     status = LIMIT_HARNESSES.has(h.name) ? "No reading yet" : "No usage limits to read";
   } else if (rl.status === "ok") {
     body = readingWindows(rl).map((w) => windowRow(w, now)).join("");
@@ -845,7 +861,7 @@ function accountCard(h, machine) {
     <div class="account-head">${Fmt.logo(h.name)}<span class="card-title">${esc(harnessTitle(h))}</span>
       ${plan ? `<span class="badge">${esc(plan)}</span>` : ""}</div>
     ${body}
-    <div class="caption">${esc(status)}</div>
+    <div class="caption">${statusHTML || esc(status)}</div>
   </div>`;
 }
 

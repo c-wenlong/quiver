@@ -83,11 +83,87 @@ _STALE_CACHE_TTL = 24 * 60 * 60
 # Registry: tool_name → fetcher callable
 RateLimitFetcher = Callable[[], RateLimitInfo | None]
 _FETCHERS: dict[str, RateLimitFetcher] = {}
+# tool_name → (fetcher, signed_in, empty_is_normal), as ``register`` was
+# given them. ``signed_in`` says whether a credential the fetcher could use
+# is there; it is asked only after that same fetcher came back empty, to
+# tell the two kinds of empty apart. Kept beside the fetcher it describes so
+# a stand-in fetcher (a test's) never runs the real credential lookup.
+_SIGNED_IN: dict[str, tuple[RateLimitFetcher, Callable[[], bool], bool]] = {}
+
+# Why a tool has no reading, as ``get_all_rate_limits`` reports it through
+# ``no_reading`` and ``swe list --json`` as a row's ``no_reading``.
+SIGNED_OUT = "signed_out"
+FETCH_ERROR = "error"
 
 
-def register(tool_name: str, fetcher: RateLimitFetcher) -> None:
-    """Register a rate limit fetcher for a tool."""
+def register(
+    tool_name: str,
+    fetcher: RateLimitFetcher,
+    signed_in: Callable[[], bool] | None = None,
+    empty_is_normal: bool = False,
+) -> None:
+    """Register a rate limit fetcher for a tool.
+
+    ``signed_in`` checks for the credential the fetcher reads, without
+    using it. With one, an empty fetch reads as signed out when it says no
+    and as a failed fetch when it says yes; without one an empty fetch
+    carries no reason. ``empty_is_normal`` is for a fetcher that can come
+    back empty while signed in and healthy (Freebuff on an account with no
+    GLM quota): there an empty answer is "nothing to report".
+    """
     _FETCHERS[tool_name] = fetcher
+    if signed_in is not None:
+        _SIGNED_IN[tool_name] = (fetcher, signed_in, empty_is_normal)
+
+
+def _no_reading_reason(
+    tool_name: str, fetcher: RateLimitFetcher, raised: bool = False,
+) -> str | None:
+    """Why ``fetcher`` came back empty for ``tool_name``: ``SIGNED_OUT``,
+    ``FETCH_ERROR``, or None when that can't be told."""
+    entry = _SIGNED_IN.get(tool_name)
+    if entry is None or entry[0] is not fetcher:
+        return FETCH_ERROR if raised else None
+    _fetcher, probe, empty_is_normal = entry
+    try:
+        signed_in = bool(probe())
+    except Exception:
+        return None
+    if not signed_in:
+        return SIGNED_OUT
+    if empty_is_normal and not raised:
+        return None
+    return FETCH_ERROR
+
+
+# A probe answers "is a credential there", never by reading a secret: a
+# slow lookup raises (unknown, not absent), so a busy keychain or ``gh``
+# never tells a signed-in user to sign in again.
+_PROBE_TIMEOUT = 1.0
+
+
+def _keychain_item_exists(*query: str) -> bool:
+    """Whether a generic-password item matching ``query`` is in the
+    keychain. Without ``-w`` the secret is never read, so no access prompt;
+    off macOS there is no keychain and the answer is no."""
+    if not shutil.which("security"):
+        return False
+    result = subprocess.run(
+        ["security", "find-generic-password", *query],
+        capture_output=True, text=True, timeout=_PROBE_TIMEOUT,
+    )
+    return result.returncode == 0
+
+
+def _gh_signed_in() -> bool:
+    """Whether ``gh auth token`` has a token; a timeout raises."""
+    if not shutil.which("gh"):
+        return False
+    result = subprocess.run(
+        ["gh", "auth", "token"], capture_output=True, text=True,
+        timeout=_PROBE_TIMEOUT,
+    )
+    return result.returncode == 0 and bool(result.stdout.strip())
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +392,25 @@ def _register_codex() -> None:
     def fetch() -> RateLimitInfo | None:
         return _fetch_codex()
 
-    register("codex", fetch)
+    register("codex", fetch,
+             signed_in=lambda: _read_codex_access_token() is not None)
+
+
+def _read_codex_access_token() -> str | None:
+    """The ChatGPT OAuth ``access_token`` from ``~/.codex/auth.json``."""
+    auth_path = os.path.expanduser("~/.codex/auth.json")
+    if not os.path.exists(auth_path):
+        return None
+    try:
+        with open(auth_path) as f:
+            auth = json.load(f)
+    except (json.JSONDecodeError, OSError, RecursionError):
+        return None
+    if not isinstance(auth, dict):
+        return None
+    tokens = auth.get("tokens") or {}
+    access_token = tokens.get("access_token") if isinstance(tokens, dict) else None
+    return access_token or None
 
 
 def _fetch_codex() -> RateLimitInfo | None:
@@ -325,18 +419,7 @@ def _fetch_codex() -> RateLimitInfo | None:
     Uses the OAuth ``access_token`` from ``~/.codex/auth.json`` to query
     ``https://chatgpt.com/backend-api/wham/usage``.
     """
-    auth_path = os.path.expanduser("~/.codex/auth.json")
-    if not os.path.exists(auth_path):
-        return None
-
-    try:
-        with open(auth_path) as f:
-            auth = json.load(f)
-    except (json.JSONDecodeError, OSError, RecursionError):
-        return None
-
-    tokens = auth.get("tokens") or {}
-    access_token = tokens.get("access_token")
+    access_token = _read_codex_access_token()
     if not access_token:
         return None
 
@@ -402,7 +485,7 @@ def _register_github_copilot() -> None:
     def fetch() -> RateLimitInfo | None:
         return _fetch_github_copilot()
 
-    register("copilot", fetch)
+    register("copilot", fetch, signed_in=_gh_signed_in)
 
 
 def _get_gh_auth_token() -> str | None:
@@ -993,7 +1076,11 @@ def _register_claude() -> None:
     def fetch() -> RateLimitInfo | None:
         return _fetch_claude()
 
-    register("claude", fetch)
+    def signed_in() -> bool:
+        return (_read_claude_credentials_file() is not None
+                or _keychain_item_exists("-l", "Claude Code-credentials"))
+
+    register("claude", fetch, signed_in=signed_in)
 
 
 # ---------------------------------------------------------------------------
@@ -1550,7 +1637,13 @@ def _register_droid() -> None:
     def fetch() -> RateLimitInfo | None:
         return _fetch_droid()
 
-    register("droid", fetch)
+    def signed_in() -> bool:
+        if os.environ.get("FACTORY_API_KEY", "").strip() or _decrypt_droid_auth_file():
+            return True
+        return any(_keychain_item_exists("-l", label)
+                   for label in ("Factory Safe Storage", "Factory Key"))
+
+    register("droid", fetch, signed_in=signed_in)
 
 
 # ---------------------------------------------------------------------------
@@ -1665,7 +1758,9 @@ def _register_freebuff() -> None:
     def fetch() -> RateLimitInfo | None:
         return _fetch_freebuff()
 
-    register("freebuff", fetch)
+    register("freebuff", fetch,
+             signed_in=lambda: bool(_get_freebuff_access_token()),
+             empty_is_normal=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1776,10 +1871,27 @@ def _read_cursor_keychain_token() -> str | None:
     return token or None
 
 
+# Where ``cursor-agent`` keeps its session off macOS (on a Mac it uses the
+# keychain): ``{"accessToken": <jwt>, "refreshToken": <jwt>}``.
+_CURSOR_CLI_AUTH_FILE = "~/.config/cursor/auth.json"
+
+
+def _read_cursor_cli_token(path: str | None = None) -> str | None:
+    """Return the ``cursor-agent`` CLI's session token from its auth file."""
+    try:
+        with open(os.path.expanduser(path or _CURSOR_CLI_AUTH_FILE)) as f:
+            auth = json.load(f)
+    except (json.JSONDecodeError, OSError, RecursionError, UnicodeDecodeError):
+        return None
+    token = auth.get("accessToken") if isinstance(auth, dict) else None
+    return token.strip() if isinstance(token, str) and token.strip() else None
+
+
 def _get_cursor_access_token() -> str | None:
-    """Editor store first (a file read, every platform), then the CLI's
-    keychain entry on macOS."""
-    return _read_cursor_state_token() or _read_cursor_keychain_token()
+    """Editor store first, then the CLI's auth file (Linux), then its
+    keychain entry (macOS). All three hold the same kind of session JWT."""
+    return (_read_cursor_state_token() or _read_cursor_cli_token()
+            or _read_cursor_keychain_token())
 
 
 def _cursor_token_claims(token: str) -> dict | None:
@@ -2289,7 +2401,12 @@ def _register_cursor() -> None:
     def fetch() -> RateLimitInfo | None:
         return _fetch_cursor()
 
-    register("cursor", fetch)
+    def signed_in() -> bool:
+        return bool(_read_cursor_state_token() or _read_cursor_cli_token()
+                    or _keychain_item_exists("-s", "cursor-access-token",
+                                             "-a", "cursor-user"))
+
+    register("cursor", fetch, signed_in=signed_in)
 
 
 # ---------------------------------------------------------------------------
@@ -2504,7 +2621,8 @@ def _register_devin() -> None:
     def fetch() -> RateLimitInfo | None:
         return _fetch_devin()
 
-    register("devin", fetch)
+    register("devin", fetch,
+             signed_in=lambda: _read_devin_credentials() is not None)
 
 
 # Tools whose fetchers list every quota window in ``RateLimitInfo.windows``.
@@ -2575,7 +2693,12 @@ def _load_cached(
 
 
 def _load_cached_no_data(ttl: float | None = None) -> set[str]:
-    """Names whose fetcher recently returned nothing.
+    """Names whose fetcher recently returned nothing."""
+    return set(_load_cached_no_data_marks(ttl))
+
+
+def _load_cached_no_data_marks(ttl: float | None = None) -> dict[str, float]:
+    """Names whose fetcher recently returned nothing, with when it did.
 
     Without this a provider that never reports usage counts as a permanent
     cache miss: it is absent from ``limits``, so every call re-runs its
@@ -2588,34 +2711,61 @@ def _load_cached_no_data(ttl: float | None = None) -> set[str]:
     """
     try:
         if not RATE_LIMITS_CACHE_FILE.exists():
-            return set()
+            return {}
         with open(RATE_LIMITS_CACHE_FILE) as f:
             data = json.load(f)
         ttl = _CACHE_TTL if ttl is None else ttl
         cached_at = data.get("cached_at", 0)
         if not isinstance(cached_at, (int, float)) or not math.isfinite(cached_at):
-            return set()
+            return {}
         if time.time() - cached_at > ttl:
-            return set()
+            return {}
         names = data.get("no_data", [])
         if isinstance(names, dict):
             now = time.time()
             return {
-                name for name, ts in names.items()
+                name: ts for name, ts in names.items()
                 if isinstance(ts, (int, float)) and math.isfinite(ts)
                 and now - ts <= ttl
             }
-        return set(names) if isinstance(names, list) else set()
+        # The legacy list carries no per-name time: it is as old as the file.
+        return ({name: cached_at for name in names if isinstance(name, str)}
+                if isinstance(names, list) else {})
     except Exception:
-        return set()
+        return {}
+
+
+def _load_cached_no_data_status() -> dict[str, str]:
+    """Why each ``no_data`` name had nothing, from the cache's
+    ``no_data_status`` map: ``SIGNED_OUT`` or ``FETCH_ERROR``. Freshness is
+    ``_load_cached_no_data``'s call; a name absent here carries no reason
+    (saved by an swe from before the map, or a fetcher that can't tell)."""
+    try:
+        with open(RATE_LIMITS_CACHE_FILE) as f:
+            data = json.load(f)
+        reasons = data.get("no_data_status") if isinstance(data, dict) else None
+        if not isinstance(reasons, dict):
+            return {}
+        return {
+            name: reason for name, reason in reasons.items()
+            if reason in (SIGNED_OUT, FETCH_ERROR)
+        }
+    except Exception:
+        return {}
 
 
 def _save_cached(
     limits: dict[str, dict],
     updated_at: dict[str, float] | None = None,
     no_data: Iterable[str] | None = None,
+    no_data_status: dict[str, str] | None = None,
 ) -> None:
-    """Persist rate limits to disk cache."""
+    """Persist rate limits to disk cache.
+
+    ``no_data_status`` gives the reason for some ``no_data`` names. It is
+    a map of its own beside ``no_data`` so an older swe, which reads
+    ``no_data`` values as timestamps, still parses the file.
+    """
     try:
         RATE_LIMITS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
         now = time.time()
@@ -2630,6 +2780,12 @@ def _save_cached(
                 for name in (no_data or ())
             },
         }
+        reasons = {
+            name: reason for name, reason in (no_data_status or {}).items()
+            if name in payload["no_data"]
+        }
+        if reasons:
+            payload["no_data_status"] = reasons
         with open(RATE_LIMITS_CACHE_FILE, "w") as f:
             json.dump(payload, f)
     except Exception:
@@ -2740,6 +2896,7 @@ def get_all_rate_limits(
     deadline: float | None = None,
     refresh_failed: bool = False,
     cache_ttl: float | None = None,
+    no_reading: dict[str, str] | None = None,
 ) -> dict[str, RateLimitInfo]:
     """Fetch rate limits for the selected registered tools.
 
@@ -2758,8 +2915,25 @@ def get_all_rate_limits(
     a window marked ``unavailable`` — as a cache miss, so a Refresh press
     retries the providers that failed while healthy ones are still served
     from cache.
+
+    ``no_reading``, when given, is filled with why each selected tool left
+    out of the result has no reading: ``SIGNED_OUT`` (no credential to
+    read with) or ``FETCH_ERROR`` (credentials, but the fetch failed).
+    Tools whose reason can't be told are left out of it too.
     """
     result: dict[str, RateLimitInfo] = {}
+    reasons: dict[str, str] = {}
+    # no_data markers served from cache this call, kept as saved.
+    kept_empty: dict[str, float] = {}
+
+    def report() -> dict[str, RateLimitInfo]:
+        if no_reading is not None:
+            no_reading.update({
+                name: reason for name, reason in reasons.items()
+                if name not in result
+            })
+        return result
+
     requested = None if tool_names is None else set(tool_names)
     fetchers = [
         (name, fetcher)
@@ -2840,12 +3014,30 @@ def get_all_rate_limits(
                     pass
             # A provider that answered "nothing to report" last time is
             # covered for this window too, otherwise it is refetched forever.
-            known_empty = _load_cached_no_data(cache_ttl) & fetcher_names
+            empty_marks = _load_cached_no_data_marks(cache_ttl)
+            known_empty = set(empty_marks) & fetcher_names
+            cached_reasons = _load_cached_no_data_status()
+            # Signed out is a local credential verdict, re-derived every
+            # call like auth-required, so a fresh sign-in shows at once. A
+            # Refresh press retries a failed fetch.
+            known_empty = {
+                name for name in known_empty
+                if cached_reasons.get(name) != SIGNED_OUT
+                and not (refresh_failed and cached_reasons.get(name) == FETCH_ERROR)
+            }
+            reasons.update({
+                name: cached_reasons[name] for name in known_empty
+                if name in cached_reasons
+            })
             # An entry set aside for a refetch is not "nothing to report":
             # a leftover no_data marker must not stop its retry.
-            missing = fetcher_names - result.keys() - (known_empty - set(upgrade_fallback))
+            served_empty = known_empty - set(upgrade_fallback) - result.keys()
+            missing = fetcher_names - result.keys() - served_empty
             if not missing:
-                return result
+                return report()
+            # Answered from cache this call: the save below must keep their
+            # markers and reasons as they were, or the next call refetches.
+            kept_empty = {name: empty_marks[name] for name in served_empty}
             fetchers = [item for item in fetchers if item[0] in missing]
             raw_cache = {name: asdict(info) for name, info in result.items()}
 
@@ -2863,6 +3055,7 @@ def get_all_rate_limits(
             cache_updated_at[name] = stale_updated_at[name]
 
     fetched: dict[str, RateLimitInfo | None] = {}
+    fetched_reasons: dict[str, str] = {}
     fetched_lock = threading.Lock()
 
     limit = _RATE_LIMIT_FETCH_DEADLINE if deadline is None else deadline
@@ -2870,12 +3063,22 @@ def get_all_rate_limits(
 
     def fetch_one(tool_name: str, fetcher: Callable) -> None:
         _fetch_cutoff.at = cutoff
+        raised = False
         try:
             info = fetcher()
         except Exception:
-            info = None
+            info, raised = None, True
         with fetched_lock:
             fetched[tool_name] = info
+        # The reading is in; the reason is extra and only asked while the
+        # deadline allows, so a probe can never turn a finished fetch into
+        # a timeout.
+        if info or time.monotonic() >= cutoff:
+            return
+        reason = _no_reading_reason(tool_name, fetcher, raised)
+        if reason:
+            with fetched_lock:
+                fetched_reasons[tool_name] = reason
 
     workers = [
         threading.Thread(target=fetch_one, args=item, daemon=True)
@@ -2888,6 +3091,7 @@ def get_all_rate_limits(
 
     with fetched_lock:
         completed = fetched.copy()
+        completed_reasons = fetched_reasons.copy()
     empty_fetchers: set[str] = set()
     # no_data entries carried over from a filtered run keep their own time.
     empty_fetchers_ts: dict[str, float] = {}
@@ -2914,6 +3118,8 @@ def get_all_rate_limits(
             # previous reading is data: it must never gain a no_data marker,
             # or the next call would serve "nothing to report" over it.
             empty_fetchers.add(tool_name)
+            if tool_name in completed_reasons:
+                reasons[tool_name] = completed_reasons[tool_name]
         elif tool_name not in result:
             # Missed the deadline: remember a marker so the cell reads …
             # instead of looking like a provider with nothing to report.
@@ -2932,6 +3138,7 @@ def get_all_rate_limits(
             raw_cache[tool_name] = asdict(marker)
             cache_updated_at[tool_name] = time.time()
 
+    carried_reasons: dict[str, str] = {}
     if requested is not None:
         # A filtered run (--exclude, starred-only) never asked the other
         # providers anything: rewriting the file without them would drop
@@ -2966,6 +3173,11 @@ def get_all_rate_limits(
         if isinstance(base_ts, (int, float)):
             for name in carried - set(cache_updated_at):
                 cache_updated_at[name] = base_ts
+        saved_reasons = disk.get("no_data_status")
+        if isinstance(saved_reasons, dict):
+            for name, reason in saved_reasons.items():
+                if name not in fetcher_names:
+                    carried_reasons[name] = reason
         saved_no_data = disk.get("no_data")
         if isinstance(saved_no_data, dict):
             for name, ts in saved_no_data.items():
@@ -2975,15 +3187,22 @@ def get_all_rate_limits(
             for name in saved_no_data:
                 if name not in fetcher_names:
                     empty_fetchers_ts[name] = time.time()
-    no_data_marks = dict(empty_fetchers_ts)
+    # A reading in the result (the 24h fallback) must never gain a marker.
+    kept_empty = {n: ts for n, ts in kept_empty.items() if n not in result}
+    no_data_marks = {**empty_fetchers_ts, **kept_empty}
     for name in empty_fetchers:
         no_data_marks[name] = time.time()
 
     # Cache an empty result only when no recent successful snapshot exists.
     # Partial outages retain each provider's last known value for up to 24h.
-    _save_cached(raw_cache, cache_updated_at, no_data=no_data_marks)
+    no_data_reasons = {**carried_reasons, **{
+        name: reasons[name] for name in empty_fetchers | set(kept_empty)
+        if name in reasons
+    }}
+    _save_cached(raw_cache, cache_updated_at, no_data=no_data_marks,
+                 no_data_status=no_data_reasons)
 
-    return result
+    return report()
 
 
 def get_rate_limit(tool_name: str, use_cache: bool = True) -> RateLimitInfo | None:

@@ -75,6 +75,24 @@ import Testing
         #expect(!model.isStarred("droid"))
     }
 
+    @Test func cardsSayWhySweHasNoReading() async {
+        // swe's no_reading tells a signed-out harness from a failed fetch;
+        // a row without it (or from an older swe) keeps the plain note.
+        let json = #"""
+        {"schema": 1, "data": {"harnesses": [
+          {"name": "copilot", "command": "copilot", "description": "", "version": null, "aliases": [], "tags": [], "state": "starred", "sessions_100d": 1, "rate_limit": null, "no_reading": "signed_out"},
+          {"name": "cursor", "command": "cursor-agent", "description": "", "version": null, "aliases": [], "tags": [], "state": "starred", "sessions_100d": 1, "rate_limit": null, "no_reading": "error"},
+          {"name": "devin", "command": "devin", "description": "", "version": null, "aliases": [], "tags": [], "state": "starred", "sessions_100d": 1, "rate_limit": null},
+          {"name": "droid", "command": "droid", "description": "", "version": null, "aliases": [], "tags": [], "state": "starred", "sessions_100d": 1, "rate_limit": null, "no_reading": "something-new"}
+        ]}}
+        """#
+        let model = OtherLimitsModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: Data(json.utf8), stderr: ""))),
+                  snapshotFile: tempSnapshotFile(), names: tempNamesStore())
+        await model.load()
+        #expect(model.cards.map(\.name) == ["copilot", "cursor", "devin", "droid"])
+        #expect(model.cards.map(\.usageNote) == [.signIn, .fetchFailed, nil, nil])
+    }
+
     @Test func onlyStarredHarnessesShowALimitAnywhere() async {
         // swe can still hand back a cached reading for a harness since unstarred.
         let json = #"""
