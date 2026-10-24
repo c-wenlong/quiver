@@ -6,7 +6,8 @@ module is the Python side of ``SearchMessage.swift`` (text caps),
 ``SearchContent.swift`` (content blocks), ``SearchChunker.swift`` (FTS row
 sizes), ``SearchIdentifiers.swift`` (identifier shadow text) and the
 per-harness decoders in ``SearchLineDecoders.swift``,
-``SearchMoreLineDecoders.swift`` and ``SearchPlainLineDecoders.swift``.
+``SearchMoreLineDecoders.swift``, ``SearchPlainLineDecoders.swift`` and
+``SearchGraphLineDecoders.swift``.
 Keep the rules in step with those files.
 
 Every cap counts UTF-16 code units, the unit the Swift caps count. Swift
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -689,6 +691,163 @@ def _codebuddy(state: _CodebuddyState, obj: dict) -> tuple[list[Message], Hints]
     return [], hints
 
 
+def _hermes(obj: dict) -> tuple[list[Message], Hints]:
+    """``SearchHermesDecoder``: one whole ``session_*.json`` document."""
+    hints = Hints(session_id=json_string(obj.get("session_id")), cwd=json_string(obj.get("cwd")))
+    messages: list[Message] = []
+    records = obj.get("messages")
+    for record in records if isinstance(records, list) else ():
+        if isinstance(record, dict) and record.get("role") in (USER, ASSISTANT):
+            messages += content_messages(record["role"], record.get("content"), None)
+    return messages, hints
+
+
+def _swift_json(value) -> str:
+    """``JSONSerialization.data(withJSONObject:)`` text: compact, with
+    ``/`` escaped. Key order can still differ: Foundation keeps none."""
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=False).replace("/", "\\/")
+
+
+def _kiro_blocks(content) -> list:
+    """``toPreviewBlocks``: Kiro's ``{kind, data}`` blocks restated as the
+    Claude-shaped blocks ``content_messages`` reads."""
+    blocks: list = []
+    for block in content if isinstance(content, list) else ():
+        if not isinstance(block, dict):
+            continue
+        kind = block.get("kind")
+        data = block.get("data")
+        if kind == "text":
+            if isinstance(data, str) and data:
+                blocks.append({"type": "text", "text": data})
+        elif kind == "json":
+            # Foundation serializes only an object or array at the top.
+            if isinstance(data, (dict, list)):
+                blocks.append({"type": "text", "text": _swift_json(data)})
+        elif kind == "toolUse":
+            tool = data if isinstance(data, dict) else None
+            use: dict = {"type": "tool_use"}
+            name = json_string(tool.get("name")) if tool else None
+            if name is not None:
+                use["name"] = name
+            if tool is not None and "input" in tool:
+                use["input"] = tool["input"]
+            blocks.append(use)
+        elif kind == "toolResult":
+            blocks.append({"type": "tool_result", "content": _kiro_blocks(
+                data.get("content") if isinstance(data, dict) else None)})
+    return blocks
+
+
+def _kiro(obj: dict) -> tuple[list[Message], Hints]:
+    """``SearchKiroDecoder``: a transcript record (``kind``) or the
+    ``<uuid>.json`` manifest."""
+    hints = Hints()
+    kind = obj.get("kind")
+    if isinstance(kind, str):
+        data = obj.get("data")
+        if not isinstance(data, dict):
+            return [], hints
+        blocks = _kiro_blocks(data.get("content"))
+        if kind == "Prompt":
+            meta = data.get("meta")
+            ts = stamp_iso(meta.get("timestamp")) if isinstance(meta, dict) else None
+            return content_messages(USER, blocks, ts), hints
+        if kind == "AssistantMessage":
+            return content_messages(ASSISTANT, blocks, None), hints
+        if kind == "ToolResults":
+            return content_messages(TOOL, blocks, None), hints
+        return [], hints
+    hints.cwd = json_string(obj.get("cwd"))
+    title = json_string(obj.get("title"))
+    hints.title = title_candidate(title, 96) if title else None
+    return [], hints
+
+
+def _grok_flatten(value) -> str | None:
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, list):
+        return None
+    parts = []
+    for item in value:
+        if isinstance(item, str):
+            parts.append(item)
+        elif isinstance(item, dict):
+            kind = item.get("type")
+            if isinstance(kind, str) and kind != "text":
+                continue
+            if isinstance(item.get("text"), str):
+                parts.append(item["text"])
+    return "\n".join(parts) if parts else None
+
+
+_QUERY_OPEN = re.compile(re.escape("<user_query>"), re.IGNORECASE)
+_QUERY_CLOSE = re.compile(re.escape("</user_query>"), re.IGNORECASE)
+
+
+def grok_strip_query(text: str) -> str:
+    """``stripUserQueryEnvelope``: the ``<user_query>`` body, or the text
+    as it is; a missing closer still yields the tail."""
+    start = _QUERY_OPEN.search(text)
+    if start is None:
+        return text
+    body = text[start.end():]
+    end = _QUERY_CLOSE.search(body)
+    return (body[:end.start()] if end else body).strip()
+
+
+def _grok_bootstrap(text: str) -> bool:
+    normalized = text.strip().lower()
+    if not normalized.startswith("<user_info>"):
+        return False
+    end = normalized.find("</user_info>")
+    if end < 0:
+        return "<user_query>" not in normalized
+    remainder = normalized[end + len("</user_info>"):].strip()
+    return not remainder or (remainder.startswith("<git_status>")
+                             and remainder.endswith("</git_status>"))
+
+
+def _grok_prompt(value) -> str | None:
+    raw = _grok_flatten(value)
+    if raw is None or _grok_bootstrap(raw):
+        return None
+    trimmed = grok_strip_query(raw).strip()
+    if not trimmed or _grok_bootstrap(trimmed):
+        return None
+    head = trimmed.lower()
+    if head.startswith(("<user_info>", "<user_info ")) and "<user_query>" not in head:
+        return None
+    return trimmed
+
+
+def _grok(obj: dict) -> tuple[list[Message], Hints]:
+    """``SearchGrokDecoder``: a ``chat_history.jsonl`` record or the
+    ``summary.json`` document."""
+    hints = Hints()
+    kind = obj.get("type")
+    if kind in (USER, ASSISTANT):
+        ts = stamp_iso(obj.get("timestamp"))
+        content = obj.get("content")
+        if kind == USER:
+            body = _grok_prompt(content)
+            text = bounded(body) if body is not None else None
+            return ([Message(USER, text, ts)] if text else []), hints
+        if isinstance(content, str):
+            text = bounded(grok_strip_query(content))
+            return ([Message(ASSISTANT, text, ts)] if text else []), hints
+        return content_messages(ASSISTANT, content, ts), hints
+    info = obj.get("info") if isinstance(obj.get("info"), dict) else {}
+    hints.session_id = json_string(info.get("id"))
+    hints.cwd = json_string(info.get("cwd"))
+    generated = json_string(obj.get("generated_title"))
+    summary = json_string(obj.get("session_summary"))
+    hints.title = ((title_candidate(generated, 96) if generated else None)
+                   or (title_candidate(summary, 96) if summary else None))
+    return [], hints
+
+
 # The cheap byte gates (`markers`) run before json.loads.
 _MARKERS = {
     "claude": (b'"type":"user"', b'"type":"assistant"', b'"custom-title"', b'"ai-title"'),
@@ -702,6 +861,11 @@ _MARKERS = {
               b'"custom-title"', b'"ai-title"', b'"workspace-directories"'),
     "codebuddy": (b'"message"', b'"summary"', b'"ai-title"', b'"sessionId"', b'"cwd"',
                   b'"gitBranch"'),
+    "hermes": (b'"session_id"', b'"messages"', b'"cwd"', b'"session_start"'),
+    "kiro": (b'"kind"', b'"session_id"', b'"session_state"', b'"cwd"', b'"title"',
+             b'"parent_session_id"'),
+    "grok": (b'"type"', b'"info"', b'"generated_title"', b'"session_summary"', b'"head_branch"',
+             b'"user_query"', b'"user_info"', b'"content"'),
 }
 
 HARNESSES = tuple(_MARKERS)
@@ -750,8 +914,14 @@ class Decoder:
             messages, hints = _cursor(obj)
         elif self.harness == "qoder":
             messages, hints = _qoder(self._qoder, obj)
-        else:
+        elif self.harness == "codebuddy":
             messages, hints = _codebuddy(self._codebuddy, obj)
+        elif self.harness == "hermes":
+            messages, hints = _hermes(obj)
+        elif self.harness == "kiro":
+            messages, hints = _kiro(obj)
+        else:
+            messages, hints = _grok(obj)
         if hints.title is not None:
             self.explicit_title_seen = True
         elif not (self.prompt_title_sent or self.explicit_title_seen
