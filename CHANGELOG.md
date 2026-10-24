@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Doctor, and the Harnesses page's editor, Detect and Add.**
+  `#/doctor` shows the `swe doctor` report as the Mac app's Settings ›
+  Doctor does: each finding with its fix command, a copy button, and Run
+  where swe can make the fix itself (`swe setup --apply`, `swe init`,
+  `swe harness discover --apply`). Run asks first, saying what it will do
+  on which machine; the hub runs the fix the finding names, never a
+  command sent from the browser. On Harnesses, a click on a row opens the
+  app's editor (name, command, description, version, aliases, tags,
+  notes; an alias another harness uses is refused), Detect scans the hub
+  for coding CLIs and registers the ticked ones, and Add harness adds a
+  custom one without overwriting anything.
+
 - **Remote iPhone app: links in replies get a preview card.** A reply
   that links to a web page shows a card under the text with the page's
   host, its path and an Open button (up to three per reply). Tapping the

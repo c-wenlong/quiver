@@ -9,6 +9,7 @@ import sys
 import threading
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from quiver.console import c, cpad, elide, fit_widths, terminal_width, truncate
 from quiver.flags import expand_value_flags
@@ -1311,6 +1312,19 @@ def _add_interactive(args: list[str]) -> int:
 _ADD_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
+class HarnessRefusal(ValueError):
+    """A registry write ``swe add`` or ``swe edit`` refused; nothing was
+    written. The message says why, in the words the CLI prints."""
+
+
+class AliasCollision(HarnessRefusal):
+    """An alias another harness already answers to."""
+
+
+class AlreadyRegistered(HarnessRefusal):
+    """``swe add --no-replace`` for a name the registry holds."""
+
+
 def cmd_add(args):
     args, json_view = take_json_flag(list(args))
     refusal = error_stream(json_view)
@@ -1376,21 +1390,54 @@ def cmd_add(args):
         print(c("red", "Usage: swe add <name> <command> [description] [--aliases=a,b] [--tags=t1,t2]"),
               file=refusal)
         return 1
+    try:
+        reply, entry = _add_entry(tools, name, command, desc, aliases, tags,
+                                  no_replace=no_replace)
+    except HarnessRefusal as exc:
+        print(c("red", f"  {exc}"), file=refusal)
+        return 1
+    if json_view:
+        return emit(reply)
+    action = reply["action"].capitalize()
+    installed = reply["installed"]
+    saved_aliases = reply["aliases"]
+    status = c("green", "installed") if installed else c("yellow", "not yet in PATH")
+    alias_str = f"  aliases: {', '.join(saved_aliases)}" if saved_aliases else ""
+    print(f"  {c('green', '✓')} {action} '{name}' → '{command}' ({status}){alias_str}")
+    if entry.get("state") == "archived":
+        print(c("dim", "  still archived — `swe hs star` brings it back"))
+
+
+def add_harness(name: str, command: str, description: str | None = None,
+                aliases: list[str] | None = None, tags: list[str] | None = None,
+                *, no_replace: bool = False) -> dict:
+    """``swe add <name> <command> … --json`` in process: the reply it prints.
+
+    ``None`` for a field means "not supplied", as on the command line: a
+    re-add keeps the saved value, and a new entry gets the default
+    (``tags`` is ``agentic, coding``). Raises ``HarnessRefusal`` for a bad
+    name, a name already registered under ``no_replace``, or an alias
+    another harness answers to; nothing is written then.
+    """
+    return _add_entry(load_registry(), name, command, description, aliases, tags,
+                      no_replace=no_replace)[0]
+
+
+def _add_entry(tools: dict, name: str, command: str, desc, aliases, tags,
+               *, no_replace: bool) -> tuple[dict, dict]:
+    """Write ``name`` into ``tools`` and save it: (the --json reply, the entry)."""
     if not _ADD_NAME.fullmatch(name):
-        print(c("red", f"  {name!r} isn't a valid harness name: letters, digits,"
-                       " then . _ - too"), file=refusal)
-        return 1
+        raise HarnessRefusal(f"{name!r} isn't a valid harness name: letters, digits,"
+                             " then . _ - too")
     if no_replace and resolve(tools, name):
-        print(c("red", f"  {name} is already registered"), file=refusal)
-        return 1
+        raise AlreadyRegistered(f"{name} is already registered")
     # An alias another harness answers to would redirect `swe use` and
     # `swe remove` for that name.
     collision = _alias_collision(tools, name, aliases or [])
     if collision:
-        print(c("red", f"  {collision}"), file=refusal)
-        return 1
+        raise AliasCollision(collision)
 
-    action = "Updated" if name in tools else "Added"
+    action = "updated" if name in tools else "added"
     previous = tools.get(name) or {}
     tools[name] = {
         "command": command,
@@ -1404,18 +1451,11 @@ def cmd_add(args):
         **_kept_fields(previous),
     }
     save_registry(tools)
-    installed = is_installed(command)
-    saved_aliases = tools[name]["aliases"]
-    saved_tags = tools[name]["tags"]
-    if json_view:
-        return emit({"name": name, "command": command,
-                     "action": action.lower(), "installed": installed,
-                     "aliases": saved_aliases, "tags": saved_tags})
-    status = c("green", "installed") if installed else c("yellow", "not yet in PATH")
-    alias_str = f"  aliases: {', '.join(saved_aliases)}" if saved_aliases else ""
-    print(f"  {c('green', '✓')} {action} '{name}' → '{command}' ({status}){alias_str}")
-    if tools[name].get("state") == "archived":
-        print(c("dim", "  still archived — `swe hs star` brings it back"))
+    entry = tools[name]
+    reply = {"name": name, "command": command, "action": action,
+             "installed": is_installed(command),
+             "aliases": entry["aliases"], "tags": entry["tags"]}
+    return reply, entry
 
 
 def cmd_remove(args):
@@ -1639,6 +1679,37 @@ def cmd_aliases(args):
     print()
 
 
+def doctor_report(home: Path | None = None) -> DoctorReport:
+    """The ``swe doctor --json`` report, built in process (the web app's
+    Doctor page reads it from here)."""
+    return _doctor_probe(home or Path.home()).report
+
+
+def _doctor_probe(home: Path) -> SimpleNamespace:
+    """Every probe ``swe doctor`` runs, and the report made from them."""
+    from quiver.harness.doctor import collect_findings, setup_findings
+    from quiver.harness.drift import run_drift_checks
+    from quiver.harness.path_health import (
+        find_off_path_tools,
+        nvm_bin_dirs,
+        preferred_npm_bin,
+        probe_node_env,
+    )
+
+    probe = SimpleNamespace(tools=load_registry(), env=probe_node_env())
+    probe.nvm_dirs = nvm_bin_dirs(home)
+    probe.preferred = preferred_npm_bin()
+    probe.which_npm = shutil.which("npm")
+    probe.orphans = find_off_path_tools(probe.tools)
+    probe.drift = run_drift_checks()
+    probe.setup = setup_findings(home)
+    probe.report = DoctorReport(
+        collect_findings(probe.env, probe.preferred, probe.which_npm,
+                         probe.nvm_dirs, probe.orphans, probe.drift)
+        + probe.setup)
+    return probe
+
+
 def cmd_doctor(args):
     """Diagnose Node/PATH mismatches that hide globally installed harnesses."""
     args, json_view = take_json_flag(list(args or []))
@@ -1650,27 +1721,11 @@ def cmd_doctor(args):
         else:
             print(c("red", message))
         return 1
-    from quiver.harness.doctor import collect_findings, setup_findings
-    from quiver.harness.drift import run_drift_checks
-    from quiver.harness.path_health import (
-        find_off_path_tools,
-        nvm_bin_dirs,
-        preferred_npm_bin,
-        probe_node_env,
-    )
-
-    tools = load_registry()
-    env = probe_node_env()
     home = Path.home()
-    nvm_dirs = nvm_bin_dirs(home)
-    preferred = preferred_npm_bin()
-    which_npm = shutil.which("npm")
-    orphans = find_off_path_tools(tools)
-    drift = run_drift_checks()
-    setup = setup_findings(home)
-    report = DoctorReport(
-        collect_findings(env, preferred, which_npm, nvm_dirs, orphans, drift)
-        + setup)
+    probe = _doctor_probe(home)
+    tools, env, nvm_dirs = probe.tools, probe.env, probe.nvm_dirs
+    preferred, which_npm = probe.preferred, probe.which_npm
+    orphans, drift, setup, report = probe.orphans, probe.drift, probe.setup, probe.report
     failed = not report.ok
 
     if json_view:
@@ -2228,7 +2283,7 @@ def _apply_edits(tools: dict, name: str, updates: dict) -> tuple[dict, list[str]
 
     for field, raw in updates.items():
         if field not in EDITABLE_FIELDS:
-            raise ValueError(f"Unknown field '{field}'")
+            raise HarnessRefusal(f"Unknown field '{field}'")
         new_val = _normalize_field_value(field, raw)
         old_val = info.get(field)
         if field in ("aliases", "tags"):
@@ -2240,14 +2295,14 @@ def _apply_edits(tools: dict, name: str, updates: dict) -> tuple[dict, list[str]
             if field == "aliases":
                 conflict = _alias_collision(tools, name, new_val)
                 if conflict:
-                    raise ValueError(conflict)
+                    raise AliasCollision(conflict)
             info[field] = new_val
             changes.append(f"{field}: {_format_list(old_norm)} → {_format_list(new_val)}")
             continue
 
         if field == "command":
             if not new_val:
-                raise ValueError("command cannot be empty")
+                raise HarnessRefusal("command cannot be empty")
             old_disp = old_val or "—"
             if old_val == new_val:
                 continue
@@ -2361,6 +2416,32 @@ def _edit_harness_json(name: str, info: dict) -> dict:
     ).to_json()
 
 
+def edit_harness(key: str, updates: dict) -> EditReply:
+    """``swe edit <key> --field=value… --json`` in process: the reply it prints.
+
+    ``updates`` maps a field in ``EDITABLE_FIELDS`` to the text the flag
+    would carry (lists comma-separated, or a list); an empty value clears
+    the field. Raises ``LookupError`` for a name or alias the registry
+    lacks, and ``HarnessRefusal`` (``AliasCollision`` for an alias another
+    harness answers to) for an edit swe refuses. Nothing is written then,
+    nor when nothing changed.
+    """
+    tools = load_registry()
+    name = resolve(tools, key)
+    if not name:
+        raise LookupError(f"Tool '{key}' not found. Try 'swe list'.")
+    new_info, changes = _apply_edits(tools, name, updates)
+    if not changes:
+        return EditReply(name, [], _edit_harness_json(name, tools[name]))
+    # Built before the write: a failure here must not leave an edit saved
+    # that the caller was told failed.
+    harness = _edit_harness_json(name, new_info)
+    tools[name] = new_info
+    save_registry(tools)
+    # Each change line reads "field: old -> new".
+    return EditReply(name, [line.split(":", 1)[0] for line in changes], harness)
+
+
 def cmd_edit(args):
     """Edit harness registry fields (flags or interactive)."""
     args, json_view = take_json_flag(list(args or []))
@@ -2412,8 +2493,14 @@ def _edit(args, json_view):
         return 1
 
     info = tools[name]
-    if not json_view:
-        _show_edit_fields(name, info)
+    if json_view:
+        try:
+            return emit(edit_harness(name, updates).to_json())
+        except ValueError as exc:
+            # A refusal, or a value the field can't take (a colour that isn't one).
+            print(c("red", f"  {exc}"), file=err)
+            return 1
+    _show_edit_fields(name, info)
 
     if not updates:
         interactive = _edit_interactive(name, info, tools)
@@ -2432,24 +2519,11 @@ def _edit(args, json_view):
         return 1
 
     if not changes:
-        if json_view:
-            return emit(EditReply(name, [],
-                                  _edit_harness_json(name, info)).to_json())
         print(c("dim", "  No changes."))
         return 0
 
-    # Built before the write: a failure here must not leave an edit saved
-    # that the caller was told failed.
-    harness = _edit_harness_json(name, new_info) if json_view else None
     tools[name] = new_info
     save_registry(tools)
-    if json_view:
-        # Each change line reads "field: old -> new".
-        return emit(EditReply(
-            name,
-            [line.split(":", 1)[0] for line in changes],
-            harness,
-        ).to_json())
     print(f"  {c('green', '✓')} Updated '{name}'")
     for line in changes:
         print(c("dim", f"    · {line}"))

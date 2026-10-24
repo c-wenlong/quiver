@@ -189,11 +189,7 @@ def cmd_setup(args):
 
     home = Path.home()
     try:
-        harness_findings = discover_harnesses()
-        new_harness = [f for f in harness_findings if f.status == "new" and f.confidence == "high"]
-        mcp_findings = discover_mcp_servers()
-        new_mcp = [f for f in mcp_findings if f.status == "new"]
-        skill_hints = skills_symlink_hints(home=home)
+        new_harness, new_mcp, skill_hints = _setup_findings(home)
     except (EOFError, KeyboardInterrupt):
         raise
     except Exception as exc:
@@ -357,6 +353,31 @@ def cmd_setup(args):
 
     print(c("dim", "  Dry-run only. Run: swe setup --apply\n"))
     return 0
+
+
+def _setup_findings(home: Path) -> tuple[list, list, list]:
+    """What setup would apply: (new high-confidence harnesses, new MCP
+    servers, skills-root hints)."""
+    harness_findings = discover_harnesses()
+    new_harness = [f for f in harness_findings if f.status == "new" and f.confidence == "high"]
+    mcp_findings = discover_mcp_servers()
+    new_mcp = [f for f in mcp_findings if f.status == "new"]
+    return new_harness, new_mcp, skills_symlink_hints(home=home)
+
+
+def apply_setup(home: Path | None = None) -> dict:
+    """``swe setup --apply --json``'s ``applied`` document, in process.
+
+    The web app's Doctor page runs a ``setup`` fix through here, the way
+    the Mac app's Run calls ``swe setup --apply --json``: no --adopt and
+    no --starred, so the stars stay as they are. A step that fails is
+    reported in ``errors`` or ``links.error``, as on the command line; a
+    discovery that fails raises.
+    """
+    home = home or Path.home()
+    new_harness, new_mcp, skill_hints = _setup_findings(home)
+    actionable_skills = [h for h in skill_hints if h.action in ("create_shared", "symlink")]
+    return _apply_all(new_harness, new_mcp, actionable_skills, home, None, None)
 
 
 def _apply_all(new_harness, new_mcp, actionable_skills, home: Path,

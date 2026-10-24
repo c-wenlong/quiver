@@ -1,7 +1,8 @@
 /* Harnesses and Accounts: ports of the Mac app's HarnessesPage and the
  * starred-harness cards on AccountsPage. Harnesses can star, unstar,
- * archive (with a reason) and restore, through POST /v1/app/harness/<action>;
- * editing, Detect and Add stay in swe and the Mac app. Loaded before app.js.
+ * archive (with a reason) and restore, and has the app's three sheets: the
+ * row editor, Detect and Add harness, all through POST
+ * /v1/app/harness/<action>. Loaded before app.js.
  */
 "use strict";
 
@@ -12,6 +13,8 @@ const harnessesPage = {
   // Writes: rows waiting on the hub, the row whose archive form is open
   // (and what is typed in it), and the last action's error.
   busy: new Set(), archiving: null, reason: "", actionError: null,
+  // The open sheet: { kind: "edit" | "detect" | "add", ... } or null.
+  sheet: null,
 };
 const REASON_MAX = 500;
 
@@ -37,7 +40,9 @@ async function renderHarnesses() {
 function harnessesHeader() {
   const where = harnessesPage.data && harnessesPage.data.machine ? ` on ${harnessesPage.data.machine}` : "";
   return pageHeader("Harnesses", `The AI coding CLIs swe knows about${where}. Star the ones you use; archive the ones you've ruled out.`,
-    `<button class="icon-button" id="page-refresh" aria-label="Refresh" title="Refresh">${icon("rescan")}</button>`);
+    `<button class="harness-button" data-sheet="detect">Detect</button>
+     <button class="harness-button primary harness-add" data-sheet="add">${harnessIcon("plus")}Add harness</button>
+     <button class="icon-button" id="page-refresh" aria-label="Refresh" title="Refresh">${icon("rescan")}</button>`);
 }
 
 /* Starred first, then the busiest, then by name. */
@@ -68,7 +73,10 @@ function paintHarnesses() {
   }
   const count = list.length + hidden;
   let body;
-  if (!all.length) body = `<p class="empty">No harnesses registered yet. Run <code>swe harness discover --apply</code> on the hub.</p>`;
+  if (!all.length) {
+    body = `<div class="harness-none"><p class="empty">No harnesses registered yet.</p>
+      <button class="harness-button" data-sheet="detect" title="Scan the hub for harnesses to register">Detect</button></div>`;
+  }
   else if (!list.length) {
     body = `<p class="empty">${q ? "No harnesses match." : p.scope === "archived" ? "Nothing archived." : "Every harness is archived."}</p>`;
   } else {
@@ -105,6 +113,7 @@ function paintHarnesses() {
   const fold = document.getElementById("harness-fold");
   if (fold) fold.onclick = () => { p.expanded = !p.expanded; paintHarnesses(); };
   bindHarnessActions();
+  bindSheetButtons();
 }
 
 function archivedLine(a) {
@@ -124,10 +133,12 @@ function harnessRow(h) {
     : `<span class="badge">${h.installed ? "Installed" : "Not on PATH"}</span>`;
   const sessions = h.sessions_100d == null ? ""
     : `<span class="caption">${h.sessions_100d} session${h.sessions_100d === 1 ? "" : "s"} in 100 days</span>`;
-  return `<div class="list-row harness-row${busy ? " busy" : ""}" data-harness="${esc(h.name)}"${busy ? ' aria-busy="true"' : ""}>
+  return `<div class="list-row harness-row${busy ? " busy" : ""}" data-harness="${esc(h.name)}"
+    title="Click to edit ${esc(harnessTitle(h))}"${busy ? ' aria-busy="true"' : ""}>
     <span class="session-logo">${Fmt.logo(h.name)}</span>
     <div class="list-main">
-      <div class="list-title"><span class="name">${esc(harnessTitle(h))}</span>
+      <div class="list-title"><button type="button" class="name harness-open" data-act="edit"
+        title="Click to edit ${esc(harnessTitle(h))}">${esc(harnessTitle(h))}</button>
         ${h.version ? `<code class="muted">${esc(h.version)}</code>` : ""}
         <code>${esc(h.command)}</code>${aliases}</div>
       ${h.description ? `<div class="caption">${esc(h.description)}</div>` : ""}
@@ -145,6 +156,7 @@ function harnessRow(h) {
 const HARNESS_ICON = {
   star: '<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/>',
   archive: '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
 };
 
 function harnessIcon(name, filled = false) {
@@ -195,7 +207,9 @@ function bindHarnessActions() {
     btn.onclick = (event) => {
       event.stopPropagation();
       const act = btn.dataset.act;
-      if (act === "archive-open") {
+      if (act === "edit") {
+        openHarnessSheet("edit", name);
+      } else if (act === "archive-open") {
         p.archiving = p.archiving === name ? null : name;
         p.reason = "";
         paintHarnesses();
@@ -206,6 +220,13 @@ function bindHarnessActions() {
       } else {
         harnessWrite(act, name);
       }
+    };
+  }
+  // A click anywhere on a row but its buttons and form opens the editor.
+  for (const row of document.querySelectorAll(".harness-row")) {
+    row.onclick = (event) => {
+      if (event.target.closest("button, input, form, a") || window.getSelection().toString()) return;
+      openHarnessSheet("edit", row.dataset.harness);
     };
   }
   const form = document.querySelector(".harness-archive");
@@ -322,6 +343,373 @@ async function apiPost(path, body) {
   let data = null;
   try { data = await resp.json(); } catch { /* empty body */ }
   return { status: resp.status, data };
+}
+
+/* ------------------------------------------------- Harnesses: the sheets */
+
+/* The Mac app's three sheets as one <dialog>: the row editor (HarnessEditor),
+ * Detect (DetectSheet) and Add harness (AddHarnessSheet). Each changes
+ * harness.json only through the hub, and the list repaints from its answer. */
+
+const HARNESS_NAME_RULE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+// HarnessEdit's fields: [field, swe edit's name for it, is a list].
+const EDIT_FIELDS = [["displayName", "display_name", false], ["command", "command", false],
+  ["description", "description", false], ["version", "version", false],
+  ["aliases", "aliases", true], ["tags", "tags", true], ["notes", "notes", false]];
+
+function bindSheetButtons() {
+  for (const btn of document.querySelectorAll("[data-sheet]")) {
+    btn.onclick = () => openHarnessSheet(btn.dataset.sheet);
+  }
+}
+
+function harnessDialog() {
+  let dlg = document.getElementById("harness-sheet");
+  if (dlg) return dlg;
+  dlg = document.createElement("dialog");
+  dlg.id = "harness-sheet";
+  dlg.className = "sheet harness-sheet";
+  // Esc closes, except while a save is in flight (the app's sheet can't be
+  // dismissed then either).
+  dlg.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeHarnessSheet();
+  });
+  dlg.addEventListener("close", () => { harnessesPage.sheet = null; });
+  document.body.appendChild(dlg);
+  // A sheet belongs to the Harnesses page: leaving it closes the sheet.
+  window.addEventListener("hashchange", () => { if (!onHarnessesPage()) closeHarnessSheet(true); });
+  return dlg;
+}
+
+/* HarnessEdit(harness): the draft starts from the row. */
+function editDraft(h) {
+  return {
+    displayName: h.display_name || "", command: h.command || "", description: h.description || "",
+    version: h.version || "", aliases: (h.aliases || []).join(", "), tags: (h.tags || []).join(", "),
+    notes: h.notes || "",
+  };
+}
+
+/* HarnessEdit.normalised: lists are trimmed, de-duplicated and comma-joined. */
+function editNormalised(text, isList) {
+  if (!isList) return text.trim();
+  const seen = new Set();
+  return text.split(",").map((t) => t.trim()).filter((t) => t && !seen.has(t) && seen.add(t)).join(",");
+}
+
+/* HarnessEdit.flags(from:): the fields that changed, as swe edit takes them. */
+function editChanges(draft, original) {
+  const fields = {};
+  for (const [key, field, isList] of EDIT_FIELDS) {
+    const now = editNormalised(draft[key], isList);
+    if (now !== editNormalised(original[key], isList)) fields[field] = now;
+  }
+  return fields;
+}
+
+const commandProblem = (command) => (command.trim() ? null : "Enter the command that runs it.");
+
+function openHarnessSheet(kind, name) {
+  const p = harnessesPage;
+  if (!p.data) return;
+  if (kind === "edit") {
+    const h = p.data.harnesses.find((r) => r.name === name);
+    if (!h) return;
+    p.sheet = { kind, name, original: editDraft(h), draft: editDraft(h), working: false, error: null };
+  } else if (kind === "detect") {
+    p.sheet = { kind, findings: null, checked: new Set(), registered: null, working: false, error: null, gen: 0 };
+  } else {
+    p.sheet = { kind, draft: { name: "", command: "", description: "", aliases: "", tags: "" }, working: false, error: null };
+  }
+  const dlg = harnessDialog();
+  paintHarnessSheet();
+  if (!dlg.open) dlg.showModal();
+  const first = dlg.querySelector("input, textarea");
+  if (first) first.focus();
+  if (kind === "detect") detectScan();
+}
+
+function closeHarnessSheet(force = false) {
+  const p = harnessesPage, dlg = document.getElementById("harness-sheet");
+  if (!dlg) return;
+  if (p.sheet && p.sheet.working && !force) return;
+  const name = p.sheet && p.sheet.kind === "edit" ? p.sheet.name : null;
+  p.sheet = null;
+  if (dlg.open) dlg.close();
+  // Back to where the sheet was opened from.
+  const back = name ? document.querySelector(`.harness-row[data-harness="${CSS.escape(name)}"] .harness-open`) : null;
+  if (back) back.focus();
+}
+
+function paintHarnessSheet() {
+  const p = harnessesPage, s = p.sheet, dlg = document.getElementById("harness-sheet");
+  if (!s || !dlg) return;
+  const el = document.activeElement;
+  const focusId = el && dlg.contains(el) && el.id ? el.id : null;
+  const caret = focusId && typeof el.selectionStart === "number" ? [el.selectionStart, el.selectionEnd] : null;
+  dlg.dataset.kind = s.kind;
+  dlg.innerHTML = s.kind === "edit" ? editSheet(s) : s.kind === "detect" ? detectSheet(s) : addSheet(s);
+  bindHarnessSheet();
+  const again = focusId && document.getElementById(focusId);
+  if (again && !again.disabled) {
+    again.focus();
+    if (caret) { try { again.setSelectionRange(caret[0], caret[1]); } catch { /* not a text field */ } }
+  }
+}
+
+/* A FormField: label, the control, and a hint or problem under it. */
+function sheetField(id, label, control, hint = "", problem = false) {
+  return `<label class="harness-field" for="${id}"><span class="harness-label">${esc(label)}</span>${control}
+    <span class="caption harness-hint${problem ? " problem" : ""}" id="${id}-hint">${esc(hint)}</span></label>`;
+}
+
+function sheetInput(id, value, placeholder, { mono = false, multiline = false, rows = 1, disabled = false } = {}) {
+  const cls = `field harness-input${mono ? " mono" : ""}`;
+  const off = disabled ? " disabled" : "";
+  return multiline
+    ? `<textarea class="${cls}" id="${id}" rows="${rows}" placeholder="${esc(placeholder)}" spellcheck="false"${off}>${esc(value)}</textarea>`
+    : `<input class="${cls}" id="${id}" type="text" value="${esc(value)}" placeholder="${esc(placeholder)}"
+        autocomplete="off" spellcheck="false"${off}>`;
+}
+
+function editFacts(h) {
+  const parts = [{ starred: "Starred", archived: "Archived" }[h.state] || "Not starred"];
+  if (h.installed != null) parts.push(h.installed ? "Installed" : "Not on PATH");
+  if (h.sessions_100d != null) parts.push(h.sessions_100d === 1 ? "1 session in 100 days" : `${h.sessions_100d} sessions in 100 days`);
+  return parts.join(" · ");
+}
+
+function editSheet(s) {
+  const h = harnessesPage.data.harnesses.find((r) => r.name === s.name) || { name: s.name };
+  const d = s.draft, problem = commandProblem(d.command);
+  const unchanged = !Object.keys(editChanges(d, s.original)).length;
+  const off = { disabled: s.working };
+  return `<form class="sheet-body harness-form" id="harness-sheet-form" novalidate>
+    <div class="harness-sheet-head">
+      <div class="sheet-title">${Fmt.logo(s.name)}<span>Edit ${esc(harnessTitle(h))}</span></div>
+      <div class="caption">${esc(editFacts(h))}</div>
+    </div>
+    <div class="harness-pair">
+      ${sheetField("he-displayName", "Name", sheetInput("he-displayName", d.displayName, Fmt.harnessName(s.name), off),
+        `Shown across Quiver. Empty uses ${Fmt.harnessName(s.name)}.`)}
+      ${sheetField("he-command", "Command", sheetInput("he-command", d.command, s.name, { ...off, mono: true }),
+        problem || "What swe runs to start it.", !!problem)}
+    </div>
+    ${sheetField("he-description", "Description", sheetInput("he-description", d.description, "What it's good for", { ...off, multiline: true, rows: 2 }))}
+    <div class="harness-pair">
+      ${sheetField("he-version", "Version", sheetInput("he-version", d.version, "1.0.0", { ...off, mono: true }), "Leave empty to clear it.")}
+      ${sheetField("he-aliases", "Aliases", sheetInput("he-aliases", d.aliases, "cc, claude-code", { ...off, mono: true }), "Comma-separated short names.")}
+    </div>
+    ${sheetField("he-tags", "Tags", sheetInput("he-tags", d.tags, "agentic, coding", off), "Comma-separated, like agentic, coding, byok.")}
+    ${sheetField("he-notes", "Notes", sheetInput("he-notes", d.notes, "Anything worth remembering about it", { ...off, multiline: true, rows: 3 }))}
+    ${s.error ? `<p class="error harness-sheet-error" role="alert">${esc(s.error)}</p>` : ""}
+    <div class="sheet-actions">
+      <button type="button" class="harness-button" data-sheet-act="cancel"${s.working ? " disabled" : ""}>Cancel</button>
+      <button type="submit" class="harness-button primary" id="harness-sheet-go"${s.working || unchanged || problem ? " disabled" : ""}>${s.working ? "Saving…" : "Save"}</button>
+    </div>
+  </form>`;
+}
+
+function detectSheet(s) {
+  const machine = (harnessesPage.data && harnessesPage.data.machine) || "the hub";
+  let body;
+  if (s.registered) {
+    const added = s.registered.added;
+    body = `<p class="harness-sheet-text">${added.length ? `Registered ${esc(added.join(", "))}.` : "Nothing was registered."}</p>
+      ${s.registered.skipped.map((k) => `<p class="caption">Skipped ${esc(k.name)}: ${esc(k.reason)}</p>`).join("")}`;
+  } else if (s.findings) {
+    body = !s.findings.length
+      ? `<p class="harness-sheet-text">Every harness on ${esc(machine)} is already registered.</p>`
+      : `<div class="harness-detect-list">${s.findings.map((f) => `<label class="harness-detect-row">
+          <input type="checkbox" data-detect="${esc(f.name)}"${s.checked.has(f.name) ? " checked" : ""}${s.working ? " disabled" : ""}>
+          <span class="harness-detect-name">${esc(f.name)}</span>
+          <code class="caption">${esc(f.command)}</code>
+          <span class="badge">${esc(f.confidence)}</span>
+          ${f.short_path ? `<span class="caption muted harness-detect-path">${esc(f.short_path)}</span>` : ""}
+        </label>`).join("")}</div>`;
+  } else if (!s.error) {
+    body = `<p class="caption harness-scanning"><span class="harness-spinner" aria-hidden="true"></span>Scanning PATH and ~/ for coding CLIs…</p>`;
+  } else {
+    body = "";
+  }
+  const offer = !s.registered && s.findings && s.findings.length;
+  return `<form class="sheet-body harness-form harness-detect" id="harness-sheet-form" novalidate>
+    <div class="sheet-title"><span>Detect harnesses</span></div>
+    ${s.error ? `<p class="error harness-sheet-error" role="alert">${esc(s.error)}</p>` : ""}
+    ${body}
+    <div class="sheet-actions">
+      <button type="button" class="harness-button" data-sheet-act="cancel"${s.working ? " disabled" : ""}>${s.registered ? "Done" : "Cancel"}</button>
+      ${offer ? `<button type="submit" class="harness-button primary" id="harness-sheet-go"${s.working || !s.checked.size ? " disabled" : ""}>Register (${s.checked.size})</button>` : ""}
+    </div>
+  </form>`;
+}
+
+/* AddHarnessSheet.nameProblem */
+function addNameProblem(name) {
+  if (!name) return "Letters, digits, then . _ -";
+  if ((harnessesPage.data.harnesses || []).some((h) => h.name === name)) return `${name} is already registered`;
+  return HARNESS_NAME_RULE.test(name) ? null : "Start with a letter or digit; then . _ -";
+}
+
+function addSheet(s) {
+  const d = s.draft, problem = addNameProblem(d.name);
+  const off = { disabled: s.working };
+  return `<form class="sheet-body harness-form harness-add-form" id="harness-sheet-form" novalidate>
+    <div class="sheet-title"><span>Add harness</span></div>
+    ${sheetField("ha-name", "Name", sheetInput("ha-name", d.name, "mycli", { ...off, mono: true }), problem || "", !!problem)}
+    ${sheetField("ha-command", "Command", sheetInput("ha-command", d.command, "binary name or path", { ...off, mono: true }))}
+    ${sheetField("ha-description", "Description", sheetInput("ha-description", d.description, "What it does", off))}
+    ${sheetField("ha-aliases", "Aliases", sheetInput("ha-aliases", d.aliases, "comma-separated", { ...off, mono: true }))}
+    ${sheetField("ha-tags", "Tags", sheetInput("ha-tags", d.tags, "agentic, coding", { ...off, mono: true }))}
+    ${s.error ? `<p class="error harness-sheet-error" role="alert">${esc(s.error)}</p>` : ""}
+    <div class="sheet-actions">
+      <button type="button" class="harness-button" data-sheet-act="cancel"${s.working ? " disabled" : ""}>Cancel</button>
+      <button type="submit" class="harness-button primary" id="harness-sheet-go"${s.working || problem || !d.command ? " disabled" : ""}>${s.working ? "Adding…" : "Add"}</button>
+    </div>
+  </form>`;
+}
+
+function bindHarnessSheet() {
+  const p = harnessesPage, s = p.sheet, dlg = document.getElementById("harness-sheet");
+  const cancel = dlg.querySelector('[data-sheet-act="cancel"]');
+  if (cancel) cancel.onclick = () => closeHarnessSheet();
+  const go = document.getElementById("harness-sheet-go");
+  // Typing updates the draft and the button and hints in place, so the
+  // field being typed in is never redrawn.
+  const refresh = () => {
+    if (s.kind === "edit") {
+      const problem = commandProblem(s.draft.command);
+      const hint = document.getElementById("he-command-hint");
+      hint.textContent = problem || "What swe runs to start it.";
+      hint.classList.toggle("problem", !!problem);
+      go.disabled = s.working || !!problem || !Object.keys(editChanges(s.draft, s.original)).length;
+    } else if (s.kind === "add") {
+      const problem = addNameProblem(s.draft.name);
+      const hint = document.getElementById("ha-name-hint");
+      hint.textContent = problem || "";
+      hint.classList.toggle("problem", !!problem);
+      go.disabled = s.working || !!problem || !s.draft.command;
+    }
+  };
+  for (const input of dlg.querySelectorAll(".harness-input")) {
+    const key = input.id.slice(3);
+    input.oninput = () => { s.draft[key] = input.value; refresh(); };
+  }
+  for (const box of dlg.querySelectorAll("[data-detect]")) {
+    box.onchange = () => {
+      if (box.checked) s.checked.add(box.dataset.detect); else s.checked.delete(box.dataset.detect);
+      if (go) { go.textContent = `Register (${s.checked.size})`; go.disabled = s.working || !s.checked.size; }
+    };
+  }
+  const form = document.getElementById("harness-sheet-form");
+  form.onsubmit = (event) => {
+    event.preventDefault();
+    if (!go || go.disabled) return;
+    if (s.kind === "edit") editSave(s);
+    else if (s.kind === "detect") detectRegister(s);
+    else addSave(s);
+  };
+}
+
+function sheetFailure(status, data) {
+  return (data && data.error && data.error.message)
+    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+}
+
+/* The sheet's request: working while it runs, the error in the sheet. A
+ * 401 closes it for the pairing card. Returns the reply, or null. */
+async function sheetPost(s, action, body) {
+  s.working = true;
+  s.error = null;
+  paintHarnessSheet();
+  const { status, data } = await apiPost(`/v1/app/harness/${action}`, body);
+  s.working = false;
+  if (status === 401) {
+    closeHarnessSheet(true);
+    if (onHarnessesPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    return null;
+  }
+  // A list read still in flight may predate this write: drop it.
+  if (status === 200) harnessesPage.gen++;
+  if (status !== 200 || !data) {
+    s.error = sheetFailure(status, data);
+    if (harnessesPage.sheet === s) paintHarnessSheet();
+    return null;
+  }
+  return data;
+}
+
+async function editSave(s) {
+  const p = harnessesPage, name = s.name;
+  const fields = editChanges(s.draft, s.original);
+  if (!Object.keys(fields).length || commandProblem(s.draft.command)) return;
+  p.busy.add(name);
+  if (onHarnessesPage() && p.data) repaintHarnesses();
+  const data = await sheetPost(s, "edit", { name, fields });
+  p.busy.delete(name);
+  if (data && p.data) {
+    const at = p.data.harnesses.findIndex((h) => h.name === data.name);
+    if (at >= 0 && data.harness) p.data.harnesses[at] = data.harness;
+  }
+  if (data && p.sheet === s) closeHarnessSheet(true);
+  if (onHarnessesPage() && p.data) repaintHarnesses();
+}
+
+async function detectScan() {
+  const p = harnessesPage, s = p.sheet;
+  const mine = ++s.gen;
+  const { status, data } = await api("/v1/app/harness?view=discover");
+  if (p.sheet !== s || mine !== s.gen) return;
+  if (status === 401) {
+    closeHarnessSheet(true);
+    if (onHarnessesPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    return;
+  }
+  if (status !== 200 || !data) {
+    s.error = sheetFailure(status, data);
+  } else {
+    // HarnessDiscovery.selection: new matches only, the sure ones ticked.
+    s.findings = data.findings.filter((f) => f.status === "new");
+    s.checked = new Set(s.findings.filter((f) => f.confidence === "high").map((f) => f.name));
+  }
+  paintHarnessSheet();
+  const go = document.getElementById("harness-sheet-go");
+  if (go && !go.disabled) go.focus();
+}
+
+async function detectRegister(s) {
+  const p = harnessesPage;
+  const names = s.findings.filter((f) => s.checked.has(f.name)).map((f) => f.name);
+  if (!names.length) return;
+  const data = await sheetPost(s, "register", { names });
+  if (!data) return;
+  if (p.data) p.data.harnesses = data.harnesses;
+  s.registered = { added: data.applied.added || [], skipped: data.applied.skipped || [] };
+  if (p.sheet === s) {
+    paintHarnessSheet();
+    const done = document.querySelector('[data-sheet-act="cancel"]');
+    if (done) done.focus();
+  }
+  if (onHarnessesPage() && p.data) repaintHarnesses();
+}
+
+async function addSave(s) {
+  const p = harnessesPage, d = s.draft;
+  if (addNameProblem(d.name) || !d.command) return;
+  // AddHarnessSheet.csv
+  const csv = (text) => text.split(",").map((t) => t.trim()).filter(Boolean);
+  const data = await sheetPost(s, "add", {
+    name: d.name, command: d.command, description: d.description,
+    aliases: csv(d.aliases), tags: csv(d.tags),
+  });
+  if (!data) return;
+  if (p.data && data.harness) {
+    const at = p.data.harnesses.findIndex((h) => h.name === data.name);
+    if (at >= 0) p.data.harnesses[at] = data.harness; else p.data.harnesses.push(data.harness);
+  }
+  if (p.sheet === s) closeHarnessSheet(true);
+  if (onHarnessesPage() && p.data) repaintHarnesses();
 }
 
 /* ---------------------------------------------------------------- Accounts */
