@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote PWA: / command menu in the prompt box.** Typing `/` at the
+  start of the browser client's prompt box lists the commands this
+  session's harness will run, from the hub's `GET
+  /v1/sessions/{id}/commands`: name, argument hint, one-line
+  description, and where it comes from (Built-in, User, Project, Skill,
+  Plugin). The list is fetched once per chat and filtered as you type,
+  names that start with what's typed first; Enter or Tab picks and puts
+  `/name ` in the box, ready for an argument. Footnotes say when custom
+  commands don't work in the session's mode or aren't available from a
+  satellite yet.
+
 - **Remote PWA: @ file mentions in the prompt box.** Typing `@` in the
   browser client's prompt box opens a menu of files and folders under
   the session's folder, from the hub's `GET /v1/sessions/{id}/files`,

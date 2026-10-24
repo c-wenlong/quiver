@@ -1195,6 +1195,7 @@ async function openChat(key) {
   state.awaitingReply = false;
   resetTray();
   closeMenu();
+  resetCommands();
   toolCards.clear();
   el("chat-log").innerHTML = "";
   show("chat");
@@ -2603,10 +2604,11 @@ el("attach-btn").addEventListener("click", async () => {
 });
 
 /* ── prompt menus ────────────────────────────────────────────
-   Typing @ opens files and folders under the session's folder; the
-   hub only lists names, and the harness reads the file when the
-   message arrives. Positions are offsets into the box's value; the
-   caret is the input's selectionEnd. */
+   Typing @ opens files and folders under the session's folder, and /
+   at the start of the box the commands this session's harness will
+   run. The hub only lists them: the harness reads the file or expands
+   the command when the message arrives. Positions are offsets into the
+   box's value; the caret is the input's selectionEnd. */
 
 /* The `@token` the caret is in, if any: the @ sits at the start of the
  * text or after whitespace and runs to the caret with no whitespace in
@@ -2677,6 +2679,113 @@ function splitPath(path) {
   return slash < 0 ? { name: clean, parent: "" } : { name: clean.slice(slash + 1), parent: clean.slice(0, slash) };
 }
 
+/* A `/command` being typed: the box starts with / and the caret is
+ * still in that first word. */
+function slashToken(text, caret) {
+  if (caret < 1 || text[0] !== "/" || /\s/.test(text.slice(0, caret))) return null;
+  let end = caret;
+  while (end < text.length && !/\s/.test(text[end])) end++;
+  return { start: 0, end, query: text.slice(1, caret) };
+}
+
+/* What the box gets on a pick, always ending in a space: /name, or the
+ * hub's own `insert` (Codex skills are $name). */
+function commandInsert(c) {
+  const text = c.insert || `/${c.name}`;
+  return /\s$/.test(text) ? text : text + " ";
+}
+
+const SOURCE_LABEL = { builtin: "Built-in", user: "User", project: "Project", skill: "Skill", plugin: "Plugin" };
+
+function sourceLabel(src) {
+  if (!src) return "";
+  return SOURCE_LABEL[src] || src.charAt(0).toUpperCase() + src.slice(1);
+}
+
+/* Commands whose name starts with the query, then those that hold it
+ * anywhere, case-insensitively; the hub's order within each. */
+function filterCommands(commands, query) {
+  const q = query.toLowerCase();
+  if (!q) return commands;
+  const name = (c) => c.name.toLowerCase();
+  return commands.filter((c) => name(c).startsWith(q))
+    .concat(commands.filter((c) => !name(c).startsWith(q) && name(c).includes(q)));
+}
+
+/* The box after picking a command, with the caret after its space,
+ * ready for an argument. An existing space after the word is reused. */
+function insertCommand(text, token, c) {
+  const end = Math.min(Math.max(token.end, 0), text.length);
+  let inserted = commandInsert(c);
+  const reuse = end < text.length && /\s/.test(text[end]);
+  if (reuse) inserted = inserted.slice(0, -1);
+  return { text: inserted + text.slice(end), caret: inserted.length + (reuse ? 1 : 0) };
+}
+
+/* The / menu's list: fetched once per chat on the first /, filtered
+ * here as you type. A failed load retries the next time it opens. */
+const cmds = { key: null, response: null, loading: false, error: "", gen: 0 };
+
+function resetCommands() {
+  cmds.gen++;
+  cmds.key = null;
+  cmds.response = null;
+  cmds.loading = false;
+  cmds.error = "";
+}
+
+async function loadCommands() {
+  const key = state.currentKey;
+  const gen = ++cmds.gen;
+  cmds.key = key;
+  cmds.loading = true;
+  renderMenu();
+  let status = 0, data = null;
+  try {
+    ({ status, data } = await api(`/v1/sessions/${encodeURIComponent(key)}/commands`));
+  } catch { status = 0; }
+  if (gen !== cmds.gen || key !== state.currentKey) return;
+  cmds.loading = false;
+  if (status === 200 && data) {
+    cmds.response = data;
+    cmds.error = "";
+  } else {
+    cmds.error = commandsError(hubError(status, data));
+  }
+  menu.active = 0;
+  renderMenu();
+}
+
+function commandsError(err) {
+  switch (err.code) {
+    case "network": return "Can't reach the hub";
+    case "unknown_session": return "The hub doesn't know this session any more";
+    default: return err.status === 404 ? "Update the hub to list commands from here" : "Couldn't load commands";
+  }
+}
+
+/* What the menu says besides its rows: the line in place of an empty
+ * list, and muted footnotes under it. */
+function commandNotes(r) {
+  const row = state.sessions.find((x) => x.key === state.currentKey) || {};
+  const harness = harnessName({ display_name: row.agent, name: r.harness || row.harness || "" }) || "this harness";
+  const supported = r.supported !== false;
+  const empty = !supported || !(r.commands || []).length ? `No commands for ${harness}` : "";
+  const footnotes = [];
+  const customMissing = supported && r.custom_available === false;
+  if (customMissing) {
+    const m = row.remote && state.machines.find((x) => x.id === row.machine_id);
+    footnotes.push(row.remote
+      ? `Custom commands from ${(m && m.name) || "that machine"} aren't available yet`
+      : "Custom commands don't work in this session's mode");
+  }
+  const note = String(r.note || "").trim();
+  if (note && !(customMissing && note.toLowerCase().includes("custom commands"))) {
+    footnotes.push(note.charAt(0).toUpperCase() + note.slice(1));
+  }
+  return { empty, footnotes };
+}
+
 const MENTION_DEBOUNCE_MS = 120;
 const MENTION_LIMIT = 50;
 
@@ -2711,13 +2820,29 @@ function closeMenu() {
 function trackMenus() {
   const input = el("composer-text");
   const focused = document.activeElement === input;
-  const token = focused && !input.disabled && input.selectionStart === input.selectionEnd
-    ? mentionToken(input.value, input.selectionEnd) : null;
+  const caret = input.selectionEnd;
+  const live = focused && !input.disabled && input.selectionStart === caret;
+  const slash = live ? slashToken(input.value, caret) : null;
+  const token = slash || (live ? mentionToken(input.value, caret) : null);
   if (!token || !sameToken(token, menu.dismissed)) menu.dismissed = null;
   if (!token || menu.dismissed) {
     if (menu.kind) closeMenu();
     return;
   }
+  if (slash) {
+    const opening = menu.kind !== "slash";
+    if (opening && menu.kind) closeMenu();
+    if (!opening && slash.query !== menu.token.query) menu.active = 0;
+    menu.kind = "slash";
+    menu.token = slash;
+    const loaded = !!cmds.response && cmds.key === state.currentKey;
+    // Fetch when there's no list and no failure to show; retry a failure
+    // only on opening, so typing doesn't hammer a hub that refused.
+    if (!cmds.loading && (cmds.error ? opening : !loaded)) loadCommands();
+    else renderMenu();
+    return;
+  }
+  if (menu.kind === "slash") closeMenu();
   const before = menu.kind === "mention" ? menu.token.query : null;
   menu.kind = "mention";
   menu.token = token;
@@ -2777,10 +2902,11 @@ function filesError(err) {
 function renderMenu() {
   const box = el("prompt-menu");
   const input = el("composer-text");
-  const open = menu.kind === "mention";
+  const open = !!menu.kind;
   box.classList.toggle("hidden", !open);
   input.setAttribute("aria-expanded", String(open));
   if (!open) { box.innerHTML = ""; input.removeAttribute("aria-activedescendant"); return; }
+  if (menu.kind === "slash") { renderCommandMenu(box, input); return; }
   let html;
   if (menu.error) {
     html = `<div class="menu-note error-note">${esc(menu.error)}</div>`;
@@ -2810,11 +2936,58 @@ function renderMenu() {
   }
 }
 
+function renderCommandMenu(box, input) {
+  const r = cmds.key === state.currentKey ? cmds.response : null;
+  menu.rows = r ? filterCommands(r.commands || [], menu.token.query) : [];
+  if (menu.active >= menu.rows.length) menu.active = 0;
+  let html = "";
+  // A failed load shows above whatever list is kept from before.
+  if (cmds.error) html += `<div class="menu-note error-note">${esc(cmds.error)}</div>`;
+  let footnotes = [];
+  if (cmds.loading && !r) {
+    if (!cmds.error) html += `<div class="menu-note">Loading commands</div>`;
+  } else if (r) {
+    const notes = commandNotes(r);
+    footnotes = notes.footnotes;
+    if (notes.empty) {
+      menu.rows = [];
+      html += `<div class="menu-note">${esc(notes.empty)}</div>`;
+    } else if (!menu.rows.length) {
+      html += `<div class="menu-note">No command matches /${esc(menu.token.query)}</div>`;
+    } else {
+      html += menu.rows.map((c, i) => {
+        const label = commandInsert(c).trim();
+        const tag = sourceLabel(c.source);
+        const aria = [label, c.argument_hint, c.description, tag].filter(Boolean).join(", ");
+        return `<div class="menu-row cmd${i === menu.active ? " active" : ""}" role="option" id="menu-opt-${i}"` +
+          ` aria-selected="${i === menu.active}" data-i="${i}" aria-label="${esc(aria)}">` +
+          `<span class="cmd-body"><span class="cmd-top"><span class="menu-name">${esc(label)}</span>` +
+          (c.argument_hint ? `<span class="menu-sub">${esc(c.argument_hint)}</span>` : "") + `</span>` +
+          (c.description ? `<span class="cmd-desc">${esc(c.description)}</span>` : "") + `</span>` +
+          (tag ? `<span class="own">${esc(tag)}</span>` : "") + `</div>`;
+      }).join("");
+    }
+  }
+  if (footnotes.length) {
+    html += `<div class="menu-foot">${footnotes.map((f) => `<div>${esc(f)}</div>`).join("")}</div>`;
+  }
+  box.innerHTML = html;
+  if (menu.rows.length) {
+    input.setAttribute("aria-activedescendant", `menu-opt-${menu.active}`);
+    const row = box.querySelector(".menu-row.active");
+    if (row) row.scrollIntoView({ block: "nearest" });
+  } else {
+    input.removeAttribute("aria-activedescendant");
+  }
+}
+
 function pickMenu(i) {
   const entry = menu.rows[i];
-  if (!entry || menu.kind !== "mention") return;
+  if (!entry || !menu.kind) return;
   const input = el("composer-text");
-  const next = insertMention(input.value, menu.token, entry.path, entry.kind === "dir");
+  const next = menu.kind === "slash"
+    ? insertCommand(input.value, menu.token, entry)
+    : insertMention(input.value, menu.token, entry.path, entry.kind === "dir");
   input.value = next.text;
   input.focus();
   input.setSelectionRange(next.caret, next.caret);
@@ -2836,7 +3009,7 @@ el("composer-text").addEventListener("blur", () => {
 
 el("composer-text").addEventListener("keydown", (e) => {
   if (!menu.kind) return;
-  const rows = menu.error ? 0 : menu.rows.length;
+  const rows = menu.kind === "mention" && menu.error ? 0 : menu.rows.length;
   if (e.key === "Escape") {
     e.preventDefault();
     menu.dismissed = menu.token;
