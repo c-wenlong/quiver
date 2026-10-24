@@ -1,6 +1,8 @@
 /* Sessions page: the hub's sessions with tokens and spend, filtered,
  * grouped by day. Ports the Mac app's SessionsPage. Loaded before app.js;
  * it uses app.js's helpers (api, esc, icon, pageHeader) only when called.
+ * A row opens the session's chat (pages/chat.js, #/sessions?chat=<key>),
+ * whose Details button shows the sheet this page used to open.
  */
 "use strict";
 
@@ -13,9 +15,20 @@ const sessionsPage = {
   data: null, gen: 0,
   query: "", tool: "", window: "90d", project: "", model: "",
   showTrivial: false, openDays: new Set(),
+  // Where the list was scrolled when a chat opened, restored on the way back.
+  scrollY: null,
 };
 
+const sessionChat = () => globalThis.SessionChat || null;
+
 async function renderSessions(_id, rescan = false) {
+  const chat = sessionChat();
+  const chatKey = chat ? chat.keyFromHash() : null;
+  if (chatKey) {
+    sessionsPage.gen++;
+    return chat.open(chatKey, { row: sessionRowFor(chatKey), details: () => sessionDetails(chatKey) });
+  }
+  if (chat) chat.close();
   const panel = document.getElementById("panel");
   const gen = ++sessionsPage.gen;
   if (!sessionsPage.data || rescan) {
@@ -23,7 +36,9 @@ async function renderSessions(_id, rescan = false) {
       sessionsPage.data ? "Refreshing…" : "Listing sessions…"}</p></div></div>`;
   } else {
     paintSessions();
+    if (sessionsPage.scrollY != null) window.scrollTo(0, sessionsPage.scrollY);
   }
+  sessionsPage.scrollY = null;
   const { status, data } = await api(`/v1/app/sessions${rescan ? "?rescan=1" : ""}`);
   if (gen !== sessionsPage.gen) return;
   if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
@@ -195,7 +210,8 @@ function duration(seconds) {
 }
 
 function sessionRow(r) {
-  const badge = STATUS_BADGE[r.status] ? `<span class="badge status-${r.status}">${STATUS_BADGE[r.status]}</span>` : "";
+  const badge = (STATUS_BADGE[r.status] ? `<span class="badge status-${r.status}">${STATUS_BADGE[r.status]}</span>` : "")
+    + (r.ownership === "attached" ? '<span class="badge ownership-attached" title="Runs under Quiver: you can send to it">Attached</span>' : "");
   const time = new Date(r.last_active_at * 1000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   const second = [r.project, Fmt.harnessName(r.harness), r.remote ? r.machine : r.location,
     r.usage ? r.usage.models.map((m) => m.model).join(", ") : "", time, duration(r.duration_s)]
@@ -325,6 +341,33 @@ function bindSessionControls() {
   }
   const byKey = new Map(s.data.sessions.map((r) => [r.key, r]));
   for (const row of document.querySelectorAll(".session-row")) {
-    row.onclick = () => { const r = byKey.get(row.dataset.key); if (r) openSheet(r); };
+    row.onclick = () => {
+      const r = byKey.get(row.dataset.key);
+      if (!r) return;
+      // Without the chat script (it failed to load), a row keeps its sheet.
+      if (!sessionChat()) return openSheet(r);
+      s.scrollY = window.scrollY;
+      location.hash = `#/sessions?chat=${encodeURIComponent(r.key)}`;
+    };
   }
+}
+
+function sessionRowFor(key) {
+  return (sessionsPage.data && sessionsPage.data.sessions.find((r) => r.key === key)) || null;
+}
+
+/* The chat's Details button: the row's sheet, read from the list's data
+ * (fetched now when the chat was opened from a link). */
+async function sessionDetails(key) {
+  let r = sessionRowFor(key);
+  if (!r) {
+    const { status, data } = await api("/v1/app/sessions");
+    if (status === 200 && data) {
+      sessionsPage.data = data;
+      r = sessionRowFor(key);
+    }
+  }
+  if (!r || !document.getElementById("session-sheet")) return false;
+  openSheet(r);
+  return true;
 }

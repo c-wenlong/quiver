@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: remote control on the Sessions page.** Clicking a session
+  opens its chat: the transcript with thinking, tool cards, diffs and
+  compaction, live as the agent works, and for an attached session the
+  composer (Queue or Steer, Stop), approval cards with Allow, Always and
+  Deny, and Attach (after a confirm) for an observed one. It is the
+  phone's chat on the hub's same routes, so the web app at the hub's
+  address is the whole app; the old details sheet is the chat's Details
+  button, and attached sessions carry an Attached badge in the list.
+
 - **Remote iPhone app: links in replies get a preview card.** A reply
   that links to a web page shows a card under the text with the page's
   host, its path and an Open button (up to three per reply). Tapping the

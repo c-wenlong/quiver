@@ -1,19 +1,26 @@
 """The Sessions page: per-session usage, projects, accidental sessions,
 and /v1/app/sessions on the hub."""
 
+import http.client
 import json
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from quiver.ledger.models import LedgerRecord, UsageEvent
+from quiver.remote import protocol
 from quiver.ledger.pricing import PricingCatalog, rates_from_entry
 from quiver.ledger.sessions import by_session
 from quiver.ledger.store import LedgerStore
 from quiver.webapp import sessions
 from quiver.webapp.api import WebApp
 
-from tests.test_remote_hub import HubBase
+from tests.test_remote_hub import HubBase, _AttachedServer
+
+STATIC = Path(__file__).resolve().parent.parent / "src" / "quiver" / "webapp" / "static"
 
 CATALOG = PricingCatalog({"m": rates_from_entry(
     {"input_cost_per_token": 1e-06, "output_cost_per_token": 2e-06})})
@@ -125,6 +132,20 @@ class TestBuild(unittest.TestCase):
         self.assertEqual((here["duration_s"], here["project"], here["project_key"]), (300, "one", "one"))
 
 
+    def test_rows_carry_remote_control_state(self):
+        rows = [
+            {"key": "claude:a", "id": "a", "harness": "claude", "machine_id": "hub",
+             "ownership": "attached", "attachable": True, "last_active_at": 2},
+            {"key": "gemini:b", "id": "b", "harness": "gemini", "machine_id": "hub",
+             "last_active_at": 1},
+        ]
+        attached, bare = sessions.build(rows, {}, "hub", {}, scanned=True)
+        self.assertEqual((attached["ownership"], attached["attachable"]), ("attached", True))
+        # A row the catalog didn't mark is observed: never offer a composer
+        # the hub would refuse.
+        self.assertEqual((bare["ownership"], bare["attachable"]), ("observed", False))
+
+
 class TestCodexResume(unittest.TestCase):
     def test_a_resumed_thread_carries_every_rollout(self):
         store = LedgerStore(Path(tempfile.mkdtemp()) / "l.sqlite")
@@ -183,6 +204,8 @@ class TestSessionsRoute(HubBase):
         self.assertEqual(row["usage"]["models"], [{"model": "claude-opus-5", "tokens": 1010}])
         self.assertEqual(row["project"], "proj")
         self.assertIn("claude", body["ledger_harnesses"])
+        # A terminal owns it; claude can resume, so the chat offers Attach.
+        self.assertEqual((row["ownership"], row["attachable"]), ("observed", True))
 
     @unittest.skipIf(__import__("os").geteuid() == 0, "root reads anything")
     def test_an_unreadable_source_keeps_its_sessions_visible(self):
@@ -196,6 +219,189 @@ class TestSessionsRoute(HubBase):
 
     def test_page_script_is_served(self):
         self.assertEqual(self.srv.request("GET", "/app/sessions.js")[0], 200)
+        status, body = self.srv.request("GET", "/app/pages.js")
+        self.assertEqual(status, 200)
+        self.assertIn(b"globalThis.SessionChat", body)
+        status, body = self.srv.request("GET", "/app/pages.css")
+        self.assertIn(b".chat-composer", body)
+
+
+class TestChatContract(unittest.TestCase):
+    """The hub answers the chat (pages/chat.js) relies on, in the order it
+    makes the calls: catalog row, backfill, stream from the backfill's
+    last seq, then the writes, against a session attached to a stub."""
+
+    def setUp(self):
+        self.srv = _AttachedServer()
+        self.addCleanup(self.srv.stop)
+        self.hdr = {"Authorization": f"Bearer {self.srv.pair()['credential']}"}
+        self.key = "claude:s1"
+        self.srv.state.status_of = lambda sessions: ["done"]
+
+    def emit(self, etype, data):
+        return self.srv.state.emit(self.key, protocol.event(etype, self.key, "hub", data))
+
+    def stream(self, last):
+        """Every event the stream sends up to journal.caught-up."""
+        conn = http.client.HTTPConnection("127.0.0.1", self.srv.port, timeout=5)
+        try:
+            conn.request("GET", f"/v1/sessions/claude%3As1/events?last={last}", headers=self.hdr)
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 200)
+            events = []
+            for _ in range(200):
+                line = resp.readline().decode()
+                if not line:
+                    break
+                if line.startswith("data:"):
+                    events.append(json.loads(line[5:]))
+                    if events[-1]["type"] == "journal.caught-up":
+                        break
+            return events
+        finally:
+            conn.close()
+
+    def test_open_reads_row_then_backfill_then_replays_what_came_after(self):
+        self.emit("message.appended", protocol.message("user", "fix it"))
+        self.emit("message.appended", protocol.message("assistant", "on it"))
+        self.emit("approval.requested", {"request_id": "r1", "prompt": "Run tests?"})
+        status, data = self.srv.request("GET", "/v1/sessions", headers=self.hdr)
+        row = next(r for r in json.loads(data)["sessions"] if r["key"] == self.key)
+        self.assertEqual((row["ownership"], row["attachable"]), ("attached", True))
+        status, data = self.srv.request(
+            "GET", "/v1/sessions/claude%3As1/messages?limit=500", headers=self.hdr)
+        messages = json.loads(data)["messages"]
+        self.assertEqual([m["data"]["kind"] for m in messages], ["user", "assistant"])
+        # The stream opens after the last message shown, so the approval
+        # asked since then reaches the page.
+        events = self.stream(messages[-1]["seq"])
+        self.assertEqual([e["type"] for e in events], ["approval.requested", "journal.caught-up"])
+        self.assertEqual(events[0]["data"]["request_id"], "r1")
+
+    def test_send_settles_by_client_id(self):
+        from quiver.remote import inject
+        fake = MagicMock()
+        fake.send.return_value = inject.InjectResult(True, "sent", degraded=True)
+        q = self.srv.state.bus.subscribe(self.key)
+        with patch.object(inject, "injector_for", return_value=fake):
+            status, data = self.srv.request(
+                "POST", "/v1/sessions/claude%3As1/message",
+                body={"text": "hi", "mode": "steer", "client_id": "c-1"}, headers=self.hdr)
+            self.assertEqual(status, 202, data)
+            ev = q.get(timeout=5)
+        self.assertEqual(json.loads(data)["client_id"], "c-1")
+        self.assertEqual(ev["type"], "command.result")
+        self.assertEqual((ev["data"]["client_id"], ev["data"]["ok"], ev["data"]["degraded"]),
+                         ("c-1", True, True))
+
+    def test_approval_and_stop(self):
+        from quiver.remote import inject
+        fake = MagicMock()
+        fake.approval.return_value = inject.InjectResult(True, "approved")
+        fake.control.return_value = inject.InjectResult(True, "interrupted")
+        with patch.object(inject, "injector_for", return_value=fake):
+            status, _ = self.srv.request(
+                "POST", "/v1/sessions/claude%3As1/approval",
+                body={"request_id": "r1", "decision": "always"}, headers=self.hdr)
+            self.assertEqual(status, 200)
+            status, _ = self.srv.request(
+                "POST", "/v1/sessions/claude%3As1/control", body={"op": "interrupt"}, headers=self.hdr)
+            self.assertEqual(status, 200)
+        resolved = [e for e in self.srv.state.journal.read_since(self.key, 0)[0]
+                    if e["type"] == "approval.resolved"]
+        self.assertEqual(resolved[0]["data"], {"request_id": "r1", "decision": "always"})
+        fake.control.assert_called_once()
+
+    def test_every_route_wants_the_device_credential(self):
+        for method, action, body in (("GET", "messages", None), ("GET", "events?last=0", None),
+                                     ("POST", "message", {"text": "x"}), ("POST", "approval", {}),
+                                     ("POST", "control", {"op": "interrupt"})):
+            status, _ = self.srv.request(method, f"/v1/sessions/claude%3As1/{action}", body=body)
+            self.assertEqual(status, 401, action)
+
+
+class TestChatObserved(HubBase):
+    """An observed session: every write but Attach is 409 not_attached,
+    which the chat answers by locking its composer."""
+
+    def test_writes_refused_until_attached(self):
+        auth = self.auth()
+        for action, body in (("message", {"text": "hi", "client_id": "c"}),
+                             ("approval", {"request_id": "r", "decision": "allow"}),
+                             ("control", {"op": "interrupt"})):
+            status, data = self.srv.request("POST", f"/v1/sessions/claude%3As1/{action}",
+                                            body=body, headers=auth)
+            self.assertEqual(status, 409, action)
+            self.assertEqual(json.loads(data)["error"]["code"], "not_attached")
+
+    def test_attach_refuses_a_session_mid_turn(self):
+        # The test catalog reads every session as active.
+        status, data = self.srv.request("POST", "/v1/sessions/claude%3As1/control",
+                                        body={"op": "attach"}, headers=self.auth())
+        self.assertEqual(status, 409, data)
+        self.assertEqual(json.loads(data)["error"]["code"], "not_idle")
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestChatScript(unittest.TestCase):
+    """pages/chat.js's pure helpers, run under node with the globals it
+    borrows from app.js stubbed."""
+
+    def run_js(self, body):
+        prelude = (
+            "const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')"
+            ".replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#39;');\n"
+            "globalThis.window = { addEventListener() {} };\n"
+            "globalThis.document = { addEventListener() {} };\n"
+            "globalThis.location = { hash: '' };\n")
+        source = (STATIC / "pages" / "chat.js").read_text(encoding="utf-8")
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(prelude + source + "\nconst T = SessionChat._test;\n"
+                    + "process.stdout.write(JSON.stringify((() => {" + body + "})()));\n")
+        self.addCleanup(Path(f.name).unlink)
+        done = subprocess.run(["node", f.name], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_markdown_escapes_then_restores_code_and_bold(self):
+        out = self.run_js(
+            "return [T.md('<img src=x onerror=alert(1)> **bold** `a<b`'),"
+            " T.md('before\\n```python\\nx = 1\\n```\\nafter')];")
+        self.assertEqual(out[0], "&lt;img src=x onerror=alert(1)&gt; <strong>bold</strong> <code>a&lt;b</code>")
+        self.assertEqual(out[1], 'before<pre class="code"><code>x = 1</code></pre>after')
+
+    def test_edit_tools_render_as_diffs(self):
+        out = self.run_js("""
+          const edit = T.toolDiff({ name: "Edit", args_full: JSON.stringify(
+            { file_path: "a.py", old_string: "x\\ny\\nz", new_string: "x\\nY\\nz" }) });
+          const write = T.toolDiff({ name: "Write", args_full: JSON.stringify({ file_path: "<b>.txt", content: "hi" }) });
+          const patch = T.toolDiff({ name: "apply_patch", args_full: JSON.stringify({ patch: "@@ h\\n-a\\n+b" }) });
+          return { edit, write, patch,
+            bash: T.toolDiff({ name: "Bash", args_full: "{}" }),
+            junk: T.toolDiff({ name: "Edit", args_full: "not json" }),
+            lines: T.diffLines("a\\nb\\nc", "a\\nB\\nc") };""")
+        self.assertIn('<div class="diff-line diff-del">- y</div><div class="diff-line diff-add">+ Y</div>', out["edit"])
+        self.assertIn('<div class="diff-file">a.py</div>', out["edit"])
+        self.assertIn("&lt;b&gt;.txt", out["write"])
+        self.assertIn('<div class="diff-line diff-meta">@@ h</div>', out["patch"])
+        self.assertIsNone(out["bash"])
+        self.assertIsNone(out["junk"])
+        self.assertEqual(out["lines"], {"ctxTop": ["a"], "del": ["b"], "add": ["B"], "ctxBot": ["c"]})
+
+    def test_frames_pacing_and_routes(self):
+        out = self.run_js("""
+          return {
+            frame: T.parseFrame('id: 4\\nevent: x\\ndata: {"type":"a",\\ndata: "seq":4}'),
+            beat: T.parseFrame(': ka'), bad: T.parseFrame('data: {nope'),
+            delays: [T.revealDelay(0), T.revealDelay(1), T.revealDelay(20), T.revealDelay(25)],
+            keys: [SessionChat.keyFromHash('#/sessions?chat=claude%3As1%40mac'),
+                   SessionChat.keyFromHash('#/sessions'), SessionChat.keyFromHash('#/overview?chat=x')],
+          };""")
+        self.assertEqual(out["frame"], {"type": "a", "seq": 4})
+        self.assertIsNone(out["beat"])
+        self.assertIsNone(out["bad"])
+        self.assertEqual(out["delays"], [None, 180, 60, None])
+        self.assertEqual(out["keys"], ["claude:s1@mac", None, None])
 
 
 if __name__ == "__main__":
