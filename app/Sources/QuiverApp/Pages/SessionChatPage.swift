@@ -110,7 +110,7 @@ private struct ChatTranscript: View {
                 }
             }
             if let row = model.row, !row.isAttached {
-                ObservedBanner(row: row)
+                ObservedBanner(model: model, row: row)
             }
             if model.loading {
                 LoadingCard(text: "Loading the transcript…")
@@ -141,7 +141,9 @@ private struct ChatTranscript: View {
                         .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                 }
                 ForEach(model.items) { item in
-                    ChatEntry(item: item)
+                    ChatEntry(item: item) { rid, decision in
+                        Task { await model.decide(rid, decision) }
+                    }
                 }
                 if model.working {
                     WorkingDots().accessibilityLabel("Agent is working")
@@ -160,12 +162,45 @@ private struct ChatTranscript: View {
 /// An observed session is read-only here; the web app says why above
 /// its transcript.
 private struct ObservedBanner: View {
+    var model: SessionChatModel
     var row: HubSessionRow
+    /// Attach was clicked: the banner asks before stopping the terminal.
+    @State private var confirming = false
 
     var body: some View {
         Card {
-            Label(text, systemImage: "eye")
-                .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+            if confirming, model.canAttach {
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Attach this session?").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+                        Text("Attach stops \(row.agent ?? HarnessMark(row.harness ?? "").name) in the terminal "
+                             + "running this session, then resumes the session under Quiver so you can send "
+                             + "to it from here.")
+                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    }
+                    Spacer()
+                    Button("Cancel") { confirming = false }
+                        .secondaryButton()
+                        .keyboardShortcut(.cancelAction)
+                    Button(model.attaching ? "Attaching…" : "Stop it and attach") {
+                        Task {
+                            await model.attach()
+                            confirming = false
+                        }
+                    }
+                    .primaryButton()
+                    .disabled(model.attaching)
+                }
+            } else {
+                HStack(spacing: 16) {
+                    Label(text, systemImage: "eye")
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    if model.canAttach {
+                        Button("Attach") { confirming = true }.primaryButton()
+                    }
+                }
+            }
         }
     }
 
@@ -178,6 +213,8 @@ private struct ObservedBanner: View {
 
 private struct ChatEntry: View {
     var item: HubChatItem
+    /// Answers an approval: request id, then `allow`, `always` or `deny`.
+    var decide: (String, String) -> Void
 
     var body: some View {
         switch item.kind {
@@ -213,8 +250,8 @@ private struct ChatEntry: View {
             }
         case .tool(let call, let result):
             ToolCard(call: call, result: result)
-        case .approval(_, let prompt, let decision, let resolved):
-            ApprovalCard(prompt: prompt, decision: decision, resolved: resolved)
+        case .approval(let rid, let prompt, let state):
+            ApprovalCard(prompt: prompt, state: state) { decide(rid, $0) }
         case .compaction:
             Text("Context compacted")
                 .font(Theme.caption).foregroundStyle(Theme.textMuted)
@@ -387,32 +424,56 @@ private struct CodeBlock: View {
     }
 }
 
-/// An approval the agent asked for, and how it was answered.
+/// An approval the agent asked for: Allow, Always or Deny while it
+/// waits, then how it was answered.
 private struct ApprovalCard: View {
     var prompt: String
-    var decision: String?
-    var resolved: Bool
+    var state: HubApprovalState
+    var decide: (String) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("Approval needed").font(Theme.caption).foregroundStyle(Theme.warningText)
             MarkdownBlocks(blocks: GitHubMarkdown.blocks(prompt))
                 .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
-            Text(outcome).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            if case .resolved = state {} else {
+                HStack(spacing: 8) {
+                    Button("Allow") { decide("allow") }.secondaryButton()
+                    Button("Always") { decide("always") }.secondaryButton()
+                        .hoverTip("Allow this and don't ask again for the same kind of action.")
+                    Button("Deny") { decide("deny") }.secondaryButton()
+                }
+                .disabled(!state.answerable)
+            }
+            if let note {
+                Text(note).font(Theme.caption)
+                    .foregroundStyle(isFailure ? Theme.dangerText : Theme.textSecondary)
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius)
-            .strokeBorder(resolved ? Theme.border : Theme.warning, lineWidth: 1))
+            .strokeBorder(state.answerable ? Theme.warning : Theme.border, lineWidth: 1))
     }
 
-    private var outcome: String {
-        guard resolved else { return "Waiting for an answer" }
-        switch decision {
-        case "allow": return "Allowed"
-        case "always": return "Always allowed"
-        case "deny": return "Denied"
-        default: return "Answered"
+    private var isFailure: Bool {
+        if case .failed = state { return true }
+        return false
+    }
+
+    private var note: String? {
+        switch state {
+        case .open: nil
+        case .submitting: "Sending your answer…"
+        case .queued: "Queued: waiting for the satellite"
+        case .failed(let why): why
+        case .resolved(let decision):
+            switch decision {
+            case "allow": "Allowed"
+            case "always": "Always allowed"
+            case "deny": "Denied"
+            default: "Answered"
+            }
         }
     }
 }

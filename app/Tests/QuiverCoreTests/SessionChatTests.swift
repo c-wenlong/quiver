@@ -204,9 +204,9 @@ extension HubStubbed {
         chat.apply(message(7, #"{"kind": "assistant", "text": "hi"}"#))
         #expect(chat.items.count == 1)
         chat.apply(event("approval.requested", #"{"request_id": "r1", "prompt": "Run rm?"}"#))
-        #expect(chat.items.last?.kind == .approval(requestId: "r1", prompt: "Run rm?", decision: nil, resolved: false))
+        #expect(chat.items.last?.kind == .approval(requestId: "r1", prompt: "Run rm?", state: .open))
         chat.apply(event("approval.resolved", #"{"request_id": "r1", "decision": "deny"}"#))
-        #expect(chat.items.last?.kind == .approval(requestId: "r1", prompt: "Run rm?", decision: "deny", resolved: true))
+        #expect(chat.items.last?.kind == .approval(requestId: "r1", prompt: "Run rm?", state: .resolved("deny")))
     }
 
     @Test func anOlderPageBringsTheCallForAnOrphanResult() {
@@ -287,7 +287,7 @@ extension HubStubbed {
         chat.apply(event("approval.requested", seq: 2, #"{"request_id": "r1", "prompt": "Run make?"}"#))
         chat.apply(event("message.appended", seq: 3, #"{"kind": "assistant", "text": "done"}"#))
         #expect(chat.items.map(\.id) == ["m1", "approval-r1", "m3"])
-        #expect(chat.items[1].kind == .approval(requestId: "r1", prompt: "Run make?", decision: nil, resolved: false))
+        #expect(chat.items[1].kind == .approval(requestId: "r1", prompt: "Run make?", state: .open))
         // Live again past the history.
         chat.apply(event("message.appended", seq: 4, #"{"kind": "assistant", "text": "more"}"#))
         #expect(chat.items.map(\.id) == ["m1", "approval-r1", "m3", "m4"])
@@ -302,21 +302,25 @@ extension HubStubbed {
 
     /// A chat opened on an attached (or observed) session whose `POST
     /// .../message` answers `send`.
-    func opened(ownership: String = "attached", send: (Int, String) = (202, #"{"ok": true, "waiting": false}"#))
-        async throws -> SessionChatModel {
+    func opened(ownership: String = "attached", send: (Int, String) = (202, #"{"ok": true, "waiting": false}"#),
+                control: (Int, Data) = (200, Data(#"{"ok": true}"#.utf8)),
+                approval: (Int, Data) = (200, Data(#"{"ok": true}"#.utf8)),
+                attachable: Bool = true) async throws -> SessionChatModel {
         let store = HubDeviceStore(url: dir.appending(path: "app-device.json"))
         try store.save(HubCredential(deviceId: "d1", credential: "secret"), for: "127.0.0.1:8477")
         HubStub.requests = []
         HubStub.handler = { req in
             switch req.url?.path {
             case "/v1/sessions":
-                return (200, Data(#"{"sessions": [{"key": "claude:s1", "status": "done", "ownership": "\#(ownership)"}]}"#.utf8))
+                return (200, Data(#"{"sessions": [{"key": "claude:s1", "status": "done", "ownership": "\#(ownership)", "attachable": \#(attachable)}]}"#.utf8))
             case "/v1/sessions/claude:s1/messages":
                 return (200, Data(#"{"messages": [], "has_more": false}"#.utf8))
             case "/v1/sessions/claude:s1/message":
                 return (send.0, Data(send.1.utf8))
             case "/v1/sessions/claude:s1/control":
-                return (200, Data(#"{"ok": true}"#.utf8))
+                return control
+            case "/v1/sessions/claude:s1/approval":
+                return approval
             default:
                 return (404, Data())
             }
@@ -440,6 +444,76 @@ extension HubStubbed {
         #expect(SessionChatModel.echoes("run", "run"))
         #expect(SessionChatModel.echoes("@a.png @b.txt run", "run"))
         #expect(!SessionChatModel.echoes("please run", "run"))
+    }
+}
+}
+
+extension HubStubbed {
+@MainActor
+@Suite struct SessionChatAttachTests {
+    func opened(ownership: String = "observed", control: (Int, Data) = (200, Data(#"{"ok": true}"#.utf8)),
+                approval: (Int, Data) = (200, Data(#"{"ok": true}"#.utf8))) async throws -> SessionChatModel {
+        try await HubStubbed.SessionChatSendTests().opened(ownership: ownership, control: control, approval: approval)
+    }
+
+    func event(_ type: String, _ data: String) -> HubEnvelope {
+        HubEnvelope(type: type, session: "claude:s1", data: try! HubWire.decoder.decode(HubJSON.self, from: Data(data.utf8)))
+    }
+
+    @Test func attachingOpensTheComposer() async throws {
+        let chat = try await opened()
+        #expect(chat.canAttach)
+        #expect(!chat.canSend)
+        await chat.attach()
+        let post = try #require(HubStub.requests.last { $0.httpMethod == "POST" })
+        #expect(HubStub.body(post) == ["op": "attach"])
+        #expect(chat.canSend)
+        #expect(!chat.canAttach)
+    }
+
+    @Test func aRefusedAttachSaysWhy() async throws {
+        let chat = try await opened(control: (409, Data(#"{"error": {"code": "not_idle"}}"#.utf8)))
+        await chat.attach()
+        #expect(chat.items.last?.kind == .error("Attach failed: The session is mid-turn. Attach once it's idle."))
+        #expect(!chat.canSend)
+        #expect(!chat.attaching)
+    }
+
+    @Test func anAnswerSettlesTheApproval() async throws {
+        let chat = try await opened(ownership: "attached")
+        chat.apply(event("approval.requested", #"{"request_id": "r1", "prompt": "Run make?"}"#))
+        await chat.decide("r1", "always")
+        let post = try #require(HubStub.requests.last { $0.httpMethod == "POST" })
+        #expect(HubStub.body(post) == ["request_id": "r1", "decision": "always"])
+        #expect(chat.items.last?.kind == .approval(requestId: "r1", prompt: "Run make?", state: .resolved("always")))
+        // A resolved approval takes no second answer.
+        let posts = HubStub.requests.count
+        await chat.decide("r1", "deny")
+        #expect(HubStub.requests.count == posts)
+    }
+
+    @Test func aSatellitesApprovalWaitsForItsResult() async throws {
+        let chat = try await opened(ownership: "attached", approval: (202, Data(#"{"queued": true}"#.utf8)))
+        chat.apply(event("approval.requested", #"{"request_id": "r2", "prompt": "Edit?"}"#))
+        await chat.decide("r2", "allow")
+        #expect(chat.items.last?.kind == .approval(requestId: "r2", prompt: "Edit?", state: .queued))
+        chat.apply(event("command.result", #"{"op": "approval", "request_id": "r2", "ok": false, "note": "prompt closed"}"#))
+        #expect(chat.items.last?.kind == .approval(requestId: "r2", prompt: "Edit?",
+                                                   state: .failed("Approval failed: prompt closed")))
+        #expect(chat.items.count == 1)
+    }
+
+    @Test func aFailedAnswerCanBeTriedAgain() async throws {
+        let chat = try await opened(ownership: "attached",
+                                    approval: (409, Data(#"{"error": {"code": "gone", "message": "no such prompt"}}"#.utf8)))
+        chat.apply(event("approval.requested", #"{"request_id": "r3", "prompt": "Push?"}"#))
+        await chat.decide("r3", "deny")
+        guard case .approval(_, _, let state) = chat.items.last?.kind else {
+            Issue.record("no card")
+            return
+        }
+        #expect(state == .failed("Approval failed: No such prompt"))
+        #expect(state.answerable)
     }
 }
 }
