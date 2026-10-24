@@ -115,10 +115,21 @@ def install(program: list[str], log_path: Path, path_env: str,
 
 def uninstall(home: Path | None = None, run: Runner = subprocess.run) -> bool:
     """Stop and disable the hub and remove the unit. False when none was
-    installed."""
+    installed.
+
+    Raises RuntimeError, keeping the unit, when systemctl fails to stop a
+    hub that is still active; a failed disable of an absent unit is the
+    normal "nothing to stop" case.
+    """
     path = unit_path(home)
     existed = path.exists()
-    _ctl(run, "disable", "--now", UNIT)
+    res = _ctl(run, "disable", "--now", UNIT)
+    if res.returncode != 0 and existed:
+        active = (_ctl(run, "is-active", UNIT).stdout or "").strip()
+        if active not in {"inactive", "failed"}:
+            # "active", "activating", or no answer from the manager at
+            # all: the hub may still be serving, so keep its unit.
+            raise RuntimeError(_message(res, "disable"))
     if existed:
         path.unlink()
         _ctl(run, "daemon-reload")
@@ -142,8 +153,9 @@ LINGER_FIX = "sudo loginctl enable-linger $USER"
 
 
 def ensure_linger(run: Runner = subprocess.run) -> str:
-    """Turn lingering on if it is off. "" when it's on, else what to run."""
-    if lingering(run) is not False:
+    """Turn lingering on unless it is known to be on. "" when it's on,
+    else what to run (also when loginctl can't say)."""
+    if lingering(run):
         return ""
     try:
         run(["loginctl", "enable-linger"], capture_output=True, text=True,

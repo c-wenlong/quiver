@@ -85,7 +85,7 @@ class Facts:
     agent_running: bool = False
     # Linux: a systemd user manager to install into, and whether user
     # services outlive logout (None when loginctl can't say).
-    service_available: bool = True
+    service_available: bool = False
     linger: bool | None = None
     hub_config: dict = field(default_factory=dict)
     loopback_ok: bool = False
@@ -245,6 +245,9 @@ def evaluate(f: Facts) -> dict:
             elif f.linger is False:
                 detail = ("Runs only while you're logged in. To keep it after "
                           "logout, run `sudo loginctl enable-linger $USER`.")
+            elif f.linger is None:
+                detail = ("Restarts if it stops. loginctl couldn't say whether it outlives "
+                          "logout; to be sure, run `sudo loginctl enable-linger $USER`.")
             else:
                 detail = "Starts at boot and restarts if it stops"
             steps.append(_step("hub.service", t_hub, OK, detail))
@@ -588,7 +591,7 @@ def default_actions(home: Path | None = None, run: Runner = subprocess.run) -> A
         if err:
             return err
         try:
-            install_service(program, remote_dir_for(home) / "serve.log", home=home)
+            install_service(program, remote_dir_for(home) / "serve.log", home=home, run=run)
         except RuntimeError as exc:
             return str(exc)
         return None

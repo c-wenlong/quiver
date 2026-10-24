@@ -247,8 +247,8 @@ def _service_problem() -> str | None:
     return "--install keeps the hub running on macOS (launchd) and Linux (systemd) only"
 
 
-def install_service(program: list[str], log_path: Path,
-                    home: Path | None = None) -> tuple[Path, str]:
+def install_service(program: list[str], log_path: Path, home: Path | None = None,
+                    run=subprocess.run) -> tuple[Path, str]:
     """Install and (re)start the hub as this platform's background service.
 
     Returns its file and a note to print ("" when none); raises
@@ -257,11 +257,11 @@ def install_service(program: list[str], log_path: Path,
     path_env = os.environ.get("PATH", "")
     if sys.platform == "darwin":
         try:
-            return launchd.install(program, log_path, path_env, home=home), ""
+            return launchd.install(program, log_path, path_env, home=home, run=run), ""
         except RuntimeError as exc:
             raise RuntimeError(f"launchctl could not load the hub: {exc}") from exc
     try:
-        path, linger = systemd.install(program, log_path, path_env, home=home)
+        path, linger = systemd.install(program, log_path, path_env, home=home, run=run)
     except RuntimeError as exc:
         raise RuntimeError(f"systemctl could not start the hub: {exc}") from exc
     note = (f"it runs only while you're logged in; to keep it after logout, run `{linger}`"

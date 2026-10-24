@@ -13,8 +13,9 @@ from quiver.remote import systemd
 class FakeCtl:
     """Records systemctl/loginctl calls; `linger` flips when enabled."""
 
-    def __init__(self, fail=(), linger="yes", can_linger=True, active="active"):
+    def __init__(self, fail=(), linger="yes", can_linger=True, active="active", loginctl=True):
         self.calls = []
+        self.loginctl = loginctl
         self.fail = set(fail)
         self.linger = linger
         self.can_linger = can_linger
@@ -23,6 +24,8 @@ class FakeCtl:
     def __call__(self, argv, **_kw):
         self.calls.append(argv)
         if argv[0] == "loginctl":
+            if not self.loginctl:
+                return subprocess.CompletedProcess(argv, 1, stdout="", stderr="no logind")
             if argv[1] == "enable-linger" and self.can_linger:
                 self.linger = "yes"
             return subprocess.CompletedProcess(argv, 0, stdout=f"{self.linger}\n", stderr="")
@@ -94,6 +97,22 @@ class UnitTest(unittest.TestCase):
         self.assertFalse(systemd.unit_path(self.home).exists())
         self.assertEqual(ctl.verbs(), ["disable", "daemon-reload"])
         self.assertFalse(systemd.uninstall(self.home, FakeCtl()))
+
+    def test_a_refused_stop_keeps_the_unit_of_a_running_hub(self):
+        systemd.install(self.program, self.log, "/bin", home=self.home, run=FakeCtl())
+        with self.assertRaises(RuntimeError) as ctx:
+            systemd.uninstall(self.home, FakeCtl(fail={"disable"}))
+        self.assertIn("boom", str(ctx.exception))
+        self.assertTrue(systemd.unit_path(self.home).exists())
+        self.assertTrue(systemd.uninstall(self.home, FakeCtl(fail={"disable"}, active="inactive")),
+                        "a stopped hub's unit is removed even if disable complained")
+        self.assertFalse(systemd.uninstall(self.home, FakeCtl(fail={"disable"})), "nothing installed")
+
+    def test_lingering_loginctl_cannot_report_is_not_taken_as_on(self):
+        ctl = FakeCtl(loginctl=False)
+        self.assertIsNone(systemd.lingering(ctl))
+        self.assertEqual(systemd.ensure_linger(ctl), systemd.LINGER_FIX)
+        self.assertIn("enable-linger", ctl.verbs())
 
     def test_xdg_config_home_is_honoured(self):
         with patch.dict("os.environ", {"XDG_CONFIG_HOME": "/cfg"}):

@@ -251,7 +251,7 @@ class TestServe(unittest.TestCase):
     def test_install_hands_the_hub_to_launchd(self):
         seen = {}
 
-        def fake_install(program, log_path, path_env, home=None):
+        def fake_install(program, log_path, path_env, **_kw):
             seen["program"], seen["log"] = program, log_path
             return Path("/h/Library/LaunchAgents/x.plist")
 
@@ -281,7 +281,7 @@ class TestServe(unittest.TestCase):
     def test_install_on_linux_writes_a_systemd_unit(self):
         seen = {}
 
-        def fake_install(program, log_path, path_env, home=None):
+        def fake_install(program, log_path, path_env, **_kw):
             seen["program"] = program
             return Path("/h/.config/systemd/user/quiver-remote-hub.service"), "sudo loginctl enable-linger $USER"
 
@@ -316,7 +316,7 @@ class TestServe(unittest.TestCase):
     def test_install_prefers_the_app_bundle_and_checks_the_hub_started(self):
         seen = {}
 
-        def fake_install(program, log_path, path_env, home=None):
+        def fake_install(program, log_path, path_env, **_kw):
             seen["program"] = program
             return Path("/h/x.plist")
 

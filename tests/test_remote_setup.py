@@ -46,7 +46,8 @@ def facts(**over):
     n = over.pop("devices", 1)
     f = setup.Facts(platform="darwin", exe="/usr/local/bin/tailscale", version="1.102.4",
                     status=running(), serve=SERVE, agent_args=GOOD_ARGS, agent_running=True,
-                    loopback_ok=True, https_ok=True, device_times=[1000.0] * n)
+                    loopback_ok=True, https_ok=True, device_times=[1000.0] * n,
+                    service_available=True)
     for k, v in over.items():
         setattr(f, k, v)
     return f
@@ -167,6 +168,21 @@ class EvaluateTest(unittest.TestCase):
         self.assertEqual(step(r, "hub.service")["state"], setup.TODO)
         ok = setup.evaluate(facts(platform="linux", linger=True))
         self.assertIn("boot", step(ok, "hub.service")["detail"])
+
+    def test_unknown_lingering_is_not_claimed_to_start_at_boot(self):
+        hub = step(setup.evaluate(facts(platform="linux", linger=None)), "hub.service")
+        self.assertEqual(hub["state"], setup.OK)
+        self.assertNotIn("Starts at boot", hub["detail"])
+        self.assertIn("enable-linger", hub["detail"])
+
+    def test_another_platform_gets_the_command_not_an_install(self):
+        self.assertFalse(setup.Facts().service_available, "only gather on Linux turns it on")
+        f = facts(platform="freebsd", agent_args=None, loopback_ok=False, https_ok=False,
+                  cert=(True, ""), hub_config={})
+        f.service_available = False
+        hub = step(setup.evaluate(f), "hub.service")
+        self.assertEqual(hub["state"], setup.NEEDS_YOU)
+        self.assertEqual(hub["action"]["kind"], "command")
 
     def test_a_linux_hub_without_lingering_says_how_to_keep_it(self):
         r = setup.evaluate(facts(platform="linux", linger=False))
@@ -452,7 +468,12 @@ class DefaultActionsTest(unittest.TestCase):
         self.assertIsNone(err)
         prog.assert_called_once_with("127.0.0.1", 8477, URL)
         self.assertEqual(install.call_args.args[0], GOOD_ARGS)
-        self.assertEqual(install.call_args.kwargs, {"home": home})
+        self.assertEqual(install.call_args.kwargs, {"home": home, "run": subprocess.run})
+        fake = object()
+        with patch.object(commands, "hub_program", return_value=(GOOD_ARGS, None)), \
+             patch.object(commands, "install_service", return_value=(Path("/x"), "")) as install:
+            setup.default_actions(home, run=fake).install_hub(URL, 8477)
+        self.assertIs(install.call_args.kwargs["run"], fake, "a fake runner reaches the service manager")
 
     def test_install_hub_reports_a_load_failure(self):
         with patch.object(commands, "hub_program", return_value=(GOOD_ARGS, None)), \
