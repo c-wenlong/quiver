@@ -695,8 +695,9 @@ every page, component and feature, and the hub work each needs.
 Two clients. The hub serves a static SPA (`src/quiver/remote/web/`),
 so the whole feature works in any browser over Tailscale with "add to
 home screen". On iPhone the client is native SwiftUI (`remote/ios/`):
-it reads the same REST routes and SSE streams, keeps its credential in
-the Keychain, and leaves room for widgets, Live Activities, Face ID and
+it reads the same REST routes and SSE streams, keeps one credential per
+paired hub in the Keychain (it can be paired with several hubs and
+switches between them from the hub menu), and leaves room for widgets, Live Activities, Face ID and
 APNs. It replaced an earlier WKWebView wrapper around the SPA once the
 webview's scrolling, keyboard handling and blank offline launch showed.
 Push comes from ntfy for now. A device paired in Safari's PWA and the
