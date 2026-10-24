@@ -31,7 +31,9 @@ struct RootView: View {
             if app.hub == nil {
                 WelcomeView()
             } else {
-                MainTabs()
+                // A fresh set of tabs per hub: navigation, search and the
+                // Usage page's figures belong to the hub they came from.
+                MainTabs().id(app.hub?.id)
             }
         }
         .tint(Theme.textPrimary)

@@ -3,8 +3,14 @@ import SwiftUI
 /// P1 to P3: welcome, pair this device, and the approve-code wait.
 struct WelcomeView: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.dismiss) private var dismiss
+    /// Opened from the hub menu to pair one more hub: it can be cancelled,
+    /// and it closes once the new hub is on screen.
+    var addingHub = false
     @State private var path: [PairStep] = []
     @State private var scanning = false
+    /// The hub on screen when the sheet opened.
+    @State private var startedOn: PairedHub?
 
     enum PairStep: Hashable { case pair, token }
 
@@ -18,8 +24,9 @@ struct WelcomeView: View {
                         .frame(width: 84, height: 84)
                         .clipShape(.rect(cornerRadius: 20))
                         .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(Theme.border, lineWidth: 1))
-                    Text("Quiver Remote").font(Theme.pageTitle).tracking(-0.6).foregroundStyle(Theme.textPrimary)
-                    Text("Watch and steer your agent sessions from your phone, over Tailscale.")
+                    Text(addingHub ? "Pair another hub" : "Quiver Remote").font(Theme.pageTitle).tracking(-0.6).foregroundStyle(Theme.textPrimary)
+                    Text(addingHub ? "Add another machine running swe remote serve. Switch between hubs from the menu at the top right."
+                                   : "Watch and steer your agent sessions from your phone, over Tailscale.")
                         .font(Theme.body).foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
@@ -55,8 +62,25 @@ struct WelcomeView: View {
                 }
             }
             .overlay { if app.pairing.busy && app.pairing.pending == nil { BusyOverlay() } }
+            .toolbar {
+                if addingHub {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") {
+                            app.cancelPairing()
+                            dismiss()
+                        }
+                    }
+                }
+            }
         }
         .tint(Theme.textPrimary)
+        .onAppear { startedOn = app.hub }
+        // The new hub is on screen (paired by any route: Tailscale, token,
+        // scanned code or a link): the sheet's job is done.
+        // Pairing the same hub again counts too: it gets a new credential.
+        .onChange(of: app.hub) { _, hub in
+            if addingHub, hub != startedOn { dismiss() }
+        }
     }
 }
 

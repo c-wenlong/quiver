@@ -47,7 +47,7 @@ final class UsageModel {
             usage = try await client.usage(refresh: refresh)
             usageError = nil
         } catch {
-            usageError = message(error, app: app)
+            usageError = message(error, app: app, client: client)
         }
     }
 
@@ -57,13 +57,13 @@ final class UsageModel {
             overviews[period] = try await client.overview(period: period)
             overviewErrors[period] = nil
         } catch {
-            overviewErrors[period] = message(error, app: app)
+            overviewErrors[period] = message(error, app: app, client: client)
         }
     }
 
-    private func message(_ error: Error, app: AppModel) -> String {
+    private func message(_ error: Error, app: AppModel, client: HubClient) -> String {
         guard let hubError = error as? HubError else { return error.localizedDescription }
-        if hubError.isUnauthorized { app.unpair() }
+        if hubError.isUnauthorized { app.unpair(from: client) }
         return hubError.message
     }
 

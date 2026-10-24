@@ -3,11 +3,13 @@ import Observation
 
 enum Connection: Equatable { case connecting, online, offline }
 
-/// App-wide state: the paired hub, its sessions and inbox, and the
-/// pairing flows that get a device there.
+/// App-wide state: the paired hubs, the sessions and inbox of the one
+/// on screen, and the pairing flows that get a device there.
 @MainActor @Observable
 final class AppModel {
-    private(set) var hub: PairedHub?
+    /// Every hub this phone is paired with; `hub` is the one on screen.
+    private(set) var hubs: HubList
+    var hub: PairedHub? { hubs.active }
     private(set) var sessions: [SessionRow] = []
     private(set) var machines: [Machine] = []
     private(set) var inbox: [InboxItem] = []
@@ -19,14 +21,18 @@ final class AppModel {
     var pairing = PairingFlow()
 
     private var refreshTask: Task<Void, Never>?
+    @ObservationIgnored private let store: HubStore
 
-    init() {
-        hub = PairingStore.load()
+    init(store: HubStore = KeychainHubStore()) {
+        self.store = store
+        hubs = store.load()
     }
 
     /// A model on `hub` without reading the Keychain, for tests.
-    init(hub: PairedHub?) {
-        self.hub = hub
+    convenience init(hub: PairedHub?) {
+        var list = HubList()
+        if let hub { list.adopt(hub) }
+        self.init(store: MemoryHubStore(list))
     }
 
     var client: HubClient? {
@@ -34,7 +40,7 @@ final class AppModel {
     }
 
     var hubName: String {
-        machines.first?.displayName ?? hub?.baseURL.host ?? "Hub"
+        machines.first?.displayName ?? hub.map { hubs.name(of: $0) } ?? "Hub"
     }
 
     // MARK: Refresh
@@ -74,13 +80,14 @@ final class AppModel {
                 now.timeIntervalSince(at) < Self.detachWaitCap && fetched.first { $0.key == key }?.isAttached != false
             }
             machines = sessionsBody.machines ?? machines
+            rememberName(machines.first?.displayName, of: pairedAtStart)
             inbox = inboxBody.items
             refreshedAt = Date()
             connection = .online
             loadError = nil
         } catch let error as HubError {
             guard hub == pairedAtStart else { return }
-            if error.isUnauthorized { unpair(); return }
+            if error.isUnauthorized { unpair(from: client); return }
             connection = .offline
             loadError = error.message
         } catch {
@@ -266,31 +273,75 @@ final class AppModel {
 
     // MARK: Pairing
 
+    /// A newly paired hub joins the list (or replaces the one at the same
+    /// address) and goes on screen; the other hubs stay paired.
     func adopt(_ hub: PairedHub) {
-        PairingStore.save(hub)
-        self.hub = hub
-        sessions = []
-        inbox = []
-        pendingDetaches = [:]
-        pins = PinLedger()
-        dropChats()
-        loadedOnce = false
-        connection = .connecting
+        store.saveCredential(hub)
+        hubs.adopt(hub)
+        store.saveIndex(hubs)
         pairing = PairingFlow()
+        showHub()
+    }
+
+    /// Puts another paired hub on screen.
+    func switchHub(to id: String) {
+        guard id != hub?.id, hubs.hubs.contains(where: { $0.id == id }) else { return }
+        hubs.activeId = id
+        store.saveIndex(hubs)
+        showHub()
+    }
+
+    /// Unpairs the hub on screen and shows the next one, if any. With
+    /// `client`, only if that client still talks to the hub on screen: a
+    /// refused answer from a hub this phone has switched away from must
+    /// not unpair the one it switched to.
+    func unpair(from client: HubClient? = nil) {
+        guard let current = hub else { return }
+        if let client, client.baseURL != current.baseURL || client.credential != current.credential.credential { return }
+        store.deleteCredential(current.id)
+        hubs.remove(current.id)
+        store.saveIndex(hubs)
+        if hub == nil {
+            stopRefreshing()
+            clearHubState()
+        } else {
+            showHub()
+        }
+    }
+
+    /// Starts afresh on the hub now on screen: nothing from the last one
+    /// may show, and the list loads again.
+    private func showHub() {
+        stopRefreshing()
+        clearHubState()
+        connection = .connecting
         startRefreshing()
     }
 
-    func unpair() {
-        stopRefreshing()
-        PairingStore.clear()
-        hub = nil
+    private func clearHubState() {
         sessions = []
         machines = []
         inbox = []
+        loadError = nil
+        refreshedAt = nil
         pendingDetaches = [:]
         pins = PinLedger()
         dropChats()
         loadedOnce = false
+    }
+
+    /// Keeps the machine name a hub reports, so the menu can name it while
+    /// another hub is on screen.
+    private func rememberName(_ name: String?, of paired: PairedHub?) {
+        guard let name, !name.isEmpty, let paired, hubs.names[paired.id] != name else { return }
+        hubs.names[paired.id] = name
+        store.saveIndex(hubs)
+    }
+
+    /// Opens pairing from the hub menu: an empty form, since the address
+    /// filled in would be the hub already paired.
+    func beginPairingAnother() {
+        pairing = PairingFlow(host: "")
     }
 
     private func dropChats() {
@@ -393,7 +444,7 @@ final class AppModel {
 }
 
 struct PairingFlow {
-    var host: String = PairingStore.lastHost ?? ""
+    var host: String = KeychainHubStore.lastHost ?? ""
     var deviceName: String = PairingFlow.defaultDeviceName
     var busy = false
     var error: String?

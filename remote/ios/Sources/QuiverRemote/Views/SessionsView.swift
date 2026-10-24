@@ -10,6 +10,7 @@ struct SessionsView: View {
     @State private var showNewSession = false
     @State private var startedKey: String?
     @State private var confirmUnpair = false
+    @State private var pairingAnother = false
     @State private var search = SessionSearch()
     @State private var swipes = SwipeCoordinator()
     @State private var renaming: SessionRow?
@@ -86,17 +87,29 @@ struct SessionsView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    Section("Hubs") {
+                        ForEach(app.hubs.hubs) { hub in
+                            Button { app.switchHub(to: hub.id) } label: {
+                                HubMenuLabel(name: app.hubs.name(of: hub), host: hub.baseURL.host, current: hub.id == app.hub?.id)
+                            }
+                        }
+                        Button {
+                            app.beginPairingAnother()
+                            pairingAnother = true
+                        } label: { Label("Pair another hub", systemImage: "plus") }
+                    }
                     Section(app.hub?.baseURL.host ?? "") {
                         Button { showDevices = true } label: { Label("Pair requests and devices", systemImage: "iphone.and.arrow.forward") }
                         Button { Task { await app.refresh() } } label: { Label("Refresh", systemImage: "arrow.clockwise") }
                     }
-                    Button(role: .destructive) { confirmUnpair = true } label: { Label("Unpair this device", systemImage: "xmark.circle") }
+                    Button(role: .destructive) { confirmUnpair = true } label: { Label("Unpair from \(app.hubName)", systemImage: "xmark.circle") }
                 } label: {
                     HubChip(name: app.hubName, connection: app.connection)
                 }
             }
         }
         .sheet(isPresented: $showDevices) { NavigationStack { DevicesView() } }
+        .sheet(isPresented: $pairingAnother) { WelcomeView(addingHub: true) }
         // The chat opens after the sheet is gone, so the push isn't lost
         // under the dismiss animation.
         .sheet(isPresented: $showNewSession, onDismiss: {
@@ -122,10 +135,12 @@ struct SessionsView: View {
         } message: { _ in
             Text("It's working right now. Detaching now stops the turn; keeping it lets you attach to it from the Mac with tmux.")
         }
-        .confirmationDialog("Unpair this device?", isPresented: $confirmUnpair, titleVisibility: .visible) {
+        .confirmationDialog("Unpair from \(app.hubName)?", isPresented: $confirmUnpair, titleVisibility: .visible) {
             Button("Unpair", role: .destructive) { app.unpair() }
         } message: {
-            Text("You'll need to pair again to see sessions.")
+            Text(app.hubs.hubs.count > 1
+                 ? "Your other hubs stay paired. You'll need to pair again to see this hub's sessions."
+                 : "You'll need to pair again to see sessions.")
         }
     }
 
@@ -301,6 +316,21 @@ struct SessionRowView: View {
 struct RowButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.background(configuration.isPressed ? Theme.pressed : .clear)
+    }
+}
+
+/// A hub in the hub menu: its name with its address under it, and a
+/// check on the one on screen. The menu takes the image as the row's icon
+/// and the second text as its subtitle.
+struct HubMenuLabel: View {
+    var name: String
+    var host: String?
+    var current: Bool
+
+    var body: some View {
+        if current { Image(systemName: "checkmark") }
+        Text(name)
+        if let host, host != name { Text(host) }
     }
 }
 

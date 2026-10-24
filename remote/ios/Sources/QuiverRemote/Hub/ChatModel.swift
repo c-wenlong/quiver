@@ -203,7 +203,7 @@ final class ChatModel {
                 switch event {
                 case .connected: self.live = true
                 case .disconnected: self.live = false
-                case .unauthorized: self.app?.unpair(); return
+                case .unauthorized: self.app?.unpair(from: client); return
                 case .truncated:
                     self.dropPending()
                     await self.backfill(client)
