@@ -1194,6 +1194,7 @@ async function openChat(key) {
   dropPending();
   state.awaitingReply = false;
   resetTray();
+  closeMenu();
   toolCards.clear();
   el("chat-log").innerHTML = "";
   show("chat");
@@ -2089,9 +2090,11 @@ el("composer").addEventListener("submit", async (e) => {
   const action = composerAction();
   if (action === "stop") { interrupt(); return; }
   if (action !== "send") return;
+  closeMenu();
   if (state.editingId) { saveEdit(); return; }
   const text = input.value.trim();
   input.value = "";
+  closeMenu();
   state.editNote = "";
   state.trayNote = "";
   sendText(text);
@@ -2405,6 +2408,7 @@ function beginEdit(cid) {
   state.editingId = cid;
   state.editNote = "";
   input.value = entry.text;
+  closeMenu();
   input.focus();
   renderTray();
 }
@@ -2415,6 +2419,8 @@ function cancelEdit() {
   el("composer-text").value = state.draftBeforeEdit;
   state.draftBeforeEdit = "";
   state.editNote = "";
+  // The box's text changed under any open menu: its token is stale.
+  closeMenu();
   renderTray();
 }
 
@@ -2458,6 +2464,7 @@ function editWentOut(cid, text) {
   state.editingId = null;
   state.draftBeforeEdit = "";
   el("composer-text").value = text;
+  closeMenu();
   state.editNote = "That message already went out";
   renderTray();
 }
@@ -2476,6 +2483,7 @@ async function requeueEdit(cid, text, gen) {
     state.editingId = null;
     el("composer-text").value = state.draftBeforeEdit;
     state.draftBeforeEdit = "";
+    closeMenu();
   }
   state.trayNote = "Edited. It moved to the end of the queue";
   sendText(text);
@@ -2592,6 +2600,280 @@ el("attach-btn").addEventListener("click", async () => {
     }, 0);
     scrollBottom();
   }
+});
+
+/* ── prompt menus ────────────────────────────────────────────
+   Typing @ opens files and folders under the session's folder; the
+   hub only lists names, and the harness reads the file when the
+   message arrives. Positions are offsets into the box's value; the
+   caret is the input's selectionEnd. */
+
+/* The `@token` the caret is in, if any: the @ sits at the start of the
+ * text or after whitespace and runs to the caret with no whitespace in
+ * between. A path with spaces is quoted, @"My Documents/notes.txt", as
+ * Claude Code writes it; while a folder is browsed the quote stays open.
+ * An @ inside a word (a@b.com) never starts one. */
+function mentionToken(text, caret) {
+  const quoted = quotedMention(text, caret);
+  if (quoted) return quoted;
+  let start = caret;
+  while (start > 0 && !/\s/.test(text[start - 1])) start--;
+  if (start >= caret || text[start] !== "@") return null;
+  let end = caret;
+  while (end < text.length && !/\s/.test(text[end])) end++;
+  return { start, end, query: text.slice(start + 1, caret) };
+}
+
+function quotedMention(text, caret) {
+  let q = caret - 1;
+  while (q >= 0 && text[q] !== '"' && text[q] !== "\n") q--;
+  if (q < 1 || text[q] !== '"' || text[q - 1] !== "@") return null;
+  const start = q - 1;
+  if (start > 0 && !/\s/.test(text[start - 1])) return null;
+  let end = caret;
+  while (end < text.length && text[end] !== '"' && text[end] !== "\n") end++;
+  if (end < text.length && text[end] === '"') {
+    end++;
+  } else {
+    end = caret;
+    while (end < text.length && !/\s/.test(text[end])) end++;
+  }
+  return { start, end, query: text.slice(q + 1, caret) };
+}
+
+/* The box after picking `path`, and where the caret goes. A file becomes
+ * `@path ` (an existing space is reused); a folder becomes `@path/` so
+ * the menu stays open to pick inside it. A path with whitespace is
+ * quoted, and a folder's quote is left open until a file closes it. */
+function insertMention(text, token, path, isDir) {
+  const start = Math.min(token.start, text.length);
+  const end = Math.min(Math.max(token.end, start), text.length);
+  const clean = trimSlash(path);
+  const quoted = /\s/.test(clean);
+  let inserted = (quoted ? '@"' : "@") + clean;
+  if (isDir) {
+    inserted += "/";
+  } else {
+    if (quoted) inserted += '"';
+    if (end >= text.length || !/\s/.test(text[end])) inserted += " ";
+  }
+  const out = text.slice(0, start) + inserted + text.slice(end);
+  let caret = start + inserted.length;
+  // A file before existing whitespace: step over it, as if typed.
+  if (!isDir && !inserted.endsWith(" ") && caret < out.length) caret++;
+  return { text: out, caret };
+}
+
+function trimSlash(path) {
+  let p = String(path || "");
+  while (p.endsWith("/") && p.length > 1) p = p.slice(0, -1);
+  return p;
+}
+
+/* "src/app/main.py" as its name and the folder it's in. */
+function splitPath(path) {
+  const clean = trimSlash(path);
+  const slash = clean.lastIndexOf("/");
+  return slash < 0 ? { name: clean, parent: "" } : { name: clean.slice(slash + 1), parent: clean.slice(0, slash) };
+}
+
+const MENTION_DEBOUNCE_MS = 120;
+const MENTION_LIMIT = 50;
+
+// The open menu: kind "mention", the token, the rows, which row is
+// highlighted, and the search's state. `dismissed` is the token the
+// menu was closed on (Escape); it stays closed until the token changes.
+const menu = {
+  kind: null, token: null, rows: [], active: 0,
+  answered: null, loading: false, error: "",
+  gen: 0, timer: null, dismissed: null,
+};
+
+function sameToken(a, b) {
+  return !!a && !!b && a.start === b.start && a.end === b.end && a.query === b.query;
+}
+
+function closeMenu() {
+  menu.gen++;
+  clearTimeout(menu.timer);
+  menu.timer = null;
+  menu.kind = null;
+  menu.token = null;
+  menu.rows = [];
+  menu.active = 0;
+  menu.answered = null;
+  menu.loading = false;
+  menu.error = "";
+  renderMenu();
+}
+
+/* Called whenever the box's text, caret or focus changes. */
+function trackMenus() {
+  const input = el("composer-text");
+  const focused = document.activeElement === input;
+  const token = focused && !input.disabled && input.selectionStart === input.selectionEnd
+    ? mentionToken(input.value, input.selectionEnd) : null;
+  if (!token || !sameToken(token, menu.dismissed)) menu.dismissed = null;
+  if (!token || menu.dismissed) {
+    if (menu.kind) closeMenu();
+    return;
+  }
+  const before = menu.kind === "mention" ? menu.token.query : null;
+  menu.kind = "mention";
+  menu.token = token;
+  if (token.query === before && (menu.answered !== null || menu.loading || menu.error)) return;
+  searchFiles(token.query);
+}
+
+/* Debounced, one request at a time; the last good rows stay up while
+ * the next query loads. */
+function searchFiles(query) {
+  const gen = ++menu.gen;
+  const key = state.currentKey;
+  clearTimeout(menu.timer);
+  menu.loading = true;
+  renderMenu();
+  menu.timer = setTimeout(async () => {
+    menu.timer = null;
+    let status = 0, data = null;
+    try {
+      ({ status, data } = await api(
+        `/v1/sessions/${encodeURIComponent(key)}/files?q=${encodeURIComponent(query)}&limit=${MENTION_LIMIT}`
+      ));
+    } catch { status = 0; }
+    if (gen !== menu.gen || key !== state.currentKey) return;
+    menu.loading = false;
+    menu.answered = query;
+    if (status === 200 && data) {
+      menu.rows = data.entries || [];
+      menu.error = "";
+    } else {
+      menu.rows = [];
+      menu.error = filesError(hubError(status, data));
+    }
+    menu.active = 0;
+    renderMenu();
+  }, MENTION_DEBOUNCE_MS);
+}
+
+/* The one muted line the menu shows instead of rows. */
+function filesError(err) {
+  switch (err.code) {
+    case "files_unavailable": {
+      const row = state.sessions.find((r) => r.key === state.currentKey);
+      const m = row && state.machines.find((x) => x.id === row.machine_id);
+      return `File search isn't available for sessions on ${(m && m.name) || "that machine"}`;
+    }
+    case "cwd_missing": return "This session's folder is gone";
+    case "bad_cwd": return "This session has no working folder";
+    case "not_readable": return "The hub can't read this session's folder";
+    case "unknown_session": return "The hub doesn't know this session any more";
+    case "network": return "Can't reach the hub";
+    // A hub from before the route answers any unknown path 404.
+    default: return err.status === 404 ? "Update the hub to search files from here" : "Couldn't search files";
+  }
+}
+
+function renderMenu() {
+  const box = el("prompt-menu");
+  const input = el("composer-text");
+  const open = menu.kind === "mention";
+  box.classList.toggle("hidden", !open);
+  input.setAttribute("aria-expanded", String(open));
+  if (!open) { box.innerHTML = ""; input.removeAttribute("aria-activedescendant"); return; }
+  let html;
+  if (menu.error) {
+    html = `<div class="menu-note error-note">${esc(menu.error)}</div>`;
+  } else if (menu.answered === null && !menu.rows.length) {
+    html = `<div class="menu-note">Searching files</div>`;
+  } else if (!menu.rows.length) {
+    html = `<div class="menu-note">No files match</div>`;
+  } else {
+    html = menu.rows.map((entry, i) => {
+      const { name, parent } = splitPath(entry.path);
+      const dir = entry.kind === "dir";
+      return `<div class="menu-row${i === menu.active ? " active" : ""}" role="option" id="menu-opt-${i}"` +
+        ` aria-selected="${i === menu.active}" data-i="${i}"` +
+        ` aria-label="${esc(parent ? `${name}, in ${parent}` : name)}">` +
+        `<span class="menu-icon ${dir ? "dir" : "file"}" aria-hidden="true"></span>` +
+        `<span class="menu-name">${esc(name)}</span>` +
+        (parent ? `<span class="menu-sub">${esc(parent)}</span>` : "") + `</div>`;
+    }).join("");
+  }
+  box.innerHTML = html;
+  if (menu.rows.length && !menu.error) {
+    input.setAttribute("aria-activedescendant", `menu-opt-${menu.active}`);
+    const row = box.querySelector(".menu-row.active");
+    if (row) row.scrollIntoView({ block: "nearest" });
+  } else {
+    input.removeAttribute("aria-activedescendant");
+  }
+}
+
+function pickMenu(i) {
+  const entry = menu.rows[i];
+  if (!entry || menu.kind !== "mention") return;
+  const input = el("composer-text");
+  const next = insertMention(input.value, menu.token, entry.path, entry.kind === "dir");
+  input.value = next.text;
+  input.focus();
+  input.setSelectionRange(next.caret, next.caret);
+  updateSendButton();
+  trackMenus();
+}
+
+el("composer-text").addEventListener("input", trackMenus);
+el("composer-text").addEventListener("focus", trackMenus);
+// The caret moved without typing: an arrow key or a tap in the text.
+el("composer-text").addEventListener("click", trackMenus);
+el("composer-text").addEventListener("keyup", (e) => {
+  if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End") trackMenus();
+});
+// Closing on blur waits a beat, so a tap on a row still lands.
+el("composer-text").addEventListener("blur", () => {
+  setTimeout(() => { if (document.activeElement !== el("composer-text")) closeMenu(); }, 150);
+});
+
+el("composer-text").addEventListener("keydown", (e) => {
+  if (!menu.kind) return;
+  const rows = menu.error ? 0 : menu.rows.length;
+  if (e.key === "Escape") {
+    e.preventDefault();
+    menu.dismissed = menu.token;
+    closeMenu();
+  } else if (rows && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+    e.preventDefault();
+    menu.active = (menu.active + (e.key === "ArrowDown" ? 1 : rows - 1)) % rows;
+    renderMenu();
+  } else if ((e.key === "Enter" || e.key === "Tab") && !e.isComposing) {
+    // While the menu is open Enter picks, or waits for rows; it sends
+    // once the menu is closed (Escape sends the text as typed).
+    if (!rows && e.key === "Tab") return;
+    e.preventDefault();
+    if (rows) pickMenu(menu.active);
+  }
+});
+
+// A row picks on a completed tap: pointerdown only keeps the box's
+// focus (so the phone keyboard stays up), and a drag that scrolls the
+// list, or a touch the browser cancels for scrolling, picks nothing.
+let menuTap = null;
+el("prompt-menu").addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  const row = e.target.closest(".menu-row");
+  menuTap = row ? { i: Number(row.dataset.i), x: e.clientX, y: e.clientY, id: e.pointerId } : null;
+});
+el("prompt-menu").addEventListener("pointermove", (e) => {
+  if (menuTap && e.pointerId === menuTap.id &&
+      Math.hypot(e.clientX - menuTap.x, e.clientY - menuTap.y) > 8) menuTap = null;
+});
+el("prompt-menu").addEventListener("pointercancel", () => { menuTap = null; });
+el("prompt-menu").addEventListener("pointerup", (e) => {
+  const tap = menuTap;
+  menuTap = null;
+  if (!tap || e.pointerId !== tap.id) return;
+  const row = e.target.closest(".menu-row");
+  if (row && Number(row.dataset.i) === tap.i) pickMenu(tap.i);
 });
 
 /* ── wiring ──────────────────────────────────────────────── */
