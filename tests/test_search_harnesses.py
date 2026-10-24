@@ -686,6 +686,19 @@ class PairedHarnessTests(_Home):
         again = self.run_pass()
         self.assertEqual((again.indexed, again.current), (0, again.files))
 
+    def test_a_finished_grok_tail_line_indexes_once(self):
+        self.run_pass()
+        self.assertEqual(search_index.search(self.home, "lemur"), [])
+        history = self.home / ".grok/sessions/ws-1/gk-dir/chat_history.jsonl"
+        with open(history, "a") as handle:
+            handle.write('ne about the lemur"}\n')
+        self.assertEqual(self.run_pass().indexed, 1)
+        self.assertEqual(self.sessions()["gk-dir"][5], 3)
+        self.assertEqual([h.session_id for h in search_index.search(self.home, "lemur")], ["gk-dir"])
+        again = self.run_pass()
+        self.assertEqual((again.indexed, again.current), (0, again.files))
+        self.assertEqual(self.sessions()["gk-dir"][5], 3)
+
     def test_a_sidecar_only_change_reads_the_pair_again(self):
         self.run_pass()
         transcript = self.home / f".kiro/sessions/cli/{KIRO_ID}.jsonl"
