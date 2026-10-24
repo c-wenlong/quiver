@@ -22,7 +22,7 @@ from pathlib import Path
 from quiver.paths import remote_dir_for
 from quiver.remote import attachments, catalog as catalog_mod, slash
 from quiver.remote import inject, journal, protocol, supervise, tail
-from quiver.remote import usage as usage_mod
+from quiver.remote import fork as fork_mod, usage as usage_mod
 from quiver.remote.detach import PendingDetaches
 
 AGENT_FILE = "agent.json"          # satellite's stored hub credential
@@ -177,6 +177,9 @@ class RemoteAgent:
         self._last_cmd_seq = self._load_cmd_cursor()
         self._done_cmd_seq = self._last_cmd_seq
         self._done_set: set[int] = set()
+        # The stream thread, the work loop and fork threads all finish
+        # commands; the cursor advance must not interleave.
+        self._done_lock = threading.Lock()
         self.tail_manager = tail.TailManager(
             emit=self._capture, machine_id=self.machine_id, home=self.home,
         )
@@ -238,11 +241,12 @@ class RemoteAgent:
         """Advance the completed cursor to the highest contiguous seq."""
         if not isinstance(seq, int):
             return
-        self._done_set.add(seq)
-        while self._done_cmd_seq + 1 in self._done_set:
-            self._done_cmd_seq += 1
-            self._done_set.discard(self._done_cmd_seq)
-        self._save_cmd_cursor()
+        with self._done_lock:
+            self._done_set.add(seq)
+            while self._done_cmd_seq + 1 in self._done_set:
+                self._done_cmd_seq += 1
+                self._done_set.discard(self._done_cmd_seq)
+            self._save_cmd_cursor()
 
     # -- upstream ----------------------------------------------------------
 
@@ -407,8 +411,23 @@ class RemoteAgent:
             # later interrupt/detach isn't stuck behind the run.
             self._work_q.put((seq, ev))
             return
+        if (ev.get("data") or {}).get("op") == "fork":
+            # Booting the fork's pane can take 30 s: run it beside the
+            # stream so an interrupt or detach behind it goes at once.
+            # The cursor still waits for it, so a crash replays it.
+            threading.Thread(
+                target=self._dispatch_then_done, args=(seq, ev),
+                name=f"agent-fork-{seq}", daemon=True,
+            ).start()
+            return
         self._dispatch(ev)
         self._mark_done(seq)
+
+    def _dispatch_then_done(self, seq, ev: dict) -> None:
+        try:
+            self._dispatch(ev)
+        finally:
+            self._mark_done(seq)
 
     def _work_loop(self) -> None:
         while not self._stop.is_set():
@@ -493,6 +512,15 @@ class RemoteAgent:
                 return payload is not None, (err or "staged"), False
             if session is None:
                 return False, "unknown session on this machine", False
+            if op == "fork":
+                # Tracked like launch: the result and the adopted
+                # session both carry the hub's launch id.
+                ok, note = fork_mod.start(
+                    self.home, session, self.catalog.tail_rows(),
+                    str(data.get("prompt") or ""),
+                    str(data.get("launch_id") or ""),
+                )
+                return ok, note, False
             if op == "attach":
                 # Same as the hub: attaching again cancels a when_idle
                 # detach (one already running finishes first).

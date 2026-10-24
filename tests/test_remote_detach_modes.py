@@ -690,6 +690,31 @@ class TestKeptRecordsWithFakes(unittest.TestCase):
         self.assertTrue(ok, note)
         self.assertIn("adopted", note)
 
+    def test_a_fork_or_launch_marker_never_adopts_a_kept_session(self):
+        # A fork from the kept session (or any launch) in its folder
+        # leaves a pending marker; the kept key must not be bound to
+        # that new pane, even when its transcript looks new enough.
+        proj = Path(tempfile.mkdtemp())
+        key = protocol.session_key("claude", "s1", str(proj))
+        supervise._save_kept(self.home, {key: dict(
+            _tmux_meta(self.name), cwd=str(proj), pane_pid=4242,
+            kept_at=time.time())})
+        folder = supervise._pending_dir(self.home)
+        folder.mkdir(parents=True)
+        (folder / "qv-fork.json").write_text(json.dumps({
+            "tmux": "qv-fork", "tool_name": "claude", "cwd": str(proj),
+            "exclude": [], "fork_of": "other", "launched_at": time.time(),
+        }))
+        transcript = proj / "t.jsonl"
+        transcript.write_text("{}\n")
+        rows = [(key, _session(path=str(proj)), "done")]
+        with patch("quiver.remote.tail.resolve_jsonl_path",
+                   return_value=transcript):
+            self.assertEqual(supervise.adopt_pending(self.home, rows), [])
+        self.assertIsNone(supervise.meta_for(self.home, key))
+        self.assertEqual(supervise.kept(self.home)[key]["tmux"], self.name)
+        self.assertTrue((folder / "qv-fork.json").exists())
+
     def test_adopt_with_a_failed_kept_cleanup_still_attaches(self):
         self.assertTrue(self._keep()[0])
         with self._failing_writes("kept.json"):

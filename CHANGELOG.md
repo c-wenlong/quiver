@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `harness_title`, and `title` shows your name when you set one. Open
   clients hear about a change as a `session.meta` event.
 
+- **Remote: fork a session from the phone.** `POST
+  /v1/sessions/{id}/fork` starts a new run that continues from a
+  session's history under tmux, leaves the original untouched, and is
+  tracked like a new-session launch so the phone can open it. Claude
+  Code, Codex, Kilo, Pi and Droid can fork, on the hub or a satellite;
+  session rows carry `can_fork` so the app shows Fork only for those.
+
 - **Remote: detach can wait for the turn to end or keep tmux running.**
   The control route's `detach` takes a `mode`. `now` is today's
   behaviour and stays the default. `when_idle` answers at once and

@@ -48,6 +48,7 @@ from quiver.remote import (
     tsid,
     usage as usage_mod,
 )
+from quiver.remote import fork as fork_mod
 from quiver.remote.detach import PendingDetaches
 from quiver.remote.journal import Journal
 from quiver.webapp import (
@@ -325,7 +326,8 @@ class HubState:
                     lid, state="started",
                     key=str(event.get("session") or key),
                 )
-            elif lid and data.get("op") == "launch" and not data.get("ok"):
+            elif lid and data.get("op") in {"launch", "fork"} \
+                    and not data.get("ok"):
                 self.settle_launch(
                     lid, state="failed", note=str(data.get("note") or "")
                 )
@@ -1355,6 +1357,10 @@ class _Handler(BaseHTTPRequestHandler):
             row = self._state.catalog.row_for(key)
             if row is None:
                 self._send_error(404, "unknown_session", "no such session")
+                return
+            if action == "fork":  # hub or satellite: fork.py routes it
+                self._send_json(*fork_mod.request(
+                    self._state, key, row, self._read_body()))
                 return
             if action in sessionmeta.ACTIONS:
                 self._session_meta(key, action)

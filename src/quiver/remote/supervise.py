@@ -562,6 +562,20 @@ def _stop_local_writers(
             continue
 
 
+_FORK_FLAGS = frozenset({"--fork-session", "--fork"})
+
+
+def _flag_value(argv: list[str], flag: str) -> str | None:
+    for i, tok in enumerate(argv[:-1]):
+        if tok == flag:
+            return argv[i + 1]
+    prefix = flag + "="
+    for tok in argv:
+        if tok.startswith(prefix):
+            return tok[len(prefix):]
+    return None
+
+
 def _local_writer_pids(session: Session) -> list[int]:
     """Harness processes that still own ``session``.
 
@@ -609,6 +623,12 @@ def _local_writer_pids(session: Session) -> list[int]:
             continue
         if not argv or os.path.basename(argv[0]) != binary:
             continue
+        # A fork names its source too but writes its own session:
+        # attaching the source must not stop it. A fork that names its
+        # output (claude --session-id) still owns that one.
+        if argv[1:2] == ["fork"] or _FORK_FLAGS.intersection(argv[1:]):
+            if _flag_value(argv, "--session-id") not in targets:
+                continue
         if not any(t in argv[1:] for t in targets):
             continue
         pids.append(pid)
@@ -967,6 +987,116 @@ def launch_new(
     return True, "launched under tmux; the session appears on refresh", name
 
 
+def launch_fork(
+    home: Path | None,
+    source: Session,
+    argv: list[str],
+    prompt: str,
+    *,
+    known_ids: list[str] | None = None,
+    launch_id: str = "",
+    expect_id: str = "",
+) -> tuple[bool, str, str | None]:
+    """``POST /v1/sessions/{key}/fork``: run ``argv`` (``fork.fork_argv``)
+    under tmux in the source's folder, tracked like ``launch_new``.
+
+    The source is never written to or stopped. Its id joins ``known_ids``
+    in the marker's exclude list, and ``fork_of`` keeps a codex resume of
+    the source (a new rollout under the same thread) out of adoption too.
+    ``expect_id`` is the new session's id when the command line set it
+    (claude ``--session-id``): adoption then waits for exactly that id.
+    Returns ``(ok, note, tmux_name)``.
+    """
+    binary = argv[0] if argv else ""
+    if not binary or not shutil.which(binary):
+        return False, f"{source.tool_name} is not installed on this machine", None
+    cwd = source.path or ""
+    if not cwd or not os.path.isdir(cwd):
+        return False, f"no such folder on this machine: {cwd}", None
+    key = (f"fork:{source.tool_name}:{int(time.time())}-{os.getpid()}-"
+           f"{secrets.token_hex(3)}")
+    name = tmux_name(key)
+    exclude = set(known_ids or [])
+    if source.session_id:
+        exclude.add(source.session_id)
+    marker = _pending_dir(home) / f"{name}.json"
+    # The marker is the reservation: written before the pane exists, and
+    # under the lock, so a second fork in this folder sees it at once.
+    with _registry_lock(home):
+        if not expect_id and fork_blocker(home, source.tool_name, cwd):
+            return False, fork_busy_note(source.tool_name), None
+        try:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(json.dumps({
+                "tmux": name,
+                "tool_name": source.tool_name,
+                "cwd": cwd,
+                "exclude": sorted(exclude),
+                "fork_of": source.session_id or "",
+                "expect_id": expect_id,
+                "launched_at": time.time(),
+                "launch_id": launch_id,
+            }))
+        except OSError:
+            pass
+    if launch_tmux(key, argv, cwd) is None:
+        marker.unlink(missing_ok=True)
+        return False, (
+            f"tmux is not available, or {binary} exited right after launch"
+        ), None
+    if prompt:
+        if not prime_pane(name, prompt):
+            return True, (
+                "forked under tmux, but the prompt could not be "
+                "delivered; attach from a terminal or retry"
+            ), name
+    elif boot_pane(name) is None:
+        # No prompt to type, but the pane must still get past a trust
+        # gate before the phone's first Enter can land on "No, exit".
+        return True, "forked under tmux; it has not finished starting", name
+    return True, "forked under tmux; the session appears on refresh", name
+
+
+# A marker this fresh holds its folder even before its pane is up.
+_RESERVE_S = 60.0
+
+
+def fork_busy_note(tool: str) -> str:
+    return (f"another {tool} session started in this folder is still "
+            f"waiting to show up; fork again once it has")
+
+
+def fork_blocker(home: Path | None, tool: str, cwd: str) -> str | None:
+    """The pending launch a new id-less fork would race, if any.
+
+    A harness that picks its own id leaves adoption only the folder and
+    the creation time to go on, so two launches waiting in one folder
+    could claim each other's transcripts. Forks of such harnesses wait
+    until the earlier one is adopted or its pane is gone. Markers that
+    name their id (claude) never block. Returns the blocker's tmux name.
+    """
+    real = os.path.realpath(cwd)
+    now = time.time()
+    try:
+        markers = list(_pending_dir(home).glob("*.json"))
+    except OSError:
+        return None
+    for path in markers:
+        try:
+            pending = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if pending.get("expect_id") or pending.get("tool_name") != tool:
+            continue
+        if os.path.realpath(str(pending.get("cwd") or "")) != real:
+            continue
+        name = str(pending.get("tmux") or "")
+        fresh = now - float(pending.get("launched_at") or 0) < _RESERVE_S
+        if fresh or tmux_alive(name):
+            return name
+    return None
+
+
 def prime_pane(name: str, prompt: str, *, timeout: float = 30.0) -> bool:
     """Boot the TUI past its trust dialog, then type ``prompt``.
 
@@ -1081,10 +1211,19 @@ def adopt_pending(
         return []
     adopted: list[str] = []
     now = time.time()
+    loaded: list[tuple[Path, dict]] = []
     for marker in markers:
         try:
-            pending = json.loads(marker.read_text(encoding="utf-8"))
+            loaded.append(
+                (marker, json.loads(marker.read_text(encoding="utf-8"))))
         except (OSError, ValueError):
+            marker.unlink(missing_ok=True)
+    # Ids a fork named up front belong to that fork alone: no other
+    # same-folder launch may claim them by creation time.
+    claimed = {str(p.get("expect_id")) for _m, p in loaded
+               if isinstance(p, dict) and p.get("expect_id")}
+    for marker, pending in loaded:
+        if not isinstance(pending, dict):
             marker.unlink(missing_ok=True)
             continue
         # Give up on markers older than a day: whatever launched either
@@ -1092,7 +1231,7 @@ def adopt_pending(
         if now - float(pending.get("launched_at") or 0) > 86400:
             marker.unlink(missing_ok=True)
             continue
-        hit = _pending_match(home, pending, rows)
+        hit = _pending_match(home, pending, rows, claimed)
         if hit is None:
             continue
         key = hit
@@ -1110,8 +1249,22 @@ def adopt_pending(
     return adopted
 
 
+def _same_thread(tool: str, session_id: str, other: str) -> bool:
+    """Whether two session ids are one conversation: a codex resume
+    writes a new rollout under the same thread uuid."""
+    if session_id == other:
+        return True
+    if tool != "codex":
+        return False
+    from quiver.sessions.parsers import codex_thread_id
+
+    thread = codex_thread_id(session_id)
+    return bool(thread) and thread == codex_thread_id(other)
+
+
 def _pending_match(
-    home: Path | None, pending: dict, rows: list[tuple[str, Session, str]]
+    home: Path | None, pending: dict, rows: list[tuple[str, Session, str]],
+    claimed: set[str] = frozenset(),
 ) -> str | None:
     from quiver.remote import tail
 
@@ -1122,13 +1275,26 @@ def _pending_match(
     # one the catalog did NOT have, so these never qualify regardless of
     # what the filesystem timestamps say.
     exclude = {str(s) for s in pending.get("exclude") or ()}
+    # A fork whose command line named the new id: that id and no other.
+    expect = str(pending.get("expect_id") or "")
+    fork_of = str(pending.get("fork_of") or "")
     candidates: list[tuple[str, float]] = []
+    # A kept session still runs in its own tmux pane: binding its key to
+    # this launch's (or fork's) pane would leave two panes on one key and
+    # strand the kept one.
+    owned = set(_load_registry(home)) | set(_load_kept(home))
     for key, session, _status in rows:
-        if key in _load_registry(home):
+        if key in owned:
             continue
         if session.tool_name != tool:
             continue
-        if session.session_id in exclude:
+        if expect:
+            if session.session_id == expect:
+                candidates.append((key, launched))
+            continue
+        if session.session_id in exclude or session.session_id in claimed:
+            continue
+        if fork_of and _same_thread(tool, session.session_id, fork_of):
             continue
         if os.path.realpath(session.path or "") != cwd:
             continue
