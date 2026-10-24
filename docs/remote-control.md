@@ -171,10 +171,14 @@ immediate wake but never poll faster than an active session already
 does.
 
 Status between catalog refreshes: a session that is hot, or whose
-transcript grew since its last probe, has its status re-probed by the
-tail thread at most once a second (`STATUS_PROBE_S`). The probe is
-`sessions/status.py` on that one session, through its status tail
-cache, with the session's last-activity time raised to the
+source moved since its last probe, has its status re-probed by the tail
+thread at most once a second (`STATUS_PROBE_S`). "Moved" means the poll
+advanced the cursor, message or not, so a turn that ends on a record
+with nothing to show (Codex `task_complete`, Claude `turn_duration`)
+still gets its probe. Every session owed a probe in one tick goes
+through a single `sessions/status.py` call, so the live-pid registry,
+the bg-job table and the status tail cache are read once per tick, not
+once per session. Each session is probed with the session's last-activity time raised to the
 transcript's mtime (the catalog's copy can be minutes old, and a
 mid-turn transcript older than `ACTIVE_WINDOW_S` reads as
 interrupted). A change emits `session.status` and `notify` at once, so
@@ -188,14 +192,17 @@ it was taken and the newer read wins:
 | Who | Time of the read | Where the rule lives |
 |---|---|---|
 | Catalog refresh | when the refresh started (`Catalog.tail_snapshot`) | `TailManager.sync(rows, as_of=...)` skips keys probed later |
-| Tail probe | the tick's clock | `Catalog.note_status` patches the row; a refresh that started earlier keeps it |
+| Tail probe | just before the probe reads, not the tick's start | `Catalog.note_status` patches the row; a refresh that started earlier keeps it |
 
 So a refresh that read "done" just before the send landed cannot flip
 the phone back to done, and the catalog's own rows (the session list,
 the inbox, a satellite's catalog push) agree with the events. A tie
 goes to the catalog. `TailManager` writes `statuses` and emits status
 events only under `_status_lock`, since the catalog thread (`sync`) and
-the tail thread (probes) both write them. Satellites probe the same way
+the tail thread (probes) both write them. The probe reads outside that
+lock and applies a result only if the session's tailer is still the
+same object, and `sync` drops tailers under the lock, so a session the
+catalog removed mid-read never comes back as a status event. Satellites probe the same way
 and their catalog push carries the result.
 
 Before a message leaves the hub, `injected.py` removes what a harness

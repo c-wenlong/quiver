@@ -964,6 +964,10 @@ class Tailer:
             source.start_near_end()
         self.next_poll_at = 0.0
         self._pending_save = False
+        # Whether the last poll moved the source (bytes, rows or
+        # fingerprints read), with or without a message to show: a
+        # turn-ending record that decodes to nothing still moves it.
+        self.moved = False
         # What the cursor file holds now. A poll that leaves the source
         # here writes nothing, so the 0.25 s hot cadence and the 1 s
         # active one cost a read, not a file write, while nothing moves.
@@ -1005,11 +1009,14 @@ class Tailer:
         (duplicates, recoverable) instead of skipping messages forever.
         """
         self.next_poll_at = now + self.interval(active, hot)
+        before = self.source.state()
         out = self.source.poll()
+        after = self.source.state()
+        self.moved = bool(out) or after != before
         # A source can move without emitting (records that decode to
         # nothing, an opencode row still streaming), so compare the
         # state rather than trusting ``out`` alone.
-        if out or self.source.state() != self._saved:
+        if out or after != self._saved:
             self._pending_save = True
         return out
 
@@ -1036,6 +1043,7 @@ class TailManager:
         max_sessions: int = TAIL_MAX_SESSIONS,
         status_of: Callable[[list[Session]], list[str]] | None = None,
         on_status: Callable[[str, str, float], None] | None = None,
+        read_clock: Callable[[], float] = time.time,
     ) -> None:
         self.emit = emit
         self.machine_id = machine_id
@@ -1074,6 +1082,10 @@ class TailManager:
         # belong to the tail thread alone.
         self._status_of = status_of
         self._on_status = on_status
+        # Stamps a probe's read. The tick clock only schedules: a slow
+        # tick would otherwise date a fresh read before a catalog
+        # refresh that it actually followed.
+        self._read_clock = read_clock
         self._status_lock = threading.RLock()
         self._status_at: dict[str, float] = {}
         self._probe_due: set[str] = set()
@@ -1188,8 +1200,10 @@ class TailManager:
         wanted_keys = {key for key, _s, _st in wanted}
         for key in list(self.tailers):
             if key not in by_key:
-                self.tailers.pop(key, None)
+                # Under the lock: a probe applies only while its tailer
+                # is still the registered one, checked under this lock.
                 with self._status_lock:
+                    self.tailers.pop(key, None)
                     self.statuses.pop(key, None)
                     self._status_at.pop(key, None)
                 self._probe_due.discard(key)
@@ -1277,35 +1291,52 @@ class TailManager:
             return session
         return dataclasses.replace(session, timestamp=ts)
 
-    def _maybe_probe(self, key: str, tailer: "Tailer", now: float,
-                     hot: bool) -> None:
-        """Re-probe one session's status when it is hot or its
-        transcript grew, at most every STATUS_PROBE_S."""
+    def _wants_probe(self, key: str, now: float, hot: bool) -> bool:
+        """Whether ``key`` is owed a status probe this tick: hot or its
+        source moved since the last one, at most every STATUS_PROBE_S."""
         if self._status_of is None:
-            return
+            return False
         if not hot and key not in self._probe_due:
-            return
+            return False
         if now - self._probed_at.get(key, float("-inf")) < STATUS_PROBE_S:
-            return
+            return False
         self._probed_at[key] = now
         self._probe_due.discard(key)
+        return True
+
+    def _probe(self, due: list[tuple[str, "Tailer"]]) -> None:
+        """One ``status_of`` call for every session owed a probe.
+
+        ``session_statuses`` reads the live-pid registry, the bg-job
+        table and the status tail cache once per call, so a batch costs
+        about what one session does. A result applies only if its tailer
+        is still the registered one: ``sync`` may drop (or replace) the
+        session while the read runs, and a removed session must not
+        come back as a status event.
+        """
+        if not due:
+            return
+        sessions = [self._probe_session(key, tailer) for key, tailer in due]
+        read_at = self._read_clock()
         try:
-            got = self._status_of([self._probe_session(key, tailer)])
+            got = self._status_of(sessions)
         except Exception:
             return
-        if not got:
-            return
-        status = str(got[0] or "")
-        with self._status_lock:
-            # The catalog hears every accepted probe, changed or not, so
-            # a refresh that read an older state cannot leave its row
-            # disagreeing with what the phone was last told.
-            if self._take_status(key, status, now, announce_first=True) \
-                    and self._on_status is not None:
-                try:
-                    self._on_status(key, status, now)
-                except Exception:
-                    pass
+        for (key, tailer), status in zip(due, got or []):
+            status = str(status or "")
+            with self._status_lock:
+                if self.tailers.get(key) is not tailer:
+                    continue
+                # The catalog hears every accepted probe, changed or
+                # not, so a refresh that read an older state cannot
+                # leave its row disagreeing with the phone.
+                if self._take_status(key, status, read_at,
+                                     announce_first=True) \
+                        and self._on_status is not None:
+                    try:
+                        self._on_status(key, status, read_at)
+                    except Exception:
+                        pass
 
     def _emit_status(self, key: str, status: str) -> None:
         self.emit(
@@ -1339,11 +1370,13 @@ class TailManager:
         now = time.time() if now is None else now
         woken, hot_until = self._take_wakes(now)
         n = 0
+        probe_due: list[tuple[str, Tailer]] = []
         for key, tailer in list(self.tailers.items()):
             if key not in woken and not tailer.due(now):
-                # Not due for a read, but a transcript that grew since
-                # its last probe still gets one once the gate opens.
-                self._maybe_probe(key, tailer, now, key in hot_until)
+                # Not due for a read, but a source that moved since its
+                # last probe still gets one once the gate opens.
+                if self._wants_probe(key, now, key in hot_until):
+                    probe_due.append((key, tailer))
                 continue
             try:
                 messages = tailer.poll(
@@ -1363,9 +1396,12 @@ class TailManager:
                 n += 1
             if messages:
                 self.last_append[key] = now
+            if tailer.moved:
                 self._probe_due.add(key)
             tailer.commit_cursor()
-            self._maybe_probe(key, tailer, now, key in hot_until)
+            if self._wants_probe(key, now, key in hot_until):
+                probe_due.append((key, tailer))
+        self._probe(probe_due)
         self._poll_approvals(now)
         return n
 
