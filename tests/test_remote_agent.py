@@ -394,6 +394,27 @@ class TestAgentState(unittest.TestCase):
         self.assertEqual(args[1]["text"], "hello")
         self.assertEqual(args[1]["mode"], "steer")
 
+    def test_execute_wakes_the_local_tailer(self):
+        a = self._agent()
+        a.catalog.session_for = MagicMock(return_value=_session())
+        fake = MagicMock()
+        fake.send.return_value = inject.InjectResult(True, "ok")
+        fake.approval.return_value = inject.InjectResult(True, "ok")
+        with patch.object(inject, "injector_for", return_value=fake), \
+             patch.object(supervise, "meta_for", return_value={}):
+            a._execute("claude:s1", "message", {"text": "hi"})
+            a._execute("claude:s2", "approval",
+                       {"request_id": "r", "decision": "allow"})
+        with patch.object(supervise, "attach",
+                          return_value=(True, "attached")):
+            a._execute("claude:s3", "attach", {"mode": "tmux"})
+        with patch.object(supervise, "attach",
+                          return_value=(False, "busy")):
+            a._execute("claude:s4", "attach", {"mode": "tmux"})
+        for key in ("claude:s1", "claude:s2", "claude:s3"):
+            self.assertTrue(a.tail_manager.is_hot(key), key)
+        self.assertFalse(a.tail_manager.is_hot("claude:s4"))
+
     def test_execute_attach_calls_supervise(self):
         a = self._agent()
         a.catalog.session_for = MagicMock(return_value=_session())
@@ -1171,6 +1192,30 @@ class TestAgentRouteValidation(unittest.TestCase):
             "POST", f"/v1/sessions/{key}/nonsense", {},
             headers=self.srv.auth)
         self.assertEqual(status, 404)
+
+    def test_satellite_queue_tray_is_empty_and_actions_409(self):
+        # A satellite delivers or refuses on arrival, so nothing waits
+        # on the hub: the list is empty and an action says why.
+        self.srv.request(
+            "POST", "/v1/agent/catalog",
+            {"machine_id": self.mid, "rows": [
+                {"key": "claude:r1", "ownership": "attached",
+                 "status": "active"}]},
+            headers=self.srv.auth)
+        self.srv.state.catalog.refresh()
+        key = "claude%3Ar1%40sat-m1"
+        status, data = self.srv.request(
+            "GET", f"/v1/sessions/{key}/queue", headers=self.srv.auth)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data), {"sends": []})
+        status, data = self.srv.request(
+            "POST", f"/v1/sessions/{key}/queue",
+            {"client_id": "q-1", "op": "cancel"}, headers=self.srv.auth)
+        self.assertEqual(status, 409)
+        self.assertEqual(
+            json.loads(data)["error"]["code"], "queue_unsupported")
+        replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+        self.assertEqual(replay, [])
 
     def test_forward_control_on_observed_is_409(self):
         self.srv.request(
