@@ -117,19 +117,26 @@ class TestTmuxHelpers(unittest.TestCase):
             self.assertFalse(supervise.tmux_alive("qv-x"))
 
     def test_launch_tmux_argv(self):
+        # The harness is exec'd by absolute path with our PATH — no shell
+        # in between to rebuild PATH from zsh startup files.
         with patch.object(supervise, "tmux_bin", return_value="/usr/bin/tmux"), \
-             patch.object(supervise, "tmux_alive", return_value=False), \
+             patch.object(supervise, "tmux_alive", side_effect=[False, True]), \
+             patch.object(supervise.shutil, "which", return_value="/opt/bin/claude"), \
+             patch.object(supervise.time, "sleep"), \
+             patch.dict(supervise.os.environ, {"PATH": "/opt/bin:/usr/bin"}), \
              patch.object(supervise, "_tmux", return_value=self._cp()) as t:
             name = supervise.launch_tmux("claude:s1", ["claude", "--resume", "s1"], "/tmp")
         self.assertIsNotNone(name)
-        args = list(t.call_args[0])
-        self.assertEqual(args[:4], ["new-session", "-d", "-s", name])
-        self.assertIn("--resume s1", args[-1])
-        self.assertIn("claude", args[-1])
+        self.assertEqual(list(t.call_args[0]), [
+            "new-session", "-d", "-s", name,
+            "-e", "PATH=/opt/bin:/usr/bin", "-c", "/tmp",
+            "/opt/bin/claude", "--resume", "s1",
+        ])
 
     def test_launch_tmux_edges(self):
         # No tmux → None. Existing pane → reuse its name. Failed
-        # new-session → None. _tmux blowing up → None.
+        # new-session → None. _tmux blowing up → None. Pane gone by
+        # the settle check → None.
         with patch.object(supervise, "tmux_bin", return_value=None):
             self.assertIsNone(supervise.launch_tmux("k", ["claude"], "/tmp"))
         with patch.object(supervise, "tmux_bin", return_value="/x/tmux"), \
@@ -150,13 +157,13 @@ class TestTmuxHelpers(unittest.TestCase):
             self.assertIsNone(
                 supervise.launch_tmux("claude:s1", ["claude"], "/tmp")
             )
-
-    def test_shquote_quotes_specials(self):
-        self.assertEqual(supervise._shquote("plain-1.x"), "plain-1.x")
-        self.assertEqual(
-            supervise._shquote("it's a path"), "'it'\\''s a path'"
-        )
-        self.assertEqual(supervise._shquote(""), "''")
+        with patch.object(supervise, "tmux_bin", return_value="/x/tmux"), \
+             patch.object(supervise, "tmux_alive", return_value=False), \
+             patch.object(supervise.time, "sleep"), \
+             patch.object(supervise, "_tmux", return_value=self._cp()):
+            self.assertIsNone(
+                supervise.launch_tmux("claude:s1", ["claude"], "/tmp")
+            )
 
 
 def _typing_pane(pane):
@@ -770,6 +777,30 @@ class TestAttachMtime(unittest.TestCase):
         meta = supervise.meta_for(self.home, self.key)
         self.assertEqual(meta["tmux"], "qv-new")
         self.assertEqual(meta["mode"], "tmux")
+
+    def test_tmux_handoff_spares_the_replacement(self):
+        # The replacement runs the same `claude --resume <id>` argv, so
+        # only pids listed before launch may be stopped.
+        old = Path(tempfile.mkdtemp()) / "old.jsonl"
+        old.write_text("{}\n")
+        import os
+        stale = time.time() - 3600
+        os.utime(old, (stale, stale))
+        live = [111]
+        with patch("quiver.remote.tail.resolve_jsonl_path",
+                   return_value=old), \
+             patch.object(supervise, "_local_writer_pids",
+                          side_effect=lambda _s: list(live)), \
+             patch.object(supervise, "launch_tmux",
+                          side_effect=lambda *a, **k: live.append(222)
+                          or "qv-new"), \
+             patch.object(supervise.os, "kill") as kill:
+            ok, _ = supervise.attach(
+                self.home, self.key, self.session,
+                last_append_at=None, status="done", mode="tmux",
+            )
+        self.assertTrue(ok)
+        kill.assert_called_once_with(111, supervise.signal.SIGTERM)
 
 
 class TestAttachModeGates(unittest.TestCase):
