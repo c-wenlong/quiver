@@ -190,6 +190,13 @@ struct HubClient: Sendable {
         _ = try await raw(request("POST", "/v1/sessions/\(Self.encodeKey(key))/queue", body: body))
     }
 
+    /// Paths under the session's working folder matching `query`, for
+    /// the prompt box's `@` menu. Hub-machine sessions only.
+    func files(_ key: String, query: String, limit: Int = 50) async throws -> FilesResponse {
+        try await send(request("GET", "/v1/sessions/\(Self.encodeKey(key))/files",
+                               query: ["q": query, "limit": "\(limit)"]))
+    }
+
     /// Returns true when the hub queued it for a satellite (202), so the
     /// outcome arrives later as `command.result` or `session.ownership`.
     @discardableResult

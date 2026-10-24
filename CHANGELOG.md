@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Doctor, and the Harnesses page's editor, Detect and Add.**
+  `#/doctor` shows the `swe doctor` report as the Mac app's Settings ›
+  Doctor does: each finding with its fix command, a copy button, and Run
+  where swe can make the fix itself (`swe setup --apply`, `swe init`,
+  `swe harness discover --apply`). Run asks first, saying what it will do
+  on which machine; the hub runs the fix the finding names, never a
+  command sent from the browser. On Harnesses, a click on a row opens the
+  app's editor (name, command, description, version, aliases, tags,
+  notes; an alias another harness uses is refused), Detect scans the hub
+  for coding CLIs and registers the ticked ones, and Add harness adds a
+  custom one without overwriting anything.
+
 - **Web app: Settings, with remote pairing.** The Settings page from the
   Mac app, for the hub machine. Integrations › Remote shows the hub,
   the paired devices with "This device" marked and a Revoke that asks
@@ -22,6 +34,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Set up this machine" and Doctor link to their pages. Rows that set
   up the Mac app itself (Dock, login item, terminal, notifications,
   updates, Keychain services) are greyed out as "Mac app only".
+
+- **Remote iPhone app: type @ to mention a file.** Typing `@` in the
+  prompt box opens a list of files and folders from the session's
+  working folder just above it, filtered as you type. Tapping a file
+  puts `@path ` in the message; tapping a folder puts `@folder/` and
+  lists what's inside. A space, a tap in the transcript, or deleting the
+  `@` closes it. Sessions on a satellite say file search isn't available
+  for that machine yet. A path with spaces goes in quoted,
+  `@"My Documents/notes.txt"`, as Claude Code writes it. On iOS 17 the
+  menu follows the end of the text rather than the caret.
 
 - **Remote iPhone app: swipe a session to attach, detach, pin, rename or
   fork it.** Swipe right on a Sessions row to attach it, or to detach
@@ -159,6 +181,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and skipped; the pages around it still load.
 
 ### Added
+
+- **Web app: Sync on the MCP servers page.** A server's sheet copies it
+  from one harness (or the Quiver hub) to the harnesses you switch on, as
+  the Mac app's Sync does: Preview shows, per harness, the file it writes,
+  the command line it gets and the env var and header names it gains,
+  loses or changes (values never leave the hub), and Sync asks inline,
+  naming every file, before writing exactly the previewed plan. It runs
+  `swe mcp sync`'s own code in process, refuses with 409 if any config
+  changed since the preview, and refuses a hub server whose `${NAME}` has
+  no value rather than writing it literally.
 
 - **Web app: Fix and Fix all on the Plugins page's Health tab.** Each
   finding swe can fix has a Fix button that opens an inline confirm with

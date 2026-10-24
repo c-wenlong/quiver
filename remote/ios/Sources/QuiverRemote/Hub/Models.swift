@@ -342,3 +342,22 @@ struct SearchResponse: Decodable {
     let results: [SearchResult]
     let indexed: Bool?
 }
+
+/// One path from `GET /v1/sessions/{id}/files`, relative to the
+/// session's working folder.
+struct FileEntry: Codable, Hashable {
+    let path: String
+    var kind: String? = nil
+    var mtime: Double? = nil
+
+    var isDir: Bool { kind == "dir" }
+}
+
+/// `GET /v1/sessions/{id}/files?q=&limit=`: the prompt box's `@` menu.
+struct FilesResponse: Codable {
+    var cwd: String? = nil
+    var query: String? = nil
+    var source: String? = nil
+    var truncated: Bool? = nil
+    let entries: [FileEntry]
+}
