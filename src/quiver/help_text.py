@@ -679,6 +679,15 @@ to use their own login state and environment."""
                                             Allow/Deny buttons posting back over
                                             the tailnet. {c('cyan', '--off')} disables.
 
+  {c('cyan', 'swe remote ssh [--on|--off]')}            The phone's SSH console, for when
+                                            the hub itself is down. It dials
+                                            this machine's sshd over the
+                                            tailnet, not the hub. {c('cyan', '--on')}
+                                            writes each paired phone's key into
+                                            ~/.ssh/authorized_keys (one tagged
+                                            line per device; revoking a device
+                                            removes it), {c('cyan', '--off')} removes them.
+
   State lives under {c('dim', '~/.quiver/data/remote/')}: device credentials in
   devices.json (0600), per-session event journals and transcript cursors."""
     ),

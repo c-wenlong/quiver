@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote: SSH keys for the phone's console.** A paired phone can
+  post the public half of an SSH key (`POST /v1/ssh/key`), and
+  `GET /v1/ssh` tells it the login user, port 22, whether sshd answers,
+  and this machine's ed25519 and ecdsa host keys to pin. With
+  `swe remote ssh --on` the hub writes one line per device into
+  `~/.ssh/authorized_keys`, tagged `quiver-remote:<device id>` and
+  limited to no agent or X11 forwarding; every other line stays as it
+  was. Revoking a device (CLI or web app) removes its line, and
+  `--off` removes them all. Off by default, since it changes who can
+  log in. The console dials sshd directly, so it still works when the
+  hub is down.
+
 - **Remote iPhone app: paired with more than one hub.** Pairing the
   app with another machine, such as a home server's hub, used to
   replace the hub it was paired with. Now the new hub joins a list: the

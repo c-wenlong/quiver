@@ -260,6 +260,24 @@ def touch_device(home: Path | str | None, device_id: str) -> None:
         _save_devices(home_path, devices)
 
 
+def update_device(home: Path | str | None, device_id: str, **fields) -> bool:
+    """Set fields on a live device's row; False when it is unknown or
+    revoked. A None value removes the field."""
+    home_path = Path(home) if home is not None else None
+    with _state_lock(home_path):
+        devices = load_devices(home_path)
+        row = devices.get(device_id)
+        if row is None or row.get("revoked_at"):
+            return False
+        for name, value in fields.items():
+            if value is None:
+                row.pop(name, None)
+            else:
+                row[name] = value
+        _save_devices(home_path, devices)
+        return True
+
+
 def revoke_device(home: Path | str | None, device_id: str) -> bool:
     home_path = Path(home) if home is not None else None
     with _state_lock(home_path):
@@ -269,7 +287,14 @@ def revoke_device(home: Path | str | None, device_id: str) -> bool:
             return False
         row["revoked_at"] = time.time()
         _save_devices(home_path, devices)
-        return True
+    # A lost phone loses its SSH login too. After the lock, since sync
+    # takes its own. An OSError from it reaches the caller with the
+    # revoke already saved: the hub refuses the credential either way,
+    # but the person revoking must hear that the key line is still there.
+    from quiver.remote import sshkeys
+
+    sshkeys.sync(home_path)
+    return True
 
 
 # -- tailnet pair requests --------------------------------------------------
