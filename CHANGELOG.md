@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe session index` reads Pi, Cursor, Qoder, CodeBuddy and OpenCode.**
+  swe's index writer now decodes these the way the Quiver app does, so a
+  Linux hub's search matches what was said in them too. Cursor chats take
+  the title, folder and times their transcript lacks from the chat's
+  `meta.json`; OpenCode sessions (1.x and 2.x tables) index under
+  `<opencode.db>#<id>`. Both writers produce the same rows for each file,
+  so on a Mac neither re-reads what the other already read.
+
 - **Session search reads Devin CLI sessions.** Both index writers (the
   Quiver app and `swe session index`) now read every Devin session from
   `~/.local/share/devin/cli/sessions.db`, along the chain that holds each
