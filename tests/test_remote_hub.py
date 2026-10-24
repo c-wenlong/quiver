@@ -193,6 +193,27 @@ class TestHubWriteRoutes(unittest.TestCase):
         row = self.srv.state.catalog.row_for("claude:s1")
         self.assertEqual(row["ownership"], "attached")
 
+
+    def test_unhashable_body_fields_answer_422(self):
+        # These used to raise TypeError in the handler, which dropped
+        # the connection with no response at all.
+        for action, body in (
+            ("message", {"text": "hi", "mode": []}),
+            ("message", {"text": "hi", "mode": {}}),
+            ("approval", {"request_id": "r1", "decision": []}),
+            ("approval", {"request_id": "r1", "decision": {}}),
+            ("control", {"op": []}),
+            ("control", {"op": {}}),
+        ):
+            with self.subTest(action=action, body=body):
+                status, data = self.srv.request(
+                    "POST", f"/v1/sessions/claude:s1/{action}",
+                    body=body, headers=self.hdr,
+                )
+                self.assertEqual(status, 422, data)
+                self.assertEqual(
+                    json.loads(data)["error"]["code"], "bad_command"
+                )
     def test_message_success(self):
         from quiver.remote import inject
         q = self.srv.state.bus.subscribe("claude:s1")
@@ -1359,6 +1380,390 @@ class TestSendQueue(unittest.TestCase):
         self.assertFalse(bad["data"]["ok"])
         self.assertIn("boom", bad["data"]["note"])
         self.assertTrue(good["data"]["ok"])
+
+
+class TestQueuedSends(unittest.TestCase):
+    """GET/POST /v1/sessions/{key}/queue: the phone's queued-send tray."""
+
+    def setUp(self):
+        self.srv = _AttachedServer()
+        self.addCleanup(self.srv.stop)
+        cred = self.srv.pair()
+        self.hdr = {"Authorization": f"Bearer {cred['credential']}"}
+        self.key = "claude:s1"
+        self.live = ["active"]
+        self.srv.state.status_of = lambda sessions: list(self.live)
+        from quiver.remote import hub as hub_mod
+        from quiver.remote import inject
+        self.fake = MagicMock()
+        self.fake.send.return_value = inject.InjectResult(True, "sent")
+        for p in (
+            patch.object(inject, "injector_for", return_value=self.fake),
+            patch.object(hub_mod, "QUEUE_POLL_S", 0.05),
+        ):
+            p.start()
+            self.addCleanup(p.stop)
+        self.events = self.srv.state.bus.subscribe(self.key)
+
+    def _send(self, text, cid, mode="queue", **extra):
+        return self.srv.request(
+            "POST", f"/v1/sessions/{self.key}/message",
+            body={"text": text, "mode": mode, "client_id": cid, **extra},
+            headers=self.hdr,
+        )
+
+    def _act(self, cid, op):
+        status, data = self.srv.request(
+            "POST", f"/v1/sessions/{self.key}/queue",
+            body={"client_id": cid, "op": op}, headers=self.hdr,
+        )
+        return status, json.loads(data)
+
+    def _list(self):
+        status, data = self.srv.request(
+            "GET", f"/v1/sessions/{self.key}/queue", headers=self.hdr,
+        )
+        self.assertEqual(status, 200, data)
+        return json.loads(data)["sends"]
+
+    def _result(self):
+        ev = self.events.get(timeout=5)
+        self.assertEqual(ev["type"], "command.result")
+        return ev["data"]
+
+    def _no_more_results(self):
+        with self.assertRaises(queue.Empty):
+            self.events.get(timeout=0.4)
+
+    def test_list_shows_waiting_send_then_drops_it_once_delivered(self):
+        from quiver.remote import attachments
+        staged, err = attachments.stage(
+            self.srv.home, self.key, "shot.png", b"\x89PNG\r\n\x1a\n"
+        )
+        self.assertIsNotNone(staged, err)
+        before = time.time()
+        status, data = self._send(
+            "after this turn", "q-1", attachments=[staged["ref"]]
+        )
+        self.assertEqual(status, 202, data)
+        self.assertTrue(json.loads(data)["waiting"])
+        sends = self._list()
+        self.assertEqual(len(sends), 1)
+        self.assertEqual(sends[0]["client_id"], "q-1")
+        self.assertEqual(sends[0]["text"], "after this turn")
+        # Refs as the phone sent them, never the staged file path.
+        self.assertEqual(sends[0]["attachments"], [staged["ref"]])
+        self.assertGreaterEqual(sends[0]["queued_at"], before)
+        self.live = ["done"]
+        self.assertTrue(self._result()["ok"])
+        self.assertEqual(self._list(), [])
+        self.fake.send.assert_called_once()
+
+    def test_list_keeps_fifo_order_and_skips_sends_without_client_id(self):
+        self.assertEqual(self._send("one", "q-1")[0], 202)
+        status, _ = self.srv.request(
+            "POST", f"/v1/sessions/{self.key}/message",
+            body={"text": "anonymous"}, headers=self.hdr,
+        )
+        self.assertEqual(status, 202)
+        self.assertEqual(self._send("two", "q-2")[0], 202)
+        self.assertEqual(
+            [s["client_id"] for s in self._list()], ["q-1", "q-2"]
+        )
+
+    def test_list_unknown_session_404_and_needs_auth(self):
+        status, _ = self.srv.request(
+            "GET", "/v1/sessions/claude:nope/queue", headers=self.hdr,
+        )
+        self.assertEqual(status, 404)
+        status, _ = self.srv.request(
+            "GET", f"/v1/sessions/{self.key}/queue",
+        )
+        self.assertEqual(status, 401)
+        status, _ = self.srv.request(
+            "POST", f"/v1/sessions/{self.key}/queue",
+            body={"client_id": "q-1", "op": "cancel"},
+        )
+        self.assertEqual(status, 401)
+
+    def test_steer_sends_a_waiting_send_while_session_is_active(self):
+        self.assertEqual(self._send("now please", "q-1")[0], 202)
+        status, body = self._act("q-1", "steer")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body, {"ok": True, "client_id": "q-1",
+                                "op": "steer"})
+        result = self._result()
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["client_id"], "q-1")
+        self.assertNotIn("cancelled", result)
+        self.fake.send.assert_called_once()
+        _session, cmd, live = self.fake.send.call_args[0]
+        self.assertEqual(cmd["mode"], "steer")
+        self.assertEqual(cmd["text"], "now please")
+        self.assertEqual(live, "active")
+        self.assertEqual(self._list(), [])
+        # The parked queue job must not send it a second time on idle.
+        self.live = ["done"]
+        self._no_more_results()
+        self.fake.send.assert_called_once()
+
+    def test_steer_queues_behind_earlier_steers(self):
+        from quiver.remote import inject
+        first_in = threading.Event()
+        release = threading.Event()
+
+        def send(session, cmd, status):
+            if cmd["text"] == "s0":
+                first_in.set()
+                release.wait(5)
+            return inject.InjectResult(True, "sent")
+
+        self.fake.send.side_effect = send
+        self.assertEqual(self._send("s0", "s-0", mode="steer")[0], 202)
+        self.assertTrue(first_in.wait(2))
+        self.assertEqual(self._send("q1", "q-1")[0], 202)
+        self.assertEqual(self._act("q-1", "steer")[0], 200)
+        self.assertEqual(self._send("s2", "s-2", mode="steer")[0], 202)
+        release.set()
+        got = [self._result()["client_id"] for _ in range(3)]
+        self.assertEqual(got, ["s-0", "q-1", "s-2"])
+        self.assertEqual(
+            [c[0][1]["text"] for c in self.fake.send.call_args_list],
+            ["s0", "q1", "s2"],
+        )
+
+    def test_steer_degrades_like_a_normal_steer(self):
+        from quiver.remote import inject
+        self.fake.send.return_value = inject.InjectResult(
+            True, "sent (steer queued: headless runs are atomic)",
+            degraded=True,
+        )
+        self.assertEqual(self._send("hi", "q-1")[0], 202)
+        self.assertEqual(self._act("q-1", "steer")[0], 200)
+        result = self._result()
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["degraded"])
+        self.assertIn("steer queued", result["note"])
+
+    def test_cancel_removes_send_and_reports_it(self):
+        self.assertEqual(self._send("never mind", "q-1")[0], 202)
+        self.assertEqual(self._send("keep me", "q-2")[0], 202)
+        status, body = self._act("q-1", "cancel")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["op"], "cancel")
+        result = self._result()
+        self.assertEqual(result["client_id"], "q-1")
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["cancelled"])
+        self.assertEqual(result["note"], "removed before sending")
+        self.assertEqual(result["op"], "message")
+        self.assertEqual(
+            [s["client_id"] for s in self._list()], ["q-2"]
+        )
+        # The journal keeps it, so a reopened app sees the removal.
+        evs, _ = self.srv.state.journal.read_since(self.key, 0)
+        self.assertTrue(evs[-1]["data"].get("cancelled"))
+        self.live = ["done"]
+        kept = self._result()
+        self.assertEqual(kept["client_id"], "q-2")
+        self.assertTrue(kept["ok"])
+        self.assertEqual(
+            [c[0][1]["text"] for c in self.fake.send.call_args_list],
+            ["keep me"],
+        )
+
+    def test_unknown_and_finished_ids_fail_cleanly(self):
+        status, body = self._act("nope", "cancel")
+        self.assertEqual(status, 404)
+        self.assertEqual(body["error"]["code"], "unknown_send")
+        self.live = ["done"]
+        self.assertEqual(self._send("hi", "q-1")[0], 202)
+        self.assertTrue(self._result()["ok"])
+        for op in ("cancel", "steer"):
+            status, body = self._act("q-1", op)
+            self.assertEqual(status, 409, body)
+            self.assertEqual(body["error"]["code"], "not_waiting")
+            self.assertIn("already went out", body["error"]["message"])
+        self.fake.send.assert_called_once()
+
+    def test_acting_twice_is_409(self):
+        self.assertEqual(self._send("hi", "q-1")[0], 202)
+        self.assertEqual(self._act("q-1", "cancel")[0], 200)
+        status, body = self._act("q-1", "steer")
+        self.assertEqual(status, 409)
+        self.assertIn("already removed", body["error"]["message"])
+        self.assertEqual(self._send("hi", "q-2")[0], 202)
+        self.assertEqual(self._act("q-2", "steer")[0], 200)
+        status, body = self._act("q-2", "cancel")
+        self.assertEqual(status, 409)
+        self.assertIn("already sent now", body["error"]["message"])
+
+    def test_bad_action_bodies_422(self):
+        for body in (
+            {"client_id": "q-1", "op": "explode"},
+            {"client_id": "bad id!", "op": "cancel"},
+            {"client_id": "x" * 65, "op": "cancel"},
+            {"op": "cancel"},
+            # Unhashable values must 422, not drop the connection.
+            {"client_id": "q-1", "op": []},
+            {"client_id": "q-1", "op": {}},
+            {"client_id": ["q-1"], "op": "cancel"},
+            {"client_id": {}, "op": "cancel"},
+        ):
+            status, data = self.srv.request(
+                "POST", f"/v1/sessions/{self.key}/queue",
+                body=body, headers=self.hdr,
+            )
+            self.assertEqual(status, 422, body)
+            self.assertEqual(
+                json.loads(data)["error"]["code"], "bad_command"
+            )
+
+    def test_removed_and_steered_sends_free_their_backlog_slots(self):
+        from quiver.remote import hub as hub_mod
+        with patch.object(hub_mod, "MAX_SEND_BACKLOG", 4):
+            for i in range(4):
+                self.assertEqual(self._send(f"m{i}", f"q-{i}")[0], 202)
+            status, data = self._send("full", "q-full")
+            self.assertEqual(status, 429, data)
+            # q-0's job is parked polling; q-1..q-3 sit behind it.
+            self.assertEqual(self._act("q-1", "cancel")[0], 200)
+            self.assertEqual(self._act("q-2", "cancel")[0], 200)
+            self.assertEqual(self._act("q-3", "steer")[0], 200)
+            for _ in range(3):
+                self._result()
+            for i in range(4, 7):
+                status, data = self._send(f"m{i}", f"q-{i}")
+                self.assertEqual(status, 202, data)
+            self.assertEqual(self._send("full", "q-full")[0], 429)
+        self.assertEqual(
+            [s["client_id"] for s in self._list()],
+            ["q-0", "q-4", "q-5", "q-6"],
+        )
+
+    def test_duplicate_client_id_while_waiting_is_409(self):
+        self.assertEqual(self._send("one", "q-1")[0], 202)
+        for mode in ("queue", "steer"):
+            status, data = self._send("again", "q-1", mode=mode)
+            self.assertEqual(status, 409, data)
+            self.assertEqual(
+                json.loads(data)["error"]["code"], "duplicate_client_id"
+            )
+        self.assertEqual(len(self._list()), 1)
+
+    def test_cancel_as_job_starts_injecting_reports_once(self):
+        # The job wins the race: it has claimed the send and is inside
+        # the injector, so the cancel is refused and one result lands.
+        from quiver.remote import inject
+        in_send = threading.Event()
+        release = threading.Event()
+
+        def send(session, cmd, status):
+            in_send.set()
+            release.wait(5)
+            return inject.InjectResult(True, "sent")
+
+        self.fake.send.side_effect = send
+        self.assertEqual(self._send("hi", "q-1")[0], 202)
+        self.live = ["done"]
+        self.assertTrue(in_send.wait(2))
+        status, body = self._act("q-1", "cancel")
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"]["code"], "not_waiting")
+        release.set()
+        result = self._result()
+        self.assertTrue(result["ok"])
+        self.assertNotIn("cancelled", result)
+        self._no_more_results()
+        self.fake.send.assert_called_once()
+
+    def test_cancel_just_before_job_claims_never_sends(self):
+        # The cancel wins: the job has seen the session go idle but not
+        # yet claimed the send. It must drop it, not send it too.
+        at_final_read = threading.Event()
+        cancelled = threading.Event()
+
+        def status_of(sessions):
+            if self.live == ["done"]:
+                at_final_read.set()
+                cancelled.wait(5)
+            return list(self.live)
+
+        self.assertEqual(self._send("hi", "q-1")[0], 202)
+        self.srv.state.status_of = status_of
+        self.live = ["done"]
+        self.assertTrue(at_final_read.wait(2))
+        status, _body = self._act("q-1", "cancel")
+        self.assertEqual(status, 200)
+        cancelled.set()
+        result = self._result()
+        self.assertTrue(result["cancelled"])
+        self._no_more_results()
+        self.fake.send.assert_not_called()
+
+    def test_stop_fails_a_waiting_send_once(self):
+        self.assertEqual(self._send("hi", "q-1")[0], 202)
+        self.assertEqual(len(self._list()), 1)
+        self.srv.state.stop()
+        result = self._result()
+        self.assertEqual(result["note"], "hub restarted; message not sent")
+        self.assertNotIn("cancelled", result)
+        self._no_more_results()
+        self.fake.send.assert_not_called()
+
+
+class TestWaitingRegistry(unittest.TestCase):
+    """sendq.Waiting: a send leaves ``waiting`` exactly once."""
+
+    def test_claim_is_exclusive_under_contention(self):
+        from quiver.remote import sendq
+        for _ in range(50):
+            reg = sendq.Waiting()
+            send = sendq.QueuedSend("c1", "hi", [], {})
+            self.assertTrue(reg.add("k", send))
+            barrier = threading.Barrier(3)
+            wins = []
+
+            def by_job():
+                barrier.wait()
+                if reg.claim("k", send, "sending"):
+                    wins.append("job")
+
+            def by_phone(outcome):
+                barrier.wait()
+                got, _why = reg.take("k", "c1", outcome)
+                if got is not None:
+                    wins.append(outcome)
+
+            threads = [
+                threading.Thread(target=by_job),
+                threading.Thread(target=by_phone, args=("removed",)),
+                threading.Thread(target=by_phone, args=("steered",)),
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(5)
+            self.assertEqual(len(wins), 1, wins)
+            self.assertEqual(send.state, {"job": "sending"}.get(
+                wins[0], wins[0]))
+            self.assertEqual(reg.list("k"), [])
+            self.assertTrue(send.wake.is_set())
+            self.assertEqual(reg.take("k", "c1", "removed")[1], send.state)
+
+    def test_gone_memory_is_bounded_and_reuse_clears_it(self):
+        from quiver.remote import sendq
+        reg = sendq.Waiting()
+        with patch.object(sendq, "GONE_MEMORY", 3):
+            for i in range(5):
+                s = sendq.QueuedSend(f"c{i}", "x", [], {})
+                reg.add("k", s)
+                reg.claim("k", s, "sending")
+            self.assertEqual(reg.take("k", "c0", "removed")[1], "unknown")
+            self.assertEqual(reg.take("k", "c4", "removed")[1], "sending")
+        again = sendq.QueuedSend("c4", "y", [], {})
+        self.assertTrue(reg.add("k", again))
+        self.assertIs(reg.take("k", "c4", "removed")[0], again)
 
 
 _PHONE = {

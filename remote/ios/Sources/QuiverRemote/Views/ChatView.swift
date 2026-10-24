@@ -801,6 +801,46 @@ private struct AttachCard: View {
     }
 }
 
+/// Beside the prompt box: send what's typed, or, with nothing typed while
+/// the agent works, a red stop that interrupts the turn.
+struct SendOrStopButton: View {
+    let action: ChatModel.ComposerAction
+    var onSend: () -> Void = {}
+    var onStop: () -> Void = {}
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The icons swap with a small scale, or a plain fade under Reduce Motion.
+    private var swap: AnyTransition { reduceMotion ? .opacity : .scale.combined(with: .opacity) }
+
+    var body: some View {
+        Button {
+            switch action {
+            case .send: onSend()
+            case .stop: onStop()
+            case .disabled: break
+            }
+        } label: {
+            ZStack {
+                Circle().fill(action == .stop ? Theme.dangerFill : Theme.primaryBackground)
+                if action == .stop {
+                    RoundedRectangle(cornerRadius: 3).fill(.white).frame(width: 13, height: 13)
+                        .transition(swap)
+                } else {
+                    Image(systemName: "arrow.up").font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Theme.primaryForeground)
+                        .transition(swap)
+                }
+            }
+            .frame(width: 40, height: 40)
+            .opacity(action == .disabled ? 0.4 : 1)
+            .animation(.easeOut(duration: 0.15), value: action)
+        }
+        .buttonStyle(.plain)
+        .disabled(action == .disabled)
+        .accessibilityLabel(action == .stop ? "Stop the agent" : "Send")
+    }
+}
+
 private struct Composer: View {
     @Bindable var model: ChatModel
     @FocusState private var focused: Bool
@@ -815,8 +855,6 @@ private struct Composer: View {
                 .pickerStyle(.segmented)
                 .frame(width: 150)
                 Spacer()
-                Button { Task { await model.interrupt() } } label: { Label("Stop", systemImage: "stop.fill") }
-                    .secondaryButton(compact: true)
             }
             HStack(alignment: .bottom, spacing: 8) {
                 TextField("Message the session", text: $model.draft, axis: .vertical)
@@ -826,18 +864,9 @@ private struct Composer: View {
                     .padding(.horizontal, 14).padding(.vertical, 11)
                     .background(Theme.field, in: .rect(cornerRadius: 22))
                     .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(Theme.border, lineWidth: 1))
-                Button {
-                    Task { await model.send() }
-                } label: {
-                    Image(systemName: "arrow.up").font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Theme.primaryForeground)
-                        .frame(width: 40, height: 40)
-                        .background(Theme.primaryBackground, in: .circle)
-                }
-                .buttonStyle(.plain)
-                .disabled(model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .opacity(model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
-                .accessibilityLabel("Send")
+                SendOrStopButton(action: ChatModel.composerAction(draft: model.draft, agentWorking: model.canInterrupt),
+                                 onSend: { Task { await model.send() } },
+                                 onStop: { Task { await model.interrupt() } })
             }
         }
         .padding(.horizontal, Theme.gutter)
