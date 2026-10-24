@@ -288,12 +288,15 @@ def revoke_device(home: Path | str | None, device_id: str) -> bool:
         row["revoked_at"] = time.time()
         _save_devices(home_path, devices)
     # A lost phone loses its SSH login too. After the lock, since sync
-    # takes its own. An OSError from it reaches the caller with the
-    # revoke already saved: the hub refuses the credential either way,
-    # but the person revoking must hear that the key line is still there.
+    # takes its own. The revoke is saved by now, so a failed rewrite is
+    # KeysNotSynced, never the OSError a failed save raises: the person
+    # revoking must hear the device is out but its key line is still there.
     from quiver.remote import sshkeys
 
-    sshkeys.sync(home_path)
+    try:
+        sshkeys.sync(home_path)
+    except OSError as exc:
+        raise sshkeys.KeysNotSynced(str(exc)) from exc
     return True
 
 

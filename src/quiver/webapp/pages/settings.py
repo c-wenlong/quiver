@@ -208,9 +208,11 @@ def _revoke(ctx, body: dict) -> dict:
     if device_id == ctx.device_id and body.get("confirm_this_device") is not True:
         raise PageError(409, "confirm_this_device",
                         "That's the device you're using. Confirm to sign it out of the hub.")
+    from quiver.remote import sshkeys
+
     try:
         revoked = pairing.revoke_device(ctx.home, device_id)
-    except OSError as exc:
+    except sshkeys.KeysNotSynced as exc:
         raise PageError(500, "ssh_key_left",
                         f"Signed out, but its SSH key is still in ~/.ssh/authorized_keys: {exc}") from exc
     if not revoked:

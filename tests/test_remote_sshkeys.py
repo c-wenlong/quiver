@@ -9,6 +9,8 @@ import stat
 import struct
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -23,11 +25,25 @@ except ImportError:  # run as `python3 -m unittest tests.test_remote_sshkeys`
     from tests.test_remote_hub import _Server, _session
 
 
-def _key(kind="ssh-ed25519", body=b"\x01" * 32, inner=None):
-    """A made-up OpenSSH public key line of ``kind``."""
-    name = (inner or kind).encode("ascii")
-    blob = (struct.pack(">I", len(name)) + name
-            + struct.pack(">I", len(body)) + body)
+def _s(data):
+    """One SSH wire string."""
+    return struct.pack(">I", len(data)) + data
+
+
+_POINT = {"nistp256": 65, "nistp384": 97, "nistp521": 133}
+
+
+def _key(kind="ssh-ed25519", body=None, inner=None, fields=None):
+    """A made-up OpenSSH public key line of ``kind``: an ed25519 key's 32
+    bytes (``body``) or an ecdsa key's curve and point, unless ``fields``
+    replaces what follows the type name."""
+    if fields is None:
+        if kind.startswith("ecdsa-"):
+            curve = kind.rsplit("-", 1)[1]
+            fields = [curve.encode(), b"\x04" + b"\x02" * (_POINT[curve] - 1)]
+        else:
+            fields = [body if body is not None else b"\x01" * 32]
+    blob = _s((inner or kind).encode("ascii")) + b"".join(_s(f) for f in fields)
     return f"{kind} {base64.b64encode(blob).decode('ascii')}"
 
 
@@ -54,6 +70,14 @@ class TestNormalize(unittest.TestCase):
             "ssh-ed25519 !!!notbase64",
             _key() + "\n" + _key(),
             "ssh-ed25519 " + "A" * 2000,
+            # Right type name, wrong or missing key material.
+            _key(fields=[]),
+            _key(body=b"\x01" * 31),
+            _key(fields=[b"\x01" * 32, b"extra"]),
+            _key("ecdsa-sha2-nistp256", fields=[]),
+            _key("ecdsa-sha2-nistp256", fields=[b"nistp384", b"\x04" + b"\x02" * 64]),
+            _key("ecdsa-sha2-nistp256", fields=[b"nistp256", b"\x03" + b"\x02" * 64]),
+            _key("ecdsa-sha2-nistp256", fields=[b"nistp256", b"\x04" + b"\x02" * 10]),
         ):
             self.assertIsNone(sshkeys.normalize_public_key(bad), bad)
 
@@ -123,6 +147,80 @@ class TestSync(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(self.ak.stat().st_mode), 0o644)
         sshkeys.set_enabled(self.home, False)
         self.assertEqual(self.ak.read_text().splitlines(), mine)
+
+    def test_other_lines_keep_their_exact_bytes(self):
+        self.ak.parent.mkdir(mode=0o700)
+        mine = (b"ssh-ed25519 AAAAmine caf\xe9 latin-1\n"
+                b"ssh-ed25519 AAAAcrlf windows\r\n"
+                b"ssh-ed25519 AAAAsep a\xe2\x80\xa8b\n")
+        self.ak.write_bytes(mine)
+        did = _device(self.home)
+        sshkeys.set_device_key(self.home, did, _key())
+        sshkeys.set_enabled(self.home, True)
+        self.assertTrue(self.ak.read_bytes().startswith(mine))
+        sshkeys.set_enabled(self.home, False)
+        self.assertEqual(self.ak.read_bytes(), mine)
+
+    def test_sync_reads_devices_inside_its_lock(self):
+        # A sync that read the keys, then paused, must not write them back
+        # over a revoke that finished meanwhile.
+        did = _device(self.home)
+        sshkeys.set_enabled(self.home, True)
+        sshkeys.set_device_key(self.home, did, _key())
+        read = threading.Event()
+        go = threading.Event()
+        real = sshkeys._desired_lines
+        calls = []
+
+        def slow(home):
+            out = real(home)
+            if not calls:
+                calls.append(1)
+                read.set()
+                go.wait(5)
+            return out
+
+        with patch.object(sshkeys, "_desired_lines", slow):
+            first = threading.Thread(target=sshkeys.sync, args=(self.home,))
+            first.start()
+            self.assertTrue(read.wait(5))
+            revoke = threading.Thread(
+                target=pairing.revoke_device, args=(self.home, did))
+            revoke.start()
+            time.sleep(0.2)
+            go.set()
+            first.join(5)
+            revoke.join(5)
+        self.assertNotIn(did, self.ak.read_text())
+
+    def test_installed_means_in_the_file(self):
+        did = _device(self.home)
+        sshkeys.set_enabled(self.home, True)
+        sshkeys.set_device_key(self.home, did, _key())
+        self.assertTrue(sshkeys.view(self.home, did)["device"]["installed"])
+        with patch.object(sshkeys, "atomic_write_bytes",
+                          side_effect=OSError("read-only")):
+            with self.assertRaises(OSError):
+                sshkeys.set_device_key(self.home, did, _key(body=b"\x09" * 32))
+        view = sshkeys.view(self.home, did)
+        self.assertEqual(view["device"]["public_key"], _key(body=b"\x09" * 32))
+        self.assertFalse(view["device"]["installed"])
+
+    def test_revoke_tells_a_failed_save_from_a_failed_cleanup(self):
+        did = _device(self.home)
+        sshkeys.set_enabled(self.home, True)
+        sshkeys.set_device_key(self.home, did, _key())
+        with patch.object(pairing, "_save_devices",
+                          side_effect=OSError("disk full")):
+            with self.assertRaises(OSError) as caught:
+                pairing.revoke_device(self.home, did)
+        self.assertNotIsInstance(caught.exception, sshkeys.KeysNotSynced)
+        self.assertFalse(pairing.load_devices(self.home)[did].get("revoked_at"))
+        with patch.object(sshkeys, "atomic_write_bytes",
+                          side_effect=OSError("read-only")):
+            with self.assertRaises(sshkeys.KeysNotSynced):
+                pairing.revoke_device(self.home, did)
+        self.assertTrue(pairing.load_devices(self.home)[did]["revoked_at"])
 
     def test_untouched_file_keeps_exact_bytes(self):
         self.ak.parent.mkdir(mode=0o700)

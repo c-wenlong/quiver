@@ -32,7 +32,7 @@ import struct
 import threading
 from pathlib import Path
 
-from quiver.paths import atomic_write_text, remote_dir_for
+from quiver.paths import atomic_write_bytes, atomic_write_text, remote_dir_for
 from quiver.remote import pairing
 
 SSH_PORT = 22
@@ -102,12 +102,50 @@ def set_enabled(home: Path | str | None, on: bool) -> dict:
     return sync(home)
 
 
+def _read_string(blob: bytes, at: int) -> tuple[bytes, int] | None:
+    """One SSH wire ``string`` (uint32 length, then bytes) at ``at``."""
+    if at + 4 > len(blob):
+        return None
+    (size,) = struct.unpack(">I", blob[at:at + 4])
+    end = at + 4 + size
+    if end > len(blob):
+        return None
+    return blob[at + 4:end], end
+
+
+# An ecdsa key's curve name and uncompressed point (0x04, X, Y) size.
+_ECDSA_CURVES = {
+    "ecdsa-sha2-nistp256": (b"nistp256", 65),
+    "ecdsa-sha2-nistp384": (b"nistp384", 97),
+    "ecdsa-sha2-nistp521": (b"nistp521", 133),
+}
+
+
+def _blob_ok(kind: str, blob: bytes) -> bool:
+    """True when ``blob`` is a whole ``kind`` public key and nothing else."""
+    fields = []
+    at = 0
+    while at < len(blob):
+        got = _read_string(blob, at)
+        if got is None:
+            return False
+        value, at = got
+        fields.append(value)
+    if not fields or fields[0] != kind.encode("ascii"):
+        return False
+    if kind == "ssh-ed25519":
+        return len(fields) == 2 and len(fields[1]) == 32
+    curve, point_len = _ECDSA_CURVES[kind]
+    return (len(fields) == 3 and fields[1] == curve
+            and len(fields[2]) == point_len and fields[2][:1] == b"\x04")
+
+
 def normalize_public_key(text: object) -> str | None:
     """``"<type> <base64>"`` for a well-formed public key, else None.
 
-    The comment is dropped (the hub writes its own) and the blob's inner
-    type name must match the outer one, so a key can't claim to be a
-    type it isn't.
+    The comment is dropped (the hub writes its own). The blob must be a
+    whole key of the type it claims: its own type name, then the ed25519
+    key's 32 bytes or the ecdsa curve and point, and nothing after.
     """
     if not isinstance(text, str) or len(text) > _MAX_KEY_LEN:
         return None
@@ -120,10 +158,7 @@ def normalize_public_key(text: object) -> str | None:
         blob = base64.b64decode(parts[1], validate=True)
     except (binascii.Error, ValueError):
         return None
-    if len(blob) < 4:
-        return None
-    (name_len,) = struct.unpack(">I", blob[:4])
-    if blob[4:4 + name_len] != parts[0].encode("ascii"):
+    if not _blob_ok(parts[0], blob):
         return None
     return f"{parts[0]} {parts[1]}"
 
@@ -157,8 +192,16 @@ def sshd_listening(port: int = SSH_PORT, timeout: float = 1.0) -> bool:
         return False
 
 
-def _managed(line: str) -> bool:
-    return any(part.startswith(TAG) for part in line.split())
+class KeysNotSynced(Exception):
+    """``authorized_keys`` couldn't be rewritten after a change that was
+    already saved (a revoke, say). The cause is ``__cause__``."""
+
+
+_TAG_BYTES = TAG.encode("ascii")
+
+
+def _managed(line: bytes) -> bool:
+    return any(part.startswith(_TAG_BYTES) for part in line.split())
 
 
 def _desired_lines(home: Path | None) -> dict[str, str]:
@@ -172,35 +215,60 @@ def _desired_lines(home: Path | None) -> dict[str, str]:
     return out
 
 
+def _read_lines(path: Path) -> list[bytes]:
+    """The file's lines as raw bytes, split where sshd splits: at ``\\n``.
+
+    Bytes, not text, so a key comment in any encoding (or a ``\\r``, or
+    a Unicode line separator) comes back out exactly as it went in.
+    """
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return []
+    lines = raw.split(b"\n")
+    if lines and lines[-1] == b"":
+        lines.pop()
+    return lines
+
+
 def sync(home: Path | str | None = None) -> dict:
     """Rewrite the managed lines of ``authorized_keys`` from ``devices.json``.
 
     Every line without the tag stays exactly as it was, in its place.
+    The wanted state is read inside the lock: a sync that read it before
+    a concurrent revoke and wrote after would put the revoked key back.
     Returns ``{"enabled", "installed": [device ids], "changed"}``.
     """
     home_path = _home(home)
-    on = enabled(home_path)
-    desired = _desired_lines(home_path) if on else {}
     path = authorized_keys_file(home_path)
     with _lock(home_path):
-        try:
-            current = path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            current = ""
-        old = current.splitlines()
-        lines = [ln for ln in old if not _managed(ln)] + list(desired.values())
+        on = enabled(home_path)
+        desired = _desired_lines(home_path) if on else {}
+        old = _read_lines(path)
+        lines = [ln for ln in old if not _managed(ln)]
+        lines += [ln.encode("ascii") for ln in desired.values()]
         # Compared by line, so a file this never manages keeps its exact
         # bytes (a missing final newline included).
         changed = lines != old
-        text = "\n".join(lines) + "\n" if lines else ""
         if changed:
             ssh_dir = path.parent
             if not ssh_dir.exists():
                 # sshd's StrictModes refuses a group- or world-writable
                 # ~/.ssh, so a new one starts at 0700.
                 ssh_dir.mkdir(mode=0o700, parents=True)
-            atomic_write_text(path, text, private=True)
+            data = b"\n".join(lines) + b"\n" if lines else b""
+            atomic_write_bytes(path, data, private=True)
     return {"enabled": on, "installed": sorted(desired), "changed": changed}
+
+
+def installed_line(home: Path | str | None, device_id: str) -> bool:
+    """True when the device's line is in ``authorized_keys`` right now."""
+    row = pairing.load_devices(_home(home)).get(device_id) or {}
+    key = normalize_public_key(row.get("ssh_public_key"))
+    if not key or row.get("revoked_at"):
+        return False
+    want = f"{OPTIONS} {key} {TAG}{device_id}".encode("ascii")
+    return want in _read_lines(authorized_keys_file(_home(home)))
 
 
 def set_device_key(
@@ -236,6 +304,9 @@ def view(home: Path | str | None, device_id: str | None) -> dict:
         "host_keys": host_keys(),
         "device": {
             "public_key": key,
-            "installed": bool(on and key and not row.get("revoked_at")),
+            # What sshd will read, not what was asked for: a rewrite
+            # that failed leaves this false.
+            "installed": bool(on and device_id
+                              and installed_line(home_path, device_id)),
         },
     }

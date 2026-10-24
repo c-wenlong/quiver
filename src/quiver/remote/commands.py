@@ -435,9 +435,13 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
     if revoke:
         try:
             ok = pairing.revoke_device(None, revoke)
-        except OSError as exc:
+        except sshkeys.KeysNotSynced as exc:
             print(c("red", f"revoked {revoke}, but its SSH key is still in "
                            f"~/.ssh/authorized_keys: {exc}"),
+                  file=error_stream(json_view))
+            return 1
+        except OSError as exc:
+            print(c("red", f"could not revoke {revoke}: {exc}"),
                   file=error_stream(json_view))
             return 1
         if json_view:
@@ -617,7 +621,7 @@ def _cmd_ssh(flags: dict, json_view: bool) -> int:
             "id": did,
             "name": row.get("name") or "device",
             "fingerprint": sshkeys.fingerprint(key),
-            "installed": view["enabled"] and not row.get("revoked_at"),
+            "installed": sshkeys.installed_line(None, did),
             "revoked": bool(row.get("revoked_at")),
         }
         for did, row in devices.items()
