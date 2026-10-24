@@ -288,6 +288,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   light icon (`app/Icons/AppIcon-light.png`), and the hub no longer
   serves `icon.svg`.
 
+- **Web app: Menu bar and Widgets say "Mac app only" and stay put.** The
+  two sidebar items wear the same "Mac app only" pill as Settings' Mac-only
+  rows and are no longer links, so neither a click nor Tab reaches them. A
+  `#/menubar` or `#/widgets` link opens Overview instead of a placeholder
+  page.
+
 - **Remote iPhone app: the welcome screen says where a pair code comes
   from.** It told new users to run `swe remote pair --app` in a
   terminal on the hub. It now points to Quiver › Settings › Remote ›
