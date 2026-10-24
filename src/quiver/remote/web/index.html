@@ -68,16 +68,16 @@
     </div>
     <div id="chat-log"></div>
     <div id="chat-working" class="hidden" role="status" aria-label="Agent is working"><span></span><span></span><span></span></div>
-    <form id="composer">
-      <select id="composer-mode" title="queue waits for idle; steer writes now">
-        <option value="queue">queue</option>
-        <option value="steer">steer</option>
-      </select>
-      <input id="composer-text" type="text" autocomplete="off"
-             placeholder="Message the session">
-      <button id="interrupt-btn" class="ghost" type="button" title="Interrupt">■</button>
-      <button id="composer-send" class="primary" type="submit">Send</button>
-    </form>
+    <div id="composer-dock">
+      <div id="queued-tray" class="hidden" aria-label="Queued messages"></div>
+      <div id="edit-bar" class="hidden"></div>
+      <form id="composer">
+        <input id="composer-text" type="text" autocomplete="off"
+               placeholder="Message the session">
+        <button id="composer-send" class="send-btn" type="submit"
+                aria-label="Send" title="Send" disabled></button>
+      </form>
+    </div>
   </section>
 </main>
 
