@@ -2,7 +2,7 @@
 
 The Mac app's MCP servers page (`McpServersPage`, `McpModel`,
 `McpServerRepoModel`) in the web app, for the machine the hub runs on.
-Read only.
+Its one write is a server's Sync, with its Preview.
 
 ## What it shows
 
@@ -26,9 +26,23 @@ Read only.
   with no value; a dot shows each server's health once checked.
 - Click a row for its sheet: transport, health detail, the command line or
   URL, env var and header **names**, which harnesses hold each definition,
-  where it is missing, the `${NAME}`s that need values, and the `swe mcp
-  sync … --only=<name>` command that copies it to the compared harnesses
-  that lack it.
+  where it is missing, the `${NAME}`s that need values (with the `swe mcp
+  secret set` hint), and **Sync**.
+- **Sync** is the Mac sheet's: **Copy from** (each definition's first
+  harness, plus the Quiver hub when `mcp.json` holds the server), then a
+  switch per harness that lacks the server (on by default for compared
+  harnesses that use MCP) and per harness with a different definition
+  ("replaces its own definition", always opt-in). **Preview** shows swe's
+  sentence ("Would add to claude. Would update codex.") and, per harness,
+  the file it writes, the command line it gets (and the one it loses when
+  replaced), the env var and header names it gains (+), loses (−) or whose
+  value changes (~), and the harness's own keys it keeps (`disabled`,
+  `autoApprove`, …). **Sync** opens an inline confirm that lists every
+  file it will write and, when a definition is replaced, says whose ("Replace
+  their definitions?"); confirming writes exactly the previewed plan.
+  Changing a switch or the source drops the preview. While a `${NAME}` the
+  hub copy uses has no value, Preview and Sync from the hub are off with
+  "Set the values above first.", and the hub refuses them too.
 - Below the grid: the harnesses with no servers, and the note that env and
   header values never leave swe. Then the servers folder's state when the
   scan has nothing to list (missing, empty, or unreadable).
@@ -70,10 +84,92 @@ appear only with `?health=1` (`swe mcp status --json`'s values). `error`
 is set when the harness configs could not be read; the folders are still
 listed then, as in the app.
 
+### Sync
+
+`POST /v1/app/mcp/preview` and `POST /v1/app/mcp/sync`, both with:
+
+```json
+{"server": "linear", "source": "claude",
+ "targets": ["cursor", "codex"], "replace": ["cursor"],
+ "fingerprint": "…"}
+```
+
+`source` is a harness or `quiver` (the hub); `targets` are harnesses from
+the page's own list; `replace` names the targets whose own definition the
+user agreed to replace. `fingerprint` (sync only) is the preview's. Both
+answer:
+
+```json
+{
+  "server": "linear", "source": "claude",
+  "from": {"transport": "stdio", "summary": "node /srv/linear.js --token …",
+           "env_keys": ["LINEAR_API_KEY"], "header_keys": []},
+  "fingerprint": "9f2c…",
+  "report": {"source": "claude", "dry_run": true, "selected": ["linear"],
+             "targets": [{"name": "codex", "added": ["linear"], "updated": [],
+                          "skipped": [], "pruned": []}, …]},
+  "harnesses": [{
+    "harness": "cursor", "action": "replace", "outcome": "replace",
+    "path": "~/.cursor/mcp.json", "creates": false, "unverified": false,
+    "before": {"transport": "stdio", "summary": "node /old/linear.js", …},
+    "after": {"transport": "stdio", "summary": "node /srv/linear.js --token …", …},
+    "command_changes": true,
+    "env": {"added": ["LINEAR_API_KEY"], "removed": ["OLD_KEY"], "changed": ["DEBUG"]},
+    "headers": {"added": [], "removed": [], "changed": []},
+    "kept": ["disabled"]
+  }],
+  "files": ["~/.cursor/mcp.json", "~/.codex/config.toml"],
+  "error": null
+}
+```
+
+`report` is `McpSyncReport` (`swe mcp sync … --no-interactive --json`),
+two runs merged as `McpModel.sync` merges them. `outcome` is what swe's
+report says happened to that harness (`add`, `replace`, `skip`, or
+`not_run` when an earlier call failed). A sync's answer adds `page`, the
+`GET /v1/app/mcp` payload after the write, which the page repaints from
+(keeping the health it already had).
+
+How it runs:
+
+- Both actions call `mcp/cli.py`'s `_sync` in process, exactly as the Mac
+  app runs swe: `_sync([source, *adding, "--only=<name>",
+  "--no-interactive"])` for the harnesses that lack the server, then the
+  same with `--force` for the ones whose definition is replaced; preview
+  adds `--dry-run`. `--only` gets the name as a glob that matches only
+  itself (`McpServer.onlyPattern`). `_sync`'s printing is captured, never
+  shown, and its last line becomes the error when it refuses.
+- Everything is checked against what the server reads itself, fresh, under
+  one lock: the server must be in the inventory (404 `unknown_server`),
+  the source one of its sources (422 `bad_source`), each target a harness
+  the page lists (422 `unknown_harness`), and still what the page showed:
+  a target to add must still lack the server and a target to replace must
+  still have its own (409 `target_changed`). A name with a comma can't be
+  synced alone (422 `comma_name`, as the app says). Bad shapes are 422.
+- **The fingerprint.** Preview returns an HMAC-SHA256, keyed per hub
+  process, over the source's definition and each target's current
+  definition, action and config path. Sync recomputes it and refuses with
+  409 `plan_changed` when anything differs, so a config edited between
+  Preview and Sync (or a hub restart) asks for a new preview instead of
+  writing a plan nobody saw. The page's Sync button always previews first
+  when the picks changed, so its confirm lists what is on disk now.
+- **`${NAME}` with no value.** From the hub, a server whose `${NAME}` has
+  no value in `~/.quiver/secrets/mcp/.api_keys` is refused with 409
+  `secrets_missing` ("Not syncing: no value for NOTION_TOKEN (used by
+  notion). Set it on the hub with: swe mcp secret set NOTION_TOKEN"),
+  before `_sync` runs, and `_sync` refuses it again on its own. Nothing is
+  written as a literal `${NAME}`.
+- A failure part way (a config that won't parse or save) comes back with
+  `error` set and the report of what already happened; if nothing
+  happened it is a 409 `sync_refused`. The page reads the list again after
+  any failed sync.
+
 ## Security
 
 - Env and header values are never in the payload; swe sends only their
-  names.
+  names. A sync's preview compares values on the hub and sends only which
+  names change. The command lines in a plan are swe-scrubbed (known secret
+  values swapped back to `${NAME}`) and then redacted like `summary`.
 - swe scrubs the credentials it recognises from commands, arguments and
   URLs. The page module then redacts again with a port of the app's
   `McpRedaction` (secret flags, header values, env assignments, URL
@@ -89,12 +185,18 @@ listed then, as in the app.
 
 ## Differences from the Mac app
 
-- **No writes.** Add server, Sync (and its Preview), Remove, and pasting a
-  secret value all change config files or the secrets store, so they stay
-  in `swe mcp add|sync|remove|secret set` and the Mac app. The sheet shows
-  the `swe mcp sync` command to run on the hub instead of the sync form,
-  and the names that need values with the `swe mcp secret set` hint
+- **Sync is the only write.** Add server, Remove, and pasting a secret
+  value stay in `swe mcp add|remove|secret set` and the Mac app; the sheet
+  shows the names that need values with the `swe mcp secret set` hint
   instead of paste fields.
+- **Preview says more.** The Mac app's Preview is swe's one sentence; the
+  web page adds the per-harness plan (files, command line, key names
+  gained, lost or changed), since the confirm has to name the files.
+- **Sync always confirms.** The Mac app asks only when a definition is
+  replaced; the web page always shows the inline confirm with the files,
+  and writes only a previewed plan (the fingerprint). A Mac sync that
+  finds a target changed since it was ticked drops it quietly; the web
+  page refuses and asks for a refresh.
 - **Show in Finder and Open in editor** are Mac only; a folder's full path
   shows on hover instead.
 - **The servers folder is always `~/.quiver/mcp/servers`.** The Mac app
