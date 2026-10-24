@@ -116,6 +116,8 @@ const settingsIcon = (name) =>
 
 const settingsPage = {
   data: null, gen: 0, github: null, githubBusy: false,
+  // Sync now: a sync in flight, and its failure or the owners it skipped.
+  syncing: false, syncError: null,
   // `swe remote setup`'s steps for this machine, and a load in flight.
   // Stale once Settings is opened again: a step can come undone (the
   // last phone revoked, the hub stopped), so each visit checks again.
@@ -430,9 +432,14 @@ function githubCard() {
     const ago = g.catalog.synced_at ? ` · synced ${Fmt.ago(g.catalog.synced_at)}` : "";
     catalog = `${g.catalog.repos} repos${ago} — the Add-repository search reads this list.`;
   }
+  // The app's Sync now: off while one runs or while gh can't run.
+  const blocked = !g || !g.env || g.env.status !== "ok";
+  const p = settingsPage;
+  const sync = `<button class="set-button primary" id="set-gh-sync"${p.syncing || blocked ? " disabled" : ""}
+      title="${blocked ? "Sign gh in on the hub first" : "List every repo your account and its orgs can see"}">${p.syncing ? "Syncing…" : "Sync now"}</button>`;
   return setCard([
     setRow("GitHub CLI", detail, refresh, { warning }),
-    setRow("Repository catalog", catalog, `<code class="muted">swe gh sync</code>`),
+    setRow("Repository catalog", catalog, sync, { warning: p.syncError }),
   ]);
 }
 
@@ -837,6 +844,8 @@ function bindRemote() {
   for (const btn of document.querySelectorAll("[data-setup-pair]")) btn.onclick = () => settingsMint();
   const gh = document.getElementById("set-gh-refresh");
   if (gh) gh.onclick = () => settingsLoadGithub(true);
+  const sync = document.getElementById("set-gh-sync");
+  if (sync) sync.onclick = () => settingsSyncGithub();
   const pair = document.getElementById("set-pair");
   if (pair) pair.onclick = () => settingsMint();
   for (const row of document.querySelectorAll("[data-device]")) {
@@ -903,6 +912,30 @@ async function settingsLoadGithub(refresh) {
   if (status === 200 && data) p.github = data.github;
   else p.github = { error: (data && data.error && data.error.message) || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.") };
   if (gen === routeGen && onSettingsPage() && settingsSection() === "integrations") settingsRepaintRemote();
+}
+
+/* Sync now: the hub runs swe gh sync and answers with the card read
+ * again. Owners that failed keep their old rows, as the app says. */
+async function settingsSyncGithub() {
+  const p = settingsPage;
+  if (p.syncing) return;
+  const gen = routeGen;
+  p.syncing = true;
+  p.syncError = null;
+  settingsRepaintRemote("#set-gh-sync");
+  const { status, data } = await apiPost("/v1/app/settings/sync", {});
+  p.syncing = false;
+  if (status === 401) { if (gen === routeGen && onSettingsPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked."); return; }
+  if (status === 200 && data) {
+    p.github = data.github;
+    const skipped = (data.failed || []).map((f) => (f.owner === "<orgs>" ? "your organizations" : f.owner));
+    p.syncError = skipped.length ? `Skipped ${skipped.join(", ")} — their old repos stayed.` : null;
+  } else {
+    p.syncError = (data && data.error && data.error.message) || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    // A 409 for gh means the card's own line is out of date: check again.
+    if (status === 409 && data && data.error && String(data.error.code || "").startsWith("gh_")) settingsLoadGithub(true);
+  }
+  if (gen === routeGen && onSettingsPage() && settingsSection() === "integrations") settingsRepaintRemote("#set-gh-sync");
 }
 
 async function settingsMint() {

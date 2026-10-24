@@ -27,7 +27,7 @@ belongs to the hub machine:
   address. Read only: the page never runs ``--apply``, which can move the
   very hub serving it.
 
-Writes, both behind the device bearer and the Origin check:
+Writes, all behind the device bearer and the Origin check:
 
 - ``pair``: mint a one-time pair token (``swe remote pair --json``) and
   return its browser link and ``quiver://pair`` deep link, each with a QR
@@ -37,6 +37,11 @@ Writes, both behind the device bearer and the Origin check:
   background thread, rather than waiting for the hub loop's next cycle;
   the answer is the new ``session_search`` status, and the page polls
   until ``running`` clears.
+- ``sync``: Integrations › GitHub › Sync now, ``swe gh sync --json`` in
+  process (``github.manage.sync_catalog``) with the hub's ``gh`` login,
+  into the hub's catalog. One runs at a time (a second is a 409). The
+  answer is ``{"github", "failed"}``: the GitHub card read again and the
+  owners whose listing failed, whose old rows the catalog keeps.
 - ``revoke``: ``{"device_id"}`` signs one paired device out of the hub
   (``swe remote devices --revoke``). The device must be one ``get``
   lists. Revoking the device that sent the request also needs
@@ -61,10 +66,14 @@ from urllib.parse import urlsplit
 from quiver import __version__
 from quiver.webapp.pages import PageError
 
-ACTIONS = ("pair", "revoke", "session_search")
+ACTIONS = ("pair", "revoke", "session_search", "sync")
 DEVICE_ID_MAX = 64
 # The hub's id for the owner's own tailnet device (hub._owner_device).
 TAILNET_PREFIX = "tailnet:"
+
+# One catalog sync at a time, held without waiting like the Doctor
+# page's Run: a second Sync now while one runs is refused, not queued.
+_SYNC_LOCK = threading.Lock()
 
 # Pairing's own file lock already makes each change atomic; this one runs
 # the page's writes in turn so a revoke and a list never interleave and
@@ -96,6 +105,10 @@ def get(ctx, args: dict) -> dict:
 def post(ctx, action: str, body: dict) -> dict:
     if action not in ACTIONS:
         raise PageError(404, "unknown_action", f"unknown settings action: {action}")
+    if action == "sync":
+        # Outside the write lock: a sync lists every owner's repos and can
+        # take a minute, and pairing must not wait on it.
+        return _sync(ctx)
     with _WRITE_LOCK:
         if action == "pair":
             return {"ticket": _mint(ctx)}
@@ -367,6 +380,28 @@ def _github(ctx, refresh: bool = False) -> dict:
         "env": gh_shared.env_payload(env),
         "catalog": catalog.status(paths.github_catalog_for(ctx.home)),
     }
+
+
+def _sync(ctx) -> dict:
+    """Sync now: ``swe gh sync --json`` in process, for the hub's home.
+    A missing or signed-out ``gh`` is a 409 in its own setup words. The
+    answer is the GitHub card again (``env`` and the new ``catalog``)
+    plus ``failed``, the owners that did not list, whose old rows stay."""
+    from quiver.github import gh, manage
+    from quiver.webapp.pages import _github as gh_shared
+
+    if not _SYNC_LOCK.acquire(blocking=False):
+        raise PageError(409, "busy", "A sync is already running. Wait for it, then try again.")
+    try:
+        env = gh_shared.probe(ctx.home, refresh=True)
+        if env.status != "ok":
+            raise PageError(409, "gh_" + env.status.replace("-", "_"), gh.env_error(env))
+        summary = manage.sync_catalog(env, ctx.home)
+        if summary["error"]:
+            raise PageError(502, "sync_failed", summary["error"])
+        return {"github": _github(ctx), "failed": summary["failed"]}
+    finally:
+        _SYNC_LOCK.release()
 
 
 def _paths(ctx, home: Path) -> dict:
