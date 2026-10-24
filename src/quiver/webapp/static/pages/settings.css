@@ -55,6 +55,7 @@
 .set-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .set-title { font-size: 13px; color: var(--text-label); display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .set-detail { font-size: 12px; line-height: 16px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.set-search-status { margin-top: 4px; }
 .set-warning { display: flex; align-items: flex-start; gap: 5px; font-size: 12px; line-height: 16px; color: var(--text-secondary); }
 .set-warning svg { width: 13px; height: 13px; flex: none; margin-top: 1px; color: var(--warning-text); }
 .set-warning.danger svg { color: var(--danger-text); }
