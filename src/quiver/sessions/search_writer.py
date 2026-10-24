@@ -34,9 +34,12 @@ the app, are never touched.
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import os
 import sqlite3
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field, replace
@@ -65,6 +68,11 @@ INDEX_INTERVAL_S = 120
 
 STATE_FILE = "indexer.json"
 LOCK_FILE = "index.lock"
+# What each transcript held up to its cursor when this side last read it
+# (``{path: {"offset", "hash"}}``), so an append can prove the prefix it
+# skips is unchanged. Written only under ``index.lock``.
+PRINTS_FILE = "prints.json"
+PRINT_SAMPLE = 4096
 
 TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -136,12 +144,33 @@ def load_state(home: Path | None = None) -> dict:
     return data if isinstance(data, dict) else {"enabled": False}
 
 
-def _save_state(home: Path | None, data: dict) -> None:
+def _write_json(path: Path, data: dict) -> None:
+    """Atomic replace through a temp file of this writer's own, so two
+    savers never share one."""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(json.dumps(data, indent=2, sort_keys=True) + "\n")
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+def _update_state(home: Path | None, change) -> dict:
+    """Read, change and save ``indexer.json`` under its own lock, so a
+    pass recording its counts never undoes an ``--off`` saved meanwhile."""
     path = _state_path(home)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
-    os.replace(tmp, path)
+    with open(str(path) + ".lock", "a+") as lock:
+        if fcntl is not None:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        data = load_state(home)
+        change(data)
+        _write_json(path, data)
+        return data
 
 
 def is_enabled(home: Path | None = None) -> bool:
@@ -149,9 +178,14 @@ def is_enabled(home: Path | None = None) -> bool:
 
 
 def set_enabled(home: Path | None, enabled: bool) -> None:
-    data = load_state(home)
-    data["enabled"] = bool(enabled)
-    _save_state(home, data)
+    _update_state(home, lambda data: data.update(enabled=bool(enabled)))
+
+
+def record_error(home: Path | None, message: str) -> None:
+    """What stopped the hub's last pass, shown by ``--status`` until a
+    pass succeeds."""
+    _update_state(home, lambda data: data.update(
+        last_error={"message": message, "at": time.time()}))
 
 
 # -- schema --------------------------------------------------------------
@@ -296,6 +330,10 @@ NONE, EXISTING, FRESH, REPLACE = "none", "existing", "fresh", "replace"
 class Store:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
+        # The session row the last successful commit_file wrote under, read
+        # inside its transaction: re-reading the row after COMMIT could
+        # pick up another writer's commit instead.
+        self.last_session_row_id: int | None = None
 
     def file_row(self, path: str) -> FileRow | None:
         row = self.conn.execute(
@@ -387,6 +425,7 @@ class Store:
                 (path, stat.ino, byte_offset, stat.mtime_ms, stat.size, target),
             )
             conn.execute("COMMIT")
+            self.last_session_row_id = target
             return True
         except BaseException:
             if conn.in_transaction:
@@ -409,16 +448,22 @@ class Store:
         flag = conn.execute("SELECT value FROM meta WHERE key = 'orphans_pending'").fetchone()
         if flag and flag[0] == "0":
             return 0
-        orphan = conn.execute(
-            "SELECT session_row_id FROM messages"
-            " WHERE session_row_id NOT IN (SELECT id FROM sessions) LIMIT 1"
-        ).fetchone()
-        if orphan is None:
-            conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('orphans_pending', '0')")
-            conn.execute("PRAGMA incremental_vacuum(2000)").fetchall()
-            return 0
+        # The probe and the flag reset share one write transaction: a
+        # session the app deletes between them would otherwise raise the
+        # flag just before this lowers it, and its messages would wait for
+        # the next delete to be found.
         conn.execute("BEGIN IMMEDIATE")
         try:
+            orphan = conn.execute(
+                "SELECT session_row_id FROM messages"
+                " WHERE session_row_id NOT IN (SELECT id FROM sessions) LIMIT 1"
+            ).fetchone()
+            if orphan is None:
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) VALUES('orphans_pending', '0')")
+                conn.execute("COMMIT")
+                conn.execute("PRAGMA incremental_vacuum(2000)").fetchall()
+                return 0
             ids = [r[0] for r in conn.execute(
                 "SELECT id FROM messages WHERE session_row_id = ? LIMIT ?", (orphan[0], limit))]
             for message_id in ids:
@@ -467,15 +512,29 @@ def read_need(row: FileRow | None, stat: FileStat) -> str:
 def _lines(handle, start: int):
     """Complete lines from ``start``, each with the offset past its
     newline. A trailing line with no newline is still being written and is
-    left for the next pass, as ``JSONLReader`` does."""
+    left for the next pass, as ``JSONLReader`` does. A line over
+    ``MAX_LINE_BYTES`` is skipped (yielded as ``b""``) without ever being
+    held whole."""
     handle.seek(start)
     offset = start
     while True:
-        line = handle.readline()
-        if not line or not line.endswith(b"\n"):
-            return
-        offset += len(line)
-        yield line, offset
+        line = handle.readline(MAX_LINE_BYTES + 1)
+        if line.endswith(b"\n"):
+            offset += len(line)
+            yield line, offset
+            continue
+        if len(line) <= MAX_LINE_BYTES:
+            return  # end of file, or an unfinished last line
+        skipped = len(line)
+        while True:
+            piece = handle.readline(1 << 20)
+            skipped += len(piece)
+            if piece.endswith(b"\n"):
+                break
+            if not piece:
+                return
+        offset += skipped
+        yield b"", offset
 
 
 @dataclass
@@ -527,10 +586,32 @@ class _Pending:
         )
 
 
+def fingerprint(handle, offset: int) -> str:
+    """A hash of the first, middle and last ``PRINT_SAMPLE`` bytes before
+    ``offset``: the Swift ledger's head/middle/tail check, so a same-length
+    edit inside the indexed span still shows."""
+    digest = hashlib.sha256(str(offset).encode())
+    middle = max(0, offset // 2 - PRINT_SAMPLE // 2)
+    for start in (0, middle, max(0, offset - PRINT_SAMPLE)):
+        handle.seek(start)
+        digest.update(handle.read(min(PRINT_SAMPLE, offset - start)))
+    return digest.hexdigest()
+
+
+def _load_prints(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 class Indexer:
-    def __init__(self, store: Store, buffer_budget: int = BUFFER_BUDGET_CHARS):
+    def __init__(self, store: Store, buffer_budget: int = BUFFER_BUDGET_CHARS,
+                 prints: dict | None = None):
         self.store = store
         self.buffer_budget = buffer_budget
+        self.prints = {} if prints is None else prints
 
     def index_file(self, path: str, harness: str) -> str:
         """Read one transcript into the index. Returns what happened:
@@ -545,11 +626,18 @@ class Indexer:
         need = read_need(row, stat)
         if need in (SKIP, CURRENT):
             return need
+        # An appended span bigger than the buffer is read whole instead,
+        # where mid-read flushes bound the memory it takes.
+        appending = need == APPEND and stat.size - row.byte_offset <= self.buffer_budget
         try:
-            committed = self._read(path, harness, stat, row, need == APPEND)
+            committed = self._read(path, harness, stat, row, appending)
         except _Moved:
             return "moved"
-        except (OSError, sqlite3.Error):
+        except (OSError, sqlite3.Error, ValueError, RecursionError):
+            # ValueError and RecursionError are a transcript's own bytes
+            # (text SQLite can't take, JSON nested past the parser's
+            # limit): counted like an unreadable file, so it is held out
+            # rather than stopping every pass at the same place.
             try:
                 self.store.mark_failed(path, stat.mtime_ms)
             except sqlite3.Error:
@@ -563,11 +651,14 @@ class Indexer:
         with open(path, "rb") as handle:
             start = 0
             if appending:
-                # The offset always sits just past a newline; anything else
-                # means the file was rewritten under the same inode.
-                handle.seek(row.byte_offset - 1)
-                if handle.read(1) != b"\n":
-                    appending = False
+                # Only a prefix this side read and fingerprinted, still
+                # byte-identical, may be skipped. A row another writer
+                # moved, or a file rewritten under the same inode, is read
+                # whole.
+                saved = self.prints.get(path)
+                appending = (isinstance(saved, dict)
+                             and saved.get("offset") == row.byte_offset
+                             and saved.get("hash") == fingerprint(handle, row.byte_offset))
             if appending:
                 start = row.byte_offset
                 # Only an explicit title may replace the stored one.
@@ -585,13 +676,17 @@ class Indexer:
                                row=row, decoder=decoder)
             end_offset = start
             for line, end_offset in _lines(handle, start):
-                if len(line) > MAX_LINE_BYTES or not decoder.wants(line):
+                if not line or not decoder.wants(line):
                     continue
                 obj = _parse(line)
                 if obj is None:
                     continue
                 self._record(pending, *decoder.decode_object(obj), stat)
-        return self._finish(pending, stat, end_offset)
+            committed = self._finish(pending, stat, end_offset)
+            if committed:
+                self.prints[path] = {"offset": end_offset,
+                                     "hash": fingerprint(handle, end_offset)}
+        return committed
 
     def _record(self, pending: _Pending, messages, hints, stat: FileStat) -> None:
         for name in ("session_id", "cwd", "title"):
@@ -624,9 +719,9 @@ class Indexer:
             session_row_id=pending.flushed_session)
         if not ok:
             raise _Moved()
-        fence = self.store.fence(pending.path)
-        pending.flushed_session = fence[0] if fence else None
-        pending.expected, pending.has_expected = fence, True
+        pending.flushed_session = self.store.last_session_row_id
+        pending.expected = (pending.flushed_session, PARTIAL_OFFSET)
+        pending.has_expected = True
         pending.messages = []
         pending.buffered = 0
 
@@ -684,7 +779,7 @@ class _Moved(sqlite3.Error):
 def _parse(line: bytes):
     try:
         obj = json.loads(line)
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
     return obj if isinstance(obj, dict) else None
 
@@ -773,8 +868,10 @@ def run_pass(home: Path | None = None, *, should_stop=None) -> PassResult:
     result = PassResult()
     with _Lock(path.parent / LOCK_FILE):
         conn = open_index(path)
+        prints_path = path.parent / PRINTS_FILE
+        prints = _load_prints(prints_path)
         try:
-            indexer = Indexer(Store(conn))
+            indexer = Indexer(Store(conn), prints=prints)
             for source, harness in sources(home):
                 if should_stop is not None and should_stop():
                     break
@@ -795,10 +892,15 @@ def run_pass(home: Path | None = None, *, should_stop=None) -> PassResult:
                 pass
         finally:
             conn.close()
+            # Transcripts that are gone need no print.
+            _write_json(prints_path, {p: v for p, v in prints.items() if os.path.exists(p)})
     result.seconds = round(time.monotonic() - started, 3)
-    data = load_state(home)
-    data["last_pass"] = {**result.as_dict(), "finished_at": time.time()}
-    _save_state(home, data)
+
+    def record(data: dict) -> None:
+        data["last_pass"] = {**result.as_dict(), "finished_at": time.time()}
+        data.pop("last_error", None)
+
+    _update_state(home, record)
     return result
 
 
@@ -809,6 +911,7 @@ def status(home: Path | None = None) -> dict:
     body: dict = {
         "enabled": state.get("enabled") is True,
         "last_pass": state.get("last_pass"),
+        "last_error": state.get("last_error"),
         "exists": False,
     }
     path = search_index_for(home)

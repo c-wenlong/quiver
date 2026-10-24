@@ -436,6 +436,107 @@ class WriterEdgeTests(_Home):
         self.assertEqual(store.drain_orphans(), 0)
 
 
+class ReviewFixTests(_Home):
+    def test_an_off_saved_during_a_pass_stays_off(self):
+        self.write(self.projects / "a.jsonl", claude_line("user", "hello"))
+        writer.set_enabled(self.home, True)
+        calls = []
+
+        def stop():
+            if not calls:
+                writer.set_enabled(self.home, False)
+            calls.append(1)
+            return False
+
+        writer.run_pass(self.home, should_stop=stop)
+        self.assertFalse(writer.is_enabled(self.home))
+        self.assertEqual(writer.load_state(self.home)["last_pass"]["indexed"], 1)
+        leftovers = [p.name for p in search_index.index_path(self.home).parent.iterdir()
+                     if p.name.endswith(".tmp")]
+        self.assertEqual(leftovers, [])
+
+    def test_a_same_length_edit_before_an_append_is_read_whole(self):
+        path = self.projects / "a.jsonl"
+        self.write(path, claude_line("user", "alpha words"))
+        self.run_pass()
+        text = path.read_text().replace("alpha", "omega")
+        self.write(path, text + claude_line("user", "appended"))
+        self.run_pass()
+        self.assertEqual(search_index.search(self.home, "alpha"), [])
+        self.assertEqual(len(search_index.search(self.home, "omega")), 1)
+        self.assertEqual(self.db().execute("SELECT count(*) FROM messages").fetchone()[0], 2)
+
+    def test_a_row_without_this_sides_print_is_read_whole(self):
+        path = self.projects / "a.jsonl"
+        self.write(path, claude_line("user", "first"))
+        self.run_pass()
+        (search_index.index_path(self.home).parent / writer.PRINTS_FILE).unlink()
+        self.write(path, claude_line("user", "second"), mode="a")
+        self.run_pass()
+        conn = self.db()
+        self.assertEqual(conn.execute("SELECT count(*) FROM messages").fetchone()[0], 2)
+        self.assertEqual(conn.execute("SELECT count(*) FROM messages_fts").fetchone()[0], 2)
+
+    def test_a_large_appended_span_is_read_whole(self):
+        path = self.write(self.projects / "a.jsonl", claude_line("user", "first"))
+        conn = writer.open_index(search_index.index_path(self.home))
+        self.addCleanup(conn.close)
+        indexer = writer.Indexer(writer.Store(conn), buffer_budget=50)
+        indexer.index_file(path, "claude")
+        session = conn.execute("SELECT id FROM sessions").fetchone()[0]
+        self.write(Path(path), claude_line("user", "a much longer second prompt"), mode="a")
+        self.assertEqual(indexer.index_file(path, "claude"), "indexed")
+        self.assertNotEqual(conn.execute("SELECT id FROM sessions").fetchone()[0], session)
+
+    def test_an_oversized_line_is_skipped_without_losing_the_rest(self):
+        big = claude_line("user", "x" * 5000)
+        path = self.write(self.projects / "a.jsonl",
+                          claude_line("user", "before") + big + claude_line("user", "after"))
+        with mock.patch.object(writer, "MAX_LINE_BYTES", 1024):
+            self.run_pass()
+        texts = [r[0] for r in self.db().execute("SELECT user_text FROM messages_fts ORDER BY rowid")]
+        self.assertEqual(texts, ["before", "after"])
+        self.assertEqual(self.db().execute("SELECT byte_offset FROM files").fetchone()[0],
+                         os.path.getsize(path))
+
+    def test_bad_text_and_deep_nesting_never_stop_a_pass(self):
+        self.write(self.projects / "a.jsonl",
+                   '{"type":"user","sessionId":"s","message":{"content":"bad \\ud800 surrogate"}}\n'
+                   + '{"type":"user",' + '"x":' * 0 + '"a":' + "[" * 100000 + "]" * 100000 + "}\n")
+        self.write(self.projects / "b.jsonl", claude_line("user", "fine", session="s2"))
+        result = self.run_pass()
+        self.assertEqual((result.indexed, result.failed), (2, 0))
+        self.assertEqual(len(search_index.search(self.home, "surrogate")), 1)
+
+    def test_the_hub_loop_keeps_its_last_error(self):
+        from quiver.remote import hub
+
+        class OneCycle(threading.Event):
+            def wait(self, timeout=None):
+                self.set()
+                return True
+
+        writer.set_enabled(self.home, True)
+        path = search_index.index_path(self.home)
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        conn.execute("INSERT INTO meta VALUES ('schema_version', '9')")
+        conn.commit()
+        conn.close()
+        hub.HubState._search_index_loop(mock.Mock(home=self.home, _stop=OneCycle()))
+        self.assertIn("schema version 9", writer.status(self.home)["last_error"]["message"])
+        plain = run_swe(self.home, "session", "index", "--status")
+        self.assertIn("The hub's last pass failed", plain.stdout)
+
+    def test_status_of_a_torn_index_fails(self):
+        path = search_index.index_path(self.home)
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"not sqlite at all" * 200)
+        result = run_swe(self.home, "session", "index", "--status")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Couldn't read the search index", result.stdout)
+
+
 class DecodeTests(unittest.TestCase):
     """Expectations copied from the Swift suites, so both writers agree."""
 

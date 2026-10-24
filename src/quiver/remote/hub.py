@@ -542,10 +542,16 @@ class HubState:
             if search_writer.is_enabled(self.home):
                 try:
                     search_writer.run_pass(self.home, should_stop=self._stop.is_set)
-                except Exception:
-                    # A busy lock, a newer schema or a locked file: the
-                    # next cycle tries again.
-                    pass
+                except search_writer.IndexBusy:
+                    pass  # a `swe session index` run has it; next cycle
+                except Exception as exc:
+                    # A newer schema or a locked file: kept for
+                    # `swe session index --status` and the Settings row,
+                    # and the next cycle tries again.
+                    try:
+                        search_writer.record_error(self.home, str(exc) or type(exc).__name__)
+                    except OSError:
+                        pass
             self._stop.wait(search_writer.INDEX_INTERVAL_S)
 
     def _refresh_launchable(self) -> None:

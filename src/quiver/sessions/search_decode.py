@@ -76,8 +76,18 @@ def truncate(text: str, limit: int) -> str:
     return text
 
 
+def clean(text: str) -> str:
+    """``text`` without lone surrogates. JSON can spell one (``"\\ud800"``)
+    and ``json.loads`` keeps it, but neither UTF-8 nor SQLite takes it."""
+    try:
+        text.encode("utf-8")
+        return text
+    except UnicodeEncodeError:
+        return text.encode("utf-8", "replace").decode("utf-8")
+
+
 def bounded(text: str, limit: int = MESSAGE_LIMIT) -> str | None:
-    trimmed = truncate(text, limit).strip()
+    trimmed = clean(truncate(text, limit)).strip()
     return trimmed or None
 
 
@@ -85,7 +95,7 @@ def json_string(value) -> str | None:
     """``JSONValue.string``: a non-blank string, trimmed."""
     if not isinstance(value, str):
         return None
-    trimmed = value.strip()
+    trimmed = clean(value).strip()
     return trimmed or None
 
 

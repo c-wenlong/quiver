@@ -653,16 +653,22 @@ def cmd_session_index(args) -> int:
     if json_view:
         if result is not None:
             body["pass"] = result.as_dict()
-        return emit(body)
+        emit(body)
+        return 1 if body.get("error") else 0
     if result is not None:
         print(f"Read {result.indexed:,} of {result.files:,} transcripts "
               f"({result.current:,} already current) in {result.seconds:.1f}s.")
         if result.failed:
             print(c("yellow", f"{result.failed:,} transcripts could not be read."))
-    print(_index_status_line(body))
+    if body.get("error"):
+        print(c("red", f"Couldn't read the search index: {body['error']}"))
+    else:
+        print(_index_status_line(body))
+    if body.get("last_error"):
+        print(c("yellow", f"The hub's last pass failed: {body['last_error'].get('message')}"))
     state = "on" if body.get("enabled") else "off"
     print(c("dim", f"Hub keeps it current: {state} (swe session index --on|--off)"))
-    return 0
+    return 1 if body.get("error") else 0
 
 
 def cmd_session(args):
