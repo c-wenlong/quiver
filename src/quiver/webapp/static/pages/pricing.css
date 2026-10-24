@@ -72,3 +72,22 @@
   .qp-grid { grid-template-columns: minmax(0, 1fr) repeat(2, 60px) 52px; gap: 8px; padding: 0 16px; }
   .qp-card-head { padding: 16px 16px 10px; }
 }
+
+/* Rows open the price form (PricingEditSheet). */
+.qp-row[role="button"] { cursor: pointer; }
+.qp-row[role="button"]:focus-visible { outline: 2px solid var(--accent-fill); outline-offset: -2px; }
+dialog.qp-sheet { width: min(460px, calc(100vw - 32px)); }
+.qp-sheet .sheet-title { min-width: 0; }
+.qp-sheet .caption, .qp-sheet .error { margin: 0; }
+.qp-field { display: flex; flex-direction: column; gap: 4px; }
+.qp-field .field { height: 32px; }
+.qp-key { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.qp-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.qp-actions { align-items: center; }
+.qp-spacer { flex: 1; }
+.qp-button { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--card);
+  color: var(--text-primary); font-size: 13px; cursor: pointer; white-space: nowrap; }
+.qp-button:hover:not(:disabled) { background: var(--hover); }
+.qp-button.primary { background: var(--text-primary); color: var(--card); border-color: var(--text-primary); }
+.qp-button.danger-text { color: var(--danger-text); }
+.qp-button:disabled { opacity: .45; cursor: default; }

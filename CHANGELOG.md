@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: set your own model prices.** A Pricing row opens the Mac
+  app's price form: price applies to, input, output and cache rates per
+  1M tokens, Save, and Remove your price on a row priced by you. It writes
+  `~/.quiver/config/pricing.json` on the hub, in the app's shape, and the
+  page reprices at once. The footer and the unpriced help used to say to
+  set prices in the Mac app.
+
 - **Web app: Remove an MCP server.** The MCP server sheet has the Mac
   app's Remove…, which asks first, names `swe mcp remove <name>
   --from=…` and the places it goes from, and runs it on the hub.

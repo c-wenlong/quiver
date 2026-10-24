@@ -2,7 +2,8 @@
 
 Port of the Mac app's Pricing page (`PricingPage.swift`, `PricingModel.swift`):
 every model the hub's ledger saw in the period, grouped by provider, with the
-price its name resolves to, where that price came from, and its tokens.
+price its name resolves to, where that price came from, and its tokens. A
+row opens the app's price form, which saves your own price or removes it.
 
 Files: `src/quiver/webapp/pages/pricing.py`, `src/quiver/webapp/pages/_brands.py`
 (the brand table, shared with Models), `static/pages/pricing.js` and `pricing.css`.
@@ -44,7 +45,8 @@ Files: `src/quiver/webapp/pages/pricing.py`, `src/quiver/webapp/pages/_brands.py
     "models": [{
       "model": "claude-opus-5-5", "tokens": 285400000,
       "harnesses": ["claude"], "harness_billed": false, "billed_by": [],
-      "entry": "claude-opus-5-5", "source": "litellm", "spend_source": "litellm",
+      "entry": "claude-opus-5-5", "key": "claude-opus-5-5",
+      "source": "litellm", "spend_source": "litellm",
       "rates": {"input": 4.0, "output": 20.0, "cache_read": 0.2, "cache_write": 5.0},
       "tiers": [{"name": "fast", "multiplier": 2.0}],
       "is_free": false, "unpriced_tokens": 0, "brand": {"...": "..."}
@@ -64,17 +66,46 @@ when unpriced); `spend_source` is what the Source column shows (`billed`,
 the entry key) and `source(key)` for this, so the page and the ledger resolve
 a name the same way.
 
+`key` is the price form's "Price applies to": the saved entry when the row is
+priced by you, else `base_name(model)` (`PricingCatalog.baseName`), which
+covers every dated and effort form of the name.
+
+### The price form
+
+Clicking a row (or Enter on it) opens a dialog, the app's `PricingEditSheet`:
+the model, "Price applies to" (monospaced, pre-filled with `key`), Input,
+Output, Cache read and Cache write pre-filled with the row's rates, the
+note "USD per 1M tokens. Blank cache fields count as 0. Saves to
+~/.quiver/config/pricing.json on <machine>.", and Cancel / Save. Save stays
+off until the name is set, Input and Output are numbers of 0 or more, and
+the cache fields are blank or such numbers. A row priced by you also gets
+"Remove your price". The dialog lives outside the page panel, so a repaint
+behind it never loses what is typed; it closes once the hub answers and the
+page repaints from that answer.
+
+`POST /v1/app/pricing/save` with `{"model", "key", "input", "output",
+"cache_read"?, "cache_write"?, "replacing"?, "period"?, "tz"?, "harness"?}`
+writes `key`'s price with `ledger/pricing.py`'s `save_override`, the app's
+`PricingOverrides.set`: `{"schema": 1, "models": {...}}`, sorted, written
+atomically, other entries and top-level keys kept. `replacing` (the row's
+saved entry, accepted only if it is yours now) leaves in the same write. A
+rate must be a finite number from 0 to 1,000,000 (strings parse; blank cache
+rates are 0): 422 `bad_rate`, `bad_key`, `bad_model` otherwise.
+`POST /v1/app/pricing/remove` with `{"model", …}` drops every saved key that
+prices the model (`PricingCatalog.user_keys`, the app's `userKeys(matching:)`)
+in one write (`remove_overrides`); 404 `no_saved_price` when there is none.
+A `pricing.json` that isn't JSON is never overwritten (409
+`pricing_unwritable`). Each write drops the hub's cached price list
+(`WebApp.prices_changed`), and the answer is `{"action", "page"}`, the page
+read again with the period, zone and filter sent.
+
 ## Differences from the Mac app
 
-- **No price form.** Clicking a row in the app opens "Set a price", which saves
-  or resets a price in `~/.quiver/config/pricing.json` and reprices past usage.
-  That is a write and is left out; rows are not clickable, and the unpriced
-  help says to set a price in the Mac app or in that file. The hub's ledger
-  reads the same file, so a price saved there shows here as yours. To port it:
-  a `post(ctx, "save"|"reset", body)` writing the file (the app's
-  `PricingOverrides` rules, including removing every saved key that matches
-  the model) and dropping the cached catalog.
-- The subtitle drops "saving reprices past usage", since nothing here saves.
+- **Remove, not Reset.** The app titles the button "Reset to list price" when
+  a downloaded price sits under yours and shows that list price in the form.
+  The web ledger keeps one entry per key, so the form doesn't know the list
+  price, and the button reads "Remove your price" either way; the row falls
+  back to the downloaded price when there is one.
 - Prices are today's: the web ledger keeps no price history (see
   `ledger/pricing.py`), so usage before a price change is priced at the new
   rate, where the app prices it at the old one.

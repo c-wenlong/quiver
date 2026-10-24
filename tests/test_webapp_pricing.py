@@ -8,7 +8,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from quiver.ledger.models import LedgerRecord, UsageEvent
-from quiver.ledger.pricing import PricingCatalog, alias_target, load_catalog, rates_from_entry
+from quiver.ledger.pricing import (PricingCatalog, alias_target, base_name, load_catalog, rates_from_entry,
+                                   remove_overrides, save_override)
 from quiver.ledger.store import LedgerStore
 from quiver.webapp.api import WebApp
 from quiver.webapp.pages import _brands, pricing
@@ -74,6 +75,64 @@ class TestCatalogSources(unittest.TestCase):
         self.assertEqual(cat.resolve_entry("my-model", None)[1], "my-model")
         self.assertEqual(cat.source("my-model"), "yours")
         self.assertEqual(cat.source("claude-opus-5"), "litellm")
+
+
+class TestOverrideWriter(unittest.TestCase):
+    """config/pricing.json as the Mac app's PricingOverrides writes it."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.file = self.home / ".quiver" / "config" / "pricing.json"
+
+    def doc(self):
+        return json.loads(self.file.read_text())
+
+    def test_save_writes_the_apps_shape_and_keeps_the_rest(self):
+        self.file.parent.mkdir(parents=True)
+        self.file.write_text(json.dumps({"note": "mine", "models": {"old": {"input": 1, "output": 2},
+                                                                    "odd": {"input": "x"}}}))
+        save_override(self.home, "my-model", {"input": 0.5, "output": 1.5})
+        doc = self.doc()
+        self.assertEqual(doc["schema"], 1)
+        self.assertEqual(doc["note"], "mine")
+        self.assertEqual(doc["models"]["my-model"],
+                         {"input": 0.5, "output": 1.5, "cache_read": 0.0, "cache_write": 0.0})
+        self.assertEqual(set(doc["models"]), {"old", "odd", "my-model"})
+        cat = load_catalog(self.home, download=False)
+        self.assertEqual(cat.source("my-model"), "yours")
+        self.assertAlmostEqual(cat.entries["my-model"].input, 0.5e-6)
+
+    def test_a_renamed_key_leaves_in_the_same_write(self):
+        save_override(self.home, "a", {"input": 1, "output": 1})
+        save_override(self.home, "b", {"input": 2, "output": 2}, replacing="a")
+        self.assertEqual(list(self.doc()["models"]), ["b"])
+
+    def test_remove_drops_every_key_given(self):
+        for key in ("gpt-4.1", "gpt-4-1", "keep"):
+            save_override(self.home, key, {"input": 1, "output": 1})
+        remove_overrides(self.home, ["gpt-4.1", "gpt-4-1"])
+        self.assertEqual(list(self.doc()["models"]), ["keep"])
+
+    def test_a_file_that_isnt_json_is_never_overwritten(self):
+        self.file.parent.mkdir(parents=True)
+        self.file.write_text("{ hand edited")
+        with self.assertRaises(ValueError):
+            save_override(self.home, "x", {"input": 1, "output": 1})
+        self.assertEqual(self.file.read_text(), "{ hand edited")
+
+    def test_user_keys_and_base_name(self):
+        cat = PricingCatalog({k: _rates(1e-6, 1e-6) for k in ("gpt-4.1", "gpt-4-1", "claude-x", "swe-2-high")},
+                             overrides={"gpt-4.1", "gpt-4-1", "claude-x", "swe-2-high"})
+        self.assertEqual(cat.user_keys("openai/gpt-4.1-2025-04-14"), ["gpt-4-1", "gpt-4.1"])
+        self.assertEqual(cat.user_keys("swe-2-medium"), [])
+        self.assertEqual(cat.user_keys("swe-2-high"), ["swe-2-high"])
+        self.assertEqual(cat.user_keys("nothing"), [])
+        # An alias the row resolves through is a saved price it shows.
+        aliased = PricingCatalog({"claude-haiku-4-5": _rates(1e-6, 1e-6)}, {"aliases": {"model_private_11": "claude-haiku-4-5"}},
+                                 overrides={"claude-haiku-4-5"})
+        self.assertEqual(aliased.user_keys("MODEL_PRIVATE_11"), ["claude-haiku-4-5"])
+        self.assertEqual(base_name("anthropic/claude-opus-5-20261001"), "claude-opus-5")
+        self.assertEqual(base_name("gpt-5-high"), "gpt-5")
 
 
 class TestRows(_Store):
@@ -209,6 +268,59 @@ class TestRoute(HubBase):
         self.assertEqual(body["period"], "month")
         self.assertEqual((body["groups"], body["harness_filter"], body["notes"]), ([], [], []))
         self.assertEqual(body["machine"], self.srv.state.machine["name"])
+
+    def usage(self, model):
+        """One event in the hub's ledger, with the log scan stubbed out so
+        it is the only usage there is."""
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from quiver.ledger.store import ledger_path_for
+
+        scan = patch("quiver.webapp.api.scan", return_value=SimpleNamespace(errors=[]))
+        scan.start()
+        self.addCleanup(scan.stop)
+        store = LedgerStore(ledger_path_for(self.srv.home))
+        store.upsert(LedgerRecord(key="k1", event=UsageEvent(
+            harness="claude", account="/h", session="s", cwd=None, model=model,
+            ts=datetime.now().timestamp() - 60, input=1_000_000)))
+        store.db.commit()
+        store.close()
+
+    def row(self, body, model):
+        return next(m for g in body["groups"] for m in g["models"] if m["model"] == model)
+
+    def test_save_and_remove_a_price(self):
+        self.usage("my-local-model")
+        auth = {**self.auth(), "Origin": f"http://127.0.0.1:{self.srv.port}"}
+        _, data = self.srv.request("GET", "/v1/app/pricing", headers=auth)
+        row = self.row(json.loads(data), "my-local-model")
+        self.assertEqual((row["spend_source"], row["key"]), ("unpriced", "my-local-model"))
+        status, data = self.srv.request("POST", "/v1/app/pricing/save", headers=auth, body={
+            "model": "my-local-model", "key": "my-local-model", "input": 0.5, "output": "1.5",
+            "cache_read": "", "period": "month"})
+        self.assertEqual(status, 200, data)
+        row = self.row(json.loads(data)["page"], "my-local-model")
+        self.assertEqual((row["source"], row["rates"]["input"], row["rates"]["output"]), ("yours", 0.5, 1.5))
+        status, data = self.srv.request("POST", "/v1/app/pricing/remove", headers=auth,
+                                        body={"model": "my-local-model"})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(self.row(json.loads(data)["page"], "my-local-model")["spend_source"], "unpriced")
+        status, _ = self.srv.request("POST", "/v1/app/pricing/remove", headers=auth, body={"model": "my-local-model"})
+        self.assertEqual(status, 404)
+
+    def test_bad_prices_are_refused_and_write_nothing(self):
+        auth = {**self.auth(), "Origin": f"http://127.0.0.1:{self.srv.port}"}
+        base = {"model": "m", "key": "m", "input": 1, "output": 1}
+        for change, code in (({"input": -1}, "bad_rate"), ({"output": None}, "bad_rate"),
+                             ({"input": "1e400"}, "bad_rate"), ({"cache_write": True}, "bad_rate"),
+                             ({"key": " "}, "bad_key"), ({"key": "a\nb"}, "bad_key"), ({"model": ""}, "bad_model")):
+            status, data = self.srv.request("POST", "/v1/app/pricing/save", headers=auth, body={**base, **change})
+            self.assertEqual((status, json.loads(data)["error"]["code"]), (422, code), change)
+        status, _ = self.srv.request("POST", "/v1/app/pricing/save", body=base,
+                                     headers={**self.auth(), "Origin": "https://evil.example"})
+        self.assertEqual(status, 403)
+        self.assertFalse((self.srv.home / ".quiver" / "config" / "pricing.json").exists())
 
     def test_bundles_carry_both_pages(self):
         status, body = self.srv.request("GET", "/app/pages.js")

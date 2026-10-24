@@ -1,7 +1,8 @@
 /* Pricing: the models the ledger saw, grouped by provider, with the price
  * each one resolves to and where it came from. Ports the Mac app's
- * PricingPage, read only: setting or resetting a price stays in the Mac
- * app. Also exports the helpers the Models page shares (QuiverPricing).
+ * PricingPage: a row opens its price form (PricingEditSheet), which saves
+ * your own price or removes it, POST /v1/app/pricing/save|remove. Also
+ * exports the helpers the Models page shares (QuiverPricing).
  * Everything sits in one closure: pages.js is a single script, so a
  * top-level name here could clash with another page's. */
 (() => {
@@ -77,7 +78,7 @@
 
   /* ------------------------------------------------------------ page */
 
-  const SUBTITLE = "Per 1M tokens. Your prices win over downloaded ones.";
+  const SUBTITLE = "Per 1M tokens. Your prices win over downloaded ones; saving reprices past usage.";
   const FOLD = 4;
   const state = { data: null, period: "month", harness: [], expanded: new Set(), seq: 0, menuOpen: false };
 
@@ -160,10 +161,14 @@
       : `<div class="card"><p class="empty">No usage in this period.</p></div>`;
     document.getElementById("panel").innerHTML = `<div class="page qp-page">${header(false)}
       <div class="stack">${notes}${body}
-        <p class="caption footer">Setting or resetting a price is in the Mac app for now. The hub reads the same
-          <code>~/.quiver/config/pricing.json</code>, so a price saved there shows here as yours.</p>
+        <p class="caption footer">Click a model to set your own price. It saves to
+          <code>~/.quiver/config/pricing.json</code> on ${esc(d.machine || "the hub")}, which the Mac app reads too.</p>
       </div></div>`;
     bindHeader();
+    for (const el of document.querySelectorAll(".qp-row")) {
+      el.onclick = () => openPrice(el.dataset.model);
+      el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPrice(el.dataset.model); } };
+    }
     for (const btn of document.querySelectorAll("[data-expand]")) {
       btn.onclick = () => {
         const id = btn.dataset.expand;
@@ -202,7 +207,8 @@
     const rate = (v, extra = "") => `<span class="qp-rate num${extra}${r.harness_billed ? " muted" : ""}" title="${esc(cacheLine)}">${perMillion(v)}</span>`;
     const help = sourceHelp(r);
     const note = tierNote(r);
-    return `<div class="qp-grid qp-row" data-model="${esc(r.model)}">
+    return `<div class="qp-grid qp-row" data-model="${esc(r.model)}" role="button" tabindex="0"
+      aria-label="${esc(`Set a price for ${r.alias || r.model}`)}">
       <div class="qp-model">${brandLogo(r.brand)}
         <div class="qp-name"><div class="qp-line"><span class="ellipsis" title="${esc(fullName(r))}">${esc(r.alias || r.model)}</span>
           ${r.alias ? `<span class="caption muted qp-raw">${esc(r.model)}</span>` : ""}
@@ -237,7 +243,7 @@
     // sentence then speaks only for the rest, and says who bills that part.
     const mixed = r.billed_by.length > 0;
     const rest = mixed ? "usage without a logged charge" : "spend";
-    const set = "Set one in the Mac app's Pricing page or in ~/.quiver/config/pricing.json on the hub.";
+    const set = "Click the row to set one.";
     let text = {
       free: mixed ? "Free model: usage without a logged charge is priced at $0." : "Free model: priced at $0.",
       yours: `Your price: ${rest} uses the rates you saved.`,
@@ -265,6 +271,140 @@
       case "free": return `<span class="qp-symbol">${GIFT}</span>`;
       default: return `<span class="qp-symbol warn">${WARN}</span>`;
     }
+  }
+
+  /* ---------------------------------------------------------- price form */
+
+  const modelRow = (model) => {
+    for (const g of (state.data && state.data.groups) || []) {
+      const r = g.models.find((m) => m.model === model);
+      if (r) return r;
+    }
+    return null;
+  };
+
+  /* PricingEditSheet.rate: a per-1M rate as the text a field holds. */
+  const rateText = (v) => (v == null ? "" : String(Number(v.toPrecision(6))));
+
+  /* A field's number, null when it isn't one; blank is `blank`. */
+  function rateValue(text, blank) {
+    const t = text.trim();
+    if (!t) return blank;
+    const n = Number(t);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }
+
+  /* The sheet lives outside the panel, so a repaint landing while it is
+   * open (a rescan, a filter) never throws away what is being typed. */
+  function priceSheet() {
+    let sheet = document.getElementById("qp-sheet");
+    if (!sheet) {
+      sheet = document.createElement("dialog");
+      sheet.className = "sheet qp-sheet";
+      sheet.id = "qp-sheet";
+      sheet.setAttribute("aria-label", "Price");
+      document.body.appendChild(sheet);
+    }
+    return sheet;
+  }
+
+  function openPrice(model) {
+    const r = modelRow(model), sheet = priceSheet();
+    if (!r) return;
+    const rates = r.rates || {};
+    const field = (id, label, value) => `<label class="qp-field"><span class="caption">${label}</span>
+      <input class="field" id="${id}" inputmode="decimal" placeholder="0.00" autocomplete="off" value="${esc(rateText(value))}"></label>`;
+    const where = state.data.machine || "the hub";
+    sheet.innerHTML = `<form class="sheet-body" id="qp-form" novalidate>
+      <div class="sheet-title">${brandLogo(r.brand)}<span class="ellipsis" title="${esc(fullName(r))}">${esc(r.alias || r.model)}</span></div>
+      ${r.harness_billed ? `<p class="caption">${esc(sourceHelp(r))} A saved price fills the rate columns and prices usage with no logged charge.</p>` : ""}
+      <label class="qp-field"><span class="caption">Price applies to</span>
+        <input class="field qp-key" id="qp-key" autocomplete="off" spellcheck="false" maxlength="200" value="${esc(r.key)}">
+        <span class="caption muted">${state.harness.length ? "Price applies to every harness, filter or not." : "Covers every harness's usage of this name."}</span></label>
+      <div class="qp-fields">${field("qp-in", "Input", rates.input)}${field("qp-out", "Output", rates.output)}
+        ${field("qp-cr", "Cache read", rates.cache_read)}${field("qp-cw", "Cache write", rates.cache_write)}</div>
+      <p class="caption muted">USD per 1M tokens. Blank cache fields count as 0. Saves to ~/.quiver/config/pricing.json on ${esc(where)}.</p>
+      <p class="error" id="qp-error" role="alert" hidden></p>
+      <div class="sheet-actions qp-actions">
+        ${r.source === "yours" ? '<button type="button" class="qp-button danger-text" id="qp-remove">Remove your price</button>' : ""}
+        <span class="qp-spacer"></span><span class="caption" id="qp-working"></span>
+        <button type="button" class="qp-button" id="qp-cancel">Cancel</button>
+        <button type="submit" class="qp-button primary" id="qp-save">Save</button>
+      </div></form>`;
+    const $ = (id) => document.getElementById(id);
+    const valid = () => !!$("qp-key").value.trim() && rateValue($("qp-in").value, null) != null
+      && rateValue($("qp-out").value, null) != null && rateValue($("qp-cr").value, 0) != null && rateValue($("qp-cw").value, 0) != null;
+    const sync = () => { $("qp-save").disabled = !valid() || !!sheet.dataset.working; $("qp-error").hidden = true; };
+    for (const id of ["qp-key", "qp-in", "qp-out", "qp-cr", "qp-cw"]) $(id).oninput = sync;
+    $("qp-cancel").onclick = () => sheet.close();
+    $("qp-form").onsubmit = (e) => {
+      e.preventDefault();
+      if (!valid()) return;
+      writePrice(sheet, "save", "Saving…", {
+        model: r.model, key: $("qp-key").value.trim(),
+        input: rateValue($("qp-in").value, null), output: rateValue($("qp-out").value, null),
+        cache_read: rateValue($("qp-cr").value, 0), cache_write: rateValue($("qp-cw").value, 0),
+        replacing: r.source === "yours" ? r.entry : null,
+      });
+    };
+    if ($("qp-remove")) $("qp-remove").onclick = () => writePrice(sheet, "remove", "Removing…", { model: r.model });
+    // Each opening is its own form: a reply to an earlier one leaves it be.
+    sheet.dataset.working = "";
+    sheet.dataset.token = String(++priceForms);
+    sync();
+    if (!sheet.open) sheet.showModal();
+    $("qp-in").focus();
+  }
+
+  let priceForms = 0;
+  const onPricing = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "pricing";
+  // The form sits outside the panel, so leaving the page must close it.
+  window.addEventListener("hashchange", () => {
+    const sheet = document.getElementById("qp-sheet");
+    if (sheet && sheet.open && !onPricing()) sheet.close();
+  });
+
+  /* The sheet closes once the hub has written and repriced; the page then
+   * repaints from its answer, read with the same period and filter. */
+  async function writePrice(sheet, action, label, body) {
+    const $ = (id) => document.getElementById(id);
+    if (sheet.dataset.working) return;
+    const token = sheet.dataset.token;
+    sheet.dataset.working = "1";
+    $("qp-working").textContent = label;
+    for (const id of ["qp-save", "qp-remove", "qp-cancel"]) if ($(id)) $(id).disabled = true;
+    const q = { period: state.period, tz: timeZone() };
+    if (state.harness.length) q.harness = state.harness.join(",");
+    const asked = JSON.stringify([state.period, state.harness]);
+    const { status, data } = await apiPost(`/v1/app/pricing/${action}`, { ...body, ...q });
+    // Only the form this request came from reacts to its answer.
+    const mine = sheet.dataset.token === token && sheet.open && !!$("qp-form");
+    if (mine) sheet.dataset.working = "";
+    if (status === 401) {
+      if (mine) sheet.close();
+      if (onPricing()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      return;
+    }
+    if (status === 200 && data && data.page) {
+      if (mine) sheet.close();
+      if (!onPricing()) return;
+      // The answer was read with the period and filter of the time; if
+      // they have changed since, read the page again rather than show it.
+      if (JSON.stringify([state.period, state.harness]) !== asked) { render("pricing"); return; }
+      state.seq++;  // a read still in flight began before the write
+      state.data = data.page;
+      state.harness = data.page.harness_filter || [];
+      paint();
+      return;
+    }
+    if (!mine) return;
+    $("qp-working").textContent = "";
+    for (const id of ["qp-remove", "qp-cancel"]) if ($(id)) $(id).disabled = false;
+    $("qp-save").disabled = false;
+    const err = $("qp-error");
+    err.textContent = (data && data.error && data.error.message)
+      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    err.hidden = false;
   }
 
   registerPage("pricing", render);
