@@ -112,7 +112,9 @@ every `/v1` route; POSTs also pass the Origin check) and serves every
 page script as one `/app/pages.js`, every stylesheet as `/app/pages.css`.
 The page goes live in the sidebar as soon as its script registers. The
 sidebar's order and icons are fixed in `app.js` and already list every
-Mac app page; Menu bar and Widgets are marked Mac only.
+Mac app page; Menu bar and Widgets wear Settings' "Mac app only" pill and
+are not links (`MAC_ONLY`), and a `#/menubar` or `#/widgets` link opens
+Overview.
 
 A page that needs usage reads the shared ledger with `with ctx.state.webapp.ledger() as (store, catalog, scan_ok):`, never a store of its own.
 
