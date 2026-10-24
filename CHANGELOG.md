@@ -224,6 +224,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Remote iPhone app: the welcome screen says where a pair code comes
+  from.** It told new users to run `swe remote pair --app` in a
+  terminal on the hub. It now points to Quiver › Settings › Remote ›
+  Pair a device on the hub machine (the Mac app or the hub's web app),
+  with `swe remote setup` and `swe remote pair --app` as the fallback
+  for a server with neither. The QR scanner's hint says the same.
+
 - **`swe setup --apply` run twice no longer invents harnesses.** The
   second run linked skills into every harness in the `HARNESS_ROOTS`
   table, making `~/.augment`, `~/.kiro`, `~/.pi` and the rest to hold the

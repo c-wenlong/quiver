@@ -25,7 +25,7 @@ struct WelcomeView: View {
                         .clipShape(.rect(cornerRadius: 20))
                         .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(Theme.border, lineWidth: 1))
                     Text(addingHub ? "Pair another hub" : "Quiver Remote").font(Theme.pageTitle).tracking(-0.6).foregroundStyle(Theme.textPrimary)
-                    Text(addingHub ? "Add another machine running swe remote serve. Switch between hubs from the menu at the top right."
+                    Text(addingHub ? "Add another machine running a Quiver hub. Switch between hubs from the menu at the top right."
                                    : "Watch and steer your agent sessions from your phone, over Tailscale.")
                         .font(Theme.body).foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.center)
@@ -40,9 +40,19 @@ struct WelcomeView: View {
                     if let error = app.pairing.error {
                         Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText).multilineTextAlignment(.center)
                     }
-                    (Text("On the hub, run ") + Text("swe remote pair --app").font(Theme.mono))
-                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                        .padding(.top, 6)
+                    // Where the code comes from: the Mac app or the hub's web
+                    // app (both have Settings › Remote), else the CLI on a
+                    // server with neither.
+                    VStack(spacing: 4) {
+                        Text("On the hub machine, open Quiver › Settings › Remote › Pair a device and scan its code.")
+                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        (Text("No Quiver app there? Run ") + Text("swe remote setup").font(Theme.mono)
+                            + Text(", then ") + Text("swe remote pair --app").font(Theme.mono) + Text("."))
+                            .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    }
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 6)
                 }
                 .padding(.horizontal, Theme.gutter)
                 .padding(.bottom, 24)
