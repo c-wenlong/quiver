@@ -205,6 +205,23 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .92em;
 @media (prefers-reduced-motion: reduce) {
   .tray-mark.spin { animation: none; }
 }
+/* the @ and / menus: rows just above the prompt box; past six they scroll */
+#prompt-menu {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; margin-bottom: 8px; padding: 4px 0;
+  max-height: calc(6 * 40px + 8px); overflow-y: auto;
+}
+.menu-row {
+  display: flex; align-items: center; gap: 10px; height: 40px;
+  padding: 0 12px; cursor: pointer;
+}
+.menu-row.active, .menu-row:hover { background: var(--panel2); }
+.menu-name { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.menu-sub { flex: 1 1 0; min-width: 0; font-size: .78rem; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.menu-icon { flex: 0 0 16px; height: 14px; border: 1.5px solid var(--dim); border-radius: 2px; }
+.menu-icon.file { width: 12px; flex-basis: 12px; height: 15px; border-radius: 2px 5px 2px 2px; margin: 0 2px; }
+.menu-icon.dir { border-radius: 2px 2px 3px 3px; border-top-width: 3px; }
+.menu-note { padding: 10px 12px; font-size: .82rem; color: var(--dim); }
 .banner { display: flex; align-items: center; gap: 0.6rem; }
 .banner button { width: auto; margin: 0; margin-left: auto; padding: 0.35rem 0.9rem; }
 

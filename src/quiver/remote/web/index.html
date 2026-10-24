@@ -71,9 +71,11 @@
     <div id="composer-dock">
       <div id="queued-tray" class="hidden" aria-label="Queued messages"></div>
       <div id="edit-bar" class="hidden"></div>
+      <div id="prompt-menu" class="hidden" role="listbox" aria-label="Suggestions"></div>
       <form id="composer">
         <input id="composer-text" type="text" autocomplete="off"
-               placeholder="Message the session">
+               placeholder="Message the session" role="combobox"
+               aria-controls="prompt-menu" aria-expanded="false" aria-autocomplete="list">
         <button id="composer-send" class="send-btn" type="submit"
                 aria-label="Send" title="Send" disabled></button>
       </form>
