@@ -36,6 +36,24 @@ const state = {
   lastRevealAt: 0,
   // A send went through and nothing from the agent has come back yet.
   awaitingReply: false,
+  // The Queued tray: sends the hub holds until the agent goes idle,
+  // oldest first, as {cid, text, phase, note}. phase is posting (the
+  // POST is out), waiting, sendingNow, removing (hidden while the hub
+  // confirms) or left (the hub says it already went).
+  queued: [],
+  // Sends that left the hub's queue while the chat was closed; hidden,
+  // kept so a replayed echo or result still lands in the transcript.
+  departed: [],
+  // Client ids that left the tray: a queue list fetched before that
+  // can't bring them back.
+  settledSends: new Set(),
+  // The queued send whose text is in the prompt box to be edited.
+  editingId: null,
+  draftBeforeEdit: "",
+  savingEdit: false,
+  editNote: "",
+  trayNote: "",
+  confirmRemoveAll: null,
 };
 
 function esc(s) {
@@ -329,6 +347,7 @@ async function openChat(key) {
   const gen = ++state.openGen; // a second openChat supersedes this one
   dropPending();
   state.awaitingReply = false;
+  resetTray();
   toolCards.clear();
   el("chat-log").innerHTML = "";
   show("chat");
@@ -342,6 +361,8 @@ async function openChat(key) {
   await backfill(key, gen);
   if (gen !== state.openGen || state.currentKey !== key) return;
   openStream(key, store.lastSeq[key] || 0);
+  // The tray survives the app closing: the hub holds the sends.
+  loadQueue(key, gen);
 }
 
 function updateOwnership(row) {
@@ -352,9 +373,6 @@ function updateOwnership(row) {
   el("composer-text").placeholder = observed
     ? "Read-only: tap Attach to send"
     : "Message the session";
-  el("composer-send").disabled = observed;
-  el("interrupt-btn").disabled = observed;
-  el("composer-mode").classList.toggle("hidden", observed);
   el("chat-banner").classList.toggle("hidden", !observed);
   // attachable means "has resume flags"; the server also refuses when
   // the session is mid-turn, so hide the button then rather than have
@@ -419,6 +437,22 @@ function appendEvent(ev, live = true) {
     const d = ev.data || {};
     let settled = false;
     if (d.op === "message" && d.client_id) {
+      const entry = takeQueued(d.client_id);
+      if (entry) {
+        // A queued send went out (or failed): into the transcript as a
+        // send, settled below. One that was removed is just gone.
+        settled = true;
+        if (!d.cancelled) appendOptimistic(entry.text, d.client_id);
+      } else if (d.cancelled) {
+        // Removed from another device, or after this one let it go:
+        // never a failure.
+        settled = true;
+        state.settledSends.add(d.client_id);
+        const gone = el("chat-log").querySelector(
+          `.msg.user[data-client-id="${CSS.escape(d.client_id)}"]`
+        );
+        if (gone) gone.remove();
+      }
       const b = el("chat-log").querySelector(
         `.msg.user.pending[data-client-id="${CSS.escape(d.client_id)}"]`
       );
@@ -545,6 +579,7 @@ function updateWorking() {
   const row = state.sessions.find((r) => r.key === state.currentKey);
   const on = !!state.currentKey &&
     ((row && row.status === "active") || state.awaitingReply || state.pending.length > 0);
+  updateSendButton();
   const dots = el("chat-working");
   if (dots.classList.contains("hidden") === !on) return;
   dots.classList.toggle("hidden", !on);
@@ -705,8 +740,7 @@ function appendMessage(msg, seq, live = true) {
     // dedupes: history replay must not erase a queued bubble.
     const hit = [...log.querySelectorAll(".msg.user[data-client-id]:not(.failed)")].find(
       (b) => {
-        const t = b.dataset.text;
-        if (!t || (msg.text !== t && !(msg.text || "").endsWith(t))) return false;
+        if (!echoes(msg.text, b.dataset.text)) return false;
         const sentAt = Number(b.dataset.sentAt || 0);
         return !msg.ts || !sentAt || msg.ts >= sentAt - 5;
       }
@@ -723,6 +757,9 @@ function appendMessage(msg, seq, live = true) {
       return;
     }
     if (hit) hit.remove();
+    // A queued send went out: it leaves the tray and the echo lands in
+    // the transcript where it really is.
+    else echoLeavesTray(msg.text);
   }
   if (live && kind !== "user" && kind !== "tool_result") state.awaitingReply = false;
   const div = document.createElement("div");
@@ -1153,59 +1190,502 @@ function failBubble(bubble, text) {
   bubble.appendChild(note);
 }
 
+/* An echoed user message is the stored text, which attachments prefix
+ * with "@path ", hence the endsWith. */
+function echoes(stored, sent) {
+  if (!sent) return false;
+  return stored === sent || (stored || "").endsWith(sent);
+}
+
+function hubError(status, data) {
+  const e = (data && data.error) || {};
+  return { status, code: e.code || (status ? "" : "network"), message: e.message || "" };
+}
+
+/* What the button beside the prompt box does: send whatever is typed,
+ * stop the agent when nothing is typed and it's working, else nothing.
+ * An emptied edit has nothing to save, so stop stays out of its way. */
+function composerAction() {
+  if (el("composer-text").value.trim()) return "send";
+  if (state.editingId) return "disabled";
+  return agentWorking() ? "stop" : "disabled";
+}
+
+// Mid-turn, or about to start on a send: worth a stop. Messages still
+// being revealed after the turn ended don't count.
+function agentWorking() {
+  const row = state.sessions.find((r) => r.key === state.currentKey);
+  return (row && row.status === "active") || state.awaitingReply;
+}
+
+function updateSendButton() {
+  const btn = el("composer-send");
+  const action = composerAction();
+  const observed = el("composer-text").disabled;
+  btn.classList.toggle("stop", action === "stop");
+  btn.disabled = observed || action === "disabled" || state.savingEdit;
+  btn.setAttribute("aria-label", action === "stop" ? "Stop the agent" : state.editingId ? "Save" : "Send");
+  btn.title = action === "stop" ? "Stop the agent" : state.editingId ? "Save" : "Send";
+}
+
+el("composer-text").addEventListener("input", updateSendButton);
+
 el("composer").addEventListener("submit", async (e) => {
   e.preventDefault();
   const input = el("composer-text");
+  if (!state.currentKey || input.disabled) return;
+  const action = composerAction();
+  if (action === "stop") { interrupt(); return; }
+  if (action !== "send") return;
+  if (state.editingId) { saveEdit(); return; }
   const text = input.value.trim();
-  if (!text || !state.currentKey || input.disabled) return;
   input.value = "";
-  const mode = el("composer-mode").value;
-  const clientId = newClientId();
-  const bubble = appendOptimistic(text, clientId);
+  state.editNote = "";
+  state.trayNote = "";
+  sendText(text);
+});
+
+/* Queue mode: it goes out at once when the agent is idle, else the hub
+ * holds it and the tray shows it (Send now on a tray row is the steer).
+ * A satellite's session can't be held, and a queue-mode send to it
+ * mid-turn is refused, so mid-turn it steers straight in, no tray. */
+function sendRoute(row) {
+  const active = !!row && row.status === "active";
+  if (!active) return { toTray: false, mode: "queue" };
+  return row.remote ? { toTray: false, mode: "steer" } : { toTray: true, mode: "queue" };
+}
+
+async function sendText(text) {
+  const key = state.currentKey;
   const gen = state.openGen;
-  state.awaitingReply = true;
+  const row = state.sessions.find((r) => r.key === key);
+  const route = sendRoute(row);
+  const clientId = newClientId();
+  let bubble = null;
+  if (route.toTray) {
+    state.queued.push({ cid: clientId, text, phase: "posting", note: "" });
+    renderTray();
+  } else {
+    bubble = appendOptimistic(text, clientId);
+    state.awaitingReply = true;
+  }
   updateWorking();
   let status = 0, data = null;
   try {
     ({ status, data } = await api(
-      `/v1/sessions/${encodeURIComponent(state.currentKey)}/message`,
-      { method: "POST", body: JSON.stringify({ text, mode, client_id: clientId }) }
+      `/v1/sessions/${encodeURIComponent(key)}/message`,
+      { method: "POST", body: JSON.stringify({ text, mode: route.mode, client_id: clientId }) }
     ));
   } catch {
     status = 0; // network failure — the hub never saw it
   }
-  // A fast command.result may already have settled this bubble —
-  // .pending is gone then, and the response must not clobber it.
-  if (!bubble.classList.contains("pending")) return;
-  if (status === 202) {
-    // The send itself resolves later as command.result; the note says
-    // where it stands until then.
-    const note = bubble.querySelector(".send-note");
-    if (note) {
-      note.textContent = data && data.waiting
-        ? "queued until the agent is idle"
-        : "sent";
-    }
-  } else {
-    // Another chat may be open by now; its dots aren't ours to clear.
-    if (gen === state.openGen) {
-      state.awaitingReply = false;
+  if (gen !== state.openGen) return; // another chat is open now
+  if (status === 202) posted(clientId, bubble, !!(data && data.waiting));
+  else postFailed(clientId, bubble, hubError(status, data));
+}
+
+/* The hub took the send; `waiting` says whether it holds it for idle.
+ * Where it shows follows the hub, not the status the page last saw. */
+function posted(cid, bubble, waiting) {
+  const entry = state.queued.find((q) => q.cid === cid);
+  if (entry) {
+    if (entry.phase !== "posting") return;
+    if (waiting) {
+      entry.phase = "waiting";
+    } else {
+      // The agent was idle after all: it goes out now.
+      state.queued = state.queued.filter((q) => q !== entry);
+      const b = appendOptimistic(entry.text, cid);
+      b.querySelector(".send-note").textContent = "sent";
+      state.awaitingReply = true;
       updateWorking();
     }
-    failBubble(
-      bubble,
-      (data && data.error && data.error.message)
-        || (status ? `send failed (${status})` : "request failed — connection lost")
-    );
+    renderTray();
+    return;
   }
+  // A fast command.result may already have settled this bubble —
+  // .pending is gone then, and the response must not clobber it.
+  if (!bubble || !bubble.classList.contains("pending")) return;
+  if (waiting && !state.settledSends.has(cid)) {
+    // The agent was busy after all: it waits in the tray.
+    bubble.remove();
+    state.queued.push({ cid, text: bubble.dataset.text, phase: "waiting", note: "" });
+    state.awaitingReply = false;
+    updateWorking();
+    renderTray();
+    return;
+  }
+  const note = bubble.querySelector(".send-note");
+  if (note) note.textContent = "sent";
+}
+
+/* The POST failed: a failed bubble in the transcript. */
+function postFailed(cid, bubble, err) {
+  const why = err.message || (err.status ? `send failed (${err.status})` : "request failed — connection lost");
+  const entry = state.queued.find((q) => q.cid === cid);
+  if (entry) {
+    state.queued = state.queued.filter((q) => q !== entry);
+    state.settledSends.add(cid);
+    renderTray();
+    failBubble(appendOptimistic(entry.text, cid), why);
+    return;
+  }
+  if (!bubble || !bubble.classList.contains("pending")) return;
+  state.awaitingReply = false;
+  updateWorking();
+  failBubble(bubble, why);
+}
+
+async function interrupt() {
+  if (!state.currentKey) return;
+  let status = 0, data = null;
+  try {
+    ({ status, data } = await api(
+      `/v1/sessions/${encodeURIComponent(state.currentKey)}/control`,
+      { method: "POST", body: JSON.stringify({ op: "interrupt" }) }
+    ));
+  } catch { status = 0; }
+  if (status >= 400 || status === 0) {
+    appendMessage({
+      kind: "system",
+      text: (data && data.error && data.error.message) || "interrupt failed",
+    }, 0);
+    scrollBottom();
+  }
+}
+
+/* ── queued tray ─────────────────────────────────────────────
+   Sends made while the agent works, pinned above the prompt box until
+   they go out. Each can be edited, removed, or sent now (written into
+   the running turn); the header's button removes them all. */
+
+function resetTray() {
+  if (state.editingId) el("composer-text").value = state.draftBeforeEdit;
+  state.queued = [];
+  state.departed = [];
+  state.settledSends = new Set();
+  state.editingId = null;
+  state.draftBeforeEdit = "";
+  state.savingEdit = false;
+  state.editNote = "";
+  state.trayNote = "";
+  clearTimeout(state.confirmRemoveAll);
+  state.confirmRemoveAll = null;
+  renderTray();
+}
+
+/* A send that left the hub's queue: out of the tray (or the hidden
+ * departed list), remembered as settled. */
+function takeQueued(cid) {
+  for (const list of ["queued", "departed"]) {
+    const entry = state[list].find((q) => q.cid === cid);
+    if (entry) {
+      state[list] = state[list].filter((q) => q !== entry);
+      state.settledSends.add(cid);
+      if (state.editingId === cid) cancelEdit();
+      renderTray();
+      return entry;
+    }
+  }
+  return null;
+}
+
+function echoLeavesTray(text) {
+  for (const list of ["departed", "queued"]) {
+    const entry = state[list].find((q) => echoes(text, q.text));
+    if (entry) { takeQueued(entry.cid); return; }
+  }
+}
+
+async function loadQueue(key, gen) {
+  let status = 0, data = null;
+  try {
+    ({ status, data } = await api(`/v1/sessions/${encodeURIComponent(key)}/queue`));
+  } catch { return; }
+  if (gen !== state.openGen || state.currentKey !== key) return;
+  // An older hub has no queue route: the tray only shows this page's sends.
+  if (status !== 200 || !data) return;
+  mergeQueue(data.sends || []);
+}
+
+/* The hub's list wins: what it holds shows in its order (keeping what
+ * this page knows about each), and what it no longer holds leaves the
+ * tray for `departed`, except a send whose POST hasn't been answered
+ * yet. Sends already shown in the transcript or gone can't come back. */
+function mergeQueue(sends) {
+  const known = new Set(state.settledSends);
+  el("chat-log").querySelectorAll(".msg.user[data-client-id]").forEach((b) => known.add(b.dataset.clientId));
+  const out = [];
+  for (const send of sends) {
+    const cid = send.client_id;
+    if (!cid || known.has(cid) || out.some((q) => q.cid === cid)) continue;
+    const mine = state.queued.find((q) => q.cid === cid);
+    if (mine) out.push(mine.phase === "posting" ? { ...mine, phase: "waiting" } : mine);
+    else out.push({ cid, text: send.text || "", phase: "waiting", note: "" });
+  }
+  for (const mine of state.queued) {
+    if (out.some((q) => q.cid === mine.cid)) continue;
+    if (mine.phase === "posting") out.push(mine);
+    else if (!known.has(mine.cid) && !state.departed.some((d) => d.cid === mine.cid)) {
+      state.departed.push(mine);
+    }
+  }
+  state.queued = out;
+  if (state.editingId && !out.some((q) => q.cid === state.editingId && q.phase === "waiting")) {
+    cancelEdit();
+  }
+  renderTray();
+}
+
+/* The short note a tray row shows when the hub refuses Send now or
+ * Remove. */
+function queueNote(err) {
+  switch (err.code) {
+    case "not_waiting": {
+      const why = err.message.toLowerCase();
+      if (why.includes("removed")) return "Already removed";
+      if (why.includes("failed")) return "Already failed";
+      return "Already sent";
+    }
+    case "not_attached": return "Attach to send now";
+    case "queue_unsupported": return "Not available on this machine";
+    case "backlog_full": return "Too many waiting. Try again shortly";
+    case "unknown_send": return "The hub lost this message";
+    case "network": return "Can't reach the hub";
+    default: return err.message || "Something went wrong";
+  }
+}
+
+async function queueAction(cid, op, text) {
+  const body = { client_id: cid, op };
+  if (text !== undefined) body.text = text;
+  let status = 0, data = null;
+  try {
+    ({ status, data } = await api(
+      `/v1/sessions/${encodeURIComponent(state.currentKey)}/queue`,
+      { method: "POST", body: JSON.stringify(body) }
+    ));
+  } catch { status = 0; }
+  return status === 200 ? null : hubError(status, data);
+}
+
+/* Send now: the hub stops holding it and writes it into the running
+ * turn. It shows "Sending now" until its result or echo arrives. */
+async function sendNow(cid) {
+  const entry = state.queued.find((q) => q.cid === cid);
+  if (!entry || entry.phase !== "waiting") return;
+  const gen = state.openGen;
+  if (state.editingId === cid) cancelEdit();
+  entry.phase = "sendingNow";
+  entry.note = "";
+  state.trayNote = "";
+  renderTray();
+  const err = await queueAction(cid, "steer");
+  if (!err || gen !== state.openGen) return;
+  if (entry.phase !== "sendingNow" || !state.queued.includes(entry)) return;
+  entry.phase = err.code === "not_waiting" ? "left" : "waiting";
+  entry.note = queueNote(err);
+  renderTray();
+}
+
+/* Remove: gone from the tray at once, back with a note if the hub
+ * refuses. Its command.result says cancelled, never a failure. */
+async function removeQueued(cid) {
+  const entry = state.queued.find((q) => q.cid === cid);
+  if (!entry) return;
+  if (entry.phase === "left") { dropQueued(cid); return; } // nothing to ask
+  if (entry.phase !== "waiting") return;
+  const gen = state.openGen;
+  if (state.editingId === cid) cancelEdit();
+  entry.phase = "removing";
+  entry.note = "";
+  state.trayNote = "";
+  renderTray();
+  const err = await queueAction(cid, "cancel");
+  if (gen !== state.openGen) return;
+  if (!err) { dropQueued(cid); return; }
+  if (entry.phase !== "removing" || !state.queued.includes(entry)) return;
+  // The hub never held it, or forgot it: there's nothing to remove.
+  if (err.code === "unknown_send") { dropQueued(cid); return; }
+  entry.phase = err.code === "not_waiting" ? "left" : "waiting";
+  entry.note = queueNote(err);
+  renderTray();
+}
+
+function dropQueued(cid) {
+  state.settledSends.add(cid);
+  state.queued = state.queued.filter((q) => q.cid !== cid);
+  renderTray();
+}
+
+/* Edit: the message's text goes into the prompt box, and the send
+ * button saves it back. Only a send the hub still holds can be edited. */
+function beginEdit(cid) {
+  const entry = state.queued.find((q) => q.cid === cid);
+  if (!entry || entry.phase !== "waiting") return;
+  const input = el("composer-text");
+  if (!state.editingId) state.draftBeforeEdit = input.value;
+  state.editingId = cid;
+  state.editNote = "";
+  input.value = entry.text;
+  input.focus();
+  renderTray();
+}
+
+function cancelEdit() {
+  if (!state.editingId) return;
+  state.editingId = null;
+  el("composer-text").value = state.draftBeforeEdit;
+  state.draftBeforeEdit = "";
+  state.editNote = "";
+  renderTray();
+}
+
+async function saveEdit() {
+  const cid = state.editingId;
+  const input = el("composer-text");
+  const text = input.value.trim();
+  if (!cid || state.savingEdit || !text) return;
+  const entry = state.queued.find((q) => q.cid === cid);
+  if (!entry || entry.phase !== "waiting") { editWentOut(cid, text); return; }
+  const gen = state.openGen;
+  state.savingEdit = true;
+  renderTray();
+  const err = await queueAction(cid, "edit", text);
+  if (gen !== state.openGen) return;
+  state.savingEdit = false;
+  if (!err) {
+    // The row keeps its place with the new text.
+    entry.text = text;
+    entry.note = "";
+    if (state.editingId === cid) cancelEdit();
+    renderTray();
+    return;
+  }
+  if (err.code === "not_waiting") { editWentOut(cid, text); return; }
+  // An older hub can't edit in place: remove the message, then queue
+  // the new text, which lands at the end.
+  if (err.status === 400 || err.status === 422) { requeueEdit(cid, text, gen); return; }
+  state.editNote = queueNote(err);
+  renderTray();
+}
+
+/* Too late to edit: the new text stays in the prompt box to send as a
+ * new message. */
+function editWentOut(cid, text) {
+  const entry = state.queued.find((q) => q.cid === cid);
+  if (entry && entry.phase === "waiting") {
+    entry.phase = "left";
+    entry.note = "Already sent";
+  }
+  state.editingId = null;
+  state.draftBeforeEdit = "";
+  el("composer-text").value = text;
+  state.editNote = "That message already went out";
+  renderTray();
+}
+
+async function requeueEdit(cid, text, gen) {
+  const err = await queueAction(cid, "cancel");
+  if (gen !== state.openGen) return;
+  if (err) {
+    if (err.code === "not_waiting") { editWentOut(cid, text); return; }
+    state.editNote = queueNote(err);
+    renderTray();
+    return;
+  }
+  dropQueued(cid);
+  if (state.editingId === cid) {
+    state.editingId = null;
+    el("composer-text").value = state.draftBeforeEdit;
+    state.draftBeforeEdit = "";
+  }
+  state.trayNote = "Edited. It moved to the end of the queue";
+  sendText(text);
+}
+
+function removeAllQueued() {
+  if (state.confirmRemoveAll === null) {
+    // First tap arms it; the label asks for a second.
+    state.confirmRemoveAll = setTimeout(() => {
+      state.confirmRemoveAll = null;
+      renderTray();
+    }, 3000);
+    renderTray();
+    return;
+  }
+  clearTimeout(state.confirmRemoveAll);
+  state.confirmRemoveAll = null;
+  for (const q of [...state.queued]) {
+    if (q.phase === "waiting" || q.phase === "left") removeQueued(q.cid);
+  }
+  renderTray();
+}
+
+function renderTray() {
+  const tray = el("queued-tray");
+  const shown = state.queued.filter((q) => q.phase !== "removing");
+  tray.classList.toggle("hidden", !shown.length);
+  if (!shown.length && state.confirmRemoveAll !== null) {
+    clearTimeout(state.confirmRemoveAll);
+    state.confirmRemoveAll = null;
+  }
+  const n = shown.length;
+  const arming = state.confirmRemoveAll !== null;
+  let html = `<div class="tray-head"><span>${n === 1 ? "1 message queued" : `${n} messages queued`}</span>` +
+    `<button type="button" class="tray-btn${arming ? " arming" : ""}" data-act="remove-all"` +
+    ` aria-label="Remove all">${arming ? (n === 1 ? "Remove it?" : `Remove all ${n}?`) : "✕"}</button></div>`;
+  if (state.trayNote) html += `<div class="tray-note">${esc(state.trayNote)}</div>`;
+  html += `<div class="tray-rows">`;
+  for (const q of shown) {
+    const editing = q.cid === state.editingId;
+    let right;
+    if (q.note) {
+      right = `<span class="tray-row-note${q.phase === "left" ? " left" : ""}">${esc(q.note)}</span>` +
+        (q.phase === "left"
+          ? `<button type="button" class="tray-btn" data-act="remove" aria-label="Remove">✕</button>`
+          : "");
+    } else if (q.phase === "sendingNow") {
+      right = `<span class="tray-row-note left">Sending now</span>`;
+    } else {
+      const off = q.phase === "posting" ? " disabled" : "";
+      right =
+        `<button type="button" class="tray-btn" data-act="edit" aria-label="Edit" title="Edit"${off}>✎</button>` +
+        `<button type="button" class="tray-btn" data-act="remove" aria-label="Remove" title="Remove"${off}>✕</button>` +
+        `<button type="button" class="tray-btn" data-act="send-now" aria-label="Send now" title="Send now"${off}>↵</button>`;
+    }
+    html += `<div class="tray-row${editing ? " editing" : ""}${q.phase === "posting" ? " posting" : ""}" data-cid="${esc(q.cid)}">` +
+      `<span class="tray-mark${q.phase === "sendingNow" ? " spin" : ""}">${editing ? "✎" : ""}</span>` +
+      `<span class="tray-text">${esc(q.text.replace(/\n/g, " "))}</span>${right}</div>`;
+  }
+  tray.innerHTML = html + `</div>`;
+  const bar = el("edit-bar");
+  bar.classList.toggle("hidden", !state.editingId && !state.editNote);
+  bar.innerHTML = state.editingId
+    ? `<span class="edit-label">Editing queued message${
+        state.editNote ? `<span class="edit-note">${esc(state.editNote)}</span>` : ""}</span>` +
+      `<button type="button" class="tray-btn text" data-act="cancel-edit"${state.savingEdit ? " disabled" : ""}>Cancel</button>`
+    : state.editNote ? `<span class="edit-note">${esc(state.editNote)}</span>` : "";
+  el("composer-text").placeholder = el("composer-text").disabled
+    ? el("composer-text").placeholder
+    : state.editingId ? "Edit the queued message" : "Message the session";
+  updateSendButton();
+}
+
+el("queued-tray").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-act]");
+  if (!btn || btn.disabled) return;
+  const cid = (btn.closest(".tray-row") || {}).dataset?.cid;
+  const act = btn.dataset.act;
+  if (act === "remove-all") removeAllQueued();
+  else if (act === "remove") removeQueued(cid);
+  else if (act === "send-now") sendNow(cid);
+  else if (act === "edit") beginEdit(cid);
 });
 
-el("interrupt-btn").addEventListener("click", async () => {
-  if (!state.currentKey) return;
-  await api(
-    `/v1/sessions/${encodeURIComponent(state.currentKey)}/control`,
-    { method: "POST", body: JSON.stringify({ op: "interrupt" }) }
-  );
+el("edit-bar").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-act=cancel-edit]");
+  if (btn && !btn.disabled) cancelEdit();
 });
 
 el("attach-btn").addEventListener("click", async () => {
@@ -1316,6 +1796,7 @@ document.addEventListener("visibilitychange", () => {
     if (state.view === "chat" && state.currentKey && !state.stream) {
       openStream(state.currentKey, store.lastSeq[state.currentKey] || 0);
     }
+    if (state.view === "chat" && state.currentKey) loadQueue(state.currentKey, state.openGen);
     loadSessions();
     loadInbox();
     if (state.view === "usage") loadUsage();

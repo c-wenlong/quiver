@@ -713,9 +713,13 @@ Screens:
   "Thought for 12s" card; `tool_use`/`tool_result` pair into collapsible
   cards (`Edit · src/foo.py` → args + output), runs fold to "used 6
   tools"; `compaction` renders an inline divider; `approval` renders an
-  action card (allow/deny/always); composer carries Queue/Steer, `/`
-  shortcuts, `@` file-complete proxied through the hub, photo/file
-  attach landing as `@`-refs on the machine.
+  action card (allow/deny/always). In both clients a send goes out at
+  once when the agent is idle; mid-turn it waits in a Queued tray above
+  the prompt box (Edit, Remove, Send now, Remove all), reloaded from
+  `GET /v1/sessions/{id}/queue` on open, and the send button turns into
+  a red stop while the box is empty and the agent works. The composer
+  also carries `/` shortcuts, `@` file-complete proxied through the
+  hub, and photo/file attach landing as `@`-refs on the machine.
 - **Inbox** — the control-plane screen: every pending decision across
   both machines (approvals, `needs_followup` hits, errors, finished).
   The phone's job is unblocking agents, not being a terminal. The hub
