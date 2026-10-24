@@ -204,6 +204,7 @@ class TestLaunchFork(unittest.TestCase):
         with patch.object(supervise.shutil, "which", return_value="/x/bin"), \
              patch.object(supervise, "launch_tmux",
                           return_value="qv-fork") as lt, \
+             patch.object(supervise, "tmux_name", return_value="qv-fork"), \
              patch.object(supervise, "boot_pane", return_value="❯") as bp, \
              patch.object(supervise, "prime_pane",
                           return_value=True) as pp:
@@ -272,6 +273,102 @@ class TestLaunchFork(unittest.TestCase):
         self.assertEqual(lf.call_args[1]["expect_id"], "")
 
 
+class TestOverlappingForks(unittest.TestCase):
+    """Harnesses that pick their own id fork one at a time per folder."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.proj = tempfile.mkdtemp()
+
+    def _fork(self, source, argv, expect_id="", tmux_up=False):
+        names = iter(["qv-a", "qv-b", "qv-c"])
+        with patch.object(supervise.shutil, "which", return_value="/x/bin"), \
+             patch.object(supervise, "launch_tmux", return_value="qv"), \
+             patch.object(supervise, "boot_pane", return_value="❯"), \
+             patch.object(supervise, "tmux_alive", return_value=tmux_up), \
+             patch.object(supervise, "tmux_name",
+                          side_effect=lambda _k: next(names)):
+            return supervise.launch_fork(self.home, source, argv, "",
+                                         expect_id=expect_id)
+
+    def test_second_codex_fork_waits_for_the_first(self):
+        src = _session(CODEX_ID, "codex", self.proj)
+        ok, _n, _ = self._fork(src, ["codex", "fork", CODEX_THREAD])
+        self.assertTrue(ok)
+        ok, note, _ = self._fork(src, ["codex", "fork", CODEX_THREAD])
+        self.assertFalse(ok)
+        self.assertIn("still waiting", note)
+        markers = list(supervise._pending_dir(self.home).glob("*.json"))
+        self.assertEqual(len(markers), 1)
+        # Once the first is adopted (its marker gone) the next one runs.
+        markers[0].unlink()
+        ok, _n, _ = self._fork(src, ["codex", "fork", CODEX_THREAD])
+        self.assertTrue(ok)
+
+    def test_a_stale_marker_with_a_dead_pane_does_not_block(self):
+        src = _session("d1", "droid", self.proj)
+        self._fork(src, ["droid", "--fork", "d1"])
+        marker = next(supervise._pending_dir(self.home).glob("*.json"))
+        data = json.loads(marker.read_text())
+        data["launched_at"] -= 600
+        marker.write_text(json.dumps(data))
+        ok, _n, _ = self._fork(src, ["droid", "--fork", "d1"])
+        self.assertTrue(ok)
+        # ... but a live pane still holds the folder.
+        ok, _n, _ = self._fork(src, ["droid", "--fork", "d1"])
+        self.assertFalse(ok)
+
+    def test_claude_forks_name_their_id_and_never_wait(self):
+        src = _session("abc", path=self.proj)
+        for new in ("n1", "n2"):
+            ok, _n, _ = self._fork(src, ["claude"], expect_id=new)
+            self.assertTrue(ok)
+
+    def test_overlapping_launches_never_claim_a_named_fork(self):
+        # A launch_new marker (no id) and a claude fork (named n1) wait in
+        # one folder: the launch must not take n1 by creation time.
+        folder = supervise._pending_dir(self.home)
+        folder.mkdir(parents=True)
+        now = time.time()
+        (folder / "qv-new.json").write_text(json.dumps({
+            "tmux": "qv-new", "tool_name": "claude", "cwd": self.proj,
+            "launched_at": now, "launch_id": "lnew", "exclude": ["abc"]}))
+        (folder / "qv-f.json").write_text(json.dumps({
+            "tmux": "qv-f", "tool_name": "claude", "cwd": self.proj,
+            "launched_at": now, "launch_id": "lfork", "expect_id": "n1",
+            "exclude": ["abc"]}))
+        fresh = MagicMock()
+        fresh.stat.return_value = MagicMock(
+            st_birthtime=now + 1, st_mtime=now + 1, st_ctime=now + 1)
+        rows = [("claude:n1", _session("n1", path=self.proj), "done"),
+                ("claude:x9", _session("x9", path=self.proj), "done")]
+        with patch("quiver.remote.tail.resolve_jsonl_path",
+                   return_value=fresh):
+            adopted = supervise.adopt_pending(self.home, rows)
+        self.assertEqual(sorted(adopted), ["claude:n1", "claude:x9"])
+        self.assertEqual(
+            supervise.meta_for(self.home, "claude:n1")["launch_id"], "lfork")
+        self.assertEqual(
+            supervise.meta_for(self.home, "claude:x9")["launch_id"], "lnew")
+
+    def test_route_answers_409_while_a_fork_is_pending(self):
+        srv = _Hub([_session(CODEX_ID, "codex", self.proj)])
+        self.addCleanup(srv.stop)
+        folder = supervise._pending_dir(srv.home)
+        folder.mkdir(parents=True)
+        (folder / "qv-a.json").write_text(json.dumps({
+            "tmux": "qv-a", "tool_name": "codex", "cwd": self.proj,
+            "launched_at": time.time()}))
+        with patch.object(supervise, "tmux_bin", return_value="/x/tmux"), \
+             patch("quiver.remote.fork.shutil.which", return_value="/x/c"), \
+             patch.object(fork_mod, "start") as start:
+            status, body = srv.request(
+                "POST", f"/v1/sessions/codex:{CODEX_ID}/fork", {})
+        self.assertEqual(status, 409, body)
+        self.assertEqual(body["error"]["code"], "fork_pending")
+        start.assert_not_called()
+
+
 class TestForkAdoption(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
@@ -338,6 +435,51 @@ class TestForkWritersAndSatellites(unittest.TestCase):
         with patch.object(supervise.subprocess, "run", side_effect=fake_run):
             self.assertEqual(
                 supervise._local_writer_pids(_session("abc")), [1])
+
+    def test_attaching_a_fork_stops_its_own_writer(self):
+        lines = {
+            "1": "claude --resume abc",
+            "2": "claude --resume abc --fork-session --session-id n1",
+            "3": "claude --resume n1",
+        }
+
+        def fake_run(argv, **_kw):
+            cp = MagicMock()
+            cp.stdout = "1\n2\n3\n" if argv[0] == "pgrep" else lines.get(
+                argv[2], "")
+            return cp
+
+        with patch.object(supervise.subprocess, "run", side_effect=fake_run):
+            self.assertEqual(
+                supervise._local_writer_pids(_session("n1")), [2, 3])
+
+    def test_a_slow_satellite_fork_does_not_hold_up_later_commands(self):
+        ag = agent_mod.RemoteAgent("http://h:1", "cred",
+                                   Path(tempfile.mkdtemp()))
+        release = threading.Event()
+        ran = []
+
+        def execute(key, op, data):
+            if op == "fork":
+                release.wait(5)
+            ran.append(op)
+            return True, op, False
+
+        with patch.object(ag, "_execute", side_effect=execute):
+            ag._handle_frame(json.dumps({"type": "command", "seq": 1,
+                "session": "claude:abc", "data": {"op": "fork"}}).encode())
+            ag._handle_frame(json.dumps({"type": "command", "seq": 2,
+                "session": "claude:abc",
+                "data": {"op": "control", "ctl": "interrupt"}}).encode())
+            self.assertEqual(ran, ["control"])
+            # The cursor waits for the fork, so a crash would replay it.
+            self.assertEqual(ag._done_cmd_seq, 0)
+            release.set()
+            for t in threading.enumerate():
+                if t.name.startswith("agent-fork-"):
+                    t.join(timeout=5)
+        self.assertEqual(ran, ["control", "fork"])
+        self.assertEqual(ag._done_cmd_seq, 2)
 
     def test_satellite_executes_fork_op(self):
         home = Path(tempfile.mkdtemp())

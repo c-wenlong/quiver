@@ -197,6 +197,12 @@ def request(state, key: str, row: dict, body: dict | None) -> tuple[int, dict]:
             "not_installed", f"{argv[0]} is not installed on this machine")
     if not supervise.tmux_bin():
         return 422, protocol.error("launch_failed", "tmux is not installed")
+    if not FORK_SUPPORT[session.tool_name].presets_id and \
+            supervise.fork_blocker(state.home, session.tool_name, cwd):
+        # supervise.launch_fork re-checks under the registry lock; this
+        # is the answer the phone can show straight away.
+        return 409, protocol.error(
+            "fork_pending", supervise.fork_busy_note(session.tool_name))
     launch_id = state.new_launch(state.machine_id, session.tool_name, cwd)
     rows = state.catalog.tail_rows()
 

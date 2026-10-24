@@ -341,8 +341,9 @@ note. The hub keeps launches in memory for a day.
 the session's harness that continues from its history, in the session's
 folder under tmux, and leaves the original as it was. The source can be
 attached or only watched; the fork never writes to it, and attaching the
-source later never stops a fork (`_local_writer_pids` skips any process
-carrying a fork flag). The answer is the same `202 {launch_id, state:
+source later never stops a fork (`_local_writer_pids` skips a process
+carrying a fork flag, unless it names the attached session as its own
+output with `--session-id`). The answer is the same `202 {launch_id, state:
 "pending", note}` as a new-session launch, followed through `GET
 /v1/launches/{launch_id}`. `prompt` is optional and typed in once the TUI
 is up; with none, the pane is still booted past the trust prompt, and the
@@ -350,7 +351,8 @@ launch stays pending until the harness writes the fork's transcript.
 Session rows carry `can_fork`, so the app offers Fork only where it
 works. Errors: `404 unknown_session`, `409 fork_unsupported` (the harness
 has no fork command line, or its session has no id to pass), `422
-bad_cwd` (the session's folder is gone from the hub), `422 not_installed`,
+bad_cwd` (the session's folder is gone from the hub), `409 fork_pending`
+(see below), `422 not_installed`,
 `422 launch_failed` (tmux missing), `422 bad_command`, `429 backlog_full`.
 
 Each harness's fork command line, read off the installed binary's
@@ -374,8 +376,17 @@ as `expect_id` and adoption waits for exactly that id. The other
 harnesses pick their own id: the marker excludes the source's id along
 with every same-folder session that existed at the fork, and `fork_of`
 also keeps out a codex resume of the source (a new rollout file under
-the same thread uuid). A satellite's session gets a `fork` command in
-its journal, like `launch`: the satellite checks its own folder, its
+the same thread uuid). That leaves only the folder and creation time, so
+two such forks waiting in one folder could take each other's
+transcripts: a fork of these harnesses is refused with `409
+fork_pending` while another launch of that harness is still waiting for
+adoption in the folder (its marker is under a minute old or its pane is
+alive). The marker is written under the registry lock before the pane
+starts, so two requests at once can't both pass. An id a Claude fork
+named is never claimed by any other pending launch. A satellite's session gets a `fork` command in
+its journal, like `launch`; the satellite runs it on its own thread, so
+booting the pane never delays the commands behind it. It checks its own
+folder, its
 failed `command.result` (echoing `launch_id`) turns the launch `failed`,
 and its `session.launched` names the new key. The hub refuses a
 satellite row without `can_fork`, which covers satellites too old to
