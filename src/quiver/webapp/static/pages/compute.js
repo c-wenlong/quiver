@@ -491,7 +491,10 @@ function chartSpec() {
       format: (v) => CFmt.bytes(Math.max(0, v) * GB), axis: (v) => `${v.toFixed(1)} GB`,
       flag: { value: limitGB, label: `Flag above ${CFmt.bytes(limitGB * GB)}` } }
     : { series, x: [end - span, end], y: [0, scaleTop(values, 25, gpu ? 100 : 25)],
-      format: (v) => `${CFmt.percent(v)}%`, axis: (v) => `${Math.round(v)}%` };
+      format: (v) => `${CFmt.percent(v)}%`, axis: (v) => `${Math.round(v)}%`,
+      // gpu_available stays true once pmon answered; it can stop since.
+      empty: gpu && !series.some((s) => s.points.some(([t]) => t >= end - span))
+        ? "nvidia-smi gave no GPU readings in this window." : "" };
 }
 
 /* Round tick values from lo to hi, about `count` of them. */
