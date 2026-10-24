@@ -125,6 +125,7 @@ final class AppModel {
             UserDefaults.standard.set(swePath, forKey: SweLocation.defaultsKey)
             swe = Self.client(for: swePath)
             skills.use(swe, for: swePath)
+            hub = Self.localHub(swe: swe)
             others = OtherLimitsModel(swe: swe, extraAccounts: extraAccountsProvider)
             Task { await others.load() }
             // The "swe too old" verdicts were about the old build.
@@ -433,12 +434,20 @@ final class AppModel {
     /// ~/.quiver/config/plugin-display-names.json.
     var primitiveNames: PluginDisplayNames
     private let userHome = FileManager.default.homeDirectoryForCurrentUser
+    /// This Mac's hub, which the Sessions page's chat talks to.
+    private(set) var hub: LocalHub
+
+    static func localHub(swe: SweClient) -> LocalHub {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return LocalHub(locator: swe, store: HubDeviceStore(url: HubDeviceStore.defaultURL(home: home)))
+    }
 
     init() {
         let saved = UserDefaults.standard.string(forKey: SweLocation.defaultsKey) ?? ""
         swePath = saved
         let client = Self.client(for: saved)
         swe = client
+        hub = Self.localHub(swe: client)
         terminal = UserDefaults.standard.string(forKey: "terminalApp")
             .flatMap(TerminalApp.init(rawValue:)) ?? .terminal
         appIcon = AppIconStyle(saved: UserDefaults.standard.string(forKey: "appIcon"))
