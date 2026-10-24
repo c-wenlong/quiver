@@ -227,3 +227,71 @@ final class MentionSearchTests: XCTestCase {
         XCTAssertEqual(body.source, "git")
     }
 }
+
+final class MentionReviewFixTests: XCTestCase {
+    func testIOS17KeepsFollowingTheEndAfterAPick() {
+        // iOS 17: a pick leaves no fixed caret, so a later @ still opens.
+        let token = Mention.token(in: "@ma", cursor: nil)!
+        let next = Mention.insert("main.py", isDir: false, replacing: token, in: "@ma")
+        let cursor = Caret.afterPick(next.cursor, tracksCaret: false)
+        XCTAssertNil(cursor)
+        let typed = next.text + "and @rea"
+        XCTAssertEqual(Mention.token(in: typed, cursor: cursor)?.query, "rea")
+        // A fixed caret left from the pick would have missed it.
+        XCTAssertNil(Mention.token(in: typed, cursor: next.cursor))
+        // iOS 18 keeps the offset, which its field keeps up to date.
+        XCTAssertEqual(Caret.afterPick(9, tracksCaret: true), 9)
+    }
+
+    func testFolderWithSpacesIsQuotedAndStaysOpen() {
+        let token = Mention.token(in: "see @My", cursor: nil)!
+        let folder = Mention.insert("My Documents", isDir: true, replacing: token, in: "see @My")
+        XCTAssertEqual(folder.text, "see @\"My Documents/")
+        XCTAssertEqual(folder.cursor, folder.text.count)
+        let inside = Mention.token(in: folder.text, cursor: folder.cursor)
+        XCTAssertEqual(inside, MentionToken(start: 4, end: folder.text.count, query: "My Documents/"))
+        // Drilling in: the file closes the quote.
+        let file = Mention.insert("My Documents/plan notes.txt", isDir: false, replacing: inside!, in: folder.text)
+        XCTAssertEqual(file.text, "see @\"My Documents/plan notes.txt\" ")
+        XCTAssertEqual(file.cursor, file.text.count)
+        XCTAssertNil(Mention.token(in: file.text, cursor: file.cursor))
+    }
+
+    func testQuotedTokenMidText() {
+        let text = "open @\"My Do\" please"
+        // Caret after "@\"My D".
+        let token = Mention.token(in: text, cursor: 11)
+        XCTAssertEqual(token, MentionToken(start: 5, end: 13, query: "My D"))
+        let r = Mention.insert("My Docs/a b.md", isDir: false, replacing: token!, in: text)
+        XCTAssertEqual(r.text, "open @\"My Docs/a b.md\" please")
+        XCTAssertEqual(r.cursor, 23)
+    }
+
+    func testClosedQuotesAndQuotesInWordsDoNotTrigger() {
+        XCTAssertNil(Mention.token(in: "@\"a b\" then", cursor: nil))
+        XCTAssertNil(Mention.token(in: "say x@\"y", cursor: nil))
+        XCTAssertEqual(Mention.token(in: "@\"a b\" then @c", cursor: nil)?.query, "c")
+    }
+}
+
+@MainActor
+final class MentionResumeTests: XCTestCase {
+    func testResumeRestartsTheOpenSearch() async {
+        let search = MentionSearch()
+        var asked: [String] = []
+        search.pause = { _ in }
+        search.fetch = { q in asked.append(q); return FilesResponse(entries: [FileEntry(path: "a.txt")]) }
+        await search.track(MentionToken(start: 0, end: 2, query: "a"))?.value
+        // stop(): the app went to the background with the menu open.
+        search.reset()
+        XCTAssertTrue(search.isOpen)
+        XCTAssertNil(search.answered)
+        await search.resume()?.value
+        XCTAssertEqual(asked, ["a", "a"])
+        XCTAssertEqual(search.entries.map(\.path), ["a.txt"])
+        // Nothing to restart once answered, or with the menu closed.
+        XCTAssertNil(search.resume())
+        search.track(nil)
+        XCTAssertNil(search.resume())
+    }
+}

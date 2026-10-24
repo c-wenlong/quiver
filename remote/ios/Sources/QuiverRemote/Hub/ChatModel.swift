@@ -188,6 +188,8 @@ final class ChatModel {
         let sends = try? await client.queue(key)
         guard gen == generation else { return }
         if let sends { mergeQueue(sends.sends) }
+        // The prompt box's menu may still be open from before stop().
+        mentions.resume()
         streamTask = Task { [weak self, cursor] in
             for await event in EventStream.events(client: client, key: self?.key ?? "", last: cursor) {
                 guard let self else { return }

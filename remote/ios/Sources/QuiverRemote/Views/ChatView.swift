@@ -914,8 +914,8 @@ private struct Composer: View {
         guard let token = mention else { return }
         let next = Mention.insert(entry.path, isDir: entry.isDir, replacing: token, in: model.draft)
         model.draft = next.text
-        cursor = next.cursor
-        moveCaret = next.cursor
+        cursor = Caret.afterPick(next.cursor, tracksCaret: Caret.tracked)
+        moveCaret = cursor
     }
 }
 
