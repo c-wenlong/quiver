@@ -64,8 +64,15 @@ def _inventory(home: Path) -> dict:
 
 
 def _find(inventory: dict, path: str) -> dict:
+    """The inventory's skill at ``path``. The inventory lists each skill by
+    its realpath, so a path reaching that folder through a symlink (a home
+    under /var on macOS, say) names it too; only listed skills match."""
+    try:
+        real = _real(path)
+    except (OSError, ValueError):
+        real = path
     for skill in inventory["skills"]:
-        if skill["path"] == path:
+        if skill["path"] in (path, real):
             return skill
     raise PageError(404, "unknown_skill", "No skill at that path on the hub.")
 
@@ -378,7 +385,7 @@ def post(ctx, action: str, body: dict) -> dict:
     with _WRITE_LOCK:
         inventory = _inventory(home)
         if skill_ref is not None:
-            _find(inventory, skill_ref)
+            skill_ref = _find(inventory, skill_ref)["path"]
         if action == "link_all":
             root = None
             result = _link_all(inventory["harnesses"], home, _named(body))
