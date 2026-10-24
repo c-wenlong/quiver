@@ -150,12 +150,27 @@ final class ChatModel {
     /// was ~850 KB and took seconds to lay out on the phone.
     static let pageSize = 100
 
+    /// The prompt box's `@` menu.
+    let mentions = MentionSearch()
+
     init(key: String, app: AppModel) {
         self.key = key
         self.app = app
+        mentions.fetch = { [weak self] query in
+            guard let self, let client = self.app?.client else { throw HubError.network(CancellationError()) }
+            return try await client.files(self.key, query: query, limit: MentionSearch.limit)
+        }
+        mentions.machine = { [weak self] in self?.machineName ?? "that machine" }
     }
 
     var row: SessionRow? { app?.session(key) }
+
+    /// The name of the machine the session runs on, as the Sessions list
+    /// shows it.
+    var machineName: String {
+        let id = row?.machineId
+        return app?.machines.first { $0.id == id }?.displayName ?? id ?? "that machine"
+    }
 
     /// First open loads history; a resume (back from the background) keeps
     /// what's on screen and replays events after `cursor`.
@@ -193,6 +208,7 @@ final class ChatModel {
         generation += 1
         streamTask?.cancel()
         streamTask = nil
+        mentions.reset()
         flushPending()
         live = false
     }

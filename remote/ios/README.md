@@ -12,7 +12,7 @@ devices.
 
 | Folder | What |
 |---|---|
-| `Sources/QuiverRemote/Hub/` | Wire types, `HubClient` (one method per route), the SSE reader, `AppModel` (pairing, sessions, inbox), `ChatModel` (one open chat), `UsageModel` and `UsageFormat` (the Usage tab's data and number formatting), and the diff and markdown helpers |
+| `Sources/QuiverRemote/Hub/` | Wire types, `HubClient` (one method per route), the SSE reader, `AppModel` (pairing, sessions, inbox), `ChatModel` (one open chat), `UsageModel` and `UsageFormat` (the Usage tab's data and number formatting), `PromptCompletion` (the prompt box's `@` menu), and the diff and markdown helpers |
 | `Sources/QuiverRemote/Theme/` | The Mac app's theme ported to iOS: the same hex values and roles, cards, list rows, badges, buttons |
 | `Sources/QuiverRemote/Views/` | Welcome and pairing, Sessions, Chat, Inbox, Usage (limits and spend), Pair requests, the QR scanner |
 | `Tests/QuiverRemoteTests/` | Unit tests for parsing, pairing links, diffs, grouping and chat event handling |

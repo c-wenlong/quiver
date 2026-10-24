@@ -96,6 +96,8 @@ private struct ChatBody: View {
         .defaultScrollAnchor(.bottom)
         .modifier(LoadsEarlierAtRest(model: model, oldest: entries.first?.id))
         .scrollDismissesKeyboard(.interactively)
+        // A tap in the transcript closes the prompt box's menu.
+        .simultaneousGesture(TapGesture().onEnded { model.mentions.dismiss() })
         .safeAreaInset(edge: .bottom) { bottomBar }
     }
 
@@ -845,12 +847,21 @@ private struct Composer: View {
     @Bindable var model: ChatModel
     @FocusState private var focused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The caret in the prompt box (nil: the end), and where a pick moves it.
+    @State private var cursor: Int?
+    @State private var moveCaret: Int?
 
     private var arrival: AnyTransition { reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8)) }
+
+    /// The `@token` being typed, while the prompt box has focus.
+    private var mention: MentionToken? {
+        focused ? Mention.token(in: model.draft, cursor: cursor) : nil
+    }
 
     var body: some View {
         let tray = model.tray
         let editing = model.editingId != nil
+        let mentions = model.mentions
         VStack(spacing: 8) {
             if !tray.isEmpty {
                 QueuedTray(sends: tray, note: model.trayNote, editingId: model.editingId,
@@ -864,8 +875,13 @@ private struct Composer: View {
                 EditBar(editing: editing, saving: model.savingEdit, note: model.editNote) { model.cancelEdit() }
                     .transition(arrival)
             }
+            if mentions.isOpen {
+                MentionMenu(entries: mentions.entries, answered: mentions.answered, error: mentions.error) { pick($0) }
+                    .transition(arrival)
+            }
             HStack(alignment: .bottom, spacing: 8) {
-                TextField(editing ? "Edit the queued message" : "Message the session", text: $model.draft, axis: .vertical)
+                PromptField(placeholder: editing ? "Edit the queued message" : "Message the session",
+                            text: $model.draft, cursor: $cursor, moveCaret: $moveCaret)
                     .font(Theme.body)
                     .lineLimit(1...5)
                     .focused($focused)
@@ -881,10 +897,25 @@ private struct Composer: View {
         }
         .animation(.easeOut(duration: 0.2), value: tray.isEmpty)
         .animation(.easeOut(duration: 0.2), value: editing)
-        .onChange(of: model.editingId) { _, id in if id != nil { focused = true } }
+        .animation(.easeOut(duration: 0.15), value: mentions.isOpen)
+        .onChange(of: model.editingId) { _, id in
+            // The queued message's text replaced the draft: caret to its end.
+            cursor = nil
+            if id != nil { focused = true }
+        }
+        .onChange(of: mention, initial: true) { _, token in mentions.track(token) }
         .padding(.horizontal, Theme.gutter)
         .padding(.top, 10)
         .padding(.bottom, 8)
+    }
+
+    /// Puts the picked path in place of the `@token`.
+    private func pick(_ entry: FileEntry) {
+        guard let token = mention else { return }
+        let next = Mention.insert(entry.path, isDir: entry.isDir, replacing: token, in: model.draft)
+        model.draft = next.text
+        cursor = next.cursor
+        moveCaret = next.cursor
     }
 }
 
