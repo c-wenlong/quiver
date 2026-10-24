@@ -117,6 +117,7 @@ remote/
   pairing.py     # QR payload, one-time token → device credential
   catalog.py     # session registry: local + satellite rows, machine-scoped
   dismissals.py  # per-device inbox dismissals (inbox_dismissals.json, 0600)
+  sessionmeta.py # pins and display names, hub-wide (session_meta.json, 0600)
   tail.py        # byte-offset transcript readers → events (read path)
   inject.py      # per-harness send/approval/interrupt registry (write path)
   supervise.py   # tmux lifecycle for attached sessions
@@ -133,7 +134,7 @@ remote/
 Layering: `remote` may import `sessions`, `reports`, `paths`, `console`,
 `flags`; nothing imports `remote` back. State under
 `~/.quiver/data/remote/` (`devices.json` 0600, `inbox_dismissals.json`
-0600, `cursors/`, `journal/`) —
+0600, `session_meta.json` 0600, `cursors/`, `journal/`) —
 gitignored like the rest of `data/`. New commands run the usual
 checklist: `completion.py`, `help_text.py`, `docs/json-contracts.md`.
 
@@ -238,6 +239,8 @@ GET  /v1/sessions/{id}/queue         queue-mode sends still waiting for idle
 POST /v1/sessions/{id}/queue         {client_id, op: steer|cancel} on one waiting send
 POST /v1/sessions/{id}/attachments   multipart upload → staged file, returns ref
 POST /v1/sessions/{id}/approval      {request_id, decision}
+POST /v1/sessions/{id}/pin           {pinned: bool} → pin or unpin on the hub
+POST /v1/sessions/{id}/title         {title: string} → display name, "" clears it
 POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill
 POST /v1/sessions                    new session {machine, harness, cwd, prompt} → launch_id
 POST /v1/sessions/{id}/fork          {prompt?} new session from this one's history → launch_id
@@ -255,7 +258,8 @@ POST /v1/pair                        QR payload → device credential
 ```
 
 Events: `message.appended`, `message.delta` (tier A only),
-`session.status`, `approval.requested|resolved`, `compaction`,
+`session.status`, `session.meta` (title, harness_title, pinned,
+pinned_at after a pin or rename), `approval.requested|resolved`, `compaction`,
 `machine.online|offline`, `notify` (needs_you|finished|error|limit).
 
 `queue|steer` is the OpenAI Remote distinction: queue waits for idle;
@@ -263,6 +267,14 @@ steer injects mid-turn where the channel allows (codex turn input, tmux
 send-keys), else degrades to queue with a UI hint. `SessionRow.to_json`
 is reused verbatim so phone and macOS app share semantics —
 `docs/json-contracts.md` gains a section rather than a parallel dialect.
+
+Pins and names are kept on the hub in `session_meta.json`, keyed by
+session key, so the phone, the web app and satellite sessions agree.
+Each session row carries `pinned`, `pinned_at` (epoch seconds or
+`null`; sort the Pinned section by it), `title` (the name set with
+`POST /v1/sessions/{id}/title`, else the harness's own) and
+`harness_title` (always the harness's own). Both routes answer those
+fields and emit `session.meta` so open clients update.
 
 The phone shows queue-mode sends that are still waiting in a tray above
 the prompt box. `GET /v1/sessions/{id}/queue` lists them, oldest first:

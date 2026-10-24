@@ -40,6 +40,7 @@ from quiver.remote import (
     pairing,
     protocol,
     search as search_mod,
+    sessionmeta,
     sendq,
     slash,
     supervise,
@@ -1353,6 +1354,9 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(*fork_mod.request(
                     self._state, key, row, self._read_body()))
                 return
+            if action in sessionmeta.ACTIONS:
+                self._session_meta(key, action)
+                return
             remote_mid = row.get("machine_id")
             if remote_mid and remote_mid != self._state.machine_id:
                 self._forward(key, remote_mid, action, row)
@@ -2074,6 +2078,32 @@ class _Handler(BaseHTTPRequestHandler):
         row["ownership"] = protocol.OWNERSHIP_ATTACHED
         self._emit_ownership(key)
         self._send_json(200, {"ok": True, "note": note})
+
+    def _session_meta(self, key: str, action: str) -> None:
+        """``POST /v1/sessions/{key}/pin|title``: kept on the hub for
+        every session, satellite ones too (``sessionmeta.py``)."""
+        body = self._read_body()
+        if body is None:
+            self._send_error(400, "bad_body", "unreadable JSON body")
+            return
+        try:
+            sessionmeta.update(self._state.home, key, action, body)
+        except ValueError as exc:
+            self._send_error(422, "bad_command", str(exc))
+            return
+        except sessionmeta.TooManyEntries as exc:
+            self._send_error(409, "too_many_pins", str(exc))
+            return
+        except OSError:
+            self._send_error(500, "store_failed", "could not save the change")
+            return
+        row = self._state.catalog.reapply_meta(key) or {}
+        data = sessionmeta.fields(row)
+        self._state.emit(
+            key,
+            protocol.event("session.meta", key, self._state.machine_id, data),
+        )
+        self._send_json(200, {"ok": True, **data})
 
     def _emit_ownership(self, key: str) -> None:
         row = self._state.catalog.row_for(key) or {}

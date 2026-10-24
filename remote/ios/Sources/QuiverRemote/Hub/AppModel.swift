@@ -89,7 +89,7 @@ final class AppModel {
             guard waiting.contains(r.key) else { return r }
             return SessionRow(key: r.key, harness: r.harness, agent: r.agent, cwd: r.cwd, title: r.title,
                               lastActiveAt: r.lastActiveAt, status: "approval", machineId: r.machineId,
-                              ownership: r.ownership, attachable: r.attachable)
+                              ownership: r.ownership, attachable: r.attachable, remote: r.remote)
         }
     }
 
@@ -122,7 +122,7 @@ final class AppModel {
         let r = sessions[i]
         sessions[i] = SessionRow(key: r.key, harness: r.harness, agent: r.agent, cwd: r.cwd, title: r.title,
                                  lastActiveAt: r.lastActiveAt, status: status ?? r.status, machineId: r.machineId,
-                                 ownership: ownership ?? r.ownership, attachable: r.attachable)
+                                 ownership: ownership ?? r.ownership, attachable: r.attachable, remote: r.remote)
     }
 
     // MARK: Inbox
