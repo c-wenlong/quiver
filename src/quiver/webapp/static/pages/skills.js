@@ -250,7 +250,9 @@ function skillsLinksPanel(d) {
 /* RootDetail's buttons: Unlink for a linked folder, Link to shared skills
  * for one that isn't, nothing for a blocked one; each asks first. */
 function skillsRootActions(root, d, link) {
-  const p = skillsPage, busy = p.busy.has(root.path);
+  // One write at a time, as the hub runs them: a reply can then never
+  // land after a newer one and paint older states over it.
+  const p = skillsPage, busy = p.busy.size > 0;
   const c = p.confirm && p.confirm.path === root.path ? p.confirm : null;
   if (c) return skillsConfirm(c, d, c.kind === "unlink" ? "Unlink" : "Link", busy);
   if (link === "linked") {
@@ -354,10 +356,13 @@ async function skillsWrite(c) {
     if (!root) return;
     paths = [root.path];
     action = c.kind;
-    body = { harness: root.path, expect: root.state };
+    // The state and its detail as the confirm described them: an empty
+    // folder that fills with copies stays "absorb" but now needs a backup.
+    body = { harness: root.path, expect: root.state, expect_detail: root.detail || "" };
   }
   if (skill) body.skill = skill;
-  if (paths.some((x) => p.busy.has(x))) return;
+  if (p.busy.size) return;
+  p.writes = (p.writes || 0) + 1;
   p.confirm = null;
   if (c.kind !== "link_all") p.links = "";
   p.actionError = null;
@@ -403,9 +408,13 @@ function skillsApply(list, skillRow) {
     skills: list.skills, plugin_skill_count: list.plugin_skill_count, catalog_error: list.catalog_error,
   };
   const cur = open && p.detail[open];
+  // The reply's row is for the skill open when the write began; another
+  // may be open now, so take that one's own row from the list.
+  const row = skillRow && skillRow.path === open ? skillRow
+    : open ? list.skills.find((s) => s.path === open) : null;
   p.detail = {};
-  if (cur && skillRow) {
-    p.detail[open] = { ...cur, skill: skillRow, harnesses: list.harnesses, shared_dir: list.shared_dir };
+  if (cur && row) {
+    p.detail[open] = { ...cur, skill: row, harnesses: list.harnesses, shared_dir: list.shared_dir };
     p.headerData = p.detail[open];
   } else if (p.headerData) {
     p.headerData = { ...p.headerData, harnesses: list.harnesses, shared_dir: list.shared_dir };
@@ -413,11 +422,11 @@ function skillsApply(list, skillRow) {
 }
 
 async function skillsReload() {
+  const writes = skillsPage.writes;
   const { status, data } = await api("/v1/app/skills");
-  if (status === 200 && data) {
-    const open = skillsPage.onDetail ? skillsRoutePath() : null;
-    skillsApply(data, open ? (data.skills.find((s) => s.path === open) || null) : null);
-  }
+  // A write started meanwhile answers with newer states than this read.
+  if (writes !== skillsPage.writes) return;
+  if (status === 200 && data) skillsApply(data, null);
   skillsRepaint();
 }
 

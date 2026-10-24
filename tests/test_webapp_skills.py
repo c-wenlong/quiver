@@ -329,6 +329,21 @@ class TestWrites(_WriteHome, unittest.TestCase):
         self.assertIn("No skills folder yet", err.message)
         self.assertFalse(os.path.lexists(self.path("codex")))
 
+    def test_a_folder_that_filled_up_within_the_same_state_is_left_alone(self):
+        # Confirmed as an empty folder; it now holds a copy of a shared
+        # skill, so linking would back it up: ask again instead.
+        kilo = Path(self.path("kilo"))
+        (kilo / "tdd").mkdir()
+        (kilo / "tdd" / "SKILL.md").write_text((self.shared / "SKILL.md").read_text())
+        err = self.refused("link", {"harness": str(kilo), "expect": "absorb", "expect_detail": "empty"})
+        self.assertEqual((err.status, err.code), (409, "state_changed"))
+        self.assertIn("Linking backs it up", err.message)
+        self.assertFalse(kilo.is_symlink())
+        self.assertFalse((self.home / ".quiver" / "backups").exists())
+        reply = self.post("link", {"harness": str(kilo), "expect": "absorb",
+                                   "expect_detail": "1 skills, all already shared"})
+        self.assertEqual(reply["harness"]["state"], "linked")
+
     def test_unlink_removes_only_the_link(self):
         self.post("link", {"harness": self.path("codex")})
         reply = self.post("unlink", {"harness": self.path("codex"), "expect": "linked", "skill": str(self.shared)})
@@ -371,6 +386,14 @@ class TestWrites(_WriteHome, unittest.TestCase):
         self.assertIn("changed since", reply["result"]["failed"][0]["message"])
         self.assertFalse(os.path.lexists(self.path("codex")))
 
+    def test_link_all_reports_a_named_folder_the_hub_no_longer_lists(self):
+        gone = str(self.home / ".gone" / "skills")
+        reply = self.post("link_all", {"harnesses": [self.path("kilo"), gone]})
+        self.assertEqual([r["name"] for r in reply["result"]["linked"]], ["kilo"])
+        self.assertEqual([(f["path"], f["message"]) for f in reply["result"]["failed"]],
+                         [(gone, "no longer listed on the hub.")])
+        self.assertFalse(os.path.lexists(gone))
+
     def test_archived_folders_are_left_out_of_link_all_but_link_on_a_click(self):
         config = self.home / ".quiver" / "config"
         config.mkdir(parents=True, exist_ok=True)
@@ -390,6 +413,7 @@ class TestWrites(_WriteHome, unittest.TestCase):
             ("link", {}, 422, "bad_harness"),
             ("link", {"harness": 3}, 422, "bad_harness"),
             ("link", {"harness": self.path("codex"), "expect": 1}, 422, "bad_expect"),
+            ("link", {"harness": self.path("codex"), "expect_detail": []}, 422, "bad_expect"),
             ("link", {"harness": self.path("codex"), "skill": "/etc"}, 404, "unknown_skill"),
             ("link_all", {"harnesses": "codex"}, 422, "bad_harnesses"),
             ("relink", {"harness": self.path("codex")}, 404, "unknown_action"),

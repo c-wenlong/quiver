@@ -297,8 +297,10 @@ def file_view(skill: dict, name: str) -> dict:
 #   ``harnesses`` limits it to the folders the page's confirm named.
 #
 # ``harness`` is a folder's path (a name works when one folder has it).
-# ``expect`` is the state the page showed: when the folder has changed
-# since, nothing is written and the refusal says what it is now. ``skill``
+# ``expect`` is the state the page showed and ``expect_detail`` its detail
+# (an empty folder that fills with shared copies stays ``absorb`` but now
+# needs a backup): when the folder has changed since, nothing is written
+# and the refusal says what it is now. ``skill``
 # is the skill whose detail is open; the reply carries its row again.
 #
 # The reply is the list payload (``listing``) read after the write, plus
@@ -382,7 +384,7 @@ def post(ctx, action: str, body: dict) -> dict:
             result = _link_all(inventory["harnesses"], home, _named(body))
         else:
             root = _root(inventory["harnesses"], _ref(body, "harness"))
-            _expect(root, body.get("expect"))
+            _expect(root, body.get("expect"), body.get("expect_detail"))
             result = _link(root, home) if action == "link" else _unlink(root, home)
         after = _inventory(home)
     reply = listing(ctx, home, after)
@@ -428,12 +430,13 @@ def _root(roots: list[dict], ref: str) -> dict:
     raise PageError(404, "unknown_harness", "No harness skills folder like that on the hub.")
 
 
-def _expect(root: dict, expect) -> None:
-    if expect is None:
-        return
-    if not isinstance(expect, str):
+def _expect(root: dict, expect, detail) -> None:
+    if expect is not None and not isinstance(expect, str):
         raise PageError(422, "bad_expect", "expect must be the state the page showed.")
-    if expect != root["state"]:
+    if detail is not None and not isinstance(detail, str):
+        raise PageError(422, "bad_expect", "expect_detail must be the detail the page showed.")
+    if ((expect is not None and expect != root["state"])
+            or (detail is not None and detail != (root.get("detail") or ""))):
         raise PageError(409, "state_changed",
                         f"{root['name']}'s skills folder changed since the page read it. "
                         f"{explanation(root)} Look again before you change it.")
@@ -495,6 +498,12 @@ def _link_all(roots: list[dict], home: Path, named: set[str] | None) -> dict:
     failed = []
     if named is not None:
         target_paths = {r["path"] for r in targets}
+        # A folder the confirm named that the hub no longer lists at all
+        # (its harness left the registry) is reported too, not dropped.
+        listed = {r["path"] for r in roots}
+        for path in sorted(named - listed):
+            failed.append({"name": Path(path).parent.name.lstrip(".") or path, "path": path,
+                           "message": "no longer listed on the hub."})
         for root in roots:
             if root["path"] in named and root["path"] not in target_paths:
                 failed.append({"name": root["name"], "path": root["path"],

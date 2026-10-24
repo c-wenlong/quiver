@@ -42,8 +42,8 @@ quiver links whole skills folders, never single skills, so every write
 names a harness skills folder from the payload's `harnesses`. Each action
 asks first, inline in the popover: a panel says exactly what will happen
 (which folder, linked to what, whether it is backed up first) with Cancel
-and the action's button. While the hub works the chip spins and the
-buttons are disabled; the page repaints only from the hub's answer. A
+and the action's button. One write runs at a time: while the hub works
+the chip spins and every write button is disabled; the page repaints only from the hub's answer. A
 refusal shows in the popover and in an error card on the page, and the
 list is read again, since a failed change may still have moved something
 (the app reloads either way too).
@@ -54,14 +54,16 @@ rewrites `skill_links.json`):
 
 | Action | Body | Does |
 |---|---|---|
-| `link` | `{"harness": "<folder path>", "expect": "create", "skill"?: "<skill folder>"}` | `link_skill_root(path, force=…)`, as `swe skills link <path> [--force] --json`. Only a Not linked folder (`create`, `relink`, `absorb`); `--force` only for `absorb` holding copies of shared skills, which is backed up to `~/.quiver/backups` first. |
-| `unlink` | `{"harness": "<folder path>", "expect": "linked", "skill"?: …}` | `unlink_skill_root(path)`, as `swe skills unlink <path> --json`. Only a Linked folder; the folder is left absent, not recreated. |
-| `link_all` | `{"harnesses"?: ["<folder path>", …], "skill"?: …}` | `SkillsModel.linkAll`: each folder `linkAllTargets` clears (Not linked, not archived, no `--force` needed), one at a time; a failure is reported and the rest go on. `harnesses` limits it to the folders the confirm named; one named that is no longer free is reported, not linked. |
+| `link` | `{"harness": "<folder path>", "expect": "create", "expect_detail": "", "skill"?: "<skill folder>"}` | `link_skill_root(path, force=…)`, as `swe skills link <path> [--force] --json`. Only a Not linked folder (`create`, `relink`, `absorb`); `--force` only for `absorb` holding copies of shared skills, which is backed up to `~/.quiver/backups` first. |
+| `unlink` | `{"harness": "<folder path>", "expect": "linked", "expect_detail": "", "skill"?: …}` | `unlink_skill_root(path)`, as `swe skills unlink <path> --json`. Only a Linked folder; the folder is left absent, not recreated. |
+| `link_all` | `{"harnesses"?: ["<folder path>", …], "skill"?: …}` | `SkillsModel.linkAll`: each folder `linkAllTargets` clears (Not linked, not archived, no `--force` needed), one at a time; a failure is reported and the rest go on. `harnesses` limits it to the folders the confirm named; one named that is no longer free, or no longer listed at all, is reported in `failed`, not linked. |
 
 `harness` is a folder's path (a registry name works when only one folder
-has it); it must be one the inventory lists (404). `expect` is the state
-the page showed; when the folder has changed since, nothing is written and
-the 409 `state_changed` says what it is now. `skill` must be a listed skill
+has it); it must be one the inventory lists (404). `expect` and
+`expect_detail` are the state and detail the page showed (an empty folder
+that fills with shared copies stays `absorb` but would now be backed up);
+when either has changed since, nothing is written and the 409
+`state_changed` says what the folder is now. `skill` must be a listed skill
 folder (404). Other refusals: 409 with the folder's state as the code for
 `keep` (holds skills that exist nowhere else: never overwritten),
 `conflict` (a file in the way), `ignored` and `skipped`; 409
