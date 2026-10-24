@@ -393,9 +393,12 @@ const SessionChat = (() => {
         const note = b.querySelector(".send-note");
         if (d.ok) {
           // A degraded send still landed: keep the why visible.
-          if (note) {
-            if (d.degraded) note.textContent = d.note || "Sent (queued: mid-turn input isn't supported here)";
-            else note.remove();
+          if (d.degraded) {
+            // Kept when the transcript echoes the message (appendMessage).
+            b.classList.add("degraded");
+            if (note) note.textContent = d.note || "Sent (queued: mid-turn input isn't supported here)";
+          } else if (note) {
+            note.remove();
           }
         } else {
           b.classList.add("failed");
@@ -464,6 +467,8 @@ const SessionChat = (() => {
       put(card);
       return;
     }
+    // A degraded send's note survives its transcript echo.
+    let carried = "";
     if (kind === "user" && live) {
       // A queued send's real bubble lands via message.appended: swap it for
       // the optimistic one already drawn (attachments prefix the stored text
@@ -482,11 +487,15 @@ const SessionChat = (() => {
         hit.classList.remove("pending");
         delete hit.dataset.clientId;
         const note = hit.querySelector(".send-note");
-        if (note) note.remove();
+        if (note && !hit.classList.contains("degraded")) note.remove();
         hit.querySelector(".text").innerHTML = md(msg.text);
         return;
       }
-      if (hit) hit.remove();
+      if (hit) {
+        const note = hit.querySelector(".send-note");
+        if (note && hit.classList.contains("degraded")) carried = note.textContent;
+        hit.remove();
+      }
     }
     if (live && kind !== "user" && kind !== "tool_result") chat.awaitingReply = false;
     if (kind === "tool_result") {
@@ -512,6 +521,10 @@ const SessionChat = (() => {
       div.innerHTML = `<div class="role">Error</div><div class="text">${md(msg.text)}</div>`;
     } else if (kind === "user" || kind === "assistant") {
       div.innerHTML = `<div class="text">${md(msg.text)}</div>`;
+      if (carried) {
+        div.classList.add("degraded");
+        div.insertAdjacentHTML("beforeend", `<div class="send-note">${esc(carried)}</div>`);
+      }
     } else {
       div.innerHTML = `<div class="role">${esc(kind)}</div><div class="text">${md(msg.text)}</div>`;
     }
