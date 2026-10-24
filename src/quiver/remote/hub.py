@@ -40,6 +40,7 @@ from quiver.remote import (
     pairing,
     protocol,
     search as search_mod,
+    sessionmeta,
     sendq,
     slash,
     supervise,
@@ -47,6 +48,8 @@ from quiver.remote import (
     tsid,
     usage as usage_mod,
 )
+from quiver.remote import fork as fork_mod
+from quiver.remote.detach import PendingDetaches
 from quiver.remote.journal import Journal
 from quiver.webapp import (
     api as webapp_api,
@@ -171,6 +174,8 @@ class HubState:
         # queue-mode sends not yet handed to an injector, by session
         # and client_id: GET/POST /v1/sessions/{key}/queue read it.
         self.waiting = sendq.Waiting()
+        # ``detach`` with ``mode: when_idle``, waiting out a turn.
+        self.detaches = PendingDetaches(self._stop)
         # Fresh per-session status for queued sends; tests stub it.
         from quiver.sessions.status import session_statuses
         self.status_of = session_statuses
@@ -321,7 +326,8 @@ class HubState:
                     lid, state="started",
                     key=str(event.get("session") or key),
                 )
-            elif lid and data.get("op") == "launch" and not data.get("ok"):
+            elif lid and data.get("op") in {"launch", "fork"} \
+                    and not data.get("ok"):
                 self.settle_launch(
                     lid, state="failed", note=str(data.get("note") or "")
                 )
@@ -340,6 +346,9 @@ class HubState:
 
     def start(self) -> None:
         self._register_machine()
+        # A keep or adopt cut short by a crash leaves a key in both
+        # the supervised and kept registries; settle it before serving.
+        supervise.reconcile_kept(self.home)
         targets: list = [
             (self._catalog_loop, "remote-catalog"),
             (self._tail_loop, "remote-tail"),
@@ -365,6 +374,7 @@ class HubState:
         # in-flight one sees _stop and reports the same note.
         self.waiting.wake_all()
         self.sendq.close()
+        self.detaches.close()
         for t in self._threads:
             t.join(timeout=2)
         self.webapp.close()
@@ -491,6 +501,7 @@ class HubState:
                             ),
                         )
                 self.tail_manager.sync(self.catalog.tail_rows())
+                supervise.reap_kept(self.home, self.catalog.session_for)
             except Exception:
                 pass
             self._stop.wait(catalog_mod.REFRESH_INTERVAL_S)
@@ -1347,6 +1358,13 @@ class _Handler(BaseHTTPRequestHandler):
             if row is None:
                 self._send_error(404, "unknown_session", "no such session")
                 return
+            if action == "fork":  # hub or satellite: fork.py routes it
+                self._send_json(*fork_mod.request(
+                    self._state, key, row, self._read_body()))
+                return
+            if action in sessionmeta.ACTIONS:
+                self._session_meta(key, action)
+                return
             remote_mid = row.get("machine_id")
             if remote_mid and remote_mid != self._state.machine_id:
                 self._forward(key, remote_mid, action, row)
@@ -1651,10 +1669,11 @@ class _Handler(BaseHTTPRequestHandler):
                         "session is observed: read-only until attached",
                     )
                     return
+                fields = {"ctl": op, "value": cmd.get("value") or ""}
+                if "mode" in cmd:
+                    fields["mode"] = cmd["mode"]
                 queued = self._state.queue_command(
-                    mid, "control", key,
-                    {"ctl": op, "value": cmd.get("value") or ""},
-                )
+                    mid, "control", key, fields)
             if queued is None:
                 self._send_error(429, "backlog_full",
                                  "machine is too far behind")
@@ -1839,13 +1858,14 @@ class _Handler(BaseHTTPRequestHandler):
     }
 
     def _queue_action(self, key: str, row: dict) -> None:
-        """``POST /v1/sessions/{key}/queue {client_id, op}``.
+        """``POST /v1/sessions/{key}/queue {client_id, op, text?}``.
 
         ``steer`` takes one waiting queue-mode send off the idle wait and
         submits it as a steer (after the steers already queued);
         ``cancel`` drops it and reports ``command.result`` with
-        ``cancelled: true``. Both claim the send under the ``Waiting``
-        lock, so they race the send's own job safely.
+        ``cancelled: true``; ``edit`` replaces its text in place. All
+        three act under the ``Waiting`` lock, so they race the send's own
+        job safely: the job injects only after claiming it there.
         """
         body = self._read_body()
         if body is None:
@@ -1859,6 +1879,24 @@ class _Handler(BaseHTTPRequestHandler):
         client_id, op = act["client_id"], act["op"]
         state = self._state
         steer_key = self._send_key(key, "steer")
+        if op == "edit":
+            text = act["text"]
+
+            def change(send) -> None:
+                # The job's command is the same dict, read only after
+                # its claim, so it injects the new text.
+                send.text = text
+                send.payload["cmd"]["text"] = text
+
+            send, gone = state.waiting.update(key, client_id, change)
+            if send is None:
+                self._queue_gone(gone)
+                return
+            self._send_json(200, {
+                "ok": True, "client_id": client_id, "op": op,
+                "text": text,
+            })
+            return
         if op == "steer":
             # Sending now is a write: the same rules as a steer message.
             if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
@@ -1877,14 +1915,7 @@ class _Handler(BaseHTTPRequestHandler):
             key, client_id, "steered" if op == "steer" else "removed"
         )
         if send is None:
-            if gone == "unknown":
-                self._send_error(
-                    404, "unknown_send",
-                    "no queued message with that client_id",
-                )
-            else:
-                self._send_error(409, "not_waiting", self._GONE_NOTES.get(
-                    gone, "that message is no longer queued"))
+            self._queue_gone(gone)
             return
         if op == "cancel":
             self._send_result(
@@ -1899,6 +1930,16 @@ class _Handler(BaseHTTPRequestHandler):
             )
             state.sendq.submit(steer_key, job, cancel)
         self._send_json(200, {"ok": True, "client_id": client_id, "op": op})
+
+    def _queue_gone(self, gone: str) -> None:
+        """Answer an action on a send that is not waiting."""
+        if gone == "unknown":
+            self._send_error(
+                404, "unknown_send", "no queued message with that client_id",
+            )
+        else:
+            self._send_error(409, "not_waiting", self._GONE_NOTES.get(
+                gone, "that message is no longer queued"))
 
     def _fresh_status(self, session, fallback: str) -> str:
         """Reclassify one session now; the catalog row can be stale."""
@@ -1981,31 +2022,101 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(422, "bad_command", str(exc))
             return
         op = cmd["op"]
+        mode = cmd.get("mode") or "now"
         if op == "attach":
             self._attach(key, row, body)
             return
+        if op == "kill" or (op == "detach" and mode != "when_idle"):
+            # A later detach or kill replaces a pending when_idle one.
+            self._state.detaches.cancel(key, f"replaced by {op} {mode}")
         if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
             self._send_error(
                 409, "not_attached",
                 "session is observed: read-only until attached",
             )
             return
+        if op == "detach" and mode == "when_idle":
+            self._detach_when_idle(key)
+            return
         session = self._state.catalog.session_for(key)
-        result = self._injector(key).control(
-            session, op, str(cmd.get("value") or "")
-        )
+        if op == "detach" and mode == "keep":
+            result = inject.InjectResult(*supervise.keep(
+                self._state.home, key))
+        else:
+            result = self._injector(key).control(
+                session, op, str(cmd.get("value") or "")
+            )
         if not result.ok:
             self._send_error(409, "control_failed", result.note)
             return
         if op in {"kill", "detach"}:
-            attachments.drop_session(self._state.home, key)
-            row["ownership"] = protocol.OWNERSHIP_OBSERVED
-            self._emit_ownership(key)
+            self._detached(key, drop_files=mode != "keep")
         self._send_json(200, {"ok": True, "note": result.note})
 
+    def _detached(self, key: str, drop_files: bool = True) -> None:
+        # A kept harness still runs and may read its staged files.
+        if drop_files:
+            attachments.drop_session(self._state.home, key)
+        row = self._state.catalog.row_for(key)
+        if row is not None:
+            row["ownership"] = protocol.OWNERSHIP_OBSERVED
+        self._emit_ownership(key)
+
+    def _detach_when_idle(self, key: str) -> None:
+        """``detach`` with ``mode: when_idle``: 202 now, detach later.
+
+        The wait, its 30 min cap and its cancel live in ``detach.py``;
+        the outcome lands as a ``command.result`` (``op: detach``).
+        """
+        state = self._state
+
+        def status() -> str:
+            row = state.catalog.row_for(key) or {}
+            session = state.catalog.session_for(key)
+            fallback = str(row.get("status") or "")
+            return self._fresh_status(session, fallback) \
+                if session is not None else fallback
+
+        def fire() -> tuple[bool, str]:
+            if supervise.meta_for(state.home, key) is None:
+                return False, "session was already detached"
+            result = self._injector(key).control(
+                state.catalog.session_for(key), "detach", "")
+            if result.ok:
+                self._detached(key)
+            return result.ok, result.note
+
+        def report(ok: bool, note: str, cancelled: bool) -> None:
+            fields = {"command_id": "", "op": "detach",
+                      "mode": "when_idle", "ok": ok, "note": note}
+            if cancelled:
+                fields["cancelled"] = True
+            state.emit(key, protocol.event(
+                "command.result", key, state.machine_id, fields))
+
+        fresh = state.detaches.schedule(
+            key, status=status, fire=fire, report=report)
+        self._send_json(202, {
+            "ok": True, "queued": True, "mode": "when_idle",
+            "note": "detaches when the current turn ends" if fresh
+            else "a detach is already waiting for this turn to end",
+        })
+
     def _attach(self, key: str, row: dict, body: dict) -> None:
+        # Attaching again cancels a when_idle detach; one already
+        # running finishes first, and this attach then starts over.
+        undone = self._state.detaches.cancel(key, "cancelled by attach")
+        if undone == "fired":
+            # The detach ran while we waited, and a catalog refresh may
+            # have replaced the row: judge from the current one and the
+            # registry, never the request's copy.
+            row = self._state.catalog.row_for(key) or row
+            if supervise.meta_for(self._state.home, key) is None:
+                row["ownership"] = protocol.OWNERSHIP_OBSERVED
         if row.get("ownership") == protocol.OWNERSHIP_ATTACHED:
-            self._send_json(200, {"ok": True, "note": "already attached"})
+            self._send_json(200, {"ok": True, "note": (
+                "already attached; the pending detach is cancelled"
+                if undone == "cancelled" else "already attached")})
             return
         if not row.get("attachable"):
             self._send_error(
@@ -2039,9 +2150,11 @@ class _Handler(BaseHTTPRequestHandler):
                 422, "bad_mode", "appserver attach only exists for codex"
             )
             return
-        if str(row.get("status") or "") == "active":
+        if str(row.get("status") or "") == "active" and \
+                key not in supervise.kept(self._state.home):
             # Busy beats environment: on a box with no tmux the truest
-            # answer for a mid-turn session is still not_idle.
+            # answer for a mid-turn session is still not_idle. A kept
+            # tmux session is adopted as it is, so mid-turn is fine.
             self._send_error(
                 409, "not_idle",
                 "session is mid-turn; try again when it is idle",
@@ -2068,6 +2181,32 @@ class _Handler(BaseHTTPRequestHandler):
         row["ownership"] = protocol.OWNERSHIP_ATTACHED
         self._emit_ownership(key)
         self._send_json(200, {"ok": True, "note": note})
+
+    def _session_meta(self, key: str, action: str) -> None:
+        """``POST /v1/sessions/{key}/pin|title``: kept on the hub for
+        every session, satellite ones too (``sessionmeta.py``)."""
+        body = self._read_body()
+        if body is None:
+            self._send_error(400, "bad_body", "unreadable JSON body")
+            return
+        try:
+            sessionmeta.update(self._state.home, key, action, body)
+        except ValueError as exc:
+            self._send_error(422, "bad_command", str(exc))
+            return
+        except sessionmeta.TooManyEntries as exc:
+            self._send_error(409, "too_many_pins", str(exc))
+            return
+        except OSError:
+            self._send_error(500, "store_failed", "could not save the change")
+            return
+        row = self._state.catalog.reapply_meta(key) or {}
+        data = sessionmeta.fields(row)
+        self._state.emit(
+            key,
+            protocol.event("session.meta", key, self._state.machine_id, data),
+        )
+        self._send_json(200, {"ok": True, **data})
 
     def _emit_ownership(self, key: str) -> None:
         row = self._state.catalog.row_for(key) or {}

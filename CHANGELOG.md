@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Settings, with remote pairing.** The Settings page from the
+  Mac app, for the hub machine. Integrations › Remote shows the hub,
+  the paired devices with "This device" marked and a Revoke that asks
+  first (signing out the browser you're on needs its own confirm), and
+  Pair a device, which mints a one-time code and shows the browser link
+  and the `quiver://pair` app link as QR codes. The hub draws those
+  itself with a small stdlib encoder (a port of Nayuki's MIT QR
+  generator), since the web app loads no library. Appearance and which
+  pages the sidebar lists are kept per browser; the API keys show
+  masked and read only; the GitHub CLI and the hub's paths are listed;
+  "Set up this machine" and Doctor link to their pages. Rows that set
+  up the Mac app itself (Dock, login item, terminal, notifications,
+  updates, Keychain services) are greyed out as "Mac app only".
+
 - **Remote iPhone app: type @ to mention a file.** Typing `@` in the
   prompt box opens a list of files and folders from the session's
   working folder just above it, filtered as you type. Tapping a file
@@ -36,6 +50,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   goes out. The tray reloads from the hub when you reopen the chat, and
   the Queue/Steer picker is gone. On a hub too old to edit, an edit
   removes the message and queues the new text at the end, and says so.
+
+- **Remote: pin a session and give it a name.** `POST
+  /v1/sessions/{key}/pin` and `/title` keep a pin and a display name on
+  the hub, so the phone and the web app agree and watched or satellite
+  sessions work too. Every session row gains `pinned`, `pinned_at` and
+  `harness_title`, and `title` shows your name when you set one. Open
+  clients hear about a change as a `session.meta` event.
+
+- **Remote: fork a session from the phone.** `POST
+  /v1/sessions/{id}/fork` starts a new run that continues from a
+  session's history under tmux, leaves the original untouched, and is
+  tracked like a new-session launch so the phone can open it. Claude
+  Code, Codex, Kilo, Pi and Droid can fork, on the hub or a satellite;
+  session rows carry `can_fork` so the app shows Fork only for those.
+
+- **Remote: detach can wait for the turn to end or keep tmux running.**
+  The control route's `detach` takes a `mode`. `now` is today's
+  behaviour and stays the default. `when_idle` answers at once and
+  detaches when the session stops working, unless an attach or another
+  detach cancels it first. `keep` stops supervising but leaves the tmux
+  session running for `tmux attach` on the Mac; attaching from the phone
+  later takes that same tmux session back instead of starting a second
+  run, and the hub closes a kept session nobody has used for 12 hours.
+  Satellites support all three.
+
+- **Remote: edit a queued message in place.** `POST
+  /v1/sessions/{key}/queue` takes `op: "edit"` with a `text`, which
+  replaces a waiting send's text without moving it in the queue and
+  answers `200 {ok, client_id, op, text}`. An edit racing the send
+  either lands before it goes out or answers `409 not_waiting`, so a
+  `200` edit is never followed by the old text.
 
 - **Remote iPhone app: links in replies get a preview card.** A reply
   that links to a web page shows a card under the text with the page's
