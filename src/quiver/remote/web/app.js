@@ -1246,6 +1246,7 @@ el("composer").addEventListener("submit", async (e) => {
   const action = composerAction();
   if (action === "stop") { interrupt(); return; }
   if (action !== "send") return;
+  closeMenu();
   if (state.editingId) { saveEdit(); return; }
   const text = input.value.trim();
   input.value = "";
@@ -1563,6 +1564,7 @@ function beginEdit(cid) {
   state.editingId = cid;
   state.editNote = "";
   input.value = entry.text;
+  closeMenu();
   input.focus();
   renderTray();
 }
@@ -1573,6 +1575,8 @@ function cancelEdit() {
   el("composer-text").value = state.draftBeforeEdit;
   state.draftBeforeEdit = "";
   state.editNote = "";
+  // The box's text changed under any open menu: its token is stale.
+  closeMenu();
   renderTray();
 }
 
@@ -1616,6 +1620,7 @@ function editWentOut(cid, text) {
   state.editingId = null;
   state.draftBeforeEdit = "";
   el("composer-text").value = text;
+  closeMenu();
   state.editNote = "That message already went out";
   renderTray();
 }
@@ -1634,6 +1639,7 @@ async function requeueEdit(cid, text, gen) {
     state.editingId = null;
     el("composer-text").value = state.draftBeforeEdit;
     state.draftBeforeEdit = "";
+    closeMenu();
   }
   state.trayNote = "Edited. It moved to the end of the queue";
   sendText(text);
@@ -1995,19 +2001,35 @@ el("composer-text").addEventListener("keydown", (e) => {
     e.preventDefault();
     menu.active = (menu.active + (e.key === "ArrowDown" ? 1 : rows - 1)) % rows;
     renderMenu();
-  } else if (rows && (e.key === "Enter" || e.key === "Tab") && !e.isComposing) {
-    // Enter picks while the menu has rows; it sends once it's closed.
+  } else if ((e.key === "Enter" || e.key === "Tab") && !e.isComposing) {
+    // While the menu is open Enter picks, or waits for rows; it sends
+    // once the menu is closed (Escape sends the text as typed).
+    if (!rows && e.key === "Tab") return;
     e.preventDefault();
-    pickMenu(menu.active);
+    if (rows) pickMenu(menu.active);
   }
 });
 
-// pointerdown, not click: the box keeps focus and the keyboard stays up.
+// A row picks on a completed tap: pointerdown only keeps the box's
+// focus (so the phone keyboard stays up), and a drag that scrolls the
+// list, or a touch the browser cancels for scrolling, picks nothing.
+let menuTap = null;
 el("prompt-menu").addEventListener("pointerdown", (e) => {
-  const row = e.target.closest(".menu-row");
-  if (!row) return;
   e.preventDefault();
-  pickMenu(Number(row.dataset.i));
+  const row = e.target.closest(".menu-row");
+  menuTap = row ? { i: Number(row.dataset.i), x: e.clientX, y: e.clientY, id: e.pointerId } : null;
+});
+el("prompt-menu").addEventListener("pointermove", (e) => {
+  if (menuTap && e.pointerId === menuTap.id &&
+      Math.hypot(e.clientX - menuTap.x, e.clientY - menuTap.y) > 8) menuTap = null;
+});
+el("prompt-menu").addEventListener("pointercancel", () => { menuTap = null; });
+el("prompt-menu").addEventListener("pointerup", (e) => {
+  const tap = menuTap;
+  menuTap = null;
+  if (!tap || e.pointerId !== tap.id) return;
+  const row = e.target.closest(".menu-row");
+  if (row && Number(row.dataset.i) === tap.i) pickMenu(tap.i);
 });
 
 /* ── wiring ──────────────────────────────────────────────── */
