@@ -24,7 +24,7 @@ app's saved value does).
 | Notifications | All three rows Mac app only. |
 | Providers | Harnesses tab: Provider visibility is Mac app only, with a link to the Harnesses page. Inference tab: the API keys, read only (below). |
 | Services | Mac app only (keys in the Mac's Keychain). |
-| Integrations | GitHub: gh's login (with the app's warnings and a re-check button) and the synced repo catalog. Remote: the hub, paired devices, Pair a device, and pair requests waiting for approval (below). |
+| Integrations | GitHub: gh's login (with the app's warnings and a re-check button) and the synced repo catalog. Remote: the setup checklist until it's done, the hub, paired devices, Pair a device, and pair requests waiting for approval (below). |
 | Paths | The hub's swe, API keys file and MCP servers folder, read only. Editor: Mac app only. |
 | Doctor | A link to the Doctor page (`#/doctor`); the app draws Doctor inside Settings. |
 | Experimental | Session search: Mac app only. |
@@ -34,6 +34,15 @@ badge where its control would be.
 
 ### Integrations › Remote
 
+- **Set up remote control**: while any step `swe remote setup` checks is
+  left, a card lists them all with a Done, Needs you, Quiver does this,
+  Failed or Waiting badge. A step only a person can do links to its
+  page (Download Tailscale, Sign in, Open admin console) or copies its
+  command; "Pair a phone" mints a code like Pair a device. The steps
+  Quiver does itself are not run from here, since moving the hub can cut
+  off the page it serves: the card's last row points to the Mac app's
+  Set up remote control or `swe remote setup --apply` on the hub, with
+  Check again. The card is gone once every step is done.
 - **Hub**: "Hub running", the machine name, the public URL (or the
   listen address), uptime, and an Online badge. The page is served by
   the hub, so the app's "No hub reachable" state can't occur here.
@@ -120,6 +129,12 @@ working. `url` is only ever an http(s) link.
 {"status", "login", "error"}, "catalog": {"repos", "synced_at", "owners"}
 | null}}`, through the Repositories page's cached `gh auth status` probe.
 It is separate because that probe can take a second or two.
+
+`GET /v1/app/settings?part=remote_setup` answers `{"remote_setup":
+<swe remote setup --json data>}` for the hub machine (see
+`docs/json-contracts.md`). It is separate because it calls tailscale and
+probes the hub's own https address, and it never fetches a certificate:
+it shows the cached result, so the page stays quick.
 
 ## Writes
 
