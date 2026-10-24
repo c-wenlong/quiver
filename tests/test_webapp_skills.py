@@ -323,6 +323,17 @@ class TestWrites(_WriteHome, unittest.TestCase):
         self.assertEqual(len(backups), 1)
         self.assertTrue((backups[0] / "tdd" / "SKILL.md").is_file())
 
+    def test_a_folder_of_empty_subfolders_links(self):
+        kilo = Path(self.path("kilo"))
+        (kilo / "old" / "nested").mkdir(parents=True)
+        reply = self.post("link", {"harness": str(kilo), "expect": "absorb", "expect_detail": "empty"})
+        self.assertEqual(reply["harness"]["state"], "linked")
+        self.assertTrue(kilo.is_symlink())
+        reply = self.post("unlink", {"harness": str(kilo)})
+        (kilo / "old").mkdir(parents=True)
+        reply = self.post("link_all", {"harnesses": [str(kilo)]})
+        self.assertEqual([r["name"] for r in reply["result"]["linked"]], ["kilo"])
+
     def test_a_folder_that_changed_since_the_page_read_it_is_left_alone(self):
         err = self.refused("link", {"harness": self.path("codex"), "expect": "absorb"})
         self.assertEqual((err.status, err.code), (409, "state_changed"))

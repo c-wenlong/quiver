@@ -285,8 +285,8 @@ def file_view(skill: dict, name: str) -> dict:
 #   ~/.quiver/skills, as the Mac app's "Link to shared skills" does
 #   (``swe skills link <path> [--force] --json``). Only a Not linked folder
 #   (create, relink, absorb) is linked; ``--force`` is passed only for an
-#   absorb folder holding copies of shared skills, which link_skill_root
-#   backs up first. keep, conflict, ignored and skipped are refused with
+#   absorb folder (copies of shared skills, or a tree with no file in it),
+#   which link_skill_root backs up first. keep, conflict, ignored and skipped are refused with
 #   the reason, so a folder holding the only copy of a skill is never
 #   replaced. An archived folder can be linked here, as in the app.
 # - ``unlink`` ``{"harness", "expect"?, "skill"?}``: remove a Linked
@@ -468,8 +468,14 @@ def _link(root: dict, home: Path) -> dict:
         # way. Neither is ever replaced from here.
         raise PageError(409, root["state"], f"Quiver won't link {root['name']}. {explanation(root)}")
     _same_folder(root, home)
+    # Every absorb folder goes with --force, the "empty" one too: init calls
+    # a tree of empty subfolders empty, but link_skill_root refuses any
+    # folder with an entry in it unless forced. Both kinds were just
+    # classified (no file, or only copies of shared skills), and --force
+    # backs the folder up before it is removed, so nothing can be lost.
+    force = root["state"] == "absorb"
     try:
-        label, src, tgt = link_skill_root(root["path"], home=home, cwd=Path(os.sep), force=needs_force(root))
+        label, src, tgt = link_skill_root(root["path"], home=home, cwd=Path(os.sep), force=force)
     except (SkillLayoutError, ConfigurationError) as exc:
         raise PageError(409, "link_failed", str(exc)) from exc
     return LinkReply(label, str(src), str(tgt)).to_json()

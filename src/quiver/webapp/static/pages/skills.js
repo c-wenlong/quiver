@@ -143,7 +143,7 @@ function skillsConfirmText(c, d) {
     case "relink": return `Points ${path} at ${shared} instead of where it points now, so ${name} loads every shared skill.`;
     default: return rootNeedsForce(root)
       ? `Copies ${path} into ~/.quiver/backups, then replaces it with a link to ${shared}. The skills in it (${root.detail}) are all in the shared library already.`
-      : `Removes the empty folder ${path} and puts a link to ${shared} in its place.`;
+      : `Removes ${path}, which holds no files, and puts a link to ${shared} in its place.`;
   }
 }
 

@@ -54,9 +54,9 @@ rewrites `skill_links.json`):
 
 | Action | Body | Does |
 |---|---|---|
-| `link` | `{"harness": "<folder path>", "expect": "create", "expect_detail": "", "skill"?: "<skill folder>"}` | `link_skill_root(path, force=…)`, as `swe skills link <path> [--force] --json`. Only a Not linked folder (`create`, `relink`, `absorb`); `--force` only for `absorb` holding copies of shared skills, which is backed up to `~/.quiver/backups` first. |
+| `link` | `{"harness": "<folder path>", "expect": "create", "expect_detail": "", "skill"?: "<skill folder>"}` | `link_skill_root(path, force=…)`, as `swe skills link <path> [--force] --json`. Only a Not linked folder (`create`, `relink`, `absorb`); `--force` only for `absorb`, which is backed up to `~/.quiver/backups` first when it has anything in it (copies of shared skills, or empty subfolders, which swe's link otherwise refuses). |
 | `unlink` | `{"harness": "<folder path>", "expect": "linked", "expect_detail": "", "skill"?: …}` | `unlink_skill_root(path)`, as `swe skills unlink <path> --json`. Only a Linked folder; the folder is left absent, not recreated. |
-| `link_all` | `{"harnesses"?: ["<folder path>", …], "skill"?: …}` | `SkillsModel.linkAll`: each folder `linkAllTargets` clears (Not linked, not archived, no `--force` needed), one at a time; a failure is reported and the rest go on. `harnesses` limits it to the folders the confirm named; one named that is no longer free, or no longer listed at all, is reported in `failed`, not linked. |
+| `link_all` | `{"harnesses"?: ["<folder path>", …], "skill"?: …}` | `SkillsModel.linkAll`: each folder `linkAllTargets` clears (Not linked, not archived, and not a folder of shared copies), one at a time; a failure is reported and the rest go on. `harnesses` limits it to the folders the confirm named; one named that is no longer free, or no longer listed at all, is reported in `failed`, not linked. |
 
 `harness` is a folder's path (a registry name works when only one folder
 has it); it must be one the inventory lists (404). `expect` and
@@ -135,6 +135,8 @@ Also:
   the app's buttons act on the first click. The hub refuses a folder whose
   state changed since the page read it, where the app acts on its last
   list.
+- An `absorb` folder the app calls empty but that holds empty subfolders
+  is linked with `--force` (backed up first); the app's link fails on it.
 - A failed write also shows its error card on the detail page; the app
   shows it over the list and in the popover only.
 - The skills come from the hub machine, so the subtitle names it rather
