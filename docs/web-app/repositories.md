@@ -181,8 +181,9 @@ Start then:
    `~/.quiver/worktrees/<owner>__<name>-prN`, reused on the next ask.
    Answers `{"repo", "number", "path", "head", "created", "machine"}`.
    It holds no lock the other writes wait on, since a first clone can
-   take minutes; the same PR asked twice at once is a 409 `busy`. A
-   failure is a 502 `worktree_failed` naming the step ("Fetch failed:
+   take minutes. Checkouts of one repo run one after another: its PRs
+   share a mirror and its `FETCH_HEAD`, so two at once could hand one
+   session the other PR's code. A failure is a 502 `worktree_failed` naming the step ("Fetch failed:
    …"); a missing or signed-out `gh` a 409.
 2. `POST /v1/sessions` `{"harness", "cwd": path, "prompt"}`, the hub's
    own launch route (docs/remote-control.md), then `GET /v1/launches/<id>` once a

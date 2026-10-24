@@ -1289,7 +1289,8 @@
     const open = dlg.querySelector("#gh-session-open");
     if (open) open.onclick = () => openSession(s, pr);
     const x = s.session;
-    if (!x) return;
+    // The panel is drawn only over a loaded PR; a failed refetch hides it.
+    if (!x || !pr) return;
     const harness = dlg.querySelector("#gh-session-harness");
     if (harness) harness.onchange = () => { x.harness = harness.value; };
     const prompt = dlg.querySelector("#gh-session-prompt");

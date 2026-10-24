@@ -341,11 +341,19 @@ def harnesses() -> list[dict]:
             for h in catalog_mod.launchable_harnesses()]
 
 
-# Checkouts being made, ``(home, repo, number)``: a clone can take
-# minutes, so it holds no lock the other writes wait on, and the same PR
-# asked for twice is refused rather than checked out twice at once.
-_WORKTREES_BUSY: set = set()
-_WORKTREES_LOCK = threading.Lock()
+# One checkout at a time per repo mirror, ``(home, repo)``: two PRs of
+# one repo share its mirror and its FETCH_HEAD, so a second fetch landing
+# between the first one's fetch and checkout would hand the first
+# session the second PR's code. A clone can take minutes, so these are
+# not the write lock the other writes wait on; a second caller waits for
+# the first, then reuses its mirror (and its checkout, for the same PR).
+_MIRROR_LOCKS: dict = {}
+_MIRROR_LOCKS_GUARD = threading.Lock()
+
+
+def _mirror_lock(home, repo: str) -> threading.Lock:
+    with _MIRROR_LOCKS_GUARD:
+        return _MIRROR_LOCKS.setdefault((G.home_key(home), repo.lower()), threading.Lock())
 
 
 def _worktree_args(home, body: dict) -> tuple[str, str]:
@@ -357,20 +365,12 @@ def worktree(ctx, repo: str, number: str) -> dict:
     ``~/.quiver/worktrees``, as ``swe gh pr worktree``: a bare mirror
     per repo, the head fetched from ``refs/pull/N/head`` (fork PRs too),
     a detached checkout reused on the next ask. Answers ``{"repo",
-    "number", "path", "head", "created", "machine"}``. 409 while the same
-    PR is being checked out, 409 for a missing or signed-out ``gh``, 502
-    when git or GitHub fails (the message names the step)."""
+    "number", "path", "head", "created", "machine"}``. Checkouts of one
+    repo run one after another. 409 for a missing or signed-out ``gh``,
+    502 when git or GitHub fails (the message names the step)."""
     _require_gh(ctx.home)
-    key = (G.home_key(ctx.home), repo.lower(), number)
-    with _WORKTREES_LOCK:
-        if key in _WORKTREES_BUSY:
-            raise PageError(409, "busy", f"#{number} is already being checked out.")
-        _WORKTREES_BUSY.add(key)
-    try:
+    with _mirror_lock(ctx.home, repo):
         made = manage.pr_worktree(repo, number, ctx.home)
-    finally:
-        with _WORKTREES_LOCK:
-            _WORKTREES_BUSY.discard(key)
     if made.status != "ok":
         _require_gh(ctx.home, fresh=True)
         raise PageError(502, "worktree_failed", made.error)

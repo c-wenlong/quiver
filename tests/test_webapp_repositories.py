@@ -857,13 +857,21 @@ class TestPrWorktree(_Base):
                 R.post(self.ctx, "worktree", body)
             self.assertEqual((caught.exception.status, caught.exception.code), (status, code))
 
-    def test_one_checkout_per_pr_at_a_time(self):
-        R._WORKTREES_BUSY.add((G.home_key(self.home), "o/a", "7"))
-        self.addCleanup(R._WORKTREES_BUSY.clear)
-        with self.assertRaises(PageError) as caught:
-            R.post(self.ctx, "worktree", {"repo": "o/a", "number": 7})
-        self.assertEqual((caught.exception.status, caught.exception.code), (409, "busy"))
+    def test_checkouts_of_one_repo_wait_for_each_other(self):
+        # Two PRs of one repo share its mirror's FETCH_HEAD: the second
+        # checkout must not start until the first has finished.
+        lock = R._mirror_lock(self.home, "O/A")
+        lock.acquire()
+        done = []
+        worker = threading.Thread(target=lambda: done.append(
+            R.post(self.ctx, "worktree", {"repo": "o/a", "number": 7})))
+        worker.start()
+        worker.join(0.5)
+        self.assertEqual(done, [])
         self.assertFalse(any(c[:2] == ["repo", "clone"] for c in self.gh.calls()))
+        lock.release()
+        worker.join(30)
+        self.assertEqual(done[0]["head"], self.head)
 
     def test_harnesses_are_what_the_hub_can_launch(self):
         rows = [{"name": "claude", "command": "claude", "display_name": "Claude Code", "tracked": True}]
