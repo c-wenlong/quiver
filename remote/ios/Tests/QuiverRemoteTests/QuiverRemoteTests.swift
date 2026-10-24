@@ -330,6 +330,47 @@ final class ChatModelTests: XCTestCase {
         XCTAssertTrue(chat.hasEarlier)
     }
 
+    private func say(_ seq: Int) -> Envelope {
+        env(#"{"type":"message.appended","seq":"# + String(seq) + #","data":{"kind":"assistant","text":"m"# + String(seq) + #""}}"#)
+    }
+
+    func testRevealDelayShortensWithBacklogAndReplaysAtOnce() {
+        XCTAssertEqual(ChatModel.revealDelay(waiting: 1), .milliseconds(180))
+        XCTAssertEqual(ChatModel.revealDelay(waiting: 12), .milliseconds(100))
+        XCTAssertNil(ChatModel.revealDelay(waiting: 25))
+        XCTAssertNil(ChatModel.revealDelay(waiting: 0))
+    }
+
+    func testABurstIsRevealedOneAtATime() async throws {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        for seq in 1...3 { chat.enqueue(say(seq)) }
+        XCTAssertTrue(chat.items.isEmpty)
+        XCTAssertTrue(chat.working)
+        var counts: [Int] = []
+        for _ in 0..<200 where chat.items.count < 3 {
+            if counts.last != chat.items.count { counts.append(chat.items.count) }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(chat.items.map(\.id), ["m1", "m2", "m3"])
+        XCTAssertTrue(counts.contains(1) && counts.contains(2), "saw \(counts)")
+        XCTAssertFalse(chat.working)
+    }
+
+    func testAReplayAfterReconnectingLandsAtOnce() async throws {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        for seq in 1...30 { chat.enqueue(say(seq)) }
+        await Task.yield()
+        XCTAssertEqual(chat.items.count, 30)
+    }
+
+    func testLeavingShowsWhatsStillWaiting() {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        for seq in 1...3 { chat.enqueue(say(seq)) }
+        chat.stop()
+        XCTAssertEqual(chat.items.count, 3)
+        XCTAssertFalse(chat.working)
+    }
+
     func testReopeningAChatReusesItsModel() {
         let app = AppModel()
         let first = app.chat("claude:1")
