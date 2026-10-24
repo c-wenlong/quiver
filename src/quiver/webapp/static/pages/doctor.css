@@ -64,3 +64,4 @@
 .doctor-blocked p { margin: 0; }
 .doctor-blocked-text { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .doctor-button.primary.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.doctor-pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow: auto; }

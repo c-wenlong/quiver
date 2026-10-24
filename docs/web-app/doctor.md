@@ -59,6 +59,17 @@ names in `action`, in process:
 | `setup` | `setup.commands.apply_setup` (no adopt, stars left alone) | `swe setup --apply --json` |
 | `init` | `init.commands.run_init(home, quiet=True, ask=False)` | `swe init` with no terminal |
 | `discover` | `discover_harnesses()` then `apply_findings(min_confidence="high")` | `swe harness discover --apply --json` |
+| `install` | `harness.commands.install_harness(name, via)`, output captured | `swe install <name> --via=<via>` |
+
+`swe doctor` gives an off-PATH harness the fix `swe install <name>`, which
+only lists installers, and no action. This page adds `action: "install"`
+and `via` to that finding when swe knows an installer whose tool is on the
+hub's PATH, and shows the fix as `swe install <name> --via=<via>`. The
+method is the one that put the stray copy where it is (read off its path,
+as `swe install --json` reads its `uninstall`: an nvm copy came from npm), else the first usable
+one in swe's order. Reinstalling through the PATH's own manager puts the
+command on PATH. A failed install's error ends with the last lines of its
+output.
 
 Nothing in the body says what to run. The reply is `{"ran", "error",
 "blocked", "report"}`: the action, what went wrong (`null` when nothing
@@ -86,7 +97,7 @@ any path it still left alone (one resolving outside the home or into
 | 503 | `page_unavailable` | the report can't be built (a corrupt harness.json) |
 
 Fixes also take the Harnesses page's registry lock (`harness.REGISTRY_LOCK`),
-since all three can rewrite harness.json.
+since all of them can rewrite harness.json.
 
 ## Differences from the Mac app
 
@@ -94,6 +105,9 @@ since all three can rewrite harness.json.
   machine. The app's Run runs at once.
 - "Run in Terminal" for a `swe …` fix with no action is left out: the
   browser can't open a terminal on the hub. The copy button stays.
+- An off-PATH harness gets Run (`swe install <name> --via=<via>`, in
+  process). The app runs `swe install <name>` in Terminal, which lists
+  the installers.
 - `init` never opens the new-skills-folder picker, even if the hub was
   started from a terminal: new folders wait, as in the app's run.
 - Replace and back up (`swe init --force`) after a run that hit a real

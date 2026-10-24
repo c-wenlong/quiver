@@ -26,6 +26,7 @@ const DOCTOR_RUNS = {
   setup: (m) => `This runs swe setup --apply on ${m}: it registers the harnesses it finds, imports their MCP servers into ~/.quiver/mcp.json, and links the shared AGENTS.md and skills into each harness. Real files in the way are left alone, and your stars stay as they are.`,
   init: (m) => `This runs swe init on ${m}: it links the shared AGENTS.md and skills into each harness that doesn't read them yet. Real files in the way are left alone, and new skills folders wait for a run in a terminal.`,
   discover: (m) => `This runs swe harness discover --apply on ${m}: it adds the high-confidence matches it finds to harness.json.`,
+  install: (m, f) => `This runs ${f.fix} on ${m}: it installs ${Fmt.harnessName(f.harness)} again with ${f.via}, which puts it on PATH, and registers it. A cask or install script that asks for a password can't finish here; copy the command into a terminal instead.`,
 };
 
 const DOCTOR_ICONS = {
@@ -141,7 +142,7 @@ function doctorRow(f, index) {
     fix = `<div class="doctor-fix"><code class="doctor-command">${esc(f.fix)}</code>${run}
       <button class="icon-button doctor-copy" data-doctor="copy" aria-label="Copy the command" title="Copy the command">${doctorIcon("copy")}</button></div>`;
     if (p.confirming === id && !running && DOCTOR_RUNS[f.action]) fix += doctorConfirm(f);
-    if (p.runErrors[id]) fix += `<p class="error doctor-run-error" role="alert">${esc(p.runErrors[id])}</p>`;
+    if (p.runErrors[id]) fix += `<p class="error doctor-run-error doctor-pre" role="alert">${esc(p.runErrors[id])}</p>`;
   }
   return `<div class="doctor-row" data-index="${index}">
     <span class="doctor-dot ${sev}" aria-label="${esc(f.severity)}"></span>
@@ -155,7 +156,7 @@ function doctorRow(f, index) {
 function doctorConfirm(f) {
   const machine = (doctorPage.data && doctorPage.data.machine) || "the hub";
   return `<div class="doctor-confirm" role="group" aria-label="Run ${esc(f.fix)}?">
-    <p class="caption">${esc(DOCTOR_RUNS[f.action](machine))}</p>
+    <p class="caption">${esc(DOCTOR_RUNS[f.action](machine, f))}</p>
     <div class="doctor-confirm-buttons">
       <button class="doctor-button" data-doctor="cancel">Cancel</button>
       <button class="doctor-button primary" data-doctor="go">Run ${esc(f.fix)}</button>

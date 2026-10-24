@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Install buttons for missing agents.** Setup's Install sheet
+  for an agent that isn't on the hub has an Install button beside each
+  package manager's command, which runs `swe install <name> --via=<method>`
+  on the hub and registers it; a failure shows the end of the installer's
+  output. Doctor's off-PATH finding gets Run, reinstalling the harness
+  with the manager that put the stray copy there. `swe install`'s run step
+  is now a function (`install_harness`) the CLI and the web app share.
+
 - **Web app: AGENTS.md and Doctor link with a button.** The AGENTS.md
   page's Global tab has "Link with swe init" where it used to say to run
   `swe init` on the hub, and "Replace and back up…" where it said to run
