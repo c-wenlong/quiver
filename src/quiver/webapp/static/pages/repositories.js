@@ -6,7 +6,9 @@
  * hub's synced catalog or GitHub, then pin), with the rail's gear
  * popover (RepoManager: open or unpin each pin) and drag to reorder.
  * Actions rows re-run failed or all jobs from their ⋯ menu (the app's
- * context menu). PR worktrees stay in swe and the Mac app. */
+ * context menu), and the PR sheet opens a PR in a session: the hub
+ * checks its head out (swe gh pr worktree) and starts a harness there
+ * (POST /v1/sessions), then the chat opens. */
 "use strict";
 
 (() => {
@@ -997,7 +999,8 @@
 
   function openPr(repo, number) {
     page.sheet = { repo, number: String(number), data: null, status: 0, checksOpen: false,
-      method: "squash", confirm: null, merging: false, mergeError: null, seq: 0 };
+      method: "squash", confirm: null, merging: false, mergeError: null, seq: 0,
+      session: null }; // Open in session's panel while it is open
     const dlg = sheetEl();
     paintSheet();
     if (!dlg.open) dlg.showModal();
@@ -1206,8 +1209,13 @@
     // pending confirm, so it never names a merge that can't happen.
     if (s.confirm && (!pr || pr.state !== "open" || (s.confirm === "auto" ? autoBlock(pr) : mergeBlock(pr)))) s.confirm = null;
     const mergeErr = s.mergeError ? `<div class="card gh-merge-error" role="alert"><span class="error">${esc(s.mergeError)}</span></div>` : "";
-    dlg.innerHTML = `<div class="sheet-body">${content}${mergeErr}${confirmPanel(s, pr)}
+    // The first message survives a repaint (a refetch landing mid-typing).
+    const typed = dlg.querySelector("#gh-session-prompt");
+    const caret = typed && document.activeElement === typed ? [typed.selectionStart, typed.selectionEnd] : null;
+    dlg.innerHTML = `<div class="sheet-body">${content}${mergeErr}${confirmPanel(s, pr)}${sessionPanel(s, pr)}
       <div class="gh-sheet-actions">${mergeControls(s, pr)}<span class="gh-spacer"></span>
+        ${pr && !s.session ? `<button type="button" class="icon-button" id="gh-session-open" title="Open in session: check the PR out on the hub and start an agent there"
+          aria-label="Open in session">${ico("terminal")}</button>` : ""}
         <a class="icon-button" href="${esc(url)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ico("external")}</a>
         <button type="button" class="icon-button${s.busy && d ? " spinning" : ""}" data-sheet-refresh title="Fetch again" aria-label="Fetch again">${icon("rescan")}</button>
         <button type="button" class="gh-button" id="gh-sheet-done">Done</button>
@@ -1239,7 +1247,123 @@
     if (goBtn) goBtn.onclick = runMerge;
     const toggle = dlg.querySelector("#gh-checks-toggle");
     if (toggle) toggle.onclick = () => { s.checksOpen = !s.checksOpen; paintSheet(); };
+    bindSession(dlg, s, pr, caret);
     GhUI.bindSetup(() => loadPr(true));
+  }
+
+  /* ---------------------------------------------------------- open in session */
+
+  /* app.openPrSession, on the hub: swe gh pr worktree checks the PR's
+   * head out under ~/.quiver/worktrees, then the chosen harness starts
+   * there under tmux with a first message (the hub's launch needs one;
+   * the harness writes nothing until it has it), and the chat opens once
+   * the session shows up, as the phone's new-session sheet does. */
+  const LAUNCH_POLLS = 60;
+
+  function sessionPanel(s, pr) {
+    const x = s.session;
+    if (!x || !pr) return "";
+    const busy = !!x.phase;
+    let picker;
+    if (x.harnesses === null) picker = `<div class="caption gh-muted">${ico("running", "gh-spin gh-small")} Reading what the hub can start…</div>`;
+    else if (!x.harnesses.length) picker = `<div class="caption gh-muted">No harness can start on the hub: install one there, or turn it on in Settings › Provider visibility.</div>`;
+    else picker = `<select class="field" id="gh-session-harness" aria-label="Harness"${busy || x.started ? " disabled" : ""}>${
+      x.harnesses.map((h) => `<option value="${esc(h.name)}"${h.name === x.harness ? " selected" : ""}>${esc(h.display_name)}</option>`).join("")}</select>`;
+    const ready = x.harnesses && x.harnesses.length && x.prompt.trim() && !busy && !x.started;
+    const where = s.data && s.data.machine ? ` on ${esc(s.data.machine)}` : " on the hub";
+    return `<div class="gh-confirm gh-session" role="group" aria-label="Open in session">
+      <div class="gh-confirm-text">Check out <strong>#${esc(pr.number)}</strong>'s head${where} and start an agent in it.</div>
+      ${picker}
+      <textarea class="field gh-session-prompt" id="gh-session-prompt" rows="3" aria-label="First message"
+        placeholder="Its first message"${busy || x.started ? " disabled" : ""}>${esc(x.prompt)}</textarea>
+      <div class="caption gh-muted">It runs under tmux in ~/.quiver/worktrees. The chat opens once the session shows up.</div>
+      ${x.error ? `<div class="caption gh-danger-text" role="alert">${esc(x.error)}</div>` : ""}
+      ${x.note ? `<div class="caption" role="status">${esc(x.note)}</div>` : ""}
+      <div class="gh-confirm-buttons">
+        <button type="button" class="gh-button" id="gh-session-cancel">${x.started ? "Close" : "Cancel"}</button>
+        <button type="button" class="gh-button gh-primary" id="gh-session-start"${ready ? "" : " disabled"}>${esc(x.phase || "Start")}</button>
+      </div></div>`;
+  }
+
+  function bindSession(dlg, s, pr, caret) {
+    const open = dlg.querySelector("#gh-session-open");
+    if (open) open.onclick = () => openSession(s, pr);
+    const x = s.session;
+    if (!x) return;
+    const harness = dlg.querySelector("#gh-session-harness");
+    if (harness) harness.onchange = () => { x.harness = harness.value; };
+    const prompt = dlg.querySelector("#gh-session-prompt");
+    const start = dlg.querySelector("#gh-session-start");
+    if (prompt) {
+      prompt.oninput = () => {
+        x.prompt = prompt.value;
+        if (start) start.disabled = !(x.harnesses && x.harnesses.length && x.prompt.trim() && !x.phase && !x.started);
+      };
+      if (caret) { prompt.focus(); prompt.setSelectionRange(caret[0], caret[1]); }
+    }
+    if (start) start.onclick = () => startSession(s);
+    dlg.querySelector("#gh-session-cancel").onclick = () => {
+      s.session = null; // a launch still waiting is dropped from view; the hub keeps it
+      paintSheet();
+      const back = dlg.querySelector("#gh-session-open");
+      if (back) back.focus();
+    };
+  }
+
+  async function openSession(s, pr) {
+    const x = { harnesses: null, harness: null, phase: null, error: null, note: null, started: false,
+      prompt: `Review pull request #${pr.number}, "${pr.title}", in ${pr.repo}. Its head is checked out in this folder.` };
+    s.session = x;
+    paintSheet();
+    const prompt = document.getElementById("gh-session-prompt");
+    if (prompt) prompt.focus();
+    const { status, data } = await api("/v1/app/repositories?harnesses=1");
+    if (page.sheet !== s || s.session !== x) return;
+    x.harnesses = status === 200 && data ? data.harnesses || [] : [];
+    if (status !== 200) x.error = GhUI.failMessage(status, data);
+    x.harness = x.harnesses.length ? x.harnesses[0].name : null;
+    paintSheet();
+  }
+
+  async function startSession(s) {
+    const x = s.session;
+    if (!x || x.phase || x.started || !x.harness || !x.prompt.trim()) return;
+    const alive = () => page.sheet === s && s.session === x;
+    const say = (fields) => { Object.assign(x, fields); if (alive()) paintSheet(); };
+    say({ phase: "Checking out…", error: null, note: null });
+    const made = await GhUI.post("/v1/app/repositories/worktree", { repo: s.repo, number: Number(s.number) });
+    if (!alive()) return;
+    if (made.status !== 200 || !made.data) return say({ phase: null, error: GhUI.failMessage(made.status, made.data) });
+    say({ phase: "Starting…" });
+    const launched = await GhUI.post("/v1/sessions", { harness: x.harness, cwd: made.data.path, prompt: x.prompt.trim() });
+    if (!alive()) return;
+    const id = launched.data && launched.data.launch_id;
+    if ((launched.status !== 202 && launched.status !== 200) || !id) {
+      return say({ phase: null, error: GhUI.failMessage(launched.status, launched.data) });
+    }
+    say({ phase: "Waiting for the session…" });
+    let launch = launched.data;
+    for (let polls = 0; ; polls++) {
+      if (launch.state === "started" && launch.key) {
+        document.getElementById("gh-pr-sheet").close();
+        location.hash = `#/sessions?chat=${encodeURIComponent(launch.key)}`;
+        return;
+      }
+      if (launch.state === "untracked") {
+        return say({ phase: null, started: true, note: "Started. Quiver can't read this harness's sessions yet, so there's no chat to open. It keeps running under tmux on the hub." });
+      }
+      if (launch.state === "failed") {
+        return say({ phase: null, error: launch.note ? `The session didn't start: ${launch.note}` : "The session didn't start." });
+      }
+      if (polls === LAUNCH_POLLS) break;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      if (!alive()) return;
+      const { status, data } = await api(`/v1/launches/${encodeURIComponent(id)}`);
+      if (!alive()) return;
+      if (status === 404) return say({ phase: null, error: GhUI.failMessage(status, data) });
+      if (status === 200 && data) launch = data; // a dropped poll is retried
+    }
+    say({ phase: null, started: true, note: "It started but hasn't shown up yet. It'll appear in Sessions when it does." });
   }
 
   /* ---------------------------------------------------------- add repository */

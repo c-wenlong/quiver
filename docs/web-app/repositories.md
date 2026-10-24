@@ -3,13 +3,14 @@
 The two GitHub pages: Repositories (sidebar id `repositories`, the Mac
 app's `RepositoriesPage`, `RepoDetailPage` and `PrDetailSheet`) and Inbox
 (id `inbox`, `InboxPage`). Repositories merges pull requests from the
-PR sheet, re-runs workflow runs from Actions rows, and manages the pins: the Add repository sheet
+PR sheet, opens a PR in a harness session, re-runs workflow runs from
+Actions rows, and manages the pins: the Add repository sheet
 (`AddRepoSheet`), Unpin in the rail's gear popover (`RepoManager`), and
 drag to reorder. Inbox marks notifications read.
 
 | File | What |
 |---|---|
-| `src/quiver/webapp/pages/repositories.py` | `GET /v1/app/repositories`, `POST /v1/app/repositories/merge`, `/rerun`, `/add`, `/remove` and `/reorder` |
+| `src/quiver/webapp/pages/repositories.py` | `GET /v1/app/repositories`, `POST /v1/app/repositories/merge`, `/rerun`, `/worktree`, `/add`, `/remove` and `/reorder` |
 | `src/quiver/webapp/pages/inbox.py` | `GET /v1/app/inbox`, `POST /v1/app/inbox/read` |
 | `src/quiver/webapp/pages/_github.py` | Shared: the `gh` cache, the write lock, the hub's pins, the env payload. The leading underscore keeps it off `/v1/app/`. |
 | `src/quiver/webapp/static/pages/github.js`, `github.css` | Shared by both scripts: `GhUI` (icons, the gh setup card, the minute poll, the writes' POST, the PR body's markdown) and the styles. |
@@ -50,7 +51,7 @@ is not kept, so the next look reads GitHub again.
 
 They go through the functions `swe` itself calls, in the hub process
 (`quiver.github.cli.merge_pr`, `rerun_run`, `mark_threads_read`,
-`mark_all_read`, `quiver.github.manage.add_repo`),
+`mark_all_read`, `quiver.github.manage.add_repo`, `pr_worktree`),
 with the hub's `gh` login. Nothing a browser sends reaches a shell: the
 repo must be a pin, the number and ids digits, the method one of three
 words. Writes run one at a time per hub (`_github.WRITE_LOCK`), behind
@@ -161,6 +162,39 @@ it runs the buttons are off. The sheet repaints from the answer (the PR
 shows merged, or the Auto-merge badge), and the page behind it reads the
 repo again so a merged row leaves the list. A refusal shows in an error
 card in the sheet, with the confirm still open to retry or cancel.
+
+**Open in session** (the PR sheet's terminal button, the app's "Open in
+session" menu). The panel names the PR and the hub machine, offers the
+harnesses the hub can start (`GET /v1/app/repositories?harnesses=1`:
+`{"harnesses": [{"name", "display_name", "tracked"}]}`, what the phone's
+new-session sheet offers, in Provider visibility order) and a first
+message, prefilled ("Review pull request #7, "…", in owner/name. Its
+head is checked out in this folder.") and editable: the hub's launch
+needs one, since a harness under tmux writes nothing until it gets one.
+Start then:
+
+1. `POST /v1/app/repositories/worktree` `{"repo", "number"}`: `swe gh
+   pr worktree N --repo=R --json` in process
+   (`quiver.github.manage.pr_worktree`). A bare mirror per repo under
+   `~/.quiver/data/github/mirrors`, the head fetched from GitHub's
+   `refs/pull/N/head` (fork PRs too), a detached checkout at
+   `~/.quiver/worktrees/<owner>__<name>-prN`, reused on the next ask.
+   Answers `{"repo", "number", "path", "head", "created", "machine"}`.
+   It holds no lock the other writes wait on, since a first clone can
+   take minutes; the same PR asked twice at once is a 409 `busy`. A
+   failure is a 502 `worktree_failed` naming the step ("Fetch failed:
+   …"); a missing or signed-out `gh` a 409.
+2. `POST /v1/sessions` `{"harness", "cwd": path, "prompt"}`, the hub's
+   own launch route (docs/remote-control.md), then `GET /v1/launches/<id>` once a
+   second until the session shows up, at most a minute.
+3. The sheet closes and the session's chat opens
+   (`#/sessions?chat=<key>`). A harness swe can't read sessions of says
+   it started with no chat to open; a failed launch shows its note; one
+   that hasn't shown up after a minute says it will appear in Sessions.
+
+The Mac app opens the checkout in a terminal with the harness's own
+command and no first message; the web app has no terminal on the hub to
+open, so it runs the harness under tmux there, as the phone does.
 
 **Re-run** (`POST /v1/app/repositories/rerun`), `swe gh run rerun <id>
 --repo=R [--failed] --json` in process: `{"repo": "owner/name", "run":
@@ -287,20 +321,15 @@ does.
 
 ## Differences from the Mac app
 
-Left out because they write (they stay in `swe` and the Mac app):
-
-| Write | Where it lives |
-|---|---|
-| Open a PR in a session (PR worktree) | `swe gh pr worktree`, the PR row's context menu |
-
-Also different:
-
 - Merge and mark all read ask an inline confirm first; the Mac app's
   buttons act on the first click. Marking one row read does not ask.
 - The hub refuses a merge the sheet would not offer on a fresh read of
   the PR, so a stale sheet can't merge a PR that was merged, closed or
   turned draft since it loaded.
-- Mark as read is a row button, not a context menu.
+- Mark as read is a row button, not a context menu. Re-run is a row's ⋯
+  menu, and Open in session a button in the PR sheet, not on the row.
+- Open in session starts the harness under tmux on the hub with a first
+  message, then opens its chat here; the app opens a terminal on the Mac.
 
 - The app keeps a history store, so the focus page's lists keep rows
   older than the fetch window across refreshes and offline starts. The

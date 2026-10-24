@@ -13,6 +13,8 @@ and PrDetailSheet.
   --json``.
 - ``search=<text>``: repos to pin, as ``swe gh repo search --json``:
   the synced catalog first, then a live search scoped to the account.
+- ``harnesses=1``: what ``POST /v1/sessions`` can start on the hub, for
+  the PR sheet's Open in session.
 
 Only pinned repos are read. ``refresh=1`` skips the cache.
 
@@ -29,9 +31,14 @@ Writes, ``POST /v1/app/repositories/<action>``, in process:
 - ``rerun``: an Actions row's Re-run failed jobs / Re-run all jobs,
   ``swe gh run rerun --json``, ``{"repo", "run", "failed"}``. See
   ``rerun``.
+- ``worktree``: the PR sheet's Open in session, ``swe gh pr worktree
+  --json``, ``{"repo", "number"}``. See ``worktree``. The page then
+  starts the harness itself with ``POST /v1/sessions`` in that folder.
 """
 
 from __future__ import annotations
+
+import threading
 
 from quiver.github import cli as ghcli
 from quiver.github import gh, manage, repos
@@ -58,6 +65,8 @@ def get(ctx, args: dict) -> dict:
     machine = (ctx.machine or {}).get("name")
     if "search" in args:
         body = search(ctx.home, args["search"], refresh)
+    elif G.flag(args, "harnesses"):
+        body = {"harnesses": harnesses()}
     elif args.get("repo"):
         repo = G.pinned_name(ctx.home, args["repo"])
         if args.get("pr"):
@@ -320,6 +329,55 @@ def rerun(ctx, repo: str, run: str, failed: bool) -> dict:
             "machine": (ctx.machine or {}).get("name")}
 
 
+# ---------------------------------------------------------------- PR session
+
+def harnesses() -> list[dict]:
+    """``{name, display_name, tracked}`` for each harness the hub can
+    start, in Provider visibility order (``catalog.launchable_harnesses``,
+    what the phone's new-session sheet offers)."""
+    from quiver.remote import catalog as catalog_mod
+
+    return [{"name": h["name"], "display_name": h["display_name"], "tracked": h["tracked"]}
+            for h in catalog_mod.launchable_harnesses()]
+
+
+# Checkouts being made, ``(home, repo, number)``: a clone can take
+# minutes, so it holds no lock the other writes wait on, and the same PR
+# asked for twice is refused rather than checked out twice at once.
+_WORKTREES_BUSY: set = set()
+_WORKTREES_LOCK = threading.Lock()
+
+
+def _worktree_args(home, body: dict) -> tuple[str, str]:
+    return _pinned_arg(home, body.get("repo")), _pr_number_arg(body.get("number"))
+
+
+def worktree(ctx, repo: str, number: str) -> dict:
+    """Check PR ``number``'s head out under the hub's
+    ``~/.quiver/worktrees``, as ``swe gh pr worktree``: a bare mirror
+    per repo, the head fetched from ``refs/pull/N/head`` (fork PRs too),
+    a detached checkout reused on the next ask. Answers ``{"repo",
+    "number", "path", "head", "created", "machine"}``. 409 while the same
+    PR is being checked out, 409 for a missing or signed-out ``gh``, 502
+    when git or GitHub fails (the message names the step)."""
+    _require_gh(ctx.home)
+    key = (G.home_key(ctx.home), repo.lower(), number)
+    with _WORKTREES_LOCK:
+        if key in _WORKTREES_BUSY:
+            raise PageError(409, "busy", f"#{number} is already being checked out.")
+        _WORKTREES_BUSY.add(key)
+    try:
+        made = manage.pr_worktree(repo, number, ctx.home)
+    finally:
+        with _WORKTREES_LOCK:
+            _WORKTREES_BUSY.discard(key)
+    if made.status != "ok":
+        _require_gh(ctx.home, fresh=True)
+        raise PageError(502, "worktree_failed", made.error)
+    return {"repo": repo, "number": int(number), **made.data,
+            "machine": (ctx.machine or {}).get("name")}
+
+
 # ---------------------------------------------------------------- merge
 
 METHODS = ("squash", "rebase", "merge")  # PrDetailSheet's menu, in order
@@ -340,6 +398,9 @@ def post(ctx, action: str, body: dict) -> dict:
         repo, run, failed = _rerun_args(ctx.home, body)
         with G.WRITE_LOCK:
             return rerun(ctx, repo, run, failed)
+    if action == "worktree":
+        repo, number = _worktree_args(ctx.home, body)
+        return worktree(ctx, repo, number)
     if action != "merge":
         raise PageError(404, "unknown_action",
                         f"unknown repositories action: {action}")
@@ -361,9 +422,8 @@ def _pinned_arg(home, raw) -> str:
         raise
 
 
-def _merge_args(home, body: dict) -> tuple[str, str, str, bool]:
-    repo = _pinned_arg(home, body.get("repo"))
-    number = body.get("number")
+def _pr_number_arg(number) -> str:
+    """A write's PR ``number``, as canonical digits, else a 422."""
     if isinstance(number, bool) or not isinstance(number, (int, str)):
         raise PageError(422, "bad_pr", "number must be a pull request number")
     number = str(number).strip()
@@ -372,7 +432,12 @@ def _merge_args(home, body: dict) -> tuple[str, str, str, bool]:
     if (not number.isdigit() or not number.isascii() or len(number) > 9
             or int(number) < 1):
         raise PageError(422, "bad_pr", "number must be a pull request number")
-    number = str(int(number))
+    return str(int(number))
+
+
+def _merge_args(home, body: dict) -> tuple[str, str, str, bool]:
+    repo = _pinned_arg(home, body.get("repo"))
+    number = _pr_number_arg(body.get("number"))
     method = body.get("method", "squash")
     if method not in METHODS:
         raise PageError(422, "bad_method",
