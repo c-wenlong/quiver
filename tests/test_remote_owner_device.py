@@ -7,6 +7,7 @@ already uses, so a page on another site can't borrow the identity.
 """
 
 import json
+import threading
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -122,6 +123,34 @@ class TestWhoisCache(unittest.TestCase):
             [c.args[0] for c in state.whois.call_args_list],
             [_OWNER_IP, "100.64.0.99", "100.64.0.99", _OWNER_IP],
         )
+
+
+    def test_concurrent_callers_share_one_lookup(self):
+        state = hub_mod.HubState(None)
+        started = threading.Event()
+        release = threading.Event()
+        calls = []
+
+        def slow_whois(ip):
+            calls.append(ip)
+            started.set()
+            release.wait(5)
+            return _PEERS.get(ip)
+
+        state.whois = slow_whois
+        results = []
+        threads = [threading.Thread(
+            target=lambda: results.append(state.whois_cached(_OWNER_IP)))
+            for _ in range(4)]
+        threads[0].start()
+        self.assertTrue(started.wait(5))
+        for t in threads[1:]:
+            t.start()
+        release.set()
+        for t in threads:
+            t.join(5)
+        self.assertEqual(calls, [_OWNER_IP])
+        self.assertEqual([r["node_id"] for r in results], ["n-laptop"] * 4)
 
 
 if __name__ == "__main__":

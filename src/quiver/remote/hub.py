@@ -173,6 +173,9 @@ class HubState:
         self.whois = tsid.whois
         self._whois_cache: dict[str, tuple[float, dict | None]] = {}
         self._whois_lock = threading.Lock()
+        # One lookup in flight per IP: a page firing several requests at
+        # once waits on the first instead of forking its own whois.
+        self._whois_ip_locks: dict[str, threading.Lock] = {}
         # The hub owner's tailnet login — set by serve() from whois of
         # the bind address; "" means owner-identity approval is off.
         self.owner_login = ""
@@ -251,20 +254,35 @@ class HubState:
             view["state"] = "pending"
         return view
 
-    def whois_cached(self, ip: str) -> dict | None:
-        """``whois(ip)``, remembered for _WHOIS_TTL_S (a miss for
-        _WHOIS_MISS_TTL_S)."""
-        now = time.time()
+    def _whois_hit(self, ip: str) -> tuple[bool, dict | None]:
         with self._whois_lock:
             hit = self._whois_cache.get(ip)
-            if hit is not None and hit[0] > now:
-                return hit[1]
-        peer = self.whois(ip)
-        ttl = _WHOIS_TTL_S if peer is not None else _WHOIS_MISS_TTL_S
+            if hit is not None and hit[0] > time.time():
+                return True, hit[1]
+        return False, None
+
+    def whois_cached(self, ip: str) -> dict | None:
+        """``whois(ip)``, remembered for _WHOIS_TTL_S (a miss for
+        _WHOIS_MISS_TTL_S). Concurrent callers for one IP share a single
+        lookup; different IPs look up in parallel."""
+        found, peer = self._whois_hit(ip)
+        if found:
+            return peer
         with self._whois_lock:
-            if len(self._whois_cache) > 256:
-                self._whois_cache.clear()
-            self._whois_cache[ip] = (now + ttl, peer)
+            if len(self._whois_ip_locks) > 256:
+                self._whois_ip_locks.clear()
+            ip_lock = self._whois_ip_locks.setdefault(ip, threading.Lock())
+        with ip_lock:
+            # Whoever held the lock may have just filled the cache.
+            found, peer = self._whois_hit(ip)
+            if found:
+                return peer
+            peer = self.whois(ip)
+            ttl = _WHOIS_TTL_S if peer is not None else _WHOIS_MISS_TTL_S
+            with self._whois_lock:
+                if len(self._whois_cache) > 256:
+                    self._whois_cache.clear()
+                self._whois_cache[ip] = (time.time() + ttl, peer)
         return peer
 
     def owner(self) -> str:
