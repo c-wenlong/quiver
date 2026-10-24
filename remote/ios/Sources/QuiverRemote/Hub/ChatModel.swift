@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 
 /// One entry in a chat transcript, already folded for display: tool
 /// results are merged into their call, approvals carry their state.
@@ -57,6 +58,13 @@ final class ChatModel {
     /// The seq to page back from: the oldest message loaded.
     private var nextBefore: Int?
     private var streamTask: Task<Void, Never>?
+    /// Live events not yet shown. The hub polls a busy transcript about
+    /// once a second, so several messages arrive together; they're shown
+    /// one at a time instead of as a block.
+    private var pending: [Envelope] = []
+    private var revealTask: Task<Void, Never>?
+    /// A send went through and nothing from the agent has come back yet.
+    private(set) var awaitingReply = false
     /// Bumped by every start() and stop(), so a start() still fetching
     /// history doesn't open a stream after the chat was left.
     private var generation = 0
@@ -91,8 +99,10 @@ final class ChatModel {
                 case .connected: self.live = true
                 case .disconnected: self.live = false
                 case .unauthorized: self.app?.unpair(); return
-                case .truncated: await self.backfill(client)
-                case .event(let env): self.apply(env)
+                case .truncated:
+                    self.dropPending()
+                    await self.backfill(client)
+                case .event(let env): self.enqueue(env)
                 }
             }
         }
@@ -102,7 +112,63 @@ final class ChatModel {
         generation += 1
         streamTask?.cancel()
         streamTask = nil
+        flushPending()
         live = false
+    }
+
+    /// The agent is mid-turn, a send waits for its reply, or messages
+    /// that already arrived are still being revealed.
+    var working: Bool {
+        row?.sessionStatus == .active || awaitingReply || !pending.isEmpty
+    }
+
+    // MARK: Pacing
+
+    /// The pause after showing one live entry, given how many events are
+    /// still waiting: a short beat for a few, shorter as more pile up, and
+    /// nil (show the rest at once) for a replay after reconnecting.
+    static func revealDelay(waiting: Int) -> Duration? {
+        guard waiting > 0, waiting <= 24 else { return nil }
+        return .milliseconds(min(180, 1200 / waiting))
+    }
+
+    func enqueue(_ env: Envelope) {
+        pending.append(env)
+        guard revealTask == nil else { return }
+        revealTask = Task { [weak self] in
+            while let self, !Task.isCancelled, !self.pending.isEmpty {
+                guard let delay = Self.revealDelay(waiting: self.pending.count) else {
+                    self.flushPending()
+                    break
+                }
+                let before = self.items.count
+                let env = self.pending.removeFirst()
+                withAnimation(.easeOut(duration: 0.25)) { self.apply(env) }
+                // Only a new entry earns a pause; a status change or a
+                // result landing on its card goes straight through.
+                if self.items.count > before, !self.pending.isEmpty {
+                    try? await Task.sleep(for: delay)
+                }
+            }
+            // A cancelled pass was already replaced, maybe by a newer one.
+            if !Task.isCancelled { self?.revealTask = nil }
+        }
+    }
+
+    /// Shows everything still waiting, unanimated.
+    private func flushPending() {
+        revealTask?.cancel()
+        revealTask = nil
+        let all = pending
+        pending = []
+        for env in all { apply(env) }
+    }
+
+    /// A backfill is about to reload history, which holds these.
+    private func dropPending() {
+        revealTask?.cancel()
+        revealTask = nil
+        pending = []
     }
 
     /// Reloads history. Approvals still open and sends not yet echoed
@@ -201,7 +267,10 @@ final class ChatModel {
         case "message.appended":
             if let msg = env.decode(MessageData.self) { append(msg, seq: env.seq ?? 0) }
         case "session.status":
-            app?.patch(key, status: env.decode(StatusData.self)?.status ?? "")
+            let status = env.decode(StatusData.self)?.status ?? ""
+            app?.patch(key, status: status)
+            // The turn ended (or stopped to ask) without a message to show.
+            if !["", "active"].contains(status) { awaitingReply = false }
         case "session.ownership":
             app?.patch(key, ownership: env.decode(OwnershipData.self)?.ownership)
             attachQueued = false
@@ -232,7 +301,17 @@ final class ChatModel {
             if let i = items.firstIndex(where: {
                 if case .user(let t, let s) = $0.kind, s != nil, !Self.isFailed(s) { return text == t || text.hasSuffix(t) }
                 return false
-            }) { items.remove(at: i) }
+            }) {
+                // Still the newest entry: settle the bubble where it is, so
+                // it doesn't leave and come back in.
+                if i == items.count - 1 {
+                    items[i].kind = .user(text: text, send: nil)
+                    return
+                }
+                items.remove(at: i)
+            }
+        } else if msg.kind != "tool_result" {
+            awaitingReply = false
         }
         Self.add(msg, id: "m\(seq)", to: &items, cards: &toolCards, orphans: &orphanResults)
     }
@@ -288,8 +367,11 @@ final class ChatModel {
 
     private func settle(_ r: CommandResult) {
         if r.op == "message", let cid = r.clientId, let i = items.firstIndex(where: { $0.id == "send-\(cid)" }),
-           case .user(let text, _) = items[i].kind {
+           case .user(let text, let send) = items[i].kind {
+            // Already echoed back as delivered.
+            guard send != nil else { return }
             if r.ok == false {
+                awaitingReply = false
                 items[i].kind = .user(text: text, send: .failed(r.note ?? "Send failed"))
             } else if r.degraded == true {
                 items[i].kind = .user(text: text, send: .queued(r.note ?? "Queued: mid-turn input isn't supported here"))
@@ -341,13 +423,17 @@ final class ChatModel {
         guard let client = app?.client else { return }
         let cid = UUID().uuidString
         let id = "send-\(cid)"
-        items.append(ChatItem(id: id, kind: .user(text: text, send: .sending)))
+        withAnimation(.easeOut(duration: 0.25)) {
+            items.append(ChatItem(id: id, kind: .user(text: text, send: .sending)))
+        }
+        awaitingReply = true
         do {
             let accepted = try await client.sendMessage(key, text: text, mode: mode.rawValue, clientId: cid)
             if accepted.waiting == true, let i = items.firstIndex(where: { $0.id == id }) {
                 items[i].kind = .user(text: text, send: .queued("Queued until the agent is idle"))
             }
         } catch {
+            awaitingReply = false
             if let i = items.firstIndex(where: { $0.id == id }) {
                 items[i].kind = .user(text: text, send: .failed((error as? HubError)?.message ?? "Send failed"))
             }

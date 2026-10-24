@@ -79,8 +79,13 @@ private struct ChatBody: View {
                         }
                     }
                     .onAppear { if index < Self.earlierThreshold, model.hasEarlier { model.wantsEarlier = true } }
+                    .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 12)), removal: .opacity))
+                }
+                if model.working, !model.loading {
+                    WorkingIndicator().transition(.opacity.combined(with: .offset(y: 8)))
                 }
             }
+            .animation(.easeOut(duration: 0.2), value: model.working)
             .scrollTargetLayout()
             .padding(.horizontal, Theme.gutter)
             .padding(.vertical, 12)
@@ -297,6 +302,32 @@ private struct ChatItemView: View {
         case .error(let text):
             Label(text, systemImage: "exclamationmark.triangle").font(Theme.caption).foregroundStyle(Theme.dangerText)
         }
+    }
+}
+
+/// Three pulsing dots under the last message while the agent works.
+private struct WorkingIndicator: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.animation(paused: reduceMotion)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            HStack(spacing: 4) {
+                ForEach(0..<3, id: \.self) { i in
+                    // A wave left to right, one pass every 1.2 s.
+                    let lit = reduceMotion ? 0.5 : max(0, sin((t / 1.2 - Double(i) * 0.15) * 2 * .pi))
+                    Circle().fill(Theme.textSecondary).frame(width: 6, height: 6)
+                        .opacity(0.3 + 0.7 * lit)
+                        .offset(y: -2 * lit)
+                }
+            }
+        }
+        .padding(.horizontal, 12).frame(height: 30)
+        .background(Theme.card, in: .capsule)
+        .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement()
+        .accessibilityLabel("Agent is working")
     }
 }
 
