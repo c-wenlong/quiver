@@ -122,6 +122,7 @@ remote/
   supervise.py   # tmux lifecycle for attached sessions
   journal.py     # per-session seq-numbered event log (replay on reconnect)
   hub.py         # http.server ThreadingHTTPServer: REST + SSE, device auth
+  files.py       # @-mention paths under a session's folder (/v1/sessions/{id}/files)
   agent.py       # satellite daemon: dial hub, run local tail/inject
   notify.py      # needs-you/finished/error fan-out via self-hosted ntfy
   launchd.py     # serve --install: the hub as a per-user LaunchAgent
@@ -207,6 +208,7 @@ POST /v1/sessions/{id}/approval      {request_id, decision}
 POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill
 POST /v1/sessions                    new session {machine, harness, cwd, prompt} → launch_id
 GET  /v1/folders?path=                subfolders of one folder on the hub machine (new-session browser)
+GET  /v1/sessions/{id}/files?q=     paths under the session's folder for the prompt box's @ menu
 GET  /v1/launches/{launch_id}        pending|started|failed; started carries the session key
 GET  /v1/machines · /v1/usage · /v1/search?q=
 GET  /v1/inbox                       pending decisions; ?done=1 adds finished-today
@@ -278,6 +280,34 @@ the hub user's home; a relative or missing folder is `422 bad_cwd`, an
 unreadable one `403 not_readable`, and another `machine` is `422
 browse_unavailable`, since a satellite's disk isn't readable from the
 hub.
+
+`GET /v1/sessions/{id}/files?q=&limit=` (`files.py`) feeds the prompt
+box's `@` menu: `{cwd, query, source, truncated, entries: [{path, kind,
+mtime}]}`, where `path` is relative to the session's working folder,
+`kind` is `file` or `dir`, and `source` says how the folder was listed.
+The app inserts `@path` into the message and the harness reads the file
+itself; the hub only lists names. In a git work tree the listing is `git
+ls-files --cached --others --exclude-standard` (so `.gitignore` holds,
+with the repo's fsmonitor hook off and no index lock taken); elsewhere a
+breadth-first walk skips dot-folders and dependency or build folders
+(`node_modules`, `venv`, `__pycache__`, `build`, `dist`, `target`, ...)
+and never descends a symlink. A listing keeps at most 20,000 files, opens
+at most 5,000 folders, and stops after 3 s (`truncated: true` when any cap
+hit); it is cached per folder for 10 s, so each keystroke only re-ranks.
+Every path must resolve inside the working folder: a symlink, or a
+folder reached through one, that points outside is left out. Ranking is
+case-insensitive, in tiers: the name equals the query (with or without
+its extension), starts with it, holds it; the whole path starts with it,
+holds it; the name, then the path, holds its letters in order. Within a
+tier the tighter match, then the shorter path, then the more recently
+modified one leads. An empty `q` gives the most recently modified files.
+A query that is absolute, starts with `~`, or has a `..` part matches
+nothing. `limit` defaults to 50, at most 200. Errors: `404
+unknown_session`, `422 bad_cwd` (the session has no absolute working
+folder), `422 cwd_missing` (it no longer exists or isn't a folder), `403
+not_readable`, and `422 files_unavailable` for a satellite's session,
+whose disk the hub can't read and whose command journal has no way to
+answer a request yet.
 
 `GET /v1/search?q=&limit=` (`search.py`) puts each matching session in
 the first tier it qualifies for: its title holds the query (whole, or

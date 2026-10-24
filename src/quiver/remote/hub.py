@@ -34,6 +34,7 @@ from quiver.remote import (
     catalog as catalog_mod,
     injected as injected_mod,
     dismissals,
+    files as files_mod,
     inject,
     notify,
     pairing,
@@ -1081,6 +1082,9 @@ class _Handler(BaseHTTPRequestHandler):
             if sep and action == "messages":
                 self._messages(key, args)
                 return
+            if sep and action == "files":
+                self._files(key, args)
+                return
             self._send_error(404, "not_found", "unknown route")
             return
 
@@ -1320,6 +1324,27 @@ class _Handler(BaseHTTPRequestHandler):
             ],
             "truncated": len(names) > FOLDER_LIST_CAP,
         })
+
+    def _files(self, key: str, args) -> None:
+        """``GET /v1/sessions/{id}/files?q=&limit=``: paths under the
+        session's working folder for the prompt box's ``@`` menu
+        (``files.py``)."""
+        row = self._state.catalog.row_for(key)
+        if row is None:
+            self._send_error(404, "unknown_session", "no such session")
+            return
+        try:
+            body = files_mod.for_session(
+                row,
+                hub_machine_id=self._state.machine_id,
+                machines=catalog_mod.load_machines(self._state.home),
+                query=str((args.get("q") or [""])[0]),
+                limit=_int_arg(args.get("limit"), files_mod.DEFAULT_LIMIT),
+            )
+        except files_mod.FilesError as exc:
+            self._send_error(exc.status, exc.code, exc.message)
+            return
+        self._send_json(200, body)
 
     def _launch(self) -> None:
         """``POST /v1/sessions``: start a harness on the hub or a satellite.
