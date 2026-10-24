@@ -194,6 +194,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`swe setup --apply` run twice no longer invents harnesses.** The
+  second run linked skills into every harness in the `HARNESS_ROOTS`
+  table, making `~/.augment`, `~/.kiro`, `~/.pi` and the rest to hold the
+  links, and the linking pass then read those new folders as proof the
+  harness was installed and registered and linked each one. The skills
+  step now links only into a harness folder that already exists, the
+  rule `swe init` follows. Folders an earlier run made are left in place;
+  `rm` the ones for harnesses you don't use and archive their entries
+  with `swe harness archive <name>`.
+
 - **Remote: a refused request no longer breaks the next one on the same
   connection.** When the hub answered a POST before reading its body (a
   401, a bad Origin, an unknown session, a 409 `not_attached`, a 413),
