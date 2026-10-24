@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Settings, with remote pairing.** The Settings page from the
+  Mac app, for the hub machine. Integrations › Remote shows the hub,
+  the paired devices with "This device" marked and a Revoke that asks
+  first (signing out the browser you're on needs its own confirm), and
+  Pair a device, which mints a one-time code and shows the browser link
+  and the `quiver://pair` app link as QR codes. The hub draws those
+  itself with a small stdlib encoder (a port of Nayuki's MIT QR
+  generator), since the web app loads no library. Appearance and which
+  pages the sidebar lists are kept per browser; the API keys show
+  masked and read only; the GitHub CLI and the hub's paths are listed;
+  "Set up this machine" and Doctor link to their pages. Rows that set
+  up the Mac app itself (Dock, login item, terminal, notifications,
+  updates, Keychain services) are greyed out as "Mac app only".
+
 - **Remote iPhone app: swipe a session to attach, detach, pin, rename or
   fork it.** Swipe right on a Sessions row to attach it, or to detach
   one you hold; swipe left to pin, rename or fork it. A full swipe runs
@@ -60,6 +74,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run, and the hub closes a kept session nobody has used for 12 hours.
   Satellites support all three.
 
+- **Remote: edit a queued message in place.** `POST
+  /v1/sessions/{key}/queue` takes `op: "edit"` with a `text`, which
+  replaces a waiting send's text without moving it in the queue and
+  answers `200 {ok, client_id, op, text}`. An edit racing the send
+  either lands before it goes out or answers `409 not_waiting`, so a
+  `200` edit is never followed by the old text.
+
 - **Remote iPhone app: links in replies get a preview card.** A reply
   that links to a web page shows a card under the text with the page's
   host, its path and an Open button (up to three per reply). Tapping the
@@ -75,6 +96,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   harness's share. Pull to refresh asks the hub for new readings.
 
 ### Fixed
+
+- **Remote: a session's status follows a send within a second.** The
+  hub re-read every session's status only on its 10 second catalog
+  refresh, so after a send the phone could show the session idle while
+  the reply was already streaming, and showed it working for up to 10
+  seconds after the turn ended. Now a session that was just written to,
+  or whose transcript grew, has its own status checked about once a
+  second, and the change goes to the phone at once. An older catalog
+  read can no longer flip it back. Satellites do the same.
 
 - **Remote: a malformed write body gets an answer.** A list or object
   as a message's `mode`, an approval's `decision` or a control `op` made
