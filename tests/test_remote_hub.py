@@ -821,6 +821,8 @@ class TestHubWriteRoutes(unittest.TestCase):
             self.srv.state._adopt_launches()
         self.assertEqual(self.srv.state.journal.last_seq("claude:new"), 0)
         self.assertEqual(self.srv.state.launches[lid]["key"], "claude:new")
+        # A launched or forked session starts mid-turn: tail it hot.
+        self.assertTrue(self.srv.state.tail_manager.is_hot("claude:new"))
 
     def test_folders_lists_subfolders_only(self):
         root = Path(tempfile.mkdtemp())
@@ -2206,6 +2208,34 @@ class TestServeEntry(unittest.TestCase):
             self.assertIs(signal.getsignal(signal.SIGTERM), prev)
         finally:
             signal.signal(signal.SIGTERM, prev)
+
+    def test_attach_seen_by_the_catalog_loop_wakes_the_tailer(self):
+        # Attached outside HTTP (CLI attach, a kept tmux session taken
+        # back): the catalog loop's ownership check starts it hot.
+        state = HubState(Path(tempfile.mkdtemp()))
+        seen = iter([
+            [{"key": "claude:a", "ownership": "observed"},
+             {"key": "claude:b", "ownership": "observed"}],
+            [{"key": "claude:a", "ownership": "attached"},
+             {"key": "claude:b", "ownership": "observed"}],
+        ])
+        state.catalog.rows = lambda: next(seen)
+        state.catalog.refresh = lambda: []
+        state._adopt_launches = lambda: None
+        state._refresh_launchable = lambda: None
+        state.tail_manager.sync = lambda rows, **kw: state._stop.set()
+        with patch("quiver.remote.supervise.reap_kept"):
+            state._catalog_loop()
+        self.assertTrue(state.tail_manager.is_hot("claude:a"))
+        self.assertFalse(state.tail_manager.is_hot("claude:b"))
+
+    def test_tail_manager_probes_through_state_status_of(self):
+        state = HubState(Path(tempfile.mkdtemp()))
+        state.status_of = lambda sessions: ["active"] * len(sessions)
+        self.assertEqual(state.tail_manager._status_of([object()]),
+                         ["active"])
+        self.assertEqual(state.tail_manager._on_status,
+                         state._on_probed_status)
 
     def test_state_start_stop(self):
         state = HubState(Path(tempfile.mkdtemp()))

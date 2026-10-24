@@ -122,6 +122,50 @@ class TestRemoteCatalog(unittest.TestCase):
         self.assertIsNone(cat.session_for("claude:a@m1"))
         self.assertIsNotNone(cat.row_for("claude:a@m1"))
 
+    def test_note_status_patches_row_and_survives_a_stale_refresh(self):
+        sess = Session(timestamp=0, agent="Claude Code", path="/p",
+                       session_id="s1", tool_name="claude")
+        verdict = {"status": "done", "during": None}
+
+        def status_of(sessions):
+            if verdict["during"]:
+                verdict["during"]()
+            return [verdict["status"]] * len(sessions)
+
+        cat = catalog_mod.Catalog(self.home, "localmid",
+                                  fetch_sessions=lambda: [sess],
+                                  status_of=status_of)
+        cat.refresh()
+        key = cat.rows()[0]["key"]
+        rows, as_of = cat.tail_snapshot()
+        self.assertEqual(rows[0][2], "done")
+        self.assertGreater(as_of, 0)
+        # A probe older than the catalog's read is ignored.
+        cat.note_status(key, "active", as_of - 1)
+        self.assertEqual(cat.row_for(key)["status"], "done")
+        # A newer one patches the row and the tail rows at once.
+        cat.note_status(key, "active", time.time())
+        self.assertEqual(cat.row_for(key)["status"], "active")
+        self.assertEqual(cat.tail_rows()[0][2], "active")
+        # A refresh whose read began before a probe keeps the probe's.
+        # (+1 s: a probe in the same microsecond as the read is a tie.)
+        verdict["during"] = lambda: cat.note_status(
+            key, "active", time.time() + 1)
+        cat.refresh()
+        self.assertEqual(cat.row_for(key)["status"], "active")
+        # One that began after it takes its own read.
+        verdict["during"] = None
+        with patch.object(catalog_mod.time, "time",
+                          return_value=time.time() + 60):  # after it
+            cat.refresh()
+        self.assertEqual(cat.row_for(key)["status"], "done")
+        self.assertEqual(cat._fresh, {})
+
+    def test_agent_tail_manager_probes_and_reports_to_catalog(self):
+        ag = agent_mod.RemoteAgent("http://h:1", "c", self.home)
+        self.assertIsNotNone(ag.tail_manager._status_of)
+        self.assertEqual(ag.tail_manager._on_status, ag._on_probed_status)
+
     def test_machine_upsert_round_trip(self):
         catalog_mod.upsert_machine(
             self.home, {"id": "m1", "name": "mbp", "online": True})
@@ -1055,6 +1099,8 @@ class TestAgentEdges(unittest.TestCase):
         launched = [e for e in ag.outbox if e["type"] == "session.launched"]
         self.assertEqual(launched[0]["session"], "claude:new")
         self.assertEqual(launched[0]["data"]["launch_id"], "l7")
+        # A launched or forked session starts mid-turn: tail it hot.
+        self.assertTrue(ag.tail_manager.is_hot("claude:new"))
 
     def test_visibility_change_re_registers(self):
         ag = self._agent()
@@ -1480,7 +1526,7 @@ class TestR3FinalEdges(unittest.TestCase):
         ag._uplink_loop()
         ag._stop.clear()
         ag._push_catalog = lambda: None
-        ag.tail_manager.sync = lambda rows: ag._stop.set()
+        ag.tail_manager.sync = lambda rows, **kw: ag._stop.set()
         ag._catalog_loop()
         ag._stop.clear()
         ag.tail_manager.tick = lambda: ag._stop.set()
