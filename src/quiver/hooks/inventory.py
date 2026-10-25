@@ -18,6 +18,7 @@ Nothing in this module prints.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 from quiver import paths as _paths
@@ -99,6 +100,26 @@ def _decl_matches(decl: Declaration, script: str) -> bool:
     return False
 
 
+def _decl_matches_row(
+    decl: Declaration, dest: Path, script: str, home: Path
+) -> bool:
+    """Path-aware match of a declaration to one row's own destination.
+
+    A command that carries a resolvable path must point at THIS row's
+    dest: ``~/.claude/hooks/gate.py`` names the harness hook, not the
+    shared wrapper ``_generated/gate.py`` — basename matching alone lets
+    one declaration claim both tiers, hiding an undeclared one. Only a
+    command with no resolvable path at all (a bare ``gate.py``) falls
+    back to the basename.
+    """
+    has_path = any(
+        expand_command_path(token, home) is not None
+        for token in split_command(decl.command))
+    if has_path:
+        return _decl_targets(decl, dest, home)
+    return _decl_matches(decl, script)
+
+
 def hook_rows(
     statuses: list[LinkStatus],
     declared: dict[str, list[Declaration]],
@@ -112,15 +133,23 @@ def hook_rows(
     both mean the script's own name. A script in its hub dir's
     ``.disabled`` reads enabled=False regardless of link state.
     """
+    from quiver.hooks import shared as _shared
+
     home = home or Path.home()
     registry = registry if registry is not None else {}
     hub = _paths.hooks_dir_for(home)
     rows: list[HookRow] = []
     for status in statuses:
+        if status.source is not None and \
+                status.source.name == _shared.GENERATED_DIRNAME:
+            # The _generated dir links whole — machinery, not a hook.
+            # shared_rows reports its link state per wrapper script, so
+            # hiding it here also keeps `delete _generated` unreachable.
+            continue
         source = status.source or status.path
         decls = [
             d for d in declared.get(status.label, [])
-            if _decl_matches(d, source.name)
+            if _decl_matches_row(d, status.path, source.name, home)
         ]
         rows.append(HookRow(
             script=source.name,
@@ -182,7 +211,7 @@ def shared_rows(
         events = _shared.script_events(target.source)
         decls = [
             d for d in declared.get(target.harness, [])
-            if _decl_matches(d, target.source.name)
+            if _decl_matches_row(d, dest, target.source.name, home)
         ]
         rows.append(HookRow(
             script=target.source.name,
@@ -237,12 +266,73 @@ def _managed_dest(entry: Path, hub: Path) -> bool:
 
 
 def _decl_targets(decl: Declaration, path: Path, home: Path) -> bool:
-    """Whether the declaration's command resolves to exactly ``path``."""
+    """Whether the declaration's command resolves to ``path``.
+
+    A directory hook is invoked through files inside it, so a path under
+    ``path`` counts when ``path`` is itself a directory.
+    """
     for token in split_command(decl.command):
         expanded = expand_command_path(token, home)
-        if expanded is not None and expanded == path:
+        if expanded is None:
+            continue
+        if expanded == path \
+                or (path.is_dir() and _inside(expanded, path)):
             return True
     return False
+
+
+# Shell words that can sit before the script a hook command runs.
+# ``python3 /x/gate.py /x/policy.json`` runs gate.py — policy.json is
+# argv, not a hook, so only the first path of each command segment rows.
+_COMMAND_POSITION_RE = re.compile(
+    r"(?:python|pypy|node|deno|bun|ruby|perl|php|tsx|ts-node)[\d.]*"
+    r"|ba?sh|zsh|ksh|dash|fish|csh|tcsh|osascript|pwsh?"
+    r"|env|nice|nohup|timeout|xargs|command|exec|uv|pipx?")
+_ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
+_SEGMENT_BREAKS = frozenset({"&&", "||", "|", "|&", ";"})
+
+
+def _executed_scripts(command: str, home: Path) -> list[Path]:
+    """The file a hook command actually runs — one per shell segment.
+
+    Command-position words (interpreters, env wrappers, VAR=value
+    assignments) never name the hook, and neither do a script's own file
+    arguments: the first resolvable path per ``&&``/``|``/``;`` segment
+    is the one. ``sh gate.py config.json`` rows only gate.py.
+    """
+    scripts: list[Path] = []
+    segment: list[str] = []
+    for raw in split_command(command):
+        token = raw.strip("'\"")
+        ends = token.endswith(";")
+        token = token.rstrip(";")
+        if token and token not in _SEGMENT_BREAKS:
+            segment.append(token)
+        if ends or not token or token in _SEGMENT_BREAKS:
+            first = _first_path(segment, home)
+            if first is not None:
+                scripts.append(first)
+            segment = []
+    first = _first_path(segment, home)
+    if first is not None:
+        scripts.append(first)
+    return scripts
+
+
+def _first_path(segment: list[str], home: Path) -> Path | None:
+    """The first existing file a command segment runs, if any."""
+    for token in segment:
+        base = token.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        if _COMMAND_POSITION_RE.fullmatch(base) \
+                or _ASSIGNMENT_RE.fullmatch(token):
+            continue
+        path = expand_command_path(token, home)
+        if path is not None:
+            # The executed file: later tokens are its arguments, so the
+            # first resolvable path wins even when it is missing (a
+            # vanished script is drift, not a different hook).
+            return path if path.is_file() else None
+    return None
 
 
 def foreign_rows(
@@ -253,10 +343,12 @@ def foreign_rows(
 ) -> list[HookRow]:
     """Hooks no ~/.quiver source claims: the third tier.
 
-    Two sightings, de-duped by resolved path: a file in a hooks root that
-    is not a link into the hub and shares no name with a hub source, and
-    a settings-declared command whose path resolves outside ~/.quiver.
-    Both keep their real path as source and dest — swe manages neither.
+    Two sightings, de-duped by (harness, resolved path): a file in a
+    hooks root that is not a link into the hub and shares no name with
+    a hub source, and the script a settings-declared command executes
+    when it resolves outside ~/.quiver (its file arguments are not
+    hooks). Both keep their real path as source and dest — swe manages
+    neither.
     """
     hub = _paths.hooks_dir_for(home)
     quiver = _paths.quiver_dir_for(home)
@@ -265,7 +357,9 @@ def foreign_rows(
         if status.source is not None:
             claimed.setdefault(status.label, set()).add(status.source.name)
     rows: list[HookRow] = []
-    seen: set[Path] = set()
+    # (harness, resolved path) — the same foreign script declared by two
+    # harnesses is two rows, one each, so a scoped view finds its own.
+    seen: set[tuple[str, Path]] = set()
     for name in _harness_names(hub, registry):
         contract = contract_for(registry, name, home)
         events = contract.normalized_events()
@@ -281,7 +375,7 @@ def foreign_rows(
                     continue
                 if _managed_dest(entry, hub):
                     continue
-                key = entry.resolve()
+                key = (name, entry.resolve())
                 if key in seen:
                     continue
                 seen.add(key)
@@ -293,20 +387,18 @@ def foreign_rows(
                     state="foreign",
                     detail="no ~/.quiver source claims it",
                     declared=[d for d in decls
-                              if _decl_matches(d, entry.name)],
+                              if _decl_matches_row(
+                                  d, entry, entry.name, home)],
                     tier="foreign",
                     enabled=True,
                     events_supported=events,
                 ))
         for decl in decls:
-            for token in split_command(decl.command):
-                path = expand_command_path(token, home)
-                if path is None or not path.is_file():
+            for path in _executed_scripts(decl.command, home):
+                key = (name, path.resolve())
+                if key in seen or _inside(path.resolve(), quiver):
                     continue
-                key = path.resolve()
-                if key in seen or _inside(key, quiver):
-                    continue
-                if root is not None and _inside(key, root):
+                if root is not None and _inside(path.resolve(), root):
                     continue  # the dir scan above already rows it
                 seen.add(key)
                 rows.append(HookRow(

@@ -41,6 +41,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -350,18 +352,80 @@ def _is_generated(path: Path) -> bool:
     return GENERATED_MARK in head
 
 
-def _write_if_changed(path: Path, text: str) -> bool:
-    """Write ``text`` executable when it differs; True when it wrote."""
+def _would_write(path: Path, text: str) -> bool:
+    """The ``_write_if_changed`` decision, for ``pending_deploy``."""
     try:
-        if path.read_text(encoding="utf-8") == text and \
-                os.access(path, os.X_OK):
+        if not path.is_symlink() \
+                and path.read_text(encoding="utf-8") == text \
+                and os.access(path, os.X_OK):
             return False
     except OSError:
         pass
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    path.chmod(0o755)
     return True
+
+
+def _write_if_changed(path: Path, text: str, home: Path) -> bool:
+    """Write ``text`` executable when it differs; True when it wrote.
+
+    A path already holding content that is not ours (no GENERATED mark)
+    or a symlink — which ``write_text`` would follow into somebody else's
+    file — is preserved into the backups dir before the name is taken,
+    the same rule ``swe init`` keeps for destinations. The write lands
+    atomically via ``os.replace``, so a hook starting mid-sync reads the
+    old file or the new one, never a half-written script.
+    """
+    if not _would_write(path, text):
+        return False
+    if path.is_symlink() or (path.exists() and not _is_generated(path)):
+        _paths.backup_tree(path, home)
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return True
+
+
+def _stale_wrappers(
+    home: Path, registry: dict, wanted: set[Path]
+) -> list[Path]:
+    """Generated-marked wrapper files no deploy target wants anymore.
+
+    Archived harnesses are unmanaged everywhere else, so their
+    ``_generated`` dirs are skipped here too: archiving a harness must
+    not delete the wrappers a destination link still points at.
+    """
+    from quiver.init.layout import archived_names
+
+    archived = archived_names(registry)
+    root = _paths.hooks_dir_for(home)
+    stale: list[Path] = []
+    if not root.is_dir():
+        return stale
+    for harness_dir in sorted(root.iterdir()):
+        if harness_dir.name in archived \
+                or harness_dir.name in RESERVED_HUB_DIRS:
+            continue
+        gdir = harness_dir / GENERATED_DIRNAME
+        if not gdir.is_dir() or gdir.is_symlink():
+            continue
+        for entry in sorted(gdir.iterdir()):
+            if entry.is_file() and entry not in wanted \
+                    and _is_generated(entry):
+                stale.append(entry)
+    return stale
 
 
 def apply_deploy(
@@ -374,7 +438,7 @@ def apply_deploy(
     into ``_generated`` by hand is left alone, and an emptied
     ``_generated`` dir is removed so nothing links a husk.
     """
-    from quiver.init.layout import load_registry
+    from quiver.init.layout import archived_names, load_registry
 
     if registry is None:
         registry = load_registry(home)
@@ -385,46 +449,55 @@ def apply_deploy(
 
     runtime = runtime_file(home)
     if targets or runtime.exists():
-        if _write_if_changed(runtime, runtime_text()):
+        if _write_if_changed(runtime, runtime_text(), home):
             written.append(runtime)
     for target in targets:
         contract = contract_for(registry, target.harness, home)
         text = wrapper_text(target.source, target.harness, contract, home)
-        if _write_if_changed(target.wrapper, text):
+        if _write_if_changed(target.wrapper, text, home):
             written.append(target.wrapper)
 
+    for entry in _stale_wrappers(home, registry, wanted):
+        try:
+            entry.unlink()
+        except OSError:
+            continue
+        pruned.append(entry)
+    # An emptied _generated dir leaves a dangling whole-dir link target.
+    archived = archived_names(registry)
     root = _paths.hooks_dir_for(home)
     if root.is_dir():
-        for harness_dir in root.iterdir():
-            gdir = harness_dir / GENERATED_DIRNAME
-            if not gdir.is_dir() or gdir.is_symlink():
+        for harness_dir in sorted(root.iterdir()):
+            if harness_dir.name in archived:
                 continue
-            for entry in gdir.iterdir():
-                if entry.is_file() and entry not in wanted \
-                        and _is_generated(entry):
-                    entry.unlink()
-                    pruned.append(entry)
             try:
-                gdir.rmdir()  # only succeeds on an emptied dir
+                (harness_dir / GENERATED_DIRNAME).rmdir()
             except OSError:
                 pass
     return written, pruned
 
 
 def pending_deploy(home: Path, registry: dict | None = None) -> int:
-    """How many generated files ``apply_deploy`` would write, for --check."""
+    """How many generated files ``apply_deploy`` would write or prune.
+
+    ``swe init --check`` previews with this, so it counts the same work
+    apply does: a stale runtime or wrapper rewrite, and each marked file
+    pruning removes — not only missing paths.
+    """
     from quiver.init.layout import load_registry
 
     if registry is None:
         registry = load_registry(home)
     targets = deploy_targets(home, registry)
+    wanted = {target.wrapper for target in targets}
     pending = 0
-    if targets and not runtime_file(home).exists():
-        pending += 1
+    runtime = runtime_file(home)
+    if targets or runtime.exists():
+        pending += _would_write(runtime, runtime_text())
     for target in targets:
         contract = contract_for(registry, target.harness, home)
-        if not target.wrapper.exists() or \
-                target.wrapper.read_text(encoding="utf-8", errors="replace") \
-                != wrapper_text(target.source, target.harness, contract, home):
-            pending += 1
+        pending += _would_write(
+            target.wrapper,
+            wrapper_text(target.source, target.harness, contract, home))
+    pending += len(_stale_wrappers(home, registry, wanted))
     return pending

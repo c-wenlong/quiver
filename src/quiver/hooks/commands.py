@@ -37,6 +37,7 @@ from quiver.init.layout import (
 )
 from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.hooks import shared as _shared
+from quiver.hooks.contracts import contract_for
 from quiver.hooks.create import (
     command_for,
     create,
@@ -392,6 +393,13 @@ def _edit(rest: list[str], fail) -> int:
         matches = [r for r in matches if r.harness == harness]
     if not matches:
         return fail(c("red", f"No hook script named {name} under ~/.quiver/hooks."))
+    # Foreign rows are read-only everywhere; delete and toggle refuse
+    # them explicitly, and edit does too — opening one would hand a file
+    # swe does not own to the user's editor.
+    matches = [r for r in matches if r.tier != "foreign"]
+    if not matches:
+        return fail(c("red", f"{name} is a foreign hook — swe displays "
+                             "it read-only; edit the file directly."))
     # A shared script rows once per deploy target — same file each time.
     # One source, one edit target.
     unique: dict[Path, HookRow] = {}
@@ -465,7 +473,7 @@ def _new(rest: list[str], json_view: bool, fail) -> int:
     except ValueError as exc:
         return fail(c("red", str(exc)))
     command, note = command_for(harness, target.name, registry, home)
-    stanza = settings_stanza(command)
+    stanza = settings_stanza(command, contract_for(registry, harness, home))
     targets = settings_targets(registry, harness, home)
 
     if json_view:
@@ -508,9 +516,16 @@ def _new_shared(
         for t in targets
     }
     stanza = None
-    for command in commands.values():
+    stanza_harness = None
+    for harness_name in sorted(commands):
+        command = commands[harness_name]
         if command:
-            stanza = settings_stanza(command)
+            # The stanza must speak this harness's own contract: gemini's
+            # BeforeTool and millisecond timeout are not claude's
+            # PreToolUse and 10 seconds.
+            stanza = settings_stanza(
+                command, contract_for(registry, harness_name, home))
+            stanza_harness = harness_name
             break
 
     if json_view:
@@ -539,8 +554,9 @@ def _new_shared(
         print(f"    2. {c('dim', dormant)}")
     print()
     if stanza:
-        print(f"  Grouped-schema stanza (claude shape; cursor wants "
-              f"{{event: [{{command}}]}}):\n")
+        schema = contract_for(registry, stanza_harness, home).schema
+        print(f"  {c('cyan', stanza_harness)} stanza ({schema} schema — "
+              f"merge into its settings file):\n")
         for line in stanza.splitlines():
             print(f"  {c('dim', line)}")
         print()
@@ -612,31 +628,56 @@ def _confirm(question: str, assume_yes: bool) -> bool:
 
 
 def _delete_row_files(rows: list[HookRow], home: Path) -> list[str]:
-    """Remove what ``rows`` owns; returns what happened, one line per path."""
+    """Remove what ``rows`` owns; one outcome line per path.
+
+    Shared rows repeat one source across deploy targets and foreign rows
+    can name the same file from two harnesses, so sources are deduped —
+    the second unlink would only report a false failure. A removal that
+    fails says ``failed`` and the caller exits nonzero: deleting half a
+    hook while claiming success would leave live wrappers pointing at a
+    source that is still there.
+    """
     done: list[str] = []
+    seen: set[Path] = set()
     for row in rows:
         if row.tier == "foreign":
             # --foreign deletes the real file, nothing else.
             target = row.source
+            if target in seen:
+                continue
+            seen.add(target)
             if target.is_dir() and not target.is_symlink():
                 done.append(f"skipped {target} (a directory — remove it "
                             f"by hand)")
                 continue
             try:
                 target.unlink()
+            except FileNotFoundError:
+                done.append(f"deleted {target}")
             except OSError as exc:
                 done.append(f"failed {target}: {exc}")
                 continue
-            done.append(f"deleted {target}")
+            else:
+                done.append(f"deleted {target}")
             continue
         source = row.source
+        if source in seen:
+            continue
+        seen.add(source)
         if source.is_dir() and not source.is_symlink():
-            shutil.rmtree(source)
+            try:
+                shutil.rmtree(source)
+            except OSError as exc:
+                done.append(f"failed {_short(source, home)}: {exc}")
+                continue
         else:
             try:
                 source.unlink()
-            except OSError:
-                pass
+            except FileNotFoundError:
+                pass  # already gone — the delete asked for that
+            except OSError as exc:
+                done.append(f"failed {_short(source, home)}: {exc}")
+                continue
         done.append(f"deleted {_short(source, home)}")
         # The destination link still points at the hub path — a dangling
         # symlink is harmless to the harness but litter; drop it.
@@ -676,6 +717,18 @@ def _delete(rest: list[str], json_view: bool, fail) -> int:
     if not matches:
         return fail(c("red", f"No hook named {name} under "
                              "~/.quiver/hooks or its destinations."))
+    # A shared hook is one global source across every deploy target —
+    # scoping the delete to one harness would still remove the file all
+    # of them run. Only per-harness rows may be scoped; a shared-only
+    # match refuses rather than quietly deleting for everyone.
+    if harness:
+        scoped = [r for r in matches if r.tier != "shared"]
+        if not scoped:
+            return fail(c("red", f"{name} is a shared hook — one source "
+                                 "for every harness, so --harness cannot "
+                                 "scope a delete. Omit --harness to "
+                                 "delete the shared script."))
+        matches = scoped
     foreign = [r for r in matches if r.tier == "foreign"]
     if foreign and not want_foreign:
         paths = ", ".join(sorted({_short(r.source, home)
@@ -725,13 +778,21 @@ def _delete(rest: list[str], json_view: bool, fail) -> int:
         except OSError:
             pass
     decls = [d for r in matches for d in r.declared]
+    failures = any(line.startswith("failed ") for line in done)
     if json_view:
-        return emit({
-            "deleted": done,
+        emit({
+            "deleted": [line for line in done
+                        if not line.startswith("failed ")],
+            "failed": [line for line in done
+                       if line.startswith("failed ")],
             "declarations_left": sorted({str(d.settings) for d in decls}),
         })
+        return 1 if failures else 0
     for line in done:
-        print(f"  {c('green', '✓')} {line}")
+        if line.startswith(("failed ", "skipped ")):
+            print(f"  {c('yellow', '!')} {sanitize(line)}")
+        else:
+            print(f"  {c('green', '✓')} {line}")
     if decls:
         files = sorted({sanitize(_short(d.settings, home))
                         for d in decls})
@@ -740,7 +801,7 @@ def _delete(rest: list[str], json_view: bool, fail) -> int:
         print(f"  {c('dim', note)}\n")
     else:
         print()
-    return 0
+    return 1 if failures else 0
 
 
 def _toggle(rest: list[str], json_view: bool, fail, *, off: bool) -> int:
@@ -767,6 +828,17 @@ def _toggle(rest: list[str], json_view: bool, fail, *, off: bool) -> int:
     if any(r.tier == "foreign" for r in matches):
         return fail(c("red", f"{name} is a foreign hook — swe cannot "
                              f"{verb} what it does not own."))
+    # A shared hook's .disabled marker and its generated wrappers span
+    # every harness — scoping to one would still flip them all, so a
+    # shared-only match refuses rather than pretending to be local.
+    if harness:
+        scoped = [r for r in matches if r.tier != "shared"]
+        if not scoped:
+            return fail(c("red", f"{name} is a shared hook — one marker "
+                                 f"and one wrapper set for every harness, "
+                                 f"so --harness cannot scope {verb}. "
+                                 "Omit --harness."))
+        matches = scoped
     # One marker per hub file: shared rows collapse onto their script.
     sources = {r.source for r in matches}
     for source in sources:
@@ -810,12 +882,16 @@ def _sync(rest: list[str], json_view: bool, fail) -> int:
         return fail(c("red", f"Unexpected args: {' '.join(rest)}"))
     home = Path.home()
     registry = load_registry(home)
-    written, pruned = _shared.apply_deploy(home, registry)
+    # The ignore file is the user's protection list — syncing without it
+    # could replace paths it was written to protect, so an unreadable one
+    # stops the run before any generated write or link change, the same
+    # way swe init refuses.
     try:
         patterns = load_linkignore(home)
     except LinkIgnoreError as exc:
-        print(f"warning: {exc}; syncing without it", file=sys.stderr)
-        patterns = []
+        return fail(c("red", f"{exc} — fix or remove "
+                             "~/.quiver/.linkignore, then sync again."))
+    written, pruned = _shared.apply_deploy(home, registry)
     statuses = plan_hooks(home, patterns=patterns, registry=registry)
     results: Counter = Counter()
     for status in statuses:

@@ -60,7 +60,11 @@ def normalize(raw: dict, contract: dict, argv_event: str) -> tuple[dict, str]:
     """
     if not isinstance(raw, dict):
         raw = {}
-    native = argv_event or str(raw.get("hook_event_name") or "")
+    # The payload's own event name wins; argv is the documented fallback
+    # for harnesses whose payload lacks it (cursor declarations pass the
+    # event as an argument). An option like --verbose must never become
+    # the event name a real payload already carries.
+    native = str(raw.get("hook_event_name") or "") or argv_event
     event_map = contract.get("event_map") or {}
     extra_fields = contract.get("fields") or {}
 
@@ -112,6 +116,10 @@ def _permission_of(parsed: dict) -> str | None:
     direct = parsed.get("permission")
     if direct in ("allow", "deny", "ask"):
         return direct
+    # continue:false stops the turn — on a permission event that is a
+    # deny, and it must not fall through to the allow fallback.
+    if parsed.get("continue") is False:
+        return "deny"
     return None
 
 
@@ -196,6 +204,29 @@ def translate(contract: dict, native: str, out: str) -> str:
     return out
 
 
+def _blocked(contract: dict, native: str, out: str) -> str:
+    """The must-print answer for an exit-2 block.
+
+    Flat contracts get the deny+continue:false union — a script's own
+    stdout cannot weaken a block there. Grouped ones keep the script's
+    JSON when it parses (``reason`` and friends still matter) but force
+    ``decision: block`` over whatever it printed: exit 2 is the block
+    signal, and a bare ``{}`` must not read as "no verdict".
+    """
+    if contract.get("schema") == "flat":
+        return block_output(contract, native)
+    stripped = (out or "").strip()
+    if stripped:
+        try:
+            candidate = json.loads(stripped)
+        except ValueError:
+            candidate = None
+        if isinstance(candidate, dict):
+            candidate["decision"] = "block"
+            return json.dumps(candidate)
+    return block_output(contract, native)
+
+
 def _split(argv: list[str]) -> tuple[dict, list[str]]:
     """(--contract value, rest) — everything after ``--`` is script argv."""
     try:
@@ -245,16 +276,19 @@ def main(argv: list[str]) -> int:
         sys.stderr.write(proc.stderr)
     if must_print:
         # These contracts stall on anything but valid JSON, so the shim
-        # always answers: a deliberate JSON stdout wins, exit 2 becomes
-        # the contract's block answer, every other failure fails open.
-        # Exit code is always 0 — the JSON carries the verdict.
-        out = proc.stdout.strip()
+        # always answers. Exit 2 is the block signal and is checked
+        # before stdout — a hook that prints {} and exits 2 still blocks.
+        # Any other stdout is forwarded only through translate(), which
+        # re-validates it: a prefix like '{"x' from a mid-write crash is
+        # not valid JSON and must not reach the harness. Every other
+        # failure fails open. Exit code is always 0 — the JSON carries
+        # the verdict.
         if proc.returncode == 0:
             text = translate(contract, native, proc.stdout)
-        elif out.startswith("{"):
-            text = proc.stdout
         elif proc.returncode == 2:
-            text = block_output(contract, native)
+            text = _blocked(contract, native, proc.stdout)
+        elif proc.stdout.strip().startswith("{"):
+            text = translate(contract, native, proc.stdout)
         else:
             text = default_output(contract, native)
         if text:

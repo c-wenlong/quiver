@@ -21,6 +21,7 @@ import tempfile
 from pathlib import Path
 
 from quiver import paths as _paths
+from quiver.hooks.contracts import HookContract
 from quiver.init.hooks import hook_root
 
 # File and harness names travel into paths and a JSON command string;
@@ -251,20 +252,52 @@ def shared_command_for(harness: str, script: str,
         root / _shared.GENERATED_DIRNAME / script, home)
 
 
-def settings_stanza(command: str) -> str:
-    """The exact ``hooks`` block to paste for a PreToolUse declaration."""
-    body = {
-        "hooks": {
-            "PreToolUse": [
-                {
-                    "matcher": "*",
-                    "hooks": [
-                        {"type": "command", "command": command, "timeout": 10}
-                    ],
-                }
-            ]
+def settings_stanza(command: str,
+                    contract: HookContract | None = None) -> str:
+    """The ``hooks`` block to paste, in the contract's own schema.
+
+    No contract means Claude's grouped shape (the ``swe hooks new``
+    default). A flat contract (cursor's archetype) gets
+    ``{version, hooks: {event: [{command}]}}`` instead; the event is the
+    contract's native ``PreToolUse`` — gemini's ``BeforeTool`` — and the
+    timeout obeys ``timeout_unit`` (gemini counts milliseconds).
+    """
+    event = "PreToolUse"
+    timeout = 10
+    if contract is not None:
+        for native, normalized in zip(
+                contract.events, contract.normalized_events()):
+            if normalized == "PreToolUse":
+                event = native
+                break
+        else:
+            if contract.events:
+                event = contract.events[0]
+        if contract.timeout_unit == "ms":
+            timeout = 10000
+    if contract is not None and contract.schema == "flat":
+        body = {
+            "version": 1,
+            "hooks": {
+                event: [
+                    {"command": command, "timeout": timeout}
+                ]
+            },
         }
-    }
+    else:
+        body = {
+            "hooks": {
+                event: [
+                    {
+                        "matcher": "*",
+                        "hooks": [
+                            {"type": "command", "command": command,
+                             "timeout": timeout}
+                        ],
+                    }
+                ]
+            }
+        }
     return json.dumps(body, indent=2)
 
 
