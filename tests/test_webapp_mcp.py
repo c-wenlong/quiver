@@ -598,6 +598,60 @@ class TestSecrets(_SyncHome, unittest.TestCase):
         self.assertEqual(mask("abcdefghijklmnop"), "••••••••mnop")
 
 
+class TestSecretsSheetScript(unittest.TestCase):
+    """mcp.js's Secrets section under node, with the page's globals stubbed."""
+
+    PRELUDE = """
+const registerPage = () => {};
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";");
+const Fmt = {}; const localStorage = { getItem: () => null, setItem() {} };
+const document = { getElementById: () => null };
+let answer; const apiPost = () => new Promise((resolve) => { answer = resolve; });
+"""
+
+    def run_js(self, body):
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node not installed")
+        source = (Path(mcp.__file__).parent.parent / "static" / "pages" / "mcp.js").read_text()
+        script = ("const run = new Function(" + json.dumps(self.PRELUDE + source + "\n" + body) + ");\n"
+                  "Promise.resolve(run()).then((out) => process.stdout.write(JSON.stringify(out)));")
+        out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)
+
+    SERVER = """const s = { name: "proto", harnesses: [], variants: [], in_hub: true, secrets: [
+  { name: "constructor", set: false, masked: null },
+  { name: "__proto__", set: true, masked: "••••••••abcd" },
+  { name: "PLAIN_TOKEN", set: true, masked: "••••••••wxyz" }] };
+mcpPage.data = { harnesses: [], servers: [s] };
+const st = mcpSheetState(s);
+"""
+
+    def test_names_like_object_properties_start_empty(self):
+        html = self.run_js(self.SERVER + "return mcpSecretsHtml(s, st);")
+        self.assertNotIn("native code", html)
+        self.assertRegex(html, r'data-mcp-secret-draft="constructor"[^>]*value=""')
+        self.assertIn("••••••••abcd", html)
+        self.assertIn('aria-label="Show the value"', html)
+
+    def test_a_reveal_answering_after_close_stays_hidden(self):
+        got = self.run_js(self.SERVER + """
+const buttons = { "[data-mcp-secret-reveal]": [{ dataset: { mcpSecretReveal: "PLAIN_TOKEN" } }] };
+const sheet = { querySelectorAll: (sel) => buttons[sel] || [] };
+mcpBindSecrets(sheet, s, st);
+const pending = buttons["[data-mcp-secret-reveal]"][0].onclick();
+// The sheet closes while the hub is still answering.
+st.revealed = new Map(); st.revealGen++;
+answer({ status: 200, data: { name: "PLAIN_TOKEN", value: "the-value" } });
+return pending.then(() => ({ revealed: st.revealed.has("PLAIN_TOKEN"), html: mcpSecretsHtml(s, st) }));
+""")
+        self.assertFalse(got["revealed"])
+        self.assertNotIn("the-value", got["html"])
+
+
 class TestRemove(_SyncHome, unittest.TestCase):
     """Remove: swe mcp remove for the places the sheet's confirm listed."""
 
