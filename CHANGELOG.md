@@ -421,6 +421,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stripped the quotes, so a key holding one of them came back with an
   extra backslash. It now reads double-quoted values as a shell does.
 
+- **Web app: MCP secrets named like built-in object properties.** A
+  `${constructor}` or `${__proto__}` in a server's definition showed
+  JavaScript's own value in its paste field and counted as revealed before
+  anything was fetched; the sheet keeps its values in maps now. A reveal
+  that answers after the sheet closed is dropped too, so a reopened sheet
+  shows nothing it forgot.
+
 - **Web app and remote PWA: the Quiver icon replaces the "W"
   placeholder.** The favicon, home-screen icon, sidebar brand, setup
   screen and Pricing's Quiver logo showed a placeholder zigzag that read
