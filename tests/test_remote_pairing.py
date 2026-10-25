@@ -342,3 +342,190 @@ class TestPairRequests(unittest.TestCase):
         self.assertIsNotNone(
             pairing.device_for_credential(self.tmp, cred["credential"])
         )
+
+
+class TestClientMeta(unittest.TestCase):
+    SAFARI_IPHONE = (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        "Version/18.5 Mobile/15E148 Safari/604.1"
+    )
+
+    def test_iphone_safari(self):
+        meta = pairing.client_meta(self.SAFARI_IPHONE)
+        self.assertEqual(meta["kind"], "iphone")
+        self.assertEqual(meta["os"], "iOS 18.5")
+        self.assertEqual(meta["client"], "Safari 18.5")
+
+    def test_ipad(self):
+        ua = self.SAFARI_IPHONE.replace("iPhone; CPU iPhone", "iPad; CPU")
+        meta = pairing.client_meta(ua)
+        self.assertEqual(meta["kind"], "ipad")
+        self.assertEqual(meta["os"], "iPadOS 18.5")
+
+    def test_android_chrome(self):
+        meta = pairing.client_meta(
+            "Mozilla/5.0 (Linux; Android 14; Pixel 8) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0.6422.165 Mobile Safari/537.36"
+        )
+        self.assertEqual(meta["kind"], "android")
+        self.assertEqual(meta["os"], "Android 14")
+        self.assertEqual(meta["client"], "Chrome 125.0.6422.165")
+
+    def test_mac_safari(self):
+        meta = pairing.client_meta(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+            "Version/17.4 Safari/605.1.15"
+        )
+        self.assertEqual(meta["kind"], "mac")
+        self.assertEqual(meta["os"], "macOS 10.15.7")
+        self.assertEqual(meta["client"], "Safari 17.4")
+
+    def test_windows_edge(self):
+        meta = pairing.client_meta(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0.0.0 Safari/537.36 Edg/125.0.2535.51"
+        )
+        self.assertEqual(meta["kind"], "windows")
+        self.assertEqual(meta["os"], "Windows NT 10.0")
+        self.assertEqual(meta["client"], "Edge 125.0.2535.51")
+
+    def test_cfnetwork_app_gets_darwin_os(self):
+        # Quiver Remote's URLSession UA: product token + Darwin, no
+        # platform name. The product picks the iOS table.
+        meta = pairing.client_meta(
+            "QuiverRemote/1.0 CFNetwork/3826.500.131 Darwin/25.0.0"
+        )
+        self.assertEqual(meta["client"], "QuiverRemote 1.0")
+        self.assertEqual(meta["os"], "iOS 26")
+
+    def test_cli_and_empty(self):
+        self.assertEqual(
+            pairing.client_meta("curl/8.4.0")["client"], "curl 8.4.0"
+        )
+        meta = pairing.client_meta("curl/8.4.0")
+        self.assertEqual(meta["kind"], "unknown")
+        self.assertEqual(pairing.client_meta(""), {})
+        self.assertEqual(pairing.client_meta(None), {})
+
+    def test_clean_device_meta(self):
+        out = pairing.clean_device_meta({
+            "kind": " IPHONE!! ", "model": "iPhone16,2",
+            "os": "iOS 18.5", "client": "Quiver Remote 1.0",
+            "bogus": "drop me", "os2": "drop me too",
+            "node_name": "not a client field",
+        })
+        self.assertEqual(
+            out,
+            {
+                "kind": "iphone", "model": "iPhone16,2",
+                "os": "iOS 18.5", "client": "Quiver Remote 1.0",
+            },
+        )
+
+    def test_clean_device_meta_drops_garbage(self):
+        self.assertEqual(pairing.clean_device_meta(None), {})
+        self.assertEqual(pairing.clean_device_meta("str"), {})
+        self.assertEqual(
+            pairing.clean_device_meta({"kind": "!!!", "os": 12}), {}
+        )
+        long_val = "x" * 200
+        out = pairing.clean_device_meta({"model": long_val})
+        self.assertEqual(len(out["model"]), 120)
+
+
+class TestDeviceMetadata(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def test_exchange_stores_meta(self):
+        token = pairing.mint_pair_token(self.tmp)
+        cred = pairing.exchange(
+            self.tmp, token, "phone",
+            meta={"kind": "iphone", "client": "Quiver Web",
+                  "os": "iOS 18.5", "node_name": "iphone-13.ts.net",
+                  "display_name": "nope", "credential_hash": "nope"},
+        )
+        row = pairing.load_devices(self.tmp)[cred["device_id"]]
+        self.assertEqual(row["paired_via"], "token")
+        self.assertEqual(row["kind"], "iphone")
+        self.assertEqual(row["os"], "iOS 18.5")
+        self.assertEqual(row["node_name"], "iphone-13.ts.net")
+        # Only metadata keys pass through — display_name is rename-only
+        # and credential_hash is the mint's own.
+        self.assertNotIn("display_name", row)
+        self.assertNotEqual(row["credential_hash"], "nope")
+
+    def test_exchange_without_meta_matches_old_rows(self):
+        token = pairing.mint_pair_token(self.tmp)
+        cred = pairing.exchange(self.tmp, token, "phone")
+        row = pairing.load_devices(self.tmp)[cred["device_id"]]
+        self.assertEqual(row["paired_via"], "token")
+        for key in ("kind", "client", "os", "model", "node_name"):
+            self.assertNotIn(key, row)
+
+    def test_approve_mints_meta_and_node_name(self):
+        r = pairing.request_pair(
+            self.tmp, dict(_PEER), "phone",
+            meta={"kind": "iphone", "client": "Quiver Remote 1.0",
+                  "os": "iOS 18.5", "model": "iPhone16,2",
+                  "node_name": "ignored"},
+        )
+        res = pairing.approve_request(self.tmp, r["code"])
+        self.assertIsNotNone(res)
+        row = pairing.load_devices(self.tmp)[res["device_id"]]
+        self.assertEqual(row["kind"], "iphone")
+        self.assertEqual(row["model"], "iPhone16,2")
+        self.assertEqual(row["client"], "Quiver Remote 1.0")
+        # node_name comes from the resolved peer, never the client body.
+        self.assertEqual(row["node_name"], _PEER["node_name"])
+
+    def test_touch_backfills_only_missing(self):
+        token = pairing.mint_pair_token(self.tmp)
+        cred = pairing.exchange(
+            self.tmp, token, "phone",
+            meta={"kind": "iphone", "os": "iOS 17"},
+        )
+        did = cred["device_id"]
+        pairing.touch_device(
+            self.tmp, did,
+            meta={"kind": "mac", "os": "macOS 15",
+                  "client": "Safari 17.4"},
+        )
+        row = pairing.load_devices(self.tmp)[did]
+        # Pair-time values win; only absent keys get filled.
+        self.assertEqual(row["kind"], "iphone")
+        self.assertEqual(row["os"], "iOS 17")
+        self.assertEqual(row["client"], "Safari 17.4")
+
+    def test_device_view_hides_credential(self):
+        token = pairing.mint_pair_token(self.tmp)
+        cred = pairing.exchange(self.tmp, token, "phone")
+        view = pairing.device_view(
+            cred["device_id"],
+            pairing.load_devices(self.tmp)[cred["device_id"]],
+        )
+        self.assertEqual(view["id"], cred["device_id"])
+        self.assertFalse(view["revoked"])
+        self.assertNotIn("credential_hash", view)
+        self.assertNotIn("credential", view)
+
+    def test_rename_via_update_device(self):
+        token = pairing.mint_pair_token(self.tmp)
+        cred = pairing.exchange(self.tmp, token, "phone")
+        did = cred["device_id"]
+        self.assertTrue(
+            pairing.update_device(self.tmp, did, display_name="Kai's")
+        )
+        row = pairing.load_devices(self.tmp)[did]
+        self.assertEqual(row["display_name"], "Kai's")
+        # Clearing removes the field, back to the paired name.
+        self.assertTrue(
+            pairing.update_device(self.tmp, did, display_name=None)
+        )
+        self.assertNotIn(
+            "display_name", pairing.load_devices(self.tmp)[did]
+        )

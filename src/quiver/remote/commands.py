@@ -409,13 +409,7 @@ def _cmd_status(flags: dict, json_view: bool) -> int:
             "public_url": public_url or None,
             "machines": list(machines.values()),
             "devices": [
-                {
-                    "id": did,
-                    "name": row.get("name"),
-                    "created_at": row.get("created_at"),
-                    "last_seen_at": row.get("last_seen_at"),
-                    "revoked": bool(row.get("revoked_at")),
-                }
+                pairing.device_view(did, row)
                 for did, row in devices.items()
             ],
         })
@@ -511,13 +505,7 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
     if json_view:
         return emit({
             "devices": [
-                {
-                    "id": did,
-                    "name": row.get("name"),
-                    "created_at": row.get("created_at"),
-                    "last_seen_at": row.get("last_seen_at"),
-                    "revoked": bool(row.get("revoked_at")),
-                }
+                pairing.device_view(did, row)
                 for did, row in devices.items()
             ]
         })
@@ -528,7 +516,15 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
         mark = c("red", "revoked") if row.get("revoked_at") else c("green", "active")
         seen = row.get("last_seen_at")
         seen_s = time.strftime("%Y-%m-%d %H:%M", time.localtime(seen)) if seen else "never"
-        print(f"  {did}  {row.get('name', 'device')}  {mark}  last seen {seen_s}")
+        label = str(
+            row.get("display_name") or row.get("name") or "device"
+        )
+        bits = [
+            str(row[k]) for k in ("kind", "client", "os", "node_name")
+            if row.get(k)
+        ]
+        detail = f"  {' · '.join(bits)}" if bits else ""
+        print(f"  {did}  {label}  {mark}{detail}  last seen {seen_s}")
     return 0
 
 

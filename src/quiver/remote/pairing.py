@@ -19,6 +19,7 @@ import fcntl
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import threading
 import time
@@ -110,6 +111,144 @@ def _save_devices(home: Path | None, devices: dict[str, dict]) -> None:
     )
 
 
+# -- device metadata --------------------------------------------------------
+#
+# What a device says about itself when it pairs: a ``kind`` the list
+# renders as an icon, a ``model`` where the client knows it (only a
+# native app does — browser UAs stopped carrying it years ago), the
+# ``client`` name+version and the ``os`` string. ``node_name`` is the
+# tailnet node the request came from, which is the closest thing to a
+# location Tailscale's CGNAT gives us.
+META_KEYS = ("kind", "model", "client", "os")
+_META_FIELD_KEYS = META_KEYS + ("node_name",)
+_MAX_META_LEN = 120
+
+# Darwin major → Apple OS, for CFNetwork UAs that name no platform.
+# Both families share one kernel; the product token picks the map.
+_DARWIN_IOS = {
+    "25": "iOS 26", "24": "iOS 18", "23": "iOS 17",
+    "22": "iOS 16", "21": "iOS 15", "20": "iOS 14",
+}
+_DARWIN_MACOS = {
+    "25": "macOS 26", "24": "macOS 15", "23": "macOS 14",
+    "22": "macOS 13", "21": "macOS 12", "20": "macOS 11",
+}
+
+_PRODUCT_RE = re.compile(r"^([A-Za-z][\w+.-]*)/([\d.]+)")
+
+
+def client_meta(user_agent: str) -> dict:
+    """Best-effort ``{kind, client, os}`` from a User-Agent header.
+
+    The fallback for clients that send no explicit ``device`` map.
+    Anything it can't read is simply absent — never guessed.
+    """
+    ua = (user_agent or "").strip()
+    meta: dict[str, str] = {}
+    if not ua:
+        return meta
+    # kind: the platform token. iPadOS has reported "Macintosh" since
+    # 13.x — browsers can only fix that client-side (explicit fields).
+    if "iPhone" in ua or "iPod" in ua:
+        meta["kind"] = "iphone"
+    elif "iPad" in ua:
+        meta["kind"] = "ipad"
+    elif "Android" in ua:
+        meta["kind"] = "android"
+    elif "Macintosh" in ua or "Mac OS X" in ua:
+        meta["kind"] = "mac"
+    elif "Windows" in ua:
+        meta["kind"] = "windows"
+    elif "Linux" in ua or "X11" in ua:
+        meta["kind"] = "linux"
+    # os
+    m = re.search(r"OS (\d+[._\d]*) like Mac OS X", ua)
+    if m:
+        family = "iPadOS" if "iPad" in ua else "iOS"
+        meta["os"] = f"{family} {m.group(1).replace('_', '.')}"
+    elif "Android" in ua:
+        m = re.search(r"Android (\d+[\d.]*)", ua)
+        meta["os"] = "Android" + (f" {m.group(1)}" if m else "")
+    elif "Mac OS X" in ua:
+        m = re.search(r"Mac OS X (\d+[._\d]+)", ua)
+        meta["os"] = "macOS" + (
+            f" {m.group(1).replace('_', '.')}" if m else ""
+        )
+    elif "Windows NT" in ua:
+        m = re.search(r"Windows NT ([\d.]+)", ua)
+        meta["os"] = "Windows NT" + (f" {m.group(1)}" if m else "")
+    # client: a leading product token (CFNetwork apps, curl, python)
+    # wins; else the well-known browser families.
+    m = _PRODUCT_RE.match(ua)
+    if m and not m.group(1).lower().startswith("mozilla"):
+        meta["client"] = f"{m.group(1)} {m.group(2)}"
+    else:
+        for pat, name in (
+            (r"Edg/([\d.]+)", "Edge"),
+            (r"Chrome/([\d.]+)", "Chrome"),
+            (r"CriOS/([\d.]+)", "Chrome"),
+            (r"Firefox/([\d.]+)", "Firefox"),
+            (r"Version/([\d.]+).*Safari/", "Safari"),
+            (r"Safari/([\d.]+)", "Safari"),
+        ):
+            m = re.search(pat, ua)
+            if m:
+                meta["client"] = f"{name} {m.group(1)}"
+                break
+    # A bare Darwin version says only "some Apple OS" — our own app's
+    # token says which. Unknown Darwin clients read as macOS.
+    if "os" not in meta:
+        m = re.search(r"Darwin/(\d+)", ua)
+        if m:
+            table = (
+                _DARWIN_IOS
+                if "quiver" in meta.get("client", "").lower()
+                else _DARWIN_MACOS
+            )
+            guess = table.get(m.group(1))
+            if guess:
+                meta["os"] = guess
+    if "kind" not in meta:
+        # A Mozilla-prefixed UA with no platform token is some browser
+        # we didn't recognise; curl/python-style UAs are just unknown.
+        meta["kind"] = "browser" if ua.startswith("Mozilla/") else "unknown"
+    return meta
+
+
+def clean_device_meta(fields: dict | None) -> dict:
+    """The explicit ``device`` map a client posts: known keys only,
+    trimmed and length-capped; ``kind`` becomes a lowercase token so
+    renderers can switch on it."""
+    if not isinstance(fields, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key in META_KEYS:
+        val = fields.get(key)
+        if not isinstance(val, str):
+            continue
+        val = val.strip()[:_MAX_META_LEN]
+        if val:
+            out[key] = val
+    kind = out.get("kind")
+    if kind is not None:
+        kind = re.sub(r"[^a-z0-9_-]", "", kind.lower())[:32]
+        if kind:
+            out["kind"] = kind
+        else:
+            del out["kind"]
+    return out
+
+
+def device_view(device_id: str, row: dict) -> dict:
+    """A devices.json row safe to serve: everything but the credential."""
+    out = {
+        key: val for key, val in row.items() if key != "credential_hash"
+    }
+    out["id"] = device_id
+    out["revoked"] = bool(row.get("revoked_at"))
+    return out
+
+
 def mint_pair_token(home: Path | str | None = None) -> str:
     """Write a one-time, short-lived pairing token the hub will honor."""
     token = secrets.token_urlsafe(24)
@@ -193,7 +332,10 @@ def _consume_token(home: Path | None, token: str) -> bool:
     return True
 
 
-def exchange(home: Path | str | None, token: str, name: str = "") -> dict | None:
+def exchange(
+    home: Path | str | None, token: str, name: str = "",
+    meta: dict | None = None,
+) -> dict | None:
     """``POST /v1/pair``: token → a fresh device credential, once.
 
     Returns ``{"device_id", "credential", "name"}`` or None for a bad or
@@ -206,8 +348,19 @@ def exchange(home: Path | str | None, token: str, name: str = "") -> dict | None
     with _state_lock(home_path):
         if not _consume_token(home_path, token):
             return None
-        device_id, credential = _mint_device(home_path, name)
+        device_id, credential = _mint_device(
+            home_path, name,
+            extra={"paired_via": "token", **_clean_meta(meta)},
+        )
     return {"device_id": device_id, "credential": credential, "name": name or "device"}
+
+
+def _clean_meta(meta: dict | None) -> dict:
+    """Device fields bound for the row: known keys, no empties."""
+    return {
+        key: val for key, val in (meta or {}).items()
+        if key in _META_FIELD_KEYS and isinstance(val, str) and val
+    }
 
 
 def _mint_device(
@@ -249,14 +402,25 @@ def device_for_credential(
     return None
 
 
-def touch_device(home: Path | str | None, device_id: str) -> None:
-    """Refresh last_seen_at; cheap best-effort, failures ignored."""
+def touch_device(
+    home: Path | str | None, device_id: str, meta: dict | None = None
+) -> None:
+    """Refresh last_seen_at; cheap best-effort, failures ignored.
+
+    ``meta`` backfills device fields the row still lacks (a device paired
+    before they were captured), so an ordinary request gradually fills in
+    kind/client/os for old rows. Fields already set are never touched.
+    """
     home_path = Path(home) if home is not None else None
     with _state_lock(home_path):
         devices = load_devices(home_path)
-        if device_id not in devices:
+        row = devices.get(device_id)
+        if row is None:
             return
-        devices[device_id]["last_seen_at"] = time.time()
+        row["last_seen_at"] = time.time()
+        for key, val in _clean_meta(meta).items():
+            if not row.get(key):
+                row[key] = val
         _save_devices(home_path, devices)
 
 
@@ -326,8 +490,15 @@ def _prune_requests(rows: list[dict], now: float) -> list[dict]:
     return [r for r in rows if r.get("expires_at", 0) > now]
 
 
-def request_pair(home: Path | str | None, peer: dict, name: str = "") -> dict:
-    """Open a pair request for a tailnet peer; the phone shows ``code``."""
+def request_pair(
+    home: Path | str | None, peer: dict, name: str = "",
+    meta: dict | None = None,
+) -> dict:
+    """Open a pair request for a tailnet peer; the phone shows ``code``.
+
+    ``meta`` (kind/model/client/os) rides on the request row and is
+    minted into the device when it's approved — the requester supplied
+    it, not the approver."""
     home_path = Path(home) if home is not None else None
     with _state_lock(home_path):
         now = time.time()
@@ -357,6 +528,10 @@ def request_pair(home: Path | str | None, peer: dict, name: str = "") -> dict:
             "login": str(peer.get("login") or ""),
             "peer_ip": str(peer.get("ip") or ""),
             "name": name or str(peer.get("node_short") or "") or "device",
+            "device_meta": {
+                key: val for key, val in (meta or {}).items()
+                if key in META_KEYS and isinstance(val, str) and val
+            },
             "created_at": now,
             "expires_at": now + REQUEST_TTL_S,
             "status": "pending",
@@ -428,6 +603,8 @@ def approve_request(
                     "paired_via": "tailscale",
                     "tailscale_node": row.get("node_id") or "",
                     "tailscale_login": row.get("login") or "",
+                    "node_name": row.get("node_name") or "",
+                    **(row.get("device_meta") or {}),
                 },
             )
             row["status"] = "approved"

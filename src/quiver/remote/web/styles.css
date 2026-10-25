@@ -404,3 +404,9 @@ details.tool.has-diff > summary { color: var(--text); }
 }
 .toast-text { flex: 1; min-width: 0; }
 .toast-act { width: auto; margin: 0; padding: 6px 8px; background: none; border: 0; color: var(--bg); font-weight: 700; }
+
+/* my device */
+.kv { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: .88rem; }
+.kv .k { color: var(--dim); flex: 0 0 auto; }
+.kv .v { text-align: right; overflow-wrap: anywhere; }
+#device-status { min-height: 1.2em; margin: 8px 2px 0; font-size: .85rem; }

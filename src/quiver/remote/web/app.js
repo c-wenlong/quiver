@@ -96,7 +96,7 @@ function setConn(on) {
 
 function show(view) {
   state.view = view;
-  for (const v of ["pair-view", "approve-view", "sessions-view", "chat-view", "inbox-view", "usage-view"]) {
+  for (const v of ["pair-view", "approve-view", "sessions-view", "chat-view", "inbox-view", "usage-view", "device-view"]) {
     el(v).classList.add("hidden");
   }
   el(view + "-view").classList.remove("hidden");
@@ -112,12 +112,39 @@ function chatTitle() {
 
 /* ── pairing ─────────────────────────────────────────────── */
 
+/* The device fields we claim at pair time. The hub merges them over
+ * what it can read from the User-Agent, and the browser knows things
+ * the UA won't say — e.g. an iPad in desktop mode sends a Macintosh UA
+ * but still has a touch screen. */
+function deviceMeta() {
+  const ua = navigator.userAgent || "";
+  let kind = "browser";
+  if (/iPhone|iPod/.test(ua)) kind = "iphone";
+  else if (/iPad/.test(ua)) kind = "ipad";
+  else if (/Android/.test(ua)) kind = "android";
+  else if (/Macintosh|Mac OS X/.test(ua)) {
+    kind = (navigator.maxTouchPoints || 0) > 1 ? "ipad" : "mac";
+  }
+  else if (/Windows/.test(ua)) kind = "windows";
+  else if (/Linux/.test(ua)) kind = "linux";
+  let os = "";
+  let m = ua.match(/OS (\d+[._\d]*) like Mac OS X/);
+  if (m) os = (/iPad/.test(ua) ? "iPadOS " : "iOS ") + m[1].replace(/_/g, ".");
+  else if ((m = ua.match(/Android (\d+[\d.]*)/))) os = "Android " + m[1];
+  else if ((m = ua.match(/Mac OS X (\d+[._\d]+)/))) os = "macOS " + m[1].replace(/_/g, ".");
+  else if ((m = ua.match(/Windows NT ([\d.]+)/))) os = "Windows NT " + m[1];
+  // Desktop-mode iPadOS: the UA is all lies; the touchscreen isn't.
+  if (kind === "ipad" && !/iPad/.test(ua)) os = "iPadOS";
+  return { kind, client: "Quiver Web", os };
+}
+
 async function startTailscalePair(name) {
   el("pair-error").textContent = "";
   let status = 0, data = null;
   try {
     ({ status, data } = await api("/v1/pair/request", {
-      method: "POST", body: JSON.stringify({ name: name || "" }),
+      method: "POST",
+      body: JSON.stringify({ name: name || "", device: deviceMeta() }),
     }));
   } catch { status = 0; }
   if (status === 201 && data) {
@@ -258,7 +285,9 @@ async function loadApprovals() {
 async function doPair(token, name) {
   const { status, data } = await api("/v1/pair", {
     method: "POST",
-    body: JSON.stringify({ token, name: name || "phone" }),
+    body: JSON.stringify({
+      token, name: name || "phone", device: deviceMeta(),
+    }),
   });
   if (status === 200 && data && data.credential) {
     store.cred = data;
@@ -2045,6 +2074,81 @@ async function loadUsage(refresh = false) {
 
 el("usage-refresh").addEventListener("click", () => loadUsage(true));
 
+/* ── my device ───────────────────────────────────────────── */
+
+const KIND_LABEL = {
+  iphone: "iPhone", ipad: "iPad", android: "Android", mac: "Mac",
+  windows: "Windows", linux: "Linux", browser: "Browser",
+};
+
+function fmtWhen(ts) {
+  return ts ? new Date(ts * 1000).toLocaleString() : "never";
+}
+
+function renderDevice(d) {
+  const rows = [
+    ["Device", KIND_LABEL[d.kind] || (d.kind ? d.kind : "Unknown")],
+    ["Model", d.model || ""],
+    ["App", d.client || ""],
+    ["OS", d.os || ""],
+    ["Tailnet node", d.node_name || ""],
+    ["Paired", d.created_at ? fmtWhen(d.created_at) : ""],
+    ["Last seen", fmtWhen(d.last_seen_at)],
+    ["Device id", d.id || ""],
+  ].filter(([, v]) => v !== "");
+  el("device-meta").innerHTML = rows.map(([k, v]) =>
+    `<div class="kv"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`
+  ).join("");
+  if (document.activeElement !== el("device-name")) {
+    el("device-name").value = d.display_name || d.name || "";
+  }
+}
+
+async function loadDevice() {
+  if (!el("device-meta").innerHTML) {
+    el("device-meta").innerHTML = `<p class="dim">Loading…</p>`;
+  }
+  let status = 0, data = null;
+  try {
+    ({ status, data } = await api("/v1/devices/me"));
+  } catch { /* handled below */ }
+  if (status === 401) { store.cred = null; boot(); return; }
+  if (status !== 200 || !data) {
+    el("device-meta").innerHTML =
+      `<p class="error">Couldn't load this device (${esc(String(status))}).</p>`;
+    return;
+  }
+  renderDevice(data);
+}
+
+el("device-save").addEventListener("click", async () => {
+  const name = el("device-name").value.trim();
+  const btn = el("device-save");
+  btn.disabled = true;
+  el("device-status").textContent = "";
+  let status = 0, data = null;
+  try {
+    ({ status, data } = await api("/v1/devices/rename", {
+      method: "POST", body: JSON.stringify({ name }),
+    }));
+  } catch { /* handled below */ }
+  btn.disabled = false;
+  if (status === 200 && data) {
+    // Keep the stored credential's name in step: other spots read it.
+    const cred = store.cred;
+    if (cred) { cred.name = data.name || name || cred.name; store.cred = cred; }
+    el("device-status").textContent = "Saved.";
+    loadDevice();
+    return;
+  }
+  el("device-status").textContent =
+    (data && data.error && data.error.message) || `Couldn't save (${status}).`;
+});
+
+el("device-name").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") el("device-save").click();
+});
+
 /* ── composer + controls ─────────────────────────────────── */
 
 function newClientId() {
@@ -3127,6 +3231,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
     if (tab.dataset.tab === "inbox") loadInbox();
     if (tab.dataset.tab === "sessions") loadSessions();
     if (tab.dataset.tab === "usage") loadUsage();
+    if (tab.dataset.tab === "device") loadDevice();
   });
 });
 
