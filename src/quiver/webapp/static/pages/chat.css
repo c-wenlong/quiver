@@ -19,6 +19,7 @@
 .chat-conn { display: flex; align-items: center; gap: 6px; flex: none; }
 .chat-conn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
 .chat-conn.on .dot { background: var(--accent-fill); }
+.chat-conn.on .caption { display: none; }
 .chat-conn.err .dot { background: var(--warning); }
 .chat-page > .card { margin-bottom: 14px; }
 

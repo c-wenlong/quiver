@@ -347,10 +347,8 @@ const SessionChat = (() => {
     if (!bar) return;
     const r = chat.row || {};
     const status = STATUS[r.status] ? `<span class="badge status-${esc(r.status)}">${esc(STATUS[r.status])}</span>` : "";
-    const own = chat.rowKnown
-      ? `<span class="badge ownership-${r.ownership === "attached" ? "attached" : "observed"}"
-          title="${r.ownership === "attached" ? "Runs under Quiver: you can send to it" : "Owned by its terminal: read-only here"}">${
-          r.ownership === "attached" ? "Attached" : "Observed"}</span>` : "";
+    // Ownership needs no chip: an observed session says so in the banner
+    // below, and an attached one shows an enabled composer.
     const sub = [harnessLabel(chat.row), r.cwd, r.remote ? r.machine : ""]
       .filter(Boolean).map(esc).join(" · ");
     bar.innerHTML = `
@@ -361,18 +359,19 @@ const SessionChat = (() => {
         <h1 class="chat-title">${esc(r.title || r.id || chat.key || "Session")}</h1>
         <div class="chat-sub">${sub}</div>
       </div>
-      <div class="chat-badges">${status}${own}</div>
+      <div class="chat-badges">${status}</div>
       <span class="chat-conn" id="chat-conn"><span class="dot"></span><span class="caption" id="chat-conn-label"></span></span>
-      ${chat.details ? '<button type="button" class="tab" id="chat-details">Details</button>' : ""}`;
+      ${chat.details ? `<button type="button" class="icon-button" id="chat-details" aria-label="Details" title="Details">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg></button>` : ""}`;
     setConn(chat.connState || "connecting");
     const details = $("chat-details");
     if (details) {
       details.onclick = async () => {
         details.disabled = true;
-        details.textContent = "Loading…";
+        details.title = "Loading…";
         const ok = await chat.details();
         details.disabled = false;
-        details.textContent = ok ? "Details" : "No details";
+        details.title = ok ? "Details" : "No details";
       };
     }
   }
@@ -382,7 +381,9 @@ const SessionChat = (() => {
     const conn = $("chat-conn");
     if (!conn) return;
     conn.className = `chat-conn ${state === true ? "on" : state === "err" ? "err" : "off"}`;
-    $("chat-conn-label").textContent = state === true ? "Live" : state === "err" ? "Reconnecting…" : "Connecting…";
+    conn.title = state === true ? "Streaming the session live"
+      : state === "err" ? "Reconnecting to the session stream" : "Connecting to the session stream";
+    $("chat-conn-label").textContent = state === true ? "" : state === "err" ? "Reconnecting…" : "Connecting…";
   }
 
   function showError(message) {
