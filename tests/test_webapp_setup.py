@@ -294,7 +294,7 @@ class TestInstall(_Home, unittest.TestCase):
             return which.get(cmd) if which else ("/opt/homebrew/bin/brew" if cmd == "brew" else None)
 
         def installer(argv, **kwargs):
-            kwargs["stdout"].write(b"==> Pouring gemini-cli\n")
+            kwargs["stdout"].write(b"==> Pouring kilo\n")
             return subprocess.CompletedProcess(argv, returncode)
 
         with patch("quiver.harness.commands.shutil.which", side_effect=where), \
@@ -306,37 +306,37 @@ class TestInstall(_Home, unittest.TestCase):
     def test_runs_the_agents_own_installer_and_registers_it(self):
         import subprocess
 
-        reply, run = self.install({"id": "gemini", "via": "brew"},
-                                  which={"brew": "/opt/homebrew/bin/brew", "gemini": "/opt/homebrew/bin/gemini"})
+        reply, run = self.install({"id": "kilo", "via": "brew"},
+                                  which={"brew": "/opt/homebrew/bin/brew", "kilo": "/opt/homebrew/bin/kilo"})
         self.assertIsNone(reply["error"])
-        self.assertEqual(run.call_args.args[0], ["brew", "install", "gemini-cli"])
+        self.assertEqual(run.call_args.args[0], ["brew", "install", "kilo-org/tap/kilo"])
         # No terminal: nothing on stdin, the output into a file, not memory.
         self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
         self.assertEqual(run.call_args.kwargs["stderr"], subprocess.STDOUT)
-        self.assertEqual(self.registry()["gemini"]["command"], "gemini")
+        self.assertEqual(self.registry()["kilo"]["command"], "kilo")
         self.assertIn("agents", reply["setup"])
 
     def test_an_alias_never_picks_another_agents_installer(self):
-        self.registry_file.write_text(json.dumps({"codex": {"command": "codex", "aliases": ["gemini"]}}))
-        _, run = self.install({"id": "gemini", "via": "brew"})
-        self.assertEqual(run.call_args.args[0], ["brew", "install", "gemini-cli"])
+        self.registry_file.write_text(json.dumps({"codex": {"command": "codex", "aliases": ["kilo"]}}))
+        _, run = self.install({"id": "kilo", "via": "brew"})
+        self.assertEqual(run.call_args.args[0], ["brew", "install", "kilo-org/tap/kilo"])
 
     def test_a_timeout_keeps_what_the_installer_printed(self):
         import subprocess
 
         def slow(argv, **kwargs):
-            kwargs["stdout"].write(b"==> Downloading gemini-cli\n")
+            kwargs["stdout"].write(b"==> Downloading kilo\n")
             raise subprocess.TimeoutExpired(argv, 600)
 
-        reply, _ = self.install({"id": "gemini", "via": "brew"}, run=slow)
+        reply, _ = self.install({"id": "kilo", "via": "brew"}, run=slow)
         self.assertIn("brew install timed out.", reply["error"])
-        self.assertIn("Downloading gemini-cli", reply["error"])
+        self.assertIn("Downloading kilo", reply["error"])
 
     def test_a_failed_install_says_why_with_its_output(self):
-        reply, _ = self.install({"id": "gemini", "via": "brew"}, returncode=1)
+        reply, _ = self.install({"id": "kilo", "via": "brew"}, returncode=1)
         self.assertIn("brew install exited with code 1", reply["error"])
-        self.assertIn("Pouring gemini-cli", reply["error"])
-        self.assertNotIn("gemini", self.registry())
+        self.assertIn("Pouring kilo", reply["error"])
+        self.assertNotIn("kilo", self.registry())
 
     def test_a_tool_off_path_is_the_error(self):
         reply, run = self.install({"id": "gemini", "via": "nix"}, which={})

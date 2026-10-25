@@ -44,8 +44,11 @@ INSTALLERS: dict[str, dict[str, str]] = {
         "npm": "@openai/codex",
         "nix": "codex",
     },
+    # No brew: the formula is deprecated upstream — Google replaced Gemini
+    # CLI with Antigravity CLI for most users and Homebrew disables the
+    # formula outright on 2026-12-18 (its named replacement is the
+    # antigravity-cli cask).
     "gemini": {
-        "brew": "gemini-cli",
         "npm": "@google/gemini-cli",
         "nix": "gemini-cli",
     },
@@ -90,12 +93,17 @@ INSTALLERS: dict[str, dict[str, str]] = {
     "kilo": {
         "brew": "kilo-org/tap/kilo",
         "npm": "@kilocode/cli",
-        "nix": "kilocode-cli",
+        # nixpkgs renamed kilocode-cli to kilo; the old attr only lives on
+        # as a warnAlias in pkgs/top-level/aliases.nix.
+        "nix": "kilo",
     },
     "goose": {
         "brew": "block-goose-cli",
         "nix": "goose-cli",
-        "script": "https://github.com/block/goose/releases/download/stable/download_cli.sh",
+        # The repo moved orgs: block/goose now redirects to aaif-goose/goose,
+        # which is the path the project's own install docs and Homebrew's
+        # block-goose-cli formula use.
+        "script": "https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh",
     },
     "aider": {
         "brew": "aider",
@@ -181,23 +189,54 @@ INSTALLERS: dict[str, dict[str, str]] = {
 }
 
 # Vendor download or product pages, emitted as ``website`` in
-# `swe install --json`. The provider sheet links to it when swe has no
-# install command to offer — and to find the GUI app when only the CLI
-# is in the table (qoder's cask is qodercli, not the IDE).
+# `swe install --json` for every provider the sheet can show. The sheet
+# links to it when swe has no install command to offer — and to find the
+# GUI app when only the CLI is in the table (qoder's cask is qodercli,
+# not the IDE) — so a provider without one dead-ends. Where the vendor
+# publishes the product only as a repo (qwen-code, crush) the repo is the
+# canonical page; everything else is the vendor's own product or download
+# URL, checked against cask/formula homepages and npm package metadata.
 WEBSITES: dict[str, str] = {
-    "antigravity": "https://antigravity.google",
+    "claude": "https://claude.com/product/claude-code",
+    "codex": "https://openai.com/codex/",
+    "gemini": "https://geminicli.com",
+    "copilot": "https://github.com/features/copilot/cli",
+    "cursor": "https://cursor.com/cli",
+    "qwen-code": "https://github.com/QwenLM/qwen-code",
+    "mistral-vibe": "https://mistral.ai/products/vibe",
+    "opencode": "https://opencode.ai",
+    "crush": "https://github.com/charmbracelet/crush",
+    "cline": "https://cline.bot",
+    "kilo": "https://kilo.ai",
+    "goose": "https://goose-docs.ai",
+    "aider": "https://aider.chat",
+    "continue": "https://continue.dev",
+    "pi": "https://pi.dev",
+    "forge": "https://forgecode.dev",
+    "devin": "https://devin.ai",
+    "droid": "https://factory.com",
+    "augment": "https://augmentcode.com",
+    "kiro": "https://kiro.dev",
+    "blackbox": "https://blackbox.ai",
+    "freebuff": "https://freebuff.com",
     "kimi": "https://code.kimi.com",
     "grok": "https://x.ai",
-    "zcode": "https://zcode.z.ai",
+    "antigravity": "https://antigravity.google",
     "commandcode": "https://commandcode.ai",
     "qoder": "https://qoder.com",
     "qoder-cn": "https://qoder.com.cn",
+    "jules": "https://jules.google",
+    "mastracode": "https://mastra.ai",
+    "zcode": "https://zcode.z.ai",
 }
 
 # GUI apps leave no binary on PATH; the .app bundle is the install
-# evidence. Same locations the app's own provider detection checks.
+# evidence. A CLI-bearing provider (kiro, antigravity, qoder) keeps its
+# bundle here too, so the sheet can say the desktop app is already on the
+# Mac. Same locations the app's own provider detection checks.
 GUI_APPS: dict[str, tuple[str, ...]] = {
     "antigravity": ("/Applications/Antigravity.app", "~/Applications/Antigravity.app"),
+    "kiro": ("/Applications/Kiro CLI.app", "~/Applications/Kiro CLI.app"),
     "zcode": ("/Applications/ZCode.app", "~/Applications/ZCode.app"),
     "qoder": ("/Applications/Qoder.app", "~/Applications/Qoder.app"),
     "qoder-cn": ("/Applications/Qoder.app", "~/Applications/Qoder.app"),
