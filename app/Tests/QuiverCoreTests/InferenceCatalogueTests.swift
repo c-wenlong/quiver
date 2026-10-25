@@ -45,4 +45,16 @@ private func key(_ name: String, _ value: String = "sk-1234567890", provider: St
             .map(\.id) == ["provider:together_ai"])
         #expect(InferenceCatalogue.filter(entries, kind: nil, query: "no such thing").isEmpty)
     }
+
+    /// The sheet's mark column: every row's logo names a bundled
+    /// harness-*.svg. A new plan or provider with no mark fails here
+    /// rather than shipping a blank cell.
+    @Test func everyEntryResolvesABundledMark() {
+        for entry in InferenceCatalogue.entries(keys: []) {
+            let logo = entry.logo
+            #expect(logo != nil, "\(entry.id) has no bundled mark")
+            #expect(logo.flatMap { HarnessIcons.icon(for: $0) } != nil,
+                    "\(entry.id) names \(logo ?? "?") with no harness-*.svg")
+        }
+    }
 }
