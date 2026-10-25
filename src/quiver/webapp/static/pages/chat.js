@@ -281,6 +281,21 @@ const SessionChat = (() => {
     paintToolRun(box);
   }
 
+  /* An entry seq-dated inside a folded run (a restored approval asked
+   * between two calls) splits it; each side keeps its fold only if it
+   * still has three tools in a row. */
+  function splitToolRun(run, beforeEl, el) {
+    const items = [...run.querySelector(".tool-run-items").children];
+    const cut = items.indexOf(beforeEl);
+    const parent = run.parentNode, ref = run.nextSibling;
+    if (cut === 0) { parent.insertBefore(el, run); return; }
+    run.remove();
+    for (const it of items.slice(0, cut)) parent.insertBefore(it, ref);
+    parent.insertBefore(el, ref);
+    for (const it of items.slice(cut)) parent.insertBefore(it, ref);
+    for (const it of items) groupTool(it);
+  }
+
   /* One SSE frame's event, or null for a comment, heartbeat or junk. */
   function parseFrame(frame) {
     let data = "";
@@ -525,8 +540,18 @@ const SessionChat = (() => {
     if (!log) return;
     const put = (el) => {
       if (seq) el.dataset.seq = String(seq);
-      const next = at ? [...log.children].find((c) => Number(c.dataset.seq || 0) > at) : null;
-      log.insertBefore(el, next || null);
+      if (!at) { log.appendChild(el); return; }
+      for (const c of log.children) {
+        if (Number(c.dataset.seq || 0) > at) { log.insertBefore(el, c); return; }
+        // A folded run has no seq of its own: the point may fall inside
+        // it, where the entry belongs between the run's tools.
+        if (c.classList.contains("tool-run")) {
+          for (const it of c.querySelector(".tool-run-items").children) {
+            if (Number(it.dataset.seq || 0) > at) { splitToolRun(c, it, el); return; }
+          }
+        }
+      }
+      log.appendChild(el);
     };
     const loading = $("chat-loading");
     if (loading) loading.remove();
