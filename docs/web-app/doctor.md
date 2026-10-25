@@ -61,10 +61,11 @@ names in `action`, in process:
 | `discover` | `discover_harnesses()` then `apply_findings(min_confidence="high")` | `swe harness discover --apply --json` |
 | `install` | `harness.commands.install_harness(name, via)`, output captured | `swe install <name> --via=<via>` |
 
-`swe doctor` gives an off-PATH harness the fix `swe install <name>`, which
-only lists installers, and no action. This page adds `action: "install"`
-and `via` to that finding when swe knows an installer whose tool is on the
-hub's PATH, and shows the fix as `swe install <name> --via=<via>`. The
+`swe doctor` itself gives an off-PATH harness `action: "install"`, `via`
+and the fix `swe install <name> --via=<via>` when swe knows an installer
+whose tool is on the hub's PATH (`harness.doctor.install_method`), so the
+Mac app's Run does the same install; with none, the fix stays `swe install
+<name>`, which only lists installers, and there is no action. The
 method is the one that put the stray copy where it is (read off its path,
 as `swe install --json` reads its `uninstall`: an nvm copy came from npm), else the first usable
 one in swe's order. Reinstalling through the PATH's own manager puts the
@@ -105,9 +106,12 @@ since all of them can rewrite harness.json.
   machine. The app's Run runs at once.
 - "Run in Terminal" for a `swe …` fix with no action is left out: the
   browser can't open a terminal on the hub. The copy button stays.
-- An off-PATH harness gets Run (`swe install <name> --via=<via>`, in
-  process). The app runs `swe install <name>` in Terminal, which lists
-  the installers.
+- An off-PATH harness's Run is the same install in both. The app runs
+  `swe install <name> --via=<via>` as a subprocess and shows what it
+  printed (on the row after a failure, with Run in Terminal beside it for
+  an installer that needs a password; in an "Installed" card after a
+  success). This page shows the last lines of a failure's output in the
+  row's error.
 - `init` never opens the new-skills-folder picker, even if the hub was
   started from a terminal: new folders wait, as in the app's run.
 - Replace and back up (`swe init --force`) after a run that hit a real

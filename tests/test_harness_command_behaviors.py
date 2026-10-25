@@ -137,6 +137,17 @@ class HarnessProcessCommandTest(unittest.TestCase):
         run.assert_not_called()
         save.assert_not_called()
 
+    def test_an_id_wins_over_another_harness_alias(self):
+        # A later harness listing "gemini" among its aliases must not take
+        # `swe install gemini` (the Doctor's fix names the id).
+        tools = {"gemini": {"command": "gemini", "aliases": []},
+                 "other": {"command": "other", "aliases": ["gemini"]}}
+        code, out, run, save = self._run_install(["gemini"], tools=tools)
+        self.assertEqual(code, 0)
+        self.assertIn("name:     gemini", out)
+        self.assertIn("swe install gemini --via=<method>", out)
+        run.assert_not_called()
+
     def test_install_listing_notes_an_installed_command(self):
         code, out, run, save = self._run_install(["gemini"])
 

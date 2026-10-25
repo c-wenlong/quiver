@@ -50,16 +50,44 @@ def collect_findings(env, preferred, which_npm, nvm_dirs, orphans, drift) -> lis
             "Avoid `npm install -g` under nvm unless nvm is always on PATH. "
             "Prefer: swe install <name>"))
     for name, command, hit in orphans:
+        via = install_method(name)
         findings.append(DoctorFinding(
             "off-path", "error",
             f"{name} ({command}) is at {hit.path} [{hit.source}], not on PATH",
-            f"swe install {name}", harness=name))
+            f"swe install {name} --via={via}" if via else f"swe install {name}",
+            harness=name, action="install" if via else None, via=via))
     for finding in drift:
         findings.append(DoctorFinding(
             f"drift.{finding.area}",
             "error" if finding.severity == "error" else "warning",
             finding.message))
     return findings
+
+
+def install_method(name: str) -> str | None:
+    """The method a Run reinstalls an off-PATH harness with: the one that
+    put the stray copy there (an nvm npm install comes back through the
+    npm on PATH), else the first whose tool is on PATH. None when no
+    installer's tool is on PATH, so there is nothing to run."""
+    import os
+    import shutil
+
+    from quiver.harness.commands import _install_command_name
+    from quiver.harness.installers import METHOD_TOOL, installers_for, uninstaller_for
+    from quiver.harness.path_health import search_dirs_for_command
+    from quiver.harness.registry import load_registry_readonly
+
+    usable = [inst.via for inst in installers_for(name) if shutil.which(METHOD_TOOL[inst.via])]
+    if not usable:
+        return None
+    command = _install_command_name(name, load_registry_readonly())
+    for hit in search_dirs_for_command(command):
+        if hit.source == "path":
+            continue
+        remover = uninstaller_for(name, os.path.realpath(hit.path))
+        if remover is not None and remover.via in usable:
+            return remover.via
+    return usable[0]
 
 
 def setup_findings(home: Path | None = None) -> list[DoctorFinding]:
