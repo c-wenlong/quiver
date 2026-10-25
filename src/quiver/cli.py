@@ -24,6 +24,7 @@ from quiver.harness.commands import (
 )
 from quiver.find import cmd_find
 from quiver.help_text import cmd_help
+from quiver.hooks import cmd_hooks
 from quiver.init import cmd_init
 from quiver.github import main as github_main
 from quiver.mcp import main as mcp_main
@@ -170,6 +171,7 @@ COMMANDS = {
     "mcp": cmd_mcp,
     "gh": cmd_gh,
     "harness": cmd_harness,
+    "hooks": cmd_hooks,
     "hs": cmd_harness,
     "setup": cmd_setup,
     "init": cmd_init,
