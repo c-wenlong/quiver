@@ -474,7 +474,8 @@ private struct SettingsSectionView: View {
             SettingsDivider()
             // Every candidate is listed so the row can say what it supports;
             // one that isn't installed greys out and can't be picked. Six
-            // titled tabs don't fit beside a label, so they take the row.
+            // titled tabs don't fit beside a label, so they take the row;
+            // too narrow for even that, they fold into two rows of three.
             VStack(alignment: .leading, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Editor").font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
@@ -484,13 +485,18 @@ private struct SettingsSectionView: View {
                 let installed = CodeEditors.installed()
                 let missing = Set(CodeEditors.candidates.map { $0.name })
                     .subtracting(installed.map { $0.name })
-                Tabs(options: CodeEditors.candidates.map {
-                         ($0.name, $0.name == "Visual Studio Code" ? "VS Code" : $0.name)
-                     },
-                     selection: Binding(get: { app.editor?.name ?? "" },
-                                        set: { app.codeEditor = $0 }),
-                     iconImages: editorIcons(installed), fillWidth: true,
-                     disabled: missing)
+                let options = CodeEditors.candidates.map {
+                    ($0.name, $0.name == "Visual Studio Code" ? "VS Code" : $0.name)
+                }
+                let selection = Binding(get: { app.editor?.name ?? "" },
+                                        set: { app.codeEditor = $0 })
+                ViewThatFits(in: .horizontal) {
+                    Tabs(options: options, selection: selection,
+                         iconImages: editorIcons(installed), disabled: missing)
+                    Tabs(options: options, selection: selection,
+                         iconImages: editorIcons(installed), fillWidth: true,
+                         columns: 3, disabled: missing)
+                }
             }
             .padding(.vertical, 14)
         }

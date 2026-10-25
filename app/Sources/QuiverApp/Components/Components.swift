@@ -343,6 +343,10 @@ struct Tabs<Value: Hashable>: View {
     /// Segmented only: the track takes the offered width and the tabs
     /// split it evenly, instead of hugging their titles.
     var fillWidth = false
+    /// Segmented only: wraps the tabs into this many equal columns on as
+    /// many rows as they need, so a long row of titled tabs still fits a
+    /// narrow card. One (the default) keeps them on a single row.
+    var columns = 1
     /// Tabs shown dimmed that can't be picked, like an app that isn't
     /// installed. One already selected still reads as selected.
     var disabled: Set<Value> = []
@@ -357,11 +361,19 @@ struct Tabs<Value: Hashable>: View {
                     Rectangle().fill(Theme.border).frame(height: Theme.hairline)
                 }
             case .segmented:
-                HStack(spacing: 2) { buttons }
-                    .padding(2)
-                    .background(Theme.segmentTrack, in: .rect(cornerRadius: Theme.blockRadius))
-                    .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
-                    .fixedSize(horizontal: !fillWidth, vertical: true)
+                Group {
+                    if columns > 1 {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2),
+                                                 count: columns),
+                                  spacing: 2) { buttons }
+                    } else {
+                        HStack(spacing: 2) { buttons }
+                            .fixedSize(horizontal: !fillWidth, vertical: true)
+                    }
+                }
+                .padding(2)
+                .background(Theme.segmentTrack, in: .rect(cornerRadius: Theme.blockRadius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
             case .period, .table:
                 HStack(spacing: 2) { buttons }.fixedSize()
             }
