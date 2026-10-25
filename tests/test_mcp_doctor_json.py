@@ -806,7 +806,8 @@ class McpSyncJsonTest(unittest.TestCase):
         self.assertFalse(data["dry_run"])
         self.assertEqual(data["selected"], ["github"])
         self.assertEqual(data["targets"], [{"name": "cursor", "added": ["github"],
-                                            "updated": [], "skipped": [], "pruned": []}])
+                                            "updated": [], "skipped": [], "pruned": [],
+                                            "unsupported": []}])
         self.assertIn("github", self.cursor())
 
     def test_never_prints_a_secret_value(self):

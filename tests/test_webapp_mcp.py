@@ -527,7 +527,8 @@ class TestSync(_SyncHome, unittest.TestCase):
             reply = self.post("sync", **LINEAR, fingerprint=fingerprint)
         # codex (an add) went first and was saved; cursor's save failed.
         self.assertEqual(reply["report"]["targets"],
-                         [{"name": "codex", "added": ["linear"], "updated": [], "skipped": [], "pruned": []}])
+                         [{"name": "codex", "added": ["linear"], "updated": [], "skipped": [], "pruned": [],
+                       "unsupported": []}])
         self.assertIn("Sync stopped at cursor: read-only file system", reply["error"])
         self.assertEqual([(h["harness"], h["outcome"]) for h in reply["harnesses"]],
                          [("cursor", "not_run"), ("codex", "add")])
@@ -541,6 +542,16 @@ class TestSync(_SyncHome, unittest.TestCase):
         self.assertEqual(mcp.sync_targets(row, "claude", ["claude", "cursor", "codex"]), (["codex"], ["cursor"]))
         self.assertEqual(mcp.sync_targets(row, "quiver", ["claude", "cursor", "codex"]),
                          (["codex"], ["claude", "cursor"]))
+
+    def test_a_url_server_is_not_offered_to_claude_desktop(self):
+        remote = {"name": "r", "transport": "http", "harnesses": ["claude"], "variants": [["claude"]],
+                  "conflict": False, "in_hub": True}
+        local = {**remote, "transport": "stdio"}
+        every = ["claude", "claude-desktop", "codex"]
+        desktop = {"path": self.home / "desktop.json", "key": "mcpServers", "local_only": True}
+        self.enterContext(patch.dict(mcp_cli.MCP_CONFIG_MAP, {"claude-desktop": desktop}))
+        self.assertEqual(mcp.sync_targets(remote, "quiver", every), (["codex"], ["claude"]))
+        self.assertEqual(mcp.sync_targets(local, "quiver", every), (["claude-desktop", "codex"], ["claude"]))
 
 
 class TestSecrets(_SyncHome, unittest.TestCase):

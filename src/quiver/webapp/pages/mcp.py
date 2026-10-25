@@ -489,6 +489,11 @@ def sync_targets(row: dict, source: str, harnesses: list[str]) -> tuple[list[str
     """McpModel.targets: ``(missing, differing)``. Missing lacks the server;
     differing has its own definition, which a sync would replace. The hub
     is no column, so from it every harness with the server differs."""
+    from quiver.mcp.cli import takes_remote
+
+    if row.get("transport") in ("http", "sse"):
+        # A config that launches local servers only can't take a URL one.
+        harnesses = [h for h in harnesses if takes_remote(h)]
     groups = _groups(row)
     group_of = {h: i for i, g in enumerate(groups) for h in g}
     if source == HUB:
@@ -656,7 +661,7 @@ def _write(plan: dict) -> tuple[dict, str | None]:
             return report, f"Sync stopped at {target}: {str(exc) or exc.__class__.__name__}"
         added = entry["action"] == "add"
         report["targets"].append({"name": target, "added": [name] if added else [],
-                                  "updated": [] if added else [name], "skipped": [], "pruned": []})
+                                  "updated": [] if added else [name], "skipped": [], "pruned": [], "unsupported": []})
     return report, None
 
 
