@@ -21,14 +21,23 @@ import ast
 from pathlib import Path
 
 from quiver import paths as _paths
-from quiver.init.hooks import HOOK_FALLBACK, hook_root, plan_hooks
+from quiver.init.hooks import (
+    DISABLED_DETAIL,
+    HOOK_FALLBACK,
+    RESERVED_HUB_DIRS,
+    hook_root,
+    plan_hooks,
+)
 from quiver.init.layout import LinkStatus, load_registry
+from quiver.hooks.contracts import contract_for
 from quiver.hooks.models import Declaration, HookDrift, HookRow
 from quiver.hooks.settings import (
     SETTINGS_FALLBACK,
+    declaration_managed_elsewhere,
     expand_command_path,
     harness_declarations,
     is_script_token,
+    settings_files,
     split_command,
 )
 
@@ -50,13 +59,15 @@ def _harness_names(root: Path, registry: dict) -> list[str]:
 
     Hub dirs plus the fallback tables plus registered names: a harness with
     no hooks root and no hub dir (codex today) still declares hooks worth
-    drift-checking.
+    drift-checking. The hub's reserved dirs (shared/, _runtime/) are
+    machinery, not harnesses.
     """
     names = set(registry) | set(HOOK_FALLBACK) | set(SETTINGS_FALLBACK)
     if root.is_dir():
         names |= {
             d.name for d in root.iterdir()
             if d.is_dir() and not d.name.startswith(".")
+            and d.name not in RESERVED_HUB_DIRS
         }
     return sorted(names)
 
@@ -91,13 +102,19 @@ def _decl_matches(decl: Declaration, script: str) -> bool:
 def hook_rows(
     statuses: list[LinkStatus],
     declared: dict[str, list[Declaration]],
+    home: Path | None = None,
+    registry: dict | None = None,
 ) -> list[HookRow]:
     """One row per plan status, with the declarations naming its basename.
 
     The match is by basename, deliberately: settings spell the command as
     ``python3 "$HOME/.claude/hooks/guard.py"`` or a bare ``guard.py``, and
-    both mean the script's own name.
+    both mean the script's own name. A script in its hub dir's
+    ``.disabled`` reads enabled=False regardless of link state.
     """
+    home = home or Path.home()
+    registry = registry if registry is not None else {}
+    hub = _paths.hooks_dir_for(home)
     rows: list[HookRow] = []
     for status in statuses:
         source = status.source or status.path
@@ -113,8 +130,215 @@ def hook_rows(
             state=status.state,
             detail=status.detail,
             declared=decls,
+            tier="harness",
+            enabled=status.detail != DISABLED_DETAIL,
+            events_supported=contract_for(
+                registry, status.label, home).normalized_events(),
         ))
     return rows
+
+
+def shared_rows(
+    home: Path,
+    registry: dict,
+    statuses: list[LinkStatus],
+    declared: dict[str, list[Declaration]],
+) -> list[HookRow]:
+    """One row per shared script x deploy target, plus dormant scripts.
+
+    A deployed wrapper lands at ``<root>/_generated/<name>``; its link
+    state is the ``_generated`` directory's own plan status, since the
+    dir links whole. A script no installed shim-able harness covers gets
+    one row with harness="shared" so it still shows up in the list —
+    harness="shared" cannot collide with a real harness dir, the name is
+    reserved.
+    """
+    from quiver.hooks import shared as _shared
+
+    gen_status = {
+        s.label: s for s in statuses
+        if s.source is not None and s.source.name == _shared.GENERATED_DIRNAME
+    }
+    targets = _shared.deploy_targets(
+        home, registry, include_disabled=True)
+    disabled = _shared.disabled_names(_shared.shared_dir(home))
+    rows: list[HookRow] = []
+    covered_scripts: set[str] = set()
+    for target in targets:
+        covered_scripts.add(target.source.name)
+        enabled = target.source.name not in disabled
+        root, _why = hook_root(registry, target.harness, home)
+        dest = (root / _shared.GENERATED_DIRNAME / target.source.name
+                if root is not None else target.wrapper)
+        status = gen_status.get(target.harness)
+        if not enabled:
+            state, detail = "ignored", DISABLED_DETAIL
+        elif not target.wrapper.exists():
+            state, detail = "create", "wrapper pending — swe hooks sync"
+        elif status is not None:
+            state, detail = status.state, status.detail
+        else:
+            state, detail = "linked", ""
+        events = _shared.script_events(target.source)
+        decls = [
+            d for d in declared.get(target.harness, [])
+            if _decl_matches(d, target.source.name)
+        ]
+        rows.append(HookRow(
+            script=target.source.name,
+            harness=target.harness,
+            source=target.source,
+            dest=dest,
+            state=state,
+            detail=detail,
+            declared=decls,
+            tier="shared",
+            enabled=enabled,
+            events_supported=events,
+        ))
+    for script in _shared.shared_scripts(home):
+        if script.name in covered_scripts:
+            continue
+        events = _shared.script_events(script)
+        if script.name in disabled:
+            state, detail = "ignored", DISABLED_DETAIL
+        elif not events:
+            detail = "no events: header — nothing declares it"
+            state = "skipped"
+        else:
+            detail = "declared events cover no installed shim-able harness"
+            state = "skipped"
+        rows.append(HookRow(
+            script=script.name,
+            harness="shared",
+            source=script,
+            dest=script,
+            state=state,
+            detail=detail,
+            declared=[],
+            tier="shared",
+            enabled=script.name not in disabled,
+            events_supported=events,
+        ))
+    return rows
+
+
+def _inside(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _managed_dest(entry: Path, hub: Path) -> bool:
+    """Whether a hooks-root entry resolves into the hub (ours, claimed)."""
+    return entry.is_symlink() and _inside(entry, hub)
+
+
+def _decl_targets(decl: Declaration, path: Path, home: Path) -> bool:
+    """Whether the declaration's command resolves to exactly ``path``."""
+    for token in split_command(decl.command):
+        expanded = expand_command_path(token, home)
+        if expanded is not None and expanded == path:
+            return True
+    return False
+
+
+def foreign_rows(
+    home: Path,
+    registry: dict,
+    statuses: list[LinkStatus],
+    declared: dict[str, list[Declaration]],
+) -> list[HookRow]:
+    """Hooks no ~/.quiver source claims: the third tier.
+
+    Two sightings, de-duped by resolved path: a file in a hooks root that
+    is not a link into the hub and shares no name with a hub source, and
+    a settings-declared command whose path resolves outside ~/.quiver.
+    Both keep their real path as source and dest — swe manages neither.
+    """
+    hub = _paths.hooks_dir_for(home)
+    quiver = _paths.quiver_dir_for(home)
+    claimed: dict[str, set[str]] = {}
+    for status in statuses:
+        if status.source is not None:
+            claimed.setdefault(status.label, set()).add(status.source.name)
+    rows: list[HookRow] = []
+    seen: set[Path] = set()
+    for name in _harness_names(hub, registry):
+        contract = contract_for(registry, name, home)
+        events = contract.normalized_events()
+        root, _why = hook_root(registry, name, home)
+        decls = declared.get(name, [])
+        if root is not None and root.is_dir() \
+                and not _inside(root, quiver):
+            for entry in sorted(root.iterdir()):
+                if entry.name.startswith(".") \
+                        or entry.name in ("__pycache__", "node_modules"):
+                    continue
+                if entry.name in claimed.get(name, set()):
+                    continue
+                if _managed_dest(entry, hub):
+                    continue
+                key = entry.resolve()
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append(HookRow(
+                    script=entry.name,
+                    harness=name,
+                    source=entry,
+                    dest=entry,
+                    state="foreign",
+                    detail="no ~/.quiver source claims it",
+                    declared=[d for d in decls
+                              if _decl_matches(d, entry.name)],
+                    tier="foreign",
+                    enabled=True,
+                    events_supported=events,
+                ))
+        for decl in decls:
+            for token in split_command(decl.command):
+                path = expand_command_path(token, home)
+                if path is None or not path.is_file():
+                    continue
+                key = path.resolve()
+                if key in seen or _inside(key, quiver):
+                    continue
+                if root is not None and _inside(key, root):
+                    continue  # the dir scan above already rows it
+                seen.add(key)
+                rows.append(HookRow(
+                    script=path.name,
+                    harness=name,
+                    source=path,
+                    dest=path,
+                    state="foreign",
+                    detail=f"declared in {decl.settings.name} outside "
+                           f"~/.quiver",
+                    declared=[d for d in decls
+                              if _decl_targets(d, path, home)
+                              or _decl_matches(d, path.name)],
+                    tier="foreign",
+                    enabled=True,
+                    events_supported=events,
+                ))
+    return rows
+
+
+def all_rows(
+    home: Path,
+    registry: dict,
+    statuses: list[LinkStatus],
+    declared: dict[str, list[Declaration]],
+) -> list[HookRow]:
+    """The full inventory: harness rows, then shared, then foreign."""
+    return (
+        hook_rows(statuses, declared, home, registry)
+        + shared_rows(home, registry, statuses, declared)
+        + foreign_rows(home, registry, statuses, declared)
+    )
 
 
 def find_script(name: str, rows: list[HookRow]) -> list[HookRow]:
@@ -262,7 +486,17 @@ def _declared_missing(
 
 
 def _undeclared(rows: list[HookRow]) -> list[HookDrift]:
-    """(b) A hub script linked into place that nothing ever invokes."""
+    """(b) A hub script linked into place that nothing ever invokes.
+
+    Shared rows count too: a generated wrapper no declaration reaches
+    never fires. Foreign rows do not — a script swe does not own sitting
+    undeclared is the machine's business, not drift. Nor does the
+    ``_generated`` dir link itself — a declaration names the script
+    inside it, so the shared rows already carry that signal and warning
+    on the directory would only double the noise.
+    """
+    from quiver.hooks import shared as _shared
+
     return [
         HookDrift(
             "undeclared", row.harness,
@@ -271,7 +505,33 @@ def _undeclared(rows: list[HookRow]) -> list[HookDrift]:
         )
         for row in rows
         if row.state == "linked" and not row.declared
+        and row.tier in ("harness", "shared") and row.enabled
+        and not (row.tier == "harness"
+                 and row.script == _shared.GENERATED_DIRNAME
+                 and row.source.is_dir())
     ]
+
+
+def _managed_settings(
+    home: Path, registry: dict
+) -> list[HookDrift]:
+    """(d) A declaration file swe must not pretend is editable.
+
+    kind="managed" is a note, not drift: a symlinked or read-only
+    settings file is owned by whatever put it there (nix, dotfiles), so
+    check reports "declaration managed elsewhere" rather than implying
+    the user should write it. ``swe hooks new`` repeats the same note.
+    """
+    out: list[HookDrift] = []
+    root = _paths.hooks_dir_for(home)
+    for name in _harness_names(root, registry):
+        for path in settings_files(registry, name, home):
+            if declaration_managed_elsewhere(path):
+                out.append(HookDrift(
+                    "managed", name,
+                    f"{path} — declaration managed elsewhere",
+                ))
+    return out
 
 
 def _unlinked(rows: list[HookRow]) -> list[HookDrift]:
@@ -313,13 +573,14 @@ def hook_findings(
     registry: dict | None = None,
     patterns: list[str] | None = None,
 ) -> list[HookDrift]:
-    """The three ``swe hooks check`` findings, in (a), (b), (c) order."""
+    """The ``swe hooks check`` findings: (a), (b), (c), then managed notes."""
     home = home or Path.home()
     statuses, registry = collect(home, registry, patterns)
     declared = declarations_by_harness(home, registry)
-    rows = hook_rows(statuses, declared)
+    rows = all_rows(home, registry, statuses, declared)
     return (
         _declared_missing(home, registry, statuses, declared)
         + _undeclared(rows)
         + _unlinked(rows)
+        + _managed_settings(home, registry)
     )

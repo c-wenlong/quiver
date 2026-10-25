@@ -221,8 +221,8 @@ class ListCommandTest(unittest.TestCase):
             })
             code, out = _run(home)
             self.assertEqual(code, 0)
-            self.assertRegex(out, r"guard\.py\s+claude\s+create\s+PreToolUse:Bash")
-            self.assertRegex(out, r"other\.py\s+claude\s+create\s+-")
+            self.assertRegex(out, r"guard\.py\s+claude\s+harness\s+create\s+PreToolUse:Bash")
+            self.assertRegex(out, r"other\.py\s+claude\s+harness\s+create\s+-")
 
     def test_harness_filter_and_alias_resolution(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -263,8 +263,19 @@ class ListCommandTest(unittest.TestCase):
             code, out = _run(home, "list", "--json")
             self.assertEqual(code, 0)
             data = json.loads(out)["data"]["hooks"]
-            self.assertEqual(data[0]["script"], "guard.py")
-            self.assertEqual(data[0]["declared"][0]["event"], "Stop")
+            row = data[0]
+            # The stable schema the app page consumes.
+            for key in ("name", "harness", "tier", "source_path",
+                        "dest_path", "link_status", "enabled",
+                        "declared", "events_supported"):
+                self.assertIn(key, row, key)
+            self.assertEqual(row["name"], "guard.py")
+            self.assertEqual(row["tier"], "harness")
+            self.assertIs(row["enabled"], True)
+            self.assertEqual(row["declared"][0]["event"], "Stop")
+            self.assertTrue(
+                row["declared"][0]["file"].endswith("settings.json"))
+            self.assertIn("PreToolUse", row["events_supported"])
 
 
 class CheckCommandTest(unittest.TestCase):
@@ -666,7 +677,7 @@ class DispatchTest(unittest.TestCase):
             code, out = _run(home, "info", "guard", "--json")
             self.assertEqual(code, 0)
             data = json.loads(out)["data"]
-            self.assertEqual(data["harnesses"][0]["state"], "linked")
+            self.assertEqual(data["harnesses"][0]["link_status"], "linked")
             code, out = _run(home, "check", "--json")
             self.assertEqual(code, 1)
             kinds = {f["kind"] for f in json.loads(out)["data"]["findings"]}

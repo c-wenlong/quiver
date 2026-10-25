@@ -1,24 +1,34 @@
-"""``swe hooks`` — manage the per-harness hook scripts under ~/.quiver/hooks.
+"""``swe hooks`` — manage the hook scripts under ~/.quiver/hooks.
 
-``swe init`` links each script; the harness's settings file declares it.
-Those are the two halves every subcommand joins: ``list`` shows link state
-next to declaration, ``check`` reports where they disagree, ``info`` and
-``edit`` work on one script, ``new`` writes the skeleton plus the stanza to
-paste. The settings files are read-only here — declaring stays with you.
+Three tiers show up here. ``harness`` rows are the per-harness scripts
+``swe init`` links into each hooks root. ``shared`` rows are the scripts
+under ``hooks/shared/`` that ``swe hooks sync`` deploys through generated
+wrappers (``hooks/shared.py`` documents the mechanism). ``foreign`` rows
+are hooks the inventory sees but no ``~/.quiver`` source claims — files
+in a hooks root another installer owns, or a settings-declared command
+that points outside the hub. ``list`` shows all three, ``check`` reports
+where declarations and links disagree, ``info`` and ``edit`` work on one
+script, ``new`` writes the skeleton plus the stanza to paste, ``delete``
+removes the hub file (``--foreign`` the real file), ``disable`` /
+``enable`` flip a hook without deleting it, and ``sync`` regenerates the
+wrappers and re-applies the link plan. The settings files are read-only
+here — declaring stays with you, and deleting never touches a stanza.
 """
 
 from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 from quiver import paths as _paths
 from quiver.console import c, sanitize, terminal_width
 from quiver.flags import expand_value_flags
-from quiver.init.hooks import plan_hooks
+from quiver.init.hooks import apply_hook_status, plan_hooks
 from quiver.init.layout import (
     LinkIgnoreError,
     aliases_of,
@@ -26,30 +36,37 @@ from quiver.init.layout import (
     load_registry,
 )
 from quiver.json_output import emit, error_stream, take_json_flag
+from quiver.hooks import shared as _shared
 from quiver.hooks.create import (
     command_for,
     create,
+    create_shared,
     settings_stanza,
     settings_targets,
+    shared_command_for,
 )
 from quiver.hooks.inventory import (
+    all_rows,
     declarations_by_harness,
     find_script,
     hook_findings,
-    hook_rows,
     script_summary,
 )
 from quiver.hooks.models import HookRow
 from quiver.table import Table
 
-SUBCOMMANDS = ("list", "info", "edit", "new", "check")
+SUBCOMMANDS = ("list", "info", "edit", "new", "check", "delete",
+               "disable", "enable", "sync")
 
 # Same vocabulary swe init prints; colour is what you would do about it.
 _STATE_COLOR = {
     "linked": "green", "create": "cyan", "absorb": "cyan",
     "relink": "yellow", "conflict": "red", "keep": "yellow",
-    "skipped": "dim", "ignored": "dim",
+    "skipped": "dim", "ignored": "dim", "foreign": "yellow",
+    "unlinked": "cyan",
 }
+
+_TIER_COLOR = {"shared": "cyan", "harness": "dim", "foreign": "yellow"}
 
 
 def print_hooks_help() -> None:
@@ -89,6 +106,14 @@ def cmd_hooks(args) -> int:
         return _new(rest, json_view, fail)
     if sub == "check":
         return _check(rest, json_view, fail)
+    if sub in ("delete", "rm"):
+        return _delete(rest, json_view, fail)
+    if sub == "disable":
+        return _toggle(rest, json_view, fail, off=True)
+    if sub == "enable":
+        return _toggle(rest, json_view, fail, off=False)
+    if sub == "sync":
+        return _sync(rest, json_view, fail)
     return fail(c("red", f"Unknown subcommand: {sub}. "
                        f"Use one of {', '.join(SUBCOMMANDS)}."))
 
@@ -142,7 +167,26 @@ def _rows(home: Path) -> tuple[list[HookRow], dict]:
         patterns = []
     statuses = plan_hooks(home, patterns=patterns, registry=registry)
     declared = declarations_by_harness(home, registry)
-    return hook_rows(statuses, declared), registry
+    return all_rows(home, registry, statuses, declared), registry
+
+
+def _row_json(r: HookRow) -> dict:
+    """The stable ``swe hooks list --json`` row shape the app page reads."""
+    return {
+        "name": r.script,
+        "harness": r.harness,
+        "tier": r.tier,
+        "source_path": str(r.source),
+        "dest_path": str(r.dest),
+        "link_status": r.state,
+        "enabled": r.enabled,
+        "declared": [{
+            "event": d.event,
+            "matcher": d.matcher,
+            "file": str(d.settings),
+        } for d in r.declared],
+        "events_supported": r.events_supported,
+    }
 
 
 def _short(path: Path, home: Path) -> str:
@@ -189,23 +233,7 @@ def _list(rest: list[str], json_view: bool, fail) -> int:
                                  f"~/.quiver/hooks/{harness}/"))
 
     if json_view:
-        return emit({
-            "hooks": [{
-                "script": r.script,
-                "harness": r.harness,
-                "source": str(r.source),
-                "destination": str(r.dest),
-                "state": r.state,
-                "detail": r.detail,
-                "declared": [{
-                    "event": d.event,
-                    "matcher": d.matcher,
-                    "timeout": d.timeout,
-                    "command": d.command,
-                    "settings": str(d.settings),
-                } for d in r.declared],
-            } for r in rows],
-        })
+        return emit({"hooks": [_row_json(r) for r in rows]})
 
     if not rows:
         print(c("dim", "\n  No hook scripts in ~/.quiver/hooks yet."))
@@ -217,6 +245,8 @@ def _list(rest: list[str], json_view: bool, fail) -> int:
     table = Table()
     table.add_column("script", "SCRIPT", width=10, max_width=34)
     table.add_column("harness", "HARNESS", width=7, max_width=14)
+    table.add_column("tier", "TIER", width=4, max_width=8,
+                     kind="preformatted")
     table.add_column("state", "LINK", width=5, max_width=44,
                      kind="preformatted")
     table.add_column("declared", "DECLARED", width=8, max_width=60)
@@ -224,13 +254,15 @@ def _list(rest: list[str], json_view: bool, fail) -> int:
         table.add_row({
             "script": sanitize(r.script),
             "harness": sanitize(r.harness),
+            "tier": c(_TIER_COLOR.get(r.tier, "dim"), r.tier),
             "state": _state_cell(r),
             "declared": _declared_cell(r),
         })
     for line in table.render():
         print(f"  {line}")
     linked = sum(1 for r in rows if r.state == "linked")
-    summary = (f"{len(rows)} scripts · {linked} linked · "
+    foreign = sum(1 for r in rows if r.tier == "foreign")
+    summary = (f"{len(rows)} scripts · {linked} linked · {foreign} foreign · "
                "swe hooks check finds the gaps")
     print(f"\n  {c('dim', summary)}\n")
     return 0
@@ -262,25 +294,31 @@ def _info(rest: list[str], json_view: bool, fail) -> int:
             "script": rest[0],
             "harnesses": [{
                 "harness": r.harness,
-                "source": str(r.source),
-                "destination": str(r.dest),
-                "state": r.state,
+                "tier": r.tier,
+                "enabled": r.enabled,
+                "source_path": str(r.source),
+                "dest_path": str(r.dest),
+                "link_status": r.state,
                 "detail": r.detail,
                 "summary": script_summary(r.source),
+                "events_supported": r.events_supported,
                 "declared": [{
                     "event": d.event,
                     "matcher": d.matcher,
                     "timeout": d.timeout,
                     "command": d.command,
-                    "settings": str(d.settings),
+                    "file": str(d.settings),
                 } for d in r.declared],
             } for r in matches],
         })
 
     print(f"\n{c('bold', sanitize(rest[0]))}\n")
     for r in matches:
-        print(f"  {c('cyan', r.harness)}")
-        print(f"    hub:    {_short(r.source, home)}")
+        print(f"  {c('cyan', r.harness)}  "
+              f"{c(_TIER_COLOR.get(r.tier, 'dim'), r.tier)}")
+        print(f"    source: {_short(r.source, home)}")
+        if not r.enabled:
+            print(f"    {c('yellow', 'disabled — swe hooks enable restores')}")
         if r.source.is_dir():
             print(f"    {c('dim', 'a directory hook — scripts inside it')}")
         summary = script_summary(r.source) if r.source.is_file() else ""
@@ -354,6 +392,12 @@ def _edit(rest: list[str], fail) -> int:
         matches = [r for r in matches if r.harness == harness]
     if not matches:
         return fail(c("red", f"No hook script named {name} under ~/.quiver/hooks."))
+    # A shared script rows once per deploy target — same file each time.
+    # One source, one edit target.
+    unique: dict[Path, HookRow] = {}
+    for r in matches:
+        unique.setdefault(r.source, r)
+    matches = list(unique.values())
     row = matches[0]
     if len(matches) > 1:
         if not sys.stdin.isatty():
@@ -385,6 +429,14 @@ def _edit(rest: list[str], fail) -> int:
     if target is None:
         return fail(c("red", f"{name} resolves to no real file — "
                              "refusing to open a symlinked path."))
+    if row.harness == "codex" and row.declared:
+        # [hooks.state] in config.toml keys commands by trusted hash: an
+        # edit that changes the command line invalidates trust and codex
+        # re-prompts on next run. Editing the script body is safe; the
+        # declared path is what is hashed.
+        print(f"  {c('yellow', '!')} codex trusts declared commands by "
+              f"hash ([hooks.state] in config.toml): keep the command "
+              f"path unchanged or codex re-prompts\n")
     argv = _editor_argv() + [str(target)]
     try:
         done = subprocess.run(argv, check=False)
@@ -398,10 +450,13 @@ def _edit(rest: list[str], fail) -> int:
 
 def _new(rest: list[str], json_view: bool, fail) -> int:
     if len(rest) != 2:
-        return fail(c("red", "Usage: swe hooks new <harness> <name>"))
+        return fail(c("red",
+                      "Usage: swe hooks new <harness|shared> <name>"))
     harness, name = rest
     home = Path.home()
     registry = load_registry(home)
+    if harness == "shared":
+        return _new_shared(name, home, registry, json_view, fail)
     # plan_hooks treats the folder name as a registry key: `new cc gate`
     # must land under claude/, not an orphaned cc/ that never links.
     harness = _resolve_harness(harness, registry, set(registry))
@@ -436,6 +491,62 @@ def _new(rest: list[str], json_view: bool, fail) -> int:
     return 0
 
 
+def _new_shared(
+    name: str, home: Path, registry: dict, json_view: bool, fail
+) -> int:
+    """``swe hooks new shared <name>``: the normalized-contract skeleton."""
+    try:
+        target = create_shared(name, home)
+    except ValueError as exc:
+        return fail(c("red", str(exc)))
+    # deploy_targets covers every shared script — keep only this one's.
+    targets = [t for t in _shared.deploy_targets(home, registry)
+               if t.source == target]
+    commands = {
+        t.harness: shared_command_for(t.harness, t.source.name,
+                                      registry, home)
+        for t in targets
+    }
+    stanza = None
+    for command in commands.values():
+        if command:
+            stanza = settings_stanza(command)
+            break
+
+    if json_view:
+        return emit({
+            "path": str(target),
+            "harness": "shared",
+            "tier": "shared",
+            "commands": commands,
+            "deploys_to": sorted(commands),
+            "stanza": stanza,
+        })
+
+    print(f"\n  {c('green', '✓')} Created {_short(target, home)} (executable)\n")
+    print(f"  Edit its {c('cyan', '# events: [...]')} header — that is what "
+          f"deploys it. Then:")
+    print(f"    1. {c('bold', 'swe hooks sync')} generates the wrappers")
+    if targets:
+        print(f"    2. declare the wrapper in each harness's hooks map:")
+        for t in targets:
+            command = commands.get(t.harness)
+            if command:
+                print(f"       {c('cyan', t.harness)}: {command}")
+    else:
+        dormant = ("no installed shim-able harness covers "
+                   "the declared events yet")
+        print(f"    2. {c('dim', dormant)}")
+    print()
+    if stanza:
+        print(f"  Grouped-schema stanza (claude shape; cursor wants "
+              f"{{event: [{{command}}]}}):\n")
+        for line in stanza.splitlines():
+            print(f"  {c('dim', line)}")
+        print()
+    return 0
+
+
 # --- check ------------------------------------------------------------------
 
 
@@ -456,14 +567,277 @@ def _check(rest: list[str], json_view: bool, fail) -> int:
                 for f in findings
             ]
         })
-        return 1 if findings else 0
+        return 1 if any(f.kind != "managed" for f in findings) else 0
     print(f"\n{c('bold', 'Hook drift')}\n")
     if not findings:
         print(f"  {c('green', '✓')} declared, linked and present all agree\n")
         return 0
-    for f in findings:
+    real = [f for f in findings if f.kind != "managed"]
+    notes = [f for f in findings if f.kind == "managed"]
+    for f in real:
         print(f"  {c('yellow', '!')} [{f.harness}] {sanitize(f.message)}")
-    note = (f"{len(findings)} findings — swe init fixes the link "
-            "side; declarations stay yours to edit")
-    print(f"\n  {c('dim', note)}\n")
-    return 1
+    for f in notes:
+        print(f"  {c('dim', '·')} [{f.harness}] {sanitize(f.message)}")
+    if real:
+        note = (f"{len(real)} findings — swe init fixes the link "
+                "side; declarations stay yours to edit")
+        print(f"\n  {c('dim', note)}\n")
+        return 1
+    print()
+    return 0
+
+
+# --- delete / disable / enable / sync -----------------------------------------
+
+
+def _flag(rest: list[str], name: str) -> tuple[list[str], bool]:
+    """Pull one boolean ``--name`` out of argv; True when present."""
+    return [a for a in rest if a != name], name in rest
+
+
+def _confirm(question: str, assume_yes: bool) -> bool:
+    """Delete-style confirmation: --yes, or an interactive y."""
+    if assume_yes:
+        return True
+    if not sys.stdin.isatty():
+        return False
+    from quiver.prompt import read_line
+
+    try:
+        answer = read_line(question).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    return answer in ("y", "yes")
+
+
+def _delete_row_files(rows: list[HookRow], home: Path) -> list[str]:
+    """Remove what ``rows`` owns; returns what happened, one line per path."""
+    done: list[str] = []
+    for row in rows:
+        if row.tier == "foreign":
+            # --foreign deletes the real file, nothing else.
+            target = row.source
+            if target.is_dir() and not target.is_symlink():
+                done.append(f"skipped {target} (a directory — remove it "
+                            f"by hand)")
+                continue
+            try:
+                target.unlink()
+            except OSError as exc:
+                done.append(f"failed {target}: {exc}")
+                continue
+            done.append(f"deleted {target}")
+            continue
+        source = row.source
+        if source.is_dir() and not source.is_symlink():
+            shutil.rmtree(source)
+        else:
+            try:
+                source.unlink()
+            except OSError:
+                pass
+        done.append(f"deleted {_short(source, home)}")
+        # The destination link still points at the hub path — a dangling
+        # symlink is harmless to the harness but litter; drop it.
+        if row.dest.is_symlink():
+            try:
+                if row.dest.resolve() == source.resolve() or \
+                        not row.dest.exists():
+                    row.dest.unlink()
+            except OSError:
+                pass
+        if row.tier == "shared":
+            # Generated wrappers are pruned by the sync below; the shared
+            # source disappearing is exactly what pruning watches for.
+            continue
+    return done
+
+
+def _delete(rest: list[str], json_view: bool, fail) -> int:
+    try:
+        rest = expand_value_flags(rest, {"--harness"})
+    except ValueError as exc:
+        return fail(c("red", str(exc)))
+    rest, harness = _harness_arg(rest)
+    rest, want_foreign = _flag(rest, "--foreign")
+    rest, assume_yes = _flag(rest, "--yes")
+    if len(rest) != 1:
+        return fail(c("red", "Usage: swe hooks delete <name> "
+                             "[--harness=<h>] [--foreign] [--yes]"))
+    name = rest[0]
+    home = Path.home()
+    rows, registry = _rows(home)
+    matches = find_script(name, rows)
+    if harness:
+        harness = _resolve_harness(
+            harness, registry, {r.harness for r in rows})
+        matches = [r for r in matches if r.harness == harness]
+    if not matches:
+        return fail(c("red", f"No hook named {name} under "
+                             "~/.quiver/hooks or its destinations."))
+    foreign = [r for r in matches if r.tier == "foreign"]
+    if foreign and not want_foreign:
+        paths = ", ".join(sorted({_short(r.source, home)
+                                  for r in foreign}))
+        return fail(c("red",
+                      f"{name} is foreign ({paths}) — swe did not put it "
+                      f"there. Pass --foreign to delete the real file."))
+    if want_foreign:
+        matches = foreign
+        if not matches:
+            return fail(c("red", f"{name} is not a foreign hook — "
+                                 "--foreign only applies to foreign rows."))
+
+    # Deleting is confirm-required; --yes answers for a script. A --json
+    # caller cannot answer a prompt (stdout must stay one document), so
+    # it must pass --yes outright.
+    if json_view and not assume_yes:
+        return fail(c("red", "delete --json needs --yes — a confirmation "
+                             "prompt would corrupt the document."))
+    owned = [r for r in matches if r.tier != "foreign"]
+    plan_lines = []
+    for r in owned:
+        plan_lines.append(f"hub source {_short(r.source, home)} "
+                          f"({r.tier}, {r.harness})")
+    for r in matches:
+        if r.tier == "foreign":
+            plan_lines.append(f"real file {_short(r.source, home)}")
+    if not _confirm(
+            f"  Delete {len(matches)} row(s): "
+            + "; ".join(plan_lines[:3])
+            + ("…" if len(plan_lines) > 3 else "") + "? [y/N] ",
+            assume_yes):
+        return fail(c("red", "Refused without --yes (or a y at the "
+                             "prompt)."))
+
+    done = _delete_row_files(matches, home)
+    # Wrappers whose shared source vanished get pruned; if that emptied
+    # a _generated dir, its destination link dangles — drop it too.
+    _shared.apply_deploy(home, registry)
+    for row in matches:
+        if row.tier != "shared":
+            continue
+        link = row.dest.parent
+        try:
+            if link.is_symlink() and not link.exists():
+                link.unlink()
+        except OSError:
+            pass
+    decls = [d for r in matches for d in r.declared]
+    if json_view:
+        return emit({
+            "deleted": done,
+            "declarations_left": sorted({str(d.settings) for d in decls}),
+        })
+    for line in done:
+        print(f"  {c('green', '✓')} {line}")
+    if decls:
+        files = sorted({sanitize(_short(d.settings, home))
+                        for d in decls})
+        note = ("declaration stanza(s) stay — remove them yourself: "
+                + ", ".join(files))
+        print(f"  {c('dim', note)}\n")
+    else:
+        print()
+    return 0
+
+
+def _toggle(rest: list[str], json_view: bool, fail, *, off: bool) -> int:
+    """``swe hooks disable`` / ``enable``: the .disabled marker + re-plan."""
+    try:
+        rest = expand_value_flags(rest, {"--harness"})
+    except ValueError as exc:
+        return fail(c("red", str(exc)))
+    rest, harness = _harness_arg(rest)
+    verb = "disable" if off else "enable"
+    if len(rest) != 1:
+        return fail(c("red", f"Usage: swe hooks {verb} <name> "
+                             f"[--harness=<h>]"))
+    name = rest[0]
+    home = Path.home()
+    rows, registry = _rows(home)
+    matches = find_script(name, rows)
+    if harness:
+        harness = _resolve_harness(
+            harness, registry, {r.harness for r in rows})
+        matches = [r for r in matches if r.harness == harness]
+    if not matches:
+        return fail(c("red", f"No hook named {name} under ~/.quiver/hooks."))
+    if any(r.tier == "foreign" for r in matches):
+        return fail(c("red", f"{name} is a foreign hook — swe cannot "
+                             f"{verb} what it does not own."))
+    # One marker per hub file: shared rows collapse onto their script.
+    sources = {r.source for r in matches}
+    for source in sources:
+        _shared.set_disabled(source.parent, source.name, off)
+    # Re-plan and apply so the destination follows the marker right now:
+    # disable unlinks, enable links. Shared wrappers (re)generate too.
+    if any(r.tier == "shared" for r in matches):
+        _shared.apply_deploy(home, registry)
+    statuses = plan_hooks(home, registry=registry)
+    # A shared script's link is its harness's _generated dir — apply that
+    # status too so enabling relinks the wrappers it just wrote.
+    interesting = set(sources) | {
+        _shared.generated_dir(home, r.harness)
+        for r in matches if r.tier == "shared"
+    }
+    results: Counter = Counter()
+    for status in statuses:
+        if status.source in interesting:
+            results[apply_hook_status(status, home)] += 1
+    word = "disabled" if off else "enabled"
+    if json_view:
+        return emit({
+            "name": name,
+            "state": word,
+            "sources": [str(s) for s in sorted(sources)],
+            "links": dict(results),
+        })
+    print(f"  {c('green', '✓')} {word} {name}: "
+          + ", ".join(sorted({_short(s, home) for s in sources})))
+    note = ("declarations stay — the harness sees a missing script, "
+            "which its contract tolerates (or a default JSON answer "
+            "for generated wrappers)")
+    print(f"  {c('dim', note)}\n")
+    return 0
+
+
+def _sync(rest: list[str], json_view: bool, fail) -> int:
+    """``swe hooks sync``: regenerate wrappers, then apply the link plan."""
+    rest, force = _flag(rest, "--force")
+    if rest:
+        return fail(c("red", f"Unexpected args: {' '.join(rest)}"))
+    home = Path.home()
+    registry = load_registry(home)
+    written, pruned = _shared.apply_deploy(home, registry)
+    try:
+        patterns = load_linkignore(home)
+    except LinkIgnoreError as exc:
+        print(f"warning: {exc}; syncing without it", file=sys.stderr)
+        patterns = []
+    statuses = plan_hooks(home, patterns=patterns, registry=registry)
+    results: Counter = Counter()
+    for status in statuses:
+        results[apply_hook_status(status, home, force)] += 1
+    if json_view:
+        return emit({
+            "generated": [str(p) for p in written],
+            "pruned": [str(p) for p in pruned],
+            "links": dict(results),
+        })
+    if written:
+        for path in written:
+            print(f"  {c('cyan', '+')} wrote {_short(path, home)}")
+    if pruned:
+        for path in pruned:
+            print(f"  {c('dim', '-')} pruned {_short(path, home)}")
+    changed = {k: v for k, v in results.items()
+               if k not in ("linked", "skipped", "ignored")}
+    if changed:
+        print("  " + "  ".join(f"{k}: {v}" for k, v in sorted(
+            changed.items())))
+    linked = results.get("linked", 0)
+    total = sum(results.values())
+    print(f"  {c('dim', f'{linked}/{total} hook links in place')}\n")
+    return 0

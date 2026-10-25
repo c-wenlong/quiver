@@ -502,23 +502,42 @@ to use their own login state and environment."""
   {c('dim', 'swe find plugins shows drift between ~/.quiver/plugins and each harness.')}"""
     ),
     "hooks": (
-        "Manage the per-harness hook scripts under ~/.quiver/hooks",
+        "Manage the hook scripts under ~/.quiver/hooks",
         f"""\
-  {c('cyan', 'swe hooks')}                       Every script, its link state, its declaration
+  {c('cyan', 'swe hooks')}                       Every hook, its tier, link state, declaration
   {c('cyan', 'swe hooks list [--harness=<h>]')}  One harness only
-  {c('cyan', 'swe hooks info <name>')}           One script: hub path, docstring, state, events
+  {c('cyan', 'swe hooks info <name>')}           One script: path, docstring, state, events
   {c('cyan', 'swe hooks edit <name>')}           Open the hub file in VISUAL or EDITOR (default vi)
   {c('cyan', 'swe hooks new <harness> <name>')}  Write a Python skeleton + the stanza to paste
+  {c('cyan', 'swe hooks new shared <name>')}     Same, but the shared normalized contract
   {c('cyan', 'swe hooks check')}                 Declared-but-missing, linked-but-undeclared,
                                     or a hub script never linked in
+  {c('cyan', 'swe hooks sync')}                  Regenerate shared wrappers, re-apply links
+  {c('cyan', 'swe hooks disable <name>')}        Unlink a hook without deleting it
+  {c('cyan', 'swe hooks enable <name>')}         Re-link a disabled hook
+  {c('cyan', 'swe hooks delete <name>')}         Remove the hub file (--foreign: the real file;
+                                    --yes skips the confirmation)
+
+{c('bold', 'Tiers')}
+  {c('cyan', 'shared')}    ~/.quiver/hooks/shared/<name>.py — one script deployed
+           into every installed shim-able harness through a generated
+           wrapper (hooks/<h>/_generated/). Its # events: [PreToolUse, ...]
+           header says which normalized events it wants.
+  {c('dim', 'harness')}   the per-harness scripts swe links into each hooks root
+  {c('yellow', 'foreign')}  a script or declared command no ~/.quiver source claims —
+           another installer owns it; swe lists it, never writes it
 
   Scripts live one folder per harness under {c('bold', '~/.quiver/hooks/')}, and
   {c('cyan', 'swe init')} links each into that harness's hooks dir (~/.claude/hooks,
   ~/.factory/hooks, or {c('dim', 'capabilities.hooks.root')} in harness.json).
+  The contract registry (events, schema, settings file, quirks like
+  cursor's must-print-JSON and codex's trusted command hashes) lives in
+  hooks/contracts.py; harness.json capabilities.hooks entries override it.
 
   Declaring a hook — the event, matcher and timeout in settings.json or
   hooks.json — stays with you: swe reads those files for the DECLARED
-  column and {c('cyan', 'swe hooks check')}, but never writes them.
+  column and {c('cyan', 'swe hooks check')}, but never writes them, and
+  delete never removes a stanza.
 
 {c('bold', 'States')}
   {c('green', 'linked')}    already points at the hub copy
@@ -526,7 +545,8 @@ to use their own login state and environment."""
   {c('yellow', 'relink')}    symlink points elsewhere
   {c('red', 'conflict')}  a real file is in the way, needs swe init --force
   {c('dim', 'skipped')}   no hooks root, or harness not installed
-  {c('dim', 'ignored')}   .linkignore or archived in harness.json"""),
+  {c('dim', 'ignored')}   .linkignore, archived in harness.json, or disabled
+  {c('yellow', 'foreign')}   not managed by swe — list-only"""),
     "init": (
         "Create ~/.quiver and symlink every harness to it",
         f"""\

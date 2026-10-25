@@ -529,8 +529,11 @@ def check_hook_drift(home: Path) -> list[Finding]:
     from quiver.hooks.inventory import hook_findings
 
     try:
+        # "managed" notes (a read-only or symlinked declaration file) are
+        # reported by swe hooks check but are not drift a user can fix —
+        # leaving them out keeps doctor's warning list actionable.
         return [Finding("warn", "hooks", d.message)
-                for d in hook_findings(home)]
+                for d in hook_findings(home) if d.kind != "managed"]
     except Exception as exc:
         return [Finding("warn", "hooks",
                         f"hook drift check could not run: {exc}")]

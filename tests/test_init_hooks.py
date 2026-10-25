@@ -70,7 +70,8 @@ class HookRootTest(unittest.TestCase):
         self.assertEqual(hook_root(reg, "claude", Path("/h")), (None, UNSUPPORTED_DETAIL))
 
     def test_unknown_harness_has_no_root(self):
-        self.assertEqual(hook_root({}, "codex", Path("/h")), (None, NO_ROOT_DETAIL))
+        self.assertEqual(
+            hook_root({}, "not-a-harness", Path("/h")), (None, NO_ROOT_DETAIL))
 
 
 class PlanHooksTest(unittest.TestCase):
@@ -168,7 +169,7 @@ class PlanHooksTest(unittest.TestCase):
     def test_harness_with_no_root_is_skipped_with_the_fix(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            src = _hook(home, "codex", "notify.sh")
+            src = _hook(home, "not-a-harness", "notify.sh")
             [status] = plan_hooks(home)
             self.assertEqual((status.state, status.detail), ("skipped", NO_ROOT_DETAIL))
             self.assertEqual(status.path, src)
@@ -304,6 +305,11 @@ class DriftHooksTest(unittest.TestCase):
             "claude": {"capabilities": {"hooks": {"supported": True, "root": "~/.claude/hooks"}}},
             "cline": {},
             "droid": {},
+            # Every other contract-table row is "registered": the drift
+            # check only warns on a table row the registry has never
+            # heard of, and HOOK_FALLBACK covers many harnesses now.
+            **{name: {} for name in HOOK_FALLBACK
+               if name not in ("claude", "cline", "droid")},
         }
         findings = check_code_vs_data(reg, plugin_roots=(), hook_roots=list(HOOK_FALLBACK.items()))
         self.assertEqual(findings, [])

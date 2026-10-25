@@ -17,6 +17,13 @@ and the fixture that pins the shape. Fixtures live under
 | `swe skills --json` | `SkillInventory` | `swe-skills.json` |
 | `swe skills link|unlink ... --json` | `LinkReply` | `swe-skills-link.json`, `swe-skills-unlink.json` |
 | `swe init --check --json` | `InitCheck` | `swe-init-check.json` |
+| `swe hooks list [--harness=<id>] --json` | `{"hooks": [HookRow]}` — `name`, `harness`, `tier` (`shared`/`harness`/`foreign`), `source_path`, `dest_path`, `link_status` (the init link vocabulary plus `foreign`), `enabled`, `events_supported` (normalized event names), `declared` (`{event, matcher, file}`) | |
+| `swe hooks info <name> --json` | `{"script", "harnesses": [row]}` — the `list` row shape plus `detail`, `summary`, and `declared` carrying `timeout` and `command` too | |
+| `swe hooks check --json` | `{"findings": [{"kind", "harness", "message"}]}` — `kind` is `declared-missing`/`undeclared`/`unlinked`/`managed` (`managed` is a note, not drift; exit 1 when anything else is present) | |
+| `swe hooks sync [--force] --json` | `{"generated": [path], "pruned": [path], "links": {state: count}}` | |
+| `swe hooks delete <name> [--harness=<id>] [--foreign] [--yes] --json` | `{"deleted": [str], "declarations_left": [file]}` — deletes need `--yes` or a tty confirm; foreign files need `--foreign` | |
+| `swe hooks disable <name>` / `swe hooks enable <name>` `[--harness=<id>] --json` | `{"name", "state": "disabled"|"enabled", "sources": [path], "links": {state: count}}` | |
+| `swe hooks new <harness> <name> --json` | `{"path", "harness", "command", "settings": [file], "stanza"}`; `swe hooks new shared <name> --json` returns `{"path", "harness": "shared", "tier", "commands": {h: cmd}, "deploys_to": [h], "stanza"}` | |
 | `swe mcp list --json` · `swe mcp status --json` | `McpInventory` | `swe-mcp-list.json`, `swe-mcp-status.json` |
 | `swe mcp sync ... --no-interactive --json` | `McpSyncReport` | |
 | `swe find plugins --json` | `PluginDriftReport` | `swe-find-plugins.json` |
