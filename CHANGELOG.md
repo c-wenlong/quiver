@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the method (`action: "install"`, `via`, and the fix `swe install <name>
   --via=<via>`), which the web Doctor used to add on its own.
 
+- **Web app: Add server on the MCP page.** The header's Add server opens
+  the Mac app's "Add a server" sheet: a command line or a URL (HTTP or
+  SSE), env vars or headers with a Secret switch per row, the harnesses to
+  add it to, and Replace. It runs `swe mcp add` on the hub in process; a
+  secret's value goes to the MCP secrets file, the hub's `mcp.json` gets
+  `${NAME}`, and the harnesses picked get the value. `swe mcp add`'s body is now `add_plan` and `add_server`, which
+  the CLI and the web app share.
+
 - **Web app: add, edit, delete, reveal and copy API keys.** Settings ›
   Providers › Inference is now the Mac app's Keys and plans table, read
   from `~/.quiver/secrets/providers/.api_keys`: each key under its
@@ -421,6 +429,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stale; satellites' harnesses group under their machine. Below it, cost
   and tokens for today, 7 or 30 days, a daily cost chart and each
   harness's share. Pull to refresh asks the hub for new readings.
+
+- **Mac app DMG: a drag-to-install window.** Opening the DMG now shows
+  Quiver on the left, Applications on the right and an arrow between
+  them over a Quiver background, instead of a plain folder with LICENSE
+  and THIRD_PARTY_NOTICES.md beside the app. Both files now ship inside
+  the bundle, in `Contents/Resources`.
 
 ### Fixed
 

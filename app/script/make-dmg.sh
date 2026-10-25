@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Package a built Quiver.app into Quiver-<version>.dmg: the app beside an
-# /Applications symlink, LICENSE and THIRD_PARTY_NOTICES.md alongside.
+# Package a built Quiver.app into Quiver-<version>.dmg: a laid-out install
+# window with the app on the left, an /Applications link on the right and
+# a drag arrow between them (dmg-settings.py, make-dmg-background.swift).
+# LICENSE and THIRD_PARTY_NOTICES.md travel inside the bundle (build-app.sh).
 #
 #   app/script/make-dmg.sh [path/to/Quiver.app] [output.dmg]
 #
@@ -42,7 +44,6 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
-repo="$(cd "$here/.." && pwd)"
 app="${1:-${QUIVER_BUILD_DIR:-$here/build}/Quiver.app}"
 
 if [ ! -d "$app" ] || [ ! -f "$app/Contents/Info.plist" ]; then
@@ -123,20 +124,29 @@ else
   fi
 fi
 
-# Stage the image contents: the app, the drag-to-install symlink and the
-# notices third-party licences ask to travel with copies.
-staging="$scratch/dmg"
-mkdir -p "$staging"
-ditto "$app" "$staging/Quiver.app"
-ln -s /Applications "$staging/Applications"
-for notice in "$repo/LICENSE" "$here/THIRD_PARTY_NOTICES.md"; do
-  if [ -f "$notice" ]; then
-    cp "$notice" "$staging/"
-  else
-    echo "make-dmg: warning: $notice missing; the DMG ships without it" >&2
-  fi
-done
-hdiutil create -volname Quiver -srcfolder "$staging" -ov -format UDZO "$out" >/dev/null
+# The install window. dmgbuild writes the window layout (.DS_Store) and
+# the background straight into the image, with no Finder or AppleScript,
+# so it behaves the same on a headless CI runner. It and its two
+# dependencies are pure Python, pinned by hash into a throwaway venv.
+cat > "$scratch/dmg-requirements.txt" <<'REQS'
+dmgbuild==1.6.7 --hash=sha256:37ee5771c377beb3203d9164aae8046ffed8531c06edf9227f5788b3c599b1bf
+ds_store==1.3.3 --hash=sha256:b92a371efbf1b4ccce2a04d1ed13fceacc4736c81ba09cf5aefb74c088160a35
+mac_alias==2.2.3 --hash=sha256:7362b521d2132ef92f606a37abfed5fcd849ceb2f28b6f9743e014b02af92f0d
+REQS
+python3 -m venv "$scratch/venv"
+"$scratch/venv/bin/pip" install --quiet --disable-pip-version-check \
+  --only-binary :all: --require-hashes -r "$scratch/dmg-requirements.txt"
+
+# The background at 1x and 2x, joined into one TIFF so Retina screens get
+# the sharp copy.
+swift "$here/script/make-dmg-background.swift" 1 "$scratch/background.png"
+swift "$here/script/make-dmg-background.swift" 2 "$scratch/background@2x.png"
+tiffutil -cathidpicheck "$scratch/background.png" "$scratch/background@2x.png" \
+  -out "$scratch/background.tiff" 2>/dev/null
+
+"$scratch/venv/bin/dmgbuild" -s "$here/script/dmg-settings.py" \
+  -D app="$app" -D background="$scratch/background.tiff" \
+  Quiver "$out" >/dev/null
 hdiutil verify "$out" >/dev/null
 
 # Sign the image when a real identity is around; "-" or none leaves it
