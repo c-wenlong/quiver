@@ -24,6 +24,8 @@ Its writes are a server's Sync, with its Preview, and its Remove.
   when the harness lacks the server. A section folds after ten rows. A
   warning triangle marks a server whose hub definition has a `${NAME}`
   with no value; a dot shows each server's health once checked.
+- **Add server** in the header adds a server to the hub and the harnesses
+  picked (below).
 - Click a row for its sheet: transport, health detail, the command line or
   URL, env var and header **names**, which harnesses hold each definition,
   where it is missing, **Secrets** (below), and **Sync**.
@@ -211,6 +213,40 @@ some hub definition refers to (404 `unknown_secret`), so the page can't
 read the rest of the store; an unset name is 404 `secret_not_set`. Error
 messages never include a value.
 
+### Add server
+
+The header's **Add server** opens the Mac app's "Add a server" sheet:
+**Server** (Name; Kind, Command or URL; the command line with the app's
+"command npx · args …" hint and its shell-like splitting, or the URL with
+HTTP or SSE), **Env vars** or **Headers** (a row per key and value, with a
+Secret switch that turns itself on for a key named like a credential until
+flipped by hand, and "saved as ${GITHUB_GITHUB_TOKEN}" under a secret),
+and **Where** (Add to, defaulting to the compared harnesses, with All
+active and None; "Always saved to the Quiver hub too"; Replace if it
+already exists). A secret's value is a password field. On success the
+sheet closes and the list repaints with "Added github in Quiver hub,
+Codex." above it.
+
+`POST /v1/app/mcp/add` with `{"name", "kind": "command" | "url",
+"command": [words] | "url" + "transport": "http" | "sse", "vars": [{"key",
+"value", "secret"}], "targets": [harnesses], "force"}` runs `swe mcp add`
+in process: `mcp/cli.py`'s `add_plan` (the definition and targets,
+checked) and `add_server` (the writes), the two halves the CLI shares.
+A secret var's value goes to `~/.quiver/secrets/mcp/.api_keys` through
+`set_secret` under `SERVER_KEY` (the app's `mcpSecretName`). The hub's
+`mcp.json` keeps `${SERVER_KEY}`; the harness configs picked get the value
+itself, as `swe mcp add` and a sync write them. A value already written as
+`${NAME}` is kept. Nothing is stored or written for an add the hub
+refuses: every value is checked as storable first, a name already in the
+hub or a picked harness without `force` is 409 `exists`, a `SERVER_KEY`
+another hub server already refers to is 409 `secret_taken` (two servers
+would otherwise share one saved value), two keys that fold to the same
+name are 422 `secret_clash`, swe's own refusals are 422 `add_refused` (an
+unknown harness, an SSE server for a harness that can't take one) or 409
+(a `${NAME}` the store can't fill, counting the values this add would
+store), and bad shapes are 422. The answer is swe's `--json` report, `{"name", "hub",
+"targets"}`, with `page`, the list after the write, and never a value.
+
 ## Security
 
 - Env and header values are never in the payload; swe sends only their
@@ -233,8 +269,12 @@ messages never include a value.
 
 ## Differences from the Mac app
 
-- **Sync, Remove and Secrets are the writes.** Add server stays in
-  `swe mcp add` and the Mac app.
+- **Add server, Sync, Remove and Secrets are the writes.**
+- **Add server's "Add to"** is a list of switches under the face ("2 of 3
+  harnesses") rather than the app's popover checklist, and a secret value
+  has an eye to show it while typing. Secret values are cleared from the
+  sheet once sent, whether or not the hub took them. Enter in a field adds;
+  the sheet can't be closed while the hub is adding.
 - **Secrets look like Inference keys.** The Mac sheet pastes a missing
   value only; the web sheet also shows set values masked, with reveal,
   copy and Replace.

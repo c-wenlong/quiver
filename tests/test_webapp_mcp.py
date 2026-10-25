@@ -445,7 +445,7 @@ class TestSync(_SyncHome, unittest.TestCase):
             ("preview", {"server": "", "source": "claude", "targets": ["codex"]}, 422, "bad_server"),
             ("preview", {"server": "linear", "source": 3, "targets": ["codex"]}, 422, "bad_source"),
             ("sync", {"server": "linear", "source": "claude", "targets": ["codex"]}, 422, "no_fingerprint"),
-            ("add", {"server": "linear"}, 404, "unknown_action"),
+            ("install", {"server": "linear"}, 404, "unknown_action"),
         ]
         before = self.snapshot()
         for action, body, status, code in cases:
@@ -637,6 +637,16 @@ const st = mcpSheetState(s);
         self.assertIn("••••••••abcd", html)
         self.assertIn('aria-label="Show the value"', html)
 
+    def test_add_sheet_splits_and_names_like_the_app(self):
+        got = self.run_js("""return {
+  words: [mcpCommandWords('npx -y "@scope/pkg" a\\\\ b'), mcpCommandWords("x 'C:\\\\'"), mcpCommandWords('x "open')],
+  names: [mcpSecretName("my-server", "api.key"), mcpSecretName("1x", "Token"), mcpSecretName("a", "__b__")],
+  secret: ["GITHUB_TOKEN", "x-api-key", "Authorization", "DEBUG", ""].map(mcpIsSecretName) };""")
+        self.assertEqual(got["words"], [["npx", "-y", "@scope/pkg", "a b"], ["x", "C:\\"], None])
+        self.assertEqual(got["names"], [mcp.secret_name("my-server", "api.key"), mcp.secret_name("1x", "Token"),
+                                        mcp.secret_name("a", "__b__")])
+        self.assertEqual(got["secret"], [True, True, True, False, False])
+
     def test_a_reveal_answering_after_close_stays_hidden(self):
         got = self.run_js(self.SERVER + """
 const buttons = { "[data-mcp-secret-reveal]": [{ dataset: { mcpSecretReveal: "PLAIN_TOKEN" } }] };
@@ -650,6 +660,112 @@ return pending.then(() => ({ revealed: st.revealed.has("PLAIN_TOKEN"), html: mcp
 """)
         self.assertFalse(got["revealed"])
         self.assertNotIn("the-value", got["html"])
+
+
+class TestAdd(_SyncHome, unittest.TestCase):
+    """Add server: swe mcp add in process, secrets through set_secret."""
+
+    TOKEN = "ghp_addsecretvalue00001234"
+
+    def add(self, **body):
+        return mcp.post(_ctx(), "add", body)
+
+    def refused(self, **body):
+        before = self.snapshot()
+        store = self.home / ".quiver" / "secrets" / "mcp" / ".api_keys"
+        had = store.read_bytes() if store.exists() else None
+        with self.assertRaises(PageError) as caught:
+            self.add(**body)
+        self.assertEqual(self.snapshot(), before, "a refusal must write nothing")
+        self.assertEqual(store.read_bytes() if store.exists() else None, had, "nor store a secret")
+        self.assertNotIn(self.TOKEN, caught.exception.message)
+        return caught.exception
+
+    def test_a_command_server_with_a_secret_goes_to_the_hub_and_the_targets(self):
+        reply = self.add(name="github", kind="command", command=["npx", "-y", "server-github"],
+                         vars=[{"key": "GITHUB_TOKEN", "value": self.TOKEN, "secret": True},
+                               {"key": "DEBUG", "value": "1", "secret": False},
+                               {"key": "", "value": "ignored", "secret": False}],
+                         targets=["claude", "cursor"])
+        self.assertEqual((reply["hub"], reply["targets"]),
+                         ("added", [{"name": "claude", "status": "added"}, {"name": "cursor", "status": "added"}]))
+        self.assertNotIn(self.TOKEN, json.dumps(reply))
+        hub = json.loads(self.hub.read_text())["mcpServers"]["github"]
+        self.assertEqual(hub, {"command": "npx", "args": ["-y", "server-github"],
+                               "env": {"GITHUB_TOKEN": "${GITHUB_GITHUB_TOKEN}", "DEBUG": "1"}})
+        from quiver.mcp.secrets import load_secrets
+        self.assertEqual(load_secrets()["GITHUB_GITHUB_TOKEN"], self.TOKEN)
+        claude = json.loads(self.claude.read_text())["mcpServers"]["github"]
+        self.assertEqual(claude["env"]["GITHUB_TOKEN"], self.TOKEN)
+        row = next(r for r in reply["page"]["servers"] if r["name"] == "github")
+        self.assertEqual(row["secrets"], [{"name": "GITHUB_GITHUB_TOKEN", "set": True, "masked": "••••••••1234"}])
+
+    def test_a_url_server_takes_headers_and_sse(self):
+        self.add(name="remote", kind="url", url=" https://mcp.example.com/sse ", transport="sse",
+                 vars=[{"key": "X-Team", "value": "core", "secret": False}], targets=[])
+        hub = json.loads(self.hub.read_text())["mcpServers"]["remote"]
+        self.assertEqual(hub, {"url": "https://mcp.example.com/sse", "type": "sse", "headers": {"X-Team": "core"}})
+
+    def test_replace_needs_force(self):
+        body = dict(name="notion", kind="command", command=["npx", "notion-mcp-2"],
+                    vars=[{"key": "NOTION_TOKEN", "value": self.TOKEN, "secret": True}], targets=[])
+        error = self.refused(**body)
+        self.assertEqual((error.status, error.code), (409, "exists"))
+        self.assertEqual(self.add(**body, force=True)["hub"], "replaced")
+
+    def test_nothing_is_stored_for_an_add_refused_later(self):
+        secret = {"key": "API_KEY", "value": self.TOKEN, "secret": True}
+        cmd = {"name": "fresh", "kind": "command", "command": ["npx", "x"]}
+        # A ${NAME} the store can't fill, with a harness picked.
+        error = self.refused(**cmd, targets=["claude"],
+                             vars=[secret, {"key": "OTHER", "value": "${MISSING}", "secret": False}])
+        self.assertEqual((error.status, error.code), (409, "add_refused"))
+        self.assertIn("MISSING", error.message)
+        # A later secret the store can't hold.
+        error = self.refused(**cmd, targets=[], vars=[secret, {"key": "B_KEY", "value": "a'b\"c", "secret": True}])
+        self.assertEqual((error.status, error.code), (422, "bad_value"))
+        # Two keys that fold to one name.
+        error = self.refused(**cmd, targets=[], vars=[secret, {"key": "api.key", "value": "x", "secret": True}])
+        self.assertEqual((error.status, error.code), (422, "secret_clash"))
+
+    def test_a_secret_another_server_refers_to_is_not_overwritten(self):
+        self.add(name="a-b", kind="command", command=["x"], targets=[],
+                 vars=[{"key": "TOKEN", "value": "first-value-0000", "secret": True}])
+        error = self.refused(name="a_b", kind="command", command=["y"], targets=[],
+                             vars=[{"key": "TOKEN", "value": self.TOKEN, "secret": True}])
+        self.assertEqual((error.status, error.code), (409, "secret_taken"))
+        self.assertIn("a-b", error.message)
+        # Replacing the same server may change its own value.
+        self.add(name="a-b", kind="command", command=["x"], targets=[], force=True,
+                 vars=[{"key": "TOKEN", "value": "second-value-000", "secret": True}])
+        from quiver.mcp.secrets import load_secrets
+        self.assertEqual(load_secrets()["A_B_TOKEN"], "second-value-000")
+
+    def test_secret_names_follow_the_app(self):
+        self.assertEqual(mcp.secret_name("my-server", "api.key"), "MY_SERVER_API_KEY")
+        self.assertEqual(mcp.secret_name("1x", "Token"), "MCP_1X_TOKEN")
+        self.assertEqual(mcp.secret_name("a", "__b__"), "A_B")
+
+    def test_refusals(self):
+        cmd = {"kind": "command", "command": ["npx", "x"], "targets": []}
+        cases = [
+            ({"name": "_bad", **cmd}, (422, "bad_name")),
+            ({"name": "ok", "kind": "pipe"}, (422, "bad_kind")),
+            ({"name": "ok", "kind": "command", "command": []}, (422, "bad_command")),
+            ({"name": "ok", "kind": "url", "url": "  "}, (422, "bad_url")),
+            ({"name": "ok", "kind": "url", "url": "https://x", "transport": "ws"}, (422, "bad_transport")),
+            ({"name": "ok", **cmd, "targets": ["nope"]}, (422, "add_refused")),
+            ({"name": "ok", **cmd, "vars": [{"key": "K", "value": 3}]}, (422, "bad_vars")),
+            ({"name": "ok", **cmd, "vars": [{"key": "TOKEN", "value": " ", "secret": True}]}, (422, "bad_value")),
+            ({"name": "ok", **cmd, "vars": [{"key": "TOKEN", "value": "a\nb" + self.TOKEN, "secret": True}]},
+             (422, "bad_value")),
+            ({"name": "linear", **cmd, "targets": ["claude"],
+              "vars": [{"key": "TOKEN", "value": self.TOKEN, "secret": True}]}, (409, "exists")),
+            ({"name": "ok", **cmd, "force": "yes"}, (422, "bad_force")),
+        ]
+        for body, want in cases:
+            error = self.refused(**body)
+            self.assertEqual((error.status, error.code), want, body.get("name"))
 
 
 class TestRemove(_SyncHome, unittest.TestCase):
@@ -721,6 +837,18 @@ class TestSyncRoute(_SyncHome, HubBase):
                                         body={**LINEAR, "fingerprint": fingerprint}, headers=auth)
         self.assertEqual(status, 409, data)  # the plan it described has happened
         self.assertIn("target_changed", data.decode())
+
+    def test_add_over_the_route(self):
+        token = "ghp_addsecretvalue00001234"
+        body = {"name": "routed", "kind": "command", "command": ["echo"],
+                "vars": [{"key": "API_KEY", "value": token, "secret": True}], "targets": []}
+        status, _ = self.srv.request("POST", "/v1/app/mcp/add", body=body,
+                                     headers={**self.auth(), "Origin": "https://evil.example"})
+        self.assertEqual(status, 403)
+        status, data = self.srv.request("POST", "/v1/app/mcp/add", body=body,
+                                        headers={**self.auth(), "Origin": self.origin()})
+        self.assertEqual(status, 200, data)
+        self.assertNotIn(token.encode(), data)
 
     def test_secrets_over_the_route(self):
         token = "ntn_abcdefghijklmnopqrst1234"
