@@ -441,21 +441,26 @@ private struct SettingsSectionView: View {
         NSImage(systemSymbolName: "app.dashed", accessibilityDescription: nil)
     }
 
-    /// Each terminal's own icon, the placeholder for one that isn't installed.
+    /// Each terminal's own icon — its bundled mark when it isn't
+    /// installed, the placeholder when it has neither.
     private var terminalIcons: [TerminalApp: NSImage] {
         var icons: [TerminalApp: NSImage] = [:]
         for terminal in TerminalApp.allCases {
-            icons[terminal] = terminal.icon ?? missingAppIcon
+            icons[terminal] = terminal.icon
+                ?? terminal.toolIconID.flatMap(ToolIcons.image(for:))
+                ?? missingAppIcon
         }
         return icons
     }
 
-    /// Every candidate editor's icon, the placeholder for one that isn't installed.
+    /// Every candidate editor's icon — its bundled mark when it isn't
+    /// installed, the placeholder when it has neither.
     private func editorIcons(_ installed: [CodeEditor]) -> [String: NSImage] {
         var icons: [String: NSImage] = [:]
-        for (name, _) in CodeEditors.candidates {
+        for (name, _, icon) in CodeEditors.candidates {
             icons[name] = installed.first { $0.name == name }
                 .map { NSWorkspace.shared.icon(forFile: $0.appURL.path) }
+                ?? ToolIcons.image(for: icon)
                 ?? missingAppIcon
         }
         return icons
@@ -479,9 +484,9 @@ private struct SettingsSectionView: View {
                     hint: "Empty uses ~/.quiver/mcp/servers.", folders: true) { app.mcpServersPath = $0 }
             SettingsDivider()
             // Every candidate is listed so the row can say what it supports;
-            // one that isn't installed greys out and can't be picked. Six
+            // one that isn't installed greys out and can't be picked. Seven
             // titled tabs don't fit beside a label, so they take the row;
-            // too narrow for even that, they fold into two rows of three.
+            // too narrow for even that, they fold into rows of three.
             VStack(alignment: .leading, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Editor").font(Theme.bodySmall).foregroundStyle(Theme.textLabel)

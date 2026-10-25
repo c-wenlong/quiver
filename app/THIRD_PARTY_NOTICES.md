@@ -126,6 +126,13 @@ Where each came from is in `Resources/harness-icons.tsv`:
   squircle plate it sits on is dropped), and Artificial Analysis's
   geometric mark from the inline SVG in artificialanalysis.ai's header;
   both are trademark-only like the rest.
+- The `tool-*.svg` marks Settings draws for uninstalled terminals and
+  editors — Ghostty, iTerm2, WezTerm, Cursor, Zed, VSCodium and Xcode —
+  come from Simple Icons (simple-icons, CC0-1.0); Visual Studio Code's
+  ribbon from devicons/devicon (MIT). Gram's mark (`tool-gram.png`) is
+  its own app icon, and Devin's editor entry reuses the bundled Devin
+  harness mark. All are trademarks of their owners, used only to name
+  them.
 
 TokenTracker is used under the MIT License (Copyright (c) 2026
 xiufengsun; full text above, under OpenUsage, as the same notice). LobeHub

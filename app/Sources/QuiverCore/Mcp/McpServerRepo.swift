@@ -402,15 +402,17 @@ public struct CodeEditor: Equatable, Sendable, Identifiable {
     }
 }
 
-/// The editors the app offers, in preference order.
+/// The editors the app offers, in preference order. `icon` is the
+/// `ToolIcons` id shown when the app isn't installed.
 public enum CodeEditors {
-    public static let candidates: [(name: String, app: String)] = [
-        ("Cursor", "Cursor.app"),
-        ("Visual Studio Code", "Visual Studio Code.app"),
-        ("Zed", "Zed.app"),
-        ("Windsurf", "Windsurf.app"),
-        ("Devin", "Devin.app"),
-        ("Xcode", "Xcode.app"),
+    public static let candidates: [(name: String, app: String, icon: String)] = [
+        ("Cursor", "Cursor.app", "cursor"),
+        ("Visual Studio Code", "Visual Studio Code.app", "vscode"),
+        ("VSCodium", "VSCodium.app", "vscodium"),
+        ("Zed", "Zed.app", "zed"),
+        ("Gram", "Gram.app", "gram"),
+        ("Devin", "Devin.app", "devin"),
+        ("Xcode", "Xcode.app", "xcode"),
     ]
 
     /// The candidates present in /Applications or ~/Applications (the
@@ -420,7 +422,7 @@ public enum CodeEditors {
     ) -> [CodeEditor] {
         let bases = [URL(fileURLWithPath: "/Applications"),
                      FileManager.default.homeDirectoryForCurrentUser.appending(path: "Applications")]
-        return candidates.compactMap { name, app in
+        return candidates.compactMap { name, app, _ in
             bases.lazy.map { $0.appending(path: app) }.first(where: appExists)
                 .map { CodeEditor(name: name, appURL: $0) }
         }

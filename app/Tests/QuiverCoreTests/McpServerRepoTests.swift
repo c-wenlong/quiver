@@ -380,9 +380,9 @@ private func git(_ args: String..., in dir: URL) async throws {
 
     @Test func anEditorOnlyInTheHomeFolderStillCounts() {
         let installed = CodeEditors.installed { url in
-            url.lastPathComponent == "Windsurf.app" && url.path.hasPrefix("/Users/")
+            url.lastPathComponent == "VSCodium.app" && url.path.hasPrefix("/Users/")
         }
-        #expect(installed.map(\.name) == ["Windsurf"])
-        #expect(installed.first?.appURL.path.contains("/Applications/Windsurf.app") == true)
+        #expect(installed.map(\.name) == ["VSCodium"])
+        #expect(installed.first?.appURL.path.contains("/Applications/VSCodium.app") == true)
     }
 }
