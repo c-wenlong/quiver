@@ -409,9 +409,12 @@ function mcpSheetState(s) {
   if (!st || st.name !== s.name) {
     st = mcpPage.sheet = { name: s.name, source: null, chosen: new Set(), replace: new Set(),
       preview: null, done: null, error: null, running: false, confirming: false, removing: false,
-      // Secrets: values fetched for Reveal (cleared when the sheet closes),
-      // names being replaced, drafts as typed, the one saving, its error.
-      revealed: {}, replacing: new Set(), drafts: {}, savingSecret: null, secretError: null };
+      // Secrets: values fetched for Reveal (cleared when the sheet closes,
+      // and closing bumps revealGen so an answer still on its way is
+      // dropped), names being replaced, drafts as typed, the one saving,
+      // its error. Maps, since ${constructor} is a valid name.
+      revealed: new Map(), revealGen: 0, replacing: new Set(), drafts: new Map(),
+      savingSecret: null, secretError: null };
   }
   const sources = mcpSources(s);
   if (!sources.includes(st.source)) {
@@ -546,12 +549,12 @@ function mcpSecretsHtml(s, st) {
       return `<div class="mcp-secret-row"><code class="mcp-secret-name">${name}</code>
         <input class="field mcp-secret-input" type="password" autocomplete="new-password" spellcheck="false"
           data-mcp-secret-draft="${name}" placeholder="${x.set ? "New value" : "Paste the value"}" aria-label="Value for ${name}"
-          value="${esc(st.drafts[x.name] || "")}"${saving ? " disabled" : ""}>
+          value="${esc(st.drafts.get(x.name) || "")}"${saving ? " disabled" : ""}>
         ${x.set ? `<button type="button" class="mcp-sheet-button" data-mcp-secret-cancel="${name}"${saving ? " disabled" : ""}>Cancel</button>` : ""}
         <button type="button" class="mcp-sheet-button" data-mcp-secret-save="${name}"${
-          saving || !(st.drafts[x.name] || "").trim() || st.savingSecret ? " disabled" : ""}>${saving ? "Saving…" : "Save"}</button></div>`;
+          saving || !(st.drafts.get(x.name) || "").trim() || st.savingSecret ? " disabled" : ""}>${saving ? "Saving…" : "Save"}</button></div>`;
     }
-    const shown = st.revealed[x.name];
+    const shown = st.revealed.get(x.name);
     return `<div class="mcp-secret-row"><code class="mcp-secret-name">${name}</code>
       <span class="mcp-secret-value${shown != null ? " revealed" : ""}">${esc(shown != null ? shown : x.masked || "")}</span>
       <button type="button" class="icon-button mcp-secret-icon" data-mcp-secret-reveal="${name}"
@@ -577,7 +580,7 @@ async function mcpSecretValue(name, st) {
 function mcpBindSecrets(sheet, s, st) {
   for (const input of sheet.querySelectorAll("[data-mcp-secret-draft]")) {
     input.oninput = () => {
-      st.drafts[input.dataset.mcpSecretDraft] = input.value;
+      st.drafts.set(input.dataset.mcpSecretDraft, input.value);
       const save = sheet.querySelector(`[data-mcp-secret-save="${CSS.escape(input.dataset.mcpSecretDraft)}"]`);
       if (save) save.disabled = !input.value.trim() || !!st.savingSecret;
     };
@@ -590,7 +593,7 @@ function mcpBindSecrets(sheet, s, st) {
     btn.onclick = () => {
       const name = btn.dataset.mcpSecretReplace;
       st.replacing.add(name);
-      delete st.revealed[name];
+      st.revealed.delete(name);
       st.secretError = null;
       mcpOpenSheet(s);
       const input = sheet.querySelector(`[data-mcp-secret-draft="${CSS.escape(name)}"]`);
@@ -598,16 +601,19 @@ function mcpBindSecrets(sheet, s, st) {
     };
   }
   for (const btn of sheet.querySelectorAll("[data-mcp-secret-cancel]")) {
-    btn.onclick = () => { st.replacing.delete(btn.dataset.mcpSecretCancel); delete st.drafts[btn.dataset.mcpSecretCancel]; mcpOpenSheet(s); };
+    btn.onclick = () => { st.replacing.delete(btn.dataset.mcpSecretCancel); st.drafts.delete(btn.dataset.mcpSecretCancel); mcpOpenSheet(s); };
   }
   for (const btn of sheet.querySelectorAll("[data-mcp-secret-reveal]")) {
     btn.onclick = async () => {
       const name = btn.dataset.mcpSecretReveal;
       st.secretError = null;
-      if (st.revealed[name] != null) delete st.revealed[name];
+      if (st.revealed.has(name)) st.revealed.delete(name);
       else {
+        const gen = st.revealGen;
         const value = await mcpSecretValue(name, st);
-        if (value != null) st.revealed[name] = value;
+        // Closed since the click: the sheet forgot its values, so stay hidden.
+        if (gen !== st.revealGen) return;
+        if (value != null) st.revealed.set(name, value);
       }
       if (mcpPage.sheet === st) mcpRepaintSheet(s);
     };
@@ -616,7 +622,7 @@ function mcpBindSecrets(sheet, s, st) {
     btn.onclick = async () => {
       st.secretError = null;
       const name = btn.dataset.mcpSecretCopy;
-      const value = st.revealed[name] != null ? st.revealed[name] : await mcpSecretValue(name, st);
+      const value = st.revealed.has(name) ? st.revealed.get(name) : await mcpSecretValue(name, st);
       if (value == null) { if (mcpPage.sheet === st) mcpRepaintSheet(s); return; }
       if (await mcpCopyText(value)) {
         btn.innerHTML = mcpSvg("check");
@@ -653,14 +659,14 @@ async function mcpCopyText(text) {
  * page repaints from the answer. */
 async function mcpSaveSecret(s, name) {
   const st = mcpPage.sheet;
-  const value = (st.drafts[name] || "").trim();
+  const value = (st.drafts.get(name) || "").trim();
   if (!value || st.savingSecret) return;
   st.savingSecret = name;
   st.secretError = null;
   mcpOpenSheet(s);
   const { status, data } = await mcpPost("secret_set", { name, value });
   st.savingSecret = null;
-  delete st.drafts[name];
+  st.drafts.delete(name);
   if (status === 401) {
     if (mcpOnPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
     return;
@@ -671,7 +677,7 @@ async function mcpSaveSecret(s, name) {
     return;
   }
   st.replacing.delete(name);
-  delete st.revealed[name];
+  st.revealed.delete(name);
   // A new value can change what Preview would write: show it again, and
   // the Sync controls an earlier sync's report replaced.
   st.preview = null;
@@ -886,7 +892,7 @@ function mcpOpenSheet(s) {
   sheet.dataset.server = s.name;
   // A closed sheet forgets every value it showed and every draft.
   sheet.onclose = () => {
-    st.revealed = {}; st.drafts = {}; st.replacing.clear(); st.secretError = null;
+    st.revealed = new Map(); st.revealGen++; st.drafts = new Map(); st.replacing.clear(); st.secretError = null;
     // The closed dialog's markup still holds revealed values and pasted
     // drafts; empty it so the page keeps none of them.
     sheet.replaceChildren();
