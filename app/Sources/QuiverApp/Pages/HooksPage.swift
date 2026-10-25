@@ -40,7 +40,9 @@ struct HooksPage: View {
             }
         }
         .task(id: app.swePath) { await model.loadIfStale(swe: app.swe, for: app.swePath) }
-        .quiverSheet(isPresented: $adding) {
+        // Modal: a dismiss mid-create would still write the script but
+        // lose the stanza the reply carries, so only its buttons close it.
+        .quiverSheet(isPresented: $adding, modal: true) {
             NewHookSheet()
         }
     }
@@ -127,8 +129,12 @@ private struct LinksStrip: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             Button("Replace and back up…") { confirmingReplace = true }
                                 .secondaryButton()
-                                .disabled(model.linking)
-                                .help("Runs swe init --force, which copies each real file in the way to ~/.quiver/backups before linking over it.")
+                                // --force also replaces real instruction files
+                                // a project edit on the AGENTS.md page may be
+                                // writing, so it waits for a clean model there.
+                                .disabled(model.linking || app.agentsMd.projectHasUnsavedChanges)
+                                .help(app.agentsMd.projectHasUnsavedChanges ? AgentsModel.saveFirst
+                                      : "Runs swe init --force, which copies each real file in the way to ~/.quiver/backups before linking over it.")
                         }
                     }
                 }
@@ -277,7 +283,10 @@ private struct HookDetailView: View {
     var hook: Hook
     var onBack: () -> Void
 
-    @State private var drafts = PrimitiveDrafts()
+    /// The model's, not the view's: leaving the page keeps the drafts so
+    /// an edit survives a trip to another section and the app's quit
+    /// check still sees it.
+    private var drafts: PrimitiveDrafts { app.hooks.drafts }
     @State private var leaving = false
     @State private var leaveError: String?
     /// The script's ownership, worked out off the main actor, with the
@@ -340,7 +349,10 @@ private struct HookDetailView: View {
             if check.exists { drafts.document(for: source) }
             found = (source, check)
         }
-        .task(id: hook.id) {
+        // Refetch on a refreshed row or a save: the row the list hands
+        // down may differ from what the first look fetched, and the
+        // docstring summary changes with the script.
+        .task(id: InfoKey(hook: hook, refresh: refresh)) {
             info = try? await app.swe.hookInfo(name: hook.script)
         }
         .onChange(of: app.navReselects) { leave() }
@@ -352,11 +364,23 @@ private struct HookDetailView: View {
             .accessibilityHidden(true))
         .alert("Unsaved changes", isPresented: $leaving) {
             Button("Save") { saveAndLeave() }
-            Button("Discard", role: .destructive) { onBack() }
+            // Discard drops the document, so reopening reads disk, not
+            // the edit that was thrown away.
+            Button("Discard", role: .destructive) {
+                drafts.remove(under: hook.source)
+                onBack()
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("“\(hook.script)” has unsaved changes.")
         }
+    }
+
+    /// Re-asks `swe hooks info` when the hook row changes under the open
+    /// detail (a Refresh) or after a save (`reload` bumps `refresh`).
+    private struct InfoKey: Equatable {
+        var hook: Hook
+        var refresh: Int
     }
 
     private var header: some View {
@@ -552,6 +576,7 @@ private struct NewHookSheet: View {
                 }
                 Button(created == nil ? "Close" : "Done") { dismiss() }
                     .secondaryButton()
+                    .disabled(working)
                 if created == nil {
                     Button("Create") {
                         working = true

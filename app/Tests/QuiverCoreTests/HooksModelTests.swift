@@ -126,6 +126,17 @@ import Testing
         #expect(inventory.checkError != nil)
     }
 
+    @Test func aHungCheckDoesNotHideTheList() async throws {
+        // The check's own deadline is far under the page's: a check that
+        // never answers still leaves the list swe already read.
+        let model = HooksModel(checkTimeout: .milliseconds(50))
+        await model.load(swe: SweClient(runner: SleepingCheckRunner(list: ok(listJSON))),
+                         for: "/bin/swe")
+        guard case .loaded(let inventory) = model.state else { Issue.record("\(model.state)"); return }
+        #expect(inventory.hooks.count == 4)
+        #expect(inventory.checkError != nil)
+    }
+
     @Test func aCheckWithFindingsDecodesThroughItsNonzeroExit() async throws {
         // swe exits 1 while findings remain; the payload is still a report.
         let model = HooksModel()
@@ -258,6 +269,56 @@ import Testing
         // Still fresh: opening the page asks swe nothing.
         await next.loadIfStale(swe: SweClient(runner: runner), for: "/bin/swe")
         #expect(runner.calls.count == 2)
+    }
+
+    @Test func theSavedInventoryRoundTripsThroughItsFile() async throws {
+        // MemorySnapshotStore keeps the value itself, so this saves and
+        // reads the real JSON: findings, checkError, the newer swe's
+        // fields and a link state this app has never heard of all need
+        // to come back.
+        let folder = FileManager.default.temporaryDirectory
+            .appending(path: "quiver-hooks-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = SnapshotFile<Snapshot<HookInventory>>(url: folder.appending(path: "cache/hooks.json"))
+        let inventory = HookInventory(
+            hooks: [
+                Hook(script: "prose-guard.py", harness: "shared",
+                     source: "/h/.quiver/hooks/shared/prose-guard.py",
+                     destination: "/h/.claude/hooks/prose-guard.py",
+                     state: LinkState(rawValue: "from-a-newer-swe"),
+                     detail: "waits on settings",
+                     declared: [HookDeclaration(event: "PreToolUse", matcher: "Bash",
+                                                timeout: 10,
+                                                command: "~/.claude/hooks/prose-guard.py",
+                                                settings: "/h/.claude/settings.json")],
+                     tier: .shared, enabled: false,
+                     eventsSupported: ["PreToolUse", "PostToolUse"]),
+            ],
+            findings: [HookFinding(kind: "unlinked", harness: "claude",
+                                   message: "prose-guard.py is not linked")],
+            checkError: "the check timed out")
+        await file.save(Snapshot(source: "/bin/swe", savedAt: Date(), value: inventory))
+
+        let next = HooksModel(snapshots: file)
+        await next.restore()
+        guard case .loaded(let restored) = next.state else { Issue.record("\(next.state)"); return }
+        #expect(restored == inventory)
+        #expect(restored.hooks.first?.state.rawValue == "from-a-newer-swe")
+        #expect(restored.checkError == "the check timed out")
+    }
+}
+
+/// Answers the list at once; a check sleeps until the run is cancelled,
+/// standing in for a wedged `swe hooks check`.
+struct SleepingCheckRunner: CommandRunning {
+    let list: CommandResult
+
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        if arguments.contains("check") {
+            try await Task.sleep(for: .seconds(3600))
+            return CommandResult(status: 1, stdout: Data(), stderr: "cancelled")
+        }
+        return list
     }
 }
 

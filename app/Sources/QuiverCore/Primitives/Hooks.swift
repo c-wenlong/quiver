@@ -249,9 +249,12 @@ public struct NewHookReply: Decodable, Sendable, Equatable {
 public struct HookScript: Sendable, Equatable {
     /// The script exists on disk.
     public let exists: Bool
-    /// The script stays under `~/.quiver/hooks` once symlinks resolve, so
-    /// it is the user's to edit. A script that resolves elsewhere (the hub
-    /// folder linked away, say) is view only.
+    /// The script still sits inside the hooks root once both paths
+    /// resolve, so it is the user's to edit. The resolved side matters:
+    /// `realpath` of the script can contain `/var`→`/private/var` or a
+    /// symlinked home, so the root is resolved to compare like for like.
+    /// A script that lands outside (a link under `~/.quiver/hooks` that
+    /// points elsewhere, say) is view only.
     public let editable: Bool
 
     public init(source: String, home: URL,
@@ -305,18 +308,32 @@ public final class HooksModel {
     public private(set) var creating = false
     /// The last link or create failure, in swe's words.
     public var actionError: String?
+    /// The open scripts' drafts, kept at the model so a trip to another
+    /// page — or the app's quit check — never loses an unsaved edit.
+    public let drafts = PrimitiveDrafts()
     /// One mutation at a time: swe rewrites the same links on each.
     private let gate = SerialGate()
     private let loader: SnapshotLoader<HookInventory>
+    /// The check's own bound, under the page's shared deadline: a hung
+    /// `swe hooks check` must degrade to `checkError`, not take the
+    /// already-read list down with it.
+    private let checkTimeout: Duration
+
+    /// An unsaved script edit is open.
+    public var hasUnsavedChanges: Bool { !drafts.dirty.isEmpty }
 
     /// - Parameters:
     ///   - snapshots: where the last list is kept between launches.
     ///   - maxAge: how long a list counts as fresh.
     ///   - timeout: how long swe may take before a list counts as failed.
+    ///   - checkTimeout: how long the check may take inside a fetch; much
+    ///     under `timeout`, since it reads a few settings files.
     public init(snapshots: (any SnapshotStoring<Snapshot<HookInventory>>)? = nil,
                 maxAge: TimeInterval = 60, timeout: Duration = .seconds(60),
+                checkTimeout: Duration = .seconds(15),
                 now: @escaping @Sendable () -> Date = Date.init) {
         loader = SnapshotLoader(snapshots: snapshots, maxAge: maxAge, timeout: timeout, now: now)
+        self.checkTimeout = checkTimeout
     }
 
     /// Shows the last saved list until swe answers.
@@ -327,29 +344,42 @@ public final class HooksModel {
     /// Lists the hooks unless this swe's list is fresh; joins one in flight.
     /// - Parameter source: the swe asked, as set in Settings.
     public func loadIfStale(swe: SweClient, for source: String) async {
-        await loader.loadIfStale(from: source) { try await Self.fetch(swe) }
+        await loader.loadIfStale(from: source) { try await Self.fetch(swe, checkTimeout: self.checkTimeout) }
     }
 
     /// Always lists. `source` is the swe asked, as set in Settings; nil
     /// keeps the last one.
     public func load(swe: SweClient, for source: String? = nil) async {
-        await loader.load(from: source) { try await Self.fetch(swe) }
+        await loader.load(from: source) { try await Self.fetch(swe, checkTimeout: self.checkTimeout) }
     }
 
     /// The list plus the check's findings in one load: the check exits 1
     /// while findings remain, and a check that cannot be read at all — an
     /// swe from before `hooks` existed has already failed the list anyway —
-    /// degrades to `checkError`, never hiding the scripts.
-    private static func fetch(_ swe: SweClient) async throws -> HookInventory {
+    /// degrades to `checkError`, never hiding the scripts. The check gets
+    /// its own shorter deadline: the fetch's shared bound would otherwise
+    /// let a hung check fail the whole load and hide a list swe already
+    /// answered.
+    private static func fetch(_ swe: SweClient, checkTimeout: Duration) async throws -> HookInventory {
         async let listed = swe.hooksList()
-        async let checked = swe.hooksCheck()
+        let checked = Task { try await swe.hooksCheck() }
         let list = try await listed
         do {
-            let report = try await checked
+            let report = try await withDeadline(checkTimeout, onTimeout: { CheckTimedOut() }) {
+                try await checked.value
+            }
             return HookInventory(hooks: list.hooks, findings: report.findings)
         } catch {
+            checked.cancel()
             return HookInventory(hooks: list.hooks, findings: [],
                                  checkError: error.localizedDescription)
+        }
+    }
+
+    /// `swe hooks check` ran past the check's own bound.
+    struct CheckTimedOut: LocalizedError {
+        var errorDescription: String? {
+            "swe hooks check didn't answer in time; the list is still shown."
         }
     }
 
@@ -395,7 +425,7 @@ public final class HooksModel {
     /// swe was picked meanwhile; with no source it reloads anyway.
     private func reload(swe: SweClient, for source: String?) async {
         if let source {
-            await loader.reload(from: source) { try await Self.fetch(swe) }
+            await loader.reload(from: source) { try await Self.fetch(swe, checkTimeout: self.checkTimeout) }
         } else {
             await load(swe: swe)
         }

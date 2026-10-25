@@ -124,12 +124,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     /// Both quit paths (the app menu and the panel's Quit) come through
-    /// here; AGENTS.md drafts live only in memory.
+    /// here; AGENTS.md and hook drafts live only in memory.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard AppModel.shared.agentsMd.hasUnsavedChanges else { return .terminateNow }
+        let app = AppModel.shared
+        let agentsMdDirty = app.agentsMd.hasUnsavedChanges
+        let hooksDirty = app.hooks.hasUnsavedChanges
+        guard agentsMdDirty || hooksDirty else { return .terminateNow }
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Quit with unsaved AGENTS.md edits?"
+        switch (agentsMdDirty, hooksDirty) {
+        case (true, true): alert.messageText = "Quit with unsaved AGENTS.md and hook edits?"
+        case (true, false): alert.messageText = "Quit with unsaved AGENTS.md edits?"
+        default: alert.messageText = "Quit with unsaved hook edits?"
+        }
         alert.informativeText = "Your changes haven't been saved and will be lost."
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: "Quit anyway")
