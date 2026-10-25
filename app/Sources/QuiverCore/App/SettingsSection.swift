@@ -1,7 +1,7 @@
 /// The Settings page's sub-nav, after TokenTracker's: groups of sections,
 /// each with its own title, description and cards.
 public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Sendable {
-    case general, sidebar, notifications, providers, services, integrations, files, experimental
+    case general, sidebar, notifications, providers, integrations, files, experimental
 
     public var id: String { rawValue }
 
@@ -12,7 +12,6 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .notifications: "Notifications"
         case .integrations: "Integrations"
         case .providers: "Providers"
-        case .services: "Services"
         case .files: "Files"
         case .experimental: "Experimental"
         }
@@ -24,9 +23,8 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .general: "When Quiver starts, how it looks, and which version you're running."
         case .sidebar: "Which pages the sidebar lists, and their order inside each group."
         case .notifications: "Alerts when a usage limit runs low."
-        case .integrations: "The GitHub CLI behind the GitHub pages, and the phones paired to watch your sessions."
+        case .integrations: "The GitHub CLI behind the GitHub pages, the keys for the services Quiver calls, and the phones paired to watch your sessions."
         case .providers: "Which harnesses show up across the app, and the inference plans and API keys behind them."
-        case .services: "Keys for the services Quiver itself calls, kept in the Keychain."
         case .files: "Where Quiver finds swe, your API keys file and your MCP server folders, and the editor that opens them."
         case .experimental: "Features being tried out. They may change or go away."
         }
@@ -40,7 +38,6 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .notifications: "bell"
         case .integrations: "puzzlepiece.extension"
         case .providers: "square.stack.3d.up"
-        case .services: "key"
         case .files: "folder"
         case .experimental: "flask"
         }
@@ -49,8 +46,8 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
     /// The section saved from last time, or General.
     public init(saved: String?) {
         switch saved {
-        // GitHub and Remote were their own sections before Integrations.
-        case "github", "remote": self = .integrations
+        // GitHub, Remote and Services were their own sections before Integrations.
+        case "github", "remote", "services": self = .integrations
         // Doctor moved to a card group on General.
         case "doctor": self = .general
         // Paths was renamed Files.
@@ -83,7 +80,7 @@ public enum SettingsGroup: CaseIterable, Identifiable, Sendable {
     public var sections: [SettingsSection] {
         switch self {
         case .app: [.general, .sidebar, .notifications]
-        case .usage: [.providers, .services]
+        case .usage: [.providers]
         case .advanced: [.integrations, .files, .experimental]
         }
     }

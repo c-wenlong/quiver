@@ -378,9 +378,9 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
 /// `KeychainCLI` no longer writes, so a value never sits on `security`'s
 /// argv where `ps` could read it.
 @Suite struct ServiceKeychainTests {
-    @Test func servicesIsASettingsSection() {
-        #expect(SettingsGroup.order.contains(.services))
-        #expect(!SettingsSection.services.title.isEmpty)
-        #expect(!SettingsSection.services.detail.isEmpty)
+    /// Services moved under Integrations; an old saved section still
+    /// lands there.
+    @Test func servicesLiveUnderIntegrations() {
+        #expect(SettingsSection(saved: "services") == .integrations)
     }
 }

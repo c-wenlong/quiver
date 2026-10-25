@@ -128,6 +128,10 @@ public enum ModelBrands {
         .init(id: "standardcompute", name: "Standard Compute", icon: "standardcompute", keywords: ["stdcmpt"]),
         .init(id: "cheapestinference", name: "CheapestInference", icon: "cheapestinference",
               keywords: ["cheapestinference"]),
+        // The Models page's benchmark source; a key filed under its name
+        // shows the mark too. "artificial" alone is too generic to claim,
+        // so only the run-together words match, through the id itself.
+        .init(id: "artificialanalysis", name: "Artificial Analysis", icon: "artificial-analysis"),
     ]
 
     /// Anything no brand claims: a dark grey that recedes behind the

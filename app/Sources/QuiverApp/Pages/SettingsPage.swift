@@ -159,15 +159,21 @@ private struct SettingsSectionView: View {
             case .sidebar: SidebarSection()
             case .notifications: notificationsCard
             case .providers: ProvidersSection()
-            case .services: ServicesCard(model: app.services)
             case .integrations:
                 VStack(alignment: .leading, spacing: 28) {
                     SettingsCardGroup(title: "GitHub",
-                                      detail: "The gh install behind the GitHub pages, and the synced repo catalog the Add-repo search reads.") {
+                                      detail: "The gh install behind the GitHub pages, and the synced repo catalog the Add-repo search reads.",
+                                      icons: ["github"]) {
                         githubCard
                     }
+                    SettingsCardGroup(title: "Services",
+                                      detail: "Keys for the services Quiver itself calls, kept in the Keychain.",
+                                      icons: ServiceCredentials.services.map(\.id)) {
+                        ServicesCard(model: app.services)
+                    }
                     SettingsCardGroup(title: "Remote",
-                                      detail: "Pair a phone to watch and steer sessions, and see which devices are paired.") {
+                                      detail: "Pair a phone to watch and steer sessions, and see which devices are paired.",
+                                      icons: ["tailscale"]) {
                         RemoteSection()
                     }
                 }
@@ -503,9 +509,9 @@ private struct SettingsSectionView: View {
     }
 }
 
-/// Settings > Services: one group per known service — its help line, a
-/// row per key (a SecureField until saved, then dates with Replace and
-/// Remove), and its Test button.
+/// Settings > Integrations > Services: one group per known service — its
+/// help line, a row per key (a SecureField until saved, then dates with
+/// Replace and Remove), and its Test button.
 private struct ServicesCard: View {
     let model: ServicesModel
 
@@ -642,12 +648,18 @@ private struct ServiceFieldRow: View {
 struct SettingsCardGroup<Content: View>: View {
     var title: String
     var detail: String? = nil
+    /// Harness-icons marks before the title: the integration's own logo,
+    /// or each service's own when a group holds more than one.
+    var icons: [String] = []
     @ViewBuilder var content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+                HStack(spacing: 6) {
+                    ForEach(icons, id: \.self) { HarnessIcon(harness: $0, size: 14) }
+                    Text(title).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+                }
                 if let detail { Text(detail).font(Theme.caption).foregroundStyle(Theme.textSecondary) }
             }
             content
