@@ -1935,8 +1935,10 @@ def cmd_install(args):
 
     # Read-only: only the path that actually installs may create harness.json.
     tools = load_registry_readonly()
-    # Allow installing by alias
-    resolved = resolve(tools, name)
+    # Allow installing by alias, but a harness's own id wins: another
+    # harness may list that id among its aliases, and the Doctor's fix
+    # names the id.
+    resolved = name if name in tools else resolve(tools, name)
     reg_name = resolved or name
 
     # A scoped @owner/pkg name is an explicit npm package; its registry name

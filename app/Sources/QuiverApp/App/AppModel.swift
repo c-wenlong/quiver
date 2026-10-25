@@ -128,6 +128,7 @@ final class AppModel {
             hub = Self.localHub(swe: swe)
             others = OtherLimitsModel(swe: swe, extraAccounts: extraAccountsProvider)
             Task { await others.load() }
+            doctor = DoctorModel(swe: swe)
             // The "swe too old" verdicts were about the old build.
             Task { [codexUsage, cursorFeed] in
                 await codexUsage?.swePathChanged()
@@ -295,6 +296,10 @@ final class AppModel {
     let accounts: AccountsModel
     /// Limits of the harnesses with no Quiver account, from swe.
     private(set) var others: OtherLimitsModel
+    /// Settings › Doctor's report and its runs. Held here, not by the
+    /// section, so an install keeps its row (and the one-at-a-time guard)
+    /// while you look at another section.
+    private(set) var doctor: DoctorModel
     /// Account cards whose harness is starred in swe's registry: an
     /// unstarred Claude or Codex hides its card, and its limit with it,
     /// until it is starred again. Extra Devin/Cursor accounts are harness
@@ -498,6 +503,7 @@ final class AppModel {
                 .map { ($0, store.paths(for: $0)) }
         }
         others = OtherLimitsModel(swe: client, extraAccounts: extraAccountsProvider)
+        doctor = DoctorModel(swe: client)
         codexHomes = {
             var homes = [home.appending(path: ".codex").path]
             for profile in (try? store.load()) ?? []

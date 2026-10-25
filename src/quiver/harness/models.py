@@ -108,7 +108,8 @@ class DoctorFinding:
     harness a finding is about, so the app can show its logo; it is left
     out of rows that are about the machine rather than one harness.
     ``action``, when set, is the swe command the app may offer to run:
-    "setup", "init", or "discover"."""
+    "setup", "init", "discover", or "install" (``swe install <harness>
+    --via=<via>``, reinstalling an off-PATH harness the way it got there)."""
 
     check: str
     severity: str
@@ -116,6 +117,7 @@ class DoctorFinding:
     fix: str | None = None
     harness: str | None = None
     action: str | None = None
+    via: str | None = None
 
     def to_json(self) -> dict:
         finding = {
@@ -128,6 +130,8 @@ class DoctorFinding:
             finding["harness"] = self.harness
         if self.action:
             finding["action"] = self.action
+        if self.via:
+            finding["via"] = self.via
         return finding
 
 
