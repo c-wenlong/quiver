@@ -216,7 +216,14 @@ const SessionChat = (() => {
       <div class="chat-bar" id="chat-bar"></div>
       <div class="card error-card hidden" id="chat-error"></div>
       <div class="card chat-banner hidden" id="chat-banner"></div>
-      <div class="chat-log" id="chat-log" aria-live="polite"><p class="empty" id="chat-loading">Loading the transcript…</p></div>
+      <div class="chat-log" id="chat-log" aria-live="polite"><div class="chat-skel" id="chat-loading" role="status" aria-label="Loading the transcript">
+        <div class="skel-lines"><div class="skel skel-line" style="--w:72%"></div><div class="skel skel-line" style="--w:88%"></div><div class="skel skel-line" style="--w:55%"></div></div>
+        <div class="skel skel-bubble"></div>
+        <div class="skel skel-tool"></div>
+        <div class="skel-lines"><div class="skel skel-line" style="--w:80%"></div><div class="skel skel-line" style="--w:62%"></div></div>
+        <div class="skel skel-bubble short"></div>
+        <div class="skel-lines"><div class="skel skel-line" style="--w:78%"></div><div class="skel skel-line" style="--w:90%"></div><div class="skel skel-line" style="--w:48%"></div></div>
+      </div></div>
       <div class="chat-working hidden" id="chat-working" role="status" aria-label="Agent is working"><span></span><span></span><span></span></div>
       <form class="chat-composer" id="chat-composer" autocomplete="off">
         <select class="field chat-mode" id="chat-mode" aria-label="Send mode"
@@ -815,13 +822,13 @@ const SessionChat = (() => {
     if (gen !== chat.gen) return status;
     const loading = $("chat-loading");
     if (status !== 200 || !data) {
-      if (loading) loading.textContent = status === 404 ? "No transcript for this session." : "Couldn't load the transcript.";
+      if (loading) loading.outerHTML = `<p class="empty" id="chat-loading">${status === 404 ? "No transcript for this session." : "Couldn't load the transcript."}</p>`;
       return status;
     }
     const messages = data.messages || [];
     for (const ev of messages) appendEvent(ev, false);
     if (messages.length) remember(messages[messages.length - 1].seq);
-    else if (loading) loading.textContent = "No messages yet.";
+    else if (loading) loading.outerHTML = '<p class="empty" id="chat-loading">No messages yet.</p>';
     scrollBottom();
     return status;
   }
