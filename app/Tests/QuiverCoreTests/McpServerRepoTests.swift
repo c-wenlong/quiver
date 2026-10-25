@@ -192,7 +192,7 @@ private func git(_ args: String..., in dir: URL) async throws {
 
     // MARK: - grouped
 
-    @Test func aServerRunningFromTheFolderGoesLocalAnHttpOneGoesRemote() {
+    @Test func commandServersGoLocalAndUrlServersGoRemote() {
         let servers = [repo("linear-mcp", at: "/srv/mcp/linear-mcp")]
         let hub = [
             hubServer("linear", command: "node", args: ["/srv/mcp/linear-mcp/build/index.js"]),
@@ -201,21 +201,24 @@ private func git(_ args: String..., in dir: URL) async throws {
             hubServer("hn", command: "npx", args: ["-y", "hn-mcp"]),
         ]
         let (local, remote) = McpServerRepo.grouped(servers: hub, folders: servers)
-        #expect(local.map(\.name) == ["linear"])
-        #expect(remote.map(\.name) == ["notion", "hn"])
-        guard case .server(_, let folders) = local[0] else {
-            Issue.record("linear should be a server row")
+        // An npx server is Local too: it runs on this machine. Only the
+        // one in the servers folder carries folders (its checkout tag).
+        #expect(local.map(\.name) == ["hn", "linear"])
+        #expect(remote.map(\.name) == ["notion"])
+        guard case .server(_, let folders) = local[1], case .server(_, let none) = local[0] else {
+            Issue.record("hn and linear should be server rows")
             return
         }
         #expect(folders.map(\.name) == ["linear-mcp"])
+        #expect(none.isEmpty)
     }
 
     @Test func anUnusedFolderJoinsLocalOnceWithNoServer() {
         let servers = [repo("unused", at: "/srv/mcp/unused")]
         let hub = [hubServer("notion", command: "npx", args: ["-y", "notion-mcp"])]
         let (local, remote) = McpServerRepo.grouped(servers: hub, folders: servers)
-        #expect(local == [.folder(servers[0])])
-        #expect(remote.map(\.name) == ["notion"])
+        #expect(local == [.server(hub[0], folders: []), .folder(servers[0])])
+        #expect(remote.isEmpty)
     }
 
     @Test func aFolderBackingTwoServersSitsUnderEachWithoutARowOfItsOwn() {
@@ -259,8 +262,8 @@ private func git(_ args: String..., in dir: URL) async throws {
         // folder coming back as a "Not in the hub" row.
         let (local, remote) = McpServerRepo.grouped(servers: [shown], folders: [folder],
                                                   usageFrom: [shown, hidden])
-        #expect(local.isEmpty)
-        #expect(remote.map(\.name) == ["shown"])
+        #expect(local.map(\.name) == ["shown"])
+        #expect(remote.isEmpty)
     }
 
     // MARK: - GitState.parse

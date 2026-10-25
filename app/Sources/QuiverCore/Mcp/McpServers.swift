@@ -98,6 +98,10 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
     /// `${NAME}` references in the hub's definition with no value in the
     /// secrets file. Absent from an older swe, decoded as none missing.
     public let secretsMissing: [String]
+
+    /// Reached at a URL (http, sse) rather than launched with a command on
+    /// this machine; the MCP page's Remote group.
+    public var isRemote: Bool { transport == "http" || transport == "sse" }
     /// Whether ~/.quiver/mcp.json defines this server. A hub-only row has
     /// no harnesses; an older swe sends nothing and decodes false.
     public let inHub: Bool

@@ -206,9 +206,12 @@ public enum McpServerRepo {
         }
     }
 
-    /// The hub servers split for the page's one list. A server is Local
-    /// when a folder in the managed servers folder runs it (the `hubUsage`
-    /// match), Remote otherwise; folders nobody uses join Local as
+    /// The hub servers split for the page's one list by how they run:
+    /// Local holds every server a harness launches with a command (stdio,
+    /// and an `mcp-remote` wrapper), Remote the ones reached at a URL
+    /// (http, sse). A Local server that runs from a folder in the managed
+    /// servers folder (the `hubUsage` match) carries those folders, which
+    /// the row tags as a checkout; folders nobody uses join Local as
     /// standalone "Not in the hub" rows, while a folder backing several
     /// servers sits under each of them with no row of its own. Local is a
     /// flat list sorted by name, mixing servers and unused folders; Remote
@@ -228,8 +231,8 @@ public enum McpServerRepo {
             let backing = folders
                 .filter { usage[$0.path.standardizedFileURL.path]?.contains(server.name) == true }
                 .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-            if backing.isEmpty {
-                remote.append(.server(server, folders: []))
+            if server.isRemote {
+                remote.append(.server(server, folders: backing))
             } else {
                 local.append(.server(server, folders: backing))
             }
