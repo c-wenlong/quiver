@@ -2,8 +2,10 @@
  * hub machine's harnesses configure, as a server × harness grid split into
  * Local (run from a folder in ~/.quiver/mcp/servers) and Remote, with the
  * definitions that disagree lettered. A server's sheet syncs it, with a
- * Preview first, through POST /v1/app/mcp/preview and /sync; Add server,
- * Remove and secret values stay in swe and the Mac app. Data: /v1/app/mcp,
+ * Preview first, through POST /v1/app/mcp/preview and /sync, removes it
+ * through /remove, and sets its ${NAME} values through /secret_set (shown
+ * masked; /secret_value reveals one). Add server stays in swe and the Mac
+ * app. Data: /v1/app/mcp,
  * and /v1/app/mcp?health=1 only when "Check health" is pressed.
  */
 "use strict";
@@ -42,6 +44,8 @@ const MCP_SVG = {
   up: '<path d="m6 15 6-6 6 6"/>',
   plug: '<path d="M9 3v5M15 3v5M7 8h10v4a5 5 0 0 1-10 0zM12 17v4"/>',
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff: '<path d="M3 3l18 18M10.6 5.1A10.7 10.7 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4M6.6 6.6C3.9 8.4 2 12 2 12s3.6 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
 };
 const mcpSvg = (name, cls = "") =>
   `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${MCP_SVG[name]}</svg>`;
@@ -404,7 +408,10 @@ function mcpSheetState(s) {
   let st = mcpPage.sheet;
   if (!st || st.name !== s.name) {
     st = mcpPage.sheet = { name: s.name, source: null, chosen: new Set(), replace: new Set(),
-      preview: null, done: null, error: null, running: false, confirming: false, removing: false };
+      preview: null, done: null, error: null, running: false, confirming: false, removing: false,
+      // Secrets: values fetched for Reveal (cleared when the sheet closes),
+      // names being replaced, drafts as typed, the one saving, its error.
+      revealed: {}, replacing: new Set(), drafts: {}, savingSecret: null, secretError: null };
   }
   const sources = mcpSources(s);
   if (!sources.includes(st.source)) {
@@ -523,6 +530,156 @@ async function mcpSync(s) {
 /* A word as a shell would need it typed: bare when safe, else single
  * quotes, so a copied "my server" stays one argument. */
 const mcpShellQuote = (word) => (/^[A-Za-z0-9_@%+=:,.\/-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`);
+
+/* Settings › Providers › Inference's row, for each ${NAME} the hub's
+ * definition refers to: a set one shows masked with Reveal, Copy and
+ * Replace; a missing one, or one being replaced, a password field and
+ * Save. A value reaches the page only when Reveal or Copy asks for it. */
+function mcpSecretsHtml(s, st) {
+  const list = s.secrets || [];
+  if (!list.length) return "";
+  const missing = list.filter((x) => !x.set).length;
+  const rows = list.map((x) => {
+    const name = esc(x.name);
+    if (!x.set || st.replacing.has(x.name)) {
+      const saving = st.savingSecret === x.name;
+      return `<div class="mcp-secret-row"><code class="mcp-secret-name">${name}</code>
+        <input class="field mcp-secret-input" type="password" autocomplete="new-password" spellcheck="false"
+          data-mcp-secret-draft="${name}" placeholder="${x.set ? "New value" : "Paste the value"}" aria-label="Value for ${name}"
+          value="${esc(st.drafts[x.name] || "")}"${saving ? " disabled" : ""}>
+        ${x.set ? `<button type="button" class="mcp-sheet-button" data-mcp-secret-cancel="${name}"${saving ? " disabled" : ""}>Cancel</button>` : ""}
+        <button type="button" class="mcp-sheet-button" data-mcp-secret-save="${name}"${
+          saving || !(st.drafts[x.name] || "").trim() || st.savingSecret ? " disabled" : ""}>${saving ? "Saving…" : "Save"}</button></div>`;
+    }
+    const shown = st.revealed[x.name];
+    return `<div class="mcp-secret-row"><code class="mcp-secret-name">${name}</code>
+      <span class="mcp-secret-value${shown != null ? " revealed" : ""}">${esc(shown != null ? shown : x.masked || "")}</span>
+      <button type="button" class="icon-button mcp-secret-icon" data-mcp-secret-reveal="${name}"
+        aria-label="${shown != null ? "Hide" : "Show"} the value" title="${shown != null ? "Hide" : "Show"} the value">${mcpSvg(shown != null ? "eyeOff" : "eye")}</button>
+      <button type="button" class="icon-button mcp-secret-icon" data-mcp-secret-copy="${name}" aria-label="Copy the value" title="Copy the value">${mcpSvg("copy")}</button>
+      <button type="button" class="mcp-sheet-button" data-mcp-secret-replace="${name}">Replace</button></div>`;
+  }).join("");
+  return `<hr class="mcp-rule">
+    <div class="card-title">${missing ? (missing === 1 ? "Needs a value" : "Needs values") : "Secrets"}</div>
+    <div class="mcp-secret-rows">${rows}</div>
+    ${st.secretError ? `<p class="error" role="alert">${esc(st.secretError)}</p>` : ""}
+    <p class="caption">Saved to ~/.quiver/secrets/mcp/.api_keys on ${esc((mcpPage.data && mcpPage.data.machine) || "the hub")}, never versioned. Sync fills these in when it writes a harness config.</p>`;
+}
+
+/* One value, fetched only when asked for. */
+async function mcpSecretValue(name, st) {
+  const { status, data } = await mcpPost("secret_value", { name });
+  if (status === 200 && data && typeof data.value === "string") return data.value;
+  st.secretError = mcpFailure(status, data);
+  return null;
+}
+
+function mcpBindSecrets(sheet, s, st) {
+  for (const input of sheet.querySelectorAll("[data-mcp-secret-draft]")) {
+    input.oninput = () => {
+      st.drafts[input.dataset.mcpSecretDraft] = input.value;
+      const save = sheet.querySelector(`[data-mcp-secret-save="${CSS.escape(input.dataset.mcpSecretDraft)}"]`);
+      if (save) save.disabled = !input.value.trim() || !!st.savingSecret;
+    };
+    input.onkeydown = (e) => {
+      if (e.key === "Enter") { e.preventDefault(); mcpSaveSecret(s, input.dataset.mcpSecretDraft); }
+    };
+  }
+  for (const btn of sheet.querySelectorAll("[data-mcp-secret-save]")) btn.onclick = () => mcpSaveSecret(s, btn.dataset.mcpSecretSave);
+  for (const btn of sheet.querySelectorAll("[data-mcp-secret-replace]")) {
+    btn.onclick = () => {
+      const name = btn.dataset.mcpSecretReplace;
+      st.replacing.add(name);
+      delete st.revealed[name];
+      st.secretError = null;
+      mcpOpenSheet(s);
+      const input = sheet.querySelector(`[data-mcp-secret-draft="${CSS.escape(name)}"]`);
+      if (input) input.focus();
+    };
+  }
+  for (const btn of sheet.querySelectorAll("[data-mcp-secret-cancel]")) {
+    btn.onclick = () => { st.replacing.delete(btn.dataset.mcpSecretCancel); delete st.drafts[btn.dataset.mcpSecretCancel]; mcpOpenSheet(s); };
+  }
+  for (const btn of sheet.querySelectorAll("[data-mcp-secret-reveal]")) {
+    btn.onclick = async () => {
+      const name = btn.dataset.mcpSecretReveal;
+      st.secretError = null;
+      if (st.revealed[name] != null) delete st.revealed[name];
+      else {
+        const value = await mcpSecretValue(name, st);
+        if (value != null) st.revealed[name] = value;
+      }
+      if (mcpPage.sheet === st) mcpRepaintSheet(s);
+    };
+  }
+  for (const btn of sheet.querySelectorAll("[data-mcp-secret-copy]")) {
+    btn.onclick = async () => {
+      st.secretError = null;
+      const name = btn.dataset.mcpSecretCopy;
+      const value = st.revealed[name] != null ? st.revealed[name] : await mcpSecretValue(name, st);
+      if (value == null) { if (mcpPage.sheet === st) mcpRepaintSheet(s); return; }
+      if (await mcpCopyText(value)) {
+        btn.innerHTML = mcpSvg("check");
+        setTimeout(() => { if (btn.isConnected) btn.innerHTML = mcpSvg("copy"); }, 1500);
+      } else {
+        st.secretError = "The browser didn't allow copying. Use Show and copy it by hand.";
+        if (mcpPage.sheet === st) mcpRepaintSheet(s);
+      }
+    };
+  }
+}
+
+/* Copies text, by the clipboard API where the page is a secure context
+ * and the browser allows it, else by the older copy command. Resolves
+ * true only once the text went through. */
+async function mcpCopyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try { await navigator.clipboard.writeText(text); return true; } catch { /* denied: try the old way */ }
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  (document.querySelector("dialog[open]") || document.body).appendChild(area);
+  area.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { ok = false; }
+  area.remove();
+  return ok;
+}
+
+/* set_secret on the hub, as swe mcp secret set NAME does. The field clears either way; the
+ * page repaints from the answer. */
+async function mcpSaveSecret(s, name) {
+  const st = mcpPage.sheet;
+  const value = (st.drafts[name] || "").trim();
+  if (!value || st.savingSecret) return;
+  st.savingSecret = name;
+  st.secretError = null;
+  mcpOpenSheet(s);
+  const { status, data } = await mcpPost("secret_set", { name, value });
+  st.savingSecret = null;
+  delete st.drafts[name];
+  if (status === 401) {
+    if (mcpOnPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    return;
+  }
+  if (status !== 200 || !data) {
+    st.secretError = mcpFailure(status, data);
+    if (mcpPage.sheet === st) mcpRepaintSheet(s);
+    return;
+  }
+  st.replacing.delete(name);
+  delete st.revealed[name];
+  // A new value can change what Preview would write: show it again, and
+  // the Sync controls an earlier sync's report replaced.
+  st.preview = null;
+  st.done = null;
+  st.confirming = false;
+  mcpAdopt(data.page);
+  if (mcpOnPage()) paintMcp();
+}
 
 /* Where Remove takes the server out of: every harness that has it, and the
  * hub (McpServersPage.removeServer). The hub refuses if any has changed. */
@@ -658,10 +815,7 @@ function mcpOpenSheet(s) {
     ...groups.map((g, i) => fact(groups.length > 1 ? `Definition ${mcpLetter(i)}` : "In", marks(g))),
     missing.length ? fact("Missing from", marks(missing)) : "",
   ].join("");
-  const secrets = (s.secrets_missing || []).length ? `<hr class="mcp-rule">
-    <div class="card-title">Needs values</div>
-    <div class="mcp-secrets">${s.secrets_missing.map((n) => `<code>${esc(n)}</code>`).join("")}</div>
-    <p class="caption">Set each on the hub with <code>swe mcp secret set NAME</code>. Values are saved to ~/.quiver/secrets/mcp/.api_keys, never versioned, and never shown here. Sync fills these in when it writes a harness config.</p>` : "";
+  const secrets = mcpSecretsHtml(s, st);
 
   const canSync = !!s.name && !s.name.includes(",");
   // Sync from the hub is refused by swe while a ${NAME} has no value.
@@ -727,9 +881,16 @@ function mcpOpenSheet(s) {
     <div class="card-title">Sync</div>
     ${form}${result}${error}${confirm}
     ${actions}
-    <p class="caption mcp-muted">Add server and secret values stay in swe and the Mac app.</p>
+    <p class="caption mcp-muted">Add server stays in swe and the Mac app.</p>
   </form>`;
   sheet.dataset.server = s.name;
+  // A closed sheet forgets every value it showed and every draft.
+  sheet.onclose = () => {
+    st.revealed = {}; st.drafts = {}; st.replacing.clear(); st.secretError = null;
+    // The closed dialog's markup still holds revealed values and pasted
+    // drafts; empty it so the page keeps none of them.
+    sheet.replaceChildren();
+  };
   mcpBindSheet(sheet, s, st);
   if (!sheet.open) sheet.showModal();
 }
@@ -764,6 +925,7 @@ function mcpBindSheet(sheet, s, st) {
       else mcpPreview(s, true);
     };
   }
+  mcpBindSecrets(sheet, s, st);
   const remove = sheet.querySelector("#mcp-remove");
   if (remove) remove.onclick = () => {
     st.removing = !st.removing;

@@ -197,3 +197,14 @@
 .mcp-sheet .mcp-remove-confirm p { margin: 0; font-size: 13px; }
 .mcp-notice p { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .mcp-notice svg { width: 14px; height: 14px; color: var(--accent); flex: none; }
+/* Secrets: Settings › Providers › Inference's row in the sheet. */
+.mcp-sheet .mcp-secret-rows { display: flex; flex-direction: column; gap: 6px; }
+.mcp-sheet .mcp-secret-row { display: flex; align-items: center; gap: 8px; min-height: 30px; }
+.mcp-sheet .mcp-secret-name { width: 170px; flex: none; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.mcp-sheet .mcp-secret-value { flex: 1; min-width: 0; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+  color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-sheet .mcp-secret-value.revealed { color: var(--text-primary); user-select: all; }
+.mcp-sheet .mcp-secret-input { flex: 1; min-width: 0; height: 30px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.mcp-sheet .mcp-secret-icon { width: 24px; height: 24px; flex: none; }
+.mcp-sheet .mcp-secret-icon svg { width: 13px; height: 13px; }
+@media (max-width: 720px) { .mcp-sheet .mcp-secret-row { flex-wrap: wrap; } .mcp-sheet .mcp-secret-name { width: 100%; } }

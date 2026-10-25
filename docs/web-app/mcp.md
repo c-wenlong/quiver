@@ -26,8 +26,15 @@ Its writes are a server's Sync, with its Preview, and its Remove.
   with no value; a dot shows each server's health once checked.
 - Click a row for its sheet: transport, health detail, the command line or
   URL, env var and header **names**, which harnesses hold each definition,
-  where it is missing, the `${NAME}`s that need values (with the `swe mcp
-  secret set` hint), and **Sync**.
+  where it is missing, **Secrets** (below), and **Sync**.
+- **Secrets** lists every `${NAME}` the hub definition uses, as the Mac
+  app's Settings › Providers › Inference lists keys: a set value shows
+  masked (`ntn_••••••••1234`, the app's `APIKeyMask`), with an eye to
+  reveal it, a copy button and **Replace**; a missing one is a password
+  field with **Save**. Saving writes `~/.quiver/secrets/mcp/.api_keys` on
+  the hub (`set_secret`, as `swe mcp secret set NAME` does), clears the
+  field and repaints the sheet. Revealed values are forgotten when the
+  sheet closes.
 - **Sync** is the Mac sheet's: **Copy from** (each definition's first
   harness, plus the Quiver hub when `mcp.json` holds the server), then a
   switch per harness that lacks the server (on by default for compared
@@ -61,6 +68,7 @@ Its writes are a server's Sync, with its Preview, and its Remove.
     "harnesses": ["claude", "codex"], "conflict": true,
     "variants": [["claude"], ["codex"]],
     "secrets_missing": ["LINEAR_API_KEY"], "in_hub": true,
+    "secrets": [{"name": "LINEAR_API_KEY", "set": false, "masked": null}],
     "health": "ok", "detail": null
   }],
   "health": true,
@@ -163,7 +171,8 @@ How it runs:
 - **`${NAME}` with no value.** From the hub, a server whose `${NAME}` has
   no value in `~/.quiver/secrets/mcp/.api_keys` is refused with 409
   `secrets_missing` ("Not syncing: no value for NOTION_TOKEN (used by
-  notion). Set it on the hub with: swe mcp secret set NOTION_TOKEN"),
+  notion). Set NOTION_TOKEN in this server's sheet, or on the hub with: swe
+  mcp secret set NOTION_TOKEN"),
   before `_sync` runs, and `_sync` refuses it again on its own. Nothing is
   written as a literal `${NAME}`.
 - A failure part way (a config that won't parse or save, or a target that
@@ -191,10 +200,22 @@ is left alone, because the confirm didn't name it. 404 `unknown_server`,
 422 `bad_server` / `bad_from` for bad shapes. The answer is `{"server",
 "removed", "absent", "page"}`, `page` being the list after the write.
 
+### Secrets
+
+`POST /v1/app/mcp/secret_set` with `{"name", "value"}` stores a value
+(trimmed; empty, multi-line or over 16 KB is 422 `bad_value`) and answers
+`{"name", "page"}`, never the value. `POST /v1/app/mcp/secret_value` with
+`{"name"}` answers `{"name", "value"}`: the one reply that carries a
+value, sent only when the eye or copy button asks. Both take only a name
+some hub definition refers to (404 `unknown_secret`), so the page can't
+read the rest of the store; an unset name is 404 `secret_not_set`. Error
+messages never include a value.
+
 ## Security
 
 - Env and header values are never in the payload; swe sends only their
-  names. A sync's preview compares values on the hub and sends only which
+  names. A `${NAME}`'s value is in the payload only masked, and in full
+  only in a `secret_value` answer. A sync's preview compares values on the hub and sends only which
   names change. The command lines in a plan are swe-scrubbed (known secret
   values swapped back to `${NAME}`) and then redacted like `summary`.
 - swe scrubs the credentials it recognises from commands, arguments and
@@ -212,10 +233,11 @@ is left alone, because the confirm didn't name it. 404 `unknown_server`,
 
 ## Differences from the Mac app
 
-- **Sync and Remove are the writes.** Add server and pasting a secret
-  value stay in `swe mcp add|secret set` and the Mac app; the sheet shows
-  the names that need values with the `swe mcp secret set` hint instead of
-  paste fields.
+- **Sync, Remove and Secrets are the writes.** Add server stays in
+  `swe mcp add` and the Mac app.
+- **Secrets look like Inference keys.** The Mac sheet pastes a missing
+  value only; the web sheet also shows set values masked, with reveal,
+  copy and Replace.
 - **Remove's confirm is inline** and names the command; the app's is a
   dialog. The web page also says what it removed after the sheet closes.
 - **Preview says more.** The Mac app's Preview is swe's one sentence; the
