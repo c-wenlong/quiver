@@ -62,6 +62,11 @@
 .arrive { animation: chat-arrive .25s ease-out; }
 @keyframes chat-arrive { from { opacity: 0; transform: translateY(10px); } }
 
+/* Kind icons (chat.js's iconSvg): tool cards, thought, error. */
+.tool-ic { display: inline-block; vertical-align: -2px; margin-right: 6px; color: var(--text-secondary); }
+.tool-ic svg { width: 13px; height: 13px; display: block; }
+.msg.error .role .tool-ic { color: var(--danger-text); }
+
 /* Tool cards */
 details.tool { border: 1px solid var(--border); border-radius: 10px; background: var(--card); min-width: 0; }
 details.tool > summary {
@@ -71,6 +76,17 @@ details.tool > summary {
 details.tool .tool-name { font-weight: 500; color: var(--text-label); margin-right: 8px; }
 details.tool.has-diff .tool-name { color: var(--text-primary); }
 .tool-body { padding: 0 12px 10px; display: flex; flex-direction: column; gap: 6px; }
+
+/* A folded run of tool cards: the count and which tools, opening to
+ * each call's own card (the phone's ToolRunCard). */
+details.tool-run { border: 1px solid var(--border); border-radius: 10px; background: var(--card); min-width: 0; }
+details.tool-run > summary {
+  padding: 7px 12px; font-size: 12px; color: var(--text-secondary); cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tool-run-count { font-weight: 500; color: var(--text-label); margin-right: 8px; }
+.tool-run-names { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.tool-run-items { padding: 0 10px 10px; display: flex; flex-direction: column; gap: 6px; }
 .tool-body pre {
   margin: 0; background: var(--subtle); border-radius: 8px; padding: 8px; font-size: 12px;
   white-space: pre-wrap; word-break: break-word; max-height: 360px; overflow: auto;

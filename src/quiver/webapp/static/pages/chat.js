@@ -195,6 +195,92 @@ const SessionChat = (() => {
     return null;
   }
 
+  /* The phone's icon per message kind (remote/ios's ToolCard.icon), as
+   * 24px stroke svg in the bar chevron's style. */
+  const KIND_ICONS = {
+    terminal: '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
+    doc: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/>',
+    pencil: '<path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/><path d="m15 5 4 4"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="m20.5 20.5-4.4-4.4"/>',
+    globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.6 2.3 4 5.4 4 9s-1.4 6.7-4 9c-2.6-2.3-4-5.4-4-9s1.4-6.7 4-9z"/>',
+    people: '<circle cx="9" cy="7.5" r="3.5"/><path d="M3 20.5c.5-3.5 3-5.5 6-5.5s5.5 2 6 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M15.7 15.3c2.7.6 4.6 2.6 4.8 5.2"/>',
+    wrench: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-8 8l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 8-8z"/>',
+    thought: '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5a6 6 0 0 0-12 0c0 1.3.5 2.6 1.5 3.5.8.8 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/>',
+    warn: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  };
+  const TOOL_ICONS = {
+    bash: "terminal", shell: "terminal", exec: "terminal", exec_command: "terminal", run_shell_command: "terminal",
+    read: "doc", view: "doc", read_file: "doc",
+    edit: "pencil", multiedit: "pencil", write: "pencil", apply_patch: "pencil", patch: "pencil",
+    file_edit: "pencil", notebookedit: "pencil",
+    grep: "search", glob: "search", search: "search", find: "search",
+    webfetch: "globe", websearch: "globe", fetch: "globe",
+    task: "people", agent: "people",
+  };
+  function iconSvg(kind) {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${KIND_ICONS[kind]}</svg>`;
+  }
+  function toolIcon(name) {
+    return iconSvg(TOOL_ICONS[String(name || "").toLowerCase()] || "wrench");
+  }
+
+  /* mcp__server__tool reads as "server · tool", the way the phone shows
+   * an MCP tool; other names pass through. */
+  function toolDisplayName(name) {
+    name = String(name || "");
+    if (!name.startsWith("mcp__")) return name;
+    const parts = name.slice(5).split("__").filter(Boolean);
+    return parts.length >= 2 ? `${parts[0]} · ${parts.slice(1).join("__")}` : (parts[0] || name);
+  }
+
+  /* The hub's summary leads with the tool's name ("Bash · make test"),
+   * which the card already shows. */
+  function toolArgsSummary(tool) {
+    const s = String(tool.args_summary || "");
+    const lead = `${tool.name || ""} · `;
+    return s.startsWith(lead) ? s.slice(lead.length) : s;
+  }
+
+  /* Three or more tool cards in a row fold into one "Used N tools" card
+   * (the phone's ToolRunCard rule); tools arriving later join the run at
+   * the end. */
+  function toolRunNames(items) {
+    const counts = new Map(), order = [];
+    for (const el of items) {
+      const name = (el.querySelector(".tool-name") || {}).textContent || "Tool";
+      if (!counts.has(name)) order.push(name);
+      counts.set(name, (counts.get(name) || 0) + 1);
+    }
+    return order.sort((a, b) => counts.get(b) - counts.get(a))
+      .map((n) => (counts.get(n) > 1 ? `${n} ×${counts.get(n)}` : n)).join(", ");
+  }
+
+  function paintToolRun(run) {
+    const items = run.querySelector(".tool-run-items").children;
+    run.querySelector(".tool-run-count").textContent = `Used ${items.length} tools`;
+    run.querySelector(".tool-run-names").textContent = toolRunNames(items);
+  }
+
+  function groupTool(el) {
+    const prev = el.previousElementSibling;
+    if (prev && prev.classList.contains("tool-run")) {
+      prev.querySelector(".tool-run-items").appendChild(el);
+      paintToolRun(prev);
+      return;
+    }
+    const run = [el];
+    for (let n = prev; n && n.matches("details.tool"); n = n.previousElementSibling) run.unshift(n);
+    if (run.length < 3) return;
+    const box = document.createElement("details");
+    box.className = "tool-run";
+    box.innerHTML = `<summary><span class="tool-ic">${iconSvg("wrench")}</span><span class="tool-run-count"></span><span class="tool-run-names"></span></summary><div class="tool-run-items"></div>`;
+    el.parentNode.insertBefore(box, run[0]);
+    const items = box.querySelector(".tool-run-items");
+    for (const it of run) items.appendChild(it);
+    paintToolRun(box);
+  }
+
   /* One SSE frame's event, or null for a comment, heartbeat or junk. */
   function parseFrame(frame) {
     let data = "";
@@ -453,7 +539,7 @@ const SessionChat = (() => {
     if (kind === "tool_use" && msg.tool) {
       const card = document.createElement("details");
       card.className = "tool";
-      card.innerHTML = `<summary><span class="tool-name">${esc(msg.tool.name)}</span><span class="tool-args">${esc(msg.tool.args_summary || "")}</span></summary><div class="tool-body"></div>`;
+      card.innerHTML = `<summary><span class="tool-ic">${toolIcon(msg.tool.name)}</span><span class="tool-name">${esc(toolDisplayName(msg.tool.name))}</span><span class="tool-args">${esc(toolArgsSummary(msg.tool))}</span></summary><div class="tool-body"></div>`;
       const diff = toolDiff(msg.tool);
       const body = card.querySelector(".tool-body");
       if (diff) {
@@ -465,6 +551,7 @@ const SessionChat = (() => {
       if (msg.tool.call_id) chat.toolCards.set(msg.tool.call_id, card);
       if (live) { card.classList.add("arrive"); chat.awaitingReply = false; }
       put(card);
+      groupTool(card);
       return;
     }
     // A degraded send's note survives its transcript echo.
@@ -502,9 +589,10 @@ const SessionChat = (() => {
       // Output whose call isn't on screen: a closed card of its own.
       const card = document.createElement("details");
       card.className = "tool";
-      card.innerHTML = `<summary><span class="tool-name">Tool output</span></summary><div class="tool-body"><pre>${esc((msg.text || "").slice(0, 8000))}</pre></div>`;
+      card.innerHTML = `<summary><span class="tool-ic">${toolIcon("output")}</span><span class="tool-name">Tool output</span></summary><div class="tool-body"><pre>${esc((msg.text || "").slice(0, 8000))}</pre></div>`;
       if (live) card.classList.add("arrive");
       put(card);
+      groupTool(card);
       return;
     }
     const div = document.createElement("div");
@@ -514,11 +602,11 @@ const SessionChat = (() => {
     } else if (kind === "system") {
       div.innerHTML = `<span class="text">${esc(msg.text || "")}</span>`;
     } else if (kind === "thinking") {
-      div.innerHTML = `<details><summary>Thought</summary><div class="text">${md(msg.text)}</div></details>`;
+      div.innerHTML = `<details><summary><span class="tool-ic">${iconSvg("thought")}</span>Thought</summary><div class="text">${md(msg.text)}</div></details>`;
     } else if (kind === "approval") {
       approvalCard(div, msg);
     } else if (kind === "error") {
-      div.innerHTML = `<div class="role">Error</div><div class="text">${md(msg.text)}</div>`;
+      div.innerHTML = `<div class="role"><span class="tool-ic">${iconSvg("warn")}</span>Error</div><div class="text">${md(msg.text)}</div>`;
     } else if (kind === "user" || kind === "assistant") {
       div.innerHTML = `<div class="text">${md(msg.text)}</div>`;
       if (carried) {
