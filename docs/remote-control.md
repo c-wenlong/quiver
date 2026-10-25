@@ -326,7 +326,9 @@ GET  /v1/app/sessions                the web app's Sessions: catalog rows + usag
 GET  /v1/app/harnesses               the web app's Harnesses: swe list --scope=all rows
 GET  /app/                           the web app's pages, static
 POST /v1/inbox/dismiss               {key, last_active_at} → cleared for this device
-POST /v1/pair                        QR payload → device credential
+POST /v1/pair                        QR payload → device credential; optional {device:{kind,model,client,os}} metadata
+GET  /v1/devices/me                  this device's row: kind, model, client, os, node_name, display_name, timestamps
+POST /v1/devices/rename              {name} → this device's display_name; "" clears it
 GET  /v1/ssh                         SSH console setup: user, port, listening, host_keys, this device's key
 POST /v1/ssh/key                     {public_key} ("" clears) → stored on the device, authorized_keys synced
 ```
@@ -817,6 +819,16 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   swaps in the `quiver://` deep link) stays as the fallback for devices
   `whois` can't identify. Either way, only a tailnet device can reach
   the pairing routes at all.
+- Device identity: both pair paths record `kind` (iphone/ipad/android/
+  mac/windows/linux/browser), `model`, `client` and `os` — explicit
+  `device` fields the client posts, else whatever the User-Agent lets
+  `pairing.client_meta` infer — plus the tailnet `node_name` where the
+  request came from (the only "location" CGNAT offers). The PWA's
+  "My device" tab reads `/v1/devices/me` and renames itself through
+  `/v1/devices/rename` (`display_name` beats `name` everywhere the
+  device is listed). Requests from devices paired before these fields
+  existed backfill them from the User-Agent on the same throttled write
+  as `last_seen_at`.
 - SSH console: the phone's terminal dials the machine's own sshd over
   the tailnet, never the hub, so it works while the hub is down. Its
   key is a Secure Enclave P-256 key; the hub only stores the public

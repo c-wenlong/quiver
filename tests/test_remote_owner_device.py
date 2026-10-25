@@ -96,6 +96,9 @@ class TestOwnerDevice(OwnerBase):
 
     def test_bearer_still_wins(self):
         auth = {"Authorization": f"Bearer {self.srv.pair()['credential']}"}
+        # The pair exchange itself may resolve the tailnet node for the
+        # device row; an already-paired bearer's requests never do.
+        self.calls.clear()
         status, _ = self.srv.request("GET", "/v1/sessions", headers=auth)
         self.assertEqual(status, 200)
         self.assertEqual(self.calls, [])

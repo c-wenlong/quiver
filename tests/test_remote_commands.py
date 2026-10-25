@@ -448,6 +448,42 @@ class TestDevicesList(unittest.TestCase):
             data = json.loads(out)
             self.assertEqual(data["data"]["devices"][0]["id"], "d1")
 
+    def test_json_emits_device_metadata(self):
+        devices = {"d1": {
+            "name": "phone", "display_name": "Kai's",
+            "kind": "iphone", "model": "iPhone16,2",
+            "client": "Quiver Remote 1.0", "os": "iOS 18.5",
+            "node_name": "iphone-13.ts.net", "paired_via": "tailscale",
+            "credential_hash": "secret-hash",
+            "created_at": 1, "last_seen_at": 1_700_000_000,
+        }}
+        with patch.object(commands.pairing, "load_devices",
+                          lambda *a: devices):
+            rc, out, _ = _run(["devices", "--json"])
+        self.assertEqual(rc, 0)
+        row = json.loads(out)["data"]["devices"][0]
+        self.assertEqual(row["display_name"], "Kai's")
+        self.assertEqual(row["kind"], "iphone")
+        self.assertEqual(row["client"], "Quiver Remote 1.0")
+        self.assertEqual(row["node_name"], "iphone-13.ts.net")
+        self.assertNotIn("credential_hash", row)
+        self.assertNotIn("credential", row)
+
+    def test_pretty_list_shows_display_name_and_meta(self):
+        devices = {"d1": {
+            "name": "phone", "display_name": "Kai's",
+            "kind": "iphone", "os": "iOS 18.5",
+            "node_name": "iphone-13.ts.net", "created_at": 1,
+        }}
+        with patch.object(commands.pairing, "load_devices",
+                          lambda *a: devices):
+            rc, out, _ = _run(["devices"])
+        self.assertEqual(rc, 0)
+        self.assertIn("Kai's", out)
+        self.assertIn("iphone", out)
+        self.assertIn("iOS 18.5", out)
+        self.assertIn("iphone-13.ts.net", out)
+
 
 class TestAttachFail(unittest.TestCase):
     def test_supervise_failure(self):

@@ -779,7 +779,15 @@ class _Handler(BaseHTTPRequestHandler):
         seen = row.get("last_seen_at") or 0
         if time.time() - seen > 300:
             try:
-                pairing.touch_device(self._state.home, device_id)
+                # Same write backfills kind/client/os on rows that
+                # predate their capture — never overwrites pair-time
+                # fields or a user rename.
+                pairing.touch_device(
+                    self._state.home, device_id,
+                    meta=pairing.client_meta(
+                        self.headers.get("User-Agent") or ""
+                    ),
+                )
             except Exception:
                 pass
         return device_id
@@ -867,6 +875,26 @@ class _Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _pair_meta(self, body: dict | None, node_name: str = "") -> dict:
+        """kind/model/client/os for the pairing device: the body's own
+        ``device`` map wins over whatever the User-Agent lets us infer,
+        and the tailnet node name goes in when it resolves."""
+        meta = pairing.client_meta(self.headers.get("User-Agent") or "")
+        sent = (body or {}).get("device")
+        meta.update(pairing.clean_device_meta(sent))
+        if node_name:
+            meta["node_name"] = node_name
+        return meta
+
+    def _peer_node_name(self) -> str:
+        """The caller's tailnet node name, best-effort: a miss costs the
+        row its node_name, nothing more."""
+        try:
+            peer = self._state.whois_cached(self._client_ip())
+        except Exception:
+            return ""
+        return str((peer or {}).get("node_name") or "")
+
     def _pair_request(self) -> None:
         ip = self._client_ip()
         now = time.time()
@@ -895,6 +923,7 @@ class _Handler(BaseHTTPRequestHandler):
             result = pairing.request_pair(
                 self._state.home, {**peer, "ip": ip},
                 str(body.get("name") or ""),
+                meta=self._pair_meta(body),
             )
         except pairing.PairBusy:
             self._send_error(429, "busy",
@@ -1183,6 +1212,10 @@ class _Handler(BaseHTTPRequestHandler):
             })
             return
 
+        if path == "/v1/devices/me":
+            self._device_me(device_id)
+            return
+
         if path == "/v1/ssh":
             self._send_json(200, sshkeys.view(self._state.home, device_id))
             return
@@ -1358,6 +1391,9 @@ class _Handler(BaseHTTPRequestHandler):
                 self._state.home,
                 str(body.get("token") or ""),
                 str(body.get("name") or ""),
+                meta=self._pair_meta(
+                    body, node_name=self._peer_node_name()
+                ),
             )
             if result is None:
                 self._send_error(
@@ -1382,6 +1418,10 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/v1/app/"):
             self._page_post(path[len("/v1/app/"):], device_id)
+            return
+
+        if path == "/v1/devices/rename":
+            self._device_rename(device_id)
             return
 
         if path == "/v1/ssh/key":
@@ -2532,7 +2572,53 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._send_asset(webapp_static.STATIC_DIR / name)
 
-    # -- web app page plugins (quiver/webapp/pages) ------------------------
+    # -- paired device self-service --------------------------------------
+
+    def _device_me(self, device_id: str) -> None:
+        """``GET /v1/devices/me``: the caller's own pairing record, so a
+        client can show (and rename) itself. The owner's unpaired tailnet
+        device has no devices.json row — a stub with its node name."""
+        if device_id.startswith("tailnet:"):
+            self._send_json(200, {
+                "id": device_id,
+                "name": "This device",
+                "node_name": self._peer_node_name(),
+                "owner": True,
+            })
+            return
+        row = pairing.load_devices(self._state.home).get(device_id)
+        if row is None:
+            self._send_error(404, "unknown_device", "no such device")
+            return
+        self._send_json(200, pairing.device_view(device_id, row))
+
+    def _device_rename(self, device_id: str) -> None:
+        """``POST /v1/devices/rename`` ``{name}``: the caller sets its own
+        ``display_name``; an empty name clears it back to the paired one.
+        Owner tailnet devices have no row to rename — same answer as the
+        SSH key route."""
+        if device_id.startswith("tailnet:"):
+            self._send_error(
+                409, "needs_pairing",
+                "pair this device to rename it",
+            )
+            return
+        body = self._read_body()
+        if body is None:
+            self._send_error(400, "bad_body", "unreadable JSON body")
+            return
+        name = str(body.get("name") or "").strip()[:80]
+        if not pairing.update_device(
+            self._state.home, device_id, display_name=name or None
+        ):
+            self._send_error(404, "unknown_device", "no such device")
+            return
+        row = pairing.load_devices(self._state.home).get(device_id) or {}
+        self._send_json(200, {
+            "ok": True,
+            "device_id": device_id,
+            "name": str(row.get("display_name") or row.get("name") or ""),
+        })
 
     def _ssh_key(self, device_id: str) -> None:
         """``POST /v1/ssh/key`` ``{public_key}``: store this device's SSH
@@ -2566,6 +2652,8 @@ class _Handler(BaseHTTPRequestHandler):
                              f"could not update authorized_keys: {exc}")
             return
         self._send_json(200, sshkeys.view(self._state.home, device_id))
+
+    # -- web app page plugins (quiver/webapp/pages) ------------------------
 
     def _page_context(self, device_id: str | None):
         return webapp_pages.PageContext(
