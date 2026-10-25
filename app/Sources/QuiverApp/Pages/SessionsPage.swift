@@ -648,7 +648,9 @@ private struct SessionRail: View {
 
     private var rows: [SessionsModel.Row] {
         var list = model.rows.filter(opens)
-        if !list.contains(current) {
+        // A refresh leaves the open chat's stale copy in `current`; the
+        // row it became is already here, matched by id not value.
+        if !list.contains(where: { $0.id == current.id }) {
             list.append(current)
             list.sort { $0.session.lastActiveAt > $1.session.lastActiveAt }
         }
@@ -675,7 +677,13 @@ private struct SessionRail: View {
                 Spacer(minLength: 0)
                 RailIconButton(symbol: "arrow.clockwise",
                                help: "List sessions again (⌘R)") {
-                    Task { await model.load(for: app.swePath) }
+                    Task {
+                        // The rows and the hub's "has a chat" keys: a
+                        // session started since is hidden until both land.
+                        async let hubKeys: Void = app.hub.refreshKeys()
+                        await model.load(for: app.swePath)
+                        await hubKeys
+                    }
                 }
                 .keyboardShortcut("r", modifiers: .command)
             }
@@ -688,7 +696,7 @@ private struct SessionRail: View {
                             .padding(.horizontal, 8)
                             .padding(.top, 14).padding(.bottom, 4)
                         ForEach(group.rows) { row in
-                            RailRow(selected: row == current, select: { select(row) }) {
+                            RailRow(selected: row.id == current.id, select: { select(row) }) {
                                 HarnessIcon(harness: HarnessMark(row.session.harness).icon ?? row.session.harness,
                                             size: 13)
                                 Text(row.session.title ?? row.session.id)
