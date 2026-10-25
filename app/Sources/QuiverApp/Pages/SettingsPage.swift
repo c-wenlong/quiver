@@ -1,3 +1,4 @@
+import AppKit
 import QuiverCore
 import ServiceManagement
 import SwiftUI
@@ -170,7 +171,7 @@ private struct SettingsSectionView: View {
                         RemoteSection()
                     }
                 }
-            case .paths: pathsCard
+            case .files: filesCard
             case .experimental: ExperimentalSection(sourceCheckout: $drafts.sourceCheckout)
             }
         }
@@ -193,7 +194,7 @@ private struct SettingsSectionView: View {
                        warning: missingTerminals.contains(app.terminal)
                            ? app.terminal.notInstalledMessage : nil) {
                 Tabs(options: TerminalApp.allCases.map { ($0, $0.title) }, selection: $app.terminal,
-                     disabled: missingTerminals)
+                     iconImages: terminalIcons, disabled: missingTerminals)
             }
             SettingsDivider()
             SettingRow(title: "Show in Dock",
@@ -428,7 +429,33 @@ private struct SettingsSectionView: View {
         return text
     }
 
-    private var pathsCard: some View {
+    /// The stand-in for an app LaunchServices can't find: a dashed app
+    /// shape, so a greyed-out option still lines up with the rest.
+    private var missingAppIcon: NSImage? {
+        NSImage(systemSymbolName: "app.dashed", accessibilityDescription: nil)
+    }
+
+    /// Each terminal's own icon, the placeholder for one that isn't installed.
+    private var terminalIcons: [TerminalApp: NSImage] {
+        var icons: [TerminalApp: NSImage] = [:]
+        for terminal in TerminalApp.allCases {
+            icons[terminal] = terminal.icon ?? missingAppIcon
+        }
+        return icons
+    }
+
+    /// Every candidate editor's icon, the placeholder for one that isn't installed.
+    private func editorIcons(_ installed: [CodeEditor]) -> [String: NSImage] {
+        var icons: [String: NSImage] = [:]
+        for (name, _) in CodeEditors.candidates {
+            icons[name] = installed.first { $0.name == name }
+                .map { NSWorkspace.shared.icon(forFile: $0.appURL.path) }
+                ?? missingAppIcon
+        }
+        return icons
+    }
+
+    private var filesCard: some View {
         SettingsCard {
             PathRow(title: "swe executable", placeholder: "/opt/homebrew/bin/swe",
                     stored: app.swePath, draft: $drafts.swe, running: SweLocation.executable(override: app.swePath),
@@ -445,17 +472,33 @@ private struct SettingsSectionView: View {
                     running: AppModel.mcpServersFolder(path: app.mcpServersPath).path,
                     hint: "Empty uses ~/.quiver/mcp/servers.", folders: true) { app.mcpServersPath = $0 }
             SettingsDivider()
-            SettingRow(title: "Editor", detail: "Opens a server folder from the MCP servers page.") {
-                let editors = CodeEditors.installed()
-                if editors.isEmpty {
-                    Text("No code editor found")
-                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                } else {
-                    SelectMenu(options: editors.map { ($0.name, $0.name) },
-                               selection: Binding(get: { app.codeEditor }, set: { app.codeEditor = $0 }),
-                               title: app.editor?.name)
+            // Every candidate is listed so the row can say what it supports;
+            // one that isn't installed greys out and can't be picked. Six
+            // titled tabs don't fit beside a label, so they take the row;
+            // too narrow for even that, they fold into two rows of three.
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Editor").font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
+                    Text("Opens a server folder from the MCP servers page.")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
+                let installed = CodeEditors.installed()
+                let missing = Set(CodeEditors.candidates.map { $0.name })
+                    .subtracting(installed.map { $0.name })
+                let options = CodeEditors.candidates.map {
+                    ($0.name, $0.name == "Visual Studio Code" ? "VS Code" : $0.name)
+                }
+                let selection = Binding(get: { app.editor?.name ?? "" },
+                                        set: { app.codeEditor = $0 })
+                ViewThatFits(in: .horizontal) {
+                    Tabs(options: options, selection: selection,
+                         iconImages: editorIcons(installed), disabled: missing)
+                    Tabs(options: options, selection: selection,
+                         iconImages: editorIcons(installed), fillWidth: true,
+                         columns: 3, disabled: missing)
                 }
             }
+            .padding(.vertical, 14)
         }
     }
 }

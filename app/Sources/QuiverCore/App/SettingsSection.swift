@@ -1,7 +1,7 @@
 /// The Settings page's sub-nav, after TokenTracker's: groups of sections,
 /// each with its own title, description and cards.
 public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Sendable {
-    case general, sidebar, notifications, providers, services, integrations, paths, experimental
+    case general, sidebar, notifications, providers, services, integrations, files, experimental
 
     public var id: String { rawValue }
 
@@ -13,7 +13,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .integrations: "Integrations"
         case .providers: "Providers"
         case .services: "Services"
-        case .paths: "Paths"
+        case .files: "Files"
         case .experimental: "Experimental"
         }
     }
@@ -27,7 +27,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .integrations: "The GitHub CLI behind the GitHub pages, and the phones paired to watch your sessions."
         case .providers: "Which harnesses show up across the app, and the inference plans and API keys behind them."
         case .services: "Keys for the services Quiver itself calls, kept in the Keychain."
-        case .paths: "Where Quiver finds swe, your API keys file and your MCP server folders."
+        case .files: "Where Quiver finds swe, your API keys file and your MCP server folders, and the editor that opens them."
         case .experimental: "Features being tried out. They may change or go away."
         }
     }
@@ -41,7 +41,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .integrations: "puzzlepiece.extension"
         case .providers: "square.stack.3d.up"
         case .services: "key"
-        case .paths: "folder"
+        case .files: "folder"
         case .experimental: "flask"
         }
     }
@@ -53,6 +53,8 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case "github", "remote": self = .integrations
         // Doctor moved to a card group on General.
         case "doctor": self = .general
+        // Paths was renamed Files.
+        case "paths": self = .files
         default: self = saved.flatMap(Self.init(rawValue:)) ?? .general
         }
     }
@@ -82,7 +84,7 @@ public enum SettingsGroup: CaseIterable, Identifiable, Sendable {
         switch self {
         case .app: [.general, .sidebar, .notifications]
         case .usage: [.providers, .services]
-        case .advanced: [.integrations, .paths, .experimental]
+        case .advanced: [.integrations, .files, .experimental]
         }
     }
 
