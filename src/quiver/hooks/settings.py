@@ -1,0 +1,236 @@
+"""Where each harness declares its hooks, and what it declares.
+
+A script under ``~/.quiver/hooks/<harness>/`` does nothing until the
+harness's own settings file names it: ``~/.claude/settings.json`` carries a
+``hooks`` map, ``~/.codex/hooks.json`` is that same map at its top level.
+Both share one shape — ``{Event: [{matcher?, hooks: [{type, command,
+timeout?}]}]}`` — so one reader covers them.
+
+Discovery mirrors ``hook_root``'s rule: ``capabilities.hooks.settings`` in
+harness.json wins first (one path or a list, each ``~/``-relative or
+absolute); without it, ``SETTINGS_FALLBACK`` names the files harnesses are
+known to use, and the basenames are probed beside the hooks root for a
+harness that declared only ``capabilities.hooks.root``.
+
+Everything here tolerates: a missing file, unparseable JSON, and schema
+drift (``hooks`` that is not a dict, groups that are not lists, entries
+that are not objects) each read as no declarations, never an error. These
+files are only ever read; quiver never writes one.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shlex
+from pathlib import Path
+
+from quiver.init.hooks import hook_root
+from quiver.hooks.models import Declaration
+
+# The files known harnesses declare hooks in, home-relative, keyed by
+# registry name like every other fallback table. Claude merges
+# settings.local.json over settings.json, so both count.
+SETTINGS_FALLBACK: dict[str, tuple[Path, ...]] = {
+    "claude": (Path(".claude/settings.json"), Path(".claude/settings.local.json")),
+    "codex": (Path(".codex/hooks.json"),),
+}
+
+# Probed beside the hooks root for harnesses the table above does not name:
+# <hooks root's parent>/settings.json, then hooks.json, settings.local.json.
+_PROBE_BASENAMES = ("settings.json", "hooks.json", "settings.local.json")
+
+# Extensions a command token ends with to count as naming a script.
+_SCRIPT_EXTS = (
+    ".py", ".sh", ".bash", ".zsh", ".js", ".mjs", ".cjs", ".ts",
+    ".rb", ".pl", ".ps1", ".cmd",
+)
+
+# ${HOME}, ${HOME-}, ${HOME-...}: the spellings hook commands actually use.
+_HOME_VAR_RE = re.compile(r"\$\{HOME[^}]*\}|\$HOME\b")
+
+
+def _expand_declared(value: str, home: Path) -> Path:
+    """A ``capabilities.hooks.settings`` path: ``~/``-relative or absolute."""
+    raw = str(value)
+    if raw == "~":
+        return home
+    if raw.startswith("~/"):
+        return home / raw[2:]
+    return Path(raw)
+
+
+def _declared_settings(caps: dict, home: Path) -> list[Path]:
+    value = caps.get("settings")
+    if value is None:
+        return []
+    items = value if isinstance(value, list) else [value]
+    return [_expand_declared(v, home) for v in items if isinstance(v, str)]
+
+
+def configured_settings(registry: dict, name: str, home: Path) -> list[Path]:
+    """``capabilities.hooks.settings`` paths, even before they exist.
+
+    ``swe hooks new`` names a file to create; filtering to existing files
+    the way ``settings_files`` does would silently swap a configured path
+    for a guess.
+    """
+    entry = registry.get(name)
+    caps = ((entry if isinstance(entry, dict) else {})
+            .get("capabilities") or {}).get("hooks")
+    if isinstance(caps, dict):
+        return _declared_settings(caps, home)
+    return []
+
+
+def settings_files(registry: dict, name: str, home: Path) -> list[Path]:
+    """Every settings file that may declare ``name``'s hooks, existing only.
+
+    The capability wins outright when present — it replaces the fallback,
+    it does not add to it, the same way ``capabilities.hooks.root`` does.
+    ``supported: false`` turns discovery off even for a table harness.
+    """
+    entry = registry.get(name)
+    caps = ((entry if isinstance(entry, dict) else {})
+            .get("capabilities") or {}).get("hooks")
+    out: list[Path] = []
+    if isinstance(caps, dict):
+        if "supported" in caps and not caps["supported"]:
+            return []
+        declared = _declared_settings(caps, home)
+        if declared:
+            out.extend(declared)
+    if not out:
+        for rel in SETTINGS_FALLBACK.get(name, ()):
+            out.append(home / rel)
+        root, _why = hook_root(registry, name, home)
+        if root is not None and root.parent != home:
+            for base in _PROBE_BASENAMES:
+                out.append(root.parent / base)
+    # De-dupe, keep only real files: a missing file is not a declaration.
+    seen: set[Path] = set()
+    files: list[Path] = []
+    for path in out:
+        if path in seen or not path.is_file():
+            continue
+        seen.add(path)
+        files.append(path)
+    return files
+
+
+def _read_json(path: Path) -> dict | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def declarations(path: Path, harness: str) -> list[Declaration]:
+    """The hook commands one settings file declares, shape-tolerant.
+
+    Anything that does not match the ``{Event: [group]}`` shape is skipped
+    entry by entry rather than failing the file: a harness writing a
+    different schema under ``hooks`` is drift to tolerate, not an error.
+    """
+    data = _read_json(path)
+    hooks_map = (data or {}).get("hooks")
+    if not isinstance(hooks_map, dict):
+        return []
+    out: list[Declaration] = []
+    for event, groups in hooks_map.items():
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            matcher = group.get("matcher")
+            matcher = matcher if isinstance(matcher, str) else ""
+            hooks = group.get("hooks")
+            if not isinstance(hooks, list):
+                continue
+            for hook in hooks:
+                if not isinstance(hook, dict):
+                    continue
+                command = hook.get("command")
+                if not isinstance(command, str) or not command.strip():
+                    continue
+                timeout = hook.get("timeout")
+                out.append(Declaration(
+                    harness=harness,
+                    event=str(event),
+                    matcher=matcher,
+                    timeout=timeout if isinstance(timeout, (int, float)) else None,
+                    command=command,
+                    settings=path,
+                ))
+    return out
+
+
+def harness_declarations(
+    registry: dict, name: str, home: Path
+) -> list[Declaration]:
+    """Every declaration across all of ``name``'s settings files."""
+    out: list[Declaration] = []
+    for path in settings_files(registry, name, home):
+        out.extend(declarations(path, name))
+    return out
+
+
+def split_command(command: str) -> list[str]:
+    """One hook command's tokens, quote-aware when the quoting balances.
+
+    ``bash "/path/my guard.sh"`` is one path, not two tokens; a command
+    whose quotes do not balance (shell fragments are common in the wild)
+    falls back to whitespace splitting rather than failing.
+    """
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return command.split()
+
+
+def basenames_in(command: str) -> set[str]:
+    """Every token basename a hook command could be invoking.
+
+    Quoting and trailing shell punctuation are stripped first: the real
+    files carry commands like ``python3 "/home/x/.claude/hooks/guard.py"``
+    and ``bash '/x/y.sh' session``.
+    """
+    out: set[str] = set()
+    for raw in split_command(command):
+        token = raw.strip("'\"").rstrip(";")
+        if not token or token.startswith("-"):
+            continue
+        base = token.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        if base:
+            out.add(base)
+    return out
+
+
+def is_script_token(token: str) -> bool:
+    """Whether a command token names a script file (by its extension)."""
+    base = token.strip("'\"").rstrip(";").rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    return base.endswith(_SCRIPT_EXTS)
+
+
+def expand_command_path(token: str, home: Path) -> Path | None:
+    """Resolve a command token to a filesystem path, or None if unverifiable.
+
+    ``~`` and the ``$HOME`` spellings expand against ``home``; any other
+    variable (``$SUPERSET_HOME_DIR`` is the real one in the wild) stays
+    literal after ``expandvars`` and marks the token unverifiable — a path
+    swe cannot resolve is "unknown", never "missing".
+    """
+    text = _HOME_VAR_RE.sub(str(home), token.strip("'\"").rstrip(";"))
+    if text.startswith("~"):
+        text = str(home) + text[1:]
+    text = os.path.expandvars(text)
+    if "$" in text:
+        return None
+    # A relative token (hooks/x.sh, ./x.sh) resolves against a cwd swe does
+    # not know: unverifiable.
+    if not Path(text).is_absolute():
+        return None
+    return Path(text)

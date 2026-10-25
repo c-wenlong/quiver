@@ -501,6 +501,32 @@ to use their own login state and environment."""
   {c('dim', 'Collision: swe find also has a --harness, but it means active|all there.')}
   {c('dim', 'swe find plugins shows drift between ~/.quiver/plugins and each harness.')}"""
     ),
+    "hooks": (
+        "Manage the per-harness hook scripts under ~/.quiver/hooks",
+        f"""\
+  {c('cyan', 'swe hooks')}                       Every script, its link state, its declaration
+  {c('cyan', 'swe hooks list [--harness=<h>]')}  One harness only
+  {c('cyan', 'swe hooks info <name>')}           One script: hub path, docstring, state, events
+  {c('cyan', 'swe hooks edit <name>')}           Open the hub file in VISUAL or EDITOR (default vi)
+  {c('cyan', 'swe hooks new <harness> <name>')}  Write a Python skeleton + the stanza to paste
+  {c('cyan', 'swe hooks check')}                 Declared-but-missing, linked-but-undeclared,
+                                    or a hub script never linked in
+
+  Scripts live one folder per harness under {c('bold', '~/.quiver/hooks/')}, and
+  {c('cyan', 'swe init')} links each into that harness's hooks dir (~/.claude/hooks,
+  ~/.factory/hooks, or {c('dim', 'capabilities.hooks.root')} in harness.json).
+
+  Declaring a hook — the event, matcher and timeout in settings.json or
+  hooks.json — stays with you: swe reads those files for the DECLARED
+  column and {c('cyan', 'swe hooks check')}, but never writes them.
+
+{c('bold', 'States')}
+  {c('green', 'linked')}    already points at the hub copy
+  {c('cyan', 'create')}    nothing at the destination yet (swe init links it)
+  {c('yellow', 'relink')}    symlink points elsewhere
+  {c('red', 'conflict')}  a real file is in the way, needs swe init --force
+  {c('dim', 'skipped')}   no hooks root, or harness not installed
+  {c('dim', 'ignored')}   .linkignore or archived in harness.json"""),
     "init": (
         "Create ~/.quiver and symlink every harness to it",
         f"""\
@@ -743,6 +769,7 @@ COMMAND_CATEGORIES = [
     ("Reference", [
         ("find",    None),
         ("plugins", None),
+        ("hooks",   None),
         ("skills",  "sk"),
         ("tags",    None),
         ("aliases", None),

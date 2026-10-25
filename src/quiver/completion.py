@@ -24,6 +24,7 @@ _PRIMARY_COMMANDS: list[tuple[str, str]] = [
     ("mcp", "Manage MCP servers"),
     ("gh", "GitHub: pinned repos, PRs, issues, CI, inbox"),
     ("harness", "Harness registry utils"),
+    ("hooks", "Manage per-harness hook scripts"),
     ("find", "Locate shared assets across harnesses"),
     ("plugins", "Browse every marketplace, install per harness"),
     ("providers", "Manage API keys"),
@@ -183,6 +184,27 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("-i", "Short for --interactive"),
         ("--json", "Skills or plugins: print as JSON"),
         ("--fix=", "Plugins only: run one drift finding's fix by id"),
+    ],
+    "hooks": [
+        ("--harness=", "Only one harness's scripts"),
+        ("--json", "Every hook script, state and declaration as JSON"),
+    ],
+    "hooks list": [
+        ("--harness=", "Only one harness's scripts"),
+        ("--json", "Every hook script, state and declaration as JSON"),
+    ],
+    "hooks info": [
+        ("--harness=", "Only one harness's copy"),
+        ("--json", "The script's state and declarations as JSON"),
+    ],
+    "hooks edit": [
+        ("--harness=", "Which harness's copy to open"),
+    ],
+    "hooks new": [
+        ("--json", "Path, command and settings stanza as JSON"),
+    ],
+    "hooks check": [
+        ("--json", "The drift findings as JSON"),
     ],
     "plugins catalog": [
         ("--json", "Every marketplace and plugin as JSON"),
@@ -457,6 +479,11 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
         "install": "plugins install", "uninstall": "plugins install",
         "enable": "plugins install", "disable": "plugins install",
     },
+    "hooks": {
+        "list": "hooks list", "ls": "hooks list",
+        "info": "hooks info", "edit": "hooks edit",
+        "new": "hooks new", "check": "hooks check",
+    },
     "providers": {
         "list": "providers list", "ls": "providers list", "add": "providers add",
     },
@@ -486,6 +513,8 @@ _NESTED_TOOL_TARGETS: dict[str, frozenset[str]] = {
     "harness": frozenset({"star", "archive", "favourite", "favorite", "shelve"}),
     "hs": frozenset({"star", "archive", "favourite", "favorite", "shelve"}),
     "mcp": frozenset({"list", "ls", "status", "edit"}),
+    # `swe hooks new <harness> <name>` — the first positional is a harness.
+    "hooks": frozenset({"new"}),
 }
 
 # Subcommands that take several tool arguments (`swe mcp sync cc oc <TAB>`).
@@ -633,6 +662,14 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("uninstall", "Uninstall a plugin from one harness"),
         ("enable", "Enable an installed plugin"),
         ("disable", "Disable an installed plugin"),
+    ],
+    "hooks": [
+        ("list", "Every hook script, its link state, its declaration"),
+        ("ls", "Short for list"),
+        ("info", "One script across harnesses"),
+        ("edit", "Open the hub file in $EDITOR"),
+        ("new", "Write a Python hook skeleton + settings stanza"),
+        ("check", "Declarations vs links vs disk, read-only"),
     ],
     "skills": [
         ("list", "List skills (bare `swe skills` does the same)"),

@@ -436,6 +436,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and THIRD_PARTY_NOTICES.md beside the app. Both files now ship inside
   the bundle, in `Contents/Resources`.
 
+- **`swe hooks`: a management surface for hook scripts.** Hook scripts
+  under `~/.quiver/hooks/<harness>/` were a first-class primitive with
+  no way to see or edit them; `swe init` linked them invisibly and the
+  only way to know one existed was to remember writing it. `swe hooks`
+  (default `list`, `--harness=<h>`, `--json`) prints one row per script
+  x destination with the `swe init` link state and a DECLARED column
+  naming the event and matcher that invoke it, read from the harness's
+  own settings file (`~/.claude/settings.json`, `~/.codex/hooks.json`,
+  or `capabilities.hooks.settings`). `swe hooks info <name>` shows one
+  script across harnesses — hub path, header docstring, every
+  destination state, every declaration. `swe hooks edit <name>` opens
+  the hub copy in `$VISUAL`/`$EDITOR` (default `vi`), never a symlinked
+  destination, and asks (or takes `--harness`) when the name exists
+  under several. `swe hooks new <harness> <name>` writes an executable
+  fail-open Python skeleton and prints the exact `PreToolUse` settings
+  stanza to paste — declaring stays user-owned, no settings file is
+  ever written. `swe hooks check` reports the three ways the halves
+  disagree — a declared command whose script is on disk nowhere, a
+  linked script nothing declares, a hub script never linked — and
+  `swe doctor` reports the same findings.
+
 ### Changed
 
 - **MCP Add server: Local or Remote first, in both apps.** The sheet

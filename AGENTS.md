@@ -94,6 +94,7 @@ Domain packages under `src/quiver/`:
 | `find/` | read-only views of shared assets (`amd`, `skills`, `plugins`, `mcps`), `PLUGIN_FALLBACK` table; the one write is `swe find plugins --fix=<id>`, which runs a drift finding's harness CLI commands |
 | `plugins/` | `swe plugins`: the catalog of every registered marketplace's plugins with per-harness state (`catalog.py`, read-only), and install/uninstall/enable/disable through the harness CLIs or, for codex enable, a proven one-line `config.toml` edit (`actions.py`) |
 | `init/` | writes the shared `AGENTS.md` and skills tree, symlinks them and per-harness hook scripts (`hooks.py`) into each harness, registers newly found harnesses (`manage.py`), migrates the old `~/.config/swe` root |
+| `hooks/` | `swe hooks`: the management surface for `~/.quiver/hooks/<harness>/` — list/info/edit/new plus `check`'s declared-vs-linked-vs-disk drift, which `swe doctor` also reports. Reads (never writes) each harness's settings file for the DECLARED side |
 | `reports/` | daily/weekly session reports: transcripts, triage, batching, model runners, follow-up ledger |
 | `providers/` | LLM provider metadata and API key file lookup |
 | `setup/` | interactive onboarding wizard (the one logic module allowed to print) |
