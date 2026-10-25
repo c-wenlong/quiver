@@ -125,15 +125,15 @@ class HarnessProcessCommandTest(unittest.TestCase):
         def which(name):
             return "/usr/bin/brew" if name == "brew" else None
 
-        code, out, run, save = self._run_install(["gemini"], which=which, npm=None)
+        code, out, run, save = self._run_install(["kilo"], which=which, npm=None)
 
         self.assertEqual(code, 0)
-        self.assertIn("brew install gemini-cli", out)
-        self.assertIn("npm install -g @google/gemini-cli", out)
-        self.assertIn("nix profile install nixpkgs#gemini-cli", out)
+        self.assertIn("brew install kilo-org/tap/kilo", out)
+        self.assertIn("npm install -g @kilocode/cli", out)
+        self.assertIn("nix profile install nixpkgs#kilo", out)
         self.assertIn("npm not on PATH", out)
         self.assertIn("nix not on PATH", out)
-        self.assertIn("swe install gemini --via=<method>", out)
+        self.assertIn("swe install kilo --via=<method>", out)
         run.assert_not_called()
         save.assert_not_called()
 
@@ -167,14 +167,14 @@ class HarnessProcessCommandTest(unittest.TestCase):
         save.assert_not_called()
 
     def test_install_via_brew_runs_brew(self):
-        code, out, run, save = self._run_install(["gemini", "--via=brew"])
+        code, out, run, save = self._run_install(["kilo", "--via=brew"])
 
         self.assertEqual(code, 0)
         run.assert_called_once_with(
-            ["brew", "install", "gemini-cli"],
+            ["brew", "install", "kilo-org/tap/kilo"],
             capture_output=False, text=True, timeout=600,
         )
-        self.assertIn("gemini", save.call_args.args[0])
+        self.assertIn("kilo", save.call_args.args[0])
 
     def test_install_via_cask_runs_brew_cask(self):
         code, out, run, save = self._run_install(["claude", "--via=cask"])
@@ -223,7 +223,7 @@ class HarnessProcessCommandTest(unittest.TestCase):
 
     def test_install_via_missing_tool(self):
         code, out, run, save = self._run_install(
-            ["gemini", "--via=brew"], which=lambda name: None)
+            ["kilo", "--via=brew"], which=lambda name: None)
 
         self.assertEqual(code, 1)
         self.assertIn("'brew' is needed", out)
@@ -249,21 +249,21 @@ class HarnessProcessCommandTest(unittest.TestCase):
         def which(name):
             return "/usr/bin/brew" if name == "brew" else None
 
-        code, out, run, save = self._run_install(["gemini", "--json"], which=which)
+        code, out, run, save = self._run_install(["kilo", "--json"], which=which)
 
         self.assertEqual(code, 0)
         doc = json.loads(out)
         harness = doc["data"]["harnesses"][0]
-        self.assertEqual(harness["name"], "gemini")
-        self.assertEqual(harness["command"], "gemini")
+        self.assertEqual(harness["name"], "kilo")
+        self.assertEqual(harness["command"], "kilo")
         self.assertFalse(harness["installed"])
         self.assertIsNone(harness["path"])
         self.assertEqual(harness["description"],
-                         "Google's first, 1M token context, 1,000 free requests a day")
+                         "Kilo Code's CLI, an opencode fork; extension and CLI share ~/.config/kilo")
         self.assertFalse(harness["registered"])
         self.assertEqual(
             [m["via"] for m in harness["methods"]], ["brew", "npm", "nix"])
-        self.assertEqual(harness["methods"][0]["command"], "brew install gemini-cli")
+        self.assertEqual(harness["methods"][0]["command"], "brew install kilo-org/tap/kilo")
         self.assertEqual([m["available"] for m in harness["methods"]],
                          [True, False, False])
         self.assertIsNone(harness["uninstall"])
@@ -358,11 +358,16 @@ class HarnessProcessCommandTest(unittest.TestCase):
         self.assertTrue(harness["installed"])
         self.assertIsNone(harness["uninstall"])
 
-    def test_install_json_website_is_null_for_unaudited_names(self):
+    def test_install_json_emits_the_vendor_site(self):
+        # Every catalogued provider carries a website so the sheet can
+        # link out; gemini had none before the catalog audit.
         code, out, run, save = self._run_install(["gemini", "--json"])
-
         harness = json.loads(out)["data"]["harnesses"][0]
-        self.assertIsNone(harness["website"])
+        self.assertEqual(harness["website"], "https://geminicli.com")
+
+        code, out, run, save = self._run_install(["kiro", "--json"])
+        harness = json.loads(out)["data"]["harnesses"][0]
+        self.assertEqual(harness["website"], "https://kiro.dev")
 
     def test_install_listing_notes_an_installed_gui_app(self):
         with patch("quiver.harness.installers.installed_app",
