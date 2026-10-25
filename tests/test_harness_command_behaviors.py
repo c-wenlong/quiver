@@ -301,10 +301,49 @@ class HarnessProcessCommandTest(unittest.TestCase):
         harness = json.loads(out)["data"]["harnesses"][0]
         self.assertTrue(harness["installed"])
         self.assertEqual(harness["path"], "/Applications/ZCode.app")
+        self.assertEqual(harness["app"], "/Applications/ZCode.app")
         self.assertEqual(harness["website"], "https://zcode.z.ai")
         self.assertEqual(harness["uninstall"]["via"], "cask")
         self.assertEqual(harness["uninstall"]["command"],
                          "brew uninstall --cask zcode")
+
+    def test_install_json_app_bundle_does_not_hide_a_missing_cli(self):
+        # antigravity the provider is a catalog harness (command `agy`); the
+        # IDE's bundle on disk must not mark its CLI installed. The row stays
+        # installable, reports the app, and the Caskroom record still names
+        # the remover brew owns.
+        with patch("quiver.harness.installers.installed_app",
+                   return_value="/Applications/Antigravity.app"), patch(
+                "quiver.harness.installers.installed_cask",
+                return_value="/opt/homebrew/Caskroom/antigravity"):
+            code, out, run, save = self._run_install(
+                ["antigravity", "--json"], which=lambda name: None)
+
+        harness = json.loads(out)["data"]["harnesses"][0]
+        self.assertFalse(harness["installed"])
+        self.assertIsNone(harness["path"])
+        self.assertEqual(harness["app"], "/Applications/Antigravity.app")
+        self.assertEqual(harness["uninstall"]["command"],
+                         "brew uninstall --cask antigravity")
+
+    def test_install_json_binary_wins_the_uninstaller_over_a_caskroom(self):
+        # codex through npm plus a stale Caskroom record: the reported path
+        # is the npm executable, so the remover must be npm's too.
+        npm_bin = "/usr/local/lib/node_modules/@openai/codex/bin/codex"
+
+        def which(name):
+            return npm_bin if name == "codex" else None
+
+        with patch("quiver.harness.installers.installed_app", return_value=None), \
+                patch("quiver.harness.installers.installed_cask",
+                      return_value="/opt/homebrew/Caskroom/codex"):
+            code, out, run, save = self._run_install(
+                ["codex", "--json"], which=which)
+
+        harness = json.loads(out)["data"]["harnesses"][0]
+        self.assertEqual(harness["path"], npm_bin)
+        self.assertEqual(harness["uninstall"]["via"], "npm")
+        self.assertEqual(harness["uninstall"]["package"], "@openai/codex")
 
     def test_install_json_gui_app_without_caskroom_has_no_uninstall(self):
         # A dmg install leaves no brew record: the sheet gets the website,
