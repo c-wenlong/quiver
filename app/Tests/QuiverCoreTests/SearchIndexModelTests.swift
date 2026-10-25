@@ -73,6 +73,11 @@ private func withinDeadline(_ wait: @escaping @MainActor @Sendable () async -> B
         status.filesByState = [.current: 10, .due: 1, .failed: 2]
         #expect(SearchIndexModel.statusLine(status, scanning: false)
                 == "Synced: 3 sessions, 296,431 messages · 1 file behind · 2 files failed")
+
+        // A finished scan stamps the line instead of the "Synced:" prefix.
+        let synced = SearchIndexModel.statusLine(status, scanning: false, synced: Date())
+        #expect(synced.hasPrefix("Last synced "))
+        #expect(synced.contains("3 sessions, 296,431 messages"))
     }
 
     @Test func enablingAttachesTheIndexerAndRunsAScan() async throws {
@@ -110,7 +115,10 @@ private func withinDeadline(_ wait: @escaping @MainActor @Sendable () async -> B
         #expect(s.model.indexer != nil)
         #expect(s.model.store?.fts5Available == true)
         await s.model.refreshStatus()
-        #expect(s.model.statusText == "Synced: 0 sessions, 0 messages")
+        // The scan attach kicked stamped lastSynced, so the line leads
+        // with when rather than "Synced:".
+        #expect(s.model.statusText.hasPrefix("Last synced "))
+        #expect(s.model.statusText.contains("0 sessions, 0 messages"))
     }
 
     @Test func disablingDetachesButKeepsTheFiles() async throws {
