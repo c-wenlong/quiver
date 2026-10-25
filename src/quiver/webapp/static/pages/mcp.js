@@ -1232,7 +1232,11 @@ function mcpBindAdd(sheet, a) {
     tab.onclick = () => { a.kind = tab.dataset.mcpAddKind; mcpOpenAdd(a.kind === "command" ? "#mcp-add-line" : "#mcp-add-url"); };
   }
   for (const tab of sheet.querySelectorAll("[data-mcp-add-signin]")) {
-    tab.onclick = () => { a.signIn = tab.dataset.mcpAddSignin; a.token = ""; a.showToken = false; mcpOpenAdd(a.signIn === "bearer" ? "#mcp-add-token" : null); };
+    tab.onclick = () => {
+      if (a.signIn === tab.dataset.mcpAddSignin) return;
+      a.signIn = tab.dataset.mcpAddSignin; a.token = ""; a.showToken = false;
+      mcpOpenAdd(a.signIn === "bearer" ? "#mcp-add-token" : null);
+    };
   }
   const token = sheet.querySelector("#mcp-add-token");
   if (token) token.oninput = () => { a.token = token.value; ready(); };

@@ -274,8 +274,26 @@ struct McpAddServerSheet: View {
                 error = "A server named \(name) already exists. Turn on Replace to overwrite it."
                 return
             }
+            // Every refusal comes before the first secret is stored, so a
+            // rejected add leaves the store as it was.
+            let filled = variables.filter { !$0.key.isEmpty }
+            let stored = filled.filter { $0.secret && !$0.value.hasPrefix("${") }
+            var secretNames = stored.map { mcpSecretName(server: name, key: $0.key) }
+            let bearer = kind == .url && signIn == .bearer
+            let tokenRef = mcpSecretName(server: name, key: "TOKEN")
+            if bearer {
+                if filled.contains(where: { $0.key.lowercased() == "authorization" }) {
+                    error = "Give the token once: as the bearer token or an Authorization header."
+                    return
+                }
+                secretNames.append(tokenRef)
+            }
+            if let twice = Dictionary(grouping: secretNames, by: { $0 }).first(where: { $0.value.count > 1 })?.key {
+                error = "Two values would be saved as the secret \(twice). Rename one of them."
+                return
+            }
             var pairs: [(String, String)] = []
-            for variable in variables where !variable.key.isEmpty {
+            for variable in filled {
                 var value = variable.value
                 if variable.secret && !value.hasPrefix("${") {
                     let secretName = mcpSecretName(server: name, key: variable.key)
@@ -284,15 +302,10 @@ struct McpAddServerSheet: View {
                 }
                 pairs.append((variable.key, value))
             }
-            if kind == .url && signIn == .bearer {
-                if pairs.contains(where: { $0.0.lowercased() == "authorization" }) {
-                    error = "Give the token once: as the bearer token or an Authorization header."
-                    return
-                }
-                let ref = mcpSecretName(server: name, key: "TOKEN")
-                try await app.swe.mcpSecretSet(name: ref, value: token.trimmingCharacters(in: .whitespaces))
+            if bearer {
+                try await app.swe.mcpSecretSet(name: tokenRef, value: token.trimmingCharacters(in: .whitespaces))
                 token = ""
-                pairs.append(("Authorization", "Bearer ${\(ref)}"))
+                pairs.append(("Authorization", "Bearer ${\(tokenRef)}"))
             }
             let spec: McpServerSpec
             if kind == .command {
