@@ -275,5 +275,7 @@ import Testing
         #expect(aider.uninstall == nil)
         let claude = try #require(all.first { $0.name == "claude" })
         #expect(claude.uninstall?.command == "brew uninstall --cask claude-code@latest")
+        // The audited vendors ship their download page for the sheet's link.
+        #expect(all.first { $0.name == "antigravity" }?.website == "https://antigravity.google")
     }
 }
