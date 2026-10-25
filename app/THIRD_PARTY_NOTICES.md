@@ -64,9 +64,11 @@ SOFTWARE.
 
 ## Geist and Geist Mono
 
-`Sources/QuiverCore/Resources/Geist.ttf` and `GeistMono.ttf` are the variable
-fonts from [Geist](https://github.com/vercel/geist-font) v1.7.2
-(`Geist[wght].ttf` and `GeistMono[wght].ttf`, renamed). They are the app's
+`Sources/QuiverCore/Resources/Geist.ttf`, `Geist-Italic.ttf`, `GeistMono.ttf`
+and `GeistMono-Italic.ttf` are the variable fonts from
+[Geist](https://github.com/vercel/geist-font) v1.7.2 (`Geist[wght].ttf`,
+`Geist-Italic[wght].ttf`, `GeistMono[wght].ttf` and
+`GeistMono-Italic[wght].ttf`, renamed). They are the app's
 typefaces. Copyright 2024 The Geist Project Authors, used under the SIL Open
 Font License 1.1, whose full text ships beside them as
 `Sources/QuiverCore/Resources/Geist-OFL.txt`.

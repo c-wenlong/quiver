@@ -107,7 +107,8 @@ cp -R "$bindir/Quiver_QuiverCore.bundle" "$bundle/Contents/Resources/"
 check_core_resources() {
   local core="$1/Contents/Resources/Quiver_QuiverCore.bundle" resource
   for resource in pricing.json pricing-supplement.json harness-icons.tsv \
-                  Geist.ttf GeistMono.ttf Geist-OFL.txt \
+                  Geist.ttf Geist-Italic.ttf GeistMono.ttf GeistMono-Italic.ttf \
+                  Geist-OFL.txt \
                   "$here"/Sources/QuiverCore/Resources/harness-*.svg; do
     resource="$(basename "$resource")"
     if [ ! -f "$core/$resource" ]; then

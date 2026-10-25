@@ -3,7 +3,9 @@ import CoreText
 
 /// The app's typefaces: Geist for text and Geist Mono for code and IDs,
 /// bundled in QuiverCore's resources as their variable fonts (every weight
-/// in one file; `Geist-OFL.txt` beside them is their licence). They are
+/// in one file, upright and italic; `Geist-OFL.txt` beside them is their
+/// licence). The italics are what `NSFontManager` finds for emphasis in
+/// the instruction editor; without them italic text would stay upright. They are
 /// registered for this process on first use, so nothing has to run at
 /// launch. If either file is missing or refuses to register, both lookups
 /// answer nil and the app keeps the system font rather than mixing faces.
@@ -44,11 +46,13 @@ public enum AppFonts {
         return NSFont(descriptor: tabular, size: size) ?? font
     }
 
-    /// Registers `Geist.ttf` and `GeistMono.ttf` from `bundle`. A file
+    static let files = ["Geist", "Geist-Italic", "GeistMono", "GeistMono-Italic"]
+
+    /// Registers every file in `files` from `bundle`. A file
     /// already registered by an earlier call, or a Geist the user installed
     /// themselves (a duplicate name), counts as available.
     static func register(from bundle: Bundle) -> Bool {
-        ["Geist", "GeistMono"].allSatisfy { name in
+        files.allSatisfy { name in
             guard let url = bundle.url(forResource: name, withExtension: "ttf") else { return false }
             var error: Unmanaged<CFError>?
             if CTFontManagerRegisterFontsForURL(url as CFURL, .process, &error) { return true }
