@@ -69,7 +69,9 @@ BOOTSTRAP.md lists where the credentials live.
 | `script/install-app.sh` | Builds `origin/main` and installs it as `~/Applications/Quiver.app` |
 | `script/bundle-swe.sh` | Puts `swe` and its own Python into the bundle; `build-app.sh` runs it and signs the Python binaries |
 | `script/build-app.sh` | Bundles `build/Quiver.app` with the widget extension and signs both (Developer ID on `QUIVER_CHANNEL=prod`, Apple Development otherwise, else ad-hoc) |
-| `script/make-dmg.sh` | Packages a built Quiver.app into a DMG (/Applications symlink plus LICENSE and notices), signing, notarizing and stapling when `QUIVER_NOTARY_PROFILE` or the `NOTARY_*` key are set |
+| `script/make-dmg.sh` | Packages a built Quiver.app into a DMG with a laid-out install window (app, arrow, /Applications link), signing, notarizing and stapling when `QUIVER_NOTARY_PROFILE` or the `NOTARY_*` key are set |
+| `script/dmg-settings.py` | dmgbuild settings for that window: size, icon positions, background |
+| `script/make-dmg-background.swift` | Draws the window's background at 1x or 2x; `make-dmg.sh` joins both into one HiDPI TIFF |
 | `script/QuiverWidgets.entitlements` | The extension's sandbox: read access to `~/.quiver/cache/widgets/` only |
 | `script/trim-litellm-pricing.py` | Regenerates `Resources/pricing.json` from LiteLLM's price list |
 | `THIRD_PARTY_NOTICES.md` | Licences for the LiteLLM snapshot and ported OpenUsage rules |
