@@ -179,39 +179,20 @@ private struct EqualRowGrid: Layout {
     }
 }
 
-/// TokenTracker's `status-row`: 20pt padding, 16pt radius, a hairline that
-/// strengthens on hover, the 16pt logo and the name at 16/500, and the
-/// state under it as an 8pt dot and a label.
-private struct ServiceCard: View {
-    var status: ServiceStatus
-    var isLoading: Bool
-    /// Set for a page the user added; built-ins cannot be removed.
-    var remove: (() -> Void)? = nil
-    @State private var hovering = false
-    @State private var confirmingRemove = false
-    /// Cards start folded: the header and health line show, and a bottom
-    /// ExpandRow opens the summary, components and incidents. @State keeps
-    /// each card's fold through refreshes, since the ForEach keys it by id.
-    @State private var expanded = false
-    @Environment(\.openURL) private var openURL
-
-    private static var nameFont: Font { Theme.font(size: 16, weight: .medium) }
-    private static let componentLimit = 5
-    private static let incidentLimit = 3
-
-    /// What the folded row can open. The summary only counts when the card
+private extension ServiceStatus {
+    /// What a card click can open. The summary only counts when the card
     /// would show it (not on an all-clear reading).
-    private var hasDetails: Bool {
-        if let summary = status.report?.summary, status.report?.health != .operational,
+    var hasDetails: Bool {
+        if let summary = report?.summary, report?.health != .operational,
            !summary.isEmpty { return true }
-        guard let report = status.report else { return false }
+        guard let report else { return false }
         return !report.components.isEmpty || !report.incidents.isEmpty
     }
 
-    /// The folded row's note, like "3 incidents · 5 components".
-    private var detailNote: String? {
+    /// The counts line, like "3 incidents · 5 components".
+    var detailNote: String? {
         var parts: [String] = []
-        if let report = status.report {
+        if let report {
             if !report.incidents.isEmpty {
                 parts.append(report.incidents.count == 1 ? "1 incident" : "\(report.incidents.count) incidents")
             }
@@ -219,43 +200,55 @@ private struct ServiceCard: View {
                 parts.append(report.components.count == 1 ? "1 component" : "\(report.components.count) components")
             }
         }
-        if let summary = status.report?.summary, status.report?.health != .operational,
+        if let summary = report?.summary, report?.health != .operational,
            !summary.isEmpty {
             parts.append("summary")
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
+}
+
+/// TokenTracker's `status-row`: 20pt padding, 16pt radius, a hairline that
+/// strengthens on hover, the 16pt logo and the name at 16/500, and the
+/// state under it as an 8pt dot and a label. A card that `hasDetails`
+/// opens them as a sheet on a click the row's buttons don't take, so one
+/// busy page can no longer stretch its grid row.
+private struct ServiceCard: View {
+    var status: ServiceStatus
+    var isLoading: Bool
+    /// Set for a page the user added; built-ins cannot be removed.
+    var remove: (() -> Void)? = nil
+    @State private var hovering = false
+    @State private var confirmingRemove = false
+    @State private var showingDetails = false
+    @Environment(\.openURL) private var openURL
+
+    private static var nameFont: Font { Theme.font(size: 16, weight: .medium) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 12) {
-                header
-                VStack(alignment: .leading, spacing: 4) {
-                    HealthLabel(health: status.report?.health, isLoading: isLoading && status.checkedAt == nil)
-                    if let note = status.service.note {
-                        Text(note).font(Theme.caption).foregroundStyle(Theme.textMuted)
-                    }
-                }
-                if expanded { details }
-                ProblemLine(status: status)
-            }
-            .padding(Theme.cardPadding)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-
-            if hasDetails {
-                ExpandRow(isExpanded: expanded, hidden: 0, collapsedTitle: "Show details",
-                          help: (expand: "Show the summary, affected components and incidents",
-                                 collapse: "Show only the health line"),
-                          edge: .cardBottom, note: detailNote) {
-                    withAnimation(.easeOut(duration: Theme.fadeDuration)) { expanded.toggle() }
+        VStack(alignment: .leading, spacing: 12) {
+            header
+            VStack(alignment: .leading, spacing: 4) {
+                HealthLabel(health: status.report?.health, isLoading: isLoading && status.checkedAt == nil)
+                if let note = status.service.note {
+                    Text(note).font(Theme.caption).foregroundStyle(Theme.textMuted)
                 }
             }
+            ProblemLine(status: status)
         }
+        .padding(Theme.cardPadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(hovering ? Theme.cardHover : Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius)
             .strokeBorder(hovering ? Theme.borderStrong : Theme.border, lineWidth: 1))
+        .contentShape(.rect)
         .onHover { hovering = $0 }
+        // A click opens the details sheet; a selection would take it, and
+        // the header's buttons hit-test ahead of the gesture.
+        .textSelection(.disabled)
+        .onTapGesture { if status.hasDetails { showingDetails = true } }
         .animation(.easeOut(duration: Theme.fadeDuration), value: hovering)
+        .quiverSheet(isPresented: $showingDetails) { ServiceDetailsSheet(status: status) }
     }
 
     private var header: some View {
@@ -278,42 +271,76 @@ private struct ServiceCard: View {
             }
         }
     }
+}
 
-    /// The parts behind the fold: an outage summary, components and
-    /// incidents. Both lists cap short and link out for the rest.
+/// What a card click opens when it `hasDetails`: the provider's summary,
+/// the affected components and the open incidents. They list in full,
+/// since the feed only reports what is not operational, under a capped
+/// scroll.
+private struct ServiceDetailsSheet: View {
+    var status: ServiceStatus
+    @Environment(\.dismissSheet) private var dismiss
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                if let logo = status.service.logoID { HarnessIcon(harness: logo, size: 20) }
+                Text(status.service.name).font(Theme.sectionTitle).tracking(-0.5)
+                Spacer(minLength: 8)
+                HealthLabel(health: status.report?.health)
+            }
+            if let note = status.detailNote {
+                Text(note).font(Theme.caption).foregroundStyle(Theme.textMuted)
+            }
+            if let note = status.service.note {
+                Text(note).font(Theme.caption).foregroundStyle(Theme.textMuted)
+            }
+            ProblemLine(status: status)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) { details }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 420)
+            HStack {
+                Button("Open status page", systemImage: "arrow.up.right.square") {
+                    openURL(status.service.pageURL)
+                }
+                .secondaryButton()
+                Spacer()
+                Button("Done") { dismiss() }
+                    .secondaryButton()
+                    .keyboardShortcut(.cancelAction)
+            }
+        }
+        .sheetScaffold(width: Theme.sheetWidth)
+    }
+
     @ViewBuilder private var details: some View {
         if let summary = status.report?.summary, status.report?.health != .operational {
-            Text(summary).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            Text(summary).font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
         }
 
         if let report = status.report, !report.components.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(report.components.prefix(Self.componentLimit), id: \.self) { component in
-                    ComponentRow(component: component)
-                }
-                if report.components.count > Self.componentLimit {
-                    Text("And \(report.components.count - Self.componentLimit) more")
-                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Affected components").font(Theme.caption).foregroundStyle(Theme.textMuted)
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(report.components, id: \.self) { component in
+                        ComponentRow(component: component)
+                    }
                 }
             }
         }
 
         if let report = status.report, !report.incidents.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
-                ForEach(report.incidents.prefix(Self.incidentLimit)) { incident in
-                    IncidentView(incident: incident)
-                }
-                if report.incidents.count > Self.incidentLimit {
-                    Button("\(report.incidents.count - Self.incidentLimit) more on the status page") {
-                        openURL(status.service.pageURL)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Incidents").font(Theme.caption).foregroundStyle(Theme.textMuted)
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(report.incidents) { incident in
+                        IncidentView(incident: incident)
                     }
-                    .plainButton(cornerRadius: Theme.smallRadius)
-                    .font(Theme.caption)
-                    .foregroundStyle(Theme.textSecondary)
-                    .underline()
                 }
             }
-            .padding(.top, 2)
         }
     }
 }
