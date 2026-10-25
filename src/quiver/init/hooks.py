@@ -25,6 +25,7 @@ then ``HOOK_FALLBACK`` for a harness the registry does not describe.
 from __future__ import annotations
 
 import filecmp
+import shutil
 from pathlib import Path
 
 from quiver import paths as _paths
@@ -41,21 +42,70 @@ from quiver.init.layout import (
 )
 
 # Where a harness keeps hook scripts, relative to home, for a harness whose
-# harness.json entry records no capabilities.hooks. Both are the directory
-# the harness's own hook documentation writes scripts into. Keyed by registry
-# name (droid, not its ~/.factory home), like the plugin fallback.
-HOOK_FALLBACK: dict[str, Path] = {
-    "claude": Path(".claude/hooks"),
-    "cline": Path(".cline/hooks"),
-    "droid": Path(".factory/hooks"),
-}
+# harness.json entry records no capabilities.hooks. Keyed by registry name
+# (droid, not its ~/.factory home), like the plugin fallback. The values
+# come from the contract registry in hooks/contracts.py: cline's real hook
+# dir is ~/Documents/Cline/Hooks (extensionless executables named by
+# event), never ~/.cline/hooks.
+def _fallback_roots() -> dict[str, Path]:
+    from quiver.hooks.contracts import CONTRACTS
+
+    return {
+        name: contract.root
+        for name, contract in CONTRACTS.items()
+        if contract.root is not None
+    }
+
+
+# Lazily filled by __getattr__ — see below. Annotated here so readers and
+# type checkers still see the module attribute.
+HOOK_FALLBACK: dict[str, Path]
+
+
+def __getattr__(name: str):
+    # HOOK_FALLBACK resolves on first use, never at import time: computing
+    # it imports hooks.contracts, whose package __init__ pulls in
+    # hooks.commands, which imports this very module back. An eager table
+    # deadlocks that cycle whenever init.hooks loads first
+    # (init.commands -> init.hooks -> hooks.contracts -> hooks.commands ->
+    # init.hooks); first use always lands after both modules finished.
+    if name == "HOOK_FALLBACK":
+        global HOOK_FALLBACK
+        HOOK_FALLBACK = _fallback_roots()
+        return HOOK_FALLBACK
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # Entries in a harness hooks directory that are never hooks.
 _SKIP_NAMES = frozenset({"__pycache__", "node_modules"})
 
+# Hub subdirectory names that are machinery, not harnesses: shared/ holds
+# the cross-harness scripts the deploy step reads, _runtime/ the shim it
+# generates into. hooks/shared.py owns both contents.
+RESERVED_HUB_DIRS = frozenset({"shared", "_runtime"})
+
+# A ".disabled" file inside a harness's hub dir lists script basenames
+# `swe hooks disable` switched off: the plan reports them ignored so a
+# later init never relinks one. Dotfile, so hook_sources skips it anyway.
+DISABLED_BASENAME = ".disabled"
+DISABLED_DETAIL = "disabled via swe hooks disable"
+
 NO_ROOT_DETAIL = "no hooks root, set capabilities.hooks.root in harness.json"
 UNSUPPORTED_DETAIL = "harness.json says this harness has no hooks"
 INSIDE_QUIVER_DETAIL = "hooks root is inside ~/.quiver, would link a script to itself"
+
+
+def _reserved_dirs() -> frozenset[str]:
+    return RESERVED_HUB_DIRS
+
+
+def _disabled_hook_names(harness_dir: Path) -> set[str]:
+    """Basenames in ``harness_dir/.disabled``; an absent file means none."""
+    try:
+        text = (harness_dir / DISABLED_BASENAME).read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    return {line.strip() for line in text.splitlines()
+            if line.strip() and not line.startswith("#")}
 
 
 def _expand_root(root: str, home: Path) -> Path:
@@ -206,7 +256,8 @@ def plan_hooks(
     statuses: list[LinkStatus] = []
     for harness_dir in sorted(root_dir.iterdir()):
         name = harness_dir.name
-        if not harness_dir.is_dir() or name.startswith(".") or name in _SKIP_NAMES:
+        if not harness_dir.is_dir() or name.startswith(".") \
+                or name in _SKIP_NAMES or name in _reserved_dirs():
             continue
         root, why = hook_root(registry, name, home)
         # A dir that exists proves the harness; so does its binary on PATH.
@@ -214,7 +265,18 @@ def plan_hooks(
         # no config dirs — as "harness not installed" and skipped it.
         installed = root is not None and (
             _installed(root, home) or command_on_path(name, registry))
+        disabled = _disabled_hook_names(harness_dir)
         for source in hook_sources(harness_dir):
+            if source.name in disabled:
+                # Switched off by `swe hooks disable`: keep the file, keep
+                # any declaration, never relink. enable clears the marker.
+                # path carries the destination (when the harness has a
+                # root) so apply_hook_status can unlink a leftover link;
+                # a rootless harness has no destination to point at.
+                dest = root / source.name if root is not None else source
+                statuses.append(LinkStatus(
+                    name, dest, "ignored", DISABLED_DETAIL, source))
+                continue
             if root is None:
                 # Nowhere to put it: report the source so the user can see
                 # which scripts are waiting on a harness.json entry.
@@ -235,3 +297,70 @@ def plan_hooks(
                 archived_override(status, archived)
                 statuses.append(status)
     return statuses
+
+
+def _safe_to_replace(path: Path, home: Path) -> bool:
+    """Same guard as init/commands._apply: inside $HOME, outside ~/.quiver.
+
+    Duplicated here because init/commands imports this module — the check
+    itself is two lines and moving it down would churn every caller.
+    """
+    try:
+        resolved = path.resolve()
+        return (
+            resolved.is_relative_to(home.resolve())
+            and not resolved.is_relative_to(
+                _paths.quiver_dir_for(home).resolve())
+        )
+    except OSError:
+        return False
+
+
+def apply_hook_status(status: LinkStatus, home: Path, force: bool = False) -> str:
+    """Carry out one plan_hooks status; returns a result word.
+
+    The hooks-scoped twin of ``_apply`` in init/commands.py, kept here so
+    ``swe hooks sync`` / ``enable`` / ``disable`` / ``delete`` can act on a
+    single name without re-running the whole init report. Same contract:
+    linked/skipped/ignored pass through, keep and conflict need force,
+    real content that is safe to replace is backed up before the link
+    goes in, and the symlink's target is ``status.source``. The one
+    addition: a disabled script's link is removed, since that is what
+    disabling means — the marker alone never touches the destination.
+    """
+    if status.state in ("linked", "skipped"):
+        return status.state
+    if status.state == "ignored":
+        if status.detail == DISABLED_DETAIL and status.path.is_symlink():
+            try:
+                if status.source is not None and \
+                        status.path.resolve() == status.source.resolve():
+                    status.path.unlink()
+                    return "unlinked"
+            except OSError:
+                pass
+        return status.state
+    if status.state == "keep" and not force:
+        return "protected"
+    if status.state == "conflict" and not force:
+        return "blocked"
+
+    path = status.path
+    if status.state in ("conflict", "absorb", "keep") \
+            and not path.is_symlink():
+        if path.exists():
+            if not _safe_to_replace(path, home):
+                return "blocked"
+            _paths.backup_tree(path, home)
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+    elif path.is_symlink():
+        path.unlink()
+
+    if status.source is None:
+        return "blocked"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.symlink_to(status.source)
+    return "linked"

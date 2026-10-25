@@ -425,6 +425,22 @@ def run_init(home: Path, *, check_only: bool = False, force: bool = False,
         s for s in instructions
         if not (s.state == "skipped" and registry_name(s.label) not in registered)
     ]
+    # The shared tier deploys its wrappers into the hub before planning,
+    # so this same run links the _generated dirs it just wrote. Check
+    # mode only counts what a real run would write.
+    from quiver.hooks import shared as _shared_hooks
+
+    if check_only:
+        pending = _shared_hooks.pending_deploy(home, registry)
+        if pending:
+            scaffold.append(
+                f"{pending} generated hook file(s) would be written")
+    else:
+        written, pruned = _shared_hooks.apply_deploy(home, registry)
+        if written or pruned:
+            scaffold.append(
+                f"shared hooks: {len(written)} file(s) generated, "
+                f"{len(pruned)} pruned")
     hooks = plan_hooks(home, patterns)
 
     if check_only:

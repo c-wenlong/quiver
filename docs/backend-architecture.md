@@ -46,7 +46,7 @@ An example per layer, from the harness domain:
 | `providers/` | `commands.py`, `cli.py` | `keys.py`, `registry.py`, `defaults.py`, `discover.py` | (no `--json` yet) |
 | `find/` | `commands.py`, `browser.py` | `roots.py`, `plugins.py`, `mcps.py`, `plugin_drift.py`, `entries.py`, `tree.py`, `summary.py`, `highlight.py` | `models.py`: `DriftRow` |
 | `init/` | `commands.py` | `layout.py`, `manage.py`, `migrate.py`, `hooks.py` | `models.py`: `LinkRow` |
-| `hooks/` | `commands.py` | `inventory.py`, `settings.py`, `create.py` | `models.py`: `Declaration`, `HookRow`, `HookDrift` |
+| `hooks/` | `commands.py` | `inventory.py`, `settings.py`, `create.py`, `contracts.py` (per-harness hook contracts + registry overrides), `shared.py` (shared-hook deploy: events headers, generated wrappers, `.disabled`, pruning), `shim_runtime.py` (stdlib-only payload translator copied to `~/.quiver/hooks/_runtime/`) | `models.py`: `Declaration`, `HookRow`, `HookDrift` |
 | `reports/` | `commands.py` | `pipeline.py`, `transcripts.py`, `triage.py`, `batching.py`, `runners.py`, `work.py`, `followups.py`, `prompts.py`, `store.py` | `models.py`: report records |
 | `setup/` | `commands.py`, `wizard.py` | (wizard is the whole domain; allowed to print) | `models.py`: `HarnessPreview`, `McpPreview`, `SkillsPreview` |
 

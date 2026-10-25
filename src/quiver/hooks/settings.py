@@ -2,15 +2,22 @@
 
 A script under ``~/.quiver/hooks/<harness>/`` does nothing until the
 harness's own settings file names it: ``~/.claude/settings.json`` carries a
-``hooks`` map, ``~/.codex/hooks.json`` is that same map at its top level.
-Both share one shape — ``{Event: [{matcher?, hooks: [{type, command,
-timeout?}]}]}`` — so one reader covers them.
+``hooks`` map, ``~/.codex/hooks.json`` is that same map at its top level,
+``~/.cursor/hooks.json`` spells the same idea flat. Two shapes cover them,
+keyed by the contract's ``schema`` in ``contracts.py``:
+
+  grouped — ``{Event: [{matcher?, hooks: [{type, command, timeout?}]}]}``
+  flat    — ``{Event: [{command, timeout?, matcher?}]}`` (cursor)
+
+Muse indirections once more: its settings file names no hooks at all, it
+points at a managed file through ``managed_hooks_path`` — the contract's
+``managed_hooks_key`` says which field to follow.
 
 Discovery mirrors ``hook_root``'s rule: ``capabilities.hooks.settings`` in
 harness.json wins first (one path or a list, each ``~/``-relative or
-absolute); without it, ``SETTINGS_FALLBACK`` names the files harnesses are
-known to use, and the basenames are probed beside the hooks root for a
-harness that declared only ``capabilities.hooks.root``.
+absolute); without it, ``SETTINGS_FALLBACK`` holds the files the contract
+registry records, and the basenames are probed beside the hooks root for
+a harness that declared only ``capabilities.hooks.root``.
 
 Everything here tolerates: a missing file, unparseable JSON, and schema
 drift (``hooks`` that is not a dict, groups that are not lists, entries
@@ -27,14 +34,16 @@ import shlex
 from pathlib import Path
 
 from quiver.init.hooks import hook_root
+from quiver.hooks.contracts import CONTRACTS, contract_for
 from quiver.hooks.models import Declaration
 
 # The files known harnesses declare hooks in, home-relative, keyed by
-# registry name like every other fallback table. Claude merges
-# settings.local.json over settings.json, so both count.
+# registry name like every other fallback table — the contract registry's
+# ``settings`` rows.
 SETTINGS_FALLBACK: dict[str, tuple[Path, ...]] = {
-    "claude": (Path(".claude/settings.json"), Path(".claude/settings.local.json")),
-    "codex": (Path(".codex/hooks.json"),),
+    name: contract.settings
+    for name, contract in CONTRACTS.items()
+    if contract.settings
 }
 
 # Probed beside the hooks root for harnesses the table above does not name:
@@ -127,15 +136,11 @@ def _read_json(path: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def declarations(path: Path, harness: str) -> list[Declaration]:
-    """The hook commands one settings file declares, shape-tolerant.
-
-    Anything that does not match the ``{Event: [group]}`` shape is skipped
-    entry by entry rather than failing the file: a harness writing a
-    different schema under ``hooks`` is drift to tolerate, not an error.
-    """
-    data = _read_json(path)
-    hooks_map = (data or {}).get("hooks")
+def _grouped_declarations(
+    data: dict, path: Path, harness: str
+) -> list[Declaration]:
+    """``{Event: [{matcher?, hooks: [{type, command, timeout?}]}]}``."""
+    hooks_map = data.get("hooks")
     if not isinstance(hooks_map, dict):
         return []
     out: list[Declaration] = []
@@ -168,14 +173,97 @@ def declarations(path: Path, harness: str) -> list[Declaration]:
     return out
 
 
+def _flat_declarations(
+    data: dict, path: Path, harness: str
+) -> list[Declaration]:
+    """Cursor's ``{version: 1, hooks: {event: [{command, ...}]}}``.
+
+    The list items are the hooks themselves — no matcher-group wrapper —
+    with ``matcher`` and ``timeout`` on the entry directly.
+    """
+    hooks_map = data.get("hooks")
+    if not isinstance(hooks_map, dict):
+        return []
+    out: list[Declaration] = []
+    for event, entries in hooks_map.items():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            command = entry.get("command")
+            if not isinstance(command, str) or not command.strip():
+                continue
+            matcher = entry.get("matcher")
+            timeout = entry.get("timeout")
+            out.append(Declaration(
+                harness=harness,
+                event=str(event),
+                matcher=matcher if isinstance(matcher, str) else "",
+                timeout=timeout if isinstance(timeout, (int, float)) else None,
+                command=command,
+                settings=path,
+            ))
+    return out
+
+
+def declarations(
+    path: Path,
+    harness: str,
+    registry: dict | None = None,
+    home: Path | None = None,
+) -> list[Declaration]:
+    """The hook commands one settings file declares, shape-tolerant.
+
+    The harness's contract picks the parser. Anything that does not match
+    the schema's shape is skipped entry by entry rather than failing the
+    file: a harness writing a different schema under ``hooks`` is drift
+    to tolerate, not an error.
+    """
+    home = home or Path.home()
+    data = _read_json(path)
+    if data is None:
+        return []
+    contract = contract_for(registry or {}, harness, home)
+    if contract.managed_hooks_key:
+        # muse: the settings file only points at the managed hooks file.
+        target = data.get(contract.managed_hooks_key)
+        if not isinstance(target, str) or not target.strip():
+            return []
+        managed = _expand_declared(target.strip(), home)
+        managed_data = _read_json(managed)
+        if managed_data is None:
+            return []
+        data, path = managed_data, managed
+    if contract.schema == "flat":
+        return _flat_declarations(data, path, harness)
+    return _grouped_declarations(data, path, harness)
+
+
 def harness_declarations(
     registry: dict, name: str, home: Path
 ) -> list[Declaration]:
     """Every declaration across all of ``name``'s settings files."""
     out: list[Declaration] = []
     for path in settings_files(registry, name, home):
-        out.extend(declarations(path, name))
+        out.extend(declarations(path, name, registry, home))
     return out
+
+
+def declaration_managed_elsewhere(path: Path) -> bool:
+    """Whether ``check`` should call this file managed, not editable.
+
+    A declaration file that is a symlink (nix store, dotfiles repo) or
+    simply not writable is owned by whatever manages it — reporting
+    "edit this file" sends the user at a file they cannot change, so the
+    check note says "declaration managed elsewhere" instead.
+    """
+    if path.is_symlink():
+        return True
+    try:
+        return path.is_file() and not os.access(path, os.W_OK)
+    except OSError:
+        return False
 
 
 def split_command(command: str) -> list[str]:

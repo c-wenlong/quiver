@@ -31,21 +31,34 @@ class Declaration:
 
 @dataclass
 class HookRow:
-    """One script under ~/.quiver/hooks/<harness>/, its link state, its uses."""
+    """One hook in the inventory: link state, uses, and which tier owns it.
+
+    ``tier`` is "harness" for a hub script linked per harness, "shared"
+    for a ``hooks/shared/`` script deployed through a generated wrapper,
+    and "foreign" for a script in a hooks root (or named by a settings
+    command) that no ``~/.quiver`` source claims. ``enabled`` is False
+    only for a quiver-owned script with a ``.disabled`` marker — foreign
+    rows are not ours to switch, so they always read True.
+    """
 
     script: str
     harness: str
-    source: Path            # the hub copy
+    source: Path            # the hub copy (shared/foreign: the real file)
     dest: Path              # where it should land (== source when no root)
     state: str
     detail: str
     declared: list[Declaration] = field(default_factory=list)
+    tier: str = "harness"   # shared | harness | foreign
+    enabled: bool = True
+    # The normalized event names this row's harness can fire (a shared
+    # row lists the events the script declared instead).
+    events_supported: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
 class HookDrift:
     """One way hooks on this machine disagree with what they declare."""
 
-    kind: str               # declared-missing | undeclared | unlinked
+    kind: str               # declared-missing | undeclared | unlinked | managed
     harness: str
     message: str

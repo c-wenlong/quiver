@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Shared hooks across harnesses, plus hook CRUD.** The `hooks` domain
+  gains a third tier next to per-harness scripts and foreign (unclaimed)
+  destination files. A script under `~/.quiver/hooks/shared/` declares
+  its events in a `# events: [PreToolUse, Stop]` header; `swe init` and
+  the new `swe hooks sync` generate a thin wrapper per installed
+  shim-able harness under `hooks/<harness>/_generated/` (linked whole
+  into the harness's hooks root) plus one stdlib-only runtime at
+  `hooks/_runtime/shim.py` that normalizes each harness's stdin payload
+  into a Claude-style shape and maps the script's answer back — flat
+  contracts (cursor) get `{"permission": ...}`/`{"continue": ...}`,
+  must-print contracts (gemini, qwen) always get valid JSON, and every
+  failure path fails open. Contracts now live in a registry
+  (`hooks/contracts.py`): root, settings file, schema, event names,
+  event map and JSON requirements per harness, overridable through
+  `capabilities.hooks` in `harness.json` (including a `contract` key
+  that adopts another row's schema for harnesses quiver has never met).
+  `swe hooks list` shows a TIER column and the rows carry `enabled`,
+  `events_supported` and the new stable `--json` shape;
+  `swe hooks new shared <name>` scaffolds the normalized template;
+  `swe hooks disable|enable` toggle a `.disabled` marker that unlinks
+  and relinks; `swe hooks delete` removes hub files (real foreign files
+  only with `--foreign`), always behind `--yes` or a prompt, and never
+  touches declaration stanzas. Cline's hook dir is corrected to
+  `~/Documents/Cline/Hooks`, and `shared`/`_runtime` are reserved hub
+  dirs rather than harnesses.
+
 - **Mac app: Doctor installs an off-PATH harness in the app.** An
   off-PATH finding's Run now runs `swe install <name> --via=<via>` as a
   subprocess, with "Installing… 0:14" while it works, instead of Run in

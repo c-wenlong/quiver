@@ -21,6 +21,7 @@ import tempfile
 from pathlib import Path
 
 from quiver import paths as _paths
+from quiver.hooks.contracts import HookContract
 from quiver.init.hooks import hook_root
 
 # File and harness names travel into paths and a JSON command string;
@@ -64,6 +65,56 @@ if __name__ == "__main__":
         sys.exit(0)
 '''
 
+# @NAME@ substitutes by str.replace — the template's own JSON braces
+# ({"decision": "block"} below) rule .format() out.
+_SHARED_TEMPLATE = '''\
+#!/usr/bin/env python3
+# events: [PreToolUse]
+"""@NAME@: describe what this shared hook gates in one line.
+
+The events header above declares the normalized (Claude-style, PascalCase)
+event names it wants. `swe hooks sync` deploys a generated wrapper into
+every installed shim-able harness covering at least one of them; quiver's
+shim translates the harness's payload into the normalized shape below.
+
+stdin is one JSON object: event, harness, session_id, transcript_path,
+cwd, tool_name, tool_input, tool_output, prompt, stop_hook_active,
+session_source, agent_id, agent_type, agent_transcript_path,
+last_assistant_message, error, permission_mode, tool_use_id, timestamp,
+and raw (the harness's own payload, untouched).
+
+Exit 0 passes. A JSON object on stdout answers in Claude's shape —
+hookSpecificOutput.permissionDecision allow|deny|ask, decision
+approve|block, reason, continue, stopReason — and the shim maps it back
+per contract. Exit 2 + stderr blocks where the harness supports it. Any
+internal error exits 0 (fail open): a crashing hook is worse than one
+bad call through.
+"""
+import json
+import sys
+
+
+def main():
+    try:
+        payload = json.load(sys.stdin)
+    except Exception:
+        sys.exit(0)
+
+    # payload["event"] is the normalized name; payload["raw"] keeps the
+    # harness's native fields. Inspect here; to block, say why on stderr
+    # and exit 2, or print {"decision": "block", "reason": "..."}.
+    _ = payload
+
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        sys.exit(0)
+'''
+
 
 def validate_args(harness: str, name: str) -> str | None:
     """None when both names are safe, else the reason."""
@@ -74,6 +125,31 @@ def validate_args(harness: str, name: str) -> str | None:
         return (f"{name!r} isn't a hook name: letters, digits, '_' and '-', "
                 "letter or digit first")
     return None
+
+
+def _publish(target: Path, text: str, name: str) -> Path:
+    """Write ``text`` at ``target`` executable, atomically, no clobber.
+
+    link() fails when target exists, so two concurrent creates cannot
+    overwrite each other (os.replace would silently replace the first).
+    """
+    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=f".{name}.py.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(tmp, 0o755)
+        try:
+            os.link(tmp, target)
+        except FileExistsError as exc:
+            raise ValueError(f"{name} already exists at {target}") from exc
+        os.unlink(tmp)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return target
 
 
 def create(harness: str, name: str,
@@ -94,27 +170,30 @@ def create(harness: str, name: str,
     target = harness_dir / f"{name}.py"
     if target.exists() or target.is_symlink():
         raise ValueError(f"{name} already exists at {target}")
+    return _publish(target, _TEMPLATE.format(name=name), name)
 
-    fd, tmp = tempfile.mkstemp(dir=harness_dir, prefix=f".{name}.py.")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(_TEMPLATE.format(name=name))
-        os.chmod(tmp, 0o755)
-        # Publish without clobbering: link() fails when target exists, so
-        # two concurrent `new`s cannot overwrite each other (os.replace
-        # would silently replace the first file).
-        try:
-            os.link(tmp, target)
-        except FileExistsError as exc:
-            raise ValueError(f"{name} already exists at {target}") from exc
-        os.unlink(tmp)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-    return target
+
+def create_shared(name: str, home: Path | None = None) -> Path:
+    """Write ``~/.quiver/hooks/shared/<name>.py`` — the normalized contract.
+
+    The template carries the ``events:`` header the deploy step reads and
+    the normalized payload spec as its docstring. Same rules as
+    ``create``: executable, atomic, refuses an existing file.
+    """
+    if problem := validate_args("shared", name):
+        raise ValueError(problem)
+    home = home or Path.home()
+    if not _paths.quiver_dir_for(home).is_dir():
+        raise ValueError(
+            f"{_paths.quiver_dir_for(home)} doesn't exist — run swe init first")
+    from quiver.hooks import shared as _shared
+
+    directory = _shared.shared_dir(home)
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / f"{name}.py"
+    if target.exists() or target.is_symlink():
+        raise ValueError(f"{name} already exists at {target}")
+    return _publish(target, _SHARED_TEMPLATE.replace("@NAME@", name), name)
 
 
 def _command_path(path: Path, home: Path) -> str:
@@ -154,20 +233,71 @@ def command_for(harness: str, script: str,
         "to link it in"
 
 
-def settings_stanza(command: str) -> str:
-    """The exact ``hooks`` block to paste for a PreToolUse declaration."""
-    body = {
-        "hooks": {
-            "PreToolUse": [
-                {
-                    "matcher": "*",
-                    "hooks": [
-                        {"type": "command", "command": command, "timeout": 10}
-                    ],
-                }
-            ]
+def shared_command_for(harness: str, script: str,
+                       registry: dict | None = None,
+                       home: Path | None = None) -> str | None:
+    """The command a settings file should run for a shared hook's wrapper.
+
+    ``swe hooks sync`` generates the wrapper at
+    ``<hooks root>/_generated/<script>`` — that path is what a harness's
+    settings file names. None when the harness has no hooks root.
+    """
+    from quiver.hooks import shared as _shared
+
+    home = home or Path.home()
+    root, _why = hook_root(registry or {}, harness, home)
+    if root is None:
+        return None
+    return _command_path(
+        root / _shared.GENERATED_DIRNAME / script, home)
+
+
+def settings_stanza(command: str,
+                    contract: HookContract | None = None) -> str:
+    """The ``hooks`` block to paste, in the contract's own schema.
+
+    No contract means Claude's grouped shape (the ``swe hooks new``
+    default). A flat contract (cursor's archetype) gets
+    ``{version, hooks: {event: [{command}]}}`` instead; the event is the
+    contract's native ``PreToolUse`` — gemini's ``BeforeTool`` — and the
+    timeout obeys ``timeout_unit`` (gemini counts milliseconds).
+    """
+    event = "PreToolUse"
+    timeout = 10
+    if contract is not None:
+        for native, normalized in zip(
+                contract.events, contract.normalized_events()):
+            if normalized == "PreToolUse":
+                event = native
+                break
+        else:
+            if contract.events:
+                event = contract.events[0]
+        if contract.timeout_unit == "ms":
+            timeout = 10000
+    if contract is not None and contract.schema == "flat":
+        body = {
+            "version": 1,
+            "hooks": {
+                event: [
+                    {"command": command, "timeout": timeout}
+                ]
+            },
         }
-    }
+    else:
+        body = {
+            "hooks": {
+                event: [
+                    {
+                        "matcher": "*",
+                        "hooks": [
+                            {"type": "command", "command": command,
+                             "timeout": timeout}
+                        ],
+                    }
+                ]
+            }
+        }
     return json.dumps(body, indent=2)
 
 
