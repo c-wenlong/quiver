@@ -1,6 +1,8 @@
 /* MCP servers: a port of the Mac app's McpServersPage. Every server the
  * hub machine's harnesses configure, as a server × harness grid split into
- * Local (run from a folder in ~/.quiver/mcp/servers) and Remote, with the
+ * Local (launched with a command on the hub; a folder in
+ * ~/.quiver/mcp/servers it runs from shows as a checkout tag) and Remote
+ * (reached at a URL), with the
  * definitions that disagree lettered. A server's sheet syncs it, with a
  * Preview first, through POST /v1/app/mcp/preview and /sync, removes it
  * through /remove, and sets its ${NAME} values through /secret_set (shown
@@ -125,15 +127,27 @@ function mcpFiltered(d, filter, compared) {
   return d.servers;
 }
 
-/* McpServerRepo.grouped: a server is Local when a folder in the servers
- * folder runs it, Remote otherwise; folders no server uses join Local as
- * their own rows. Local sorts by name, Remote keeps swe's order. */
+/* Reached at a URL (http, sse), not launched with a command on the hub. */
+const mcpIsRemote = (s) => s.transport === "http" || s.transport === "sse";
+
+/* "Local: runs on box": the machine whose harnesses launch a command
+ * server, which for the web app is the hub. */
+const mcpLocalTitle = () => `Local: runs on ${(mcpPage.data && mcpPage.data.machine) || "the hub"}`;
+
+/* "Local · stdio", "Remote · http": a server's type, for the sheet. */
+const mcpTypeLabel = (s) => `${mcpIsRemote(s) ? "Remote" : "Local"} · ${s.transport}`;
+
+/* McpServerRepo.grouped: Local holds every server a harness launches with
+ * a command, Remote the ones at a URL. A Local server run from a folder in
+ * the servers folder carries it (the row's checkout tag); folders no
+ * server uses join Local as their own rows. Local sorts by name, Remote
+ * keeps swe's order. */
 function mcpGrouped(servers, folders) {
   const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: "base" });
   const local = [], remote = [];
   for (const s of servers) {
     const backing = folders.filter((f) => f.used_by.includes(s.name)).sort((a, b) => byName(a.name, b.name));
-    (backing.length ? local : remote).push({ server: s, folders: backing, name: s.name });
+    (mcpIsRemote(s) ? remote : local).push({ server: s, folders: backing, name: s.name });
   }
   for (const f of folders) if (!f.used_by.length) local.push({ folder: f, name: f.name });
   local.sort((a, b) => byName(a.name, b.name));
@@ -271,12 +285,12 @@ function mcpChips(harnesses) {
 }
 
 function mcpGrid(harnesses, grouped, showHealth, hubKnown) {
-  const sections = [["Local", grouped.local], ["Remote", grouped.remote]].filter(([, rows]) => rows.length);
+  const sections = [["local", mcpLocalTitle(), grouped.local], ["remote", "Remote", grouped.remote]].filter(([, , rows]) => rows.length);
   const span = harnesses.length + 1;
   const head = `<thead><tr><th class="mcp-name-col">Server</th>${harnesses.map((h) =>
     `<th class="mcp-col">${mcpMarkHtml(h)}</th>`).join("")}</tr></thead>`;
-  const body = sections.map(([title, rows]) => {
-    const open = mcpPage.opened.has(title);
+  const body = sections.map(([key, title, rows]) => {
+    const open = mcpPage.opened.has(key);
     const shown = open || rows.length <= MCP_FOLD ? rows : rows.slice(0, MCP_FOLD);
     const hidden = Math.max(0, rows.length - MCP_FOLD);
     let html = `<tr class="mcp-section"><td colspan="${span}">${esc(title)} · ${rows.length}</td></tr>`;
@@ -284,8 +298,8 @@ function mcpGrid(harnesses, grouped, showHealth, hubKnown) {
       ? mcpServerRow(row.server, row.folders, harnesses, showHealth)
       : mcpFolderRow(row.folder, harnesses, hubKnown))).join("");
     if (hidden) {
-      html += `<tr class="mcp-expand-row"><td colspan="${span}"><button class="mcp-expand" data-mcp-fold="${esc(title)}"
-        title="${esc(open ? `Show only the first ${MCP_FOLD}` : `Show every ${title.toLowerCase()} row`)}">${mcpSvg(open ? "up" : "down")}<span>${
+      html += `<tr class="mcp-expand-row"><td colspan="${span}"><button class="mcp-expand" data-mcp-fold="${key}"
+        title="${esc(open ? `Show only the first ${MCP_FOLD}` : `Show every ${key} row`)}">${mcpSvg(open ? "up" : "down")}<span>${
         open ? "Show less" : hidden === 1 ? "Show 1 more" : `Show ${hidden} more`}</span></button></td></tr>`;
     }
     return html;
@@ -315,6 +329,7 @@ function mcpServerRow(s, folders, harnesses, showHealth) {
     ? `<span class="mcp-warn" title="${esc(`Needs a value for ${s.secrets_missing.join(", ")}`)}">${mcpSvg("warn")}</span>` : "";
   let secondary = `<span>${esc(s.transport)}</span>`;
   if (folders.length) {
+    secondary += `<span>·</span><span class="badge mcp-checkout" title="Runs from a folder in your MCP servers folder">checkout</span>`;
     secondary += `<span>·</span><span class="mono" title="${esc(folders.map((f) => f.path).join("\n"))}">${esc(folders.map((f) => f.name).join(", "))}</span>`;
     if (folders.length === 1) secondary += `<span>·</span>${mcpGitPieces(folders[0].git)}`;
   }
@@ -886,7 +901,7 @@ function mcpOpenSheet(s) {
     </div>`;
 
   sheet.innerHTML = `<form method="dialog" class="sheet-body">
-    <div class="sheet-title"><span class="mcp-sheet-name">${esc(s.name)}</span><span class="badge">${esc(s.transport)}</span>${health}</div>
+    <div class="sheet-title"><span class="mcp-sheet-name">${esc(s.name)}</span><span class="badge">${esc(mcpTypeLabel(s))}</span>${health}</div>
     ${s.summary ? `<pre class="command mcp-summary">${esc(s.summary)}</pre>` : ""}
     ${groups.length > 1 ? `<p class="caption">Command, URL and key names are definition A's.</p>` : ""}
     ${s.env_keys.length || s.header_keys.length ? `<div class="fields">

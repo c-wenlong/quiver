@@ -177,10 +177,11 @@ private struct ServerGrid: View {
     var editor: CodeEditor?
     var open: (McpServer) -> Void
 
-    /// The groups in display order, skipping empty ones.
+    /// The groups in display order, skipping empty ones. Local names the
+    /// machine whose harnesses launch the server, as the Add sheet does.
     private var sections: [(title: String, rows: [McpServerRepo.Row])] {
         var out: [(String, [McpServerRepo.Row])] = []
-        if !local.isEmpty { out.append(("Local", local)) }
+        if !local.isEmpty { out.append((mcpLocalTitle, local)) }
         if !remote.isEmpty { out.append(("Remote", remote)) }
         return out
     }
@@ -332,13 +333,21 @@ private struct ServerRow: View {
         }
     }
 
-    /// "stdio · linear-mcp · main ↑1 ↓45 · Local changes": the transport,
-    /// the folder name(s) in mono, then the git state when there is one
+    /// "stdio · checkout · linear-mcp · main ↑1 ↓45 · Local changes": the
+    /// transport, a checkout tag and the folder name(s) in mono when it runs
+    /// from the servers folder, then the git state when there is one
     /// folder; several folders leave their git state to the menus.
     @ViewBuilder private var secondary: some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             Text(server.transport)
             if !folders.isEmpty {
+                Text("·")
+                Text("checkout")
+                    .font(Theme.font(size: 10, weight: .medium))
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Theme.subtle, in: .rect(cornerRadius: 4))
+                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Theme.border, lineWidth: 1))
+                    .hoverTip("Runs from a folder in your MCP servers folder")
                 Text("·")
                 Text(folders.map(\.name).joined(separator: ", "))
                     .font(Theme.font(size: 12, design: .monospaced))
@@ -432,7 +441,7 @@ private struct ServerSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 8) {
                 Text(server.name).font(Theme.sectionTitle).tracking(-0.5)
-                Badge(server.transport)
+                Badge("\(server.isRemote ? "Remote" : "Local") · \(server.transport)")
                 if let health = server.health {
                     Circle().fill(healthColor(health)).frame(width: Theme.statusDot, height: Theme.statusDot)
                     Text(server.detail ?? "Healthy").font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -921,4 +930,10 @@ private struct RepoFolderRow: View {
             FolderActions(folders: [folder], editor: editor)
         }
     }
+}
+
+/// The Local group's title: the machine whose harnesses launch a command
+/// server. The Mac app manages this Mac's harnesses.
+var mcpLocalTitle: String {
+    "Local: runs on \(Host.current().localizedName ?? "this Mac")"
 }

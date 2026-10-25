@@ -14,19 +14,22 @@ Its writes are a server's Sync, with its Preview, and its Remove.
   chips that are off are left out of the counts, the conflict letters and
   "Missing from", and are remembered in this browser's `localStorage`
   (`quiver.mcpHiddenHarnesses`).
-- The server × harness grid, in two sections. **Local** is every server
-  whose command or an argument is a path inside a folder in
-  `~/.quiver/mcp/servers`, plus the folders no server uses ("Not in the
-  hub"), sorted by name; each shows the folder name and its git branch,
-  ahead/behind counts and a Local changes badge. **Remote** is everything
-  else in swe's order. A cell is a tick when the compared harnesses agree,
+- The server × harness grid, in two sections by how a server runs.
+  **Local: runs on <hub machine>** is every server a harness launches with
+  a command (stdio, and an `mcp-remote` wrapper), plus the folders in
+  `~/.quiver/mcp/servers` no server uses ("Not in the hub"), sorted by
+  name. A server whose command or an argument is a path inside one of
+  those folders gets a **checkout** tag, the folder name and its git
+  branch, ahead/behind counts and a Local changes badge. **Remote** is
+  every server reached at a URL (http, sse), in swe's order. A cell is a
+  tick when the compared harnesses agree,
   a letter (A, B, …) per distinct definition when they don't, and a dash
   when the harness lacks the server. A section folds after ten rows. A
   warning triangle marks a server whose hub definition has a `${NAME}`
   with no value; a dot shows each server's health once checked.
 - **Add server** in the header adds a server to the hub and the harnesses
   picked (below).
-- Click a row for its sheet: transport, health detail, the command line or
+- Click a row for its sheet: its type ("Local · stdio", "Remote · http"), health detail, the command line or
   URL, env var and header **names**, which harnesses hold each definition,
   where it is missing, **Secrets** (below), and **Sync**.
 - **Secrets** lists every `${NAME}` the hub definition uses, as the Mac
