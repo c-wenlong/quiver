@@ -83,6 +83,10 @@ struct CatalogueRow: View {
         .accessibilityLabel(isDone ? "\(name), \(done ?? "Added")" : "\(actionTitle) \(name)")
         .accessibilityAddTraits(isActionable ? .isButton : [])
         .accessibilityAction(.default) { _ = activate() }
+        // Both lines clamp to one line of width; the tip keeps the full
+        // name and detail readable ("Atlas Cloud Coding Plan",
+        // "HUGGINGFACE_HUB_TOKEN, HF_TOKEN").
+        .help(detail.map { "\(name)\n\($0)" } ?? name)
         .animation(.easeOut(duration: Theme.fadeDuration), value: hovering)
         .onHover { hovering = $0 }
     }
