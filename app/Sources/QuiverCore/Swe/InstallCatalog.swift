@@ -42,11 +42,11 @@ public struct InstallMethod: Decodable, Sendable, Equatable {
 }
 
 /// One row of `swe install --json`: a harness swe can name an installer for.
-/// `registered` (the harness is already in harness.json), `description` and
-/// `uninstall` arrived after the first shape; an older swe leaves them out
-/// and the sheet degrades instead of failing. `uninstall` is how to remove
-/// it, read off where its binary resolves to, and nil when it isn't
-/// installed or a vendor script put it there.
+/// `registered` (the harness is already in harness.json), `description`,
+/// `uninstall`, `app` and `website` arrived after the first shape; an older
+/// swe leaves them out and the sheet degrades instead of failing.
+/// `uninstall` is how to remove it, read off where its binary resolves to,
+/// and nil when it isn't installed or a vendor script put it there.
 public struct InstallableHarness: Decodable, Sendable, Equatable, Identifiable {
     public var id: String { name }
     public let name: String
@@ -54,13 +54,24 @@ public struct InstallableHarness: Decodable, Sendable, Equatable, Identifiable {
     public let installed: Bool
     public let registered: Bool
     public let description: String
+    /// The install evidence: the binary on PATH, or for a GUI-only
+    /// provider its `.app` bundle or Homebrew Caskroom record.
     public let path: String?
+    /// The provider's `.app` bundle when one is on disk. Informational
+    /// for a provider with a CLI — the IDE existing does not mean the
+    /// command is installed — and the install evidence for a GUI-only one.
+    public let app: String?
+    /// The vendor's download page, for providers swe has audited. Lets the
+    /// sheet link out instead of dead-ending when no install method exists,
+    /// and offers the GUI download when the methods only install a CLI.
+    public let website: String?
     public let methods: [InstallMethod]
     public let uninstall: InstallMethod?
 
     public init(name: String, command: String, installed: Bool,
                 registered: Bool = false, description: String = "",
-                path: String? = nil, methods: [InstallMethod] = [],
+                path: String? = nil, app: String? = nil, website: String? = nil,
+                methods: [InstallMethod] = [],
                 uninstall: InstallMethod? = nil) {
         self.name = name
         self.command = command
@@ -68,12 +79,14 @@ public struct InstallableHarness: Decodable, Sendable, Equatable, Identifiable {
         self.registered = registered
         self.description = description
         self.path = path
+        self.app = app
+        self.website = website
         self.methods = methods
         self.uninstall = uninstall
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, command, installed, registered, description, path, methods, uninstall
+        case name, command, installed, registered, description, path, app, website, methods, uninstall
     }
 
     public init(from decoder: Decoder) throws {
@@ -84,6 +97,8 @@ public struct InstallableHarness: Decodable, Sendable, Equatable, Identifiable {
         registered = try container.decodeIfPresent(Bool.self, forKey: .registered) ?? false
         description = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
         path = try container.decodeIfPresent(String.self, forKey: .path)
+        app = try container.decodeIfPresent(String.self, forKey: .app)
+        website = try container.decodeIfPresent(String.self, forKey: .website)
         methods = try container.decodeIfPresent([InstallMethod].self, forKey: .methods) ?? []
         uninstall = try container.decodeIfPresent(InstallMethod.self, forKey: .uninstall)
     }

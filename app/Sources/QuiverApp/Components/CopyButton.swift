@@ -31,7 +31,7 @@ struct CopyButton: View {
             }
             .labelStyle(.iconOnly)
         }
-        .help(copied ? "Copied" : help)
+        .hoverTip(copied ? "Copied" : help)
         .accessibilityLabel(copied ? "Copied" : title)
         .overlay(alignment: .top) {
             if showsPopup {
