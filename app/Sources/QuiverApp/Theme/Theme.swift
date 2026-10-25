@@ -314,6 +314,9 @@ struct Page<Content: View, Actions: View>: View {
     /// A link that ends the subtitle, such as "Data from [Artificial
     /// Analysis]" on the Models page. Rendered inline after the text.
     var subtitleLink: (label: String, url: URL)? = nil
+    /// A chevron before the title, for a page reached from a list (the
+    /// chat, from Sessions). Carries the ⌘[ shortcut.
+    var back: (help: String, action: () -> Void)? = nil
     var maxWidth: CGFloat = 1280
     var scrolls = true
     @ViewBuilder var actions: Actions
@@ -336,7 +339,7 @@ struct Page<Content: View, Actions: View>: View {
 
     private var stack: some View {
         VStack(alignment: .leading, spacing: 24) {
-            PageHeader(title: title, subtitle: subtitle, link: subtitleLink) { actions }
+            PageHeader(title: title, subtitle: subtitle, link: subtitleLink, back: back) { actions }
             if showsContent {
                 content
                     .textSelection(.enabled)
@@ -357,9 +360,10 @@ struct Page<Content: View, Actions: View>: View {
 extension Page where Actions == EmptyView {
     init(title: String, subtitle: String,
          subtitleLink: (label: String, url: URL)? = nil,
+         back: (help: String, action: () -> Void)? = nil,
          maxWidth: CGFloat = 1280, scrolls: Bool = true,
          @ViewBuilder content: () -> Content) {
-        self.init(title: title, subtitle: subtitle, subtitleLink: subtitleLink,
+        self.init(title: title, subtitle: subtitle, subtitleLink: subtitleLink, back: back,
                   maxWidth: maxWidth, scrolls: scrolls,
                   actions: { EmptyView() }, content: content)
     }
@@ -369,25 +373,43 @@ struct PageHeader<Actions: View>: View {
     var title: String
     var subtitle: String
     var link: (label: String, url: URL)? = nil
+    /// A chevron before the title, for a page reached from a list (the
+    /// chat, from Sessions). Carries the ⌘[ shortcut.
+    var back: (help: String, action: () -> Void)? = nil
     @ViewBuilder var actions: Actions
 
     var body: some View {
         HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(title).font(Theme.pageTitle).tracking(-0.6).foregroundStyle(Theme.textPrimary)
-                if !subtitle.isEmpty || link != nil {
-                    // Inline link: the subtitle ends mid-sentence and the
-                    // link's label finishes it.
-                    HStack(spacing: 4) {
-                        Text(subtitle).font(Theme.pageSubtitle).foregroundStyle(Theme.textSecondary)
-                        if let link {
-                            Link(link.label, destination: link.url)
-                                .font(Theme.pageSubtitle).foregroundStyle(Theme.link)
+            HStack(spacing: 12) {
+                if let back {
+                    Button(action: back.action) {
+                        Image(systemName: "chevron.left")
+                            .font(Theme.font(size: 15, weight: .medium))
+                            .foregroundStyle(Theme.textSecondary)
+                            .frame(width: 24, height: 28)
+                            .contentShape(.rect)
+                    }
+                    .plainButton(cornerRadius: Theme.smallRadius)
+                    .keyboardShortcut("[", modifiers: .command)
+                    .help("\(back.help) (⌘[)")
+                    .accessibilityLabel(back.help)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(title).font(Theme.pageTitle).tracking(-0.6).foregroundStyle(Theme.textPrimary)
+                    if !subtitle.isEmpty || link != nil {
+                        // Inline link: the subtitle ends mid-sentence and the
+                        // link's label finishes it.
+                        HStack(spacing: 4) {
+                            Text(subtitle).font(Theme.pageSubtitle).foregroundStyle(Theme.textSecondary)
+                            if let link {
+                                Link(link.label, destination: link.url)
+                                    .font(Theme.pageSubtitle).foregroundStyle(Theme.link)
+                            }
                         }
                     }
                 }
+                .textSelection(.enabled)
             }
-            .textSelection(.enabled)
             Spacer(minLength: 16)
             HStack(spacing: 8) { actions }
         }
