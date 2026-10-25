@@ -618,7 +618,7 @@ function mcpBindSecrets(sheet, s, st) {
       const name = btn.dataset.mcpSecretCopy;
       const value = st.revealed[name] != null ? st.revealed[name] : await mcpSecretValue(name, st);
       if (value == null) { if (mcpPage.sheet === st) mcpRepaintSheet(s); return; }
-      if (mcpCopyText(value)) {
+      if (await mcpCopyText(value)) {
         btn.innerHTML = mcpSvg("check");
         setTimeout(() => { if (btn.isConnected) btn.innerHTML = mcpSvg("copy"); }, 1500);
       } else {
@@ -629,12 +629,12 @@ function mcpBindSecrets(sheet, s, st) {
   }
 }
 
-/* Copies text, by the clipboard API where the page is a secure context,
- * else by the older copy command. True when it went through. */
-function mcpCopyText(text) {
+/* Copies text, by the clipboard API where the page is a secure context
+ * and the browser allows it, else by the older copy command. Resolves
+ * true only once the text went through. */
+async function mcpCopyText(text) {
   if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(text).catch(() => {});
-    return true;
+    try { await navigator.clipboard.writeText(text); return true; } catch { /* denied: try the old way */ }
   }
   const area = document.createElement("textarea");
   area.value = text;
@@ -672,8 +672,10 @@ async function mcpSaveSecret(s, name) {
   }
   st.replacing.delete(name);
   delete st.revealed[name];
-  // A new value can change what Preview would write: show it again.
+  // A new value can change what Preview would write: show it again, and
+  // the Sync controls an earlier sync's report replaced.
   st.preview = null;
+  st.done = null;
   st.confirming = false;
   mcpAdopt(data.page);
   if (mcpOnPage()) paintMcp();
@@ -883,7 +885,12 @@ function mcpOpenSheet(s) {
   </form>`;
   sheet.dataset.server = s.name;
   // A closed sheet forgets every value it showed and every draft.
-  sheet.onclose = () => { st.revealed = {}; st.drafts = {}; st.replacing.clear(); st.secretError = null; };
+  sheet.onclose = () => {
+    st.revealed = {}; st.drafts = {}; st.replacing.clear(); st.secretError = null;
+    // The closed dialog's markup still holds revealed values and pasted
+    // drafts; empty it so the page keeps none of them.
+    sheet.replaceChildren();
+  };
   mcpBindSheet(sheet, s, st);
   if (!sheet.open) sheet.showModal();
 }
