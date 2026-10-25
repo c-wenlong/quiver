@@ -334,12 +334,19 @@ struct Tabs<Value: Hashable>: View {
     var onPanel = false
     /// The harness id whose logo goes before a tab's title, by tab value.
     var icons: [Value: String] = [:]
+    /// A real image before a tab's title (an app's own icon), by tab value.
+    /// Wins over `icons` when both name a tab.
+    var iconImages: [Value: NSImage] = [:]
     /// Runs on every tap, including on the tab already selected, so a
     /// detail page under a tab can go back on a reselect.
     var onSelect: ((Value) -> Void)? = nil
     /// Segmented only: the track takes the offered width and the tabs
     /// split it evenly, instead of hugging their titles.
     var fillWidth = false
+    /// Segmented only: wraps the tabs into this many equal columns on as
+    /// many rows as they need, so a long row of titled tabs still fits a
+    /// narrow card. One (the default) keeps them on a single row.
+    var columns = 1
     /// Tabs shown dimmed that can't be picked, like an app that isn't
     /// installed. One already selected still reads as selected.
     var disabled: Set<Value> = []
@@ -354,11 +361,19 @@ struct Tabs<Value: Hashable>: View {
                     Rectangle().fill(Theme.border).frame(height: Theme.hairline)
                 }
             case .segmented:
-                HStack(spacing: 2) { buttons }
-                    .padding(2)
-                    .background(Theme.segmentTrack, in: .rect(cornerRadius: Theme.blockRadius))
-                    .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
-                    .fixedSize(horizontal: !fillWidth, vertical: true)
+                Group {
+                    if columns > 1 {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2),
+                                                 count: columns),
+                                  spacing: 2) { buttons }
+                    } else {
+                        HStack(spacing: 2) { buttons }
+                            .fixedSize(horizontal: !fillWidth, vertical: true)
+                    }
+                }
+                .padding(2)
+                .background(Theme.segmentTrack, in: .rect(cornerRadius: Theme.blockRadius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
             case .period, .table:
                 HStack(spacing: 2) { buttons }.fixedSize()
             }
@@ -370,7 +385,8 @@ struct Tabs<Value: Hashable>: View {
 
     private var buttons: some View {
         ForEach(Array(options.enumerated()), id: \.element.value) { index, option in
-            TabButton(title: option.title, icon: icons[option.value], isSelected: option.value == selection,
+            TabButton(title: option.title, icon: icons[option.value], iconImage: iconImages[option.value],
+                      isSelected: option.value == selection,
                       isFocused: focused == index, style: style, onPanel: onPanel, fillWidth: fillWidth) {
                 selection = option.value
                 onSelect?(option.value)
@@ -405,6 +421,7 @@ extension Tabs {
 private struct TabButton<Value: Hashable>: View {
     var title: String
     var icon: String?
+    var iconImage: NSImage?
     var isSelected: Bool
     var isFocused: Bool
     var style: Tabs<Value>.Style
@@ -427,7 +444,14 @@ private struct TabButton<Value: Hashable>: View {
 
     /// The logo before the title, only when there is one to draw.
     @ViewBuilder private var titleLabel: some View {
-        if let icon, HarnessIcon.exists(for: icon) {
+        if let iconImage {
+            HStack(spacing: 6) {
+                Image(nsImage: iconImage)
+                    .resizable().interpolation(.high).scaledToFit()
+                    .frame(width: 14, height: 14)
+                Text(title)
+            }
+        } else if let icon, HarnessIcon.exists(for: icon) {
             HStack(spacing: 6) {
                 HarnessIcon(harness: icon, size: 14)
                 Text(title)
