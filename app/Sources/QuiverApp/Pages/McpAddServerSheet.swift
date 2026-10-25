@@ -18,6 +18,11 @@ struct McpAddServerSheet: View {
 
     enum Kind: String, CaseIterable { case command = "Command", url = "URL" }
 
+    /// How a remote server signs in: a bearer token stored as a secret and
+    /// sent as `Authorization: Bearer ${SERVER_TOKEN}`, or OAuth, which
+    /// writes nothing: each harness signs in when it first connects.
+    enum SignIn: String, CaseIterable { case none = "None", bearer = "Bearer token", oauth = "OAuth" }
+
     struct Variable: Identifiable {
         var id = UUID()
         var key = ""
@@ -32,6 +37,9 @@ struct McpAddServerSheet: View {
     @State private var commandLine = ""
     @State private var url = ""
     @State private var sse = false
+    @State private var signIn = SignIn.none
+    @State private var token = ""
+    @State private var showToken = false
     @State private var variables: [Variable] = [Variable()]
     @State private var targets: Set<String>
     @State private var force = false
@@ -62,7 +70,18 @@ struct McpAddServerSheet: View {
         working || name.wholeMatch(of: Self.namePattern) == nil
             || (kind == .command
                 ? (words?.isEmpty ?? true)
-                : url.trimmingCharacters(in: .whitespaces).isEmpty)
+                : url.trimmingCharacters(in: .whitespaces).isEmpty
+                    || (signIn == .bearer && token.trimmingCharacters(in: .whitespaces).isEmpty))
+    }
+
+    /// The harnesses a remote server can go to: a local-only config
+    /// (Claude Desktop) can't hold one.
+    private var offered: [String] {
+        kind == .url ? harnesses.filter { !McpServer.localOnly.contains($0) } : harnesses
+    }
+
+    private var leftOut: [String] {
+        kind == .url ? harnesses.filter { McpServer.localOnly.contains($0) } : []
     }
 
     var body: some View {
@@ -93,20 +112,18 @@ struct McpAddServerSheet: View {
         .background(Theme.panel)
     }
 
-    /// Name and kind side by side, then what runs it.
+    /// Local or Remote in the grid's words, the name, then what runs it.
     private var serverSection: some View {
         Card(title: "Server") {
             VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 12) {
-                    FormField("Name") {
-                        TextField("github", text: $name).quiverField()
-                    }
-                    FormField("Kind") {
-                        Tabs(options: Kind.allCases.map { (value: $0, title: $0.rawValue) },
-                             selection: $kind)
-                            .frame(height: Theme.fieldHeight)
-                    }
-                    .fixedSize(horizontal: true, vertical: false)
+                HStack(spacing: 8) {
+                    KindCard(title: mcpLocalTitle, subtitle: "A command its harnesses launch",
+                             selected: kind == .command) { kind = .command }
+                    KindCard(title: "Remote", subtitle: "A URL, reached from any machine",
+                             selected: kind == .url) { kind = .url }
+                }
+                FormField("Name") {
+                    TextField(kind == .command ? "github" : "linear", text: $name).quiverField()
                 }
                 if kind == .command {
                     FormField("Command", hint: commandHint, problem: words == nil) {
@@ -123,14 +140,43 @@ struct McpAddServerSheet: View {
                                 .frame(height: Theme.fieldHeight)
                         }
                     }
+                    signInField
                 }
+            }
+        }
+    }
+
+    private var signInField: some View {
+        FormField("Sign-in") {
+            Tabs(options: SignIn.allCases.map { (value: $0, title: $0.rawValue) }, selection: $signIn)
+                .frame(height: Theme.fieldHeight)
+                .fixedSize()
+            switch signIn {
+            case .bearer:
+                HStack(spacing: 8) {
+                    Group {
+                        if showToken { TextField("token", text: $token) } else { SecureField("token", text: $token) }
+                    }
+                    .quiverField(monospaced: true)
+                    Button(showToken ? "Hide" : "Show", systemImage: showToken ? "eye.slash" : "eye") { showToken.toggle() }
+                        .labelStyle(.iconOnly)
+                        .iconButton()
+                        .help(showToken ? "Hide the token" : "Show the token")
+                }
+                Text("Sent as Authorization: Bearer ${\(mcpSecretName(server: name.isEmpty ? "SERVER" : name, key: "TOKEN"))}")
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+            case .oauth:
+                Text("Nothing is saved: each harness signs in the first time it connects, if it supports OAuth.")
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+            case .none:
+                EmptyView()
             }
         }
     }
 
     /// Env vars for a command, headers for a URL; each can be a secret.
     private var variablesSection: some View {
-        Card(title: kind == .command ? "Env vars" : "Headers") {
+        Card(title: kind == .command ? "Env vars" : "Other headers") {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach($variables) { $variable in
                     VStack(alignment: .leading, spacing: 4) {
@@ -192,9 +238,15 @@ struct McpAddServerSheet: View {
                             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     }
                     Spacer(minLength: 8)
-                    HarnessTargetsMenu(harnesses: harnesses, active: active, targets: $targets)
+                    HarnessTargetsMenu(harnesses: offered, active: active.filter(offered.contains),
+                                       targets: $targets)
                 }
-                .padding(.bottom, 14)
+                .padding(.bottom, leftOut.isEmpty ? 14 : 6)
+                if !leftOut.isEmpty {
+                    Text("\(leftOut.map { HarnessMark($0).name }.joined(separator: ", ")) takes local servers only in its config; add remote ones in the app itself.")
+                        .font(Theme.caption).foregroundStyle(Theme.warningText)
+                        .padding(.bottom, 14)
+                }
                 Rectangle().fill(Theme.border).frame(height: Theme.hairline)
                 HStack(alignment: .center, spacing: 16) {
                     Text("Replace if it already exists")
@@ -216,13 +268,32 @@ struct McpAddServerSheet: View {
             // refuse: check the name before mcpSecretSet runs.
             // Only the hub and the ticked harnesses get written, so only
             // a copy there is a conflict, as swe judges it.
+            let picked = targets.intersection(offered)
             let clash = existing.first { $0.name == name }
-            if let clash, clash.inHub || !targets.isDisjoint(with: clash.harnesses), !force {
+            if let clash, clash.inHub || !picked.isDisjoint(with: clash.harnesses), !force {
                 error = "A server named \(name) already exists. Turn on Replace to overwrite it."
                 return
             }
+            // Every refusal comes before the first secret is stored, so a
+            // rejected add leaves the store as it was.
+            let filled = variables.filter { !$0.key.isEmpty }
+            let stored = filled.filter { $0.secret && !$0.value.hasPrefix("${") }
+            var secretNames = stored.map { mcpSecretName(server: name, key: $0.key) }
+            let bearer = kind == .url && signIn == .bearer
+            let tokenRef = mcpSecretName(server: name, key: "TOKEN")
+            if bearer {
+                if filled.contains(where: { $0.key.lowercased() == "authorization" }) {
+                    error = "Give the token once: as the bearer token or an Authorization header."
+                    return
+                }
+                secretNames.append(tokenRef)
+            }
+            if let twice = Dictionary(grouping: secretNames, by: { $0 }).first(where: { $0.value.count > 1 })?.key {
+                error = "Two values would be saved as the secret \(twice). Rename one of them."
+                return
+            }
             var pairs: [(String, String)] = []
-            for variable in variables where !variable.key.isEmpty {
+            for variable in filled {
                 var value = variable.value
                 if variable.secret && !value.hasPrefix("${") {
                     let secretName = mcpSecretName(server: name, key: variable.key)
@@ -230,6 +301,11 @@ struct McpAddServerSheet: View {
                     value = "${\(secretName)}"
                 }
                 pairs.append((variable.key, value))
+            }
+            if bearer {
+                try await app.swe.mcpSecretSet(name: tokenRef, value: token.trimmingCharacters(in: .whitespaces))
+                token = ""
+                pairs.append(("Authorization", "Bearer ${\(tokenRef)}"))
             }
             let spec: McpServerSpec
             if kind == .command {
@@ -241,7 +317,7 @@ struct McpAddServerSheet: View {
                     url: url.trimmingCharacters(in: .whitespaces),
                     transport: sse ? "sse" : "http", headers: pairs))
             }
-            _ = try await app.swe.mcpAdd(spec, to: targets.sorted(), force: force)
+            _ = try await app.swe.mcpAdd(spec, to: picked.sorted(), force: force)
             await reload()
             dismiss()
         } catch {
@@ -366,5 +442,31 @@ private struct ChecklistRow: View {
         .onHover { hovering = $0 }
         .accessibilityLabel(HarnessMark(harness).name)
         .accessibilityAddTraits(isOn ? .isSelected : [])
+    }
+}
+
+/// Local or Remote: the grid's section words, with a line under each.
+private struct KindCard: View {
+    var title: String
+    var subtitle: String
+    var selected: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(Theme.bodySmall.weight(.medium)).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(2).multilineTextAlignment(.leading)
+                Text(subtitle).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .background(selected ? Theme.selected : .clear, in: .rect(cornerRadius: Theme.controlRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
+                .strokeBorder(selected ? Theme.borderStrong : Theme.border, lineWidth: 1))
+            .contentShape(.rect(cornerRadius: Theme.controlRadius))
+        }
+        .plainButton(cornerRadius: Theme.controlRadius)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

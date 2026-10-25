@@ -367,6 +367,15 @@ def _add_request(body: dict) -> dict:
             raise PageError(422, "bad_vars", "each var is {key, value, secret}")
         if key.strip():
             pairs.append((key.strip(), value, secret))
+    sign_in = body.get("sign_in", "none")
+    if sign_in not in ("none", "bearer", "oauth") or (sign_in != "none" and kind != "url"):
+        raise PageError(422, "bad_sign_in", "sign_in is none, bearer or oauth, for a URL server")
+    token = body.get("token", "")
+    if sign_in == "bearer":
+        if not isinstance(token, str) or not token.strip() or len(token) > VALUE_MAX:
+            raise PageError(422, "bad_value", "Paste the bearer token.")
+        if any(k.lower() == "authorization" for k, _, _ in pairs):
+            raise PageError(422, "bad_vars", "Give the token once: as the bearer token or an Authorization header.")
     targets = body.get("targets", [])
     if (not isinstance(targets, list) or len(targets) > 100
             or not all(isinstance(t, str) and 0 < len(t) <= NAME_MAX for t in targets)):
@@ -375,7 +384,8 @@ def _add_request(body: dict) -> dict:
     if not isinstance(force, bool):
         raise PageError(422, "bad_force", "force must be true or false")
     return {"name": name, "command": command, "url": url, "transport": transport,
-            "pairs": pairs, "targets": list(dict.fromkeys(targets)), "force": force}
+            "pairs": pairs, "targets": list(dict.fromkeys(targets)), "force": force,
+            "sign_in": sign_in, "token": token.strip() if sign_in == "bearer" else ""}
 
 
 def _add(ctx, body: dict) -> dict:
@@ -401,6 +411,14 @@ def _add(ctx, body: dict) -> dict:
             stored[ref] = value.strip()
             value = "${" + ref + "}"
         values[key] = value
+    if req["sign_in"] == "bearer":
+        # The token is a secret like any other: stored, and the hub keeps
+        # Authorization: Bearer ${SERVER_TOKEN}.
+        ref = secret_name(name, "TOKEN")
+        if ref in stored:
+            raise PageError(422, "secret_clash", f"Two keys would both be saved as {ref}. Rename one of them.")
+        stored[ref] = req["token"]
+        values["Authorization"] = "Bearer ${" + ref + "}"
     # Every value must be storable before any is stored.
     for ref, value in stored.items():
         if not _SECRET_NAME_RE.fullmatch(ref):
