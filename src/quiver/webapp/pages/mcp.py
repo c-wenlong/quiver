@@ -92,11 +92,26 @@ def get(ctx, args: dict) -> dict:
     return {
         "harnesses": harnesses,
         "servers": servers,
+        "caps": _caps(harnesses),
         "health": bool(health and pairs),
         "error": error,
         "folders": folders,
         "machine": (ctx.machine or {}).get("name"),
     }
+
+
+def _caps(harnesses: list[str]) -> dict:
+    """What each harness's config can hold: a server at a URL at all
+    (Claude Desktop launches local ones only) and an SSE one (opencode and
+    Codex have no marker for it), as ``swe mcp add`` judges."""
+    from quiver.mcp import cli as mcp_cli
+
+    def sse(h: str) -> bool:
+        return not (mcp_cli.get_tool_format(h) in ("opencode",)
+                    or mcp_cli.get_tool_config(h).get("io_type") == "toml_region")
+
+    return {h: {"remote": mcp_cli.takes_remote(h), "sse": mcp_cli.takes_remote(h) and sse(h)}
+            for h in harnesses}
 
 
 # ---------------------------------------------------------------- inventory
@@ -485,13 +500,22 @@ def sources(row: dict) -> list[str]:
     return out
 
 
+def source_is_remote(row: dict, source: str) -> bool:
+    """Whether the definition a sync copies, ``source``'s, is reached at a
+    URL. ``transport`` is only the first definition's; a server can be
+    local in one harness and remote in another."""
+    if "remote_in" in row:
+        return source in row["remote_in"]
+    return row.get("transport") in ("http", "sse")
+
+
 def sync_targets(row: dict, source: str, harnesses: list[str]) -> tuple[list[str], list[str]]:
     """McpModel.targets: ``(missing, differing)``. Missing lacks the server;
     differing has its own definition, which a sync would replace. The hub
     is no column, so from it every harness with the server differs."""
     from quiver.mcp.cli import takes_remote
 
-    if row.get("transport") in ("http", "sse"):
+    if source_is_remote(row, source):
         # A config that launches local servers only can't take a URL one.
         harnesses = [h for h in harnesses if takes_remote(h)]
     groups = _groups(row)
@@ -535,10 +559,14 @@ def _plan(request: dict) -> dict:
     if source not in sources(row):
         raise PageError(422, "bad_source", f"{name} can't be copied from {source}.")
     missing, differing = sync_targets(row, source, harnesses)
+    remote = source_is_remote(row, source)
     plan_targets = []
     for target in request["targets"]:
         if target not in harnesses:
             raise PageError(422, "unknown_harness", f"No harness named {target} reads MCP servers here.")
+        if remote and not mcp_cli.takes_remote(target):
+            raise PageError(422, "local_only",
+                            f"{mcp_cli.get_tool_config(target).get('label', target)} {mcp_cli.LOCAL_ONLY_NOTE}.")
         replacing = target in request["replace"]
         if target in missing and not replacing:
             action = "add"

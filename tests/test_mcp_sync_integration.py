@@ -240,6 +240,19 @@ class McpSyncLocalOnlyTargetTest(unittest.TestCase):
                          ["local", "remote"])
         self.assertIn("1 remote left out (remote)", result.stdout)
 
+    def test_an_unset_secret_on_a_remote_server_does_not_block_claude_desktop(self):
+        hub = self.home / ".quiver" / "mcp.json"
+        data = json.loads(hub.read_text())
+        data["mcpServers"]["remote"]["headers"] = {"Authorization": "Bearer ${MISSING_TOKEN}"}
+        hub.write_text(json.dumps(data) + "\n")
+        result = self.run_mcp("sync", "quiver", "claude-desktop", "--no-interactive")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(sorted(json.loads(self.desktop.read_text())["mcpServers"]), ["local"])
+        # A target that can take it still needs the value.
+        result = self.run_mcp("sync", "quiver", "claude", "--no-interactive")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("MISSING_TOKEN", result.stdout)
+
     def test_add_refuses_a_url_server_for_claude_desktop(self):
         result = self.run_mcp("add", "r2", "--url=https://mcp.example.com/x", "--to=claude-desktop")
         self.assertEqual(result.returncode, 1)
