@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from quiver.paths import provider_keys_path_for
+from quiver.providers.keyfile import unquote
 
 
 def default_keys_dir(home: Path | None = None) -> Path:
@@ -102,7 +103,10 @@ def read_shell_export_keys(
         # comment lines are ignored
         ANTHROPIC_API_KEY='sk-ant-...'
 
-    Surrounding single or double quotes are stripped from values.
+    Quoted values are read as a shell reads them (``keyfile.unquote``):
+    inside double quotes a backslash before a double quote, a backslash,
+    a dollar sign or a backtick is dropped, since the Mac app and the web
+    app escape those four when they save a key.
     Returns ``None`` if the file cannot be read or no env_var matches;
     otherwise returns a ``(value, matched_env_var)`` tuple so callers
     can surface which env-var name was actually resolved.
@@ -122,7 +126,12 @@ def read_shell_export_keys(
             prefix = f"{env_var}="
             if line.startswith(prefix):
                 value = line[len(prefix):].strip()
-                if (
+                # Quoted as a shell reads it: the Mac app and the web app
+                # write `export X="a\$b"`, which sets a$b.
+                decoded = unquote(value) if value[:1] in ('"', "'") else None
+                if decoded is not None:
+                    value = decoded
+                elif (
                     len(value) >= 2
                     and value[0] == value[-1]
                     and value[0] in ('"', "'")

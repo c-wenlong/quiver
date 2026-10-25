@@ -415,6 +415,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`swe providers` read escaped keys with their backslashes.** The Mac
+  app and the web app save a key as `export NAME="…"` with `"`, `\`, `$`
+  and a backtick escaped, as a shell expects, but swe's own reader only
+  stripped the quotes, so a key holding one of them came back with an
+  extra backslash. It now reads double-quoted values as a shell does.
+
 - **Web app and remote PWA: the Quiver icon replaces the "W"
   placeholder.** The favicon, home-screen icon, sidebar brand, setup
   screen and Pricing's Quiver logo showed a placeholder zigzag that read
