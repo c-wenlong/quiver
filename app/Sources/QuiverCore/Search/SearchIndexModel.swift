@@ -44,6 +44,15 @@ public final class SearchIndexModel {
     /// The last `store.status()` the poll read; nil until the first answer.
     public private(set) var lastStatus: SearchStatus?
 
+    /// When a scan the model saw finished — enabling's own kick, a resync,
+    /// or a poll that watched the ledger's scan settle. Nil until then, so
+    /// a store that only ever read an old index shows no timestamp.
+    public private(set) var lastSynced: Date?
+
+    /// A scan is running (the ledger's `isLoading`): the resync button
+    /// dims while one is.
+    public var isScanning: Bool { overview?.isLoading ?? false }
+
     /// Internal so tests can check what got attached under `@testable`.
     var store: SearchStore?
     var indexer: SearchIndexer?
@@ -64,6 +73,9 @@ public final class SearchIndexModel {
     private let pollScanning: Duration
     private let pollSettled: Duration
     private var started = false
+    /// What the last poll saw of the ledger's scan, for the settle that
+    /// stamps `lastSynced`.
+    private var wasScanning = false
     /// The apply currently running; a second call waits it out, then applies
     /// the newest value — the last toggle always wins.
     private var applying: Task<Void, Never>?
@@ -155,6 +167,7 @@ public final class SearchIndexModel {
         startReconcile()
         await refreshStatus()
         await overview?.load(scan: true)
+        lastSynced = Date()
     }
 
     private func detach() async {
@@ -172,6 +185,7 @@ public final class SearchIndexModel {
         store = nil
         statusError = nil
         lastStatus = nil
+        lastSynced = nil
         statusText = "Off."
     }
 
@@ -199,6 +213,7 @@ public final class SearchIndexModel {
                     .appending(path: SearchLocation.fileName))
         }
         lastStatus = nil
+        lastSynced = nil
         statusError = nil
         if enabled {
             await attach()
@@ -221,11 +236,24 @@ public final class SearchIndexModel {
         switch polled {
         case .success(let status):
             lastStatus = status
+            let scanning = overview?.isLoading ?? false
+            // A scan the model didn't kick — the app's own refresh — still
+            // counts as a sync once the poll watches it end.
+            if wasScanning && !scanning { lastSynced = Date() }
+            wasScanning = scanning
             statusText = statusError
-                ?? Self.statusLine(status, scanning: overview?.isLoading ?? false)
+                ?? Self.statusLine(status, scanning: scanning, synced: lastSynced)
         case .failure(let error):
             statusText = "Couldn't read the index status: \(error.localizedDescription)"
         }
+    }
+
+    /// Settings' resync: the same full `load(scan:)` enabling kicks, then a
+    /// status read so the line shows the fresh totals at once.
+    public func resync() async {
+        await overview?.load(scan: true)
+        lastSynced = Date()
+        await refreshStatus()
     }
 
     /// The status poll: every `pollScanning` while the ledger's scan is in
@@ -263,24 +291,36 @@ public final class SearchIndexModel {
     /// The line under the switch. `scanning` is the ledger scan the index
     /// rides on (Overview's `isLoading`): while it runs the file count can
     /// only grow, so the line reports progress — a total mid-scan would be
-    /// made up.
-    static func statusLine(_ status: SearchStatus?, scanning: Bool) -> String {
+    /// made up. `synced` is when the last scan finished; with one the
+    /// settled line leads "Last synced …", without it falls back to
+    /// "Synced:".
+    static func statusLine(_ status: SearchStatus?, scanning: Bool, synced: Date? = nil) -> String {
         guard let status else { return "The index hasn't run yet." }
         var line: String
         if scanning {
             let files = status.filesByState.values.reduce(0, +)
             line = "Indexing: \(files.formatted()) \(plural("file", of: files)) read so far"
         } else {
-            line = "Synced: \(status.sessionCount.formatted()) "
+            let totals = "\(status.sessionCount.formatted()) "
                 + "\(plural("session", of: status.sessionCount)), "
                 + "\(status.messageCount.formatted()) "
                 + "\(plural("message", of: status.messageCount))"
+            line = synced.map { "Last synced \(syncedText($0)) · \(totals)" }
+                ?? "Synced: \(totals)"
         }
         let due = status.filesByState[.due] ?? 0
         let failed = status.filesByState[.failed] ?? 0
         if due > 0 { line += " · \(due.formatted()) \(plural("file", of: due)) behind" }
         if failed > 0 { line += " · \(failed.formatted()) \(plural("file", of: failed)) failed" }
         return line
+    }
+
+    /// "2:41 PM" today, "Oct 26, 2:41 PM" once it's yesterday — the point
+    /// is when, so the date drops off when it's obviously today.
+    static func syncedText(_ date: Date) -> String {
+        Calendar.current.isDateInToday(date)
+            ? date.formatted(.dateTime.hour().minute())
+            : date.formatted(date: .abbreviated, time: .shortened)
     }
 
     private static func plural(_ noun: String, of count: Int) -> String {
