@@ -23,7 +23,7 @@
   padding: 7px 12px; font-size: 13px; text-align: left; cursor: pointer; color: var(--text-primary);
 }
 .qp-menu-row:hover { background: var(--hover); }
-.qp-check { width: 12px; flex: none; color: var(--success); font-size: 12px; }
+.qp-check { width: 12px; flex: none; color: var(--interactive); font-size: 12px; }
 .qp-grow { flex: 1; }
 .qp-unpriced { width: 300px; }
 .qp-unpriced .qp-menu-row { font-size: 12px; }

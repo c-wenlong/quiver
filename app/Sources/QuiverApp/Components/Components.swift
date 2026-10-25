@@ -3,18 +3,19 @@ import QuiverCore
 import SwiftUI
 
 // The shared controls, sized and coloured from the TokenTracker package's
-// components.md (measured values) and tokens.json. Where TokenTracker and
-// Quiver's own rules differ, Quiver's win: sentence case, green only for
-// money and "on", and a visible neutral focus ring on every control.
+// components.md (measured values) and tokens.json, coloured per the Devin
+// desktop package's colour roles. Quiver's own rules win: sentence case,
+// emerald only for money and "on", and Devin's 1pt accent ring on every
+// keyboard-focused control.
 
 // MARK: - Focus
 
 extension View {
-    /// The neutral 2pt focus ring, driven by this view's own focus.
+    /// The 1pt accent focus ring, driven by this view's own focus.
     ///
     /// A button style never learns whether its button has focus, so the
     /// ring lives here, on the control itself: it binds a `@FocusState`
-    /// and replaces macOS's blue ring.
+    /// and replaces macOS's default ring.
     func focusRing(cornerRadius: CGFloat) -> some View {
         modifier(OwnFocusRing(cornerRadius: cornerRadius))
     }
@@ -90,8 +91,8 @@ private struct RingOverlay: ViewModifier {
 // MARK: - Buttons
 
 extension View {
-    /// Black in light, near-white in dark, never green: 28pt, radius 8,
-    /// 12/500, grows to 1.03 under the pointer.
+    /// Near-black in light, white in dark (Devin's `accent-neutral` ink
+    /// button): 28pt, radius 8, 12/500, grows to 1.03 under the pointer.
     func primaryButton() -> some View {
         buttonStyle(PrimaryButtonStyle()).focusRing(cornerRadius: Theme.controlRadius)
     }

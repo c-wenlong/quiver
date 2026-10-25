@@ -7,7 +7,8 @@
 .status-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr)); gap: 16px; }
 
 .status-card { padding: 0; gap: 0; transition: background .15s, border-color .15s; }
-.status-card:hover { background: var(--hover); border-color: var(--border-strong); }
+.status-card:hover { background: linear-gradient(var(--hover), var(--hover)), var(--card);
+  border-color: var(--border-strong); }
 .status-body { flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 20px; min-width: 0; }
 .status-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .status-name { flex: 1; min-width: 0; font-size: 16px; font-weight: 500; }

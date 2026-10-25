@@ -111,7 +111,7 @@ scaffolds; `PageHeader` is the non-scrolling variant used by sheets.
 | `RailRow`, `RailIconButton` | a right-hand rail's tap row (selected/hover treatment) and its header icon button |
 | `HoverTip` | the themed tooltip modifier |
 | `MarkdownTextView` | the rich markdown editor (NSViewRepresentable) |
-| Button styles | `primaryButton`, `secondaryButton`, `iconButton`, `plainButton`, `GreenSwitchStyle`, `SegmentActionStyle` |
+| Button styles | `primaryButton`, `secondaryButton`, `iconButton`, `plainButton`, `AccentSwitchStyle`, `SegmentActionStyle` |
 | `focusRing`, `quiverField`, `sheetScaffold` | modifiers: keyboard ring, themed field, sheet frame |
 | `FlowLayout` | left-to-right wrapping layout |
 

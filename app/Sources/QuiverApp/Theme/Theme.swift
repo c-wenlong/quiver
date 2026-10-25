@@ -57,8 +57,9 @@ enum Theme {
     /// `bg.accent-primary` — interactive blue, only for links, focus rings
     /// and selected controls (the switch, the unread dot, the checkmark).
     static let interactive = Color(light: "#317cff", dark: "#4489ff")
-    /// `text.link` — the accent at 85% for inline links.
-    static let link = Color(light: "#317cffd9", dark: "#49b0ffd9")
+    /// `text.link-strong` — the solid accent for inline links (the 85%
+    /// `text.link` reads 3.09:1 on the light card).
+    static let link = Color(light: "#317cff", dark: "#49b0ff")
 
     /// `bg.accent-neutral` / `text.primary-inverse`: the ink button.
     static let primaryBackground = Color(light: "#0d0d0d", dark: "#ffffff")
@@ -88,10 +89,11 @@ enum Theme {
     static let successForeground = Color(light: "#ffffff", dark: "#0d0f0d")
     static let warning = Color(light: "#f58e3a", dark: "#f58e3a")
     static let danger = Color(light: "#f53b3a", dark: "#f53b3a")
-    /// Danger and warning as text: `text.destructive` both themes;
-    /// `text.yellow` is Devin's light-safe warning text (orange as 12-14pt
-    /// text reads about 2.4:1 on the light surfaces).
-    static let dangerText = Color(light: "#f53b3a", dark: "#f53b3a")
+    /// Danger and warning as text. `text.destructive` is Devin's only red
+    /// and reads 3.74:1 on the light card, so light keeps Quiver's deeper
+    /// red (4.83:1); dark uses `text.destructive`. `text.yellow` is Devin's
+    /// light-safe warning text (orange as 12-14pt text reads about 2.4:1).
+    static let dangerText = Color(light: "#dc2626", dark: "#f53b3a")
     static let warningText = Color(light: "#a16207", dark: "#facc15")
 
     /// Heatmap steps, empty to busiest.

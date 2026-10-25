@@ -100,7 +100,8 @@ details.tool-run > summary {
 .diff-file { padding: 6px 10px; background: var(--subtle); color: var(--text-secondary); border-bottom: 1px solid var(--border); }
 .diff-line { padding: 1px 10px; white-space: pre-wrap; word-break: break-all; }
 .diff-ctx { color: var(--text-secondary); }
-.diff-add { background: color-mix(in srgb, var(--success) 13%, transparent); color: var(--success); }
+.diff-add { background: color-mix(in srgb, var(--success) 13%, transparent);
+  color: color-mix(in srgb, var(--success) 75%, var(--text-primary)); }
 .diff-del { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger-text); }
 .diff-meta { color: var(--text-muted); font-style: italic; padding: 3px 10px; }
 
