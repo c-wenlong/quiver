@@ -117,6 +117,22 @@ class ReadShellExportKeysTest(unittest.TestCase):
                 ("sk-ant-api03-abcdef", "ANTHROPIC_API_KEY"),
             )
 
+    def test_reads_back_what_the_key_writers_escape(self):
+        from quiver.providers.keyfile import KeysFile
+        with TemporaryDirectory() as tmp:
+            f = Path(tmp) / ".api_keys"
+            for value in ['abc$def', 'q"uote', "back\\slash", "tick`s", "sk-plain-123"]:
+                keys = KeysFile("")
+                keys.set("X", value, "Acme")
+                f.write_text(keys.text)
+                self.assertEqual(read_shell_export_keys(f, ["X"]), (value, "X"), keys.text)
+
+    def test_a_quoted_value_with_a_comment_after_it(self):
+        with TemporaryDirectory() as tmp:
+            f = Path(tmp) / ".api_keys"
+            f.write_text('export X="abc" # mine\n')
+            self.assertEqual(read_shell_export_keys(f, ["X"]), ("abc", "X"))
+
     def test_extracts_single_quoted_value(self):
         with TemporaryDirectory() as tmp:
             f = Path(tmp) / ".api_keys"
