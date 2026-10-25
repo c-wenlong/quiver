@@ -24,6 +24,7 @@ const state = {
   pairGen: 0,
   approveTimer: null,
   usageGen: 0,
+  deviceGen: 0,
   usageData: null,
   usageMachine: null,
   inboxCount: 0,
@@ -2105,6 +2106,9 @@ function renderDevice(d) {
 }
 
 async function loadDevice() {
+  // Newest load wins: a reply older than a save (or a later load) must
+  // not paint its stale name back over a just-edited field.
+  const gen = ++state.deviceGen;
   if (!el("device-meta").innerHTML) {
     el("device-meta").innerHTML = `<p class="dim">Loading…</p>`;
   }
@@ -2112,6 +2116,7 @@ async function loadDevice() {
   try {
     ({ status, data } = await api("/v1/devices/me"));
   } catch { /* handled below */ }
+  if (gen !== state.deviceGen) return;
   if (status === 401) { store.cred = null; boot(); return; }
   if (status !== 200 || !data) {
     el("device-meta").innerHTML =
@@ -2126,6 +2131,7 @@ el("device-save").addEventListener("click", async () => {
   const btn = el("device-save");
   btn.disabled = true;
   el("device-status").textContent = "";
+  state.deviceGen++;  // any loadDevice reply in flight is now stale
   let status = 0, data = null;
   try {
     ({ status, data } = await api("/v1/devices/rename", {

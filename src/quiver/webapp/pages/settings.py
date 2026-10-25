@@ -215,14 +215,16 @@ def _caller(ctx) -> dict:
 
 
 def _devices(ctx, devices: dict) -> list[dict]:
-    """``swe remote status --json``'s device rows, plus who is asking."""
+    """``swe remote status --json``'s device rows, plus who is asking.
+
+    ``device_view`` carries the pairing-time identity fields (kind,
+    model, client, os, node_name) and the user's ``display_name`` — a
+    rename saved on the phone must show up here too."""
+    from quiver.remote import pairing
+
     return [
         {
-            "id": did,
-            "name": row.get("name"),
-            "created_at": row.get("created_at"),
-            "last_seen_at": row.get("last_seen_at"),
-            "revoked": bool(row.get("revoked_at")),
+            **pairing.device_view(did, row),
             "paired_via": row.get("paired_via") or "token",
             "this_device": did == ctx.device_id,
         }

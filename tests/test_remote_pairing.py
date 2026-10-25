@@ -402,6 +402,22 @@ class TestClientMeta(unittest.TestCase):
         self.assertEqual(meta["client"], "QuiverRemote 1.0")
         self.assertEqual(meta["os"], "iOS 26")
 
+    def test_mac_app_product_gets_macos(self):
+        # The Mac app's URLSession UA shares Darwin but its product is
+        # Quiver/x, not QuiverRemote — it must not get an iOS version.
+        meta = pairing.client_meta(
+            "Quiver/1.0 CFNetwork/3826.500.131 Darwin/25.0.0"
+        )
+        self.assertEqual(meta["client"], "Quiver 1.0")
+        self.assertEqual(meta["os"], "macOS 26")
+
+    def test_oversized_header_is_bounded(self):
+        # Crafted input for the old greedy Version/...Safari/ match on
+        # the unauthenticated /v1/pair path: capped, then parsed.
+        meta = pairing.client_meta("Mozilla/5.0 Version/" + "9" * 65000)
+        self.assertEqual(meta["kind"], "browser")
+        self.assertNotIn("client", meta)
+
     def test_cli_and_empty(self):
         self.assertEqual(
             pairing.client_meta("curl/8.4.0")["client"], "curl 8.4.0"

@@ -435,6 +435,30 @@ class TestGet(_Settings):
         self.assertEqual(body["remote"]["token_ttl_s"], pairing.TOKEN_TTL_S)
         self.assertEqual(body["machine"], self.srv.state.machine["name"])
 
+    def test_remote_devices_carry_display_name_and_meta(self):
+        # A rename (or pair-time metadata) saved on the phone must show
+        # in this list too — it once sent only the original name.
+        phone = self.device("phone")
+        pairing.update_device(
+            self.home, phone["device_id"],
+            display_name="Kai's iPhone", kind="iphone", os="iOS 18.5",
+            node_name="iphone-13.ts.net")
+        laptop = self.device("laptop")
+        status, data = self.srv.request(
+            "GET", "/v1/app/settings",
+            headers={"Authorization": f"Bearer {laptop['credential']}"})
+        self.assertEqual(status, 200, data)
+        rows = {
+            d["id"]: d
+            for d in json.loads(data)["remote"]["devices"]
+        }
+        row = rows[phone["device_id"]]
+        self.assertEqual(row["display_name"], "Kai's iPhone")
+        self.assertEqual(row["kind"], "iphone")
+        self.assertEqual(row["os"], "iOS 18.5")
+        self.assertEqual(row["node_name"], "iphone-13.ts.net")
+        self.assertNotIn("credential_hash", row)
+
     def test_remote_setup_is_its_own_part_and_reads_this_machine(self):
         from quiver.remote import setup
 

@@ -143,7 +143,9 @@ def client_meta(user_agent: str) -> dict:
     The fallback for clients that send no explicit ``device`` map.
     Anything it can't read is simply absent — never guessed.
     """
-    ua = (user_agent or "").strip()
+    # Real UAs are ~200 chars; /v1/pair accepts the header unauthenticated,
+    # so bound the text the patterns ever see.
+    ua = (user_agent or "").strip()[:1024]
     meta: dict[str, str] = {}
     if not ua:
         return meta
@@ -188,21 +190,30 @@ def client_meta(user_agent: str) -> dict:
             (r"Chrome/([\d.]+)", "Chrome"),
             (r"CriOS/([\d.]+)", "Chrome"),
             (r"Firefox/([\d.]+)", "Firefox"),
-            (r"Version/([\d.]+).*Safari/", "Safari"),
-            (r"Safari/([\d.]+)", "Safari"),
         ):
             m = re.search(pat, ua)
             if m:
                 meta["client"] = f"{name} {m.group(1)}"
                 break
-    # A bare Darwin version says only "some Apple OS" — our own app's
-    # token says which. Unknown Darwin clients read as macOS.
+        else:
+            # Safari's user-facing version lives in Version/x; Safari/x
+            # is the WebKit build. Two independent reads — a greedy .*
+            # between them turns a crafted header quadratic.
+            if "Safari/" in ua:
+                m = re.search(r"Version/([\d.]+)", ua) or re.search(
+                    r"Safari/([\d.]+)", ua)
+                if m:
+                    meta["client"] = f"Safari {m.group(1)}"
+    # A bare Darwin version says only "some Apple OS". Quiver Remote
+    # is the iOS app; the Mac app's own Quiver/x token — and every other
+    # Darwin product — reads as macOS.
     if "os" not in meta:
         m = re.search(r"Darwin/(\d+)", ua)
         if m:
+            client = meta.get("client", "").lower().replace(" ", "")
             table = (
                 _DARWIN_IOS
-                if "quiver" in meta.get("client", "").lower()
+                if client.startswith("quiverremote")
                 else _DARWIN_MACOS
             )
             guess = table.get(m.group(1))
