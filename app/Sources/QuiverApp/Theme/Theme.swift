@@ -101,12 +101,24 @@ enum Theme {
     @MainActor static var caption: Font { font(size: 12) }
     @MainActor static var tableHeader: Font { font(size: 12, weight: .medium) }
 
-    /// A system font at `size` points as designed, scaled by View › Zoom
-    /// (`TextZoom`). Every font in the app comes through here or the roles
-    /// above, so ⌘+ and ⌘− reach every page. Reading the zoom inside a view's
-    /// body is what redraws that view when it changes.
+    /// Geist (Geist Mono for `.monospaced`) at `size` points as designed,
+    /// scaled by View › Zoom (`TextZoom`). Every font in the app comes
+    /// through here or the roles above, so ⌘+ and ⌘− reach every page.
+    /// Reading the zoom inside a view's body is what redraws that view when
+    /// it changes. Without the bundled fonts it is the system font.
     @MainActor static func font(size: CGFloat, weight: Font.Weight? = nil, design: Font.Design? = nil) -> Font {
-        .system(size: scaled(size), weight: weight, design: design)
+        guard let family = AppFonts.family(monospaced: design == .monospaced) else {
+            return .system(size: scaled(size), weight: weight, design: design)
+        }
+        return .custom(family, fixedSize: scaled(size)).weight(weight ?? .regular)
+    }
+
+    /// The AppKit font that matches `font(size:weight:)` at the current
+    /// zoom, for text AppKit draws or measures beside it. `monospacedDigits`
+    /// matches a SwiftUI `.monospacedDigit()`.
+    @MainActor static func nsFont(size: CGFloat, weight: NSFont.Weight = .regular,
+                                  monospaced: Bool = false, monospacedDigits: Bool = false) -> NSFont {
+        AppFonts.nsFont(size: scaled(size), weight: weight, monospaced: monospaced, monospacedDigits: monospacedDigits)
     }
 
     /// `size` points at the current zoom, for AppKit fonts and measurements
