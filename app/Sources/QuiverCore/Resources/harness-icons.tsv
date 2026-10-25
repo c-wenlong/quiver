@@ -4,26 +4,33 @@ antgroup	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/antgroup
 antigravity	color	TokenTracker dashboard/public/brand-logos/antigravity.svg	MIT (TokenTracker)	Google Antigravity mark
 ark	color	TokenTracker dashboard/public/brand-logos/volcano-ark.svg	MIT (TokenTracker)	Volcano Engine Ark mark, used for both Ark plans
 artificial-analysis	mono	https://artificialanalysis.ai/ (inline header SVG)	trademark, no licence stated	geometric mark, verbatim from the site's inline header SVG (white on the dark header)
+assemblyai	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/assemblyai.svg	MIT (LobeHub icons); AssemblyAI trademark	AssemblyAI mark, for its status page
 atlascloud	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/atlascloud.svg	MIT (LobeHub icons); Atlas Cloud trademark	Atlas Cloud A mark, for its Coding Plan
 augment	mono	https://www.augmentcode.com/favicon.svg	trademark, no licence stated	{.-.} face mark; same icon as docs.augmentcode.com favicon; includes dark-mode media query; wordmark at /augment_code_wordmark.svg
 baiducloud	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/baiducloud-color.svg	MIT (LobeHub icons); Baidu trademark	Baidu AI Cloud mark, for Qianfan Token Plan
+baseten	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/baseten.svg	MIT (LobeHub icons); Baseten trademark	Baseten mark, for its status page
 blackbox	mono	https://docs.blackbox.ai/favicon.svg	trademark, no licence stated	cube mark in white on black rounded square; same mark inline on blackbox.ai/brand
 cerebras	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/cerebras.svg	MIT (LobeHub icons); Cerebras trademark	Cerebras mark
 charm	mono	https://charm.land/ (inline header SVG)	trademark, no licence stated	Charm wordmark; no standalone symbol exists, for Charm Hyper
 cheapestinference	color	https://cheapestinference.com/favicon.svg	trademark, no licence stated	site favicon, gradient tile
 claude	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/claude-color.svg	MIT (LobeHub icons)	Anthropic Claude mark in its brand orange, as TokenTracker shows it
+clerk	mono	https://unpkg.com/simple-icons@16.34.0/icons/clerk.svg	CC0-1.0 (Simple Icons); Clerk trademark	Clerk mark
 cline	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/cline.svg	MIT (LobeHub icons); cline/cline Apache-2.0	filled robot mark; outline variant exists at cline/cline assets/branding/logos/cline-icon-dark.svg
 cloudflare	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/cloudflare-color.svg	MIT (LobeHub icons); Cloudflare trademark	Cloudflare colour mark
 codex	color	TokenTracker dashboard/public/brand-logos/codex.svg	MIT (TokenTracker)	OpenAI Codex colour mark
 cohere	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/cohere-color.svg	MIT (LobeHub icons); Cohere trademark	Cohere colour mark, for API keys
 commandcode	color	TokenTracker dashboard/public/brand-logos/commandcode.svg	MIT (TokenTracker)	Command Code mark, white on its black tile
 continue	mono	https://raw.githubusercontent.com/continuedev/continue/main/docs/logo/light.svg	Apache-2.0 repo; logo trademark	hexagon mark, black fill; docs/logo/dark.svg is the white variant
+convex	mono	https://unpkg.com/simple-icons@16.34.0/icons/convex.svg	CC0-1.0 (Simple Icons); Convex trademark	Convex mark
 copilot	mono	TokenTracker dashboard/public/brand-logos/copilot.svg	MIT (TokenTracker)	GitHub Copilot mark
 crush	color	https://raw.githubusercontent.com/charmbracelet/crush/main/internal/oauth/callback/heartbit.svg	FSL-1.1-MIT repo; Charm trademark	"Crush's pink pixel heart (aria-label ""Crush"")"
 ctyun	color	https://www.ctyun.cn/ (header logo, served as image/svg+xml)	trademark, no licence stated	State Cloud (天翼云) cloud mark, text subpaths dropped, for Ctyun Coding Token Plan
 cursor	mono	TokenTracker dashboard/public/brand-logos/cursor.svg	MIT (TokenTracker)	Cursor mark
+datadog	mono	https://unpkg.com/simple-icons@16.34.0/icons/datadog.svg	CC0-1.0 (Simple Icons); Datadog trademark	Datadog mark
 deepseek	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/deepseek-color.svg	MIT (LobeHub icons); DeepSeek trademark	DeepSeek colour mark
 devin	mono	TokenTracker dashboard/public/brand-logos/devin.svg	MIT (TokenTracker)	Devin mark, traced by TokenTracker from app.devin.ai
+digitalocean	mono	https://unpkg.com/simple-icons@16.34.0/icons/digitalocean.svg	CC0-1.0 (Simple Icons); DigitalOcean trademark	DigitalOcean mark
+docker	mono	https://unpkg.com/simple-icons@16.34.0/icons/docker.svg	CC0-1.0 (Simple Icons); Docker trademark	Docker mark
 droid	mono	https://factory.ai/ (redirects to factory.com; inline svg id=mobile-nav-logo)	trademark, no licence stated	Factory asterisk mark, currentColor; extracted verbatim from page HTML; favicon.svg there is same mark on black square
 elevenlabs	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/elevenlabs.svg	MIT (LobeHub icons); ElevenLabs trademark	two-bar mark, for API keys
 featherless	color	https://featherless.ai/	trademark, no licence stated	the rebranded F (the site's inline SVG) on Featherless's yellow tile #FEF47A, as the favicon shows it; composed locally, F at 64% of the tile
@@ -45,6 +52,8 @@ kilo	mono	TokenTracker dashboard/public/brand-logos/kilo.svg	MIT (TokenTracker)	
 kimi	mono	TokenTracker dashboard/public/brand-logos/kimi.svg	MIT (TokenTracker)	Moonshot Kimi mark (LobeHub icons)
 kiro	mono	TokenTracker dashboard/public/brand-logos/kiro.svg	MIT (TokenTracker)	Kiro mark
 kwaikat	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/kwaikat.svg	MIT (LobeHub icons); Kuaishou trademark	KwaiKAT mark, for KwaiKAT Coding Plan
+lambda	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/lambda.svg	MIT (LobeHub icons); Lambda trademark	Lambda mark in its badge square
+linear	mono	https://unpkg.com/simple-icons@16.34.0/icons/linear.svg	CC0-1.0 (Simple Icons); Linear trademark	Linear mark
 llmgateway	mono	https://llmgateway.io/brand/logo-black.svg	trademark, offered on the /brand page with no licence text	arrow mark, for DevPass
 mastracode	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/mastra.svg	MIT (LobeHub icons); Mastra trademark	Mastra's orbit mark; id is mastracode (the npm name), mark is Mastra's own
 meta	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/meta-color.svg	MIT (LobeHub icons); Meta trademark	Meta mark, for Meta's models (Llama, Muse)
@@ -53,6 +62,7 @@ mistral-vibe	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/mist
 mthreads	color	https://mt-website-prod.mthreads.com/image/logos/logo-black.png	trademark, no licence stated	triangle symbol vector-traced with potrace from the official PNG (no vector source exists), for KUAE AI Coding Plan
 nebius	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/nebius.svg	MIT (LobeHub icons); Nebius trademark	Nebius mark
 nix	mono	https://unpkg.com/simple-icons@16.34.0/icons/nixos.svg	CC0-1.0 (Simple Icons); NixOS trademark	NixOS snowflake, for nix profile installs
+notion	mono	https://unpkg.com/simple-icons@16.34.0/icons/notion.svg	CC0-1.0 (Simple Icons); Notion trademark	Notion mark
 npm	mono	https://unpkg.com/simple-icons@16.34.0/icons/npm.svg	CC0-1.0 (Simple Icons); npm trademark	npm mark
 nvidia	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/nvidia-color.svg	MIT (LobeHub icons); NVIDIA trademark	NVIDIA colour mark
 ollama	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/ollama.svg	MIT (LobeHub icons); Ollama trademark	llama head
@@ -65,19 +75,24 @@ poe	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/poe.svg	MIT (L
 qoder	mono	TokenTracker dashboard/public/brand-logos/qoder.svg	MIT (TokenTracker)	Qoder mono mark (LobeHub icons)
 qoder-cn	color	TokenTracker dashboard/public/brand-logos/qoder-cn.svg	MIT (TokenTracker)	Qoder CN mark in its green
 qwen-code	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/qwen-color.svg	MIT (LobeHub icons); Qwen mark is Alibaba trademark	Qwen colour mark
+render	mono	https://unpkg.com/simple-icons@16.34.0/icons/render.svg	CC0-1.0 (Simple Icons); Render trademark	Render mark
 routing-run	mono	https://unpkg.com/@phosphor-icons/core@2.1.1/assets/bold/planet-bold.svg	MIT (Phosphor Icons)	Phosphor planet (bold); the same mark as routing.run's logo, which the site only publishes as a PNG (/logo_trans_black.png)
 scnet	mono	https://www.scnet.cn/ui/mall/_nuxt/footer-logo.BUcYEYOb.js (inline SVG in the footer logo component)	trademark, no licence stated	SCNet wordmark, viewBox cropped to the letters, for SCNet Token Plan
 sensenova	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/sensenova-color.svg	MIT (LobeHub icons); SenseTime trademark	SenseNova mark, for SenseNova Token Plan
+sentry	mono	https://unpkg.com/simple-icons@16.34.0/icons/sentry.svg	CC0-1.0 (Simple Icons); Sentry trademark	Sentry mark
 standardcompute	color	https://standardcompute.com/icon.svg	trademark, no licence stated	site icon: a single gold bar
 stepfun	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/stepfun-color.svg	MIT (LobeHub icons); StepFun trademark	StepFun colour mark
+supabase	mono	https://unpkg.com/simple-icons@16.34.0/icons/supabase.svg	CC0-1.0 (Simple Icons); Supabase trademark	Supabase mark
 synthetic	mono	https://synthetic.new/favicon.svg	trademark, no licence stated	flower mark, taken out of the favicon's white plate
 tailscale	mono	https://tailscale.com/favicon.svg	trademark, no licence stated	dot-grid mark, taken out of the favicon's squircle plate so it templates like the rest
 taotoken	mono	https://static.taotoken.net/release/taotoken_fe/dist/logo.svg	trademark, no licence stated	site logo mark
 tencentcloud	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/tencentcloud-color.svg	MIT (LobeHub icons); Tencent trademark	Tencent Cloud mark, for TokenHub plans
 together	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/together-color.svg	MIT (LobeHub icons); Together AI trademark	Together AI colour mark
+twilio	mono	https://unpkg.com/simple-icons@13.21.0/icons/twilio.svg	CC0-1.0 (Simple Icons); Twilio trademark	Twilio dots-in-circle mark; dropped from Simple Icons releases after 13.x, so pinned to 13.21.0
 ucloud	color	https://static.ucloud.cn/c20741a9a7e4bc6b19b20390a5346de9.zip (VI kit PDF, page 1 vector paths)	trademark, brand kit with no licence stated	U and pixel-grid symbol, for Compshare Coding Plan
 unicom	color	https://upload.wikimedia.org/wikipedia/en/f/fd/China_Unicom_logo_(2022).svg	trademark; non-free logo on English Wikipedia	Chinese-knot heart symbol, text dropped, for Unicom Cloud Coding Plan
 upstage	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/upstage-color.svg	MIT (LobeHub icons); Upstage trademark	Upstage colour mark
+upstash	mono	https://unpkg.com/simple-icons@16.34.0/icons/upstash.svg	CC0-1.0 (Simple Icons); Upstash trademark	Upstash mark
 uv	mono	https://unpkg.com/simple-icons@16.34.0/icons/uv.svg	CC0-1.0 (Simple Icons); Astral trademark	uv mark, for uv tool installs
 vercel	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/vercel.svg	MIT (LobeHub icons); Vercel trademark	Vercel mark
 xiaomimimo	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/xiaomimimo.svg	MIT (LobeHub icons); Xiaomi trademark	Xiaomi MiMo mark
