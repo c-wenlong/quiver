@@ -4,8 +4,8 @@
  * definitions that disagree lettered. A server's sheet syncs it, with a
  * Preview first, through POST /v1/app/mcp/preview and /sync, removes it
  * through /remove, and sets its ${NAME} values through /secret_set (shown
- * masked; /secret_value reveals one). Add server stays in swe and the Mac
- * app. Data: /v1/app/mcp,
+ * masked; /secret_value reveals one). Add server is the Mac app's
+ * McpAddServerSheet, through /add. Data: /v1/app/mcp,
  * and /v1/app/mcp?health=1 only when "Check health" is pressed.
  */
 "use strict";
@@ -22,8 +22,10 @@ const mcpPage = {
   filter: "all", opened: new Set(), hidden: mcpLoadHidden(),
   // The open sheet's sync state (mcpSheetState), kept across a repaint.
   sheet: null,
-  // What the last Remove did, until the list is read again.
+  // What the last Remove or Add did, until the list is read again.
   notice: null,
+  // The Add server sheet's draft while it is open (mcpOpenAdd).
+  add: null,
 };
 
 function mcpLoadHidden() {
@@ -43,6 +45,8 @@ const MCP_SVG = {
   down: '<path d="m6 9 6 6 6-6"/>',
   up: '<path d="m6 15 6-6 6 6"/>',
   plug: '<path d="M9 3v5M15 3v5M7 8h10v4a5 5 0 0 1-10 0zM12 17v4"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  minus: '<path d="M5 12h14"/>',
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   eyeOff: '<path d="M3 3l18 18M10.6 5.1A10.7 10.7 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4M6.6 6.6C3.9 8.4 2 12 2 12s3.6 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
   copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
@@ -168,7 +172,8 @@ function mcpHeader() {
   const busy = mcpPage.loading;
   return pageHeader("MCP servers",
     `Every server your harnesses configure${where}, where each is missing, and where two disagree.`,
-    `<button class="mcp-button" id="mcp-health" title="Run each server's command check and reach each URL"${
+    `<button class="mcp-button" id="mcp-add"${mcpPage.data ? "" : " disabled"}>${mcpSvg("plus")}<span>Add server</span></button>
+     <button class="mcp-button" id="mcp-health" title="Run each server's command check and reach each URL"${
       mcpPage.checking ? " disabled" : ""}>${mcpSvg("health")}<span>${mcpPage.checking ? "Checking…" : "Check health"}</span></button>
      <button class="icon-button${busy ? " spinning" : ""}" id="page-refresh" aria-label="Refresh" title="Read the configs again">${icon("rescan")}</button>`);
 }
@@ -176,7 +181,10 @@ function mcpHeader() {
 function mcpShell(body) {
   document.getElementById("panel").innerHTML = `<div class="page mcp">${mcpHeader()}
     <div class="stack">${body}</div></div>
-    <dialog class="sheet mcp-sheet" id="mcp-sheet"></dialog>`;
+    <dialog class="sheet mcp-sheet" id="mcp-sheet"></dialog>
+    <dialog class="sheet mcp-sheet mcp-add-sheet" id="mcp-add-sheet" aria-labelledby="mcp-add-title"></dialog>`;
+  const add = document.getElementById("mcp-add");
+  if (add) add.onclick = () => mcpStartAdd();
   const health = document.getElementById("mcp-health");
   if (health) health.onclick = () => mcpLoad(true);
   // Refresh keeps health on when the list on show has it, as in the app.
@@ -228,10 +236,14 @@ function paintMcp() {
   // open one is opened again on the same server with its new state.
   const sheet = document.getElementById("mcp-sheet");
   const openName = sheet && sheet.open ? sheet.dataset.server : null;
+  // The Add sheet is drawn again too, with the cursor back where it was.
+  const addSheet = document.getElementById("mcp-add-sheet");
+  const addFocus = addSheet && addSheet.contains(document.activeElement) ? mcpAddFocusKey(document.activeElement) : null;
   mcpShell(parts.join(""));
   mcpBind();
   const again = openName != null && d.servers.find((s) => s.name === openName);
   if (again) mcpOpenSheet(again);
+  if (p.add) mcpOpenAdd(addFocus);
 }
 
 /* The Local folder rows alone, when there is no server grid to put them
@@ -887,7 +899,6 @@ function mcpOpenSheet(s) {
     <div class="card-title">Sync</div>
     ${form}${result}${error}${confirm}
     ${actions}
-    <p class="caption mcp-muted">Add server stays in swe and the Mac app.</p>
   </form>`;
   sheet.dataset.server = s.name;
   // A closed sheet forgets every value it showed and every draft.
@@ -951,3 +962,304 @@ function mcpBindSheet(sheet, s, st) {
 }
 
 registerPage("mcp", renderMcp);
+
+/* ----------------------------------------------------------- add server */
+
+// McpRedaction.secretFlagEndings: a key ending in one is a secret by default.
+const MCP_SECRET_ENDINGS = ["token", "key", "secret", "password", "passwd", "credential", "credentials",
+  "auth", "authorization", "header"];
+
+/* mcpCommandWords: the command line split as a shell would, quotes
+ * grouping and unquoting; null for an unclosed quote. */
+function mcpCommandWords(line) {
+  const words = [];
+  let word = "", open = false, quote = " ";
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === "\\") {
+      if (quote === "'") { word += "\\"; open = true; continue; }
+      if (i + 1 >= line.length) { word += "\\"; continue; }
+      const next = line[++i];
+      word += quote === '"' && !'"\\$`'.includes(next) ? "\\" + next : next;
+      open = true;
+    } else if (ch === "'") {
+      if (quote === '"') { word += "'"; open = true; continue; }
+      if (quote === "'") quote = " "; else if (!open || quote === " ") quote = "'";
+      open = true;
+    } else if (ch === '"') {
+      if (quote === "'") { word += '"'; open = true; continue; }
+      if (quote === '"') quote = " "; else if (quote === " ") quote = '"';
+      open = true;
+    } else if (ch === " " || ch === "\t" || ch === "\n") {
+      if (quote === " ") { if (open) { words.push(word); word = ""; open = false; } }
+      else { word += ch; open = true; }
+    } else {
+      word += ch;
+      open = true;
+    }
+  }
+  if (quote !== " ") return null;
+  if (open) words.push(word);
+  return words;
+}
+
+/* mcpIsSecretName: whether a key looks like it holds a credential. */
+function mcpIsSecretName(key) {
+  const bare = key.replace(/[-_]/g, "").toLowerCase();
+  return !!bare && MCP_SECRET_ENDINGS.some((end) => bare.endsWith(end));
+}
+
+/* mcpSecretName: the ${NAME} a secret is stored under, as the hub names it. */
+function mcpSecretName(server, key) {
+  const name = `${server}_${key}`.replace(/[^A-Za-z0-9]/g, "_").toUpperCase().replace(/_+/g, "_").replace(/^_|_$/g, "");
+  return /^[0-9]/.test(name) ? "MCP_" + name : name;
+}
+
+const MCP_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.@-]*$/;
+let mcpVarSeq = 0;
+const mcpNewVar = () => ({ id: ++mcpVarSeq, key: "", value: "", secret: false, touched: false, show: false });
+
+function mcpStartAdd() {
+  const d = mcpPage.data;
+  if (!d) return;
+  const active = mcpActive(d).filter((h) => !mcpPage.hidden.has(h));
+  mcpPage.add = { name: "", kind: "command", line: "", url: "", sse: false, vars: [mcpNewVar()],
+    targets: new Set(active), force: false, working: false, error: null, picking: false };
+  mcpOpenAdd("#mcp-add-name");
+}
+
+function mcpAddHint(a) {
+  const words = mcpCommandWords(a.line);
+  if (words == null) return { text: "Unclosed quote", problem: true };
+  if (!words.length) return { text: "", problem: false };
+  return { text: `command ${words[0]}${words.length > 1 ? ` · args ${words.slice(1).join(" ")}` : ""}`, problem: false };
+}
+
+function mcpAddReady(a) {
+  if (a.working || !MCP_NAME_RE.test(a.name)) return false;
+  if (a.kind === "command") { const w = mcpCommandWords(a.line); return !!(w && w.length); }
+  return !!a.url.trim();
+}
+
+function mcpAddHtml() {
+  const a = mcpPage.add, d = mcpPage.data;
+  const dis = a.working ? " disabled" : "";
+  const hint = mcpAddHint(a);
+  const command = a.kind === "command";
+  const server = `<div class="card-title">Server</div>
+    <div class="mcp-add-row">
+      <label class="mcp-add-field"><span class="caption">Name</span>
+        <input class="field" id="mcp-add-name" placeholder="github" autocomplete="off" spellcheck="false" value="${esc(a.name)}"${dis}></label>
+      <div class="mcp-add-field"><span class="caption">Kind</span>
+        <div class="tabs mcp-add-kind" role="tablist">${[["command", "Command"], ["url", "URL"]].map(([id, title]) =>
+          `<button type="button" class="tab${a.kind === id ? " selected" : ""}" role="tab" aria-selected="${a.kind === id}" data-mcp-add-kind="${id}"${dis}>${title}</button>`).join("")}</div></div>
+    </div>
+    ${command ? `<label class="mcp-add-field"><span class="caption">Command</span>
+        <input class="field mono" id="mcp-add-line" placeholder="npx -y @modelcontextprotocol/server-github" autocomplete="off" spellcheck="false" value="${esc(a.line)}"${dis}>
+        <span class="caption mono${hint.problem ? " warn" : ""}" id="mcp-add-hint">${esc(hint.text)}</span></label>`
+      : `<div class="mcp-add-field"><label class="caption" for="mcp-add-url">URL</label>
+        <div class="mcp-add-row"><input class="field mono" id="mcp-add-url" placeholder="https://mcp.example.com/mcp" autocomplete="off" spellcheck="false" value="${esc(a.url)}"${dis}>
+        <div class="tabs mcp-add-kind" role="tablist">${[[false, "HTTP"], [true, "SSE"]].map(([v, title]) =>
+          `<button type="button" class="tab${a.sse === v ? " selected" : ""}" role="tab" aria-selected="${a.sse === v}" data-mcp-add-sse="${v}"${dis}>${title}</button>`).join("")}</div></div></div>`}`;
+  const vars = a.vars.map((v) => {
+    const hidden = v.secret && !v.show;
+    const saved = v.secret && v.key.trim() && !v.value.startsWith("${")
+      ? `<span class="caption mcp-muted mono" data-mcp-add-saved="${v.id}">saved as \${${esc(mcpSecretName(a.name || "SERVER", v.key.trim()))}}</span>` : "";
+    return `<div class="mcp-add-var" data-mcp-add-var="${v.id}">
+      <div class="mcp-add-var-row">
+        <input class="field mono mcp-add-key" data-mcp-add-key="${v.id}" placeholder="${command ? "NAME" : "Header"}" aria-label="${command ? "Variable name" : "Header name"}" autocomplete="off" spellcheck="false" value="${esc(v.key)}"${dis}>
+        <input class="field mono mcp-add-value" data-mcp-add-value="${v.id}" type="${hidden ? "password" : "text"}" autocomplete="${v.secret ? "new-password" : "off"}" spellcheck="false"
+          placeholder="${v.secret ? "value" : "value or ${NAME}"}" aria-label="Value for ${esc(v.key || "this variable")}" value="${esc(v.value)}"${dis}>
+        ${v.secret ? `<button type="button" class="icon-button mcp-secret-icon" data-mcp-add-show="${v.id}" aria-label="${v.show ? "Hide" : "Show"} the value" title="${v.show ? "Hide" : "Show"} the value">${mcpSvg(v.show ? "eyeOff" : "eye")}</button>` : ""}
+        <label class="mcp-add-secret caption">Secret<input type="checkbox" class="mcp-switch" role="switch" data-mcp-add-secret="${v.id}" aria-label="Secret"${v.secret ? " checked" : ""}${dis}></label>
+        <button type="button" class="icon-button mcp-secret-icon" data-mcp-add-drop="${v.id}" aria-label="Remove" title="Remove"${dis}>${mcpSvg("minus")}</button>
+      </div>${saved}</div>`;
+  }).join("");
+  const where = d.machine ? ` on ${esc(d.machine)}` : "";
+  const variables = `<hr class="mcp-rule"><div class="card-title">${command ? "Env vars" : "Headers"}</div>
+    <div class="mcp-add-vars">${vars}</div>
+    <div><button type="button" class="mcp-sheet-button" id="mcp-add-var"${dis}>${mcpSvg("plus")}<span>${command ? "Add variable" : "Add header"}</span></button></div>
+    <p class="caption mcp-muted">Secret values go to ~/.quiver/secrets/mcp/.api_keys${where}; the configs get \${NAME} references.</p>`;
+  const active = mcpActive(d);
+  const picked = d.harnesses.filter((h) => a.targets.has(h)).length;
+  const face = `${picked} of ${d.harnesses.length} ${d.harnesses.length === 1 ? "harness" : "harnesses"}`;
+  const checklist = a.picking ? `<div class="mcp-add-picker" role="group" aria-label="Add to">
+      <div class="mcp-add-picker-top"><button type="button" class="mcp-sheet-button" data-mcp-add-all="active">All active</button>
+        <button type="button" class="mcp-sheet-button" data-mcp-add-all="none">None</button></div>
+      ${d.harnesses.map((h) => {
+        const m = mcpMark(h);
+        return `<label class="mcp-target">${m.logoId ? Fmt.logo(m.logoId) : `<span class="mcp-logo-gap"></span>`}<span class="mcp-target-name">${esc(m.name)}</span>
+          <span class="mcp-spacer"></span><input type="checkbox" class="mcp-switch" role="switch" data-mcp-add-target="${esc(h)}" aria-label="${esc(m.name)}"${a.targets.has(h) ? " checked" : ""}${dis}></label>`;
+      }).join("")}</div>` : "";
+  const placesHtml = `<hr class="mcp-rule"><div class="card-title">Where</div>
+    <div class="mcp-add-where"><div><div>Add to</div><div class="caption">Always saved to the Quiver hub too</div></div>
+      <button type="button" class="field mcp-add-face" id="mcp-add-pick" aria-expanded="${a.picking}"${dis}>${esc(face)} ${mcpSvg(a.picking ? "up" : "down")}</button></div>
+    ${checklist}
+    <label class="mcp-add-where"><span>Replace if it already exists</span>
+      <input type="checkbox" class="mcp-switch" role="switch" id="mcp-add-force" aria-label="Replace if it already exists"${a.force ? " checked" : ""}${dis}></label>`;
+  return `<form method="dialog" class="sheet-body">
+    <div class="sheet-title" id="mcp-add-title">Add a server</div>
+    ${server}${variables}${placesHtml}
+    ${a.error ? `<p class="error" role="alert">${esc(a.error)}</p>` : ""}
+    <div class="sheet-actions mcp-sync-actions"><span class="mcp-spacer"></span>
+      <button class="mcp-sheet-button" value="close">Cancel</button>
+      <button type="button" class="mcp-sheet-button primary" id="mcp-add-go"${mcpAddReady(a) ? "" : " disabled"}>${a.working ? "Adding…" : "Add server"}</button></div>
+  </form>`;
+}
+
+/* Draws the sheet from mcpPage.add and binds it, keeping focus on the
+ * element that had it, or on ``focus``. */
+function mcpOpenAdd(focus) {
+  const sheet = document.getElementById("mcp-add-sheet");
+  const a = mcpPage.add;
+  if (!sheet || !a) return;
+  const el = document.activeElement;
+  const keep = el && sheet.contains(el) ? mcpAddFocusKey(el) : null;
+  sheet.innerHTML = mcpAddHtml();
+  // A closed sheet forgets its draft, secret values included.
+  sheet.onclose = () => { mcpPage.add = null; sheet.replaceChildren(); };
+  mcpBindAdd(sheet, a);
+  if (!sheet.open) sheet.showModal();
+  const target = (keep && sheet.querySelector(keep)) || (focus && sheet.querySelector(focus));
+  if (target && !target.disabled) {
+    target.focus();
+    if (target.setSelectionRange && typeof target.value === "string") {
+      try { target.setSelectionRange(target.value.length, target.value.length); } catch { /* not text */ }
+    }
+  }
+}
+
+function mcpAddFocusKey(el) {
+  if (el.id) return `#${CSS.escape(el.id)}`;
+  for (const attr of el.getAttributeNames()) {
+    if (attr.startsWith("data-mcp-add-")) return `[${attr}="${CSS.escape(el.getAttribute(attr))}"]`;
+  }
+  return null;
+}
+
+function mcpBindAdd(sheet, a) {
+  const go = sheet.querySelector("#mcp-add-go");
+  const ready = () => { go.disabled = !mcpAddReady(a); };
+  const name = sheet.querySelector("#mcp-add-name");
+  name.oninput = () => {
+    a.name = name.value;
+    for (const v of a.vars) {
+      const el = sheet.querySelector(`[data-mcp-add-saved="${v.id}"]`);
+      if (el) el.textContent = `saved as \${${mcpSecretName(a.name || "SERVER", v.key.trim())}}`;
+    }
+    ready();
+  };
+  const line = sheet.querySelector("#mcp-add-line");
+  if (line) {
+    line.oninput = () => {
+      a.line = line.value;
+      const hint = mcpAddHint(a), el = sheet.querySelector("#mcp-add-hint");
+      el.textContent = hint.text;
+      el.classList.toggle("warn", hint.problem);
+      ready();
+    };
+  }
+  const url = sheet.querySelector("#mcp-add-url");
+  if (url) url.oninput = () => { a.url = url.value; ready(); };
+  for (const tab of sheet.querySelectorAll("[data-mcp-add-kind]")) {
+    tab.onclick = () => { a.kind = tab.dataset.mcpAddKind; mcpOpenAdd(a.kind === "command" ? "#mcp-add-line" : "#mcp-add-url"); };
+  }
+  for (const tab of sheet.querySelectorAll("[data-mcp-add-sse]")) {
+    tab.onclick = () => { a.sse = tab.dataset.mcpAddSse === "true"; mcpOpenAdd(); };
+  }
+  const find = (el, attr) => a.vars.find((v) => String(v.id) === el.dataset[attr]);
+  for (const input of sheet.querySelectorAll("[data-mcp-add-key]")) {
+    input.oninput = () => {
+      const v = find(input, "mcpAddKey");
+      v.key = input.value;
+      // Until the switch is flipped by hand, the key decides it.
+      if (!v.touched && v.secret !== mcpIsSecretName(v.key)) { v.secret = mcpIsSecretName(v.key); mcpOpenAdd(); return; }
+      const saved = sheet.querySelector(`[data-mcp-add-saved="${v.id}"]`);
+      if (saved) saved.textContent = `saved as \${${mcpSecretName(a.name || "SERVER", v.key.trim())}}`;
+      else if (v.secret && v.key.trim()) mcpOpenAdd();
+    };
+  }
+  for (const input of sheet.querySelectorAll("[data-mcp-add-value]")) {
+    input.oninput = () => { find(input, "mcpAddValue").value = input.value; };
+  }
+  for (const box of sheet.querySelectorAll("[data-mcp-add-secret]")) {
+    box.onchange = () => { const v = find(box, "mcpAddSecret"); v.secret = box.checked; v.touched = true; v.show = false; mcpOpenAdd(); };
+  }
+  for (const btn of sheet.querySelectorAll("[data-mcp-add-show]")) {
+    btn.onclick = () => { const v = find(btn, "mcpAddShow"); v.show = !v.show; mcpOpenAdd(); };
+  }
+  for (const btn of sheet.querySelectorAll("[data-mcp-add-drop]")) {
+    btn.onclick = () => {
+      const v = find(btn, "mcpAddDrop");
+      a.vars = a.vars.filter((x) => x !== v);
+      mcpOpenAdd("#mcp-add-var");
+    };
+  }
+  sheet.querySelector("#mcp-add-var").onclick = () => {
+    const v = mcpNewVar();
+    a.vars.push(v);
+    mcpOpenAdd(`[data-mcp-add-key="${v.id}"]`);
+  };
+  sheet.querySelector("#mcp-add-pick").onclick = () => { a.picking = !a.picking; mcpOpenAdd("#mcp-add-pick"); };
+  for (const btn of sheet.querySelectorAll("[data-mcp-add-all]")) {
+    btn.onclick = () => {
+      const d = mcpPage.data;
+      a.targets = new Set(btn.dataset.mcpAddAll === "active" ? mcpActive(d).filter((h) => !mcpPage.hidden.has(h)) : []);
+      mcpOpenAdd();
+    };
+  }
+  for (const box of sheet.querySelectorAll("[data-mcp-add-target]")) {
+    box.onchange = () => {
+      const h = box.dataset.mcpAddTarget;
+      if (box.checked) a.targets.add(h); else a.targets.delete(h);
+      mcpOpenAdd();
+    };
+  }
+  sheet.querySelector("#mcp-add-force").onchange = (e) => { a.force = e.target.checked; };
+  go.onclick = () => mcpAdd();
+  sheet.querySelector("form").onsubmit = (e) => {
+    // Enter in a field adds, as the app's default button does; Cancel closes.
+    if (e.submitter && e.submitter.value === "close") return;
+    e.preventDefault();
+    if (mcpAddReady(a)) mcpAdd();
+  };
+}
+
+/* swe mcp add on the hub. Secret values are cleared from the sheet once
+ * sent, whether or not the hub took them. */
+async function mcpAdd() {
+  const a = mcpPage.add;
+  if (!a || !mcpAddReady(a)) return;
+  const d = mcpPage.data;
+  const command = a.kind === "command";
+  const body = {
+    name: a.name, kind: a.kind, force: a.force,
+    targets: d.harnesses.filter((h) => a.targets.has(h)),
+    vars: a.vars.filter((v) => v.key.trim()).map((v) => ({ key: v.key.trim(), value: v.value, secret: v.secret })),
+  };
+  if (command) body.command = mcpCommandWords(a.line);
+  else { body.url = a.url.trim(); body.transport = a.sse ? "sse" : "http"; }
+  a.working = true;
+  a.error = null;
+  for (const v of a.vars) if (v.secret) { v.value = ""; v.show = false; }
+  mcpOpenAdd();
+  const { status, data } = await mcpPost("add", body);
+  body.vars = [];
+  a.working = false;
+  if (status === 401) {
+    if (mcpOnPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    return;
+  }
+  if (mcpPage.add !== a) return;
+  if (status !== 200 || !data) {
+    a.error = mcpFailure(status, data);
+    return mcpOpenAdd();
+  }
+  const sheet = document.getElementById("mcp-add-sheet");
+  if (sheet && sheet.open) sheet.close();
+  mcpPage.add = null;
+  const places = ["Quiver hub", ...data.targets.map((t) => mcpMark(t.name).name)];
+  mcpPage.notice = `${data.hub === "replaced" ? "Replaced" : "Added"} ${data.name} in ${places.join(", ")}.`;
+  mcpAdopt(data.page);
+  if (mcpOnPage()) paintMcp();
+}

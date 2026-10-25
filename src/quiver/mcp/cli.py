@@ -1536,57 +1536,86 @@ def cmd_add(args):
         return 1
     name = positional[0]
 
-    if (url is None) == (not command_tail):
-        print("Give exactly one of --url=<url> or `-- <command> [args…]`.",
-              file=refusal)
+    try:
+        env = _add_pairs(env_pairs, "--env")
+        headers = _add_pairs(header_pairs, "--header")
+        canonical, targets = add_plan(load_registry(), url=url, transport=transport,
+                                      command=command_tail, env=env, headers=headers,
+                                      to_names=to_names)
+    except AddRefused as exc:
+        print(c("red", str(exc)) if exc.alarming else str(exc), file=refusal)
         return 1
+
+    # A literal credential in mcp.json is versioned; nudge toward ${NAME}.
+    for key, value in {**env, **headers}.items():
+        if "${" not in value and _SECRET_FLAG_RE.search(key):
+            print(c("yellow",
+                    f"  {key} looks like a credential and goes into mcp.json, "
+                    f"which is versioned. Use ${{{key}}} and swe mcp secret set {key}."),
+                  file=sys.stderr)
+
+    try:
+        report = add_server(name, canonical, targets, force=force)
+    except AddRefused as exc:
+        print(c("red", str(exc)) if exc.alarming else str(exc), file=refusal)
+        return 1
+
+    if json_view:
+        return emit(report)
+    print(f"{report['hub'].capitalize()} {name} in the Quiver hub (~/.quiver/mcp.json)")
+    for r in report["targets"]:
+        print(f"  {r['status']} in {r['name']}")
+    return 0
+
+
+class AddRefused(ValueError):
+    """An ``swe mcp add`` swe won't do; ``alarming`` prints in red."""
+
+    def __init__(self, message: str, alarming: bool = False):
+        super().__init__(message)
+        self.alarming = alarming
+
+
+def _add_pairs(raw: list[str], flag: str) -> dict[str, str]:
+    out = {}
+    for pair in raw:
+        key, sep, value = pair.partition("=")
+        if not sep:
+            raise AddRefused(f"{flag} takes KEY=VALUE pairs: {pair!r} has no =")
+        out[key] = value
+    return out
+
+
+def add_plan(registry: dict, *, url: str | None, transport: str | None,
+             command: list[str] | None, env: dict[str, str], headers: dict[str, str],
+             to_names: list[str]) -> tuple[dict, list[str]]:
+    """The first half of ``swe mcp add``: the server's canonical definition
+    and the harnesses it goes to, checked. Exactly one of ``url`` and
+    ``command`` (the command and its arguments). Raises AddRefused."""
+    if (url is None) == (not command):
+        raise AddRefused("Give exactly one of --url=<url> or `-- <command> [args…]`.")
     if url is not None:
-        if env_pairs:
-            print("--env only applies to a command server; use --header with --url.",
-                  file=refusal)
-            return 1
+        if env:
+            raise AddRefused("--env only applies to a command server; use --header with --url.")
         if transport not in (None, "http", "sse"):
-            print("--transport must be http or sse.", file=refusal)
-            return 1
+            raise AddRefused("--transport must be http or sse.")
     else:
-        if header_pairs:
-            print("--header only applies to a --url server.", file=refusal)
-            return 1
+        if headers:
+            raise AddRefused("--header only applies to a --url server.")
         if transport is not None:
-            print("--transport only applies to a --url server.", file=refusal)
-            return 1
+            raise AddRefused("--transport only applies to a --url server.")
 
-    def _pairs(raw: list[str], flag: str) -> dict[str, str] | None:
-        out = {}
-        for pair in raw:
-            key, sep, value = pair.partition("=")
-            if not sep:
-                print(f"{flag} takes KEY=VALUE pairs: {pair!r} has no =", file=refusal)
-                return None
-            out[key] = value
-        return out
-
-    env = _pairs(env_pairs, "--env")
-    headers = _pairs(header_pairs, "--header")
-    if env is None or headers is None:
-        return 1
-
-    registry = load_registry()
     targets: list[str] = []
     for place in to_names:
         if is_hub(place):
             continue  # the hub is always written
         resolved = resolve_tool_arg(registry, place)
         if _unsafe_registry_name(resolved):
-            print(c("red", f"Unsafe harness name in registry: {place}"), file=refusal)
-            return 1
+            raise AddRefused(f"Unsafe harness name in registry: {place}", alarming=True)
         if not resolved:
-            print(f"Unknown target tool: {place}", file=refusal)
-            return 1
+            raise AddRefused(f"Unknown target tool: {place}")
         if get_tool_saver(resolved) is None:
-            print(c("red", f"No MCP backend registered for {resolved}"),
-                  file=refusal)
-            return 1
+            raise AddRefused(f"No MCP backend registered for {resolved}", alarming=True)
         if resolved not in targets:
             targets.append(resolved)
 
@@ -1597,9 +1626,9 @@ def cmd_add(args):
         if headers:
             canonical["headers"] = headers
     else:
-        canonical = {"command": command_tail[0]}
-        if len(command_tail) > 1:
-            canonical["args"] = command_tail[1:]
+        canonical = {"command": command[0]}
+        if len(command) > 1:
+            canonical["args"] = command[1:]
         if env:
             canonical["env"] = env
 
@@ -1610,40 +1639,40 @@ def cmd_add(args):
                      if get_tool_format(t) in ("opencode",)
                      or get_tool_config(t).get("io_type") == "toml_region"]
         if incapable:
-            print(c("red", f"{', '.join(incapable)} can't use an SSE server."),
-                  file=refusal)
-            return 1
+            raise AddRefused(f"{', '.join(incapable)} can't use an SSE server.", alarming=True)
+    return canonical, targets
 
-    # A literal credential in mcp.json is versioned; nudge toward ${NAME}.
-    for key, value in {**env, **headers}.items():
-        if "${" not in value and _SECRET_FLAG_RE.search(key):
-            print(c("yellow",
-                    f"  {key} looks like a credential and goes into mcp.json, "
-                    f"which is versioned. Use ${{{key}}} and swe mcp secret set {key}."),
-                  file=sys.stderr)
 
+def add_conflicts(name: str, targets: list[str]) -> list[str]:
+    """Where a server called ``name`` already is, among the hub ("quiver")
+    and ``targets``: what ``--force`` would replace."""
+    conflicts = ["quiver"] if name in get_hub_servers() else []
+    return conflicts + [t for t in targets if name in get_tool_servers(t)]
+
+
+def add_server(name: str, canonical: dict, targets: list[str], *, force: bool = False) -> dict:
+    """The second half of ``swe mcp add``: write ``canonical`` to the hub
+    and each target. Every conflict and missing secret is found before
+    anything is written. Returns ``{"name", "hub", "targets"}``, the
+    ``--json`` report. Raises AddRefused."""
     # What the hub stores; values already in the secrets file become ${NAME}.
     hub_entry = redact_secrets(canonical)
 
-    # Every conflict is found before anything is written.
     hub = get_hub_servers()
     conflicts = ["quiver"] if name in hub else []
     target_servers = {t: get_tool_servers(t) for t in targets}
     conflicts += [t for t in targets if name in target_servers[t]]
     if conflicts and not force:
-        print(c("red", f"{name} already exists in: {', '.join(conflicts)}. "
-                       "Re-run with --force to replace."), file=refusal)
-        return 1
+        raise AddRefused(f"{name} already exists in: {', '.join(conflicts)}. "
+                         "Re-run with --force to replace.", alarming=True)
 
     # A ${NAME} a harness can't satisfy must not be written as the literal.
     if targets:
-        secrets = load_secrets()
-        missing = unresolved_names(canonical, secrets)
+        missing = unresolved_names(canonical, load_secrets())
         if missing:
-            for var in missing:
-                print(f"Not adding: no value for {var} (used by {name}). "
-                      f"Set it with: swe mcp secret set {var}", file=refusal)
-            return 1
+            raise AddRefused("\n".join(
+                f"Not adding: no value for {var} (used by {name}). "
+                f"Set it with: swe mcp secret set {var}" for var in missing))
 
     hub_status = "replaced" if name in hub else "added"
     hub[name] = hub_entry
@@ -1659,13 +1688,7 @@ def cmd_add(args):
                          if status == "replaced" else converted)
         get_tool_saver(target)(servers, get_tool_config(target)["path"])
         results.append({"name": target, "status": status})
-
-    if json_view:
-        return emit({"name": name, "hub": hub_status, "targets": results})
-    print(f"{hub_status.capitalize()} {name} in the Quiver hub (~/.quiver/mcp.json)")
-    for r in results:
-        print(f"  {r['status']} in {r['name']}")
-    return 0
+    return {"name": name, "hub": hub_status, "targets": results}
 
 
 class RemoveRefused(ValueError):

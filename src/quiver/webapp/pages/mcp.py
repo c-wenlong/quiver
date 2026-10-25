@@ -36,8 +36,12 @@ server refers to.
 ``POST /v1/app/mcp/remove`` is the sheet's Remove: ``swe mcp remove
 <name> --from=<places>`` (``remove_places`` + ``remove_server``) for the
 places the confirm named, each of which must still hold the server.
-Adding servers stays in ``swe mcp`` and the Mac app (see
-docs/web-app/mcp.md).
+
+``POST /v1/app/mcp/add`` is the page's Add server, the Mac app's
+``McpAddServerSheet``: ``swe mcp add`` in process (``add_plan`` +
+``add_server``). A variable marked secret is stored with ``set_secret``
+under ``SERVER_KEY`` and the configs get ``${SERVER_KEY}``; nothing is
+stored for an add the hub would refuse. The reply never holds a value.
 """
 
 from __future__ import annotations
@@ -149,7 +153,7 @@ def probe_all(pairs: list[tuple[dict, object]],
 # McpModel.sync/targets/sources): one server, copied from one source to the
 # harnesses picked, through the same ``_sync`` that ``swe mcp sync`` runs.
 
-ACTIONS = ("preview", "sync", "remove", "secret_set", "secret_value")
+ACTIONS = ("preview", "sync", "remove", "secret_set", "secret_value", "add")
 HUB = "quiver"
 NAME_MAX = 200
 
@@ -170,6 +174,8 @@ def post(ctx, action: str, body: dict) -> dict:
         raise PageError(404, "unknown_action", f"unknown MCP action: {action}")
     if action == "remove":
         return _remove(ctx, body)
+    if action == "add":
+        return _add(ctx, body)
     if action in ("secret_set", "secret_value"):
         return _secret(ctx, action, body)
     request = _sync_request(body, action == "sync")
@@ -283,6 +289,124 @@ def _remove(ctx, body: dict) -> dict:
         except (OSError, ValueError) as exc:
             raise PageError(409, "remove_failed", str(exc) or exc.__class__.__name__) from exc
     return {"server": name, "removed": removed, "absent": absent, "page": get(ctx, {})}
+
+
+# ------------------------------------------------------------------- add
+
+ADD_WORDS_MAX = 200
+ADD_VARS_MAX = 100
+TEXT_MAX = 4096
+VALUE_MAX = 16384
+
+
+def secret_name(server: str, key: str) -> str:
+    """``mcpSecretName``: the ``${NAME}`` a secret env var or header is
+    stored under, ``SERVER_KEY`` in caps with every other run of
+    characters one ``_``, and ``MCP_`` in front of a leading digit."""
+    name = "".join(ch.upper() if ch.isascii() and ch.isalnum() else "_" for ch in f"{server}_{key}")
+    name = re.sub(r"_+", "_", name).strip("_")
+    return "MCP_" + name if name[:1].isdigit() else name
+
+
+def _add_request(body: dict) -> dict:
+    """The body's fields, type-checked; swe judges the rest."""
+    if not isinstance(body, dict):
+        raise PageError(422, "bad_body", "expected a JSON object")
+    from quiver.mcp.cli import _SERVER_NAME_RE
+
+    name = body.get("name")
+    if not isinstance(name, str) or len(name) > NAME_MAX or not _SERVER_NAME_RE.match(name):
+        raise PageError(422, "bad_name",
+                        "A name is letters, digits, . _ @ - and can't start with _ . @ -.")
+    kind = body.get("kind")
+    if kind not in ("command", "url"):
+        raise PageError(422, "bad_kind", "kind must be command or url")
+    command, url, transport = None, None, None
+    if kind == "command":
+        command = body.get("command")
+        if (not isinstance(command, list) or not command or len(command) > ADD_WORDS_MAX
+                or not all(isinstance(w, str) and len(w) <= TEXT_MAX for w in command)
+                or not command[0]):
+            raise PageError(422, "bad_command", "Enter the command that starts the server.")
+    else:
+        url = body.get("url")
+        if not isinstance(url, str) or not url.strip() or len(url) > TEXT_MAX:
+            raise PageError(422, "bad_url", "Enter the server's URL.")
+        url = url.strip()
+        transport = body.get("transport", "http")
+        if transport not in ("http", "sse"):
+            raise PageError(422, "bad_transport", "transport must be http or sse")
+    variables = body.get("vars", [])
+    if not isinstance(variables, list) or len(variables) > ADD_VARS_MAX:
+        raise PageError(422, "bad_vars", "vars must be a list")
+    pairs = []
+    for var in variables:
+        if not isinstance(var, dict):
+            raise PageError(422, "bad_vars", "each var is {key, value, secret}")
+        key, value, secret = var.get("key", ""), var.get("value", ""), var.get("secret", False)
+        if (not isinstance(key, str) or len(key) > NAME_MAX or not isinstance(value, str)
+                or len(value) > VALUE_MAX or not isinstance(secret, bool)):
+            raise PageError(422, "bad_vars", "each var is {key, value, secret}")
+        if key.strip():
+            pairs.append((key.strip(), value, secret))
+    targets = body.get("targets", [])
+    if (not isinstance(targets, list) or len(targets) > 100
+            or not all(isinstance(t, str) and 0 < len(t) <= NAME_MAX for t in targets)):
+        raise PageError(422, "bad_targets", "targets must list harness names")
+    force = body.get("force", False)
+    if not isinstance(force, bool):
+        raise PageError(422, "bad_force", "force must be true or false")
+    return {"name": name, "command": command, "url": url, "transport": transport,
+            "pairs": pairs, "targets": list(dict.fromkeys(targets)), "force": force}
+
+
+def _add(ctx, body: dict) -> dict:
+    """Add server: ``{"name", "kind", "command": [words] | "url" +
+    "transport", "vars": [{key, value, secret}], "targets", "force"}``.
+    Secret values are stored only once swe would take the add, and every
+    refusal names variables, never their values."""
+    from quiver.harness.registry import load_registry_readonly
+    from quiver.mcp.cli import AddRefused, add_conflicts, add_plan, add_server
+    from quiver.mcp.secrets import set_secret
+
+    req = _add_request(body)
+    name = req["name"]
+    values, stored = {}, []
+    for key, value, secret in req["pairs"]:
+        if secret and not value.startswith("${"):
+            ref = secret_name(name, key)
+            if not value.strip():
+                raise PageError(422, "bad_value", f"{key} is marked secret but has no value.")
+            stored.append((ref, value.strip()))
+            value = "${" + ref + "}"
+        values[key] = value
+    env = values if req["command"] is not None else {}
+    headers = values if req["url"] is not None else {}
+    with _WRITE_LOCK:
+        try:
+            canonical, targets = add_plan(
+                load_registry_readonly(), url=req["url"], transport=req["transport"],
+                command=req["command"], env=env, headers=headers, to_names=req["targets"])
+        except AddRefused as exc:
+            raise PageError(422, "add_refused", str(exc)) from exc
+        clash = add_conflicts(name, targets)
+        if clash and not req["force"]:
+            raise PageError(409, "exists",
+                            f"A server named {name} already exists in {', '.join(clash)}. "
+                            "Turn on Replace to overwrite it.")
+        for ref, value in stored:
+            try:
+                set_secret(ref, value)
+            except ValueError as exc:
+                # set_secret's reasons name the variable, never the value.
+                raise PageError(422, "bad_value", f"{ref}: {exc}") from exc
+        try:
+            report = add_server(name, canonical, targets, force=req["force"])
+        except AddRefused as exc:
+            raise PageError(409, "add_refused", str(exc)) from exc
+        except (OSError, ValueError) as exc:
+            raise PageError(409, "add_failed", str(exc) or exc.__class__.__name__) from exc
+    return {**report, "page": get(ctx, {})}
 
 
 def _sync_request(body: dict, needs_fingerprint: bool) -> dict:
