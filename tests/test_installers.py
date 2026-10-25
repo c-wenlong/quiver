@@ -49,7 +49,7 @@ class InstallerTableTest(unittest.TestCase):
 
     def test_installers_for_orders_by_methods(self):
         self.assertEqual([i.via for i in installers_for("gemini")],
-                         ["brew", "npm", "nix"])
+                         ["npm", "nix"])
         self.assertEqual(installers_for("nosuch"), [])
         self.assertEqual([i.via for i in installers_for("antigravity")],
                          ["cask", "nix", "script"])
@@ -74,14 +74,27 @@ class InstallerTableTest(unittest.TestCase):
         self.assertEqual(INSTALLERS["qoder-cn"],
                          {"script": "https://qoder.com.cn/install"})
         self.assertEqual(INSTALLERS["zcode"], {"cask": "zcode"})
+        # Pinned by the 2026-10 registry audit: brew's gemini-cli is
+        # deprecated upstream (like cline's, which has no brew entry),
+        # nixpkgs renamed kilocode-cli to kilo, and block/goose moved to
+        # aaif-goose/goose.
+        self.assertNotIn("brew", INSTALLERS["gemini"])
+        self.assertNotIn("brew", INSTALLERS["cline"])
+        self.assertEqual(INSTALLERS["kilo"]["nix"], "kilo")
+        self.assertEqual(INSTALLERS["goose"]["script"],
+                         "https://github.com/aaif-goose/goose/releases/download/"
+                         "stable/download_cli.sh")
 
-    def test_websites_cover_the_new_providers_only(self):
-        # Website is the sheet's link-out when there is no install command;
-        # a URL is recorded only for audited names.
-        self.assertEqual(set(WEBSITES) - set(INSTALLERS), set())
-        for name in ("antigravity", "kimi", "grok", "zcode",
-                     "commandcode", "qoder", "qoder-cn"):
-            self.assertTrue(WEBSITES[name].startswith("https://"), name)
+    def test_every_provider_the_sheet_can_show_has_a_website(self):
+        # The sheet dead-ends on a provider with no methods and no website;
+        # the audit keeps the two tables naming the same provider set.
+        self.assertEqual(set(WEBSITES), set(INSTALLERS))
+        for name, url in WEBSITES.items():
+            self.assertTrue(url.startswith("https://"), name)
+        # Spot checks against the vendors' own pages.
+        self.assertEqual(WEBSITES["kiro"], "https://kiro.dev")
+        self.assertEqual(WEBSITES["gemini"], "https://geminicli.com")
+        self.assertEqual(WEBSITES["droid"], "https://factory.com")
 
     def test_gui_apps_have_installers_and_websites(self):
         # The bundle check exists so the sheet can show state for a GUI
@@ -167,10 +180,17 @@ class UninstallerTest(unittest.TestCase):
         # A Cellar path with nothing after node_modules has nothing to name.
         self.assertIsNone(uninstaller_for("x", "/opt/homebrew/Cellar/node/22.1.0/lib/node_modules"))
 
-    def test_nix_uses_the_table_attr(self):
+    def test_nix_removes_by_store_path(self):
+        # An element may be named a renamed attr (nixpkgs renamed
+        # kilocode-cli to kilo), so the store path — which `nix profile
+        # remove` matches whatever the element is called — is the remover,
+        # and no table entry is needed to name it.
         path = "/nix/store/abc-codex-0.1/bin/codex"
-        self.assertEqual(uninstaller_for("codex", path), Uninstaller("nix", "codex"))
-        self.assertIsNone(uninstaller_for("forge", path))
+        remover = Uninstaller("nix", "/nix/store/abc-codex-0.1")
+        self.assertEqual(uninstaller_for("codex", path), remover)
+        self.assertEqual(uninstaller_for("forge", path), remover)
+        self.assertEqual(remover.display(),
+                         "nix profile remove /nix/store/abc-codex-0.1")
 
     def test_script_installs_and_missing_paths_have_none(self):
         self.assertIsNone(uninstaller_for("claude", "/Users/me/.local/share/claude/versions/2.1/claude"))

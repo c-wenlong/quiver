@@ -9,7 +9,7 @@
                 "path": null,
                 "app": null,
                 "description": "Git-native pair programmer, commits every edit as it goes",
-                "website": null,
+                "website": "https://aider.chat",
                 "registered": false,
                 "methods": [
                     {
@@ -77,7 +77,7 @@
                 "path": null,
                 "app": null,
                 "description": "Indexes up to 500k files across repos, retrieval is the whole pitch",
-                "website": null,
+                "website": "https://augmentcode.com",
                 "registered": false,
                 "methods": [
                     {
@@ -96,7 +96,7 @@
                 "path": null,
                 "app": null,
                 "description": "Fans one task to four models, a judge picks the winner",
-                "website": null,
+                "website": "https://blackbox.ai",
                 "registered": false,
                 "methods": [
                     {
@@ -115,7 +115,7 @@
                 "path": "/opt/homebrew/bin/claude",
                 "app": null,
                 "description": "Anthropic's flagship, defined the skills, MCP and hooks others copy",
-                "website": null,
+                "website": "https://claude.com/product/claude-code",
                 "registered": false,
                 "methods": [
                     {
@@ -157,7 +157,7 @@
                 "path": "/Users/kaichen/.npm-global/bin/cline",
                 "app": null,
                 "description": "VS Code extension first, inference at cost or BYOK, no subscription",
-                "website": null,
+                "website": "https://cline.bot",
                 "registered": false,
                 "methods": [
                     {
@@ -187,7 +187,7 @@
                 "path": "/opt/homebrew/bin/codex",
                 "app": null,
                 "description": "OpenAI's, OS-level sandbox by default, network off unless approved",
-                "website": null,
+                "website": "https://openai.com/codex/",
                 "registered": false,
                 "methods": [
                     {
@@ -242,7 +242,7 @@
                 "path": null,
                 "app": null,
                 "description": "Headless CI runs and PR review, team acquired by Cursor Jun 2026",
-                "website": null,
+                "website": "https://continue.dev",
                 "registered": false,
                 "methods": [
                     {
@@ -261,7 +261,7 @@
                 "path": null,
                 "app": null,
                 "description": "First cross platform harness in CLI, VSCode and Cloud",
-                "website": null,
+                "website": "https://github.com/features/copilot/cli",
                 "registered": false,
                 "methods": [
                     {
@@ -298,7 +298,7 @@
                 "path": null,
                 "app": null,
                 "description": "Charm's, prettiest TUI, swaps models mid-session, context intact",
-                "website": null,
+                "website": "https://github.com/charmbracelet/crush",
                 "registered": false,
                 "methods": [
                     {
@@ -329,7 +329,7 @@
                 "path": "/opt/homebrew/bin/cursor-agent",
                 "app": null,
                 "description": "The editor's CLI half, shares its rules and index, print mode for CI",
-                "website": null,
+                "website": "https://cursor.com/cli",
                 "registered": false,
                 "methods": [
                     {
@@ -365,7 +365,7 @@
                 "path": "/opt/homebrew/bin/devin",
                 "app": null,
                 "description": "Cognition's, lives in the terminal and the cloud",
-                "website": null,
+                "website": "https://devin.ai",
                 "registered": false,
                 "methods": [
                     {
@@ -401,7 +401,7 @@
                 "path": "/opt/homebrew/bin/droid",
                 "app": null,
                 "description": "Factory's, spawns a worker per feature and syncs them through git",
-                "website": null,
+                "website": "https://factory.com",
                 "registered": false,
                 "methods": [
                     {
@@ -437,7 +437,7 @@
                 "path": null,
                 "app": null,
                 "description": "Lives in your zsh prompt, fire it inline with a : prefix",
-                "website": null,
+                "website": "https://forgecode.dev",
                 "registered": false,
                 "methods": [
                     {
@@ -456,7 +456,7 @@
                 "path": "/Users/kaichen/.config/manicode/freebuff",
                 "app": null,
                 "description": "Free harness for light tasks, single thread, Chinese models only",
-                "website": null,
+                "website": "https://freebuff.com",
                 "registered": false,
                 "methods": [
                     {
@@ -475,15 +475,9 @@
                 "path": null,
                 "app": null,
                 "description": "Google's first, 1M token context, 1,000 free requests a day",
-                "website": null,
+                "website": "https://geminicli.com",
                 "registered": false,
                 "methods": [
-                    {
-                        "via": "brew",
-                        "package": "gemini-cli",
-                        "command": "brew install gemini-cli",
-                        "available": true
-                    },
                     {
                         "via": "npm",
                         "package": "@google/gemini-cli",
@@ -506,7 +500,7 @@
                 "path": null,
                 "app": null,
                 "description": "Block's, extensions are MCP servers, local or hosted models",
-                "website": null,
+                "website": "https://goose-docs.ai",
                 "registered": false,
                 "methods": [
                     {
@@ -523,8 +517,8 @@
                     },
                     {
                         "via": "script",
-                        "package": "https://github.com/block/goose/releases/download/stable/download_cli.sh",
-                        "command": "curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash",
+                        "package": "https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh",
+                        "command": "curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | bash",
                         "available": true
                     }
                 ],
@@ -562,7 +556,7 @@
                 "path": null,
                 "app": null,
                 "description": "",
-                "website": null,
+                "website": "https://jules.google",
                 "registered": false,
                 "methods": [
                     {
@@ -581,7 +575,7 @@
                 "path": "/opt/homebrew/bin/kilo",
                 "app": null,
                 "description": "Kilo Code's CLI, an opencode fork; extension and CLI share ~/.config/kilo",
-                "website": null,
+                "website": "https://kilo.ai",
                 "registered": false,
                 "methods": [
                     {
@@ -598,8 +592,8 @@
                     },
                     {
                         "via": "nix",
-                        "package": "kilocode-cli",
-                        "command": "nix profile install nixpkgs#kilocode-cli",
+                        "package": "kilo",
+                        "command": "nix profile install nixpkgs#kilo",
                         "available": true
                     }
                 ],
@@ -648,7 +642,7 @@
                 "path": null,
                 "app": null,
                 "description": "AWS's, writes requirements and design docs before any code",
-                "website": null,
+                "website": "https://kiro.dev",
                 "registered": false,
                 "methods": [
                     {
@@ -679,7 +673,7 @@
                 "path": null,
                 "app": null,
                 "description": "",
-                "website": null,
+                "website": "https://mastra.ai",
                 "registered": false,
                 "methods": [
                     {
@@ -698,7 +692,7 @@
                 "path": null,
                 "app": null,
                 "description": "Mistral's, own 24B Apache weights, runs offline on one GPU",
-                "website": null,
+                "website": "https://mistral.ai/products/vibe",
                 "registered": false,
                 "methods": [
                     {
@@ -735,7 +729,7 @@
                 "path": "/opt/homebrew/bin/opencode",
                 "app": null,
                 "description": "OS, 75+ providers, local model support, fully customisable",
-                "website": null,
+                "website": "https://opencode.ai",
                 "registered": false,
                 "methods": [
                     {
@@ -777,7 +771,7 @@
                 "path": "/opt/homebrew/bin/pi",
                 "app": null,
                 "description": "Mario's minimal agent harness for full control",
-                "website": null,
+                "website": "https://pi.dev",
                 "registered": false,
                 "methods": [
                     {
@@ -863,7 +857,7 @@
                 "path": "/opt/homebrew/bin/qwen",
                 "app": null,
                 "description": "Alibaba's Gemini CLI fork, drive it from Telegram or WeChat",
-                "website": null,
+                "website": "https://github.com/QwenLM/qwen-code",
                 "registered": false,
                 "methods": [
                     {
