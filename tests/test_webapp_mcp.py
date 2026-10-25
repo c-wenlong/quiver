@@ -713,6 +713,34 @@ class TestAdd(_SyncHome, unittest.TestCase):
         self.assertEqual((error.status, error.code), (409, "exists"))
         self.assertEqual(self.add(**body, force=True)["hub"], "replaced")
 
+    def test_nothing_is_stored_for_an_add_refused_later(self):
+        secret = {"key": "API_KEY", "value": self.TOKEN, "secret": True}
+        cmd = {"name": "fresh", "kind": "command", "command": ["npx", "x"]}
+        # A ${NAME} the store can't fill, with a harness picked.
+        error = self.refused(**cmd, targets=["claude"],
+                             vars=[secret, {"key": "OTHER", "value": "${MISSING}", "secret": False}])
+        self.assertEqual((error.status, error.code), (409, "add_refused"))
+        self.assertIn("MISSING", error.message)
+        # A later secret the store can't hold.
+        error = self.refused(**cmd, targets=[], vars=[secret, {"key": "B_KEY", "value": "a'b\"c", "secret": True}])
+        self.assertEqual((error.status, error.code), (422, "bad_value"))
+        # Two keys that fold to one name.
+        error = self.refused(**cmd, targets=[], vars=[secret, {"key": "api.key", "value": "x", "secret": True}])
+        self.assertEqual((error.status, error.code), (422, "secret_clash"))
+
+    def test_a_secret_another_server_refers_to_is_not_overwritten(self):
+        self.add(name="a-b", kind="command", command=["x"], targets=[],
+                 vars=[{"key": "TOKEN", "value": "first-value-0000", "secret": True}])
+        error = self.refused(name="a_b", kind="command", command=["y"], targets=[],
+                             vars=[{"key": "TOKEN", "value": self.TOKEN, "secret": True}])
+        self.assertEqual((error.status, error.code), (409, "secret_taken"))
+        self.assertIn("a-b", error.message)
+        # Replacing the same server may change its own value.
+        self.add(name="a-b", kind="command", command=["x"], targets=[], force=True,
+                 vars=[{"key": "TOKEN", "value": "second-value-000", "secret": True}])
+        from quiver.mcp.secrets import load_secrets
+        self.assertEqual(load_secrets()["A_B_TOKEN"], "second-value-000")
+
     def test_secret_names_follow_the_app(self):
         self.assertEqual(mcp.secret_name("my-server", "api.key"), "MY_SERVER_API_KEY")
         self.assertEqual(mcp.secret_name("1x", "Token"), "MCP_1X_TOKEN")

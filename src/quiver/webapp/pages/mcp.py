@@ -299,6 +299,9 @@ TEXT_MAX = 4096
 VALUE_MAX = 16384
 
 
+_SECRET_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
 def secret_name(server: str, key: str) -> str:
     """``mcpSecretName``: the ``${NAME}`` a secret env var or header is
     stored under, ``SERVER_KEY`` in caps with every other run of
@@ -367,19 +370,33 @@ def _add(ctx, body: dict) -> dict:
     refusal names variables, never their values."""
     from quiver.harness.registry import load_registry_readonly
     from quiver.mcp.cli import AddRefused, add_conflicts, add_plan, add_server
-    from quiver.mcp.secrets import set_secret
+    from quiver.mcp.secrets import load_secrets, render_secret_line, set_secret, unresolved_names
 
     req = _add_request(body)
     name = req["name"]
-    values, stored = {}, []
+    values, stored = {}, {}
     for key, value, secret in req["pairs"]:
         if secret and not value.startswith("${"):
             ref = secret_name(name, key)
             if not value.strip():
                 raise PageError(422, "bad_value", f"{key} is marked secret but has no value.")
-            stored.append((ref, value.strip()))
+            if ref in stored:
+                raise PageError(422, "secret_clash",
+                                f"Two keys would both be saved as {ref}. Rename one of them.")
+            stored[ref] = value.strip()
             value = "${" + ref + "}"
         values[key] = value
+    # Every value must be storable before any is stored.
+    for ref, value in stored.items():
+        if not _SECRET_NAME_RE.fullmatch(ref):
+            raise PageError(422, "bad_value", f"{ref} isn't a name a secret can be saved under. Rename the key.")
+        if "\n" in value or "\r" in value:
+            raise PageError(422, "bad_value", f"{ref}: a value can't span more than one line")
+        try:
+            render_secret_line(ref, value)
+        except ValueError as exc:
+            # Its reasons name the variable, never the value.
+            raise PageError(422, "bad_value", f"{ref}: {exc}") from exc
     env = values if req["command"] is not None else {}
     headers = values if req["url"] is not None else {}
     with _WRITE_LOCK:
@@ -394,11 +411,26 @@ def _add(ctx, body: dict) -> dict:
             raise PageError(409, "exists",
                             f"A server named {name} already exists in {', '.join(clash)}. "
                             "Turn on Replace to overwrite it.")
-        for ref, value in stored:
+        # A saved name another hub server refers to is that server's value:
+        # overwriting it would change what that server gets.
+        for ref in stored:
+            users = sorted(other for other, refs in _hub_refs().items() if ref in refs and other != name)
+            if users:
+                raise PageError(409, "secret_taken",
+                                f"{ref} is already {', '.join(users)}'s secret. "
+                                "Rename the server or the key so they don't share it.")
+        # swe refuses a ${NAME} the store can't fill once a harness is
+        # picked; check it with the values this add would store, first.
+        if targets:
+            missing = unresolved_names(canonical, {**load_secrets(), **stored})
+            if missing:
+                raise PageError(409, "add_refused", "\n".join(
+                    f"Not adding: no value for {var} (used by {name}). Set it first, or mark it secret here."
+                    for var in missing))
+        for ref, value in stored.items():
             try:
                 set_secret(ref, value)
             except ValueError as exc:
-                # set_secret's reasons name the variable, never the value.
                 raise PageError(422, "bad_value", f"{ref}: {exc}") from exc
         try:
             report = add_server(name, canonical, targets, force=req["force"])

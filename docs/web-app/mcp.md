@@ -233,13 +233,18 @@ Codex." above it.
 in process: `mcp/cli.py`'s `add_plan` (the definition and targets,
 checked) and `add_server` (the writes), the two halves the CLI shares.
 A secret var's value goes to `~/.quiver/secrets/mcp/.api_keys` through
-`set_secret` under `SERVER_KEY` (the app's `mcpSecretName`), and the
-configs get `${SERVER_KEY}`; a value already written as `${NAME}` is kept.
-Nothing is stored or written for an add the hub refuses: a name already in
-the hub or a picked harness without `force` is 409 `exists`, swe's own
-refusals are 422 `add_refused` (an unknown harness, an SSE server for a
-harness that can't take one) or 409 (a `${NAME}` with no value), and bad
-shapes are 422. The answer is swe's `--json` report, `{"name", "hub",
+`set_secret` under `SERVER_KEY` (the app's `mcpSecretName`). The hub's
+`mcp.json` keeps `${SERVER_KEY}`; the harness configs picked get the value
+itself, as `swe mcp add` and a sync write them. A value already written as
+`${NAME}` is kept. Nothing is stored or written for an add the hub
+refuses: every value is checked as storable first, a name already in the
+hub or a picked harness without `force` is 409 `exists`, a `SERVER_KEY`
+another hub server already refers to is 409 `secret_taken` (two servers
+would otherwise share one saved value), two keys that fold to the same
+name are 422 `secret_clash`, swe's own refusals are 422 `add_refused` (an
+unknown harness, an SSE server for a harness that can't take one) or 409
+(a `${NAME}` the store can't fill, counting the values this add would
+store), and bad shapes are 422. The answer is swe's `--json` report, `{"name", "hub",
 "targets"}`, with `page`, the list after the write, and never a value.
 
 ## Security
@@ -268,7 +273,8 @@ shapes are 422. The answer is swe's `--json` report, `{"name", "hub",
 - **Add server's "Add to"** is a list of switches under the face ("2 of 3
   harnesses") rather than the app's popover checklist, and a secret value
   has an eye to show it while typing. Secret values are cleared from the
-  sheet once sent, whether or not the hub took them.
+  sheet once sent, whether or not the hub took them. Enter in a field adds;
+  the sheet can't be closed while the hub is adding.
 - **Secrets look like Inference keys.** The Mac sheet pastes a missing
   value only; the web sheet also shows set values masked, with reveal,
   copy and Replace.

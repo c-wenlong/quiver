@@ -1079,7 +1079,7 @@ function mcpAddHtml() {
   const variables = `<hr class="mcp-rule"><div class="card-title">${command ? "Env vars" : "Headers"}</div>
     <div class="mcp-add-vars">${vars}</div>
     <div><button type="button" class="mcp-sheet-button" id="mcp-add-var"${dis}>${mcpSvg("plus")}<span>${command ? "Add variable" : "Add header"}</span></button></div>
-    <p class="caption mcp-muted">Secret values go to ~/.quiver/secrets/mcp/.api_keys${where}; the configs get \${NAME} references.</p>`;
+    <p class="caption mcp-muted">Secret values go to ~/.quiver/secrets/mcp/.api_keys${where}. The Quiver hub keeps a \${NAME} reference; the harnesses you add it to get the value, as a sync gives them.</p>`;
   const active = mcpActive(d);
   const picked = d.harnesses.filter((h) => a.targets.has(h)).length;
   const face = `${picked} of ${d.harnesses.length} ${d.harnesses.length === 1 ? "harness" : "harnesses"}`;
@@ -1102,8 +1102,8 @@ function mcpAddHtml() {
     ${server}${variables}${placesHtml}
     ${a.error ? `<p class="error" role="alert">${esc(a.error)}</p>` : ""}
     <div class="sheet-actions mcp-sync-actions"><span class="mcp-spacer"></span>
-      <button class="mcp-sheet-button" value="close">Cancel</button>
-      <button type="button" class="mcp-sheet-button primary" id="mcp-add-go"${mcpAddReady(a) ? "" : " disabled"}>${a.working ? "Adding…" : "Add server"}</button></div>
+      <button type="button" class="mcp-sheet-button" id="mcp-add-cancel"${dis}>Cancel</button>
+      <button type="submit" class="mcp-sheet-button primary" id="mcp-add-go"${mcpAddReady(a) ? "" : " disabled"}>${a.working ? "Adding…" : "Add server"}</button></div>
   </form>`;
 }
 
@@ -1118,6 +1118,8 @@ function mcpOpenAdd(focus) {
   sheet.innerHTML = mcpAddHtml();
   // A closed sheet forgets its draft, secret values included.
   sheet.onclose = () => { mcpPage.add = null; sheet.replaceChildren(); };
+  // While the hub is adding, Escape waits: the answer has to land.
+  sheet.oncancel = (e) => { if (a.working) e.preventDefault(); };
   mcpBindAdd(sheet, a);
   if (!sheet.open) sheet.showModal();
   const target = (keep && sheet.querySelector(keep)) || (focus && sheet.querySelector(focus));
@@ -1216,10 +1218,9 @@ function mcpBindAdd(sheet, a) {
     };
   }
   sheet.querySelector("#mcp-add-force").onchange = (e) => { a.force = e.target.checked; };
-  go.onclick = () => mcpAdd();
+  sheet.querySelector("#mcp-add-cancel").onclick = () => sheet.close();
+  // Enter in a field adds, as the app's default button does.
   sheet.querySelector("form").onsubmit = (e) => {
-    // Enter in a field adds, as the app's default button does; Cancel closes.
-    if (e.submitter && e.submitter.value === "close") return;
     e.preventDefault();
     if (mcpAddReady(a)) mcpAdd();
   };
@@ -1250,14 +1251,17 @@ async function mcpAdd() {
     if (mcpOnPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
     return;
   }
-  if (mcpPage.add !== a) return;
   if (status !== 200 || !data) {
+    if (mcpPage.add !== a) return;
     a.error = mcpFailure(status, data);
     return mcpOpenAdd();
   }
-  const sheet = document.getElementById("mcp-add-sheet");
-  if (sheet && sheet.open) sheet.close();
-  mcpPage.add = null;
+  // A server that was added is shown even if its sheet went away meanwhile.
+  if (mcpPage.add === a) {
+    const sheet = document.getElementById("mcp-add-sheet");
+    mcpPage.add = null;
+    if (sheet && sheet.open) sheet.close();
+  }
   const places = ["Quiver hub", ...data.targets.map((t) => mcpMark(t.name).name)];
   mcpPage.notice = `${data.hub === "replaced" ? "Replaced" : "Added"} ${data.name} in ${places.join(", ")}.`;
   mcpAdopt(data.page);

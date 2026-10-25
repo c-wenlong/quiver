@@ -13,8 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Mac app's "Add a server" sheet: a command line or a URL (HTTP or
   SSE), env vars or headers with a Secret switch per row, the harnesses to
   add it to, and Replace. It runs `swe mcp add` on the hub in process; a
-  secret's value goes to the MCP secrets file and the configs get
-  `${NAME}`. `swe mcp add`'s body is now `add_plan` and `add_server`, which
+  secret's value goes to the MCP secrets file, the hub's `mcp.json` gets
+  `${NAME}`, and the harnesses picked get the value. `swe mcp add`'s body is now `add_plan` and `add_server`, which
   the CLI and the web app share.
 
 - **Web app: add, edit, delete, reveal and copy API keys.** Settings ›
