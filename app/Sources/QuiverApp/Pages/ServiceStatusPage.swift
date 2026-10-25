@@ -221,6 +221,7 @@ private struct ServiceCard: View {
     @State private var hovering = false
     @State private var confirmingRemove = false
     @State private var showingDetails = false
+    @FocusState private var focused: Bool
     @Environment(\.openURL) private var openURL
 
     private static var nameFont: Font { Theme.font(size: 16, weight: .medium) }
@@ -247,8 +248,24 @@ private struct ServiceCard: View {
         // the header's buttons hit-test ahead of the gesture.
         .textSelection(.disabled)
         .onTapGesture { if status.hasDetails { showingDetails = true } }
+        // The card is a Tab stop only while a sheet is behind it; Return
+        // and Space open the same sheet the click does.
+        .focusable(status.hasDetails)
+        .focusEffectDisabled()
+        .focused($focused)
+        .focusRing(focused, cornerRadius: Theme.cardRadius)
+        .onKeyPress(.return) { showDetails() }
+        .onKeyPress(.space) { showDetails() }
+        .accessibilityAddTraits(status.hasDetails ? .isButton : [])
+        .accessibilityAction(.default) { _ = showDetails() }
         .animation(.easeOut(duration: Theme.fadeDuration), value: hovering)
         .quiverSheet(isPresented: $showingDetails) { ServiceDetailsSheet(status: status) }
+    }
+
+    private func showDetails() -> KeyPress.Result {
+        guard status.hasDetails else { return .ignored }
+        showingDetails = true
+        return .handled
     }
 
     private var header: some View {
