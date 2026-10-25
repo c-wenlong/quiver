@@ -170,6 +170,10 @@ private func openGeminiIncident() throws -> Data {
     /// `model.add` builds for a manual add.
     @Test func everyEntryIsAStatuspageFeedAtTheRoot() {
         #expect(Set(StatusCatalogue.all.map(\.id)).count == StatusCatalogue.all.count)
+        // Rows are matched against tracked pages by feed host, so two
+        // entries on one host would both read Added after adding either.
+        #expect(Set(StatusCatalogue.all.map { $0.feedURL.host()?.lowercased() }).count
+            == StatusCatalogue.all.count)
         for entry in StatusCatalogue.all {
             #expect(!entry.name.isEmpty)
             #expect(entry.pageURL.scheme == "https")
