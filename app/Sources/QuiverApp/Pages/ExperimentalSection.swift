@@ -12,8 +12,11 @@ struct ExperimentalSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            SettingsCard {
-                SessionSearchRow(model: app.search)
+            SettingsCardGroup(title: "Session index",
+                              detail: "How Quiver finds what a session said, not only its titles and paths.") {
+                SettingsCard {
+                    SessionSearchRow(model: app.search)
+                }
             }
             // Prod builds ship to users: no channel picker, no checkout,
             // no Rebuild, whatever a stored dev override says. The gate is
@@ -130,31 +133,60 @@ struct ExperimentalSection: View {
     }
 }
 
-/// "Session search": the switch with its one-line description, and while it
-/// runs an "Index status" row carrying the live counts and Clear.
+/// "Session search": one row carrying the switch and description, then the
+/// index's own line — "Last synced …" with its counts, a resync button and
+/// Clear — while the feature runs. Laid out by hand like `SettingRow`,
+/// because the status line holds controls a `detail` string can't.
 private struct SessionSearchRow: View {
     @Bindable var model: SearchIndexModel
 
     var body: some View {
-        SettingRow(title: "Session search",
-                   detail: "Index the text of every session transcript, so search can match what was said, not only titles and paths.",
-                   warning: model.supported
-                       ? nil
-                       : "Not supported on this build: its SQLite has no FTS5.") {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 16) {
+                Text("Session search")
+                    .font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
+                Spacer(minLength: 8)
                 Badge("Experimental")
                 // An unsupported build can't turn it on; a persisted "on"
                 // still turns off, so the setting can never stick.
                 SettingSwitch(title: "Session search", isOn: $model.enabled)
                     .disabled(!model.supported && !model.enabled)
             }
-        }
-        if model.enabled {
-            SettingsDivider()
-            SettingRow(title: "Index status", detail: model.statusText) {
-                Button("Clear search data") { Task { await model.clearData() } }
-                    .secondaryButton()
+            if model.supported {
+                Text("Index the text of every session transcript, so search can match what was said, not only titles and paths.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            } else {
+                Label {
+                    Text("Not supported on this build: its SQLite has no FTS5.")
+                        .foregroundStyle(Theme.textSecondary)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Theme.warningText)
+                }
+                .font(Theme.caption)
+            }
+            if model.enabled {
+                HStack(spacing: 8) {
+                    Text(model.statusText)
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        .lineLimit(2)
+                    Button {
+                        Task { await model.resync() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(Theme.font(size: 11, weight: .medium))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    .plainButton()
+                    .disabled(model.isScanning)
+                    .help(model.isScanning ? "Indexing now" : "Read every transcript again now")
+                    Spacer(minLength: 4)
+                    Button("Clear search data") { Task { await model.clearData() } }
+                        .secondaryButton()
+                }
+                .padding(.top, 6)
             }
         }
+        .padding(.vertical, 14)
     }
 }
