@@ -7,8 +7,8 @@ import Testing
         #expect(SettingsGroup.allCases.map(\.title) == ["App", "Usage", "Advanced"])
         #expect(SettingsGroup.app.sections == [.general, .sidebar, .notifications])
         #expect(SettingsGroup.usage.sections == [.providers, .services])
-        #expect(SettingsGroup.advanced.sections == [.integrations, .paths, .doctor, .experimental])
-        #expect(SettingsGroup.order == [.general, .sidebar, .notifications, .providers, .services, .integrations, .paths, .doctor, .experimental])
+        #expect(SettingsGroup.advanced.sections == [.integrations, .paths, .experimental])
+        #expect(SettingsGroup.order == [.general, .sidebar, .notifications, .providers, .services, .integrations, .paths, .experimental])
     }
 
     @Test func everySectionHasATitleSymbolAndADescription() {
@@ -28,8 +28,7 @@ import Testing
         #expect(SettingsSection.integrations.step(1) == .paths)
         #expect(SettingsSection.integrations.step(-1) == .services)
         #expect(SettingsSection.general.step(-1) == .general)
-        #expect(SettingsSection.paths.step(1) == .doctor)
-        #expect(SettingsSection.doctor.step(1) == .experimental)
+        #expect(SettingsSection.paths.step(1) == .experimental)
         #expect(SettingsSection.experimental.step(1) == .experimental)
     }
 
@@ -42,6 +41,8 @@ import Testing
         // GitHub and Remote folded into Integrations.
         #expect(SettingsSection(saved: "github") == .integrations)
         #expect(SettingsSection(saved: "remote") == .integrations)
+        // Doctor folded into General.
+        #expect(SettingsSection(saved: "doctor") == .general)
         #expect(SettingsSection(saved: nil) == .general)
     }
 
