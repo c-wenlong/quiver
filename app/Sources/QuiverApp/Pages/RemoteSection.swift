@@ -91,18 +91,22 @@ struct RemoteSection: View {
     @ViewBuilder private var hubRows: some View {
         switch model?.status ?? .idle {
         case .idle, .loading:
-            SettingRow(title: "Checking hub…", detail: "swe remote status") {
+            hubStatus {
                 ProgressView().controlSize(.small)
+                Text("Checking hub…")
             }
         case .failed(let message):
-            SettingRow(title: "Status failed", detail: message) {
+            hubStatus {
+                Text("Couldn't check the hub: \(message)")
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
                 Button("Try again", action: reload).secondaryButton()
             }
         case .loaded(let status):
             if status.hub.ok {
-                SettingRow(title: "Hub running",
-                           detail: hubDetail(status)) {
+                hubStatus {
                     Badge("Online")
+                    Text(hubDetail(status))
                 }
                 if setupReport?.ready == false {
                     SettingsDivider()
@@ -111,12 +115,23 @@ struct RemoteSection: View {
             } else if setupReport?.ready == false {
                 setupRow
             } else {
-                SettingRow(title: "No hub reachable",
-                           detail: "Run `swe remote serve` on the machine that should host your phone sessions, then refresh.") {
+                hubStatus {
+                    Text("No hub reachable. Run `swe remote serve` on the machine that should host your phone sessions, then refresh.")
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
                     Button("Refresh", action: reload).secondaryButton()
                 }
             }
         }
+    }
+
+    /// The one status line under the Hub header: a marker or message with
+    /// any button the state needs, the title's job already done above it.
+    private func hubStatus<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 8) { content() }
+            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 14)
     }
 
     private func hubDetail(_ status: RemoteStatus) -> String {
