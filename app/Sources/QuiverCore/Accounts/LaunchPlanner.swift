@@ -41,6 +41,12 @@ public enum TerminalApp: String, Codable, CaseIterable, Sendable {
         self == .terminal || NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) != nil
     }
 
+    /// The app's own icon, nil when LaunchServices can't find it.
+    public var icon: NSImage? {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+            .map { NSWorkspace.shared.icon(forFile: $0.path) }
+    }
+
     /// What a launch says when the chosen terminal is missing, instead of
     /// LaunchServices' or osascript's own error text.
     public var notInstalledMessage: String {
