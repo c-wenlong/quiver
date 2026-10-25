@@ -33,6 +33,8 @@ class _Server:
         self.state.catalog._status_of = (
             statuses or (lambda ss: ["active"] * len(ss))
         )
+        # No tailnet in tests; cases that need an identity stub it.
+        self.state.whois = lambda ip: None
         self.state.catalog.refresh()
         self.state.tail_manager.sync(self.state.catalog.tail_rows())
         self.server = make_server(self.state, "127.0.0.1", 0)
@@ -2165,6 +2167,181 @@ class TestPairRoutes(unittest.TestCase):
         status, data = self._req()
         self.assertEqual(status, 429)
         self.assertEqual(json.loads(data)["error"]["code"], "rate_limited")
+
+
+class TestDeviceMetaCapture(unittest.TestCase):
+    """Pairing records kind/client/os/node_name on the device row."""
+
+    def setUp(self):
+        self.srv = _Server(sessions=[])
+        self.addCleanup(self.srv.stop)
+        self.srv.state.whois = lambda ip: dict(_PHONE)
+
+    def _row(self, device_id):
+        return pairing.load_devices(self.srv.home)[device_id]
+
+    def test_exchange_explicit_fields_win(self):
+        token = pairing.mint_pair_token(self.srv.home)
+        status, data = self.srv.request(
+            "POST", "/v1/pair",
+            {"token": token, "name": "phone",
+             "device": {"kind": "IPAD", "client": "Quiver Remote 1.2",
+                        "model": "iPad13,1"}},
+            headers={"User-Agent":
+                     "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 "
+                     "like Mac OS X) Version/18.5 Safari/604.1"},
+        )
+        self.assertEqual(status, 200, data)
+        row = self._row(json.loads(data)["device_id"])
+        # Body's kind/client beat the UA; os falls back to the UA read.
+        self.assertEqual(row["kind"], "ipad")
+        self.assertEqual(row["client"], "Quiver Remote 1.2")
+        self.assertEqual(row["model"], "iPad13,1")
+        self.assertEqual(row["os"], "iOS 18.5")
+        self.assertEqual(row["node_name"], _PHONE["node_name"])
+
+    def test_exchange_ua_only(self):
+        token = pairing.mint_pair_token(self.srv.home)
+        status, data = self.srv.request(
+            "POST", "/v1/pair", {"token": token},
+            headers={"User-Agent":
+                     "Mozilla/5.0 (Linux; Android 14; Pixel 8) "
+                     "Chrome/125.0.6422.165 Mobile Safari/537.36"},
+        )
+        self.assertEqual(status, 200, data)
+        row = self._row(json.loads(data)["device_id"])
+        self.assertEqual(row["kind"], "android")
+        self.assertEqual(row["os"], "Android 14")
+        self.assertEqual(row["client"], "Chrome 125.0.6422.165")
+
+    def test_request_flow_mints_meta(self):
+        self.srv.state.owner_login = "dev@github"
+        status, data = self.srv.request(
+            "POST", "/v1/pair/request",
+            {"device": {"kind": "iphone", "client": "Quiver Remote 1.0",
+                        "model": "iPhone16,2", "os": "iOS 18.5"}},
+            headers={"User-Agent": "QuiverRemote/1.0 Darwin/25.0.0"},
+        )
+        self.assertEqual(status, 201, data)
+        r = json.loads(data)
+        # A different node approves — same-node is self-approval.
+        self.srv.state.whois = lambda ip: dict(_MAC)
+        status, data = self.srv.request(
+            "POST", "/v1/pair/requests/approve",
+            {"code": r["code"], "request_id": r["request_id"]},
+            headers={"Content-Type": "application/json",
+                     "Authorization":
+                         f"Bearer {self.srv.pair()['credential']}"},
+        )
+        self.assertEqual(status, 200, data)
+        row = self._row(json.loads(data)["device_id"])
+        self.assertEqual(row["kind"], "iphone")
+        self.assertEqual(row["model"], "iPhone16,2")
+        self.assertEqual(row["client"], "Quiver Remote 1.0")
+        self.assertEqual(row["os"], "iOS 18.5")
+        self.assertEqual(row["node_name"], _PHONE["node_name"])
+        self.assertEqual(row["paired_via"], "tailscale")
+
+
+class TestDeviceSelfService(unittest.TestCase):
+    """GET /v1/devices/me and POST /v1/devices/rename."""
+
+    def setUp(self):
+        self.srv = _Server(sessions=[])
+        self.addCleanup(self.srv.stop)
+        self.cred = self.srv.pair()
+        self.auth = {"Authorization": f"Bearer {self.cred['credential']}"}
+
+    def test_me_requires_auth(self):
+        status, _ = self.srv.request("GET", "/v1/devices/me")
+        self.assertEqual(status, 401)
+
+    def test_me_returns_row_without_credential(self):
+        status, data = self.srv.request(
+            "GET", "/v1/devices/me", headers=self.auth)
+        self.assertEqual(status, 200)
+        body = json.loads(data)
+        self.assertEqual(body["id"], self.cred["device_id"])
+        self.assertEqual(body["name"], "test")
+        self.assertNotIn("credential_hash", body)
+        self.assertNotIn("credential", body)
+
+    def test_me_owner_stub(self):
+        # No bearer; the owner's own tailnet device gets a stub row
+        # instead of a 404.
+        self.srv.state.owner_login = "dev@github"
+        self.srv.state.allowed_hosts = {"127.0.0.1"}
+        self.srv.state.whois = lambda ip: dict(_MAC)
+        self.srv.state._whois_cache.clear()  # the pair cached a miss
+        status, data = self.srv.request(
+            "GET", "/v1/devices/me",
+            headers={"X-Quiver-Pair": "1", "Host": "127.0.0.1"},
+        )
+        self.assertEqual(status, 200, data)
+        body = json.loads(data)
+        self.assertTrue(body["owner"])
+        self.assertEqual(body["node_name"], _MAC["node_name"])
+
+    def test_rename_requires_auth(self):
+        status, _ = self.srv.request(
+            "POST", "/v1/devices/rename", {"name": "x"})
+        self.assertEqual(status, 401)
+
+    def test_rename_sets_and_clears(self):
+        status, data = self.srv.request(
+            "POST", "/v1/devices/rename", {"name": "Dev's phone"},
+            headers=self.auth)
+        self.assertEqual(status, 200, data)
+        self.assertEqual(json.loads(data)["name"], "Dev's phone")
+        row = pairing.load_devices(self.srv.home)[self.cred["device_id"]]
+        self.assertEqual(row["display_name"], "Dev's phone")
+        # Empty name clears display_name, back to the paired name.
+        status, data = self.srv.request(
+            "POST", "/v1/devices/rename", {"name": "  "},
+            headers=self.auth)
+        self.assertEqual(status, 200)
+        row = pairing.load_devices(self.srv.home)[self.cred["device_id"]]
+        self.assertNotIn("display_name", row)
+
+    def test_rename_caps_length_and_bad_body(self):
+        status, data = self.srv.request(
+            "POST", "/v1/devices/rename", {"name": "x" * 200},
+            headers=self.auth)
+        self.assertEqual(status, 200)
+        row = pairing.load_devices(self.srv.home)[self.cred["device_id"]]
+        self.assertEqual(len(row["display_name"]), 80)
+
+    def test_rename_owner_device_needs_pairing(self):
+        self.srv.state.owner_login = "dev@github"
+        self.srv.state.allowed_hosts = {"127.0.0.1"}
+        self.srv.state.whois = lambda ip: dict(_MAC)
+        self.srv.state._whois_cache.clear()  # the pair cached a miss
+        status, data = self.srv.request(
+            "POST", "/v1/devices/rename", {"name": "x"},
+            headers={"Content-Type": "application/json",
+                     "X-Quiver-Pair": "1", "Host": "127.0.0.1"},
+        )
+        self.assertEqual(status, 409, data)
+        self.assertEqual(
+            json.loads(data)["error"]["code"], "needs_pairing")
+
+    def test_backfill_on_authed_request(self):
+        # A row minted before meta existed gains it on a later request
+        # once the last_seen throttle lets a write through.
+        pairing.update_device(
+            self.srv.home, self.cred["device_id"], last_seen_at=0)
+        row = pairing.load_devices(self.srv.home)[self.cred["device_id"]]
+        self.assertNotIn("kind", row)
+        status, _ = self.srv.request(
+            "GET", "/v1/sessions",
+            headers={**self.auth, "User-Agent":
+                     "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 "
+                     "like Mac OS X) Version/18.5 Safari/604.1"},
+        )
+        self.assertEqual(status, 200)
+        row = pairing.load_devices(self.srv.home)[self.cred["device_id"]]
+        self.assertEqual(row["kind"], "iphone")
+        self.assertEqual(row["os"], "iOS 18.5")
 
 
 class TestServeEntry(unittest.TestCase):

@@ -669,8 +669,14 @@ async function settingsCopySetup(id) {
 
 function deviceRow(dev) {
   const p = settingsPage;
-  const name = dev.name || "Device";
-  const bits = [dev.id];
+  // The name it renamed itself to, then what it paired as — the fields
+  // the hub recorded, ahead of the id this row always showed.
+  const name = dev.display_name || dev.name || "Device";
+  const bits = [];
+  for (const f of [dev.kind, dev.model, dev.client, dev.os, dev.node_name]) {
+    if (f) bits.push(f);
+  }
+  bits.push(dev.id);
   if (dev.last_seen_at) bits.push(`seen ${settingsRelative(dev.last_seen_at)}`);
   if (dev.paired_via === "tailscale") bits.push("paired with Tailscale");
   const title = `${esc(name)}${dev.this_device ? ' <span class="badge set-this">This device</span>' : ""}`;

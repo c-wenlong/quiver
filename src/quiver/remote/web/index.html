@@ -87,6 +87,7 @@
   <button data-tab="sessions" class="tab active">Sessions</button>
   <button data-tab="inbox" class="tab">Inbox <span id="inbox-badge" class="badge hidden"></span></button>
   <button data-tab="usage" class="tab">Usage</button>
+  <button data-tab="device" class="tab">Device</button>
 </nav>
 
 <section id="inbox-view" class="view hidden">
@@ -99,6 +100,18 @@
     <button id="usage-refresh" type="button">Refresh</button>
   </div>
   <div id="usage-body"></div>
+</section>
+
+<section id="device-view" class="view hidden">
+  <div class="card">
+    <h1>My device</h1>
+    <div id="device-meta"></div>
+    <label class="dim" for="device-name">Name on this hub</label>
+    <input id="device-name" type="text" autocomplete="off" maxlength="80"
+           placeholder="e.g. Dev's iPhone">
+    <button id="device-save" class="primary">Save</button>
+    <p id="device-status" class="dim"></p>
+  </div>
 </section>
 
 <script src="/app.js"></script>
