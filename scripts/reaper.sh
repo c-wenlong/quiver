@@ -25,14 +25,19 @@
 #      changes, a locked worktree, an open PR, unpushed commits on a
 #      closed-PR branch, or the checkout this script runs from. The worktree's
 #      local branch is deleted too when it is merged.
-#   b. Local branches whose upstream is gone ("[gone]" in `git branch -vv`)
-#      and which are merged into origin/main — or whose tip is exactly a
-#      merged PR's head, which is the squash-merge case: the commits were
-#      pushed to the PR and stay fetchable through GitHub's pull refs.
+#   b. Local branches whose upstream is gone — configured as origin/<name>
+#      with <name> no longer on the remote (checked live via ls-remote, so
+#      a dry run mutates nothing) — and which are merged into origin/main,
+#      or whose tip is exactly a merged PR's head, which is the squash-merge
+#      case: the commits were pushed to the PR and stay fetchable through
+#      GitHub's pull refs.
 #   c. app/.build, build/ and .build/ dirs with no file modified in the last
 #      N days — in the main checkout and in surviving worktrees (build dirs
 #      inside removed worktrees go away with them). Only git-ignored dirs
 #      are pruned; a fresh checkout needs no pruning, hence the age check.
+#
+# A dry run never writes: no deletions and no `git fetch` either — remote
+# state is read through `git ls-remote` instead. Only --apply fetches.
 #
 # Runs unattended, e.g. from cron:
 #   15 4 * * *  /path/to/repo/scripts/reaper.sh --yes >> ~/.quiver/logs/reaper.log 2>&1
@@ -86,19 +91,36 @@ MODE="dry-run"; [[ $APPLY -eq 1 ]] && MODE="apply"
 log "repo: $MAIN_ROOT (mode: $MODE, days: $DAYS)"
 
 # A mkdir lock: atomic on every filesystem, no flock dependency (macOS has
-# none). A lock older than 6h is treated as stale — a killed run must not
-# block every later one.
+# none). The winner writes its pid inside the dir, so a stale lock — dead
+# pid, or an ancient one from before pid files — can be broken safely: the
+# owner is re-checked right before removal, a lost recreate race is fatal
+# for the loser, and the trap only ever releases a lock this run owns.
 LOCK="$GIT_COMMON/reaper.lock"
-if ! mkdir "$LOCK" 2>/dev/null; then
-	if [[ -n "$(find "$LOCK" -mmin +360 -print -quit 2>/dev/null)" ]]; then
-		warn "breaking stale lock: $LOCK"
-		rmdir "$LOCK" 2>/dev/null || true
-		mkdir "$LOCK" 2>/dev/null || die "another reaper holds $LOCK"
-	else
-		die "another reaper is already running (lock: $LOCK)"
+lock_pid() { cat "$LOCK/pid" 2>/dev/null || true; }
+try_lock() { mkdir "$LOCK" 2>/dev/null && printf '%s\n' "$$" >"$LOCK/pid"; }
+if ! try_lock; then
+	owner="$(lock_pid)"
+	if [[ -n "$owner" ]] && kill -0 "$owner" 2>/dev/null; then
+		die "another reaper is already running (pid $owner, lock: $LOCK)"
 	fi
+	stale=0
+	[[ -n "$owner" ]] && stale=1 # pid file exists but the process is dead
+	[[ -n "$(find "$LOCK" -mmin +360 -print -quit 2>/dev/null)" ]] && stale=1
+	if [[ $stale -eq 0 ]]; then
+		die "another reaper holds $LOCK and it is still fresh"
+	fi
+	owner_now="$(lock_pid)"
+	live_now=0
+	[[ -n "$owner_now" ]] && kill -0 "$owner_now" 2>/dev/null && live_now=1
+	if [[ "$owner_now" != "$owner" || $live_now -eq 1 ]]; then
+		die "stale lock became live while checking — another reaper won it"
+	fi
+	warn "breaking stale lock: $LOCK (pid ${owner:-none} is dead or lock is older than 6h)"
+	rm -f "$LOCK/pid" 2>/dev/null || true
+	rmdir "$LOCK" 2>/dev/null || true
+	try_lock || die "another reaper won the stale-lock race"
 fi
-trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
+trap 'if [[ "$(lock_pid)" == "$$" ]]; then rm -f "$LOCK/pid" 2>/dev/null; rmdir "$LOCK" 2>/dev/null; fi' EXIT
 
 # --- reference points --------------------------------------------------------
 
@@ -108,10 +130,23 @@ for ref in origin/main origin/master main master; do
 done
 [[ -n "$MAIN_REF" ]] || warn "no origin/main or local main ref; merged-ness checks will all fail safe (nothing removed)"
 
+REMOTE_HEADS="" HAVE_REMOTE=0
 if git remote | grep -qx origin; then
-	git fetch --prune origin >/dev/null 2>&1 || warn "git fetch --prune origin failed; deciding on possibly stale refs (still safe: misses only become skips)"
+	# --apply may write; a dry run stays strictly read-only: no fetch, gone
+	# upstreams detected from a live ls-remote instead of pruned refs.
+	if [[ $APPLY -eq 1 ]]; then
+		git fetch --prune origin >/dev/null 2>&1 || warn "git fetch --prune origin failed; deciding on possibly stale refs (still safe: misses only become skips)"
+	else
+		log "dry-run: skipping 'git fetch --prune'; using a read-only ls-remote for remote state"
+	fi
+	REMOTE_HEADS="$(GIT_TERMINAL_PROMPT=0 git ls-remote --heads origin 2>/dev/null | awk '{sub("refs/heads/", "", $2); print $2}')"
+	if [[ -z "$REMOTE_HEADS" ]]; then
+		warn "could not query origin (offline or auth); gone-upstream checks disabled, branches kept"
+	else
+		HAVE_REMOTE=1
+	fi
 else
-	log "no origin remote; skipping fetch"
+	log "no origin remote; gone-upstream and PR checks limited"
 fi
 
 HAVE_GH=0
@@ -146,6 +181,8 @@ CHECKED_OUT=""
 checked_out_path() { awk -F'\t' -v b="$1" '$1 == b { print $2; exit }' <<<"$CHECKED_OUT"; }
 
 kb() { du -sk "$1" 2>/dev/null | awk '{print $1}'; }
+
+MAIN_HEAD_BRANCH="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
 
 # --- pass 1: worktrees under .claude/worktrees/ ------------------------------
 
@@ -238,9 +275,13 @@ while IFS=$'\t' read -r wt wt_head wt_branch wt_detached wt_locked; do
 	WT_REMOVED=$((WT_REMOVED + 1)); BYTES=$((BYTES + size))
 
 	# Delete the local branch too, but only when it is merged — the branch is
-	# the last ref pointing at closed-but-unmerged work.
+	# the last ref pointing at closed-but-unmerged work. The default and the
+	# checked-out branch are never deleted: a worktree can legitimately sit
+	# on main, but main must survive its removal.
 	if [[ "$wt_detached" != 1 && -n "$wt_branch" ]]; then
-		if is_merged "$wt_branch"; then
+		if [[ "$wt_branch" == "$MAIN_HEAD_BRANCH" || "$wt_branch" == main || "$wt_branch" == master ]]; then
+			log "keep branch $wt_branch — the checked-out or default branch is never deleted"
+		elif is_merged "$wt_branch"; then
 			if [[ $APPLY -eq 0 ]]; then
 				log "would delete branch $wt_branch — merged into $MAIN_REF"
 				BR_DELETED=$((BR_DELETED + 1))
@@ -269,13 +310,14 @@ done < <(git worktree list --porcelain | awk '
 
 log "--- local branches whose upstream is gone ---"
 
-MAIN_HEAD_BRANCH="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
-while IFS= read -r line; do
-	# `git branch -vv` marks vanished upstreams as "[origin/x: gone]".
-	[[ "$line" == *": gone]"* ]] || continue
-	rest="${line:2}"            # drop the 2-char prefix ('* ', '+ ', '  ')
-	br="${rest%%[[:space:]]*}"
-	[[ -n "$br" ]] || continue
+# "Gone" is computed live: the branch's configured upstream is origin/<name>
+# and <name> no longer exists on the remote. That is what `git branch -vv`'s
+# "[gone]" marker would say after a fetch --prune, except ls-remote answers
+# without mutating anything — so a dry run stays read-only.
+while IFS=$'\t' read -r br ups; do
+	[[ -n "$br" && "$ups" == origin/* ]] || continue
+	remote_name="${ups#origin/}"
+	grep -qxF "$remote_name" <<<"$REMOTE_HEADS" && continue   # upstream still exists
 
 	if [[ "$br" == "$MAIN_HEAD_BRANCH" || "$br" == main || "$br" == master ]]; then
 		log "keep $br — the checked-out or default branch is never deleted"
@@ -327,7 +369,7 @@ while IFS= read -r line; do
 		BR_SKIPPED=$((BR_SKIPPED + 1)); continue
 	fi
 	BR_DELETED=$((BR_DELETED + 1))
-done < <(git branch -vv)
+done < <(if [[ $HAVE_REMOTE -eq 1 ]]; then git for-each-ref --format='%(refname:short)%09%(upstream:short)' refs/heads; fi)
 
 [[ $BR_DELETED -eq 0 && $BR_SKIPPED -eq 0 ]] && log "none found"
 
