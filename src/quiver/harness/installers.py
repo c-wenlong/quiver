@@ -16,6 +16,7 @@ exact tokens, tap-qualified where the package lives in a third-party tap.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 # Display and `--via` order.
@@ -137,14 +138,69 @@ INSTALLERS: dict[str, dict[str, str]] = {
     "freebuff": {
         "npm": "freebuff",
     },
+    # The app's extra providers. kimi-code on PyPI is a legacy alias of the
+    # archived kimi-cli, so no uv entry; nixpkgs grok-cli is superagent-ai's
+    # unrelated CLI, so no nix entry for grok.
+    "kimi": {
+        "brew": "kimi-code",
+        "npm": "@moonshot-ai/kimi-code",
+        "script": "https://code.kimi.com/kimi-code/install.sh",
+    },
+    "grok": {
+        "npm": "@xai-official/grok",
+        "script": "https://x.ai/cli/install.sh",
+    },
+    "antigravity": {
+        "cask": "antigravity",
+        "nix": "antigravity-cli",
+        "script": "https://antigravity.google/cli/install.sh",
+    },
+    "commandcode": {
+        "npm": "command-code",
+    },
+    "qoder": {
+        "cask": "qoderai/qoder/qodercli",
+        "npm": "@qoder-ai/qodercli",
+        "script": "https://qoder.com/install",
+    },
+    "qoder-cn": {
+        "script": "https://qoder.com.cn/install",
+    },
     # Not in HARNESS_CATALOG (discovery does not recognise them), kept so
-    # `swe install jules` / `swe install mastracode` still work.
+    # `swe install jules` / `swe install mastracode` still work. zcode too:
+    # a GUI app with no PATH binary to discover.
     "jules": {
         "npm": "@google/jules",
     },
     "mastracode": {
         "npm": "mastracode",
     },
+    "zcode": {
+        "cask": "zcode",
+    },
+}
+
+# Vendor download or product pages, emitted as ``website`` in
+# `swe install --json`. The provider sheet links to it when swe has no
+# install command to offer — and to find the GUI app when only the CLI
+# is in the table (qoder's cask is qodercli, not the IDE).
+WEBSITES: dict[str, str] = {
+    "antigravity": "https://antigravity.google",
+    "kimi": "https://code.kimi.com",
+    "grok": "https://x.ai",
+    "zcode": "https://zcode.z.ai",
+    "commandcode": "https://commandcode.ai",
+    "qoder": "https://qoder.com",
+    "qoder-cn": "https://qoder.com.cn",
+}
+
+# GUI apps leave no binary on PATH; the .app bundle is the install
+# evidence. Same locations the app's own provider detection checks.
+GUI_APPS: dict[str, tuple[str, ...]] = {
+    "antigravity": ("/Applications/Antigravity.app", "~/Applications/Antigravity.app"),
+    "zcode": ("/Applications/ZCode.app", "~/Applications/ZCode.app"),
+    "qoder": ("/Applications/Qoder.app", "~/Applications/Qoder.app"),
+    "qoder-cn": ("/Applications/Qoder.app", "~/Applications/Qoder.app"),
 }
 
 # Vendor scripts that are POSIX sh; every other script is piped to bash,
@@ -189,6 +245,34 @@ def installers_for(name: str) -> list[Installer]:
     """Known installers for ``name`` in METHODS order; empty when unknown."""
     spec = INSTALLERS.get(name) or {}
     return [Installer(via, spec[via]) for via in METHODS if via in spec]
+
+
+def installed_app(name: str) -> str | None:
+    """The .app bundle a GUI harness lives in, or None."""
+    for path in GUI_APPS.get(name, ()):
+        full = os.path.expanduser(path)
+        if os.path.isdir(full):
+            return full
+    return None
+
+
+def installed_cask(name: str) -> str | None:
+    """The Caskroom record ``brew install --cask`` leaves for the harness's
+    cask token, or None. That record is what proves brew owns the install,
+    for a GUI app that never put a binary on PATH."""
+    token = (INSTALLERS.get(name) or {}).get("cask")
+    if not token:
+        return None
+    # Tap-qualified tokens record under the bare cask name.
+    token = token.split("/")[-1]
+    prefixes = (os.environ.get("HOMEBREW_PREFIX") or "", "/opt/homebrew", "/usr/local")
+    for prefix in prefixes:
+        if not prefix:
+            continue
+        room = os.path.join(prefix, "Caskroom", token)
+        if os.path.isdir(room):
+            return room
+    return None
 
 
 @dataclass(frozen=True)
