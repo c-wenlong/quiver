@@ -139,9 +139,16 @@ private struct ChatTranscript: View {
                     Text("No messages yet.")
                         .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                 }
-                ForEach(model.items) { item in
-                    ChatEntry(item: item) { rid, decision in
-                        Task { await model.decide(rid, decision) }
+                ForEach(ChatGroup.fold(model.items)) { group in
+                    switch group {
+                    case .item(let item):
+                        ChatEntry(item: item) { rid, decision in
+                            Task { await model.decide(rid, decision) }
+                        }
+                    case .toolRun(let items):
+                        ToolRunCard(items: items) { rid, decision in
+                            Task { await model.decide(rid, decision) }
+                        }
                     }
                 }
                 if model.working {
@@ -288,7 +295,7 @@ private struct ChatEntry: View {
                 .foregroundStyle(Theme.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .thinking(let text):
-            Fold(title: Text("Thought").foregroundStyle(Theme.textSecondary)) {
+            Fold(title: Label("Thought", systemImage: "brain").foregroundStyle(Theme.textSecondary)) {
                 MarkdownBlocks(blocks: GitHubMarkdown.blocks(text))
                     .font(Theme.bodySmall)
                     .foregroundStyle(Theme.textSecondary)
@@ -307,7 +314,8 @@ private struct ChatEntry: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .error(let text):
             VStack(alignment: .leading, spacing: 4) {
-                Text("Error").font(Theme.caption).foregroundStyle(Theme.dangerText)
+                Label("Error", systemImage: "exclamationmark.triangle")
+                    .font(Theme.caption).foregroundStyle(Theme.dangerText)
                 MarkdownBlocks(blocks: GitHubMarkdown.blocks(text))
                     .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
             }
@@ -416,15 +424,93 @@ private struct Fold<Title: View, Content: View>: View {
     }
 }
 
-/// A tool call: its name and argument summary, opening to the full
-/// arguments and the output once it lands.
+/// Three or more tool calls in a row fold into one "Used N tools" card,
+/// so a long agent turn doesn't bury what it said (the phone's
+/// ChatEntry.fold, same rule).
+private enum ChatGroup: Identifiable {
+    case item(HubChatItem)
+    case toolRun([HubChatItem])
+
+    var id: String {
+        switch self {
+        case .item(let item): item.id
+        case .toolRun(let items): "run-\(items[0].id)"
+        }
+    }
+
+    static func fold(_ items: [HubChatItem], minRun: Int = 3) -> [ChatGroup] {
+        var out: [ChatGroup] = []
+        var run: [HubChatItem] = []
+        func flush() {
+            if run.count >= minRun { out.append(.toolRun(run)) } else { out += run.map(ChatGroup.item) }
+            run = []
+        }
+        for item in items {
+            if case .tool = item.kind { run.append(item); continue }
+            flush()
+            out.append(.item(item))
+        }
+        flush()
+        return out
+    }
+}
+
+/// A run of tool calls folded into one card: the count and which tools
+/// ran, opening to each call's own card (the phone's ToolRunCard).
+private struct ToolRunCard: View {
+    var items: [HubChatItem]
+    var decide: (String, String) -> Void
+
+    var body: some View {
+        Fold(title: HStack(spacing: 8) {
+            Image(systemName: "wrench.and.screwdriver")
+                .font(Theme.font(size: 12)).foregroundStyle(Theme.textSecondary)
+                .frame(width: 16)
+            Text("Used \(items.count) tools")
+                .font(Theme.font(size: 12, weight: .medium)).foregroundStyle(Theme.textPrimary)
+            Text(names)
+                .font(Theme.font(size: 12, design: .monospaced))
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1).truncationMode(.middle)
+        }) {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(items) { ChatEntry(item: $0, decide: decide) }
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.border, lineWidth: 1))
+    }
+
+    /// "Bash ×4, Edit, Read": what ran, most used first.
+    private var names: String {
+        var counts: [String: Int] = [:]
+        var order: [String] = []
+        for item in items {
+            guard case .tool(let call, _) = item.kind else { continue }
+            let name = ToolCard.displayName(call.name)
+            if counts[name] == nil { order.append(name) }
+            counts[name, default: 0] += 1
+        }
+        return order.sorted { counts[$0]! > counts[$1]! }
+            .map { counts[$0]! > 1 ? "\($0) ×\(counts[$0]!)" : $0 }
+            .joined(separator: ", ")
+    }
+}
+
+/// A tool call: its kind icon, name and argument summary, opening to the
+/// full arguments and the output once it lands.
 private struct ToolCard: View {
     var call: HubToolCall
     var result: String?
 
     var body: some View {
         Fold(title: HStack(spacing: 8) {
-            Text(call.name).font(Theme.font(size: 12, weight: .medium)).foregroundStyle(Theme.textPrimary)
+            Image(systemName: Self.icon(call.name))
+                .font(Theme.font(size: 12)).foregroundStyle(Theme.textSecondary)
+                .frame(width: 16)
+            Text(Self.displayName(call.name))
+                .font(Theme.font(size: 12, weight: .medium)).foregroundStyle(Theme.textPrimary)
             if let summary = Self.summary(call), !summary.isEmpty {
                 Text(summary)
                     .font(Theme.font(size: 12, design: .monospaced))
@@ -453,6 +539,28 @@ extension ToolCard {
         guard let summary = call.argsSummary else { return nil }
         let lead = call.name + " · "
         return summary.hasPrefix(lead) ? String(summary.dropFirst(lead.count)) : summary
+    }
+
+    /// The phone's icon per tool kind (`ToolCard.icon` in the remote app).
+    static func icon(_ name: String) -> String {
+        switch name.lowercased() {
+        case "bash", "shell", "exec", "exec_command", "run_shell_command": "terminal"
+        case "read", "view", "read_file": "doc.text"
+        case "edit", "multiedit", "write", "apply_patch", "patch", "file_edit", "notebookedit": "pencil"
+        case "grep", "glob", "search", "find": "magnifyingglass"
+        case "webfetch", "websearch", "fetch": "globe"
+        case "task", "agent": "person.2"
+        default: "wrench.and.screwdriver"
+        }
+    }
+
+    /// `mcp__server__tool` reads as `server · tool`, the way the phone
+    /// shows an MCP tool; other names pass through.
+    static func displayName(_ name: String) -> String {
+        guard name.hasPrefix("mcp__") else { return name }
+        let parts = name.dropFirst(5).components(separatedBy: "__").filter { !$0.isEmpty }
+        guard parts.count >= 2 else { return parts.first ?? name }
+        return parts[0] + " · " + parts[1...].joined(separator: "__")
     }
 }
 
