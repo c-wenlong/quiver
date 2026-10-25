@@ -5,8 +5,8 @@ import SwiftUI
 /// Sessions list the way the web app opens its chat: the transcript so
 /// far, then each message as the agent writes it.
 ///
-/// Back is the header's Sessions button, ⌘[, or picking the Sessions
-/// sidebar item again.
+/// Back is the header's chevron, ⌘[, or picking the Sessions sidebar
+/// item again.
 struct SessionChatPage: View {
     @Environment(AppModel.self) private var app
     /// The Sessions row it opened from: the header until the hub's row
@@ -22,17 +22,11 @@ struct SessionChatPage: View {
 
     var body: some View {
         Page(title: row.session.title ?? model?.row?.title ?? row.session.id,
-             subtitle: subtitle, maxWidth: 960, scrolls: false) {
-            Button { onBack() } label: {
-                Label("Sessions", systemImage: "chevron.left")
-            }
-            .secondaryButton()
-            .keyboardShortcut("[", modifiers: .command)
-            .help("Back to all sessions (⌘[)")
+             subtitle: subtitle,
+             back: ("Back to all sessions", onBack), maxWidth: 960, scrolls: false) {
             if let model { ChatBadges(model: model) }
-            Button("Details", action: onDetails)
-                .secondaryButton()
-                .help("Folder, usage and the resume command")
+            RailIconButton(symbol: "info.circle", help: "Details: folder, usage and the resume command",
+                           action: onDetails)
         } content: {
             if let model {
                 ChatTranscript(model: model)
@@ -62,27 +56,29 @@ struct SessionChatPage: View {
     }
 }
 
-/// Status, ownership and the stream's state, beside the header's buttons.
+/// The session's status and the stream's state, beside the header's
+/// buttons. Ownership needs no chip: an observed session already says
+/// so in the banner below, and an attached one shows an enabled
+/// composer. The stream's dot gets its words only when it isn't live.
 private struct ChatBadges: View {
     var model: SessionChatModel
 
     var body: some View {
-        if let row = model.row {
-            if let status = Self.status(row.status) { Badge(status) }
-            Badge(row.isAttached ? "Attached" : "Observed")
-                .hoverTip(row.isAttached ? "Runs under Quiver: you can send to it."
-                          : "Owned by its terminal: read-only here.")
-        }
+        if let row = model.row, let status = Self.status(row.status) { Badge(status) }
         HStack(spacing: 6) {
             Circle()
                 .fill(model.connection == .live ? Theme.success
                       : model.connection == .reconnecting ? Theme.warning : Theme.textMuted)
                 .frame(width: Theme.statusDot, height: Theme.statusDot)
-            Text(model.connection == .live ? "Live"
-                 : model.connection == .reconnecting ? "Reconnecting…" : "Connecting…")
-                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            if model.connection != .live {
+                Text(model.connection == .reconnecting ? "Reconnecting…" : "Connecting…")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            }
         }
         .padding(.horizontal, 4)
+        .hoverTip(model.connection == .live ? "Streaming the session live."
+                  : model.connection == .reconnecting ? "Reconnecting to the session stream."
+                  : "Connecting to the session stream.")
     }
 
     /// The web app's chat labels for the hub's statuses.

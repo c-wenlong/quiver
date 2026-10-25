@@ -797,7 +797,8 @@ struct SkeletonBlock: View {
 
 // MARK: - Rail
 
-/// A small chromeless icon button in a rail's header row.
+/// A small chromeless icon button for header rows: a rail's header, or
+/// a page header's action cluster.
 struct RailIconButton: View {
     var symbol: String
     var help: String
