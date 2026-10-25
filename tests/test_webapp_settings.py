@@ -471,16 +471,19 @@ class TestGet(_Settings):
         keys = self.home / ".quiver" / "secrets" / "providers" / ".api_keys"
         keys.parent.mkdir(parents=True)
         secret = "sk-proj-SECRETSECRETSECRET9876"
-        keys.write_text(f"export OPENAI_API_KEY={secret}\n")
+        keys.write_text(f"# OpenAI\nexport OPENAI_API_KEY={secret}\nexport EMPTY_KEY=\"\"\n")
         body = settings_page.get(self.ctx(), {})
-        rows = {r["id"]: r for r in body["providers"]["rows"]}
-        self.assertTrue(rows["openai"]["has_key"])
-        self.assertEqual(rows["openai"]["masked"], "sk-proj-***9876 (30)")
-        self.assertFalse(rows["anthropic"]["has_key"])
-        self.assertIsNone(rows["anthropic"]["masked"])
+        self.assertEqual(body["providers"]["keys"], [
+            {"name": "OPENAI_API_KEY", "provider": "OpenAI", "has_value": True, "masked": "sk-proj-••••••••9876"},
+            {"name": "EMPTY_KEY", "provider": "OpenAI", "has_value": False, "masked": ""},
+        ])
         self.assertNotIn("SECRET", json.dumps(body))
         self.assertEqual(body["providers"]["path"], "~/.quiver/secrets/providers/.api_keys")
+        self.assertRegex(body["providers"]["stamp"], r"^[0-9a-f]{64}$")
         self.assertFalse((self.home / ".quiver" / "config" / "providers.json").exists())
+        catalog = {r["id"]: r for r in body["providers"]["catalog"]}
+        self.assertEqual(catalog["gemini"]["env_vars"], ["GEMINI_API_KEY", "GOOGLE_API_KEY"])
+        self.assertEqual(catalog["anthropic"]["name"], "Anthropic")
 
     def test_providers_follow_providers_json_and_its_removals(self):
         config = self.home / ".quiver" / "config"
@@ -490,7 +493,7 @@ class TestGet(_Settings):
             "_removed": ["openai"],
         }))
         before = (config / "providers.json").read_text()
-        ids = {r["id"] for r in settings_page.get(self.ctx(), {})["providers"]["rows"]}
+        ids = {r["id"] for r in settings_page.get(self.ctx(), {})["providers"]["catalog"]}
         self.assertIn("acme", ids)
         self.assertNotIn("openai", ids)
         self.assertIn("anthropic", ids)
@@ -501,19 +504,27 @@ class TestGet(_Settings):
         config.mkdir(parents=True)
         (config / "providers.json").write_text("{nope")
         prov = settings_page.get(self.ctx(), {})["providers"]
-        self.assertEqual(prov["rows"], [])
+        self.assertEqual(prov["catalog"], [])
         self.assertTrue(prov["error"])
 
     def test_a_provider_with_bad_field_types_is_reported_not_raised(self):
         config = self.home / ".quiver" / "config"
         config.mkdir(parents=True)
         (config / "providers.json").write_text(json.dumps({
-            "acme": {"env_vars": ["ACME_API_KEY"], "key_filename": 123},
+            "acme": {"env_vars": "ACME_API_KEY"},
         }))
         body = settings_page.get(self.ctx(), {})
-        self.assertEqual(body["providers"]["rows"], [])
+        self.assertEqual(body["providers"]["catalog"], [])
         self.assertIn("Can't read the providers", body["providers"]["error"])
         self.assertTrue(body["remote"]["hub"]["ok"])
+
+    def test_a_keys_file_that_is_not_utf8_is_reported(self):
+        keys = self.home / ".quiver" / "secrets" / "providers" / ".api_keys"
+        keys.parent.mkdir(parents=True)
+        keys.write_bytes(b"export A=\xff\n")
+        prov = settings_page.get(self.ctx(), {})["providers"]
+        self.assertEqual((prov["keys"], prov["stamp"]), ([], None))
+        self.assertIn("UTF-8", prov["error"])
 
     def test_provider_links_are_web_links_only(self):
         config = self.home / ".quiver" / "config"
@@ -521,7 +532,7 @@ class TestGet(_Settings):
         (config / "providers.json").write_text(json.dumps({
             "acme": {"env_vars": ["ACME_API_KEY"], "url": "javascript:alert(1)"},
         }))
-        rows = {r["id"]: r for r in settings_page.get(self.ctx(), {})["providers"]["rows"]}
+        rows = {r["id"]: r for r in settings_page.get(self.ctx(), {})["providers"]["catalog"]}
         self.assertIsNone(rows["acme"]["url"])
         self.assertTrue(rows["openai"]["url"].startswith("https://"))
 
@@ -597,6 +608,105 @@ class TestPair(_Settings):
         status, body = self.post("approve", {}, me)
         self.assertEqual(status, 404)
         self.assertEqual(body["error"]["code"], "unknown_action")
+
+
+class TestKeys(_Settings):
+    """Providers › Inference writes: add, replace, delete, reveal."""
+
+    SECRET = "sk-ant-api03-SECRETSECRET1234"
+
+    def setUp(self):
+        super().setUp()
+        self.keys = self.home / ".quiver" / "secrets" / "providers" / ".api_keys"
+        self.keys.parent.mkdir(parents=True)
+        self.keys.write_text("# OpenAI\nexport OPENAI_API_KEY=sk-proj-OLDOLDOLDOLDOLD0000\n")
+
+    def stamp(self):
+        return settings_page.get(self.ctx(), {})["providers"]["stamp"]
+
+    def call(self, action, **body):
+        return settings_page.post(self.ctx(), action, body)
+
+    def refused(self, action, **body):
+        with self.assertRaises(PageError) as caught:
+            self.call(action, **body)
+        return caught.exception
+
+    def test_add_files_a_new_key_under_its_provider_and_answers_no_value(self):
+        reply = self.call("key_set", name="ANTHROPIC_API_KEY", value=f"  {self.SECRET}\n",
+                          provider="anthropic", stamp=self.stamp())
+        self.assertNotIn("SECRET", json.dumps(reply))
+        self.assertEqual(self.keys.read_text(), "# OpenAI\nexport OPENAI_API_KEY=sk-proj-OLDOLDOLDOLDOLD0000\n"
+                         f'\n# Anthropic\nexport ANTHROPIC_API_KEY="{self.SECRET}"\n')
+        self.assertEqual(self.keys.stat().st_mode & 0o777, 0o600)
+        names = [k["name"] for k in reply["providers"]["keys"]]
+        self.assertEqual(names, ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"])
+        backup = self.home / ".quiver" / "backups" / "api-keys" / "api_keys.bak"
+        self.assertIn("OLDOLD", backup.read_text())
+        self.assertEqual(backup.parent.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((self.home / ".quiver" / "secrets" / ".gitignore").read_text().splitlines()[-1], "*")
+
+    def test_replace_keeps_the_line_in_place(self):
+        self.keys.write_text("# OpenAI\nexport OPENAI_API_KEY=old # mine\nexport B=1\n")
+        self.call("key_set", name="OPENAI_API_KEY", value='new"$', stamp=self.stamp())
+        self.assertEqual(self.keys.read_text(), '# OpenAI\nexport OPENAI_API_KEY="new\\"\\$"\nexport B=1\n')
+
+    def test_a_second_variable_of_a_provider_joins_its_group(self):
+        self.keys.write_text("# GEMINI\nexport GEMINI_API_KEY=a\n\n# Other\nexport X=1\n")
+        self.call("key_set", name="GOOGLE_API_KEY", value="b", provider="gemini", stamp=self.stamp())
+        self.assertEqual(self.keys.read_text(), '# GEMINI\nexport GEMINI_API_KEY=a\nexport GOOGLE_API_KEY="b"\n\n# Other\nexport X=1\n')
+
+    def test_remove_drops_the_line_and_an_empty_heading(self):
+        self.call("key_remove", name="OPENAI_API_KEY", stamp=self.stamp())
+        self.assertEqual(self.keys.read_text(), "")
+
+    def test_value_answers_only_when_asked(self):
+        self.assertEqual(self.call("key_value", name="OPENAI_API_KEY"),
+                         {"name": "OPENAI_API_KEY", "value": "sk-proj-OLDOLDOLDOLDOLD0000"})
+
+    def test_a_stale_stamp_is_refused_and_nothing_is_written(self):
+        stamp = self.stamp()
+        self.keys.write_text("export EDITED=1\n")
+        error = self.refused("key_set", name="OPENAI_API_KEY", value="x", stamp=stamp)
+        self.assertEqual((error.status, error.code), (409, "changed_on_disk"))
+        self.assertEqual(self.keys.read_text(), "export EDITED=1\n")
+
+    def test_refusals_never_echo_a_value(self):
+        stamp = self.stamp()
+        cases = [
+            ("key_set", {"name": "OPENAI_API_KEY", "value": "a\nb" + self.SECRET, "stamp": stamp}, (422, "bad_value")),
+            ("key_set", {"name": "OPENAI_API_KEY", "value": "   ", "stamp": stamp}, (422, "bad_value")),
+            ("key_set", {"name": "OPENAI_API_KEY", "value": 7, "stamp": stamp}, (422, "bad_value")),
+            ("key_set", {"name": "1BAD", "value": self.SECRET, "stamp": stamp}, (422, "bad_name")),
+            ("key_set", {"name": "NEW_KEY", "value": self.SECRET, "stamp": stamp}, (422, "bad_provider")),
+            ("key_set", {"name": "NEW_KEY", "value": self.SECRET, "provider": "nope", "stamp": stamp}, (404, "unknown_provider")),
+            ("key_set", {"name": "NEW_KEY", "value": self.SECRET, "provider": "anthropic", "stamp": stamp}, (422, "bad_name")),
+            ("key_remove", {"name": "MISSING", "stamp": stamp}, (404, "not_found")),
+            ("key_value", {"name": "MISSING"}, (404, "not_found")),
+        ]
+        before = self.keys.read_text()
+        for action, body, want in cases:
+            error = self.refused(action, **body)
+            self.assertEqual((error.status, error.code), want, (action, body.get("name")))
+            self.assertNotIn("SECRET", error.message)
+            self.assertNotIn("OLDOLD", error.message)
+        self.assertEqual(self.keys.read_text(), before)
+
+    def test_keys_over_the_route(self):
+        cred = self.device("phone")
+        stamp = self.stamp()
+        body = {"name": "ANTHROPIC_API_KEY", "value": self.SECRET, "provider": "anthropic", "stamp": stamp}
+        status, _ = self.srv.request("POST", "/v1/app/settings/key_set", body=body, headers={
+            "Authorization": f"Bearer {cred['credential']}", "Origin": "https://evil.example"})
+        self.assertEqual(status, 403)
+        status, data = self.post("key_set", body, cred)
+        self.assertEqual(status, 200, data)
+        self.assertNotIn("SECRET", json.dumps(data))
+        _, page = self.srv.request("GET", "/v1/app/settings", headers={
+            "Authorization": f"Bearer {cred['credential']}", "Origin": self.origin()})
+        self.assertNotIn(b"SECRET", page)
+        status, data = self.post("key_value", {"name": "ANTHROPIC_API_KEY"}, cred)
+        self.assertEqual((status, data["value"]), (200, self.SECRET))
 
 
 class TestRevoke(_Settings):

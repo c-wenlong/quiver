@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: add, edit, delete, reveal and copy API keys.** Settings ›
+  Providers › Inference is now the Mac app's Keys and plans table, read
+  from `~/.quiver/secrets/providers/.api_keys`: each key under its
+  heading, masked as the app masks it, with reveal, copy, Add key (a
+  catalog provider, saved as its variable) and a row's Edit sheet with
+  Delete. It writes the file as the Mac app does, with its backup, mode
+  600 and the changed-on-disk check (`quiver.providers.keyfile`). The tab
+  used to list the registry's providers read only. Full values travel
+  only in the answer to a reveal or copy.
+
 - **Web app: set MCP secret values.** An MCP server's sheet lists each
   `${NAME}` its hub definition uses, like Settings › Providers ›
   Inference in the Mac app: set values show masked with reveal, copy and

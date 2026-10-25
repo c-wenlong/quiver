@@ -172,3 +172,25 @@ dialog.set-pair-sheet { width: min(520px, calc(100vw - 32px)); }
 .set-footer svg { width: 12px; height: 12px; }
 .set-card-title { font-size: 14px; font-weight: 500; color: var(--text-primary); padding: 16px 0 2px; }
 .set-caller { margin: 4px 0 6px; }
+
+/* Providers › Inference: writes */
+.set-keys-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.set-keys-actions { display: flex; gap: 8px; }
+.set-key-open { cursor: pointer; }
+.set-key-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.set-key-value { align-items: center; }
+.set-masked.revealed { word-break: break-all; }
+.set-key-tools { display: inline-flex; gap: 2px; }
+.icon-button.set-key-icon { width: 24px; height: 24px; }
+.icon-button.set-key-icon svg { width: 14px; height: 14px; }
+dialog.set-key-sheet { width: min(520px, calc(100vw - 32px)); }
+.set-key-form { display: flex; flex-direction: column; gap: 14px; }
+.set-form-field { display: flex; flex-direction: column; gap: 6px; }
+.set-key-saved { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.set-key-saved a { color: var(--accent); text-decoration: none; }
+.set-key-spacer { flex: 1; }
+.set-key-var { width: auto; }
+.set-key-input-row { display: flex; align-items: center; gap: 8px; }
+.set-key-input { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.set-warn { color: var(--warning-text, var(--text-secondary)); margin: 0; }
+.set-key-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
