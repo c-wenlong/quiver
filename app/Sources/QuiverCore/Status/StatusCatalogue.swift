@@ -44,4 +44,18 @@ public enum StatusCatalogue {
         statuspage("twilio", "Twilio", "https://status.twilio.com", .infrastructure),
         statuspage("clerk", "Clerk", "https://status.clerk.com", .infrastructure),
     ]
+
+    /// The entries passing the chip pick and the search; the query
+    /// matches the name and the feed's host ("docker" finds Docker Hub by
+    /// name, "notion-status" by its page's host).
+    public static func filter(_ entries: [StatusService] = all,
+                              group: StatusService.Group?, query: String) -> [StatusService] {
+        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
+        return entries.filter { entry in
+            if let group, entry.group != group { return false }
+            guard !needle.isEmpty else { return true }
+            return [entry.name, entry.host]
+                .contains { $0.lowercased().contains(needle) }
+        }
+    }
 }

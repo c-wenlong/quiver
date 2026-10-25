@@ -194,6 +194,34 @@ private func openGeminiIncident() throws -> Data {
             #expect(!hosts.contains(entry.feedURL.host()?.lowercased() ?? ""))
         }
     }
+
+    /// The sheet's mark column: every catalogue row and every built-in
+    /// resolves a bundled logo. A new entry with no mark fails here rather
+    /// than shipping a blank cell.
+    @Test func everyEntryResolvesABundledMark() {
+        for entry in StatusCatalogue.all + StatusService.all {
+            let logo = entry.logoID
+            #expect(logo != nil, "\(entry.id) has no bundled mark")
+            #expect(logo.flatMap { HarnessIcons.icon(for: $0) } != nil,
+                    "\(entry.id) names \(logo ?? "?") with no harness-*.svg")
+        }
+    }
+
+    /// The sheet's search reads the name and the page's host, and the
+    /// chips split on the group.
+    @Test func filterMatchesGroupNameAndHost() {
+        #expect(StatusCatalogue.filter(group: nil, query: "").count == StatusCatalogue.all.count)
+        #expect(StatusCatalogue.filter(group: .providers, query: "")
+            .allSatisfy { $0.group == .providers })
+        #expect(StatusCatalogue.filter(group: .infrastructure, query: "")
+            .allSatisfy { $0.group == .infrastructure })
+        #expect(StatusCatalogue.filter(group: nil, query: " docker ")
+            .map(\.id) == ["docker"])
+        #expect(StatusCatalogue.filter(group: nil, query: "notion-status")
+            .map(\.id) == ["notion"])
+        #expect(StatusCatalogue.filter(group: .providers, query: "docker").isEmpty)
+        #expect(StatusCatalogue.filter(group: nil, query: "no such page").isEmpty)
+    }
 }
 
 @Suite struct ServiceStatusServiceTests {

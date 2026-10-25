@@ -145,21 +145,28 @@ private struct AddServiceSheet: View {
     }
 }
 
-/// The catalogue sheet: every verified page in `StatusCatalogue`, filtered
-/// by the group tabs, with a one-click Add that runs the same `model.add`
-/// the manual sheet does. A page already on the grid, built-in or custom,
-/// reads Added: the match is on the feed's host, so the same page under
-/// another name still counts.
+/// The catalogue sheet: every verified page in `StatusCatalogue` in the
+/// shared "Connect apps" layout — a search field, the group chips, and a
+/// two-column grid of `CatalogueRow`s — with a one-click Add that runs
+/// the same `model.add` the manual sheet does. A page already on the
+/// grid, built-in or custom, reads Added: the match is on the feed's
+/// host, so the same page under another name still counts.
 private struct StatusCatalogueSheet: View {
     var model: ServiceStatusModel
     @Environment(\.dismissSheet) private var dismiss
     /// nil shows every entry, under group headings.
     @State private var group: StatusService.Group?
+    @State private var query = ""
+
+    private static let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 2)
+
+    private var shown: [StatusService] {
+        StatusCatalogue.filter(group: group, query: query)
+    }
 
     private var sections: [(group: StatusService.Group, entries: [StatusService])] {
         StatusService.Group.allCases.compactMap { group in
-            guard self.group == nil || self.group == group else { return nil }
-            let entries = StatusCatalogue.all.filter { $0.group == group }
+            let entries = shown.filter { $0.group == group }
             return entries.isEmpty ? nil : (group, entries)
         }
     }
@@ -171,22 +178,24 @@ private struct StatusCatalogueSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Service catalogue").font(Theme.sectionTitle).tracking(-0.5)
+            SearchField(prompt: "Search status pages", text: $query)
             Tabs(options: [(nil, "All"), (.providers, "AI providers"), (.infrastructure, "Infrastructure")],
-                 selection: $group)
+                 selection: $group, style: .table)
             ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(sections, id: \.group) { section in
-                        if group == nil {
-                            Text(section.group.title)
-                                .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                                .padding(.top, 12).padding(.bottom, 6)
-                        }
-                        ForEach(section.entries) { entry in
-                            CatalogueRow(entry: entry,
-                                         tracked: tracked.contains(entry.host.lowercased())) {
-                                Task {
-                                    await model.add(name: entry.name, pageURL: entry.pageURL, group: entry.group)
-                                }
+                if shown.isEmpty {
+                    Text("Nothing matches.")
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                        .frame(maxWidth: .infinity).padding(.vertical, 20)
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(sections, id: \.group) { section in
+                            if group == nil {
+                                Text(section.group.title)
+                                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                                    .padding(.top, 8).padding(.bottom, 2)
+                            }
+                            LazyVGrid(columns: Self.columns, spacing: 8) {
+                                ForEach(section.entries) { entry in row(entry) }
                             }
                         }
                     }
@@ -194,6 +203,8 @@ private struct StatusCatalogueSheet: View {
             }
             .frame(maxHeight: 420)
             HStack {
+                Text("\(shown.count) of \(StatusCatalogue.all.count)")
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted).monospacedDigit()
                 Spacer()
                 Button("Done") { dismiss() }
                     .secondaryButton()
@@ -202,40 +213,14 @@ private struct StatusCatalogueSheet: View {
         }
         .sheetScaffold(width: Theme.sheetWidth)
     }
-}
 
-/// One catalogue entry: its logo where the bundle has a mark, the name,
-/// and an Add button that turns into a quiet Added once tracked.
-private struct CatalogueRow: View {
-    var entry: StatusService
-    var tracked: Bool
-    var add: () -> Void
-    /// Set on tap so a slow add can't be double-fired; `tracked` takes
-    /// over the moment the page learns of the new service.
-    @State private var added = false
-    @State private var hovering = false
-
-    var body: some View {
-        HStack(spacing: 10) {
-            if let logo = entry.logoID {
-                HarnessIcon(harness: logo, size: 16)
-            } else {
-                Color.clear.frame(width: 16, height: 16)
-            }
-            Text(entry.name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
-            Spacer(minLength: 8)
-            if tracked || added {
-                Label("Added", systemImage: "checkmark")
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-            } else {
-                Button("Add") { added = true; add() }
-                    .secondaryButton()
+    private func row(_ entry: StatusService) -> some View {
+        CatalogueRow(logo: entry.logoID, name: entry.name, detail: entry.host,
+                     done: tracked.contains(entry.host.lowercased()) ? "Added" : nil) {
+            Task {
+                await model.add(name: entry.name, pageURL: entry.pageURL, group: entry.group)
             }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 36)
-        .background(hovering ? Theme.rowHover : .clear, in: .rect(cornerRadius: Theme.controlRadius))
-        .onHover { hovering = $0 }
     }
 }
 
