@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: set MCP secret values.** An MCP server's sheet lists each
+  `${NAME}` its hub definition uses, like Settings › Providers ›
+  Inference in the Mac app: set values show masked with reveal, copy and
+  Replace, and a missing one gets a password field that saves to
+  `~/.quiver/secrets/mcp/.api_keys` on the hub. The sheet used to say to
+  run `swe mcp secret set NAME`. Full values travel only in the answer to
+  a reveal or copy.
+
 - **Web app: set your own model prices.** A Pricing row opens the Mac
   app's price form: price applies to, input, output and cache rates per
   1M tokens, Save, and Remove your price on a row priced by you. It writes
