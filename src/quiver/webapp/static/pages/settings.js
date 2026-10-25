@@ -86,12 +86,10 @@ const SETTINGS_GROUPS = [
   ]],
   ["Usage", [
     ["providers", "Providers", "Which harnesses show up across the app, and the inference plans and API keys behind them."],
-    ["services", "Services", "Keys for the services Quiver itself calls, kept in the Keychain."],
   ]],
   ["Advanced", [
-    ["integrations", "Integrations", "The GitHub CLI behind the GitHub pages, and the phones paired to watch your sessions."],
-    ["paths", "Paths", "Where Quiver finds swe, your API keys file and your MCP server folders."],
-    ["doctor", "Doctor", "Checks on PATH, Node and drift between quiver and your harnesses."],
+    ["integrations", "Integrations", "The GitHub CLI behind the GitHub pages, the keys for the services Quiver calls, and the phones paired to watch your sessions."],
+    ["files", "Files", "Where Quiver finds swe, your API keys file and your MCP server folders, and the editor that opens them."],
     ["experimental", "Experimental", "Features being tried out. They may change or go away."],
   ]],
 ];
@@ -102,9 +100,8 @@ const SETTINGS_ICONS = {
   sidebar: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
   notifications: '<path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0"/>',
   providers: '<path d="m12 3 9 4.5-9 4.5-9-4.5zM3 12l9 4.5 9-4.5M3 16.5 12 21l9-4.5"/>',
-  services: '<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M17 6l3 3M15 8l2 2"/>',
   integrations: '<path d="M10 4a2 2 0 1 1 4 0v2h4v4h-2a2 2 0 1 0 0 4h2v4h-4v-2a2 2 0 1 0-4 0v2H6v-4H4a2 2 0 1 1 0-4h2V6h4z"/>',
-  paths: '<path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',
+  files: '<path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',
   doctor: '<path d="M6 3v6a4 4 0 0 0 8 0V3M10 13v2a5 5 0 0 0 10 0v-2"/><circle cx="20" cy="11" r="2"/>',
   experimental: '<path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3M7 15h10"/>',
   qr: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3"/>',
@@ -147,8 +144,11 @@ const settingsPage = {
 function settingsSection() {
   const fromHash = new URLSearchParams(location.hash.split("?")[1] || "").get("section");
   const saved = fromHash || settingsRead(SETTINGS_KEYS.section);
-  // GitHub and Remote were their own sections before Integrations.
-  if (saved === "github" || saved === "remote") return "integrations";
+  // GitHub, Remote and Services were their own sections before Integrations.
+  if (saved === "github" || saved === "remote" || saved === "services") return "integrations";
+  // Doctor moved to a card group on General; Paths was renamed Files.
+  if (saved === "doctor") return "general";
+  if (saved === "paths") return "files";
   return SETTINGS_ORDER.some(([id]) => id === saved) ? saved : "general";
 }
 
@@ -272,10 +272,8 @@ function settingsBody(section) {
     case "sidebar": return sidebarSection();
     case "notifications": return notificationsSection();
     case "providers": return providersSection();
-    case "services": return servicesSection();
     case "integrations": return integrationsSection();
-    case "paths": return pathsSection();
-    case "doctor": return doctorSection();
+    case "files": return filesSection();
     case "experimental": return experimentalSection();
     default: return "";
   }
@@ -307,6 +305,10 @@ function generalSection() {
       setRow("Version", d ? `swe ${d.version}${where}` : "Reading…"),
       macRow("Latest release", "Check for Updates… installs a new release of the app."),
       macRow("Automatic checks", "Sparkle checks the appcast once a day."),
+    ]))}
+    ${setGroup("Doctor", "", setCard([
+      setRow("Doctor", "Checks on PATH, Node and drift between quiver and your harnesses, on the hub.",
+        `<a class="set-button" href="#/doctor">Open Doctor</a>`),
     ]))}
   </div>`;
 }
@@ -492,19 +494,14 @@ function settingsKeyName(e) {
   return picked.env_vars.includes(e.envVar) ? e.envVar : picked.env_vars[0] || "";
 }
 
-/* ------------------------------------------------------------- Services */
-
-function servicesSection() {
-  return setCard([
-    macRow("Service keys", "Keys for the services Quiver itself calls, kept in the Mac's Keychain, with Test and Replace."),
-  ]);
-}
-
 /* --------------------------------------------------------- Integrations */
 
 function integrationsSection() {
   return `<div class="set-stack wide">
     ${setGroup("GitHub", "The gh install behind the GitHub pages, and the synced repo catalog the Add-repo search reads.", githubCard())}
+    ${setGroup("Services", "", setCard([
+      macRow("Service keys", "Keys for the services Quiver itself calls, kept in the Mac's Keychain, with Test and Replace."),
+    ]))}
     ${setGroup("Remote", "Pair a phone to watch and steer sessions, and see which devices are paired.", remoteCards())}
   </div>`;
 }
@@ -739,9 +736,9 @@ function settingsStopClock() {
   settingsPage.timer = null;
 }
 
-/* ----------------------------------------------------------------- Paths */
+/* ----------------------------------------------------------------- Files */
 
-function pathsSection() {
+function filesSection() {
   const paths = settingsPage.data && settingsPage.data.paths;
   if (!paths) return `<div class="card"><p class="empty">Reading…</p></div>`;
   return `<div class="set-stack">${setCard([
@@ -750,15 +747,6 @@ function pathsSection() {
     setRow("MCP servers folder", `In use: ${paths.mcp_servers}.`),
     macRow("Editor", "Opens a server folder from the MCP servers page."),
   ])}<p class="caption set-note">These are the hub's paths. Pointing Quiver somewhere else is a Mac app setting.</p></div>`;
-}
-
-/* ---------------------------------------------------------------- Doctor */
-
-function doctorSection() {
-  return setCard([
-    setRow("Doctor", "Checks on PATH, Node and drift between quiver and your harnesses, on the hub.",
-      `<a class="set-button" href="#/doctor">Open Doctor</a>`),
-  ]);
 }
 
 /* ---------------------------------------------------------- Experimental */
