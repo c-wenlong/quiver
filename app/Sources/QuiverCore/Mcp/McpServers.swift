@@ -102,9 +102,23 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
     /// Reached at a URL (http, sse) rather than launched with a command on
     /// this machine; the MCP page's Remote group.
     public var isRemote: Bool { transport == "http" || transport == "sse" }
+
+    /// Whether the definition a sync copies from `source` is at a URL: a
+    /// server can be local in one harness and remote in another.
+    public func isRemote(from source: String) -> Bool {
+        remoteIn.map { $0.contains(source) } ?? isRemote
+    }
+
+    /// Harnesses whose config launches local servers only, as swe's
+    /// `local_only` marks them: Claude Desktop adds a remote server in the
+    /// app itself (Settings › Connectors).
+    public static let localOnly: Set<String> = ["claude-desktop"]
     /// Whether ~/.quiver/mcp.json defines this server. A hub-only row has
     /// no harnesses; an older swe sends nothing and decodes false.
     public let inHub: Bool
+    /// The places (harnesses, "quiver" for the hub) whose definition is at
+    /// a URL. Absent from an older swe, which leaves `transport` to say.
+    public let remoteIn: [String]?
     /// Set only on a saved server, which keeps `summary` in place of the
     /// command line or URL.
     let savedSummary: String?
@@ -113,7 +127,7 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
                 url: String? = nil, envKeys: [String] = [], headerKeys: [String] = [],
                 harnesses: [String], conflict: Bool = false, variants: [[String]]? = nil,
                 health: String? = nil, detail: String? = nil, secretsMissing: [String] = [],
-                inHub: Bool = false, savedSummary: String? = nil) {
+                inHub: Bool = false, savedSummary: String? = nil, remoteIn: [String]? = nil) {
         self.name = name
         self.transport = transport
         self.command = command
@@ -129,12 +143,13 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
         self.secretsMissing = secretsMissing
         self.inHub = inHub
         self.savedSummary = savedSummary
+        self.remoteIn = remoteIn
     }
 
     private enum CodingKeys: String, CodingKey {
         case name, transport, command, args, url, envKeys, headerKeys
         case harnesses, conflict, variants, health, detail
-        case secretsMissing, inHub, savedSummary
+        case secretsMissing, inHub, savedSummary, remoteIn
     }
 
     public init(from decoder: Decoder) throws {
@@ -154,6 +169,7 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
         secretsMissing = try container.decodeIfPresent([String].self, forKey: .secretsMissing) ?? []
         inHub = try container.decodeIfPresent(Bool.self, forKey: .inHub) ?? false
         savedSummary = try container.decodeIfPresent(String.self, forKey: .savedSummary)
+        remoteIn = try container.decodeIfPresent([String].self, forKey: .remoteIn)
     }
 
     /// The server as it may be written to disk. No command line or URL:
@@ -165,7 +181,7 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
     public var saved: McpServer {
         McpServer(name: name, transport: transport, envKeys: envKeys, headerKeys: headerKeys, harnesses: harnesses,
                   conflict: conflict, variants: variants, secretsMissing: secretsMissing,
-                  inHub: inHub, savedSummary: savedSummary ?? outline)
+                  inHub: inHub, savedSummary: savedSummary ?? outline, remoteIn: remoteIn)
     }
 
     /// The program or the scheme and host, and "…" when there is more.
@@ -745,6 +761,8 @@ public final class McpModel {
     }
 
     public func targets(for server: McpServer, from source: String, in harnesses: [String]) -> SyncTargets {
+        // A config that launches local servers only can't take a URL one.
+        let harnesses = server.isRemote(from: source) ? harnesses.filter { !McpServer.localOnly.contains($0) } : harnesses
         if source == "quiver" {
             // The hub isn't a matrix column: every harness lacks it, and
             // one with its own copy gets it replaced only with approval.
