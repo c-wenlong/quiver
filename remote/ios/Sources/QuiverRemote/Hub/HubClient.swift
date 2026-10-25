@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 enum Hub {
     static let decoder: JSONDecoder = {
@@ -273,12 +274,32 @@ struct HubClient: Sendable {
         try await send(request("POST", "/v1/ssh/key", body: ["public_key": publicKey]))
     }
 
+    /// What this phone tells the hub it is at pair time: the Settings
+    /// list's kind icon, hardware model and OS. A browser can't report
+    /// `model`; `uname` can — "iPhone16,2".
+    static let deviceMeta: [String: Any] = {
+        let device = UIDevice.current
+        var uts = utsname()
+        uname(&uts)
+        let model = withUnsafeBytes(of: &uts.machine) {
+            String(cString: $0.baseAddress!.assumingMemoryBound(to: CChar.self))
+        }
+        return [
+            "kind": device.userInterfaceIdiom == .pad ? "ipad" : "iphone",
+            "model": model,
+            "client": "Quiver Remote \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")",
+            "os": "\(device.systemName) \(device.systemVersion)",
+        ]
+    }()
+
     func pair(token: String, name: String) async throws -> Credential {
-        try await send(request("POST", "/v1/pair", body: ["token": token, "name": name]))
+        try await send(request("POST", "/v1/pair",
+                               body: ["token": token, "name": name, "device": Self.deviceMeta]))
     }
 
     func startPairRequest(name: String) async throws -> PairRequestStarted {
-        try await send(request("POST", "/v1/pair/request", body: ["name": name]))
+        try await send(request("POST", "/v1/pair/request",
+                               body: ["name": name, "device": Self.deviceMeta]))
     }
 
     func pollPairRequest(id: String, secret: String) async throws -> PairPoll {
