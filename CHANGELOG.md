@@ -438,6 +438,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **MCP Add server: Local or Remote first, in both apps.** The sheet
+  starts with "Local: runs on <machine>" (a command, args and env vars) or
+  "Remote" (a URL, HTTP or SSE, and headers), in the grid's words, and
+  shows only that kind's fields. Remote has Sign-in: None, a Bearer token
+  (stored as a secret and sent as `Authorization: Bearer ${NAME}`), or
+  OAuth (nothing saved; each harness signs in itself). A harness that
+  can't take a remote server is left out with the reason. A local working
+  folder isn't offered yet: the hub's server shape has no `cwd`.
+
 - **MCP servers: grouped by Local and Remote, in both apps.** The grid's
   sections are now "Local: runs on <machine>", every server a harness
   launches with a command, and "Remote", every server at a URL. They used
