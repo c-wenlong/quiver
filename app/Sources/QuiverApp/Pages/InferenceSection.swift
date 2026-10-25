@@ -1365,9 +1365,11 @@ private struct KeyEditor: View {
 }
 
 /// Every plan and provider Quiver knows, from the Catalogue button or
-/// Browse in a key editor: kind chips and a search over rows that each
-/// start their add-key flow on one tap. A row the keys file already
-/// covers is marked Set; picking it opens its editor all the same.
+/// Browse in a key editor, in the shared "Connect apps" layout: a search
+/// field, the kind chips, and a two-column grid of `CatalogueRow`s.
+/// Picking a row starts its add-key flow and closes the sheet. A row the
+/// keys file already covers reads Set and still picks: for a plan that
+/// edits the existing key, for a provider it adds a sibling variable.
 private struct ProviderCatalogueSheet: View {
     var entries: [InferenceCatalogue.Entry]
     /// Runs with the pick just before the sheet closes itself.
@@ -1377,85 +1379,45 @@ private struct ProviderCatalogueSheet: View {
     /// The chip pick; nil is "All".
     @State private var kind: InferenceItem.Kind?
 
+    private static let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 2)
+
     private var shown: [InferenceCatalogue.Entry] {
         InferenceCatalogue.filter(entries, kind: kind, query: query)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             Text("Provider catalogue")
                 .font(Theme.sectionTitle).tracking(-0.5).foregroundStyle(Theme.textPrimary)
-            HStack(spacing: 10) {
-                Tabs(options: [(InferenceItem.Kind?.none, "All"),
-                               (.plan, "Coding plans"), (.apiKey, "API keys")],
-                     selection: $kind, style: .table)
-                SearchField(prompt: "Search plans and providers", text: $query)
-            }
+            SearchField(prompt: "Search plans and providers", text: $query)
+            Tabs(options: [(InferenceItem.Kind?.none, "All"),
+                           (.plan, "Coding plans"), (.apiKey, "API keys")],
+                 selection: $kind, style: .table)
             ScrollView {
                 if shown.isEmpty {
                     Text("Nothing matches.")
                         .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                         .frame(maxWidth: .infinity).padding(.vertical, 20)
                 } else {
-                    LazyVStack(spacing: 0) {
+                    LazyVGrid(columns: Self.columns, spacing: 8) {
                         ForEach(shown) { entry in
-                            CatalogueRow(entry: entry) {
+                            CatalogueRow(logo: entry.logo, name: entry.name, detail: entry.detail,
+                                         done: entry.hasKey ? "Set" : nil, reusable: true) {
                                 pick(entry)
                                 dismiss()
                             }
-                            if entry.id != shown.last?.id { Divider().overlay(Theme.border) }
                         }
                     }
-                    .padding(.vertical, 4)
                 }
             }
-            .frame(height: 380)
-            .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
-            .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
+            .frame(height: 420)
             HStack {
                 Text("\(shown.count) of \(entries.count)")
                     .font(Theme.caption).foregroundStyle(Theme.textMuted).monospacedDigit()
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).secondaryButton()
+                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction).secondaryButton()
             }
         }
-        .padding(20)
-        .frame(width: 560)
-        .background(Theme.panel)
-    }
-}
-
-/// One catalogue row: logo, name, what it is, and a Set mark when the
-/// keys file already covers it. The whole row is the button.
-private struct CatalogueRow: View {
-    var entry: InferenceCatalogue.Entry
-    var action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Group {
-                    if let logo = entry.logo { HarnessIcon(harness: logo, size: 16) } else { Color.clear }
-                }
-                .frame(width: 16, height: 16)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(entry.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                    Text(entry.detail).font(Theme.caption).foregroundStyle(Theme.textMuted).lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                if entry.hasKey {
-                    Label("Set", systemImage: "checkmark.circle.fill")
-                        .font(Theme.caption).foregroundStyle(Theme.success)
-                }
-                Badge(entry.kind == .plan ? "Coding plan" : "API key")
-            }
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(hovering ? Theme.rowHover : .clear)
-            .contentShape(.rect)
-        }
-        .plainButton(cornerRadius: 0)
-        .onHover { hovering = $0 }
-        .help(entry.hasKey ? "\(entry.keyName) already has a key" : "Add a key for \(entry.name)")
+        .sheetScaffold(width: Theme.sheetWidth)
     }
 }

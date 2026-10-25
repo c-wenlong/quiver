@@ -104,7 +104,8 @@ Where each came from is in `Resources/harness-icons.tsv`:
 - The inference plan and API provider marks for Tencent Cloud, Baidu
   Cloud, Huawei Cloud, iFlytek, SenseNova, KwaiKAT, Ollama, Poe, ZenMux,
   ElevenLabs and Atlas Cloud come from LobeHub icons
-  (`@lobehub/icons-static-svg`). Synthetic, CheapestInference, Standard
+  (`@lobehub/icons-static-svg`), as do the status-page marks for
+  AssemblyAI, Baseten and Lambda. Synthetic, CheapestInference, Standard
   Compute, TaoToken, JD Cloud, State Cloud (China Telecom), SCNet, Charm,
   LLM Gateway and UCloud come from each company's own site or brand kit;
   China Unicom's from its logo file on English Wikipedia; Moore Threads'
@@ -112,7 +113,10 @@ Where each came from is in `Resources/harness-icons.tsv`:
   are trademarks of their owners, used only to name them; where each came
   from is in `harness-icons.tsv`.
 - npm, Homebrew, Nix and uv come from Simple Icons (simple-icons,
-  CC0-1.0); Routing.Run's
+  CC0-1.0), as do the status-page marks for Docker, Sentry, Datadog,
+  Supabase, DigitalOcean, Render, Upstash, Convex, Linear, Notion, Clerk
+  and Twilio (Twilio's is pinned to simple-icons 13.21.0, the last
+  release carrying it); Routing.Run's
   planet mark from Phosphor Icons (`@phosphor-icons/core`, MIT).
 - Continue comes from its repository (continuedev/continue,
   `docs/logo/light.svg`); aider from its repository (Aider-AI/aider,
