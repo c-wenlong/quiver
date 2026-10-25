@@ -543,6 +543,14 @@ class TestSync(_SyncHome, unittest.TestCase):
         self.assertEqual(mcp.sync_targets(row, "quiver", ["claude", "cursor", "codex"]),
                          (["codex"], ["claude", "cursor"]))
 
+    def test_rows_say_where_a_definition_is_remote(self):
+        hub = json.loads(self.hub.read_text())
+        hub["mcpServers"]["remote"] = {"url": "https://mcp.example.com/mcp"}
+        self.hub.write_text(json.dumps(hub))
+        rows = {r["name"]: r for r in mcp.get(_ctx(), {})["servers"]}
+        self.assertEqual(rows["remote"]["remote_in"], ["quiver"])
+        self.assertEqual(rows["linear"]["remote_in"], [])
+
     def test_a_url_server_is_not_offered_to_claude_desktop(self):
         remote = {"name": "r", "transport": "http", "harnesses": ["claude"], "variants": [["claude"]],
                   "conflict": False, "in_hub": True}
@@ -550,8 +558,12 @@ class TestSync(_SyncHome, unittest.TestCase):
         every = ["claude", "claude-desktop", "codex"]
         desktop = {"path": self.home / "desktop.json", "key": "mcpServers", "local_only": True}
         self.enterContext(patch.dict(mcp_cli.MCP_CONFIG_MAP, {"claude-desktop": desktop}))
-        self.assertEqual(mcp.sync_targets(remote, "quiver", every), (["codex"], ["claude"]))
+        self.assertEqual(mcp.sync_targets({**remote, "remote_in": ["quiver"]}, "quiver", every), (["codex"], ["claude"]))
         self.assertEqual(mcp.sync_targets(local, "quiver", every), (["claude-desktop", "codex"], ["claude"]))
+        # Local in claude, remote in the hub: the source's definition decides.
+        mixed = {**local, "remote_in": ["quiver"]}
+        self.assertEqual(mcp.sync_targets(mixed, "claude", every), (["claude-desktop", "codex"], []))
+        self.assertEqual(mcp.sync_targets(mixed, "quiver", every), (["codex"], ["claude"]))
 
 
 class TestSecrets(_SyncHome, unittest.TestCase):

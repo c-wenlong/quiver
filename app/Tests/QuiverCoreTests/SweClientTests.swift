@@ -393,6 +393,11 @@ func fixture(_ name: String) throws -> Data {
         let all = ["claude", "claude-desktop", "codex"]
         #expect(await model.targets(for: remote, from: "quiver", in: all).missing == ["claude", "codex"])
         #expect(await model.targets(for: local, from: "quiver", in: all).missing == all)
+        // Local in claude, remote in the hub: the copied definition decides.
+        let mixed = McpServer(name: "m", harnesses: ["claude"], variants: [["claude"]], inHub: true,
+                              remoteIn: ["quiver"])
+        #expect(await model.targets(for: mixed, from: "claude", in: all).missing == ["claude-desktop", "codex"])
+        #expect(await model.targets(for: mixed, from: "quiver", in: all).missing == ["codex"])
     }
 
     @Test func inHubDefaultsFalseForAnOlderSwe() throws {

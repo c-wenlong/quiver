@@ -1342,7 +1342,12 @@ def _sync(args, report: dict | None):
         secrets = load_secrets()
         hub_servers = get_hub_servers()
         missing: dict[str, list[str]] = {}
+        any_remote_ok = any(takes_remote(t) for t in targets)
         for server_name in selected:
+            if not any_remote_ok and server_type(source_servers[server_name]) == "http":
+                # No target can take this one: it is left out below, so
+                # its secrets don't matter to this run.
+                continue
             for var in unresolved_names(hub_servers.get(server_name, {}), secrets):
                 missing.setdefault(var, []).append(server_name)
         if missing:

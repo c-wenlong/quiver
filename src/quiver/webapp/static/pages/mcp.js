@@ -399,7 +399,13 @@ function mcpSources(s) {
 /* McpModel.targets: harnesses without the server (picked by default) and
  * ones with a different definition (opt-in, since that replaces theirs).
  * From the hub every harness with the server counts as different. */
+/* Whether the definition copied from ``source`` is reached at a URL. */
+const mcpSourceIsRemote = (s, source) => (s.remote_in ? s.remote_in.includes(source) : mcpIsRemote(s));
+
 function mcpSyncTargets(s, source, harnesses) {
+  // A config that launches local servers only can't take a URL one.
+  const caps = (mcpPage.data && mcpPage.data.caps) || {};
+  if (mcpSourceIsRemote(s, source)) harnesses = harnesses.filter((h) => !caps[h] || caps[h].remote);
   if (source === "quiver") {
     return { missing: harnesses.filter((h) => !s.harnesses.includes(h)),
              differing: harnesses.filter((h) => s.harnesses.includes(h)) };

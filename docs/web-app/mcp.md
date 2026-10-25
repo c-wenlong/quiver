@@ -72,10 +72,11 @@ Its writes are a server's Sync, with its Preview, and its Remove.
     "env_keys": ["LINEAR_API_KEY"], "header_keys": [],
     "harnesses": ["claude", "codex"], "conflict": true,
     "variants": [["claude"], ["codex"]],
-    "secrets_missing": ["LINEAR_API_KEY"], "in_hub": true,
+    "secrets_missing": ["LINEAR_API_KEY"], "in_hub": true, "remote_in": [],
     "secrets": [{"name": "LINEAR_API_KEY", "set": false, "masked": null}],
     "health": "ok", "detail": null
   }],
+  "caps": {"claude": {"remote": true, "sse": true}, "codex": {"remote": true, "sse": false}},
   "health": true,
   "error": null,
   "folders": {

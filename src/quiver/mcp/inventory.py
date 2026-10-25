@@ -27,6 +27,13 @@ def transport_of(raw, canonical: dict) -> str:
     return kind
 
 
+def _is_url(raw) -> bool:
+    """Whether a hub definition is reached at a URL."""
+    from quiver.mcp.cli import get_mcp_handler
+
+    return isinstance(raw, dict) and bool(get_mcp_handler("quiver").parse(raw).get("url"))
+
+
 def identity_of(raw, canonical: dict) -> tuple:
     """What makes two definitions of one server the same server.
 
@@ -72,8 +79,10 @@ def server_inventory(tool_data: dict, include_hub: bool = False) -> list[tuple[d
             canonical = handler.parse(raw) if isinstance(raw, dict) else {}
             entry = seen.setdefault(
                 name, {"raw": raw, "canonical": canonical, "tools": [],
-                       "identities": []})
+                       "identities": [], "remote": []})
             entry["tools"].append(tool)
+            if canonical.get("url"):
+                entry["remote"].append(tool)
             entry["identities"].append(identity_of(raw, canonical))
     inventory = []
     for name in sorted(seen):
@@ -106,6 +115,7 @@ def server_inventory(tool_data: dict, include_hub: bool = False) -> list[tuple[d
             secrets_missing=(unresolved_names(hub[name], secrets)
                              if name in hub else []),
             in_hub=name in hub,
+            remote_in=entry["remote"] + (["quiver"] if name in hub and _is_url(hub[name]) else []),
         )
         inventory.append((row.to_json(), entry["raw"]))
 
@@ -134,6 +144,7 @@ def server_inventory(tool_data: dict, include_hub: bool = False) -> list[tuple[d
             variants=[],
             secrets_missing=unresolved_names(raw, secrets),
             in_hub=True,
+            remote_in=["quiver"] if canonical.get("url") else [],
         )
         inventory.append((row.to_json(), raw))
     inventory.sort(key=lambda pair: pair[0]["name"])

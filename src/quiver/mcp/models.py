@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -31,6 +31,10 @@ class ServerRow:
     # Whether the hub (mcp.json) defines this server. A hub-only row has
     # empty harnesses and variants.
     in_hub: bool
+    # The places (harnesses, and "quiver" for the hub) whose definition is
+    # reached at a URL. ``transport`` is the first definition's; a sync
+    # copies one place's, so it asks this.
+    remote_in: list = field(default_factory=list)
 
     def to_json(self) -> dict:
         return {
@@ -46,6 +50,7 @@ class ServerRow:
             "variants": self.variants,
             "secrets_missing": self.secrets_missing,
             "in_hub": self.in_hub,
+            "remote_in": self.remote_in,
         }
 
 
