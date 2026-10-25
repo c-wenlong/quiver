@@ -22,7 +22,7 @@ app's saved value does).
 | General | Open at login, Terminal, Show in Dock: Mac app only. First-run setup links to `#/setup` ("Set up this machine"). Display › Appearance (System, Light, Dark) works, per browser. App icon and Hide accidental sessions: Mac app only. Updates › Version shows the hub's swe version; Latest release and Automatic checks are Mac app only. |
 | Sidebar | A switch per page in every group, Enable all / Disable all, Overview, Accounts and Settings locked on ("Always on"), per browser. |
 | Notifications | All three rows Mac app only. |
-| Providers | Harnesses tab: Provider visibility is Mac app only, with a link to the Harnesses page. Inference tab: the API keys, read only (below). |
+| Providers | Harnesses tab: Provider visibility is Mac app only, with a link to the Harnesses page. Inference tab: the API keys file, with Add key, edit, delete, reveal and copy (below). |
 | Services | Mac app only (keys in the Mac's Keychain). |
 | Integrations | GitHub: gh's login (with the app's warnings and a re-check button) and the synced repo catalog with Sync now. Remote: the setup checklist until it's done, the hub, paired devices, Pair a device, and pair requests waiting for approval (below). |
 | Paths | The hub's swe, API keys file and MCP servers folder, read only. Editor: Mac app only. |
@@ -73,12 +73,32 @@ badge where its control would be.
 
 ### Providers › Inference
 
-`swe providers list`'s rows: each provider in the registry, the env var
-it is read from, whether the API keys file sets it, and the value masked
-the way `mask_key` prints it (first 8, last 4, length). A status select
-(Any, Key set, No key), a search over names and variables, and a row
-count. Adding, editing, checking and revealing keys, and the coding
-plans, stay in the Mac app.
+The Mac app's Keys and plans table, read from the API keys file
+(`quiver.providers.keyfile`, a port of the app's `APIKeysFile`): every
+`export` in file order under its `# Provider` heading ("Other" before the
+first one), the variable, the value masked as the app's `APIKeyMask` does
+(`sk-ant-••••••••WXYZ`: the vendor prefix up to a dash in the first eight
+characters, then the last four; eight dots for anything under 16), the
+eye to reveal it and a copy button, the type and the status. A status
+select (Any, Key set, No key), a search over headings and variables, and
+a row count; Reload reads the file again.
+
+- **Add key** opens the app's "Add a key": a provider from `swe providers
+  list`'s catalog, "saved as" its variable (a pick when it has several),
+  Get a key, "X is already set; saving replaces it.", and the value, a
+  password field with Show. The key goes where the app puts it: beside a
+  variable of the same provider, else under a heading that reads as its
+  name or id, else under a new `# <Name>` heading at the end.
+- **A row** opens "Edit NAME": the heading it sits under, Get a key, a new
+  value (the field starts empty; the eye shows the current one), and
+  Delete, which asks first. Saving replaces the line where it is.
+- The value field is emptied after every save, whether the hub took it or
+  not. A file changed since the page read it is refused, read again, and
+  the sheet says to make the change again.
+
+Checking keys, renaming a variable, moving it to another heading, custom
+providers, adding the `source` line, the shell status and coding plans
+stay in the Mac app.
 
 ### Experimental › Session search
 
@@ -125,8 +145,11 @@ app loads, not only when Settings is open, so `app.js` needs no change.
   },
   "providers": {
     "path": "~/.quiver/secrets/providers/.api_keys", "exists": true, "error": null,
-    "rows": [{"id": "openai", "name": "Openai", "env_var": "OPENAI_API_KEY", "env_vars": ["OPENAI_API_KEY"],
-              "has_key": true, "masked": "sk-proj-***1234 (32)", "url": "https://…", "description": "…"}]
+    "stamp": "9f2c…",
+    "keys": [{"name": "OPENAI_API_KEY", "provider": "OpenAI", "has_value": true,
+              "masked": "sk-proj-••••••••1234"}],
+    "catalog": [{"id": "openai", "name": "OpenAI", "env_vars": ["OPENAI_API_KEY"],
+                 "url": "https://platform.openai.com/api-keys"}]
   },
   "paths": {"swe": "~/.local/bin/swe", "api_keys": "~/.quiver/secrets/providers/.api_keys",
             "mcp_servers": "~/.quiver/mcp/servers"},
@@ -161,7 +184,7 @@ it shows the cached result, so the page stays quick.
 
 ## Writes
 
-All four behind the device bearer and the hub's Origin check, one at a time.
+All behind the device bearer and the hub's Origin check, one at a time.
 
 `POST /v1/app/settings/pair`, body `{}`: mints a token
 (`pairing.mint_pair_token`) and answers `{"ticket": {"host", "port",
@@ -191,6 +214,35 @@ missing or signed-out `gh` a 409 `gh_unavailable` / `gh_auth_required`
 in the setup words, and an account with no login or orgs a 502
 `sync_failed`.
 
+`POST /v1/app/settings/key_set`, body `{"name", "value", "stamp"}`,
+plus `"provider"` (a catalog id) for a variable not in the file yet:
+replaces the line in place, or adds the key where Add key says above.
+`POST /v1/app/settings/key_remove`, body `{"name", "stamp"}`: drops the
+line, and its heading once nothing is left under it. Both write as the
+Mac app's `APIKeysStore` does: the previous file copied to
+`~/.quiver/backups/api-keys/api_keys.bak` (folder mode 700), the new one
+written mode 600 through a temp file and a rename (through a symlink to
+its target), `~/.quiver/secrets` given its own `.gitignore` of `*`, and
+the file checked again just before the swap. They answer `{"providers"}`
+in the `get` shape, never a value. `stamp` is an HMAC of the file's bytes
+keyed per hub process; a file that no longer matches it is a 409
+`changed_on_disk`.
+
+`POST /v1/app/settings/key_value`, body `{"name"}`: `{"name", "value"}`,
+the one answer that carries a value, sent when the eye or copy button
+asks. Values are trimmed; error messages name variables, never values.
+
+| Status | Code | When |
+|---|---|---|
+| 422 | `bad_name` | not a variable name, or not one of the picked provider's variables |
+| 422 | `bad_value` | empty, more than one line, or over 16 KB |
+| 422 | `bad_provider` | a new variable with no provider, or a heading the file couldn't read back |
+| 404 | `unknown_provider` | a provider id the catalog doesn't have |
+| 404 | `not_found` | the variable isn't in the file |
+| 409 | `changed_on_disk` | the file changed since `stamp` |
+| 409 | `duplicate` | the variable is exported twice; fix it in an editor |
+| 409 | `unreadable` | the file isn't UTF-8 or can't be read |
+
 `POST /v1/app/settings/revoke`, body `{"device_id": "…"}` (plus
 `"confirm_this_device": true` for the device sending it): answers
 `{"revoked", "this_device", "devices"}`, the list in the `get` shape.
@@ -202,7 +254,7 @@ in the setup words, and an account with no login or orgs a 502
 | 404 | `unknown_device` | no paired device has that id |
 | 409 | `already_revoked` | the device is already signed out |
 | 409 | `confirm_this_device` | revoking the sender's own device without `confirm_this_device: true` |
-| 404 | `unknown_action` | any action but `pair`, `revoke`, `session_search` and `sync` |
+| 404 | `unknown_action` | any action but `pair`, `revoke`, `session_search`, `sync` and the `key_` ones |
 | 403 | `bad_origin` | a cross-site POST |
 | 401 | `unauthorized` | neither a paired device nor the owner's tailnet device |
 
@@ -223,8 +275,9 @@ decode a PNG drawn from the SVG.
 
 - Every row marked Mac app only above, and Services (Keychain).
 - Reordering pages in Sidebar and providers in Provider visibility.
-- Key editing, checking, revealing, adding the `source` line, and coding
-  plans in Inference.
+- In Inference: checking keys, renaming and moving them, custom
+  providers, the shell status and the `source` line, drag to reorder,
+  and coding plans.
 - Editing paths.
 - Approving and denying pair requests here: the Mac section has neither;
   the hub's remote page does it.

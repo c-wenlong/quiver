@@ -11,9 +11,12 @@ belongs to the hub machine:
   hub), its paired devices with ``this_device`` marking the browser's own
   credential, and the tailnet pair requests waiting for approval (no
   codes or secrets, as ``swe remote devices --requests`` lists them).
-- ``providers``: Providers › Inference, read only. ``swe providers
-  list``'s rows: each provider and whether the API keys file sets its
-  key, the value masked by ``mask_key``. A raw key never leaves here.
+- ``providers``: Providers › Inference, as the Mac app's: ``keys``, every
+  ``export`` in the API keys file in file order with its ``# Provider``
+  heading and the value masked (``APIKeyMask``'s form, never the value),
+  and ``catalog``, ``swe providers list``'s providers for the Add key
+  picker (name, variables, where to get a key). ``stamp`` fingerprints
+  the file as read, so a write over a newer file is refused.
 - ``paths``: where the hub's swe, API keys file and MCP servers folder are.
 - ``session_search``: Experimental › Session search, the hub's transcript
   index as ``swe session index --status --json`` reports it (whether the
@@ -42,6 +45,14 @@ Writes, all behind the device bearer and the Origin check:
   into the hub's catalog. One runs at a time (a second is a 409). The
   answer is ``{"github", "failed"}``: the GitHub card read again and the
   owners whose listing failed, whose old rows the catalog keeps.
+- ``key_set``: ``{"name", "value", "stamp"}`` replaces a key in place,
+  or with ``"provider"`` (a catalog id whose variables include ``name``)
+  adds one under that provider's heading, as the Mac app's Add key does.
+  ``key_remove``: ``{"name", "stamp"}`` deletes one. Both write through
+  ``quiver.providers.keyfile`` (backup, mode 600, the secrets folder
+  sealed) and answer the new ``providers``, never a value.
+- ``key_value``: ``{"name"}`` answers ``{"name", "value"}``, the one reply
+  that carries a value, for the eye and copy buttons.
 - ``revoke``: ``{"device_id"}`` signs one paired device out of the hub
   (``swe remote devices --revoke``). The device must be one ``get``
   lists. Revoking the device that sent the request also needs
@@ -57,6 +68,9 @@ of its own to revoke, and an id of that form is refused outright.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import os
 import shutil
 import threading
 import time
@@ -65,8 +79,11 @@ from urllib.parse import urlsplit
 
 from quiver import __version__
 from quiver.webapp.pages import PageError
+from quiver.webapp.pages._secrets import mask
 
-ACTIONS = ("pair", "revoke", "session_search", "sync")
+ACTIONS = ("pair", "revoke", "session_search", "sync", "key_set", "key_remove", "key_value")
+# A pasted key, generously: the longest real ones are a few hundred bytes.
+VALUE_MAX = 16384
 DEVICE_ID_MAX = 64
 # The hub's id for the owner's own tailnet device (hub._owner_device).
 TAILNET_PREFIX = "tailnet:"
@@ -114,6 +131,8 @@ def post(ctx, action: str, body: dict) -> dict:
             return {"ticket": _mint(ctx)}
         if action == "session_search":
             return _set_session_search(ctx, body)
+        if action in ("key_set", "key_remove", "key_value"):
+            return _key_action(ctx, action, body)
         return _revoke(ctx, body)
 
 
@@ -304,39 +323,133 @@ def _revoke(ctx, body: dict) -> dict:
 
 def _providers(ctx, home: Path) -> dict:
     from quiver.paths import provider_keys_path_for
-    from quiver.providers.discover import discover_provider_keys
+    from quiver.providers import keyfile
 
-    keys = provider_keys_path_for(ctx.home)
-    out = {"path": _display(keys, home), "exists": keys.exists(), "rows": [], "error": None}
+    path = provider_keys_path_for(ctx.home)
+    out = {"path": _display(path, home), "exists": path.exists(), "stamp": None,
+           "keys": [], "catalog": [], "error": None}
+    try:
+        keys, data = keyfile.load(path)
+    except keyfile.KeyFileError as exc:
+        out["error"] = exc.message
+    else:
+        out["stamp"] = _stamp(data)
+        out["keys"] = [{
+            "name": e.name, "provider": e.provider, "has_value": bool(e.value),
+            # APIKeyMask's form, never the value.
+            "masked": mask(e.value),
+        } for e in keys.keys]
     try:
         registry = _provider_registry(ctx)
-        found = discover_provider_keys(registry, keys)
+        out["catalog"] = [_catalog_row(pid, info) for pid, info in registry.items()]
     except (ValueError, TypeError, AttributeError, OSError) as exc:
         # A corrupt providers.json, or an entry whose fields have the
         # wrong types (key_filename: 123): say so in this card and keep
         # the rest of Settings, pairing included, working.
         out["error"] = f"Can't read the providers: {exc}"
-        return out
-    rows = []
-    for r in found:
-        info = r["info"]
-        env_vars = [str(e) for e in (r.get("env_vars") or []) if isinstance(e, str)]
-        has_key = bool(r.get("raw_key"))
-        rows.append({
-            "id": r["name"],
-            "name": str(info.get("name") or r["name"]),
-            "env_var": r.get("matched_env") or (env_vars[0] if env_vars else None),
-            "env_vars": env_vars,
-            "has_key": has_key,
-            # mask_key's form, never the value: first 8, last 4 and the length.
-            "masked": r["masked"] if has_key else None,
-            # Only a web link: the page puts it in an href.
-            "url": _web_url(info.get("url")),
-            "description": info.get("description") if isinstance(info.get("description"), str) else None,
-        })
-    rows.sort(key=lambda r: (r["name"] or r["id"]).lower())
-    out["rows"] = rows
     return out
+
+
+def _catalog_row(pid: str, info: dict) -> dict:
+    env_vars = info.get("env_vars")
+    if not isinstance(env_vars, list) or not all(isinstance(e, str) for e in env_vars):
+        raise TypeError(f"{pid}: env_vars must be a list of names")
+    name = info.get("name")
+    if name is not None and not isinstance(name, str):
+        raise TypeError(f"{pid}: name must be text")
+    return {
+        "id": pid,
+        "name": name or pid,
+        "env_vars": env_vars,
+        # Only a web link: the page puts it in an href.
+        "url": _web_url(info.get("url")),
+    }
+
+
+# Keyed per hub process, like the MCP page's plan fingerprint: the stamp
+# says whether the file changed without being a hash anyone could test a
+# guessed key against.
+_STAMP_KEY = os.urandom(32)
+
+
+def _stamp(data: bytes | None) -> str:
+    return hmac.new(_STAMP_KEY, b"none" if data is None else b"file:" + data, hashlib.sha256).hexdigest()
+
+
+def _key_action(ctx, action: str, body: dict) -> dict:
+    from quiver.paths import provider_keys_path_for
+    from quiver.providers import keyfile
+
+    name = body.get("name")
+    if not isinstance(name, str) or not keyfile.is_valid_name(name):
+        raise PageError(422, "bad_name", "name must be a variable name")
+    path = provider_keys_path_for(ctx.home)
+    try:
+        keys, data = keyfile.load(path)
+    except keyfile.KeyFileError as exc:
+        raise PageError(409, exc.code, exc.message) from None
+    present = {e.name: e for e in keys.keys}
+    if action == "key_value":
+        if name not in present:
+            raise PageError(404, "not_found", f"{name} isn't in the file any more.")
+        return {"name": name, "value": present[name].value}
+    if body.get("stamp") != _stamp(data):
+        raise PageError(409, "changed_on_disk", "The keys file changed since this page read it. Reload, then make the change again.")
+    try:
+        if action == "key_remove":
+            keys.remove(name)
+        else:
+            keys.set(name, _key_value(body), _key_heading(ctx, body, name, keys, present))
+        keyfile.save(path, keys, data, home=ctx.home)
+    except keyfile.KeyFileError as exc:
+        status = {"not_found": 404, "changed_on_disk": 409, "duplicate": 409,
+                  "unreadable": 409, "unwritable": 500}.get(exc.code, 422)
+        raise PageError(status, exc.code, exc.message) from None
+    return {"providers": _providers(ctx, _home(ctx))}
+
+
+def _key_value(body: dict) -> str:
+    value = body.get("value")
+    if not isinstance(value, str) or len(value) > VALUE_MAX:
+        raise PageError(422, "bad_value", "value must be text")
+    # A paste often brings a trailing newline; one inside is refused below.
+    value = value.strip()
+    if not value:
+        raise PageError(422, "bad_value", "Paste a key first.")
+    return value
+
+
+def _key_heading(ctx, body: dict, name: str, keys, present: dict) -> str:
+    """The heading a set goes under. A key already in the file stays where
+    it is; a new one needs the catalog provider it belongs to, and goes
+    under ``APIKeyProviders.heading(for:in:)``'s pick."""
+    if name in present:
+        return present[name].provider
+    pid = body.get("provider")
+    if not isinstance(pid, str) or not pid:
+        raise PageError(422, "bad_provider", "Pick a provider for the new key.")
+    try:
+        info = _provider_registry(ctx).get(pid)
+        row = _catalog_row(pid, info) if isinstance(info, dict) else None
+    except (ValueError, TypeError, AttributeError, OSError) as exc:
+        raise PageError(409, "bad_registry", f"Can't read the providers: {exc}") from None
+    if row is None:
+        raise PageError(404, "unknown_provider", f"unknown provider: {pid}")
+    if name not in row["env_vars"]:
+        raise PageError(422, "bad_name", f"{row['name']} keys are saved as {', '.join(row['env_vars'])}.")
+    for entry in keys.keys:
+        if entry.name in row["env_vars"]:
+            return entry.provider
+    wanted = {_fold(row["name"]), _fold(pid)}
+    for entry in keys.keys:
+        if _fold(entry.provider) in wanted:
+            return entry.provider
+    return row["name"]
+
+
+def _fold(text: str) -> str:
+    """"Together AI", "together_ai" and "TOGETHER AI" all fold together."""
+    return text.lower().replace(" ", "").replace("_", "")
 
 
 def _web_url(value) -> str | None:
