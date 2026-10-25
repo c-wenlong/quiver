@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "data": {
+    "script": "prose-guard",
+    "harnesses": [
+      {
+        "harness": "claude",
+        "source": "/tmp/quiver-fixture-home/.quiver/hooks/claude/prose-guard.py",
+        "destination": "/tmp/quiver-fixture-home/.claude/hooks/prose-guard.py",
+        "state": "linked",
+        "detail": "",
+        "summary": "Blocks prompt submissions that ask for edits to prose files.",
+        "declared": [
+          {
+            "event": "PreToolUse",
+            "matcher": "Bash",
+            "timeout": 10,
+            "command": "~/.claude/hooks/prose-guard.py",
+            "settings": "/tmp/quiver-fixture-home/.claude/settings.json"
+          }
+        ]
+      }
+    ]
+  }
+}
