@@ -111,6 +111,24 @@ def resolve(value, secrets: dict[str, str] | None = None, home: Path | None = No
     return value
 
 
+def referenced_names(value) -> list[str]:
+    """Every ``${NAME}`` a config refers to, set or not, sorted."""
+    found: set[str] = set()
+
+    def walk(v):
+        if isinstance(v, dict):
+            for x in v.values():
+                walk(x)
+        elif isinstance(v, list):
+            for x in v:
+                walk(x)
+        elif isinstance(v, str):
+            found.update(_REF_RE.findall(v))
+
+    walk(value)
+    return sorted(found)
+
+
 def unresolved_names(value, secrets: dict[str, str] | None = None,
                      home: Path | None = None) -> list[str]:
     """Reference names that the store cannot satisfy, for warning on."""

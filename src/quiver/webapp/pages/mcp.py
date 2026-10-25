@@ -7,7 +7,7 @@ scans beside it (``McpServerRepo``: which checkouts sit in
 ``GET /v1/app/mcp?health=1`` adds ``swe mcp status``'s health probe per
 server, run in parallel under one deadline, and only when asked.
 
-Nothing secret leaves here. swe already sends env and header names only
+Server definitions never carry a secret here. swe already sends env and header names only
 and scrubs known credentials out of commands, arguments and URLs; the
 row's command, args and url are then replaced by ``summary``, the one line
 the Mac app shows, redacted again the way ``McpRedaction`` does it, so a
@@ -24,11 +24,20 @@ with 409 when anything it depends on changed since the preview, and then
 writes the checked snapshot with ``_sync``'s own per-target steps, so it
 writes exactly the plan that was shown.
 
+Each hub server's row carries ``secrets``: every ``${NAME}`` its hub
+definition refers to, ``{name, set, masked}``, masked as the Mac app
+masks a key (``_secrets.mask``). ``POST /v1/app/mcp/secret_set``
+(``{"name", "value"}``) is the sheet's Save or Replace,
+``swe mcp secret set NAME`` (``set_secret``); ``POST
+/v1/app/mcp/secret_value`` (``{"name"}``) answers one value for Reveal or
+Copy, the only reply that ever holds one. Both take only a name some hub
+server refers to.
+
 ``POST /v1/app/mcp/remove`` is the sheet's Remove: ``swe mcp remove
 <name> --from=<places>`` (``remove_places`` + ``remove_server``) for the
 places the confirm named, each of which must still hold the server.
-Adding servers and setting secret values stay in ``swe mcp`` and the Mac
-app (see docs/web-app/mcp.md).
+Adding servers stays in ``swe mcp`` and the Mac app (see
+docs/web-app/mcp.md).
 """
 
 from __future__ import annotations
@@ -74,9 +83,11 @@ def get(ctx, args: dict) -> dict:
         for (row, _), (state, detail) in zip(pairs, probe_all(pairs)):
             row["health"], row["detail"] = state, detail
     folders = folder_scan(_servers_root(ctx), [row for row, _ in pairs])
+    servers = [page_row(row) for row, _ in pairs]
+    _add_secrets(servers)
     return {
         "harnesses": harnesses,
-        "servers": [page_row(row) for row, _ in pairs],
+        "servers": servers,
         "health": bool(health and pairs),
         "error": error,
         "folders": folders,
@@ -138,7 +149,7 @@ def probe_all(pairs: list[tuple[dict, object]],
 # McpModel.sync/targets/sources): one server, copied from one source to the
 # harnesses picked, through the same ``_sync`` that ``swe mcp sync`` runs.
 
-ACTIONS = ("preview", "sync", "remove")
+ACTIONS = ("preview", "sync", "remove", "secret_set", "secret_value")
 HUB = "quiver"
 NAME_MAX = 200
 
@@ -159,6 +170,8 @@ def post(ctx, action: str, body: dict) -> dict:
         raise PageError(404, "unknown_action", f"unknown MCP action: {action}")
     if action == "remove":
         return _remove(ctx, body)
+    if action in ("secret_set", "secret_value"):
+        return _secret(ctx, action, body)
     request = _sync_request(body, action == "sync")
     with _WRITE_LOCK:
         plan = _plan(request)
@@ -178,6 +191,62 @@ def post(ctx, action: str, body: dict) -> dict:
     # The page repaints from this: the list as it is now, after the write.
     reply["page"] = get(ctx, {})
     return reply
+
+
+# ---------------------------------------------------------------- secrets
+
+
+def _hub_refs() -> dict[str, list[str]]:
+    """Each hub server's ``${NAME}`` references."""
+    from quiver.mcp.cli import get_hub_servers
+    from quiver.mcp.secrets import referenced_names
+
+    return {name: referenced_names(raw) for name, raw in get_hub_servers().items()}
+
+
+def _add_secrets(servers: list[dict]) -> None:
+    """``secrets`` on each hub row: name, whether the store sets it, and its
+    masked value. Never the value itself."""
+    from quiver.mcp.secrets import load_secrets
+    from quiver.webapp.pages._secrets import mask
+
+    try:
+        refs, store = _hub_refs(), load_secrets()
+    except (OSError, ValueError):
+        refs, store = {}, {}
+    for row in servers:
+        names = refs.get(row["name"], []) if row.get("in_hub") else []
+        row["secrets"] = [{"name": n, "set": bool(store.get(n)), "masked": mask(store.get(n) or "") or None}
+                          for n in names]
+
+
+def _secret(ctx, action: str, body: dict) -> dict:
+    from quiver.mcp.secrets import load_secrets, set_secret
+
+    if not isinstance(body, dict):
+        raise PageError(422, "bad_body", "expected a JSON object")
+    name = body.get("name")
+    if not isinstance(name, str) or not name or len(name) > NAME_MAX:
+        raise PageError(422, "bad_name", "name must be a secret a server refers to")
+    with _WRITE_LOCK:
+        if not any(name in names for names in _hub_refs().values()):
+            raise PageError(404, "unknown_secret", f"No hub server refers to ${{{name}}}.")
+        if action == "secret_value":
+            value = load_secrets().get(name)
+            if not value:
+                raise PageError(404, "secret_not_set", f"{name} has no value on the hub.")
+            return {"name": name, "value": value}
+        value = body.get("value")
+        if not isinstance(value, str) or len(value) > 16384:
+            raise PageError(422, "bad_value", "value must be the secret, as text")
+        if not value.strip():
+            raise PageError(422, "bad_value", "Paste a value first.")
+        try:
+            set_secret(name, value.strip())
+        except ValueError as exc:
+            # set_secret's reasons name the variable, never the value.
+            raise PageError(422, "bad_value", str(exc)) from exc
+    return {"name": name, "page": get(ctx, {})}
 
 
 def _remove(ctx, body: dict) -> dict:
@@ -333,7 +402,7 @@ def _plan(request: dict) -> dict:
         # the server as a literal string); saying so here names them.
         raise PageError(409, "secrets_missing", " ".join(
             f"Not syncing: no value for {var} (used by {name}). "
-            f"Set it on the hub with: swe mcp secret set {var}"
+            f"Set {var} in this server's sheet, or on the hub with: swe mcp secret set {var}"
             for var in row["secrets_missing"]))
 
     store = load_secrets()

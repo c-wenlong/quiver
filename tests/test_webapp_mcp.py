@@ -401,7 +401,7 @@ class TestSync(_SyncHome, unittest.TestCase):
             error = self.refused(action, **body, fingerprint="x")
             self.assertEqual((error.status, error.code), (409, "secrets_missing"))
             self.assertIn("NOTION_TOKEN", error.message)
-            self.assertIn("swe mcp secret set NOTION_TOKEN", error.message)
+            self.assertIn("Set NOTION_TOKEN in this server's sheet", error.message)
         self.assertEqual(self.snapshot(), before)
 
     def test_from_the_hub_the_value_is_written_but_never_sent(self):
@@ -543,6 +543,61 @@ class TestSync(_SyncHome, unittest.TestCase):
                          (["codex"], ["claude", "cursor"]))
 
 
+class TestSecrets(_SyncHome, unittest.TestCase):
+    """The sheet's secrets: masked in the page, set and read on request."""
+
+    TOKEN = "ntn_abcdefghijklmnopqrst1234"
+
+    def notion(self, page):
+        return next(s for s in page["servers"] if s["name"] == "notion")
+
+    def test_the_page_lists_refs_masked_never_the_value(self):
+        self.assertEqual(self.notion(mcp.get(_ctx(), {}))["secrets"],
+                         [{"name": "NOTION_TOKEN", "set": False, "masked": None}])
+        self.set_secret("NOTION_TOKEN", self.TOKEN)
+        page = mcp.get(_ctx(), {})
+        self.assertEqual(self.notion(page)["secrets"],
+                         [{"name": "NOTION_TOKEN", "set": True, "masked": "••••••••1234"}])
+        self.assertNotIn(self.TOKEN, json.dumps(page))
+        # A harness-only server has no hub definition, so no secrets row.
+        self.assertEqual(next(s for s in page["servers"] if s["name"] == "linear")["secrets"], [])
+
+    def test_set_writes_the_store_and_answers_without_the_value(self):
+        reply = mcp.post(_ctx(), "secret_set", {"name": "NOTION_TOKEN", "value": f"  {self.TOKEN}\n"})
+        self.assertNotIn(self.TOKEN, json.dumps(reply))
+        self.assertTrue(self.notion(reply["page"])["secrets"][0]["set"])
+        from quiver.mcp.secrets import load_secrets
+        self.assertEqual(load_secrets()["NOTION_TOKEN"], self.TOKEN)
+
+    def test_value_answers_one_set_secret(self):
+        self.set_secret("NOTION_TOKEN", self.TOKEN)
+        self.assertEqual(mcp.post(_ctx(), "secret_value", {"name": "NOTION_TOKEN"}),
+                         {"name": "NOTION_TOKEN", "value": self.TOKEN})
+
+    def test_refusals_never_echo_a_value(self):
+        self.set_secret("UNRELATED", "zz_secretvalue_0000000000")
+        cases = [("secret_value", {"name": "UNRELATED"}, (404, "unknown_secret")),
+                 ("secret_set", {"name": "UNRELATED", "value": "x"}, (404, "unknown_secret")),
+                 ("secret_value", {"name": "NOTION_TOKEN"}, (404, "secret_not_set")),
+                 ("secret_set", {"name": "NOTION_TOKEN", "value": "  "}, (422, "bad_value")),
+                 ("secret_set", {"name": "NOTION_TOKEN", "value": "a\nb" + self.TOKEN}, (422, "bad_value")),
+                 ("secret_set", {"name": "NOTION_TOKEN", "value": 7}, (422, "bad_value")),
+                 ("secret_set", {"name": "", "value": "x"}, (422, "bad_name"))]
+        for action, body, want in cases:
+            with self.assertRaises(PageError) as caught:
+                mcp.post(_ctx(), action, body)
+            self.assertEqual((caught.exception.status, caught.exception.code), want, body)
+            self.assertNotIn(self.TOKEN, caught.exception.message)
+            self.assertNotIn("zz_secretvalue", caught.exception.message)
+
+    def test_mask_matches_the_mac_apps(self):
+        from quiver.webapp.pages._secrets import mask
+        self.assertEqual(mask(""), "")
+        self.assertEqual(mask("short"), "••••••••")
+        self.assertEqual(mask("sk-ant-api03-abcdefghijWXYZ"), "sk-ant-••••••••WXYZ")
+        self.assertEqual(mask("abcdefghijklmnop"), "••••••••mnop")
+
+
 class TestRemove(_SyncHome, unittest.TestCase):
     """Remove: swe mcp remove for the places the sheet's confirm listed."""
 
@@ -612,6 +667,21 @@ class TestSyncRoute(_SyncHome, HubBase):
                                         body={**LINEAR, "fingerprint": fingerprint}, headers=auth)
         self.assertEqual(status, 409, data)  # the plan it described has happened
         self.assertIn("target_changed", data.decode())
+
+    def test_secrets_over_the_route(self):
+        token = "ntn_abcdefghijklmnopqrst1234"
+        auth = {**self.auth(), "Origin": self.origin()}
+        status, _ = self.srv.request("POST", "/v1/app/mcp/secret_set", body={"name": "NOTION_TOKEN", "value": token},
+                                     headers={**self.auth(), "Origin": "https://evil.example"})
+        self.assertEqual(status, 403)
+        status, data = self.srv.request("POST", "/v1/app/mcp/secret_set",
+                                        body={"name": "NOTION_TOKEN", "value": token}, headers=auth)
+        self.assertEqual(status, 200, data)
+        self.assertNotIn(token.encode(), data)
+        _, data = self.srv.request("GET", "/v1/app/mcp", headers=auth)
+        self.assertNotIn(token.encode(), data)
+        status, data = self.srv.request("POST", "/v1/app/mcp/secret_value", body={"name": "NOTION_TOKEN"}, headers=auth)
+        self.assertEqual((status, json.loads(data)["value"]), (200, token))
 
     def test_remove_over_the_route(self):
         before = self.snapshot()
