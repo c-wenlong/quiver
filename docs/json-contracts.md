@@ -156,6 +156,11 @@ The CLI side of remote also speaks `--json`:
   `package`, `command`, `available`) for an installed harness whose binary
   resolves into a package manager's tree, else null. `via` is `cask`,
   `brew`, `npm`, `uv` or `nix`; a vendor script install has none.
+  `path` is the install evidence — the binary on PATH, or for a GUI app
+  its `.app` bundle or Homebrew Caskroom record — and `installed` follows
+  it. `website` is the vendor's download page for providers swe has
+  audited (a GUI-first app still lists its cask in `methods`); absent,
+  or null, for the rest.
 - `McpInventory`: `harnesses` lists every config read; `servers` carry
   `args`, `command`, `conflict`, `detail`, `env_keys`, `harnesses`,
   `header_keys`, `health` (a string, not an object), `name`, `transport`,

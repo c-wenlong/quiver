@@ -145,7 +145,9 @@ class TestApply(_Home, unittest.TestCase):
         return caught.exception
 
     def test_apply_adopts_links_registers_and_stars(self):
-        reply = self.post(starred=["claude", "gemini", "kimi"], adopt=str(self.claude_md))
+        # zcode stands in for a provider swe can't register: it is on the
+        # app's list but a GUI app, so the catalog has no entry for it.
+        reply = self.post(starred=["claude", "gemini", "zcode"], adopt=str(self.claude_md))
         applied = reply["applied"]
         self.assertEqual(self.agents_md().read_text(), "my own rules\n")
         self.assertTrue(self.claude_md.is_symlink())
@@ -153,7 +155,7 @@ class TestApply(_Home, unittest.TestCase):
         self.assertEqual(applied["links"]["adopted"], str(self.claude_md))
         self.assertEqual(applied["harness"], ["claude"])
         self.assertEqual(applied["starred"], {"starred": ["claude", "gemini"],
-                                              "registered": ["gemini"], "unknown": ["kimi"]})
+                                              "registered": ["gemini"], "unknown": ["zcode"]})
         self.assertFalse(reply["first_run"])
         self.assertEqual(reply["starred"], ["claude", "gemini"])
         reg = self.registry()
