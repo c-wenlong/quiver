@@ -690,12 +690,20 @@ struct SettingsDivider: View {
 struct SettingRow<Control: View>: View {
     var title: String
     var detail: String
+    /// An SF Symbol leading the row, like the paired-device kind glyphs.
+    var icon: String? = nil
     var warning: String? = nil
     var danger = false
     @ViewBuilder var control: Control
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
+            if let icon {
+                Image(systemName: icon)
+                    .font(Theme.font(size: 15))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 20)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
                 if let warning {

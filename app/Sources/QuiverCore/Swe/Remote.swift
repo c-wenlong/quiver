@@ -30,14 +30,39 @@ public struct RemoteStatus: Decodable, Sendable, Equatable {
     public struct Device: Decodable, Sendable, Equatable, Identifiable {
         public let id: String
         public let name: String?
+        /// The user's own rename — beats `name` wherever the device is
+        /// listed. Set through `/v1/devices/rename`.
+        public let displayName: String?
+        /// `iphone`/`ipad`/`android`/`mac`/`windows`/`linux`/`browser` —
+        /// picks the row's icon. Absent from hubs older than the
+        /// metadata change, so everything below stays optional.
+        public let kind: String?
+        /// Hardware model where the client knows it (the iOS wrapper
+        /// reports it; browser UAs can't).
+        public let model: String?
+        /// Client name+version, e.g. "Quiver Remote 1.0" or "Safari 18.5".
+        public let client: String?
+        public let os: String?
+        /// Tailnet node the pairing request came from — the closest
+        /// thing to an origin CGNAT offers.
+        public let nodeName: String?
         public let createdAt: Date?
         public let lastSeenAt: Date?
         public let revoked: Bool
 
-        public init(id: String, name: String? = nil, createdAt: Date? = nil,
-                    lastSeenAt: Date? = nil, revoked: Bool = false) {
+        public init(id: String, name: String? = nil, displayName: String? = nil,
+                    kind: String? = nil, model: String? = nil, client: String? = nil,
+                    os: String? = nil, nodeName: String? = nil,
+                    createdAt: Date? = nil, lastSeenAt: Date? = nil,
+                    revoked: Bool = false) {
             self.id = id
             self.name = name
+            self.displayName = displayName
+            self.kind = kind
+            self.model = model
+            self.client = client
+            self.os = os
+            self.nodeName = nodeName
             self.createdAt = createdAt
             self.lastSeenAt = lastSeenAt
             self.revoked = revoked

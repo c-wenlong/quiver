@@ -47,6 +47,39 @@ import Testing
         let device = try #require(status.devices.first)
         #expect(device.id == "dev-1")
         #expect(device.revoked == false)
+        // Hubs older than the metadata change emit none of these.
+        #expect(device.kind == nil)
+        #expect(device.displayName == nil)
+    }
+
+    /// The paired-device fields the hub minted after #783: kind icon,
+    /// model, client/OS and the tailnet node, plus the user's rename.
+    @Test func statusDecodesDeviceMetadata() async throws {
+        let body = Data(#"""
+        {"schema": 1, "data": {"hub": {"ok": true}, "hub_addr": null,
+         "machines": [],
+         "devices": [{"id": "dev-1", "name": "phone",
+                      "display_name": "Dev's iPhone",
+                      "kind": "iphone", "model": "iPhone16,2",
+                      "client": "Quiver Remote 1.0", "os": "iOS 18.5",
+                      "node_name": "test-iphone.tail0000.ts.net",
+                      "paired_via": "tailscale",
+                      "created_at": 1759999000, "last_seen_at": 1760000000,
+                      "revoked": false}]}}
+        """#.utf8)
+        let model = RemoteModel(swe: SweClient(runner: FakeRunner(.init(status: 0, stdout: body, stderr: ""))))
+        await model.load()
+        guard case .loaded(let status) = model.status else {
+            Issue.record("expected loaded, got \(model.status)")
+            return
+        }
+        let device = try #require(status.devices.first)
+        #expect(device.displayName == "Dev's iPhone")
+        #expect(device.kind == "iphone")
+        #expect(device.model == "iPhone16,2")
+        #expect(device.client == "Quiver Remote 1.0")
+        #expect(device.os == "iOS 18.5")
+        #expect(device.nodeName == "test-iphone.tail0000.ts.net")
     }
 
     @Test func statusAsksForJSON() async {
