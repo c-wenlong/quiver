@@ -225,8 +225,9 @@ private struct DeviceRow: View {
     var model: RemoteModel?
 
     var body: some View {
-        SettingRow(title: device.name?.isEmpty == false ? device.name! : "Device",
+        SettingRow(title: title,
                    detail: detail,
+                   icon: Self.icon(for: device.kind),
                    warning: model?.revokeErrors[device.id],
                    danger: true) {
             if model?.revoking.contains(device.id) == true {
@@ -241,8 +242,35 @@ private struct DeviceRow: View {
         }
     }
 
+    /// The user's rename, then the name given at pairing, then the
+    /// hardware model — an unrenamed iPhone16,2 is still recognisable.
+    private var title: String {
+        for name in [device.displayName, device.name, device.model] {
+            if let name, !name.isEmpty { return name }
+        }
+        return "Device"
+    }
+
+    /// The device kind's SF Symbol; old hubs report no kind at all.
+    static func icon(for kind: String?) -> String {
+        switch kind {
+        case "iphone": "iphone"
+        case "ipad": "ipad"
+        case "android": "smartphone"
+        case "mac": "laptopcomputer"
+        case "windows", "linux": "desktopcomputer"
+        default: "globe"
+        }
+    }
+
+    /// model · client · OS · tailnet node, then the id and last-seen the
+    /// row has always shown; absent fields simply drop out.
     private var detail: String {
-        var bits = [device.id]
+        var bits: [String] = []
+        for field in [device.model, device.client, device.os, device.nodeName] {
+            if let field, !field.isEmpty { bits.append(field) }
+        }
+        bits.append(device.id)
         if let last = device.lastSeenAt {
             bits.append("seen \(last.formatted(.relative(presentation: .named)))")
         }
