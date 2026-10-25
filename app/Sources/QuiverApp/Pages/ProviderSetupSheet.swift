@@ -9,6 +9,7 @@ import SwiftUI
 struct ProviderSetupSheet: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismissSheet) private var dismiss
+    @Environment(\.openURL) private var openURL
     var provider: Provider
     /// What Settings › Providers found; the catalog's own answer wins once
     /// it loads, since it checked PATH just now.
@@ -66,9 +67,16 @@ struct ProviderSetupSheet: View {
                 uninstallContent(entry, model: model)
             } else if let entry, !entry.methods.isEmpty {
                 note("Install commands for each package manager. Nothing runs until you pick one.")
+                if let appPath = entry.app {
+                    note("The \(provider.name) app is already on this Mac at \(appPath); these commands install its command line tool.")
+                }
                 methodList(entry.methods) { method in
                     InstallCatalogModel.installLine(entry.name, via: method.via, swe: sweExecutable)
                 }
+                websiteLink(entry.website)
+            } else if let site = entry?.website, let url = URL(string: site) {
+                note("swe doesn't know an installer for \(provider.name). Get it from its own website.")
+                downloadCard(url: url, site: site)
             } else {
                 note("swe doesn't know an installer for \(provider.name). Get it from its own website.")
             }
@@ -95,6 +103,45 @@ struct ProviderSetupSheet: View {
             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
             .textSelection(.enabled)
+    }
+
+    /// The vendor download page as a quiet link under the method list —
+    /// where the desktop app lives when the commands above only install
+    /// a CLI (qoder, antigravity), or a second way in next to a cask.
+    @ViewBuilder private func websiteLink(_ website: String?) -> some View {
+        if let website, let url = URL(string: website) {
+            Button {
+                openURL(url)
+            } label: {
+                Label("Get \(provider.name) from \(url.host() ?? website)",
+                      systemImage: "arrow.up.right.square")
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.accent)
+            }
+            .buttonStyle(.plain)
+            .hoverTip("Opens \(website)")
+            .accessibilityLabel("Open \(website)")
+        }
+    }
+
+    /// The vendor download page as the only action, for a provider with
+    /// no install command swe can offer.
+    private func downloadCard(url: URL, site: String) -> some View {
+        HStack(spacing: 12) {
+            Text(url.host() ?? site)
+                .font(Theme.font(size: 12, design: .monospaced))
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1).truncationMode(.middle)
+                .textSelection(.enabled)
+            Spacer(minLength: 12)
+            Button("Download") { openURL(url) }
+                .secondaryButton()
+                .hoverTip("Opens \(site)")
+        }
+        .padding(.horizontal, Theme.cardPadding)
+        .padding(.vertical, 12)
+        .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
     }
 
     /// On PATH but unknown to swe: `swe add` registers it as it is.
@@ -167,7 +214,7 @@ struct ProviderSetupSheet: View {
             }
             .iconButton()
             .disabled(!method.available || line == nil)
-            .help(method.available ? "Run in Terminal" : "\(method.managerTitle) isn't on your PATH")
+            .hoverTip(method.available ? "Run in Terminal" : "\(method.managerTitle) isn't on your PATH")
             .accessibilityLabel("Run \(method.managerTitle) command in Terminal")
         }
         .padding(.vertical, 6)

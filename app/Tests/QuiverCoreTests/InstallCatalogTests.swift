@@ -85,6 +85,29 @@ private let oldInstallJSON = #"""
         #expect(all[0].registered == false)
         #expect(all[0].description == "")
         #expect(all[0].uninstall == nil)
+        // website and app arrived after this shape; they decode as nil.
+        #expect(all[0].website == nil)
+        #expect(all[0].app == nil)
+    }
+
+    /// `website` is the vendor download page the sheet links out to; `app`
+    /// is a found `.app` bundle. Both are nullable and must survive decode.
+    @Test func decodesWebsiteAndApp() async throws {
+        let (model, _) = model([(["install"], ok(#"""
+        {"harnesses": [
+         {"name": "zcode", "command": "zcode", "installed": true,
+          "path": "/Applications/ZCode.app", "app": "/Applications/ZCode.app",
+          "website": "https://zcode.z.ai", "registered": false,
+          "methods": [{"via": "cask", "package": "zcode",
+           "command": "brew install --cask zcode", "available": true}]}
+        ]}
+        """#))])
+        await model.load()
+        let zcode = try #require(model.harness("zcode"))
+        #expect(zcode.website == "https://zcode.z.ai")
+        #expect(zcode.app == "/Applications/ZCode.app")
+        #expect(zcode.path == zcode.app)
+        #expect(model.harness("gemini") == nil)
     }
 
     @Test func looksUpOneHarnessByName() async throws {
