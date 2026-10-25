@@ -117,6 +117,17 @@ check_core_resources() {
 }
 check_core_resources "$bundle"
 
+# The licence and the notices third-party licences ask to travel with
+# copies. They live in the bundle rather than beside it in the DMG, so they
+# go wherever the app is dragged and the install window shows only the app.
+for notice in "$here/../LICENSE" "$here/THIRD_PARTY_NOTICES.md"; do
+  if [ ! -f "$notice" ]; then
+    echo "build-app: $notice missing" >&2
+    exit 1
+  fi
+  cp "$notice" "$bundle/Contents/Resources/"
+done
+
 # swe and its Python, so the app works on a Mac that has neither.
 "$here/script/bundle-swe.sh" "$bundle"
 
