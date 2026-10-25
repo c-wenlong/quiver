@@ -104,6 +104,7 @@ scaffolds; `PageHeader` is the non-scrolling variant used by sheets.
 | `ExpandRow` + `RowFold` (QuiverCore) | the fold pair: `RowFold.visible`/`hiddenCount` cut the rows, `ExpandRow` draws the toggle |
 | `ProviderVisibilityCard` | the Settings provider list (order and show/hide) |
 | `ReorderableRows` | drag-to-reorder rows with grip dots |
+| `RailRow`, `RailIconButton` | a right-hand rail's tap row (selected/hover treatment) and its header icon button |
 | `HoverTip` | the themed tooltip modifier |
 | `MarkdownTextView` | the rich markdown editor (NSViewRepresentable) |
 | Button styles | `primaryButton`, `secondaryButton`, `iconButton`, `plainButton`, `GreenSwitchStyle`, `SegmentActionStyle` |

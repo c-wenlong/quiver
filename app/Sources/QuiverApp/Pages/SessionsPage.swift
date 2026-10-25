@@ -53,12 +53,19 @@ private struct SessionsContent: View {
     var body: some View {
         Group {
             if let chat {
-                SessionChatPage(row: chat, onBack: { self.chat = nil }, onDetails: { detail = chat },
-                                onMissing: {
-                                    self.chat = nil
-                                    detail = chat
-                                })
-                    .onChange(of: app.navReselects) { self.chat = nil }
+                HStack(alignment: .top, spacing: 24) {
+                    SessionChatPage(row: chat, onBack: { self.chat = nil }, onDetails: { detail = chat },
+                                    onMissing: {
+                                        self.chat = nil
+                                        detail = chat
+                                    })
+                        .frame(maxWidth: .infinity)
+                        .onChange(of: app.navReselects) { self.chat = nil }
+                    SessionRail(model: model, current: chat, select: { self.chat = $0 })
+                        .frame(width: 220)
+                        .padding(.trailing, 40)
+                        .padding(.vertical, 36)
+                }
             } else {
                 listPage
             }
@@ -616,6 +623,112 @@ private struct StatusBadge: View {
         case "error": "Error"
         case "interrupted": "Interrupted"
         case "followup": "Waiting"
+        default: nil
+        }
+    }
+}
+
+/// The chat's right-hand rail, a cut-down RepoRail: every session the
+/// hub can open a chat for, grouped by day like the list, so a chat can
+/// switch sessions without going back.
+private struct SessionRail: View {
+    @Environment(AppModel.self) private var app
+    var model: SessionsModel
+    /// The open chat: marked, and kept in the list even when the page's
+    /// filters leave it out.
+    var current: SessionsModel.Row
+    var select: (SessionsModel.Row) -> Void
+
+    /// The main list's rule for a click that opens a chat.
+    private func opens(_ row: SessionsModel.Row) -> Bool {
+        row.location == .local
+            && app.hub.opensChat(HubSessionRow.key(harness: row.session.harness,
+                                                 id: row.session.id))
+    }
+
+    private var rows: [SessionsModel.Row] {
+        var list = model.rows.filter(opens)
+        // A refresh leaves the open chat's stale copy in `current`; the
+        // row it became is already here, matched by id not value.
+        if !list.contains(where: { $0.id == current.id }) {
+            list.append(current)
+            list.sort { $0.session.lastActiveAt > $1.session.lastActiveAt }
+        }
+        return list
+    }
+
+    /// The list's day captions over the chat-openable rows.
+    private var groups: [(day: Date, rows: [SessionsModel.Row])] {
+        var out: [(day: Date, rows: [SessionsModel.Row])] = []
+        for row in rows {
+            let day = Calendar.current.startOfDay(for: row.session.lastActiveAt)
+            if out.last?.day == day { out[out.count - 1].rows.append(row) }
+            else { out.append((day: day, rows: [row])) }
+        }
+        return out
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 4) {
+                Text("Sessions")
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    .padding(.leading, 8)
+                Spacer(minLength: 0)
+                RailIconButton(symbol: "arrow.clockwise",
+                               help: "List sessions again (⌘R)") {
+                    Task {
+                        // The rows and the hub's "has a chat" keys: a
+                        // session started since is hidden until both land.
+                        async let hubKeys: Void = app.hub.refreshKeys()
+                        await model.load(for: app.swePath)
+                        await hubKeys
+                    }
+                }
+                .keyboardShortcut("r", modifiers: .command)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+                        Text(group.day, format: .dateTime.month(.abbreviated).day().year())
+                            .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                            .lineLimit(1).truncationMode(.tail)
+                            .padding(.horizontal, 8)
+                            .padding(.top, 14).padding(.bottom, 4)
+                        ForEach(group.rows) { row in
+                            RailRow(selected: row.id == current.id, select: { select(row) }) {
+                                HarnessIcon(harness: HarnessMark(row.session.harness).icon ?? row.session.harness,
+                                            size: 13)
+                                Text(row.session.title ?? row.session.id)
+                                    .font(Theme.nav)
+                                    .lineLimit(1).truncationMode(.middle)
+                                Spacer(minLength: 6)
+                                if let color = Self.dotColor(row.session.status) {
+                                    Circle().fill(color)
+                                        .frame(width: Theme.statusDot, height: Theme.statusDot)
+                                        .help(StatusBadge.title(row.session.status) ?? "")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+        }
+        .padding(8)
+        .background(Theme.panel, in: .rect(cornerRadius: Theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius)
+            .strokeBorder(Theme.border, lineWidth: Theme.hairline))
+    }
+
+    /// The list's badge colours as a rail dot; nothing for a finished
+    /// session.
+    private static func dotColor(_ status: String?) -> Color? {
+        switch status {
+        case "active": Theme.success
+        case "followup": Theme.warning
+        case "error": Theme.danger
+        case "interrupted": Theme.textMuted
         default: nil
         }
     }

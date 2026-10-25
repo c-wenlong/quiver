@@ -792,3 +792,50 @@ struct SkeletonBlock: View {
             .accessibilityHidden(true)
     }
 }
+
+// MARK: - Rail
+
+/// A small chromeless icon button in a rail's header row.
+struct RailIconButton: View {
+    var symbol: String
+    var help: String
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(Theme.font(size: 13))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 28, height: 28)
+                .contentShape(.rect)
+        }
+        .plainButton(cornerRadius: Theme.controlRadius)
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
+/// A rail row: a tap target with the selected and hover treatments a
+/// rail list uses (the repos rail leaves its drag to ReorderableRows —
+/// a Button would swallow the mouse-down the drag starts from).
+struct RailRow<Content: View>: View {
+    var selected: Bool
+    var select: () -> Void
+    @ViewBuilder var content: Content
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 8) { content }
+            .foregroundStyle(selected ? Theme.textPrimary : Theme.textNav)
+            .padding(.horizontal, 8)
+            .frame(height: Theme.navRowHeight)
+            .background(selected ? Theme.navActive : hovering ? Theme.hover : .clear,
+                        in: .rect(cornerRadius: Theme.controlRadius))
+            .contentShape(.rect)
+            .onHover { hovering = $0 }
+            .onTapGesture(perform: select)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+            .accessibilityAction(.default, select)
+    }
+}
