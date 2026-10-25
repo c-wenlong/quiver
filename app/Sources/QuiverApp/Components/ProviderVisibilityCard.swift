@@ -86,7 +86,7 @@ private struct ProviderRow: View {
             .opacity(row.isInstalled || !checked ? 1 : 0.4)
             Spacer()
             Toggle(row.provider.name, isOn: Binding(get: { row.isEnabled }, set: { toggle($0) }))
-                .toggleStyle(GreenSwitchStyle())
+                .toggleStyle(AccentSwitchStyle())
                 .labelsHidden()
                 .disabled(!row.isInstalled)
                 .help(row.isInstalled ? "" : "Install \(row.provider.name) to show it")

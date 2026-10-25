@@ -102,7 +102,7 @@ button.sk-chip:hover { border-color: var(--border-strong); }
 .sk-section.first { padding-top: 0; }
 .sk-file { display: flex; align-items: center; gap: 8px; border: 0; background: transparent; padding: 3px 0; font-size: 13px;
   color: var(--text-primary); cursor: pointer; text-align: left; overflow-wrap: anywhere; }
-.sk-file:hover span:last-child { color: var(--accent); }
+.sk-file:hover span:last-child { color: var(--link); }
 .sk-file.child { padding-left: 18px; }
 .sk-ficon { color: var(--text-secondary); font-size: 11px; width: 12px; text-align: center; flex: none; }
 .sk-ficon.folder { color: var(--accent); }

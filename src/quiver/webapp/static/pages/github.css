@@ -7,7 +7,7 @@
 .gh-ico { width: 16px; height: 16px; flex: none; display: inline-block; vertical-align: middle; }
 .gh-ico.gh-big { width: 19px; height: 19px; }
 .gh-ico.gh-small { width: 12px; height: 12px; }
-.gh-success { color: var(--accent-fill); }
+.gh-success { color: var(--success); }
 .gh-danger { color: var(--danger); }
 .gh-danger-text { color: var(--danger-text); }
 .gh-warning { color: var(--warning); }
@@ -50,7 +50,7 @@ a.icon-button { color: inherit; }
 .gh-setup-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .gh-command { font-size: 13px; padding: 6px 10px; border-radius: 8px; background: var(--subtle); color: var(--text-primary); }
 .gh-copy { width: 32px; height: 32px; }
-.gh-copy.copied { color: var(--accent); }
+.gh-copy.copied { color: var(--success); }
 
 /* Dashboard frame: the page beside a full-height rail. */
 .gh-dash.with-rail {
@@ -113,7 +113,7 @@ a.icon-button { color: inherit; }
 
 .gh-pages { display: flex; flex-direction: column; gap: 10px; padding: 14px 20px 18px; }
 .gh-pages-name { font-size: 13px; color: var(--text-secondary); }
-.gh-pages-link { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); font-size: 13px; text-decoration: none; }
+.gh-pages-link { display: inline-flex; align-items: center; gap: 6px; color: var(--link); font-size: 13px; text-decoration: none; }
 
 /* The focus page's scroll loader. */
 .gh-sentinel {
@@ -223,7 +223,7 @@ select.field.gh-method { height: 32px; width: 180px; flex: 0 1 180px; }
 .gh-md { font-size: 13px; color: var(--text-secondary); line-height: 1.5; padding: 10px 14px; overflow-wrap: anywhere; }
 .gh-md > :first-child { margin-top: 0; }
 .gh-md p { margin: 0 0 8px; }
-.gh-md a { color: var(--accent); }
+.gh-md a { color: var(--link); }
 .gh-md-h { color: var(--text-primary); font-weight: 600; margin: 4px 0 8px; }
 .gh-md-h1 { font-size: 17px; } .gh-md-h2 { font-size: 15px; } .gh-md-h3 { font-size: 14px; } .gh-md-h4 { font-size: 13px; }
 .gh-md-code { background: var(--card); border-radius: 6px; padding: 8px; margin: 0 0 8px; overflow-x: auto; }
@@ -249,9 +249,9 @@ select.field.gh-method { height: 32px; width: 180px; flex: 0 1 180px; }
   content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
   background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); transition: transform .15s;
 }
-.gh-switch input:checked + .gh-switch-track { background: var(--accent-fill); }
+.gh-switch input:checked + .gh-switch-track { background: var(--interactive); }
 .gh-switch input:checked + .gh-switch-track::after { transform: translateX(14px); }
-.gh-switch input:focus-visible + .gh-switch-track { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+.gh-switch input:focus-visible + .gh-switch-track { outline: 1px solid var(--interactive); outline-offset: 2px; }
 .card.gh-inbox { gap: 0; padding: 8px 14px 14px; }
 .gh-note { display: flex; align-items: center; gap: 4px; border-radius: 8px; border-top: 1px solid var(--row-divider); }
 .gh-note:first-child { border-top: 0; }
@@ -267,7 +267,7 @@ select.field.gh-method { height: 32px; width: 180px; flex: 0 1 180px; }
 .gh-note-read .gh-ico { width: 15px; height: 15px; }
 @media (hover: none) { .gh-note-read { opacity: 1; } }
 .gh-note-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex: none; }
-.gh-note.unread .gh-note-dot { background: var(--accent); }
+.gh-note.unread .gh-note-dot { background: var(--interactive); }
 .gh-note-title {
   font-size: 13px; color: var(--text-secondary);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
@@ -318,18 +318,18 @@ dialog.gh-add-sheet { width: min(520px, calc(100vw - 32px)); }
 .gh-manage-divider { border-top: 1px solid var(--row-divider); margin: 6px 0; }
 .gh-manage-add {
   display: flex; align-items: center; gap: 6px; border: 0; background: transparent; padding: 2px 0;
-  color: var(--accent); font-size: 13px; cursor: pointer; text-align: left;
+  color: var(--link); font-size: 13px; cursor: pointer; text-align: left;
 }
 .gh-manage-add .gh-ico { width: 12px; height: 12px; }
 .gh-grip { width: 12px; height: 12px; flex: none; margin-left: -6px; margin-right: -4px; color: var(--text-muted); opacity: 0; }
 .gh-rail-row:hover .gh-grip, .gh-rail-row.dragging .gh-grip { opacity: 1; }
 .gh-rail-row.dragging { opacity: .5; }
-.gh-rail-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
-.gh-rail-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+.gh-rail-row.drop-before { box-shadow: inset 0 2px 0 var(--interactive); }
+.gh-rail-row.drop-after { box-shadow: inset 0 -2px 0 var(--interactive); }
 @media (hover: none) { .gh-grip { display: none; } }
 @media (max-width: 960px) {
-  .gh-rail-row.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
-  .gh-rail-row.drop-after { box-shadow: inset -2px 0 0 var(--accent); }
+  .gh-rail-row.drop-before { box-shadow: inset 2px 0 0 var(--interactive); }
+  .gh-rail-row.drop-after { box-shadow: inset -2px 0 0 var(--interactive); }
 }
 
 /* Actions rows: the link plus a ⋯ button for Re-run (the app's context

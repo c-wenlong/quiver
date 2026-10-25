@@ -139,7 +139,7 @@ private struct PanelFanPopover: View {
                 }
             }
             Slider(value: value, in: 0...1)
-                .tint(Theme.accent)
+                .tint(Theme.interactive)
         }
     }
 

@@ -248,7 +248,7 @@ private struct ModelsContent: View {
                     .secondaryButton()
                     if let aa = ServiceCredentials.services.first(where: { $0.id == "artificial-analysis" }) {
                         Link(destination: aa.keyURL) {
-                            Text("Get a key").font(Theme.caption).foregroundStyle(Theme.accent)
+                            Text("Get a key").font(Theme.caption).foregroundStyle(Theme.link)
                         }
                     }
                 }

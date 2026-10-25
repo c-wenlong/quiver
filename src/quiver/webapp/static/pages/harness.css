@@ -9,7 +9,7 @@
 .harness-icon.pressed { background: var(--selected); color: var(--text-primary); }
 .harness-icon:disabled, .harness-button:disabled { cursor: default; opacity: .45; }
 .harness-icon:focus-visible, .harness-button:focus-visible, .harness-archive .field:focus-visible {
-  outline: 2px solid var(--accent-fill); outline-offset: 2px;
+  outline: 1px solid var(--interactive); outline-offset: 2px;
 }
 .harness-button {
   height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border-strong);
@@ -45,7 +45,7 @@
   font-weight: inherit; color: inherit; text-align: left; cursor: pointer;
 }
 .harness-open:hover { text-decoration: underline; text-underline-offset: 2px; }
-.harness-open:focus-visible { outline: 2px solid var(--accent-fill); outline-offset: 2px; border-radius: 4px; }
+.harness-open:focus-visible { outline: 1px solid var(--interactive); outline-offset: 2px; border-radius: 4px; }
 dialog.harness-sheet { width: min(560px, calc(100vw - 32px)); background: var(--panel); }
 dialog.harness-sheet[data-kind="detect"] { width: min(460px, calc(100vw - 32px)); }
 dialog.harness-sheet[data-kind="add"] { width: min(420px, calc(100vw - 32px)); }
@@ -61,13 +61,13 @@ dialog.harness-sheet[data-kind="add"] { width: min(420px, calc(100vw - 32px)); }
 .harness-input { width: 100%; }
 .harness-input.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; }
 textarea.harness-input { height: auto; padding: 8px 10px; resize: vertical; line-height: 1.45; }
-.harness-input:focus-visible { outline: 2px solid var(--accent-fill); outline-offset: 1px; }
+.harness-input:focus-visible { outline: 1px solid var(--interactive); outline-offset: 1px; }
 .harness-input:disabled { opacity: .6; }
 .harness-sheet-error { margin: 0; user-select: text; }
 .harness-sheet-text { margin: 0; font-size: 13px; color: var(--text-secondary); }
 .harness-detect-list { display: flex; flex-direction: column; gap: 6px; max-height: 360px; overflow-y: auto; }
 .harness-detect-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; cursor: pointer; }
-.harness-detect-row input { margin: 0; accent-color: var(--accent-fill); }
+.harness-detect-row input { margin: 0; accent-color: var(--interactive); }
 .harness-detect-name { color: var(--text-primary); }
 .harness-detect-path { color: var(--text-muted); word-break: break-all; }
 .harness-scanning { display: flex; align-items: center; gap: 8px; margin: 0; }

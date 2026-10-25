@@ -425,7 +425,7 @@ private struct ChecklistRow: View {
             HStack(spacing: 10) {
                 Image(systemName: "checkmark")
                     .font(Theme.font(size: 11, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Theme.interactive)
                     .frame(width: 14)
                     .opacity(isOn ? 1 : 0)
                 HarnessMarkView(harness: harness, size: 16)
