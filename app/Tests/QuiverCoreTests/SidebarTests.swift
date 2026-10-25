@@ -7,7 +7,7 @@ import Testing
         #expect(SidebarGroup.usage.sections == [.overview, .sessions, .calendar, .pricing])
         #expect(SidebarGroup.github.sections == [.repositories, .inbox])
         #expect(SidebarGroup.manage.sections == [.accounts, .harnesses, .compute])
-        #expect(SidebarGroup.primitives.sections == [.plugins, .skills, .agentsMd, .mcpServers, .models])
+        #expect(SidebarGroup.primitives.sections == [.plugins, .skills, .agentsMd, .mcpServers, .hooks, .models])
         #expect(SidebarGroup.system.sections == [.menuBar, .widgets, .serviceStatus, .settings])
     }
 
@@ -33,7 +33,8 @@ import Testing
         #expect(AppSection.accounts.step(-1) == .inbox)
         #expect(AppSection.pricing.step(-1) == .calendar)
         // Models closes the Primitives group.
-        #expect(AppSection.mcpServers.step(1) == .models)
+        #expect(AppSection.mcpServers.step(1) == .hooks)
+        #expect(AppSection.hooks.step(1) == .models)
         #expect(AppSection.models.step(1) == .menuBar)
         // The ends stay put.
         #expect(AppSection.overview.step(-1) == .overview)
