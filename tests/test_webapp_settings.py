@@ -526,6 +526,16 @@ class TestGet(_Settings):
         self.assertEqual((prov["keys"], prov["stamp"]), ([], None))
         self.assertIn("UTF-8", prov["error"])
 
+    def test_a_keys_file_in_a_symlink_loop_is_reported(self):
+        keys = self.home / ".quiver" / "secrets" / "providers" / ".api_keys"
+        keys.parent.mkdir(parents=True)
+        keys.symlink_to(keys.parent / "loop")
+        (keys.parent / "loop").symlink_to(keys)
+        body = settings_page.get(self.ctx(), {})
+        self.assertEqual(body["providers"]["keys"], [])
+        self.assertTrue(body["providers"]["error"])
+        self.assertTrue(body["remote"]["hub"]["ok"])
+
     def test_provider_links_are_web_links_only(self):
         config = self.home / ".quiver" / "config"
         config.mkdir(parents=True)

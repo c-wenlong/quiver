@@ -137,9 +137,11 @@ const settingsPage = {
   // Bumped by every switch write and page visit: a status read that
   // started before one is stale and never lands.
   searchGen: 0,
-  // Inference keys: values fetched for the eye (forgotten on the next
-  // visit), the Add key / Edit sheet's draft, a reload in flight.
-  revealed: {}, keyEditor: null, keyError: null, keysBusy: false,
+  // Inference keys: values fetched for the eye (a Map, since a variable
+  // can be named constructor; forgotten on the next visit or reload, and
+  // revealGen drops an answer that lands after either), the Add key /
+  // Edit sheet's draft, a reload in flight.
+  revealed: new Map(), revealGen: 0, keyEditor: null, keyError: null, keysBusy: false,
 };
 
 function settingsSection() {
@@ -163,7 +165,8 @@ async function renderSettings() {
   p.ticket = null;
   p.confirming = null;
   p.setupStale = true;
-  p.revealed = {};
+  p.revealed = new Map();
+  p.revealGen++;
   p.keyEditor = null;
   if (p.data) paintSettings();
   else {
@@ -411,7 +414,7 @@ function inferenceTab() {
  * and the eye and copy buttons, the type and the status. Anywhere but
  * those buttons opens the key, as the app's row does. */
 function settingsKeyRow(r) {
-  const shown = settingsPage.revealed[r.name];
+  const shown = settingsPage.revealed.get(r.name);
   const name = esc(r.name);
   const value = shown != null ? shown : r.masked;
   return `<div class="set-key-row set-key-open" data-key-open="${name}" role="button" tabindex="0" aria-label="Edit ${name}" title="Click to edit ${name}">
@@ -1010,7 +1013,8 @@ async function settingsReloadKeys(focus) {
   const gen = routeGen;
   const mine = ++p.gen;
   p.keysBusy = true;
-  p.revealed = {};
+  p.revealed = new Map();
+  p.revealGen++;
   settingsKeyRepaint(focus);
   const { status, data } = await api("/v1/app/settings");
   p.keysBusy = false;
@@ -1031,15 +1035,18 @@ async function settingsKeyValue(name) {
 async function settingsRevealKey(name) {
   const p = settingsPage;
   const focus = `[data-key-reveal="${CSS.escape(name)}"]`;
-  if (p.revealed[name] != null) { delete p.revealed[name]; return settingsKeyRepaint(focus); }
+  if (p.revealed.has(name)) { p.revealed.delete(name); return settingsKeyRepaint(focus); }
+  const gen = p.revealGen;
   const value = await settingsKeyValue(name);
-  if (value != null) { p.revealed[name] = value; p.keyError = null; }
+  // A reload or a new visit since the click hid everything: stay hidden.
+  if (gen !== p.revealGen || !onSettingsPage()) return;
+  if (value != null) { p.revealed.set(name, value); p.keyError = null; }
   settingsKeyRepaint(focus);
 }
 
 async function settingsCopyKey(name) {
   const p = settingsPage;
-  const value = p.revealed[name] != null ? p.revealed[name] : await settingsKeyValue(name);
+  const value = p.revealed.has(name) ? p.revealed.get(name) : await settingsKeyValue(name);
   if (value == null) return settingsKeyRepaint(`[data-key-copy="${CSS.escape(name)}"]`);
   let ok = false;
   try { await navigator.clipboard.writeText(value); ok = true; } catch { /* plain http: no async clipboard */ }
@@ -1095,7 +1102,7 @@ function settingsKeyDone(e, name, status, data, focus) {
   if (settingsSignedOut(status)) return;
   if (status === 200 && data && data.providers) {
     p.data.providers = data.providers;
-    delete p.revealed[name];
+    p.revealed.delete(name);
     p.keyError = null;
     if (p.keyEditor === e) settingsCloseKey();
     else settingsKeyRepaint();

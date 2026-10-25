@@ -241,9 +241,23 @@ def backup_dir_for(home: Path | None = None) -> Path:
     return quiver_dir_for(home) / "backups" / "api-keys"
 
 
+def _target(path: Path) -> Path:
+    """The real file behind a symlink, so a save doesn't replace the link.
+    A symlink loop raises RuntimeError before Python 3.13; later ones hand
+    back a path that is still a link, which a save would replace."""
+    try:
+        target = path.resolve()
+        looped = target.is_symlink()
+    except (OSError, RuntimeError) as exc:
+        raise KeyFileError("unreadable", f"Couldn't read the keys file: {exc}") from None
+    if looped:
+        raise KeyFileError("unreadable", f"Couldn't read the keys file: {path} is a symlink loop")
+    return target
+
+
 def load(path: Path) -> tuple[KeysFile, bytes | None]:
     """The file and its bytes as read (None when there is none yet)."""
-    target = path.resolve()
+    target = _target(path)
     try:
         data = target.read_bytes()
     except FileNotFoundError:
@@ -269,7 +283,7 @@ def save(path: Path, keys: KeysFile, stamp: bytes | None, home: Path | None = No
     """Writes ``keys`` mode 600 after backing up the previous version,
     unless the file no longer holds ``stamp``. Both files are prepared
     first and the file is checked again just before they are swapped in."""
-    target = path.resolve()
+    target = _target(path)
     changed = KeyFileError("changed_on_disk", "The file changed since it was read. Reload to see the new version, then make the change again.")
     if _current(target) != stamp:
         raise changed
@@ -308,7 +322,10 @@ def save(path: Path, keys: KeysFile, stamp: bytes | None, home: Path | None = No
 def _seal(target: Path, home: Path | None) -> None:
     """A save into ~/.quiver/secrets first gives the folder its own
     ``.gitignore`` of ``*``, which git lets win over the hub's root one."""
-    folder = secrets_dir_for(home).resolve()
+    try:
+        folder = secrets_dir_for(home).resolve()
+    except (OSError, RuntimeError):
+        return
     if folder not in target.parents:
         return
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)

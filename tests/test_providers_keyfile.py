@@ -104,6 +104,16 @@ class TestStore(unittest.TestCase):
         self.assertTrue(self.path.is_symlink())
         self.assertEqual(real.read_text(), 'export A="2"\n')
 
+    def test_a_symlink_loop_is_a_refusal_not_a_crash(self):
+        self.path.parent.mkdir(parents=True)
+        self.path.symlink_to(self.path.parent / "other")
+        (self.path.parent / "other").symlink_to(self.path)
+        for call in (lambda: keyfile.load(self.path),
+                     lambda: keyfile.save(self.path, KeysFile(""), None, home=self.home)):
+            with self.assertRaises(KeyFileError) as caught:
+                call()
+            self.assertEqual(caught.exception.code, "unreadable")
+
     def test_an_edit_while_saving_wins(self):
         self.path.parent.mkdir(parents=True)
         self.path.write_text("export A=1\n")
