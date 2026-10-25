@@ -1,98 +1,885 @@
 {
-  "schema": 1,
-  "data": {
-    "harnesses": [
-      {
-        "name": "aider",
-        "command": "aider",
-        "installed": false,
-        "path": null,
-        "description": "Git-native pair programmer, commits every edit as it goes",
-        "registered": false,
-        "methods": [
-          {
-            "via": "brew",
-            "package": "aider",
-            "command": "brew install aider",
-            "available": true
-          },
-          {
-            "via": "uv",
-            "package": "aider-chat",
-            "command": "uv tool install aider-chat",
-            "available": true
-          },
-          {
-            "via": "nix",
-            "package": "aider-chat",
-            "command": "nix profile install nixpkgs#aider-chat",
-            "available": true
-          },
-          {
-            "via": "script",
-            "package": "https://aider.chat/install.sh",
-            "command": "curl -fsSL https://aider.chat/install.sh | sh",
-            "available": true
-          }
-        ],
-        "uninstall": null
-      },
-      {
-        "name": "augment",
-        "command": "auggie",
-        "installed": false,
-        "path": null,
-        "description": "Indexes up to 500k files across repos, retrieval is the whole pitch",
-        "registered": false,
-        "methods": [
-          {
-            "via": "npm",
-            "package": "@augmentcode/auggie",
-            "command": "npm install -g @augmentcode/auggie",
-            "available": true
-          }
-        ],
-        "uninstall": null
-      },
-      {
-        "name": "blackbox",
-        "command": "blackbox",
-        "installed": false,
-        "path": null,
-        "description": "Fans one task to four models, a judge picks the winner",
-        "registered": false,
-        "methods": [
-          {
-            "via": "npm",
-            "package": "@blackbox_ai/blackbox-cli",
-            "command": "npm install -g @blackbox_ai/blackbox-cli",
-            "available": true
-          }
-        ],
-        "uninstall": null
-      },
-      {
-        "name": "claude",
-        "command": "claude",
-        "installed": true,
-        "path": "/opt/homebrew/bin/claude",
-        "description": "Anthropic's agentic coding CLI",
-        "registered": true,
-        "methods": [
-          {
-            "via": "cask",
-            "package": "claude-code",
-            "command": "brew install --cask claude-code",
-            "available": true
-          }
-        ],
-        "uninstall": {
-          "via": "cask",
-          "package": "claude-code@latest",
-          "command": "brew uninstall --cask claude-code@latest",
-          "available": true
-        }
-      }
-    ]
-  }
+    "schema": 1,
+    "data": {
+        "harnesses": [
+            {
+                "name": "aider",
+                "command": "aider",
+                "installed": false,
+                "path": null,
+                "description": "Git-native pair programmer, commits every edit as it goes",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "brew",
+                        "package": "aider",
+                        "command": "brew install aider",
+                        "available": true
+                    },
+                    {
+                        "via": "uv",
+                        "package": "aider-chat",
+                        "command": "uv tool install aider-chat",
+                        "available": true
+                    },
+                    {
+                        "via": "nix",
+                        "package": "aider-chat",
+                        "command": "nix profile install nixpkgs#aider-chat",
+                        "available": true
+                    },
+                    {
+                        "via": "script",
+                        "package": "https://aider.chat/install.sh",
+                        "command": "curl -fsSL https://aider.chat/install.sh | sh",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "antigravity",
+                "command": "agy",
+                "installed": false,
+                "path": null,
+                "description": "Google's agent-first IDE, plus the `agy` terminal agent",
+                "website": "https://antigravity.google",
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "cask",
+                        "package": "antigravity",
+                        "command": "brew install --cask antigravity",
+                        "available": true
+                    },
+                    {
+                        "via": "nix",
+                        "package": "antigravity-cli",
+                        "command": "nix profile install nixpkgs#antigravity-cli",
+                        "available": true
+                    },
+                    {
+                        "via": "script",
+                        "package": "https://antigravity.google/cli/install.sh",
+                        "command": "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "augment",
+                "command": "auggie",
+                "installed": false,
+                "path": null,
+                "description": "Indexes up to 500k files across repos, retrieval is the whole pitch",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "npm",
+                        "package": "@augmentcode/auggie",
+                        "command": "npm install -g @augmentcode/auggie",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "blackbox",
+                "command": "blackbox",
+                "installed": false,
+                "path": null,
+                "description": "Fans one task to four models, a judge picks the winner",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "npm",
+                        "package": "@blackbox_ai/blackbox-cli",
+                        "command": "npm install -g @blackbox_ai/blackbox-cli",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "claude",
+                "command": "claude",
+                "installed": true,
+                "path": "/opt/homebrew/bin/claude",
+                "description": "Anthropic's flagship, defined the skills, MCP and hooks others copy",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "cask",
+                        "package": "claude-code",
+                        "command": "brew install --cask claude-code",
+                        "available": true
+                    },
+                    {
+                        "via": "npm",
+                        "package": "@anthropic-ai/claude-code",
+                        "command": "npm install -g @anthropic-ai/claude-code",
+                        "available": true
+                    },
+                    {
+                        "via": "nix",
+                        "package": "claude-code",
+                        "command": "nix profile install nixpkgs#claude-code",
+                        "available": true
+                    },
+                    {
+                        "via": "script",
+                        "package": "https://claude.ai/install.sh",
+                        "command": "curl -fsSL https://claude.ai/install.sh | bash",
+                        "available": true
+                    }
+                ],
+                "uninstall": {
+                    "via": "cask",
+                    "package": "claude-code@latest",
+                    "command": "brew uninstall --cask claude-code@latest",
+                    "available": true
+                }
+            },
+            {
+                "name": "cline",
+                "command": "cline",
+                "installed": true,
+                "path": "/Users/dev/.npm-global/bin/cline",
+                "description": "VS Code extension first, inference at cost or BYOK, no subscription",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "npm",
+                        "package": "cline",
+                        "command": "npm install -g cline",
+                        "available": true
+                    },
+                    {
+                        "via": "nix",
+                        "package": "cline",
+                        "command": "nix profile install nixpkgs#cline",
+                        "available": true
+                    }
+                ],
+                "uninstall": {
+                    "via": "npm",
+                    "package": "cline",
+                    "command": "npm uninstall -g cline",
+                    "available": true
+                }
+            },
+            {
+                "name": "codex",
+                "command": "codex",
+                "installed": true,
+                "path": "/opt/homebrew/bin/codex",
+                "description": "OpenAI's, OS-level sandbox by default, network off unless approved",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "cask",
+                        "package": "codex",
+                        "command": "brew install --cask codex",
+                        "available": true
+                    },
+                    {
+                        "via": "npm",
+                        "package": "@openai/codex",
+                        "command": "npm install -g @openai/codex",
+                        "available": true
+                    },
+                    {
+                        "via": "nix",
+                        "package": "codex",
+                        "command": "nix profile install nixpkgs#codex",
+                        "available": true
+                    }
+                ],
+                "uninstall": {
+                    "via": "cask",
+                    "package": "codex",
+                    "command": "brew uninstall --cask codex",
+                    "available": true
+                }
+            },
+            {
+                "name": "commandcode",
+                "command": "command-code",
+                "installed": false,
+                "path": null,
+                "description": "Taste-learning coding agent built for open models",
+                "website": "https://commandcode.ai",
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "npm",
+                        "package": "command-code",
+                        "command": "npm install -g command-code",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "continue",
+                "command": "cn",
+                "installed": false,
+                "path": null,
+                "description": "Headless CI runs and PR review, team acquired by Cursor Jun 2026",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "npm",
+                        "package": "@continuedev/cli",
+                        "command": "npm install -g @continuedev/cli",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "copilot",
+                "command": "copilot",
+                "installed": false,
+                "path": null,
+                "description": "First cross platform harness in CLI, VSCode and Cloud",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "cask",
+                        "package": "copilot-cli",
+                        "command": "brew install --cask copilot-cli",
+                        "available": true
+                    },
+                    {
+                        "via": "npm",
+                        "package": "@github/copilot",
+                        "command": "npm install -g @github/copilot",
+                        "available": true
+                    },
+                    {
+                        "via": "nix",
+                        "package": "github-copilot-cli",
+                        "command": "nix profile install nixpkgs#github-copilot-cli",
+                        "available": true
+                    },
+                    {
+                        "via": "script",
+                        "package": "https://gh.io/copilot-install",
+                        "command": "curl -fsSL https://gh.io/copilot-install | bash",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "crush",
+                "command": "crush",
+                "installed": false,
+                "path": null,
+                "description": "Charm's, prettiest TUI, swaps models mid-session, context intact",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "brew",
+                        "package": "charmbracelet/tap/crush",
+                        "command": "brew install charmbracelet/tap/crush",
+                        "available": true
+                    },
+                    {
+                        "via": "npm",
+                        "package": "@charmland/crush",
+                        "command": "npm install -g @charmland/crush",
+                        "available": true
+                    },
+                    {
+                        "via": "nix",
+                        "package": "crush",
+                        "command": "nix profile install nixpkgs#crush",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "cursor",
+                "command": "cursor-agent",
+                "installed": true,
+                "path": "/opt/homebrew/bin/cursor-agent",
+                "description": "The editor's CLI half, shares its rules and index, print mode for CI",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "cask",
+                        "package": "cursor-cli",
+                        "command": "brew install --cask cursor-cli",
+                        "available": true
+                    },
+                    {
+                        "via": "nix",
+                        "package": "cursor-cli",
+                        "command": "nix profile install nixpkgs#cursor-cli",
+                        "available": true
+                    },
+                    {
+                        "via": "script",
+                        "package": "https://cursor.com/install",
+                        "command": "curl -fsSL https://cursor.com/install | bash",
+                        "available": true
+                    }
+                ],
+                "uninstall": {
+                    "via": "cask",
+                    "package": "cursor-cli",
+                    "command": "brew uninstall --cask cursor-cli",
+                    "available": true
+                }
+            },
+            {
+                "name": "devin",
+                "command": "devin",
+                "installed": true,
+                "path": "/opt/homebrew/bin/devin",
+                "description": "Cognition's, lives in the terminal and the cloud",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "cask",
+                        "package": "devin-cli",
+                        "command": "brew install --cask devin-cli",
+                        "available": true
+                    },
+                    {
+                        "via": "npm",
+                        "package": "devin",
+                        "command": "npm install -g devin",
+                        "available": true
+                    },
+                    {
+                        "via": "script",
+                        "package": "https://cli.devin.ai/install.sh",
+                        "command": "curl -fsSL https://cli.devin.ai/install.sh | bash",
+                        "available": true
+                    }
+                ],
+                "uninstall": {
+                    "via": "cask",
+                    "package": "devin-cli",
+                    "command": "brew uninstall --cask devin-cli",
+                    "available": true
+                }
+            },
+            {
+                "name": "droid",
+                "command": "droid",
+                "installed": true,
+                "path": "/opt/homebrew/bin/droid",
+                "description": "Factory's, spawns a worker per feature and syncs them through git",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "cask",
+                        "package": "droid",
+                        "command": "brew install --cask droid",
+                        "available": true
+                    },
+                    {
+                        "via": "npm",
+                        "package": "droid",
+                        "command": "npm install -g droid",
+                        "available": true
+                    },
+                    {
+                        "via": "script",
+                        "package": "https://app.factory.ai/cli",
+                        "command": "curl -fsSL https://app.factory.ai/cli | sh",
+                        "available": true
+                    }
+                ],
+                "uninstall": {
+                    "via": "cask",
+                    "package": "droid",
+                    "command": "brew uninstall --cask droid",
+                    "available": true
+                }
+            },
+            {
+                "name": "forge",
+                "command": "forge",
+                "installed": false,
+                "path": null,
+                "description": "Lives in your zsh prompt, fire it inline with a : prefix",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "npm",
+                        "package": "forgecode",
+                        "command": "npm install -g forgecode",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "freebuff",
+                "command": "freebuff",
+                "installed": true,
+                "path": "/Users/dev/.config/manicode/freebuff",
+                "description": "Free harness for light tasks, single thread, Chinese models only",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "npm",
+                        "package": "freebuff",
+                        "command": "npm install -g freebuff",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "gemini",
+                "command": "gemini",
+                "installed": false,
+                "path": null,
+                "description": "Google's first, 1M token context, 1,000 free requests a day",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "brew",
+                        "package": "gemini-cli",
+                        "command": "brew install gemini-cli",
+                        "available": true
+                    },
+                    {
+                        "via": "npm",
+                        "package": "@google/gemini-cli",
+                        "command": "npm install -g @google/gemini-cli",
+                        "available": true
+                    },
+                    {
+                        "via": "nix",
+                        "package": "gemini-cli",
+                        "command": "nix profile install nixpkgs#gemini-cli",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "goose",
+                "command": "goose",
+                "installed": false,
+                "path": null,
+                "description": "Block's, extensions are MCP servers, local or hosted models",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "brew",
+                        "package": "block-goose-cli",
+                        "command": "brew install block-goose-cli",
+                        "available": true
+                    },
+                    {
+                        "via": "nix",
+                        "package": "goose-cli",
+                        "command": "nix profile install nixpkgs#goose-cli",
+                        "available": true
+                    },
+                    {
+                        "via": "script",
+                        "package": "https://github.com/block/goose/releases/download/stable/download_cli.sh",
+                        "command": "curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "grok",
+                "command": "grok",
+                "installed": false,
+                "path": null,
+                "description": "xAI's terminal agent, plans and subagents in a TUI",
+                "website": "https://x.ai",
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "npm",
+                        "package": "@xai-official/grok",
+                        "command": "npm install -g @xai-official/grok",
+                        "available": true
+                    },
+                    {
+                        "via": "script",
+                        "package": "https://x.ai/cli/install.sh",
+                        "command": "curl -fsSL https://x.ai/cli/install.sh | bash",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "jules",
+                "command": "jules",
+                "installed": false,
+                "path": null,
+                "description": "",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "npm",
+                        "package": "@google/jules",
+                        "command": "npm install -g @google/jules",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "kilo",
+                "command": "kilo",
+                "installed": true,
+                "path": "/opt/homebrew/bin/kilo",
+                "description": "Kilo Code's CLI, an opencode fork; extension and CLI share ~/.config/kilo",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "brew",
+                        "package": "kilo-org/tap/kilo",
+                        "command": "brew install kilo-org/tap/kilo",
+                        "available": true
+                    },
+                    {
+                        "via": "npm",
+                        "package": "@kilocode/cli",
+                        "command": "npm install -g @kilocode/cli",
+                        "available": true
+                    },
+                    {
+                        "via": "nix",
+                        "package": "kilocode-cli",
+                        "command": "nix profile install nixpkgs#kilocode-cli",
+                        "available": true
+                    }
+                ],
+                "uninstall": {
+                    "via": "brew",
+                    "package": "kilo",
+                    "command": "brew uninstall kilo",
+                    "available": true
+                }
+            },
+            {
+                "name": "kimi",
+                "command": "kimi",
+                "installed": false,
+                "path": null,
+                "description": "Moonshot's Kimi Code CLI, the kimi-cli successor",
+                "website": "https://code.kimi.com",
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "brew",
+                        "package": "kimi-code",
+                        "command": "brew install kimi-code",
+                        "available": true
+                    },
+                    {
+                        "via": "npm",
+                        "package": "@moonshot-ai/kimi-code",
+                        "command": "npm install -g @moonshot-ai/kimi-code",
+                        "available": true
+                    },
+                    {
+                        "via": "script",
+                        "package": "https://code.kimi.com/kimi-code/install.sh",
+                        "command": "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "kiro",
+                "command": "kiro-cli",
+                "installed": false,
+                "path": null,
+                "description": "AWS's, writes requirements and design docs before any code",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "cask",
+                        "package": "kiro-cli",
+                        "command": "brew install --cask kiro-cli",
+                        "available": true
+                    },
+                    {
+                        "via": "nix",
+                        "package": "kiro-cli",
+                        "command": "nix profile install nixpkgs#kiro-cli",
+                        "available": true
+                    },
+                    {
+                        "via": "script",
+                        "package": "https://cli.kiro.dev/install",
+                        "command": "curl -fsSL https://cli.kiro.dev/install | bash",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "mastracode",
+                "command": "mastracode",
+                "installed": false,
+                "path": null,
+                "description": "",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "npm",
+                        "package": "mastracode",
+                        "command": "npm install -g mastracode",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "mistral-vibe",
+                "command": "vibe",
+                "installed": false,
+                "path": null,
+                "description": "Mistral's, own 24B Apache weights, runs offline on one GPU",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "brew",
+                        "package": "mistral-vibe",
+                        "command": "brew install mistral-vibe",
+                        "available": true
+                    },
+                    {
+                        "via": "uv",
+                        "package": "mistral-vibe",
+                        "command": "uv tool install mistral-vibe",
+                        "available": true
+                    },
+                    {
+                        "via": "nix",
+                        "package": "mistral-vibe",
+                        "command": "nix profile install nixpkgs#mistral-vibe",
+                        "available": true
+                    },
+                    {
+                        "via": "script",
+                        "package": "https://mistral.ai/vibe/install.sh",
+                        "command": "curl -fsSL https://mistral.ai/vibe/install.sh | bash",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "opencode",
+                "command": "opencode",
+                "installed": true,
+                "path": "/opt/homebrew/bin/opencode",
+                "description": "OS, 75+ providers, local model support, fully customisable",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "brew",
+                        "package": "opencode",
+                        "command": "brew install opencode",
+                        "available": true
+                    },
+                    {
+                        "via": "npm",
+                        "package": "opencode-ai",
+                        "command": "npm install -g opencode-ai",
+                        "available": true
+                    },
+                    {
+                        "via": "nix",
+                        "package": "opencode",
+                        "command": "nix profile install nixpkgs#opencode",
+                        "available": true
+                    },
+                    {
+                        "via": "script",
+                        "package": "https://opencode.ai/install",
+                        "command": "curl -fsSL https://opencode.ai/install | bash",
+                        "available": true
+                    }
+                ],
+                "uninstall": {
+                    "via": "brew",
+                    "package": "opencode",
+                    "command": "brew uninstall opencode",
+                    "available": true
+                }
+            },
+            {
+                "name": "pi",
+                "command": "pi",
+                "installed": true,
+                "path": "/opt/homebrew/bin/pi",
+                "description": "Mario's minimal agent harness for full control",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "brew",
+                        "package": "pi-coding-agent",
+                        "command": "brew install pi-coding-agent",
+                        "available": true
+                    },
+                    {
+                        "via": "npm",
+                        "package": "@earendil-works/pi-coding-agent",
+                        "command": "npm install -g @earendil-works/pi-coding-agent",
+                        "available": true
+                    },
+                    {
+                        "via": "nix",
+                        "package": "pi-coding-agent",
+                        "command": "nix profile install nixpkgs#pi-coding-agent",
+                        "available": true
+                    }
+                ],
+                "uninstall": {
+                    "via": "brew",
+                    "package": "pi-coding-agent",
+                    "command": "brew uninstall pi-coding-agent",
+                    "available": true
+                }
+            },
+            {
+                "name": "qoder",
+                "command": "qodercli",
+                "installed": false,
+                "path": null,
+                "description": "Alibaba's agentic coding platform, IDE plus terminal CLI",
+                "website": "https://qoder.com",
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "cask",
+                        "package": "qoderai/qoder/qodercli",
+                        "command": "brew install --cask qoderai/qoder/qodercli",
+                        "available": true
+                    },
+                    {
+                        "via": "npm",
+                        "package": "@qoder-ai/qodercli",
+                        "command": "npm install -g @qoder-ai/qodercli",
+                        "available": true
+                    },
+                    {
+                        "via": "script",
+                        "package": "https://qoder.com/install",
+                        "command": "curl -fsSL https://qoder.com/install | bash",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "qoder-cn",
+                "command": "qoderclicn",
+                "installed": false,
+                "path": null,
+                "description": "Qoder's China edition (qoder.com.cn)",
+                "website": "https://qoder.com.cn",
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "script",
+                        "package": "https://qoder.com.cn/install",
+                        "command": "curl -fsSL https://qoder.com.cn/install | bash",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            },
+            {
+                "name": "qwen-code",
+                "command": "qwen",
+                "installed": true,
+                "path": "/opt/homebrew/bin/qwen",
+                "description": "Alibaba's Gemini CLI fork, drive it from Telegram or WeChat",
+                "website": null,
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "brew",
+                        "package": "qwen-code",
+                        "command": "brew install qwen-code",
+                        "available": true
+                    },
+                    {
+                        "via": "npm",
+                        "package": "@qwen-code/qwen-code",
+                        "command": "npm install -g @qwen-code/qwen-code",
+                        "available": true
+                    },
+                    {
+                        "via": "nix",
+                        "package": "qwen-code",
+                        "command": "nix profile install nixpkgs#qwen-code",
+                        "available": true
+                    }
+                ],
+                "uninstall": {
+                    "via": "brew",
+                    "package": "qwen-code",
+                    "command": "brew uninstall qwen-code",
+                    "available": true
+                }
+            },
+            {
+                "name": "zcode",
+                "command": "zcode",
+                "installed": false,
+                "path": null,
+                "description": "",
+                "website": "https://zcode.z.ai",
+                "registered": false,
+                "methods": [
+                    {
+                        "via": "cask",
+                        "package": "zcode",
+                        "command": "brew install --cask zcode",
+                        "available": true
+                    }
+                ],
+                "uninstall": null
+            }
+        ]
+    }
 }

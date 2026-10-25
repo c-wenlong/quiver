@@ -1,12 +1,20 @@
+import os
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from quiver.harness.catalog import HARNESS_CATALOG
 from quiver.harness.installers import (
+    GUI_APPS,
     INSTALLERS,
     METHOD_TOOL,
     METHODS,
+    WEBSITES,
     Installer,
     Uninstaller,
+    installed_app,
+    installed_cask,
     installers_for,
     uninstaller_for,
 )
@@ -14,8 +22,9 @@ from quiver.harness.installers import (
 
 class InstallerTableTest(unittest.TestCase):
     def test_every_known_installer_is_a_catalog_harness(self):
-        # jules and mastracode predate the catalog; discovery does not see them.
-        exempt = {"jules", "mastracode"}
+        # jules and mastracode predate the catalog; zcode is a GUI app with
+        # no PATH binary, so discovery has nothing to recognise either.
+        exempt = {"jules", "mastracode", "zcode"}
         for name in INSTALLERS:
             if name in exempt:
                 continue
@@ -42,6 +51,66 @@ class InstallerTableTest(unittest.TestCase):
         self.assertEqual([i.via for i in installers_for("gemini")],
                          ["brew", "npm", "nix"])
         self.assertEqual(installers_for("nosuch"), [])
+        self.assertEqual([i.via for i in installers_for("antigravity")],
+                         ["cask", "nix", "script"])
+
+    def test_provider_entries_checked_against_their_registries(self):
+        # The exact tokens/packages each registry uses; a bare name would
+        # be somebody else's package (nixpkgs grok-cli, npm kimi).
+        self.assertEqual(INSTALLERS["kimi"],
+                         {"brew": "kimi-code", "npm": "@moonshot-ai/kimi-code",
+                          "script": "https://code.kimi.com/kimi-code/install.sh"})
+        self.assertEqual(INSTALLERS["grok"],
+                         {"npm": "@xai-official/grok",
+                          "script": "https://x.ai/cli/install.sh"})
+        self.assertEqual(INSTALLERS["antigravity"],
+                         {"cask": "antigravity", "nix": "antigravity-cli",
+                          "script": "https://antigravity.google/cli/install.sh"})
+        self.assertEqual(INSTALLERS["commandcode"], {"npm": "command-code"})
+        self.assertEqual(INSTALLERS["qoder"],
+                         {"cask": "qoderai/qoder/qodercli",
+                          "npm": "@qoder-ai/qodercli",
+                          "script": "https://qoder.com/install"})
+        self.assertEqual(INSTALLERS["qoder-cn"],
+                         {"script": "https://qoder.com.cn/install"})
+        self.assertEqual(INSTALLERS["zcode"], {"cask": "zcode"})
+
+    def test_websites_cover_the_new_providers_only(self):
+        # Website is the sheet's link-out when there is no install command;
+        # a URL is recorded only for audited names.
+        self.assertEqual(set(WEBSITES) - set(INSTALLERS), set())
+        for name in ("antigravity", "kimi", "grok", "zcode",
+                     "commandcode", "qoder", "qoder-cn"):
+            self.assertTrue(WEBSITES[name].startswith("https://"), name)
+
+    def test_gui_apps_have_installers_and_websites(self):
+        # The bundle check exists so the sheet can show state for a GUI
+        # provider; it only matters for names swe can install or link out.
+        for name in GUI_APPS:
+            self.assertIn(name, INSTALLERS, name)
+            self.assertIn(name, WEBSITES, name)
+
+    def test_installed_app_finds_the_bundle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = Path(tmp) / "Applications" / "ZCode.app"
+            bundle.mkdir(parents=True)
+            with patch.dict(GUI_APPS, {"zcode": (str(bundle),)}):
+                self.assertEqual(installed_app("zcode"), str(bundle))
+        with patch.dict(GUI_APPS, {"zcode": ("/nonexistent/ZCode.app",)}):
+            self.assertIsNone(installed_app("zcode"))
+        self.assertIsNone(installed_app("gemini"))  # no GUI_APPS entry
+
+    def test_installed_cask_reads_the_caskroom(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            room = Path(tmp) / "Caskroom" / "zcode"
+            room.mkdir(parents=True)
+            with patch.dict(os.environ, {"HOMEBREW_PREFIX": tmp}):
+                self.assertEqual(installed_cask("zcode"), str(room))
+                # Tap-qualified tokens record under the bare cask name.
+                qoder = Path(tmp) / "Caskroom" / "qodercli"
+                qoder.mkdir()
+                self.assertEqual(installed_cask("qoder"), str(qoder))
+            self.assertIsNone(installed_cask("gemini"))  # no cask entry
 
     def test_display_per_method(self):
         self.assertEqual(Installer("brew", "gemini-cli").display(),
