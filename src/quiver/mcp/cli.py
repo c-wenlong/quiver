@@ -75,6 +75,9 @@ MCP_CONFIG_MAP = {
         "path": Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
         "key": "mcpServers",
         "label": "Claude Desktop",
+        # Its config file launches local servers only; a remote one is added
+        # in Claude Desktop itself (Settings > Connectors).
+        "local_only": True,
     },
     "cursor": {
         "path": Path.home() / ".cursor" / "mcp.json",
@@ -763,6 +766,15 @@ def _merge_format_keys(existing: dict, converted: dict) -> dict:
     return out
 
 
+LOCAL_ONLY_NOTE = ("takes local servers only in its config file; add a remote one "
+                   "in the app itself (Settings > Connectors)")
+
+
+def takes_remote(tool: str) -> bool:
+    """Whether ``tool``'s config can hold a server reached at a URL."""
+    return not get_tool_config(tool).get("local_only")
+
+
 def server_type(cfg: dict) -> str:
     cfg = normalize_server(cfg)
     if cfg.get("url"):
@@ -1330,7 +1342,12 @@ def _sync(args, report: dict | None):
         secrets = load_secrets()
         hub_servers = get_hub_servers()
         missing: dict[str, list[str]] = {}
+        any_remote_ok = any(takes_remote(t) for t in targets)
         for server_name in selected:
+            if not any_remote_ok and server_type(source_servers[server_name]) == "http":
+                # No target can take this one: it is left out below, so
+                # its secrets don't matter to this run.
+                continue
             for var in unresolved_names(hub_servers.get(server_name, {}), secrets):
                 missing.setdefault(var, []).append(server_name)
         if missing:
@@ -1403,8 +1420,14 @@ def _sync(args, report: dict | None):
         added: list[str] = []
         updated: list[str] = []
         skipped: list[str] = []
+        # Remote servers a local-only config can't hold: left out, said so.
+        unsupported: list[str] = []
+        remote_ok = takes_remote(target)
 
         for name in selected:
+            if not remote_ok and server_type(source_servers[name]) == "http":
+                unsupported.append(name)
+                continue
             converted = convert_server_for_target(source_servers[name], source, target)
             if name in target_servers:
                 if force or name in overwrite:
@@ -1442,7 +1465,7 @@ def _sync(args, report: dict | None):
         if report is not None:
             report["targets"].append({"name": target, "added": added,
                                       "updated": updated, "skipped": skipped,
-                                      "pruned": pruned})
+                                      "pruned": pruned, "unsupported": unsupported})
 
         if (added or updated or pruned) and not dry_run:
             saver = get_tool_saver(target)
@@ -1463,6 +1486,9 @@ def _sync(args, report: dict | None):
             parts.append(
                 f"{len(pruned)} {'would prune' if dry_run else 'pruned'}{names}"
             )
+        if unsupported:
+            parts.append(f"{len(unsupported)} remote left out ({', '.join(unsupported)}): "
+                         f"{get_tool_config(target).get('label', target)} {LOCAL_ONLY_NOTE}")
 
         if parts:
             status = c('cyan', '•') if dry_run else c('green', '✓')
@@ -1631,6 +1657,12 @@ def add_plan(registry: dict, *, url: str | None, transport: str | None,
             canonical["args"] = command[1:]
         if env:
             canonical["env"] = env
+
+    # A config that only launches local servers can't hold a URL one.
+    if url is not None:
+        local_only = [t for t in targets if not takes_remote(t)]
+        if local_only:
+            raise AddRefused(f"{', '.join(local_only)} {LOCAL_ONLY_NOTE}.", alarming=True)
 
     # A format with no SSE marker can't be given one: refuse the target
     # rather than silently downgrade the transport to http.

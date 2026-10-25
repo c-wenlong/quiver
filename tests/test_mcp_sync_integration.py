@@ -205,6 +205,61 @@ class McpSyncIntegrationTest(unittest.TestCase):
         self.assertIn("Unknown arg(s)", result.stdout)
 
 
+class McpSyncLocalOnlyTargetTest(unittest.TestCase):
+    """Claude Desktop's config launches local servers only: a sync leaves a
+    URL server out of it and says so, and ``add`` refuses one for it."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = pathlib.Path(self.tmp.name)
+        (self.home / ".quiver" / "config").mkdir(parents=True)
+        (self.home / ".quiver" / "config" / "tools.json").write_text(
+            json.dumps({"claude": {"aliases": ["cc"]}}) + "\n")
+        (self.home / ".quiver" / "mcp.json").write_text(json.dumps({"mcpServers": {
+            "remote": {"url": "https://mcp.example.com/mcp"},
+            "local": {"command": "npx", "args": ["-y", "local-mcp"]},
+        }}) + "\n")
+        self.desktop = self.home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+        self.desktop.parent.mkdir(parents=True)
+        self.desktop.write_text(json.dumps({"mcpServers": {}}) + "\n")
+        (self.home / ".claude.json").write_text(json.dumps({"mcpServers": {}}) + "\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_mcp(self, *args):
+        return subprocess.run([sys.executable, "-m", MCP_MODULE, *args], capture_output=True,
+                              text=True, env=_mcp_env(self.home), timeout=60)
+
+    def test_sync_leaves_a_url_server_out_of_claude_desktop(self):
+        result = self.run_mcp("sync", "quiver", "claude-desktop", "claude", "--no-interactive")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        desktop = json.loads(self.desktop.read_text())["mcpServers"]
+        self.assertEqual(sorted(desktop), ["local"])
+        self.assertEqual(sorted(json.loads((self.home / ".claude.json").read_text())["mcpServers"]),
+                         ["local", "remote"])
+        self.assertIn("1 remote left out (remote)", result.stdout)
+
+    def test_an_unset_secret_on_a_remote_server_does_not_block_claude_desktop(self):
+        hub = self.home / ".quiver" / "mcp.json"
+        data = json.loads(hub.read_text())
+        data["mcpServers"]["remote"]["headers"] = {"Authorization": "Bearer ${MISSING_TOKEN}"}
+        hub.write_text(json.dumps(data) + "\n")
+        result = self.run_mcp("sync", "quiver", "claude-desktop", "--no-interactive")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(sorted(json.loads(self.desktop.read_text())["mcpServers"]), ["local"])
+        # A target that can take it still needs the value.
+        result = self.run_mcp("sync", "quiver", "claude", "--no-interactive")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("MISSING_TOKEN", result.stdout)
+
+    def test_add_refuses_a_url_server_for_claude_desktop(self):
+        result = self.run_mcp("add", "r2", "--url=https://mcp.example.com/x", "--to=claude-desktop")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("takes local servers only", result.stdout + result.stderr)
+        self.assertNotIn("r2", self.desktop.read_text())
+
+
 class McpSyncCodexPeerTest(unittest.TestCase):
     """Verify codex is a first-class peer of the existing JSON tools.
 
