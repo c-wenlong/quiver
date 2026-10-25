@@ -151,7 +151,7 @@ struct CostDotScale: View {
 
     private static let track: CGFloat = 8
     private static let dot: CGFloat = 10
-    private static var labelFont: NSFont { .systemFont(ofSize: Theme.scaled(11), weight: .semibold) }
+    private static var labelFont: NSFont { Theme.nsFont(size: 11, weight: .semibold) }
 
     var body: some View {
         VStack(spacing: 5) {

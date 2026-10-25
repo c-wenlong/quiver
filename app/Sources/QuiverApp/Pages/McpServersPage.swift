@@ -197,7 +197,7 @@ private struct ServerGrid: View {
     /// or the name of a harness with no logo), so it shows whole.
     static func columnWidth(_ harness: String) -> CGFloat {
         let mark = HarnessMark(harness)
-        let font = NSFont.systemFont(ofSize: Theme.scaled(12), weight: .medium)
+        let font = Theme.nsFont(size: 12, weight: .medium)
         let text = mark.word.map { ($0 as NSString).size(withAttributes: [.font: font, .kern: 0.12]).width } ?? 0
         let logo: CGFloat = mark.icon == nil ? 0 : 16 + (mark.word == nil ? 0 : 4)
         return max(cellWidth, ceil(logo + text) + 16)

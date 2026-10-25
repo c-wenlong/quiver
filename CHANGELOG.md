@@ -427,6 +427,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and THIRD_PARTY_NOTICES.md beside the app. Both files now ship inside
   the bundle, in `Contents/Resources`.
 
+### Changed
+
+- **Mac app: Geist type and a pinned sidebar header.** The app's text is
+  set in Geist and its code and IDs in Geist Mono, bundled with the app
+  (SIL Open Font License) instead of the system font. AppKit text drawn
+  or measured beside it (the Overview figures, chart labels, the
+  instruction editor) uses the same faces through `Theme.nsFont`. The
+  sidebar's top row now holds a "Quiver" wordmark with the collapse
+  button at its right edge, and stays put while the pages scroll under
+  it, with a hairline once they do. Collapsed, the button sits over the
+  icon column as before.
+
 ### Fixed
 
 - **`swe providers` read escaped keys with their backslashes.** The Mac

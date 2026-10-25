@@ -404,9 +404,9 @@ private struct TotalCard: View {
     }
 
     // The AppKit fonts behind `Theme.caption`, `.display` and `.figure`.
-    static var captionDigitsFont: NSFont { .monospacedDigitSystemFont(ofSize: Theme.scaled(12), weight: .regular) }
-    static var displayFont: NSFont { .monospacedDigitSystemFont(ofSize: Theme.scaled(72), weight: .bold) }
-    static var figureFont: NSFont { .monospacedDigitSystemFont(ofSize: Theme.scaled(20), weight: .bold) }
+    static var captionDigitsFont: NSFont { Theme.nsFont(size: 12, monospacedDigits: true) }
+    static var displayFont: NSFont { Theme.nsFont(size: 72, weight: .bold, monospacedDigits: true) }
+    static var figureFont: NSFont { Theme.nsFont(size: 20, weight: .bold, monospacedDigits: true) }
 
     /// One logo per harness: the pointer on one focuses it, and so does a
     /// click or Space for the keyboard. One centred row while they fit,

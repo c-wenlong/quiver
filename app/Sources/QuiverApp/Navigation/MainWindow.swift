@@ -153,53 +153,15 @@ private struct Sidebar: View {
     private var animation: Animation? { reduceMotion ? nil : Theme.sidebarAnimation }
     private var isExpanded: Bool { expansion.isExpanded }
     private var isFloating: Bool { expansion.isFloating }
+    /// Whether the list has scrolled under the header, which then shows
+    /// a hairline along its bottom edge.
+    @State private var scrolled = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 4) {
-                toggleRow
-                    // Same spacing as between groups.
-                    .padding(.bottom, Theme.gutter)
-                VStack(alignment: .leading, spacing: 18) {
-                    ForEach(model.sidebar.visibleGroups) { group in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(group.title)
-                                .font(Theme.font(size: 11))
-                                .foregroundStyle(Theme.textMuted)
-                                .padding(.horizontal, 10)
-                                .padding(.bottom, 4)
-                                // The rail keeps its height so the icons
-                                // never move vertically.
-                                .opacity(isExpanded ? 1 : 0)
-                            ForEach(model.sidebar.sections(in: group)) { section in
-                                NavItem(section: section, isSelected: model.selection == section,
-                                        isFocused: focused == section,
-                                        collapsed: !isExpanded,
-                                        badge: section == .inbox ? model.github.unreadCount : 0,
-                                        shortcut: CommandKeyHold.shared.isHeld
-                                            ? model.sidebar.shortcutNumber(of: section) : nil) {
-                                    // Reselecting the open page asks a detail
-                                    // view on it to go back.
-                                    model.select(section)
-                                }
-                                .focused($focused, equals: section)
-                            }
-                        }
-                    }
-                }
-            }
-            .padding(.leading, Theme.sidebarLeadingPadding)
-            .padding(.trailing, Theme.sidebarTrailingPadding)
-            // Clear of the traffic lights for the toggle row.
-            .padding(.top, 28)
-            // Always laid out at full width; the rail clips the right
-            // side instead of reflowing, so icons keep their position.
-            .frame(width: width, alignment: .leading)
-            // Like a source list: up and down move the selection and focus.
-            .onKeyPress(.upArrow) { move(-1) }
-            .onKeyPress(.downArrow) { move(1) }
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            list
         }
-        .scrollIndicators(.never)
         .frame(width: isExpanded ? width : Theme.sidebarCollapsedWidth,
                alignment: .leading)
         .clipped()
@@ -241,9 +203,81 @@ private struct Sidebar: View {
         }
     }
 
-    /// The collapse/expand button: its own row under the traffic lights,
-    /// over the icon column, in the same top-left spot whether the
-    /// sidebar is collapsed, pinned open or hover-floating.
+    /// The pages, grouped, scrolling under the header.
+    private var list: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                ForEach(model.sidebar.visibleGroups) { group in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(group.title)
+                            .font(Theme.font(size: 11))
+                            .foregroundStyle(Theme.textMuted)
+                            .padding(.horizontal, 10)
+                            .padding(.bottom, 4)
+                            // The rail keeps its height so the icons
+                            // never move vertically.
+                            .opacity(isExpanded ? 1 : 0)
+                        ForEach(model.sidebar.sections(in: group)) { section in
+                            NavItem(section: section, isSelected: model.selection == section,
+                                    isFocused: focused == section,
+                                    collapsed: !isExpanded,
+                                    badge: section == .inbox ? model.github.unreadCount : 0,
+                                    shortcut: CommandKeyHold.shared.isHeld
+                                        ? model.sidebar.shortcutNumber(of: section) : nil) {
+                                // Reselecting the open page asks a detail
+                                // view on it to go back.
+                                model.select(section)
+                            }
+                            .focused($focused, equals: section)
+                        }
+                    }
+                }
+        }
+            .padding(.leading, Theme.sidebarLeadingPadding)
+            .padding(.trailing, Theme.sidebarTrailingPadding)
+            // Same spacing as between groups.
+            .padding(.top, Theme.gutter)
+            // Always laid out at full width; the rail clips the right
+            // side instead of reflowing, so icons keep their position.
+            .frame(width: width, alignment: .leading)
+            // Like a source list: up and down move the selection and focus.
+            .onKeyPress(.upArrow) { move(-1) }
+            .onKeyPress(.downArrow) { move(1) }
+        }
+        .scrollIndicators(.never)
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            geometry.contentOffset.y + geometry.contentInsets.top > 0
+        } action: { _, new in
+            scrolled = new
+        }
+    }
+
+    /// The wordmark and the collapse/expand button, pinned above the
+    /// scrolling list under the traffic lights. Laid out at full width
+    /// like the list, so the rail clips it the same way.
+    private var header: some View {
+        ZStack(alignment: .leading) {
+            Text("Quiver")
+                .font(Theme.font(size: 15, weight: .semibold))
+                .foregroundStyle(Theme.textStrong)
+                .padding(.leading, 8)
+                .opacity(isExpanded ? 1 : 0)
+                .accessibilityHidden(!isExpanded)
+            toggleRow
+        }
+        .padding(.leading, Theme.sidebarLeadingPadding)
+        .padding(.trailing, Theme.sidebarTrailingPadding)
+        // Clear of the traffic lights.
+        .padding(.top, 28)
+        .frame(width: width, alignment: .leading)
+        .overlay(alignment: .bottom) {
+            Theme.border.frame(height: 1).opacity(scrolled ? 1 : 0)
+        }
+    }
+
+    /// The collapse/expand button: at the header's trailing edge while
+    /// the sidebar is open (pinned or hover-floating), over the icon
+    /// column in the collapsed rail, sliding between the two.
     @State private var hoveringToggle = false
 
     private var toggleRow: some View {
@@ -268,7 +302,7 @@ private struct Sidebar: View {
         .onHover { hoveringToggle = $0 }
         .accessibilityLabel(label)
         .help("\(label) ⌃⌘S")
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: isExpanded ? .trailing : .leading)
     }
 
     /// Only a collapsed sidebar reacts to the pointer: in after 0.12 s,

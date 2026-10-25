@@ -156,6 +156,19 @@ import Testing
         #expect(!traits(9).contains(.bold))
     }
 
+    /// The same with the app's own fonts: Geist has to ship an italic face
+    /// for `NSFontManager` to find, or emphasis renders upright.
+    @Test(arguments: [false, true])
+    func nestedEmphasisKeepsBothTraitsInGeist(monospaced: Bool) {
+        let body = AppFonts.nsFont(size: 13, monospaced: monospaced)
+        let palette = MarkdownStylePalette.test.with(bodyFont: body)
+        let styled = MarkdownStyleSpans.styled("*a __b__ c*", palette: palette)
+        func font(_ index: Int) -> NSFont? { styled.attribute(.font, at: index, effectiveRange: nil) as? NSFont }
+        #expect(font(1)?.familyName == body.familyName)
+        #expect(font(1)?.fontDescriptor.symbolicTraits.contains(.italic) == true)
+        #expect(font(5)?.fontDescriptor.symbolicTraits.isSuperset(of: [.bold, .italic]) == true)
+    }
+
     @Test func aLongDocumentStylesQuickly() {
         let text = String(repeating: "a **b** and *i* and ~~s~~\n", count: 5_000)
         let start = Date()
@@ -177,4 +190,13 @@ private extension MarkdownStylePalette {
         textPrimary: .black, textSecondary: .gray, textMuted: .gray,
         accent: .blue, codeBackground: .lightGray,
         lineSpacing: 4, headingSpacingBefore: 10, subheadingSpacingBefore: 6)
+
+    func with(bodyFont: NSFont) -> MarkdownStylePalette {
+        MarkdownStylePalette(
+            bodyFont: bodyFont, codeFont: codeFont, headingFonts: headingFonts,
+            textPrimary: textPrimary, textSecondary: textSecondary, textMuted: textMuted,
+            accent: accent, codeBackground: codeBackground,
+            lineSpacing: lineSpacing, headingSpacingBefore: headingSpacingBefore,
+            subheadingSpacingBefore: subheadingSpacingBefore)
+    }
 }
