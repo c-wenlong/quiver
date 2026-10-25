@@ -1855,19 +1855,28 @@ def _install_json(names: list[str], tools: dict) -> dict:
     harnesses = []
     for name in names:
         command = _install_command_name(name, tools)
-        path = shutil.which(command)
-        # GUI apps never land on PATH: evidence is the .app bundle, and
-        # the Caskroom record is what proves brew did the install.
+        binary = shutil.which(command)
+        # GUI apps never land on PATH. For a provider that is only the app
+        # (no catalog command) the bundle or its Caskroom record is the
+        # install evidence; for a CLI-bearing one they only say the app
+        # exists — `installed` keeps meaning the listed command resolves,
+        # so the sheet still offers the CLI's own methods.
+        app = installed_app(name)
         caskroom = installed_cask(name)
-        if path is None:
-            path = installed_app(name) or caskroom
+        path = binary
+        if path is None and name not in HARNESS_CATALOG:
+            path = app or caskroom
+        # The remover follows the executable's own real home first; the
+        # Caskroom names a cask only when no PATH executable claimed it.
         remover = uninstaller_for(
-            name, os.path.realpath(caskroom or path)) if (caskroom or path) else None
+            name, os.path.realpath(binary or caskroom)
+        ) if (binary or caskroom) else None
         harnesses.append({
             "name": name,
             "command": command,
             "installed": path is not None,
             "path": path,
+            "app": app,
             "description": HARNESS_CATALOG.get(name, {}).get("description", ""),
             "website": WEBSITES.get(name),
             "registered": name in tools,
@@ -2036,7 +2045,13 @@ def cmd_install(args):
         else:
             app = installed_app(reg_name) or installed_cask(reg_name)
             if app:
-                print(c("green", f"  already installed at {app}"))
+                # For a provider that is only the app this is the install;
+                # for a CLI-bearing one it is just the desktop app sitting
+                # next to a missing command.
+                if reg_name in HARNESS_CATALOG:
+                    print(c("green", f"  its app is at {app}"))
+                else:
+                    print(c("green", f"  already installed at {app}"))
         print()
         for inst in installers:
             row = f"  {inst.via:<7} {inst.display()}"
