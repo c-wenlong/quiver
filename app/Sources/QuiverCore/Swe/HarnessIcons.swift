@@ -107,7 +107,8 @@ public struct HarnessMark: Equatable, Sendable {
                         "droid": "Factory Droid", "copilot": "GitHub Copilot", "lmstudio": "LM Studio",
                         "qwen-code": "Qwen Code", "mistral-vibe": "Mistral Vibe", "commandcode": "Command Code",
                         "qoder-cn": "Qoder CN", "grok-bot": "Grok Bot", "grok": "Grok Build",
-                        "kilo": "Kilo Code", "goose": "Goose", "aider": "Aider", "zcode": "ZCode"]
+                        "kilo": "Kilo Code", "goose": "Goose", "aider": "Aider", "zcode": "ZCode",
+                        "artificial-analysis": "Artificial Analysis"]
 
     static func name(of harness: String) -> String {
         names[harness] ?? harness.prefix(1).uppercased() + harness.dropFirst()

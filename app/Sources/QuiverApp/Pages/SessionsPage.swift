@@ -116,8 +116,8 @@ private struct SessionsContent: View {
                               systemImage: "info.circle")
                             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         Spacer()
-                        Button("Open Settings › Services") {
-                            settingsSection = SettingsSection.services.rawValue
+                        Button("Open Settings › Integrations") {
+                            settingsSection = SettingsSection.integrations.rawValue
                             app.selection = .settings
                         }
                         .secondaryButton()

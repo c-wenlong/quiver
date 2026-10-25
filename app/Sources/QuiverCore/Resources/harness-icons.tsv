@@ -3,6 +3,7 @@ aider	mono	https://raw.githubusercontent.com/Aider-AI/aider/main/aider/website/a
 antgroup	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/antgroup-color.svg	MIT (LobeHub icons); Ant Group trademark	Ant Group mark, for InclusionAI's Ling and Ring models
 antigravity	color	TokenTracker dashboard/public/brand-logos/antigravity.svg	MIT (TokenTracker)	Google Antigravity mark
 ark	color	TokenTracker dashboard/public/brand-logos/volcano-ark.svg	MIT (TokenTracker)	Volcano Engine Ark mark, used for both Ark plans
+artificial-analysis	mono	https://artificialanalysis.ai/ (inline header SVG)	trademark, no licence stated	geometric mark, verbatim from the site's inline header SVG (white on the dark header)
 atlascloud	mono	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/atlascloud.svg	MIT (LobeHub icons); Atlas Cloud trademark	Atlas Cloud A mark, for its Coding Plan
 augment	mono	https://www.augmentcode.com/favicon.svg	trademark, no licence stated	{.-.} face mark; same icon as docs.augmentcode.com favicon; includes dark-mode media query; wordmark at /augment_code_wordmark.svg
 baiducloud	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/baiducloud-color.svg	MIT (LobeHub icons); Baidu trademark	Baidu AI Cloud mark, for Qianfan Token Plan
@@ -70,6 +71,7 @@ sensenova	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/senseno
 standardcompute	color	https://standardcompute.com/icon.svg	trademark, no licence stated	site icon: a single gold bar
 stepfun	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/stepfun-color.svg	MIT (LobeHub icons); StepFun trademark	StepFun colour mark
 synthetic	mono	https://synthetic.new/favicon.svg	trademark, no licence stated	flower mark, taken out of the favicon's white plate
+tailscale	mono	https://tailscale.com/favicon.svg	trademark, no licence stated	dot-grid mark, taken out of the favicon's squircle plate so it templates like the rest
 taotoken	mono	https://static.taotoken.net/release/taotoken_fe/dist/logo.svg	trademark, no licence stated	site logo mark
 tencentcloud	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/tencentcloud-color.svg	MIT (LobeHub icons); Tencent trademark	Tencent Cloud mark, for TokenHub plans
 together	color	https://unpkg.com/@lobehub/icons-static-svg@1.95.1/icons/together-color.svg	MIT (LobeHub icons); Together AI trademark	Together AI colour mark

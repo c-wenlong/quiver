@@ -122,6 +122,10 @@ Where each came from is in `Resources/harness-icons.tsv`:
 - Featherless's current mark is composed locally: the rebranded F from
   the inline SVG on featherless.ai, on its favicon's yellow tile; the
   site states no licence, so the mark is trademark-only like the rest.
+- Tailscale's dot-grid mark comes from tailscale.com's favicon (the
+  squircle plate it sits on is dropped), and Artificial Analysis's
+  geometric mark from the inline SVG in artificialanalysis.ai's header;
+  both are trademark-only like the rest.
 
 TokenTracker is used under the MIT License (Copyright (c) 2026
 xiufengsun; full text above, under OpenUsage, as the same notice). LobeHub
