@@ -317,7 +317,7 @@ def installed_cask(name: str) -> str | None:
 @dataclass(frozen=True)
 class Uninstaller:
     via: str
-    package: str  # cask token, formula, npm package, uv tool, or nix profile element
+    package: str  # cask token, formula, npm package, uv tool, or nix store path
 
     def display(self) -> str:
         """The uninstall command as a person would type it."""
@@ -376,7 +376,9 @@ def uninstaller_for(name: str, real_path: str | None) -> Uninstaller | None:
         if uv + 2 < len(parts) and parts[uv + 1] == "tools":
             return Uninstaller("uv", parts[uv + 2])
     if real_path.startswith("/nix/store/"):
-        attr = (INSTALLERS.get(name) or {}).get("nix")
-        if attr:
-            return Uninstaller("nix", attr)
+        # Remove by store path, not the table's attr: the profile element
+        # may carry a renamed name (nixpkgs renamed kilocode-cli to kilo,
+        # so an install from before the rename is element "kilocode-cli"),
+        # and `nix profile remove` matches an element on its store path.
+        return Uninstaller("nix", "/".join(parts[:4]))
     return None

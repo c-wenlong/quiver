@@ -180,10 +180,17 @@ class UninstallerTest(unittest.TestCase):
         # A Cellar path with nothing after node_modules has nothing to name.
         self.assertIsNone(uninstaller_for("x", "/opt/homebrew/Cellar/node/22.1.0/lib/node_modules"))
 
-    def test_nix_uses_the_table_attr(self):
+    def test_nix_removes_by_store_path(self):
+        # An element may be named a renamed attr (nixpkgs renamed
+        # kilocode-cli to kilo), so the store path — which `nix profile
+        # remove` matches whatever the element is called — is the remover,
+        # and no table entry is needed to name it.
         path = "/nix/store/abc-codex-0.1/bin/codex"
-        self.assertEqual(uninstaller_for("codex", path), Uninstaller("nix", "codex"))
-        self.assertIsNone(uninstaller_for("forge", path))
+        remover = Uninstaller("nix", "/nix/store/abc-codex-0.1")
+        self.assertEqual(uninstaller_for("codex", path), remover)
+        self.assertEqual(uninstaller_for("forge", path), remover)
+        self.assertEqual(remover.display(),
+                         "nix profile remove /nix/store/abc-codex-0.1")
 
     def test_script_installs_and_missing_paths_have_none(self):
         self.assertIsNone(uninstaller_for("claude", "/Users/me/.local/share/claude/versions/2.1/claude"))
