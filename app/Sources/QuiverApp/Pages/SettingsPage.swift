@@ -171,7 +171,7 @@ private struct SettingsSectionView: View {
                     }
                 }
             case .paths: pathsCard
-            case .experimental: ExperimentalSection()
+            case .experimental: ExperimentalSection(sourceCheckout: $drafts.sourceCheckout)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -357,29 +357,6 @@ private struct SettingsSectionView: View {
                        }) {
                 EmptyView()
             }
-            // Prod builds ship to users: no channel picker, no checkout,
-            // no Rebuild, whatever a stored dev override says.
-            if app.updates.showsDevControls {
-                SettingsDivider()
-                SettingRow(title: "Updates from",
-                           detail: "This build defaults to \(app.updates.build.channel.title).") {
-                    Tabs(options: UpdateChannel.allCases.map { ($0, $0.title) },
-                         selection: Binding(get: { app.updates.channel },
-                                            set: { app.updates.setChannel($0) }))
-                }
-                SettingsDivider()
-                PathRow(title: "Source checkout",
-                        placeholder: "~/code/quiver",
-                        stored: app.updates.checkoutOverride,
-                        draft: $drafts.sourceCheckout,
-                        running: app.updates.checkout ?? "",
-                        hint: app.updates.stampedCheckout.map {
-                            "Empty uses the folder this build came from: \($0)"
-                        } ?? "Empty: no source folder recorded in this build.",
-                        folders: true) { app.updates.setCheckout($0) }
-                SettingsDivider()
-                localCodeRow
-            }
             SettingsDivider()
             releaseRow
             if app.updates.build.channel == .prod {
@@ -401,84 +378,6 @@ private struct SettingsSectionView: View {
         if let describe = updates.build.describe { line += " (\(describe))" }
         line += " · swe " + (updates.sweVersionKnown ? (updates.sweVersion ?? "?") : "unknown")
         return line
-    }
-
-    private var localCodeRow: some View {
-        let updates = app.updates
-        let result = updates.local
-        return SettingRow(
-            title: "Local code",
-            detail: localDetail(result),
-            warning: {
-                if case .failed(let message) = updates.rebuildState { return message }
-                return updates.rebuildNotice
-            }()) {
-                HStack(spacing: 12) {
-                    Button("Check now") { Task { await updates.refresh(force: true) } }
-                        .secondaryButton()
-                        .disabled(updates.checking)
-                    rebuildControl
-                }
-            }
-    }
-
-    private func localDetail(_ result: LocalBuildCheck.Result?) -> String {
-        guard let result else { return "No source checkout to compare against." }
-        var text: String
-        switch result.state {
-        case .upToDate:
-            text = result.buildDirty
-                ? "Built from this commit plus uncommitted edits; can't tell if they match yours"
-                : "Built from current code"
-        case .behind(let n):
-            text = "\(n) commit\(n == 1 ? "" : "s") not built yet"
-        case .diverged(let buildOnly, _):
-            text = "Built from another branch (\(buildOnly) commit\(buildOnly == 1 ? "" : "s") not in this checkout)"
-        case .notARepo:
-            text = "Not a git checkout"
-        case .unknownBuild:
-            text = "This build has no commit recorded"
-        case .builtCommitMissing:
-            text = "Built from a commit this checkout doesn't have"
-        }
-        if result.buildDirty, result.state != .upToDate {
-            text += " · built with uncommitted edits"
-        }
-        if result.checkoutDirty { text += " · uncommitted changes not built" }
-        if let upstream = result.upstreamBehind, upstream > 0 {
-            text += "\n\(upstream) new commit\(upstream == 1 ? "" : "s") upstream, not pulled"
-        }
-        return text
-    }
-
-    @ViewBuilder
-    private var rebuildControl: some View {
-        let updates = app.updates
-        switch updates.rebuildState {
-        case .idle:
-            Button("Rebuild") { Task { await updates.rebuild() } }
-                .primaryButton()
-                .disabled(updates.checkout == nil)
-        case .building:
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text("Building…").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-            }
-        case .built:
-            Button("Relaunch to update") {
-                if let url = updates.relaunchURL() {
-                    AppRelauncher.relaunch(into: url)
-                }
-            }
-            .primaryButton()
-        case .failed:
-            Button("Rebuild") {
-                updates.resetRebuild()
-                Task { await updates.rebuild() }
-            }
-            .primaryButton()
-            .disabled(updates.checkout == nil)
-        }
     }
 
     private var releaseRow: some View {
@@ -775,7 +674,7 @@ struct SettingSwitch: View {
 
 /// A path setting: label and the path in use (one line, truncated in the
 /// middle), then a 36pt mono field with Choose… and Use.
-private struct PathRow: View {
+struct PathRow: View {
     var title: String
     var placeholder: String
     var stored: String
