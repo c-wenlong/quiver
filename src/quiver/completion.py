@@ -206,6 +206,24 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     "hooks check": [
         ("--json", "The drift findings as JSON"),
     ],
+    "hooks delete": [
+        ("--harness=", "Only one harness's copy"),
+        ("--foreign", "Delete the real file of a foreign hook"),
+        ("--yes", "Skip the confirmation prompt"),
+        ("--json", "What was deleted as JSON"),
+    ],
+    "hooks disable": [
+        ("--harness=", "Only one harness's copy"),
+        ("--json", "The new state as JSON"),
+    ],
+    "hooks enable": [
+        ("--harness=", "Only one harness's copy"),
+        ("--json", "The new state as JSON"),
+    ],
+    "hooks sync": [
+        ("--force", "Replace conflicting real files"),
+        ("--json", "Generated, pruned and link results as JSON"),
+    ],
     "plugins catalog": [
         ("--json", "Every marketplace and plugin as JSON"),
     ],
@@ -483,6 +501,9 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
         "list": "hooks list", "ls": "hooks list",
         "info": "hooks info", "edit": "hooks edit",
         "new": "hooks new", "check": "hooks check",
+        "delete": "hooks delete", "rm": "hooks delete",
+        "disable": "hooks disable", "enable": "hooks enable",
+        "sync": "hooks sync",
     },
     "providers": {
         "list": "providers list", "ls": "providers list", "add": "providers add",
@@ -664,12 +685,16 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("disable", "Disable an installed plugin"),
     ],
     "hooks": [
-        ("list", "Every hook script, its link state, its declaration"),
+        ("list", "Every hook script, its tier, link state, declaration"),
         ("ls", "Short for list"),
         ("info", "One script across harnesses"),
         ("edit", "Open the hub file in $EDITOR"),
         ("new", "Write a Python hook skeleton + settings stanza"),
         ("check", "Declarations vs links vs disk, read-only"),
+        ("delete", "Remove a hook's hub file (--foreign: the real file)"),
+        ("disable", "Unlink a hook without deleting it"),
+        ("enable", "Re-link a disabled hook"),
+        ("sync", "Regenerate shared wrappers and re-apply the link plan"),
     ],
     "skills": [
         ("list", "List skills (bare `swe skills` does the same)"),
