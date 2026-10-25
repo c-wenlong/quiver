@@ -969,6 +969,7 @@ private struct KeyEditor: View {
                     Button("Browse…") { browsing = true }
                         .secondaryButton()
                         .help("Every plan and provider Quiver knows")
+                        .disabled(working || testing)
                 } else if confirmingRemove {
                     Text("Delete \(originalName)?").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         .lineLimit(1).truncationMode(.middle)
@@ -1287,11 +1288,12 @@ private struct KeyEditor: View {
         let name = finalName
         let value = draft.value
         let base = baseURL.trimmingCharacters(in: .whitespaces)
+        let custom = isCustom
         Task {
-            let result = isCustom ? await testCustom(value, base) : await test(name, value)
+            let result = custom ? await testCustom(value, base) : await test(name, value)
             testing = false
             testResult = result
-            testedFor = (name, value, isCustom ? base : "")
+            testedFor = (name, value, custom ? base : "")
         }
     }
 
@@ -1310,7 +1312,10 @@ private struct KeyEditor: View {
     }
 
     /// Test first, then save with the verdict. A rejection stops the save
-    /// once and turns the button into "Save anyway".
+    /// once and turns the button into "Save anyway". Everything the save
+    /// writes is captured at the tap: a pick that slips in while the test
+    /// runs (the fields disable on the next render, not at once) can't
+    /// switch the save between the provider paths mid-flight.
     private func saveTapped() {
         working = true
         error = nil
@@ -1318,21 +1323,25 @@ private struct KeyEditor: View {
         let provider = finalProvider
         let value = draft.value
         let base = baseURL.trimmingCharacters(in: .whitespaces)
+        let custom = isCustom
+        let prefix = customPrefix
+        let modelID = model.trimmingCharacters(in: .whitespaces)
+        let testable = canTest
         saveTask = Task {
             defer { working = false }
             var result = currentTest
             // A move to another provider alone keeps the key it had, so
             // it asks the provider nothing.
-            if canTest, result == nil {
+            if testable, result == nil {
                 testing = true
-                if isCustom {
+                if custom {
                     result = await testCustom(value, base)
                 } else {
                     result = await test(name, value)
                 }
                 testing = false
                 testResult = result
-                testedFor = (name, value, isCustom ? base : "")
+                testedFor = (name, value, custom ? base : "")
             }
             guard !Task.isCancelled else { return }
             if case .rejected = result, !saveAnyway {
@@ -1340,12 +1349,9 @@ private struct KeyEditor: View {
                 return
             }
             do {
-                if isCustom {
+                if custom {
                     let entries = CustomProvider.entries(
-                        prefix: customPrefix,
-                        baseURL: baseURL.trimmingCharacters(in: .whitespaces),
-                        key: value,
-                        model: model.trimmingCharacters(in: .whitespaces))
+                        prefix: prefix, baseURL: base, key: value, model: modelID)
                     try await saveCustom(provider, entries, value.isEmpty ? nil : result, name)
                 } else {
                     try await save(provider, name, value, value.isEmpty ? nil : result)
