@@ -371,7 +371,8 @@ const SessionChat = (() => {
         details.title = "Loading…";
         const ok = await chat.details();
         details.disabled = false;
-        details.title = ok ? "Details" : "No details";
+        details.title = "Details";
+        if (!ok) showError("The session's details could not be loaded.");
       };
     }
   }
