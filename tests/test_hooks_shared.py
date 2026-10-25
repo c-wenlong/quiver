@@ -639,6 +639,489 @@ class CrudCommandsTest(unittest.TestCase):
             self.assertIs(row.enabled, False)
             self.assertIn("PreToolUse", row.events_supported)
 
+    def test_disable_a_shared_hook_prunes_its_wrappers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            (home / ".claude").mkdir()
+            _shared_hook(home, "gate.py",
+                         "# events: [Stop]\nimport sys\nsys.exit(0)\n")
+            with mock.patch("shutil.which", return_value=None):
+                _shared.apply_deploy(home, {})
+                code, out = _run(home, "disable", "gate")
+            stub = _shared.generated_dir(home, "claude") / "gate.py"
+            self.assertEqual(code, 0, out)
+            self.assertFalse(stub.exists())
+            self.assertFalse(
+                _shared.generated_dir(home, "claude").exists())
+
+    def test_disable_scopes_by_harness_and_reports_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            for name in ("claude", "droid"):
+                src = hooks_dir(home) / f"{name}/gate.py"
+                src.parent.mkdir(parents=True)
+                src.write_text("x")
+            code, out = _run(home, "disable", "gate", "--harness=claude")
+            self.assertEqual(code, 0, out)
+            self.assertEqual(
+                _shared.disabled_names(hooks_dir(home) / "claude"),
+                {"gate.py"})
+            self.assertEqual(
+                _shared.disabled_names(hooks_dir(home) / "droid"), set())
+            code, out = _run(home, "disable", "nope")
+            self.assertEqual(code, 1)
+            self.assertIn("No hook named nope", out)
+            code, out = _run(home, "enable", "--harness=claude")
+            self.assertEqual(code, 1)
+            self.assertIn("Usage", out)
+
+    def test_delete_harness_scope_and_tty_confirm(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            for name in ("claude", "droid"):
+                src = hooks_dir(home) / f"{name}/gate.py"
+                src.parent.mkdir(parents=True)
+                src.write_text("x")
+            code, out = _run(
+                home, "delete", "gate", "--harness=droid", "--yes")
+            self.assertEqual(code, 0, out)
+            self.assertFalse(
+                (hooks_dir(home) / "droid/gate.py").exists())
+            self.assertTrue(
+                (hooks_dir(home) / "claude/gate.py").exists())
+            # An interactive y works when stdin is a tty.
+            with mock.patch.object(
+                    sys.stdin, "isatty", return_value=True), \
+                    mock.patch("quiver.prompt.read_line",
+                               return_value="y") as rl:
+                code, out = _run(home, "delete", "gate")
+            self.assertEqual(code, 0, out)
+            self.assertFalse(
+                (hooks_dir(home) / "claude/gate.py").exists())
+            rl.assert_called_once()
+
+    def test_sync_flag_errors_and_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            code, out = _run(home, "sync", "extra")
+            self.assertEqual(code, 1)
+            self.assertIn("Unexpected", out)
+            (home / ".claude").mkdir()
+            _shared_hook(home, "gate.py",
+                         "# events: [Stop]\nimport sys\nsys.exit(0)\n")
+            with mock.patch("shutil.which", return_value=None):
+                code, out = _run(home, "sync")
+            self.assertEqual(code, 0, out)
+            self.assertIn("wrote", out)
+
+    def test_delete_shared_prunes_wrapper_and_link(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            (home / ".claude/hooks").mkdir(parents=True)
+            _shared_hook(home, "gate.py",
+                         "# events: [Stop]\nimport sys\nsys.exit(0)\n")
+            with mock.patch("shutil.which", return_value=None):
+                _shared.apply_deploy(home, {})
+                link = home / ".claude/hooks/_generated"
+                link.symlink_to(
+                    _shared.generated_dir(home, "claude"),
+                    target_is_directory=True)
+                code, out = _run(home, "delete", "gate", "--yes")
+            self.assertEqual(code, 0, out)
+            self.assertFalse(
+                _shared.generated_dir(home, "claude").exists())
+            self.assertFalse(link.is_symlink())
+
+
+class NewSharedCommandTest(unittest.TestCase):
+    def test_new_shared_writes_template_and_names_targets_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            (home / ".claude").mkdir()
+            with mock.patch("shutil.which", return_value=None):
+                code, out = _run(home, "new", "shared", "watcher")
+            self.assertEqual(code, 0, out)
+            script = _shared.shared_dir(home) / "watcher.py"
+            self.assertTrue(script.is_file())
+            self.assertTrue(os.access(script, os.X_OK))
+            text = script.read_text()
+            self.assertIn("# events: [PreToolUse]", text)
+            self.assertIn("watcher:", text)
+            # One declare line per covered harness, not per event.
+            self.assertEqual(out.count(
+                "claude: ~/.claude/hooks/_generated/watcher.py"), 1)
+            self.assertIn("claude", out)
+            code, out = _run(home, "new", "shared", "watcher")
+            self.assertEqual(code, 1)
+            self.assertIn("already exists", out)
+
+    def test_new_shared_json_and_dormant(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            with mock.patch("shutil.which", return_value=None):
+                code, out = _run(home, "new", "shared", "solo", "--json")
+            self.assertEqual(code, 0, out)
+            data = json.loads(out)["data"]
+            self.assertEqual(data["tier"], "shared")
+            self.assertEqual(data["deploys_to"], [])
+            self.assertTrue(data["path"].endswith("solo.py"))
+
+
+class ShimRuntimeUnitTest(unittest.TestCase):
+    """main()/_split/edges the subprocess e2e can't reach for coverage."""
+
+    def _main(self, argv, stdin_text="{}"):
+        from quiver.hooks import shim_runtime
+        out, err = StringIO(), StringIO()
+        with mock.patch("sys.stdin", StringIO(stdin_text)), \
+                mock.patch("sys.stdout", out), \
+                mock.patch("sys.stderr", err):
+            rc = shim_runtime.main(argv)
+        return rc, out.getvalue(), err.getvalue()
+
+    @staticmethod
+    def _flat():
+        return json.dumps({
+            "harness": "cursor", "schema": "flat",
+            "event_map": {"preToolUse": "PreToolUse", "stop": "Stop"},
+            "must_print_json": True})
+
+    @staticmethod
+    def _grouped():
+        return json.dumps({"harness": "claude", "schema": "grouped"})
+
+    _script_n = 0
+
+    def _script(self, tmp, body):
+        ShimRuntimeUnitTest._script_n += 1
+        p = Path(tmp) / f"s{ShimRuntimeUnitTest._script_n}.py"
+        p.write_text(body)
+        return str(p)
+
+    def test_split_needs_separator_and_a_script(self):
+        from quiver.hooks import shim_runtime
+        for argv in (["--contract", "{}", "s.py"],
+                     ["--contract", "{}", "--"],
+                     ["--"]):
+            with self.assertRaises(SystemExit):
+                shim_runtime._split(argv)
+        contract, rest = shim_runtime._split(
+            ["--contract", '{"a": 1}', "--", "s.py", "preToolUse"])
+        self.assertEqual((contract, rest), ({"a": 1}, ["s.py", "preToolUse"]))
+
+    def test_grouped_success_passes_script_stdout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            script = self._script(
+                tmp, "import json, sys\n"
+                     "d = json.load(sys.stdin)\n"
+                     "print(json.dumps({'seen': d['event']}))\n")
+            rc, out, err = self._main(
+                ["--contract", self._grouped(), "--", script],
+                '{"hook_event_name": "Stop", "session_id": "s"}')
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(json.loads(out), {"seen": "Stop"})
+
+    def test_must_print_failures_always_answer_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            crash = self._script(tmp, "raise RuntimeError('x')\n")
+            junk = self._script(
+                tmp, "import sys\nsys.stdout.write('not json')\n")
+            deny = self._script(tmp, "import sys\nsys.exit(2)\n")
+            argv = ["--contract", self._flat(), "--"]
+            rc, out, _ = self._main(argv + [crash],
+                                    '{"hook_event_name": "preToolUse"}')
+            self.assertEqual(rc, 0)
+            self.assertEqual(json.loads(out), {"permission": "allow"})
+            rc, out, _ = self._main(argv + [junk],
+                                    '{"hook_event_name": "preToolUse"}')
+            self.assertEqual(rc, 0)
+            self.assertEqual(json.loads(out), {"permission": "allow"})
+            rc, out, _ = self._main(argv + [deny],
+                                    '{"hook_event_name": "preToolUse"}')
+            self.assertEqual(rc, 0)
+            self.assertEqual(json.loads(out),
+                             {"permission": "deny", "continue": False})
+            # A deliberate JSON answer survives a non-zero exit.
+            late = self._script(
+                tmp, "import sys\n"
+                     "sys.stdout.write('{\\\"permission\\\": \\\"ask\\\"}')\n"
+                     "sys.exit(1)\n")
+            rc, out, _ = self._main(argv + [late],
+                                    '{"hook_event_name": "preToolUse"}')
+            self.assertEqual(rc, 0)
+            self.assertEqual(json.loads(out), {"permission": "ask"})
+
+    def test_exec_error_and_bad_stdin_fail_open(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            script = self._script(tmp, "import sys\nsys.exit(0)\n")
+            with mock.patch("subprocess.run", side_effect=OSError("no")):
+                rc, out, _ = self._main(
+                    ["--contract", self._flat(), "--", script],
+                    "this is not json")
+            self.assertEqual(rc, 0)
+            # Unknown event fails open with continue, still valid JSON.
+            self.assertEqual(json.loads(out), {"continue": True})
+            # On a permission event the default is an explicit allow.
+            with mock.patch("subprocess.run", side_effect=OSError("no")):
+                rc, out, _ = self._main(
+                    ["--contract", self._flat(), "--", script],
+                    '{"hook_event_name": "preToolUse"}')
+            self.assertEqual(rc, 0)
+            self.assertEqual(json.loads(out), {"permission": "allow"})
+
+    def test_argv_event_names_a_payload_without_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            script = self._script(
+                tmp, "import json, sys\n"
+                     "d = json.load(sys.stdin)\n"
+                     "print(d['event'])\n")
+            rc, out, _ = self._main(
+                ["--contract", self._grouped(), "--", script, "Stop"],
+                '{"session_id": "s"}')
+            self.assertEqual(rc, 0)
+            self.assertEqual(out.strip(), "Stop")
+
+    def test_normalize_aliases_and_defaults(self):
+        from quiver.hooks import shim_runtime
+        norm, native = shim_runtime.normalize(
+            {"hook_event_name": "X", "error_message": "boom",
+             "source": "resume", "agent_transcript": "/t"},
+            {"harness": "h", "fields": {"tool_name": ("tool",)}}, "")
+        self.assertEqual((norm["error"], norm["session_source"],
+                          norm["agent_transcript_path"]),
+                         ("boom", "resume", "/t"))
+        norm2, _ = shim_runtime.normalize(
+            {"hook_event_name": "X", "tool": "Shell"},
+            {"harness": "h", "fields": {"tool_name": ("tool",)}}, "")
+        self.assertEqual(norm2["tool_name"], "Shell")
+
+    def test_default_and_block_output_shapes(self):
+        from quiver.hooks import shim_runtime
+        flat = {"schema": "flat"}
+        self.assertEqual(
+            shim_runtime.default_output(flat, "preToolUse"),
+            '{"permission": "allow"}')
+        self.assertEqual(
+            shim_runtime.default_output(flat, "sessionEnd"),
+            '{"continue": true}')
+        self.assertEqual(
+            shim_runtime.default_output({"schema": "grouped"}, "x"), "{}")
+        self.assertEqual(
+            shim_runtime.block_output(flat, "x"),
+            '{"permission": "deny", "continue": false}')
+        self.assertEqual(
+            shim_runtime.block_output({"schema": "grouped"}, "x"),
+            '{"decision": "block"}')
+
+    def test_permission_of_each_answer_shape(self):
+        from quiver.hooks import shim_runtime
+        cases = [
+            ({"hookSpecificOutput": {"permissionDecision": "ask"}}, "ask"),
+            ({"decision": "approve"}, "allow"),
+            ({"decision": "block"}, "deny"),
+            ({"decision": "ask"}, "ask"),
+            ({"permission": "deny"}, "deny"),
+            ({"unrelated": 1}, None),
+            ({}, None),
+        ]
+        for payload, want in cases:
+            self.assertEqual(
+                shim_runtime._permission_of(payload), want, payload)
+
+    def test_translate_flat_non_permission_events(self):
+        from quiver.hooks import shim_runtime
+        flat = {"schema": "flat"}
+        self.assertEqual(
+            shim_runtime.translate(flat, "stop", '{"continue": false}'),
+            '{"continue": false}')
+        self.assertEqual(
+            shim_runtime.translate(flat, "stop", '{"decision": "block"}'),
+            '{"continue": false}')
+        self.assertEqual(
+            shim_runtime.translate(flat, "stop", "junk"),
+            '{"continue": true}')
+
+
+class ContractOverrideTest(unittest.TestCase):
+    def test_archetype_cursor_and_cap_merges(self):
+        home = Path("/h")
+        reg = {"x": {"capabilities": {"hooks": {
+            "supported": True, "contract": "cursor",
+            "events": ["alpha"], "timeout_unit": "ms"}}}}
+        contract = contract_for(reg, "x", home)
+        self.assertEqual(contract.schema, "flat")
+        self.assertTrue(contract.must_print_json)
+        self.assertEqual(contract.events, ("alpha",))
+        self.assertEqual(contract.timeout_unit, "ms")
+        # The archetype's map still maps leftover names.
+        self.assertIn("preToolUse", contract.event_map)
+
+    def test_shim_and_supported_switches(self):
+        reg = {"claude": {"capabilities": {"hooks": {
+            "supported": True, "shim": False}}}}
+        contract = contract_for(reg, "claude", Path("/h"))
+        self.assertFalse(contract.shim_able)
+        reg = {"claude": {"capabilities": {"hooks": {
+            "supported": False}}}}
+        contract = contract_for(reg, "claude", Path("/h"))
+        self.assertFalse(contract.supported)
+        self.assertFalse(contract.shim_able)
+
+    def test_settings_and_root_and_plugin_files(self):
+        home = Path("/h")
+        reg = {"claude": {"capabilities": {"hooks": {
+            "supported": True, "root": "~/.cl/hooks",
+            "settings": ["~/.cl/hooks.json"]}}}}
+        contract = contract_for(reg, "claude", home)
+        self.assertEqual(contract.root, home / ".cl/hooks")
+        self.assertEqual(contract.settings, (home / ".cl/hooks.json",))
+
+    def test_hooks_caps_and_normalized_event_edges(self):
+        from quiver.hooks.contracts import hooks_caps, normalized_event
+        self.assertEqual(hooks_caps({"x": "nope"}, "x"), {})
+        self.assertEqual(hooks_caps({"x": {}}, "x"), {})
+        self.assertEqual(hooks_caps({}, "x"), {})
+        contract = contract_for({}, "claude", Path("/h"))
+        self.assertEqual(normalized_event(contract, "PreToolUse"),
+                         "PreToolUse")
+        self.assertEqual(normalized_event(contract, "Weird"), "Weird")
+
+
+class PendingDeployTest(unittest.TestCase):
+    def test_pending_counts_missing_and_stale(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            (home / ".claude").mkdir()
+            _shared_hook(home, "gate.py",
+                         "# events: [Stop]\nimport sys\nsys.exit(0)\n")
+            with mock.patch("shutil.which", return_value=None):
+                # Runtime + one stub missing.
+                self.assertEqual(_shared.pending_deploy(home, {}), 2)
+                _shared.apply_deploy(home, {})
+                self.assertEqual(_shared.pending_deploy(home, {}), 0)
+                stub = _shared.generated_dir(home, "claude") / "gate.py"
+                stub.write_text("corrupted")
+                self.assertEqual(_shared.pending_deploy(home, {}), 1)
+
+    def test_dormant_shared_script_rows_as_skipped(self):
+        from quiver.hooks.inventory import shared_rows
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            _shared_hook(home, "quiet.py", "import sys\n")
+            statuses = plan_hooks(home)
+            [row] = shared_rows(home, {}, statuses, {})
+            self.assertEqual(row.harness, "shared")
+            self.assertEqual(row.state, "skipped")
+            self.assertIn("no events", row.detail)
+
+
+class ApplyHookStatusBranchTest(unittest.TestCase):
+    def test_conflict_with_force_backs_up_then_links(self):
+        from quiver.init.hooks import apply_hook_status
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            src = hooks_dir(home) / "claude/gate.py"
+            src.parent.mkdir(parents=True)
+            src.write_text("hub")
+            dest = home / ".claude/hooks/gate.py"
+            dest.parent.mkdir(parents=True)
+            dest.write_text("mine")
+            [status] = plan_hooks(home)
+            self.assertEqual(status.state, "conflict")
+            self.assertEqual(apply_hook_status(status, home), "blocked")
+            self.assertTrue(dest.is_file() and not dest.is_symlink())
+            self.assertEqual(
+                apply_hook_status(status, home, force=True), "linked")
+            self.assertTrue(dest.is_symlink())
+            # The pre-replacement copy lands under backups_dir_for with a
+            # flattened name.
+            backups = list(
+                (home / ".quiver/backups").glob("*gate*"))
+            self.assertTrue(backups)
+
+    def test_absorb_replaces_an_identical_copy_with_backup(self):
+        from quiver.init.hooks import apply_hook_status
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            src = hooks_dir(home) / "claude/gate.py"
+            src.parent.mkdir(parents=True)
+            src.write_text("same bytes")
+            dest = home / ".claude/hooks/gate.py"
+            dest.parent.mkdir(parents=True)
+            dest.write_text("same bytes")
+            [status] = plan_hooks(home)
+            self.assertEqual(status.state, "absorb")
+            self.assertEqual(apply_hook_status(status, home), "linked")
+            self.assertTrue(dest.is_symlink())
+
+    def test_disabled_unlink_only_takes_our_symlink(self):
+        from quiver.init.hooks import apply_hook_status
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            src = hooks_dir(home) / "claude/gate.py"
+            src.parent.mkdir(parents=True)
+            src.write_text("x")
+            other = home / "other.py"
+            other.write_text("x")
+            dest = home / ".claude/hooks/gate.py"
+            dest.parent.mkdir(parents=True)
+            # A link that does not resolve to our source is left alone.
+            dest.symlink_to(other)
+            _shared.set_disabled(src.parent, "gate.py", True)
+            [status] = plan_hooks(home)
+            self.assertEqual(
+                apply_hook_status(status, home), "ignored")
+            self.assertTrue(dest.is_symlink())
+            # Pointing at ours: the link comes off.
+            dest.unlink()
+            dest.symlink_to(src)
+            self.assertEqual(
+                apply_hook_status(status, home), "unlinked")
+            self.assertFalse(dest.is_symlink())
+
+
+class ManagedSettingsTest(unittest.TestCase):
+    def test_a_symlinked_settings_file_is_a_note_not_drift(self):
+        from quiver.hooks.inventory import hook_findings
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            real = home / "nix/settings.json"
+            real.parent.mkdir(parents=True)
+            real.write_text(json.dumps({"hooks": {}}))
+            link = home / ".claude/settings.json"
+            link.parent.mkdir(parents=True)
+            link.symlink_to(real)
+            findings = hook_findings(home)
+            kinds = {f.kind for f in findings}
+            self.assertIn("managed", kinds)
+            # Doctor keeps the note out of its actionable warnings.
+            from quiver.harness.drift import check_hook_drift
+            self.assertFalse(
+                [f for f in check_hook_drift(home)
+                 if "managed" in f.message])
+
+
+class InitSharedDeployTest(unittest.TestCase):
+    def test_check_reports_pending_and_a_run_writes(self):
+        from quiver.init.commands import run_init
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            (home / ".claude").mkdir()
+            _shared_hook(home, "gate.py",
+                         "# events: [Stop]\nimport sys\nsys.exit(0)\n")
+            with mock.patch("shutil.which", return_value=None):
+                run = run_init(
+                    home, check_only=True, quiet=True, ask=False)
+            self.assertTrue(
+                any("generated hook file(s)" in s
+                    for s in run.scaffold), run.scaffold)
+            self.assertFalse(_shared.runtime_file(home).exists())
+            with mock.patch("shutil.which", return_value=None):
+                run = run_init(home, quiet=True, ask=False, yes=True)
+            self.assertTrue(_shared.runtime_file(home).exists())
+            self.assertTrue(
+                any("shared hooks" in s for s in run.scaffold))
+
 
 if __name__ == "__main__":
     unittest.main()
