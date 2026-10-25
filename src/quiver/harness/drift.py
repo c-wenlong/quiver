@@ -21,6 +21,10 @@ have quietly drifted apart:
   * nothing at the top level of the repo or ``~/.quiver`` should be a
     symlink pointing at a target that no longer exists (``DANGLING
     SYMLINKS``)
+  * hook declarations, link states and the files on disk should agree:
+    a settings file naming a script that exists nowhere, a hub script
+    linked but never declared, and a hub script never linked in are all
+    drift (``swe hooks check`` prints the same findings)
 
 Every check is read-only and cheap — no network, no subprocesses, a handful
 of stats at most — so it is safe to run on every ``swe doctor`` invocation
@@ -510,6 +514,29 @@ def _default_repo_root() -> Path:
 
 
 # ---------------------------------------------------------------------------
+# 5. HOOK DECLARATIONS vs LINKS vs DISK
+# ---------------------------------------------------------------------------
+
+
+def check_hook_drift(home: Path) -> list[Finding]:
+    """``swe hooks check``'s findings, re-wrapped for doctor.
+
+    The checks live in ``hooks/inventory.py`` (declared-but-missing,
+    linked-but-undeclared, unlinked); this only adapts them to Finding.
+    A hook inventory that cannot run at all — a corrupt registry or
+    linkignore — is itself one warning, never a crash for doctor.
+    """
+    from quiver.hooks.inventory import hook_findings
+
+    try:
+        return [Finding("warn", "hooks", d.message)
+                for d in hook_findings(home)]
+    except Exception as exc:
+        return [Finding("warn", "hooks",
+                        f"hook drift check could not run: {exc}")]
+
+
+# ---------------------------------------------------------------------------
 # Wiring: real data in, one list of findings out.
 # ---------------------------------------------------------------------------
 
@@ -542,4 +569,5 @@ def run_drift_checks(*, home: Path | None = None, repo_root: Path | None = None)
         registry, skill_roots=_real_skill_roots(), hook_roots=_real_hook_roots(), home=home,
     )
     findings += check_dangling_symlinks(_real_symlink_dirs(repo_root, home))
+    findings += check_hook_drift(home)
     return findings
