@@ -232,17 +232,17 @@ private struct ModelsContent: View {
         return "No usage in this period."
     }
 
-    /// No key: point at Settings › Services instead of an empty chart.
+    /// No key: point at Settings › Integrations instead of an empty chart.
     private var noKey: some View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Add an Artificial Analysis key in Settings › Services")
+                Text("Add an Artificial Analysis key in Settings › Integrations")
                     .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
                 Text("The Models page needs a free Artificial Analysis API key to download benchmarks. 1,000 requests a day are free.")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 HStack(spacing: 12) {
-                    Button("Open Settings › Services") {
-                        settingsSection = SettingsSection.services.rawValue
+                    Button("Open Settings › Integrations") {
+                        settingsSection = SettingsSection.integrations.rawValue
                         app.selection = .settings
                     }
                     .secondaryButton()

@@ -6,9 +6,9 @@ import Testing
     @Test func subNavIsGroupedAsApproved() {
         #expect(SettingsGroup.allCases.map(\.title) == ["App", "Usage", "Advanced"])
         #expect(SettingsGroup.app.sections == [.general, .sidebar, .notifications])
-        #expect(SettingsGroup.usage.sections == [.providers, .services])
+        #expect(SettingsGroup.usage.sections == [.providers])
         #expect(SettingsGroup.advanced.sections == [.integrations, .files, .experimental])
-        #expect(SettingsGroup.order == [.general, .sidebar, .notifications, .providers, .services, .integrations, .files, .experimental])
+        #expect(SettingsGroup.order == [.general, .sidebar, .notifications, .providers, .integrations, .files, .experimental])
     }
 
     @Test func everySectionHasATitleSymbolAndADescription() {
@@ -24,9 +24,9 @@ import Testing
         #expect(SettingsSection.general.step(1) == .sidebar)
         #expect(SettingsSection.sidebar.step(1) == .notifications)
         #expect(SettingsSection.notifications.step(1) == .providers)
-        #expect(SettingsSection.services.step(1) == .integrations)
+        #expect(SettingsSection.providers.step(1) == .integrations)
         #expect(SettingsSection.integrations.step(1) == .files)
-        #expect(SettingsSection.integrations.step(-1) == .services)
+        #expect(SettingsSection.integrations.step(-1) == .providers)
         #expect(SettingsSection.general.step(-1) == .general)
         #expect(SettingsSection.files.step(1) == .experimental)
         #expect(SettingsSection.experimental.step(1) == .experimental)
@@ -38,9 +38,10 @@ import Testing
         // Preferences and Updates folded into General.
         #expect(SettingsSection(saved: "preferences") == .general)
         #expect(SettingsSection(saved: "updates") == .general)
-        // GitHub and Remote folded into Integrations.
+        // GitHub, Remote and Services folded into Integrations.
         #expect(SettingsSection(saved: "github") == .integrations)
         #expect(SettingsSection(saved: "remote") == .integrations)
+        #expect(SettingsSection(saved: "services") == .integrations)
         // Doctor folded into General.
         #expect(SettingsSection(saved: "doctor") == .general)
         // Paths was renamed Files.

@@ -18,9 +18,12 @@ struct RemoteSection: View {
     private var setup: RemoteSetupModel { app.remoteSetup }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            hubCard
-            devicesCard
+        SettingsCard {
+            cardHeader("Hub", detail: "The swe your phones reach over Tailscale.")
+            hubRows
+            SettingsDivider()
+            cardHeader("Paired devices", detail: "Phones signed in to the hub.")
+            deviceRows
         }
         .task(id: app.swePath) {
             let remote = RemoteModel(swe: app.swe)
@@ -75,34 +78,42 @@ struct RemoteSection: View {
         return "Next step: \(next.title)"
     }
 
-    private var hubCard: some View {
-        Card(title: "Hub") {
-            switch model?.status ?? .idle {
-            case .idle, .loading:
-                SettingRow(title: "Checking hub…", detail: "swe remote status") {
-                    ProgressView().controlSize(.small)
+    /// A section's title and one-line help inside the card, like the
+    /// per-service headers in Integrations › Services.
+    private func cardHeader(_ title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(Theme.rowTitle).foregroundStyle(Theme.textStrong)
+            Text(detail).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+        }
+        .padding(.vertical, 14)
+    }
+
+    @ViewBuilder private var hubRows: some View {
+        switch model?.status ?? .idle {
+        case .idle, .loading:
+            SettingRow(title: "Checking hub…", detail: "swe remote status") {
+                ProgressView().controlSize(.small)
+            }
+        case .failed(let message):
+            SettingRow(title: "Status failed", detail: message) {
+                Button("Try again", action: reload).secondaryButton()
+            }
+        case .loaded(let status):
+            if status.hub.ok {
+                SettingRow(title: "Hub running",
+                           detail: hubDetail(status)) {
+                    Badge("Online")
                 }
-            case .failed(let message):
-                SettingRow(title: "Status failed", detail: message) {
-                    Button("Try again", action: reload).secondaryButton()
-                }
-            case .loaded(let status):
-                if status.hub.ok {
-                    SettingRow(title: "Hub running",
-                               detail: hubDetail(status)) {
-                        Badge("Online")
-                    }
-                    if setupReport?.ready == false {
-                        Divider().overlay(Theme.border)
-                        setupRow
-                    }
-                } else if setupReport?.ready == false {
+                if setupReport?.ready == false {
+                    SettingsDivider()
                     setupRow
-                } else {
-                    SettingRow(title: "No hub reachable",
-                               detail: "Run `swe remote serve` on the machine that should host your phone sessions, then refresh.") {
-                        Button("Refresh", action: reload).secondaryButton()
-                    }
+                }
+            } else if setupReport?.ready == false {
+                setupRow
+            } else {
+                SettingRow(title: "No hub reachable",
+                           detail: "Run `swe remote serve` on the machine that should host your phone sessions, then refresh.") {
+                    Button("Refresh", action: reload).secondaryButton()
                 }
             }
         }
@@ -126,33 +137,30 @@ struct RemoteSection: View {
         return "\(s / 86400)d \((s % 86400) / 3600)h"
     }
 
-    private var devicesCard: some View {
-        Card(title: "Paired devices") {
-            switch model?.status ?? .idle {
-            case .idle, .loading:
-                SettingRow(title: "Loading devices…", detail: "") {
-                    ProgressView().controlSize(.small)
+    @ViewBuilder private var deviceRows: some View {
+        switch model?.status ?? .idle {
+        case .idle, .loading:
+            SettingRow(title: "Loading devices…", detail: "") {
+                ProgressView().controlSize(.small)
+            }
+        case .failed:
+            EmptyView()
+        case .loaded(let status):
+            let live = status.devices.filter { !$0.revoked }
+            if live.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("No devices paired yet.")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    pairButton
                 }
-            case .failed:
-                EmptyView()
-            case .loaded(let status):
-                let live = status.devices.filter { !$0.revoked }
-                if live.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("No devices paired yet.")
-                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                        pairButton
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(live.enumerated()), id: \.element.id) { index, device in
-                            if index > 0 { Divider().overlay(Theme.border) }
-                            DeviceRow(device: device, model: model)
-                        }
-                        Divider().overlay(Theme.border)
-                        pairButton.padding(.vertical, 10)
-                    }
+                .padding(.vertical, 14)
+            } else {
+                ForEach(Array(live.enumerated()), id: \.element.id) { index, device in
+                    if index > 0 { SettingsDivider() }
+                    DeviceRow(device: device, model: model)
                 }
+                SettingsDivider()
+                pairButton.padding(.vertical, 10)
             }
         }
     }
