@@ -75,6 +75,8 @@ jobs:
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Install build tooling
         run: python3 -m pip install --upgrade build twine
@@ -161,8 +163,26 @@ jobs:
           ref: refs/tags/${{ env.RELEASE_TAG }}
           fetch-depth: 0
 
+      - name: Cache SwiftPM
+        # .build carries the incremental build products; the shared module
+        # cache under ~/Library/Caches holds the fetched dependencies.
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            app/.build
+          key: ${{ runner.os }}-swiftpm-${{ hashFiles('app/Package.swift', 'app/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-
+
       - name: Toolchain
         run: swift --version
+
+      - name: Unit tests
+        # The `app` job moved off ci.yml's PR path (issue #749); the tag
+        # build runs the Swift suite here instead, before any signing
+        # setup, so a test failure fails fast and blocks the release.
+        run: cd app && swift test
 
       - name: Import the signing certificate
         id: cert
@@ -348,9 +368,62 @@ jobs:
       - name: nix flake check
         run: nix flake check --print-build-logs
 
+  macos-check:
+    # The macOS install verification ci.yml used to run on every PR as
+    # `macos-smoke`, relocated with the rest of the native lane (issue
+    # #749).  On the tag it checks the shipping artifact rather than an
+    # editable install: the built wheel installed into a clean venv,
+    # exercised from /tmp so src/ cannot shadow it, then the path_health
+    # unittest only a Darwin box can run for real — the Darwin-only paths
+    # behind the Homebrew npm probe, the Cursor state.vscdb location and
+    # the Claude Desktop config path.
+    name: Verify the wheel on macOS
+    needs: build
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Download the distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Install the built wheel and run it
+        # Same gate the `build` job applies on Linux: a clean venv,
+        # commands run from /tmp against a throwaway HOME so a missing
+        # packaged module or broken entry point fails the tag build.
+        run: |
+          python3 -m venv /tmp/relcheck
+          /tmp/relcheck/bin/pip install dist/quiver-*.whl
+          test_home="$(mktemp -d)"
+          cd /tmp
+          HOME="$test_home" /tmp/relcheck/bin/swe --help
+          HOME="$test_home" /tmp/relcheck/bin/swe list
+          HOME="$test_home" /tmp/relcheck/bin/swe session --help
+          HOME="$test_home" /tmp/relcheck/bin/swe config --help
+          HOME="$test_home" /tmp/relcheck/bin/swe report --help
+
+      - name: Exercise macOS-sensitive paths
+        # Runs against the installed wheel: `import quiver` resolves to
+        # site-packages because the src/ layout keeps the package out of
+        # the checkout root's import path.
+        run: |
+          /tmp/relcheck/bin/python -m unittest discover -s tests -p 'test_path_health.py' -v
+
   attach-to-release:
     name: Attach artifacts to the GitHub release
-    needs: [build, macos-app, nix]
+    needs: [build, macos-app, nix, macos-check]
     runs-on: ubuntu-latest
     permissions:
       # Only this job gets a writable token, and only for release assets.
