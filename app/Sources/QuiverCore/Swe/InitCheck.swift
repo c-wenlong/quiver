@@ -47,11 +47,15 @@ public struct InitCheck: Decodable, Sendable, Equatable {
 
 /// The link-state vocabulary ARCHITECTURE.md defines, kept as a string so a
 /// state added to swe later still decodes.
-public struct LinkState: RawRepresentable, Decodable, Sendable, Hashable {
+public struct LinkState: RawRepresentable, Codable, Sendable, Hashable {
     public let rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
     public init(from decoder: Decoder) throws {
         rawValue = try decoder.singleValueContainer().decode(String.self)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
     }
 
     public static let linked = LinkState(rawValue: "linked")

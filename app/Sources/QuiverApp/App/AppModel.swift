@@ -427,6 +427,10 @@ final class AppModel {
     /// The Settings > General Updates card's build and release state.
     let updates: UpdatesModel
     let plugins: PluginsModel
+    /// The Hooks page's list: the scripts under ~/.quiver/hooks, their link
+    /// states and the check's findings. It asks for the current swe per
+    /// call, so a path change needs no rebuild here.
+    let hooks: HooksModel
     /// Every plugin in every marketplace: the Plugins page's Explore tab,
     /// and what the Skills page moves plugin skills out by.
     let pluginCatalog: PluginCatalogModel
@@ -711,6 +715,7 @@ final class AppModel {
         let pluginWork = PluginWork()
         plugins = PluginsModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugins.json")),
                                work: pluginWork)
+        hooks = HooksModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/hooks.json")))
         pluginCatalog = PluginCatalogModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugin-catalog.json")),
                                            work: pluginWork)
         updates = UpdatesModel(
@@ -839,6 +844,7 @@ final class AppModel {
             Task { [skills] in await skills.restore() },
             Task { [mcp] in await mcp.restore() },
             Task { [plugins] in await plugins.restore() },
+            Task { [hooks] in await hooks.restore() },
             Task { [pluginCatalog] in await pluginCatalog.restore() },
         ]
         if let cursorFeed { watchers.append(Task { await cursorFeed.keepFresh() }) }

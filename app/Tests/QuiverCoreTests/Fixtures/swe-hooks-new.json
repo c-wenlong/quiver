@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "data": {
+    "path": "/tmp/quiver-fixture-home/.quiver/hooks/claude/guard.py",
+    "harness": "claude",
+    "command": "~/.claude/hooks/guard.py",
+    "settings": [
+      "/tmp/quiver-fixture-home/.claude/settings.json"
+    ],
+    "stanza": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"matcher\": \"*\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"~/.claude/hooks/guard.py\",\n            \"timeout\": 10\n          }\n        ]\n      }\n    ]\n  }\n}"
+  }
+}

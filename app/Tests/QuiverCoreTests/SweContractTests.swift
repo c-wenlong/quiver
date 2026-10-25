@@ -262,6 +262,109 @@ import Testing
         #expect(result.harness.displayName == "Codex")
     }
 
+    /// Captured from `swe hooks list --json` against a throwaway HOME.
+    @Test func hooksListDecodesStatesAndDeclarations() async throws {
+        let (swe, runner) = try client("swe-hooks")
+        let inventory = try await swe.hooksList()
+        #expect(runner.calls.last == ["hooks", "list", "--json"])
+        #expect(inventory.hooks.count == 7)
+        // The current swe sends no tier/enabled/events_supported yet:
+        // they decode to nil rather than failing the row.
+        let beacon = try #require(inventory.hooks.first)
+        #expect(beacon.script == "beacon.py")
+        #expect(beacon.harness == "claude")
+        #expect(beacon.state == .linked)
+        #expect(beacon.tier == nil)
+        #expect(beacon.enabled == nil)
+        #expect(beacon.eventsSupported == nil)
+        #expect(beacon.isUndeclared)
+
+        let guard_ = try #require(inventory.hooks.first { $0.script == "prose-guard.py" })
+        let declared = try #require(guard_.declared.first)
+        #expect(declared.label == "PreToolUse:Bash")
+        #expect(declared.timeout == 10)
+        #expect(declared.command == "~/.claude/hooks/prose-guard.py")
+        #expect(declared.settings == "/tmp/quiver-fixture-home/.claude/settings.json")
+
+        let block = try #require(inventory.hooks.first { $0.script == "block-rm.py" })
+        #expect(block.declared.first?.label == "SessionStart")
+        #expect(block.declared.first?.timeout == nil)
+        #expect(block.state == .create)
+
+        let probe = try #require(inventory.hooks.first { $0.script == "probe.py" })
+        #expect(probe.state == .skipped)
+        #expect(probe.detail.contains("no hooks root"))
+        let legacy = try #require(inventory.hooks.first { $0.script == "legacy.sh" })
+        #expect(legacy.state == .ignored)
+    }
+
+    /// `swe hooks check --json` exits 1 while findings remain; the payload
+    /// still decodes through `allowFailure`.
+    @Test func hooksCheckDecodesThroughItsNonzeroExit() async throws {
+        let runner = FakeRunner(.init(status: 1, stdout: try fixture("swe-hooks-check"), stderr: ""))
+        let swe = SweClient(runner: runner)
+        let report = try await swe.hooksCheck()
+        #expect(runner.calls.last == ["hooks", "check", "--json"])
+        #expect(report.findings.map(\.kind) == ["declared-missing", "undeclared",
+                                                "unlinked", "unlinked", "unlinked"])
+        let ghost = try #require(report.findings.first)
+        #expect(ghost.harness == "claude")
+        #expect(ghost.kindTitle == "Declared, missing")
+        #expect(report.findings[1].kindTitle == "Undeclared")
+        #expect(report.findings[2].kindTitle == "Unlinked")
+    }
+
+    /// Captured from `swe hooks info prose-guard --json`.
+    @Test func hooksInfoDecodesPlacementsAndSummary() async throws {
+        let (swe, runner) = try client("swe-hooks-info")
+        let info = try await swe.hookInfo(name: "prose-guard")
+        #expect(runner.calls.last == ["hooks", "info", "prose-guard", "--json"])
+        #expect(info.script == "prose-guard")
+        let claude = try #require(info.harnesses.first)
+        #expect(claude.harness == "claude")
+        #expect(claude.state == .linked)
+        #expect(claude.summary == "Blocks prompt submissions that ask for edits to prose files.")
+        #expect(claude.declared.first?.label == "PreToolUse:Bash")
+    }
+
+    /// Captured from `swe hooks new claude guard --json`: the script, the
+    /// command a declaration runs, and the stanza to paste.
+    @Test func hooksNewReplyDecodesTheStanza() async throws {
+        let (swe, runner) = try client("swe-hooks-new")
+        let reply = try await swe.newHook(harness: "claude", name: "guard")
+        #expect(runner.calls.last == ["hooks", "new", "claude", "guard", "--json"])
+        #expect(reply.path.hasSuffix(".quiver/hooks/claude/guard.py"))
+        #expect(reply.command == "~/.claude/hooks/guard.py")
+        #expect(reply.settings == ["/tmp/quiver-fixture-home/.claude/settings.json"])
+        #expect(reply.stanza.contains("PreToolUse"))
+    }
+
+    /// A newer swe's `tier`, `enabled` and `events_supported` decode when
+    /// present; an unlisted tier word reads as nil, never a failed row.
+    @Test func hooksListDecodesTheFutureMetadata() async throws {
+        let runner = FakeRunner(.init(status: 0, stdout: Data(#"""
+            {"schema": 1, "data": {"hooks": [
+              {"script": "a.py", "harness": "shared",
+               "source": "/h/.quiver/hooks/shared/a.py",
+               "destination": "/h/.claude/hooks/a.py",
+               "state": "linked", "detail": "", "declared": [],
+               "tier": "shared", "enabled": true,
+               "events_supported": ["PreToolUse"]},
+              {"script": "b.py", "harness": "claude",
+               "source": "/h/.quiver/hooks/claude/b.py",
+               "destination": "/h/.claude/hooks/b.py",
+               "state": "create", "detail": "", "declared": [],
+               "tier": "unlisted-word"}
+            ]}}
+            """#.utf8), stderr: ""))
+        let inventory = try await SweClient(runner: runner).hooksList()
+        let a = try #require(inventory.hooks.first)
+        #expect(a.tier == .shared)
+        #expect(a.enabled == true)
+        #expect(a.eventsSupported == ["PreToolUse"])
+        #expect(inventory.hooks.last?.tier == nil)
+    }
+
     /// Captured from `swe install --json` against a throwaway HOME.
     @Test func installCatalogDecodesMethodsAndRegistration() async throws {
         let (swe, runner) = try client("swe-install")
