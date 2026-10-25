@@ -218,21 +218,36 @@ messages never include a value.
 
 ### Add server
 
-The header's **Add server** opens the Mac app's "Add a server" sheet:
-**Server** (Name; Kind, Command or URL; the command line with the app's
-"command npx · args …" hint and its shell-like splitting, or the URL with
-HTTP or SSE), **Env vars** or **Headers** (a row per key and value, with a
-Secret switch that turns itself on for a key named like a credential until
-flipped by hand, and "saved as ${GITHUB_GITHUB_TOKEN}" under a secret),
-and **Where** (Add to, defaulting to the compared harnesses, with All
-active and None; "Always saved to the Quiver hub too"; Replace if it
-already exists). A secret's value is a password field. On success the
-sheet closes and the list repaints with "Added github in Quiver hub,
-Codex." above it.
+The header's **Add server** opens the Mac app's "Add a server" sheet. It
+starts with where the server runs, in the grid's words: **Local: runs on
+<hub machine>** (a command the hub's harnesses launch) or **Remote** (a
+URL, reached from any machine). Only that kind's fields show.
+
+- **Local**: Name; the command line with the app's "command npx · args …"
+  hint and its shell-like splitting; **Env vars**, a row per key and value
+  with a Secret switch that turns itself on for a key named like a
+  credential until flipped by hand, and "saved as ${GITHUB_GITHUB_TOKEN}"
+  under a secret. A working folder isn't offered: the hub's server shape
+  has no `cwd`.
+- **Remote**: Name; the URL with HTTP or SSE; **Sign-in**, one of None,
+  **Bearer token** (a password field with an eye, stored as a secret and
+  sent as `Authorization: Bearer ${SERVER_TOKEN}`) and **OAuth** (nothing
+  is saved: each harness signs in the first time it connects, if it
+  supports OAuth); and **Other headers**, rows like the env vars.
+- **Where**: Add to, defaulting to the compared harnesses, with All active
+  and None; "Always saved to the Quiver hub too"; Replace if it already
+  exists. For a Remote server a harness that can't take it is switched off
+  with the reason: Claude Desktop takes local servers only in its config,
+  and opencode and Codex can't use an SSE server. The page reads this from
+  `caps` (`{harness: {"remote", "sse"}}`) in the payload.
+
+A secret's value is a password field. On success the sheet closes and the
+list repaints with "Added github in Quiver hub, Codex." above it.
 
 `POST /v1/app/mcp/add` with `{"name", "kind": "command" | "url",
-"command": [words] | "url" + "transport": "http" | "sse", "vars": [{"key",
-"value", "secret"}], "targets": [harnesses], "force"}` runs `swe mcp add`
+"command": [words] | "url" + "transport": "http" | "sse" + "sign_in":
+"none" | "bearer" | "oauth" (+ "token"), "vars": [{"key", "value",
+"secret"}], "targets": [harnesses], "force"}` runs `swe mcp add`
 in process: `mcp/cli.py`'s `add_plan` (the definition and targets,
 checked) and `add_server` (the writes), the two halves the CLI shares.
 A secret var's value goes to `~/.quiver/secrets/mcp/.api_keys` through

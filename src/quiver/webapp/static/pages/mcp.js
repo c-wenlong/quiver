@@ -1039,6 +1039,7 @@ function mcpStartAdd() {
   if (!d) return;
   const active = mcpActive(d).filter((h) => !mcpPage.hidden.has(h));
   mcpPage.add = { name: "", kind: "command", line: "", url: "", sse: false, vars: [mcpNewVar()],
+    signIn: "none", token: "", showToken: false,
     targets: new Set(active), force: false, working: false, error: null, picking: false };
   mcpOpenAdd("#mcp-add-name");
 }
@@ -1053,29 +1054,64 @@ function mcpAddHint(a) {
 function mcpAddReady(a) {
   if (a.working || !MCP_NAME_RE.test(a.name)) return false;
   if (a.kind === "command") { const w = mcpCommandWords(a.line); return !!(w && w.length); }
-  return !!a.url.trim();
+  return !!a.url.trim() && (a.signIn !== "bearer" || !!a.token.trim());
 }
+
+/* Remote's Sign-in: none, a bearer token (a password field, stored as a
+ * secret and sent as Authorization: Bearer ${SERVER_TOKEN}), or OAuth,
+ * which writes nothing: each harness signs in when it first connects. */
+function mcpSignInHtml(a, dis) {
+  const options = [["none", "None"], ["bearer", "Bearer token"], ["oauth", "OAuth"]];
+  const ref = mcpSecretName(a.name || "SERVER", "TOKEN");
+  let detail = "";
+  if (a.signIn === "bearer") {
+    detail = `<span class="mcp-add-row"><input class="field mono mcp-add-value" id="mcp-add-token" type="${a.showToken ? "text" : "password"}"
+        autocomplete="new-password" spellcheck="false" placeholder="token" aria-label="Bearer token" value="${esc(a.token)}"${dis}>
+      <button type="button" class="icon-button mcp-secret-icon" id="mcp-add-token-show" aria-label="${a.showToken ? "Hide" : "Show"} the token" title="${a.showToken ? "Hide" : "Show"} the token">${mcpSvg(a.showToken ? "eyeOff" : "eye")}</button></span>
+      <span class="caption mcp-muted mono" id="mcp-add-token-ref">Sent as Authorization: Bearer \${${esc(ref)}}</span>`;
+  } else if (a.signIn === "oauth") {
+    detail = `<span class="caption mcp-muted">Nothing is saved: each harness signs in the first time it connects, if it supports OAuth.</span>`;
+  }
+  return `<div class="mcp-add-field"><span class="caption">Sign-in</span>
+    <div class="tabs mcp-add-kind" role="tablist">${options.map(([id, title]) =>
+      `<button type="button" class="tab${a.signIn === id ? " selected" : ""}" role="tab" aria-selected="${a.signIn === id}" data-mcp-add-signin="${id}"${dis}>${title}</button>`).join("")}</div>
+    ${detail}</div>`;
+}
+
+/* Why a harness can't take this server, or "" when it can: a local-only
+ * config can't hold a URL server, and some formats have no SSE marker. */
+function mcpAddWhyNot(a, h) {
+  if (a.kind !== "url") return "";
+  const caps = (mcpPage.data.caps || {})[h];
+  if (!caps) return "";
+  if (!caps.remote) return "takes local servers only (add remote ones in the app)";
+  if (a.sse && !caps.sse) return "can't use an SSE server";
+  return "";
+}
+
+const mcpAddFits = (a, h) => !mcpAddWhyNot(a, h);
 
 function mcpAddHtml() {
   const a = mcpPage.add, d = mcpPage.data;
   const dis = a.working ? " disabled" : "";
   const hint = mcpAddHint(a);
   const command = a.kind === "command";
-  const server = `<div class="card-title">Server</div>
-    <div class="mcp-add-row">
-      <label class="mcp-add-field"><span class="caption">Name</span>
-        <input class="field" id="mcp-add-name" placeholder="github" autocomplete="off" spellcheck="false" value="${esc(a.name)}"${dis}></label>
-      <div class="mcp-add-field"><span class="caption">Kind</span>
-        <div class="tabs mcp-add-kind" role="tablist">${[["command", "Command"], ["url", "URL"]].map(([id, title]) =>
-          `<button type="button" class="tab${a.kind === id ? " selected" : ""}" role="tab" aria-selected="${a.kind === id}" data-mcp-add-kind="${id}"${dis}>${title}</button>`).join("")}</div></div>
-    </div>
+  // The grid's words: Local runs on the machine whose harnesses launch it.
+  const kinds = [["command", mcpLocalTitle(), "A command its harnesses launch"],
+    ["url", "Remote", "A URL, reached from any machine"]];
+  const server = `<div class="mcp-add-kinds" role="radiogroup" aria-label="Where the server runs">${kinds.map(([id, title, sub]) =>
+      `<button type="button" class="mcp-add-kind-card${a.kind === id ? " selected" : ""}" role="radio" aria-checked="${a.kind === id}" data-mcp-add-kind="${id}"${dis}>
+        <span class="mcp-add-kind-title">${esc(title)}</span><span class="caption">${esc(sub)}</span></button>`).join("")}</div>
+    <label class="mcp-add-field"><span class="caption">Name</span>
+      <input class="field" id="mcp-add-name" placeholder="${command ? "github" : "linear"}" autocomplete="off" spellcheck="false" value="${esc(a.name)}"${dis}></label>
     ${command ? `<label class="mcp-add-field"><span class="caption">Command</span>
         <input class="field mono" id="mcp-add-line" placeholder="npx -y @modelcontextprotocol/server-github" autocomplete="off" spellcheck="false" value="${esc(a.line)}"${dis}>
         <span class="caption mono${hint.problem ? " warn" : ""}" id="mcp-add-hint">${esc(hint.text)}</span></label>`
       : `<div class="mcp-add-field"><label class="caption" for="mcp-add-url">URL</label>
         <div class="mcp-add-row"><input class="field mono" id="mcp-add-url" placeholder="https://mcp.example.com/mcp" autocomplete="off" spellcheck="false" value="${esc(a.url)}"${dis}>
         <div class="tabs mcp-add-kind" role="tablist">${[[false, "HTTP"], [true, "SSE"]].map(([v, title]) =>
-          `<button type="button" class="tab${a.sse === v ? " selected" : ""}" role="tab" aria-selected="${a.sse === v}" data-mcp-add-sse="${v}"${dis}>${title}</button>`).join("")}</div></div></div>`}`;
+          `<button type="button" class="tab${a.sse === v ? " selected" : ""}" role="tab" aria-selected="${a.sse === v}" data-mcp-add-sse="${v}"${dis}>${title}</button>`).join("")}</div></div></div>
+      ${mcpSignInHtml(a, dis)}`}`;
   const vars = a.vars.map((v) => {
     const hidden = v.secret && !v.show;
     const saved = v.secret && v.key.trim() && !v.value.startsWith("${")
@@ -1091,25 +1127,31 @@ function mcpAddHtml() {
       </div>${saved}</div>`;
   }).join("");
   const where = d.machine ? ` on ${esc(d.machine)}` : "";
-  const variables = `<hr class="mcp-rule"><div class="card-title">${command ? "Env vars" : "Headers"}</div>
+  const variables = `<hr class="mcp-rule"><div class="card-title">${command ? "Env vars" : "Other headers"}</div>
     <div class="mcp-add-vars">${vars}</div>
     <div><button type="button" class="mcp-sheet-button" id="mcp-add-var"${dis}>${mcpSvg("plus")}<span>${command ? "Add variable" : "Add header"}</span></button></div>
     <p class="caption mcp-muted">Secret values go to ~/.quiver/secrets/mcp/.api_keys${where}. The Quiver hub keeps a \${NAME} reference; the harnesses you add it to get the value, as a sync gives them.</p>`;
-  const active = mcpActive(d);
-  const picked = d.harnesses.filter((h) => a.targets.has(h)).length;
+  const fits = (h) => mcpAddFits(a, h);
+  const picked = d.harnesses.filter((h) => a.targets.has(h) && fits(h)).length;
   const face = `${picked} of ${d.harnesses.length} ${d.harnesses.length === 1 ? "harness" : "harnesses"}`;
   const checklist = a.picking ? `<div class="mcp-add-picker" role="group" aria-label="Add to">
       <div class="mcp-add-picker-top"><button type="button" class="mcp-sheet-button" data-mcp-add-all="active">All active</button>
         <button type="button" class="mcp-sheet-button" data-mcp-add-all="none">None</button></div>
       ${d.harnesses.map((h) => {
         const m = mcpMark(h);
+        const why = mcpAddWhyNot(a, h);
         return `<label class="mcp-target">${m.logoId ? Fmt.logo(m.logoId) : `<span class="mcp-logo-gap"></span>`}<span class="mcp-target-name">${esc(m.name)}</span>
-          <span class="mcp-spacer"></span><input type="checkbox" class="mcp-switch" role="switch" data-mcp-add-target="${esc(h)}" aria-label="${esc(m.name)}"${a.targets.has(h) ? " checked" : ""}${dis}></label>`;
+          ${why ? `<span class="caption">${esc(why)}</span>` : ""}
+          <span class="mcp-spacer"></span><input type="checkbox" class="mcp-switch" role="switch" data-mcp-add-target="${esc(h)}" aria-label="${esc(m.name)}"${
+            a.targets.has(h) && !why ? " checked" : ""}${dis || why ? " disabled" : ""}></label>`;
       }).join("")}</div>` : "";
+  const left = d.harnesses.filter((h) => mcpAddWhyNot(a, h));
+  const leftNote = left.length && !a.picking
+    ? `<p class="caption warn">${esc(left.map((h) => `${mcpMark(h).name}: ${mcpAddWhyNot(a, h)}`).join(" · "))}</p>` : "";
   const placesHtml = `<hr class="mcp-rule"><div class="card-title">Where</div>
     <div class="mcp-add-where"><div><div>Add to</div><div class="caption">Always saved to the Quiver hub too</div></div>
       <button type="button" class="field mcp-add-face" id="mcp-add-pick" aria-expanded="${a.picking}"${dis}>${esc(face)} ${mcpSvg(a.picking ? "up" : "down")}</button></div>
-    ${checklist}
+    ${checklist}${leftNote}
     <label class="mcp-add-where"><span>Replace if it already exists</span>
       <input type="checkbox" class="mcp-switch" role="switch" id="mcp-add-force" aria-label="Replace if it already exists"${a.force ? " checked" : ""}${dis}></label>`;
   return `<form method="dialog" class="sheet-body">
@@ -1164,6 +1206,8 @@ function mcpBindAdd(sheet, a) {
       const el = sheet.querySelector(`[data-mcp-add-saved="${v.id}"]`);
       if (el) el.textContent = `saved as \${${mcpSecretName(a.name || "SERVER", v.key.trim())}}`;
     }
+    const ref = sheet.querySelector("#mcp-add-token-ref");
+    if (ref) ref.textContent = `Sent as Authorization: Bearer \${${mcpSecretName(a.name || "SERVER", "TOKEN")}}`;
     ready();
   };
   const line = sheet.querySelector("#mcp-add-line");
@@ -1181,6 +1225,13 @@ function mcpBindAdd(sheet, a) {
   for (const tab of sheet.querySelectorAll("[data-mcp-add-kind]")) {
     tab.onclick = () => { a.kind = tab.dataset.mcpAddKind; mcpOpenAdd(a.kind === "command" ? "#mcp-add-line" : "#mcp-add-url"); };
   }
+  for (const tab of sheet.querySelectorAll("[data-mcp-add-signin]")) {
+    tab.onclick = () => { a.signIn = tab.dataset.mcpAddSignin; a.token = ""; a.showToken = false; mcpOpenAdd(a.signIn === "bearer" ? "#mcp-add-token" : null); };
+  }
+  const token = sheet.querySelector("#mcp-add-token");
+  if (token) token.oninput = () => { a.token = token.value; ready(); };
+  const tokenShow = sheet.querySelector("#mcp-add-token-show");
+  if (tokenShow) tokenShow.onclick = () => { a.showToken = !a.showToken; mcpOpenAdd("#mcp-add-token"); };
   for (const tab of sheet.querySelectorAll("[data-mcp-add-sse]")) {
     tab.onclick = () => { a.sse = tab.dataset.mcpAddSse === "true"; mcpOpenAdd(); };
   }
@@ -1253,8 +1304,16 @@ async function mcpAdd() {
     targets: d.harnesses.filter((h) => a.targets.has(h)),
     vars: a.vars.filter((v) => v.key.trim()).map((v) => ({ key: v.key.trim(), value: v.value, secret: v.secret })),
   };
+  body.targets = body.targets.filter((h) => mcpAddFits(a, h));
   if (command) body.command = mcpCommandWords(a.line);
-  else { body.url = a.url.trim(); body.transport = a.sse ? "sse" : "http"; }
+  else {
+    body.url = a.url.trim();
+    body.transport = a.sse ? "sse" : "http";
+    body.sign_in = a.signIn;
+    if (a.signIn === "bearer") body.token = a.token;
+  }
+  a.token = "";
+  a.showToken = false;
   a.working = true;
   a.error = null;
   for (const v of a.vars) if (v.secret) { v.value = ""; v.show = false; }

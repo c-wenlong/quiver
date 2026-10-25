@@ -752,6 +752,41 @@ class TestAdd(_SyncHome, unittest.TestCase):
         from quiver.mcp.secrets import load_secrets
         self.assertEqual(load_secrets()["A_B_TOKEN"], "second-value-000")
 
+    def test_a_bearer_token_is_a_stored_secret_in_the_header(self):
+        reply = self.add(name="lin", kind="url", url="https://mcp.linear.app/mcp", transport="http",
+                         sign_in="bearer", token=f" {self.TOKEN} ", targets=["claude"], vars=[])
+        self.assertNotIn(self.TOKEN, json.dumps(reply))
+        hub = json.loads(self.hub.read_text())["mcpServers"]["lin"]
+        self.assertEqual(hub, {"url": "https://mcp.linear.app/mcp",
+                               "headers": {"Authorization": "Bearer ${LIN_TOKEN}"}})
+        from quiver.mcp.secrets import load_secrets
+        self.assertEqual(load_secrets()["LIN_TOKEN"], self.TOKEN)
+        claude = json.loads(self.claude.read_text())["mcpServers"]["lin"]
+        self.assertEqual(claude["headers"]["Authorization"], f"Bearer {self.TOKEN}")
+
+    def test_oauth_writes_no_header(self):
+        self.add(name="notion2", kind="url", url="https://mcp.notion.com/mcp", sign_in="oauth", targets=[])
+        self.assertEqual(json.loads(self.hub.read_text())["mcpServers"]["notion2"], {"url": "https://mcp.notion.com/mcp"})
+
+    def test_sign_in_refusals(self):
+        url = {"name": "r", "kind": "url", "url": "https://x", "targets": []}
+        cases = [({"name": "c", "kind": "command", "command": ["x"], "sign_in": "bearer", "token": "t"}, (422, "bad_sign_in")),
+                 ({**url, "sign_in": "basic"}, (422, "bad_sign_in")),
+                 ({**url, "sign_in": "bearer", "token": "  "}, (422, "bad_value")),
+                 ({**url, "sign_in": "bearer", "token": self.TOKEN,
+                   "vars": [{"key": "Authorization", "value": "x", "secret": False}]}, (422, "bad_vars"))]
+        for body, want in cases:
+            error = self.refused(**body)
+            self.assertEqual((error.status, error.code), want, body)
+
+    def test_the_page_says_which_harness_takes_what(self):
+        caps = mcp.get(_ctx(), {})["caps"]
+        self.assertEqual(caps["claude"], {"remote": True, "sse": True})
+        self.assertEqual(caps["codex"], {"remote": True, "sse": False})
+        desktop = {"path": self.home / "desktop.json", "key": "mcpServers", "local_only": True}
+        with patch.dict(mcp_cli.MCP_CONFIG_MAP, {"claude-desktop": desktop}):
+            self.assertEqual(mcp._caps(["claude-desktop"]), {"claude-desktop": {"remote": False, "sse": False}})
+
     def test_secret_names_follow_the_app(self):
         self.assertEqual(mcp.secret_name("my-server", "api.key"), "MY_SERVER_API_KEY")
         self.assertEqual(mcp.secret_name("1x", "Token"), "MCP_1X_TOKEN")
