@@ -19,9 +19,16 @@ concurrency:
 permissions:
   contents: read
 
-# This workflow checks a change: tests, coverage and the macOS-only paths.
-# Builds of shipping artifacts (the wheel, the Nix derivation, Quiver.app
-# and its DMG) run in release.yml on a `v*` tag, not on every PR.
+# This workflow checks a change, and only what is fast enough to check a
+# change: the Linux unittest shards, the coverage gate and the
+# editable-install e2e.  It is the fast lane on purpose — a PR needs to
+# turn green in minutes because agent turns poll CI to completion.
+#
+# The native lane moved off this path (issue #749): the macOS app unit
+# tests, the macOS install smoke test and the Nix derivation build now
+# run in native.yml (nightly on main, on merge_group, on demand) and
+# again on every `v*` tag in release.yml, which builds and verifies the
+# shipping artifacts (wheel, Nix derivation, Quiver.app and its DMG).
 
 env:
   # How many jobs each interpreter's suite is split across.  Must match the
@@ -163,50 +170,3 @@ jobs:
           # Coverage reporting is a nice-to-have. Codecov being unreachable
           # should not mark a run red when every test job passed.
           fail_ci_if_error: false
-
-  macos-smoke:
-    # Kept deliberately.  The source hardcodes Darwin-only locations that no
-    # Linux runner can ever reach: the Claude Desktop config under
-    # ~/Library/Application Support (mcp/cli.py), the Cursor state.vscdb path
-    # and libcrypto.dylib (harness/rate_limits.py), and the Homebrew npm probe
-    # in harness/path_health.py — the very module this job's test covers.
-    name: macOS path and entry-point smoke test
-    runs-on: macos-latest
-
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Set up Python 3.13
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: "3.13"
-
-      - name: Install package
-        run: python3 -m pip install -e .
-
-      - name: Exercise macOS-sensitive paths
-        run: |
-          python3 -m unittest discover -s tests -p 'test_path_health.py' -v
-          test_home="$(mktemp -d)"
-          HOME="$test_home" swe --help
-          HOME="$test_home" swe session --help
-
-  app:
-    # The SwiftPM package under app/ targets macOS 26, so it needs the
-    # macOS 26 image and its Xcode; macos-latest may still be older.
-    # Unit tests only: bundling, the launch smoke test and the DMG run in
-    # release.yml's macos-app job on a tag.
-    name: macOS app unit tests
-    runs-on: macos-26
-    defaults:
-      run:
-        working-directory: app
-
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Toolchain
-        run: swift --version
-
-      - name: Unit tests
-        run: swift test
