@@ -589,7 +589,7 @@ private struct ServicesCard: View {
                 }
                 Text(service.help).font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 Link(destination: service.keyURL) {
-                    Text("Get a key").font(Theme.caption).foregroundStyle(Theme.accent)
+                    Text("Get a key").font(Theme.caption).foregroundStyle(Theme.link)
                 }
             }
             .padding(.vertical, 14)
@@ -766,7 +766,7 @@ struct SettingSwitch: View {
     @Binding var isOn: Bool
 
     var body: some View {
-        Toggle(title, isOn: $isOn).labelsHidden().toggleStyle(GreenSwitchStyle())
+        Toggle(title, isOn: $isOn).labelsHidden().toggleStyle(AccentSwitchStyle())
     }
 }
 

@@ -17,7 +17,7 @@ struct InboxPage: View {
         Page(title: "Inbox",
              subtitle: "Your GitHub account's live notifications across every repo, via swe gh inbox.") {
             Toggle("Unread only", isOn: $unreadOnly)
-                .toggleStyle(GreenSwitchStyle())
+                .toggleStyle(AccentSwitchStyle())
             if model.unreadCount > 0 {
                 Button {
                     Task { await model.markInboxRead([], all: true, swe: app.swe) }
@@ -116,7 +116,7 @@ private struct NotificationRow: View {
         Button(action: open) {
             HStack(alignment: .top, spacing: 12) {
                 Circle()
-                    .fill(note.unread ? Theme.accent : .clear)
+                    .fill(note.unread ? Theme.interactive : .clear)
                     .frame(width: 8, height: 8)
                     .padding(.top, 5)
                 Image(systemName: icon)

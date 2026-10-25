@@ -484,15 +484,16 @@ struct Badge: View {
     }
 }
 
-/// TokenTracker's switch: green when on (an "on" state), grey when off, the
-/// same whether or not the window is focused, unlike the system switch.
-struct GreenSwitchStyle: ToggleStyle {
+/// Devin's switch: accent blue when on (a selected control), tinted track
+/// when off, the same whether or not the window is focused, unlike the
+/// system switch. 36x20 as `core.size.control.switch`.
+struct AccentSwitchStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
-        GreenSwitch(configuration: configuration)
+        AccentSwitch(configuration: configuration)
     }
 }
 
-private struct GreenSwitch: View {
+private struct AccentSwitch: View {
     let configuration: ToggleStyleConfiguration
 
     var body: some View {
@@ -500,13 +501,13 @@ private struct GreenSwitch: View {
             configuration.isOn.toggle()
         } label: {
             ZStack(alignment: configuration.isOn ? .trailing : .leading) {
-                Capsule().fill(configuration.isOn ? Theme.accentFill : Theme.usageTrack)
+                Capsule().fill(configuration.isOn ? Theme.interactive : Theme.usageTrack)
                     .overlay(Capsule().strokeBorder(Theme.border, lineWidth: configuration.isOn ? 0 : 1))
                 // A fixed knob, so the alignment moves it end to end.
-                Circle().fill(.white).frame(width: 18, height: 18).padding(3)
+                Circle().fill(.white).frame(width: 14, height: 14).padding(3)
                     .shadow(color: .black.opacity(0.15), radius: 1, y: 1)
             }
-            .frame(width: 40, height: 24)
+            .frame(width: 36, height: 20)
             .animation(.easeOut(duration: Theme.fadeDuration), value: configuration.isOn)
             .contentShape(Capsule())
         }

@@ -1,16 +1,19 @@
-/* Quiver web app. Tokens are the Mac app's Theme.swift values (the
- * TokenTracker style package); keep the two in step by name. */
+/* Quiver web app. Tokens are the Mac app's Theme.swift values (the Devin
+ * desktop app's colour model over TokenTracker's shapes); keep the two in
+ * step by name. Neutrals are one ink at fixed alphas: near-black (13,13,13)
+ * in light, white in dark. */
 :root {
   color-scheme: light;
-  --wash: #f5f5f5; --panel: #fafafa; --card: #ffffff; --subtle: #fafafa;
-  --hover: rgba(229,229,229,.5); --selected: #f5f5f5; --nav-active: rgba(229,229,229,.7);
-  --row-hover: rgba(250,250,250,.5); --tab-hover: #fafafa;
-  --text-primary: #0a0a0a; --text-secondary: #737373; --text-nav: #525252;
-  --text-muted: #737373; --text-label: #171717; --text-tab: #737373; --table-header: #525252;
-  --border: #e5e5e5; --border-strong: #d4d4d4; --row-divider: #f5f5f5;
+  --wash: #fcfcfc; --panel: #f8f8f8; --card: #fefefe; --subtle: rgba(13,13,13,.04);
+  --hover: rgba(13,13,13,.06); --selected: rgba(13,13,13,.08); --nav-active: rgba(13,13,13,.08);
+  --row-hover: rgba(13,13,13,.06); --tab-hover: rgba(13,13,13,.06);
+  --text-primary: rgba(13,13,13,.9); --text-secondary: rgba(13,13,13,.56); --text-nav: rgba(13,13,13,.56);
+  --text-muted: rgba(13,13,13,.56); --text-label: rgba(13,13,13,.56); --text-tab: rgba(13,13,13,.56); --table-header: rgba(13,13,13,.56);
+  --border: rgba(6,6,6,.1); --border-strong: rgba(6,6,6,.18); --row-divider: rgba(6,6,6,.08);
   --accent: #059669; --accent-fill: #10b981;
-  --warning-text: #b45309; --danger-text: #dc2626;
-  --warning: #f59e0b; --danger: #ef4444; --usage-track: #f5f5f5;
+  --interactive: #317cff; --link: rgba(49,124,255,.85);
+  --success: #00a558; --warning: #f58e3a; --danger: #f53b3a;
+  --warning-text: #a16207; --danger-text: #f53b3a; --usage-track: rgba(13,13,13,.06);
   --heat-0: #ebedf0; --heat-1: #a7f3d0; --heat-2: #6ee7b7; --heat-3: #34d399; --heat-4: #10b981;
   --logo-filter: none;
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
@@ -18,28 +21,30 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --wash: #0a0a0a; --panel: #171717; --card: #171717; --subtle: #262626;
-    --hover: rgba(38,38,38,.6); --selected: #262626; --nav-active: #262626;
-    --row-hover: rgba(38,38,38,.5); --tab-hover: rgba(38,38,38,.5);
-    --text-primary: #fafafa; --text-secondary: #a3a3a3; --text-nav: #a3a3a3;
-    --text-muted: #737373; --text-label: #e5e5e5; --text-tab: #d4d4d4; --table-header: #d4d4d4;
-    --border: #262626; --border-strong: #404040; --row-divider: #262626;
-    --warning-text: #fbbf24; --danger-text: #f87171;
-    --warning: #fbbf24; --danger: #f87171; --usage-track: rgba(64,64,64,.5);
+    --wash: #141414; --panel: #191919; --card: #252525; --subtle: rgba(255,255,255,.03);
+    --hover: rgba(255,255,255,.05); --selected: rgba(255,255,255,.08); --nav-active: rgba(255,255,255,.08);
+    --row-hover: rgba(255,255,255,.05); --tab-hover: rgba(255,255,255,.05);
+    --text-primary: rgba(255,255,255,.9); --text-secondary: rgba(255,255,255,.52); --text-nav: rgba(255,255,255,.52);
+    --text-muted: rgba(255,255,255,.52); --text-label: rgba(255,255,255,.52); --text-tab: rgba(255,255,255,.52); --table-header: rgba(255,255,255,.52);
+    --border: rgba(255,255,255,.08); --border-strong: rgba(255,255,255,.16); --row-divider: rgba(255,255,255,.04);
+    --interactive: #4489ff; --link: rgba(73,176,255,.85);
+    --success: #00ec7e; --warning: #f58e3a; --danger: #f53b3a;
+    --warning-text: #facc15; --danger-text: #f53b3a; --usage-track: rgba(255,255,255,.05);
     --heat-0: #121212; --heat-1: #065f46; --heat-2: #059669; --heat-3: #10b981; --heat-4: #34d399;
     --logo-filter: invert(1);
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --wash: #0a0a0a; --panel: #171717; --card: #171717; --subtle: #262626;
-  --hover: rgba(38,38,38,.6); --selected: #262626; --nav-active: #262626;
-  --row-hover: rgba(38,38,38,.5); --tab-hover: rgba(38,38,38,.5);
-  --text-primary: #fafafa; --text-secondary: #a3a3a3; --text-nav: #a3a3a3;
-  --text-muted: #737373; --text-label: #e5e5e5; --text-tab: #d4d4d4; --table-header: #d4d4d4;
-  --border: #262626; --border-strong: #404040; --row-divider: #262626;
-  --warning-text: #fbbf24; --danger-text: #f87171;
-  --warning: #fbbf24; --danger: #f87171; --usage-track: rgba(64,64,64,.5);
+  --wash: #141414; --panel: #191919; --card: #252525; --subtle: rgba(255,255,255,.03);
+  --hover: rgba(255,255,255,.05); --selected: rgba(255,255,255,.08); --nav-active: rgba(255,255,255,.08);
+  --row-hover: rgba(255,255,255,.05); --tab-hover: rgba(255,255,255,.05);
+  --text-primary: rgba(255,255,255,.9); --text-secondary: rgba(255,255,255,.52); --text-nav: rgba(255,255,255,.52);
+  --text-muted: rgba(255,255,255,.52); --text-label: rgba(255,255,255,.52); --text-tab: rgba(255,255,255,.52); --table-header: rgba(255,255,255,.52);
+  --border: rgba(255,255,255,.08); --border-strong: rgba(255,255,255,.16); --row-divider: rgba(255,255,255,.04);
+  --interactive: #4489ff; --link: rgba(73,176,255,.85);
+  --success: #00ec7e; --warning: #f58e3a; --danger: #f53b3a;
+  --warning-text: #facc15; --danger-text: #f53b3a; --usage-track: rgba(255,255,255,.05);
   --heat-0: #121212; --heat-1: #065f46; --heat-2: #059669; --heat-3: #10b981; --heat-4: #34d399;
   --logo-filter: invert(1);
 }
@@ -51,7 +56,7 @@ body {
   font: 14px/1.4 var(--font); -webkit-font-smoothing: antialiased;
 }
 button { font: inherit; color: inherit; }
-:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; border-radius: 8px; }
+:focus-visible { outline: 1px solid var(--interactive); outline-offset: 2px; border-radius: 8px; }
 .num { font-variant-numeric: tabular-nums; }
 .hidden { display: none !important; }
 
@@ -204,7 +209,7 @@ table.breakdown { width: 100%; border-collapse: collapse; font-size: 14px; }
 
 /* Pair gate */
 .gate { max-width: 440px; margin: 15vh auto; }
-.gate a { color: var(--accent); }
+.gate a { color: var(--link); }
 code { background: var(--subtle); border-radius: 4px; padding: 1px 4px; font-size: 12px; }
 
 @media (max-width: 720px) {

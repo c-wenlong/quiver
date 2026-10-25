@@ -137,7 +137,7 @@ struct MarkdownTextView: NSViewRepresentable {
             textPrimary: NSColor(Theme.textPrimary),
             textSecondary: NSColor(Theme.textSecondary),
             textMuted: NSColor(Theme.textMuted),
-            accent: NSColor(Theme.accent),
+            accent: NSColor(Theme.link),
             codeBackground: NSColor(Theme.code),
             lineSpacing: 4,
             headingSpacingBefore: 10,

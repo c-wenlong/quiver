@@ -513,7 +513,7 @@ struct PartsCard: View {
                         .foregroundStyle(entry.isFolder ? Theme.accent : Theme.textSecondary)
                     Text(entry.name)
                         .font(Theme.bodySmall)
-                        .foregroundStyle(selected == entry.previewPath ? Theme.accent : Theme.textPrimary)
+                        .foregroundStyle(selected == entry.previewPath ? Theme.interactive : Theme.textPrimary)
                     Spacer()
                 }
                 .contentShape(.rect)

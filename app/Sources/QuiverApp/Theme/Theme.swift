@@ -2,80 +2,97 @@ import AppKit
 import QuiverCore
 import SwiftUI
 
-/// The look, from the TokenTracker style package in the design-systems repo
-/// (`systems/tokentracker/tokens.json`; values copied from there, not from
-/// memory). Neutral surfaces one step apart with a hairline, one green used
-/// for money and "on" states only, small quiet controls, sentence case
-/// everywhere, and a visible focus ring (TokenTracker has none).
+/// The look: TokenTracker's component shapes re-tokenised onto the Devin
+/// desktop app's colour model (`systems/devin-desktop/tokens.json`; values
+/// copied from there, not from memory). Every neutral is one ink at a fixed
+/// alpha — near-black (13,13,13) in light, white in dark: text at 90, 56 and
+/// 40%, fills at 8/6/4% (light) and 8/5/3% (dark), edges at 10/8% (light) and
+/// 8/4% (dark), borders declaring (6,6,6) in light. Three surfaces: page
+/// flat, sidebar on the page colour, only cards and popups raised. One
+/// emerald kept for money and "on" states; one blue for links, focus rings
+/// and selected controls; status hues from Devin's `text.*`/`hue.*` set.
 enum Theme {
     // MARK: Colour roles (tokens.json `light` / `dark`)
 
-    static let wash = Color(light: "#f5f5f5", dark: "#0a0a0a")
-    static let panel = Color(light: "#fafafa", dark: "#171717")
-    static let card = Color(light: "#ffffff", dark: "#171717")
-    static let field = Color(light: "#ffffff", dark: "#171717")
-    static let subtle = Color(light: "#fafafa", dark: "#262626")
-    static let hover = Color(light: "#e5e5e580", dark: "#26262699")
-    static let selected = Color(light: "#f5f5f5", dark: "#262626")
-    static let navActive = Color(light: "#e5e5e5b2", dark: "#262626")
-    static let segmentTrack = Color(light: "#fafafa", dark: "#171717")
-    static let segmentSelected = Color(light: "#ffffff", dark: "#262626")
-    static let rowHover = Color(light: "#fafafa80", dark: "#26262680")
+    /// `bg.page` / `bg.wash` / `bg.elevated`.
+    static let wash = Color(light: "#fcfcfc", dark: "#141414")
+    static let panel = Color(light: "#f8f8f8", dark: "#191919")
+    static let card = Color(light: "#fefefe", dark: "#252525")
+    static let field = Color(light: "#fefefe", dark: "#252525")
+    /// `tint.tertiary` (4% / 3%): chips, badges, code blocks, `subtle`.
+    static let subtle = Color(light: "#0d0d0d0a", dark: "#ffffff08")
+    /// `tint.secondary` (6% / 5%): every hover.
+    static let hover = Color(light: "#0d0d0d0f", dark: "#ffffff0d")
+    /// `tint.primary` (8% / 8%): selected tabs and the active nav row.
+    static let selected = Color(light: "#0d0d0d14", dark: "#ffffff14")
+    static let navActive = Color(light: "#0d0d0d14", dark: "#ffffff14")
+    static let segmentTrack = Color(light: "#0d0d0d0a", dark: "#ffffff08")
+    /// `bg.elevated`: the selected segment lifts off the tinted track.
+    static let segmentSelected = Color(light: "#fefefe", dark: "#252525")
+    static let rowHover = Color(light: "#0d0d0d0f", dark: "#ffffff0d")
 
-    static let textPrimary = Color(light: "#0a0a0a", dark: "#fafafa")
-    static let textSecondary = Color(light: "#737373", dark: "#a3a3a3")
-    static let textNav = Color(light: "#525252", dark: "#a3a3a3")
-    static let textMuted = Color(light: "#737373", dark: "#737373")
-    static let textStrong = Color(light: "#0a0a0a", dark: "#ffffff")
-    static let textLabel = Color(light: "#171717", dark: "#e5e5e5")
-    /// Unselected tab and table-header text: #737373 / #d4d4d4 as measured.
-    static let textTab = Color(light: "#737373", dark: "#d4d4d4")
-    static let tableHeaderText = Color(light: "#525252", dark: "#d4d4d4")
+    /// `text.primary` (90%), `text.secondary` (56% / 52%), one muted tier.
+    static let textPrimary = Color(light: "#0d0d0de6", dark: "#ffffffe6")
+    static let textSecondary = Color(light: "#0d0d0d8f", dark: "#ffffff85")
+    static let textNav = Color(light: "#0d0d0d8f", dark: "#ffffff85")
+    static let textMuted = Color(light: "#0d0d0d8f", dark: "#ffffff85")
+    /// `text.primary-strong`: solid ink.
+    static let textStrong = Color(light: "#0d0d0d", dark: "#ffffff")
+    static let textLabel = Color(light: "#0d0d0d8f", dark: "#ffffff85")
+    static let textTab = Color(light: "#0d0d0d8f", dark: "#ffffff85")
+    static let tableHeaderText = Color(light: "#0d0d0d8f", dark: "#ffffff85")
 
-    static let border = Color(light: "#e5e5e5", dark: "#262626")
-    static let borderStrong = Color(light: "#d4d4d4", dark: "#404040")
-    static let borderHover = Color(light: "#d4d4d4", dark: "#404040")
-    /// Table rows: #f5f5f5 in light, the default hairline in dark.
-    static let rowDivider = Color(light: "#f5f5f5", dark: "#262626")
+    /// `border.primary` (10% / 8%) and `border.secondary` (8% / 4%);
+    /// `borderStrong` adds one measured step for chips and field hover.
+    static let border = Color(light: "#0606061a", dark: "#ffffff14")
+    static let borderStrong = Color(light: "#0606062e", dark: "#ffffff29")
+    static let borderHover = Color(light: "#0606062e", dark: "#ffffff29")
+    static let rowDivider = Color(light: "#06060614", dark: "#ffffff0a")
 
-    /// Money and "on": cost figures, usage fill, heatmap, switches.
+    /// Money and "on": cost figures, usage fill, heatmap, switches. Quiver's
+    /// own emerald, kept — Devin's green is a status hue, this is identity.
     static let accent = Color(light: "#059669", dark: "#059669")
     static let accentFill = Color(light: "#10b981", dark: "#10b981")
 
-    static let primaryBackground = Color(light: "#171717", dark: "#fafafa")
-    static let primaryForeground = Color(light: "#ffffff", dark: "#171717")
-    static let secondaryBackground = Color(light: "#fafafa", dark: "#171717")
-    static let code = Color(light: "#f5f5f5", dark: "#17171799")
-    static let dialog = Color(light: "#ffffff", dark: "#0a0a0a")
-    /// The dimmed layer over the window behind a sheet (`bg.scrim`).
-    static let scrim = Color(light: "#00000066", dark: "#00000099")
+    /// `bg.accent-primary` — interactive blue, only for links, focus rings
+    /// and selected controls (the switch, the unread dot, the checkmark).
+    static let interactive = Color(light: "#317cff", dark: "#4489ff")
+    /// `text.link` — the accent at 85% for inline links.
+    static let link = Color(light: "#317cffd9", dark: "#49b0ffd9")
+
+    /// `bg.accent-neutral` / `text.primary-inverse`: the ink button.
+    static let primaryBackground = Color(light: "#0d0d0d", dark: "#ffffff")
+    static let primaryForeground = Color(light: "#fcfcfc", dark: "#141414")
+    static let secondaryBackground = Color(light: "#0d0d0d0f", dark: "#ffffff0d")
+    static let code = Color(light: "#0d0d0d0f", dark: "#ffffff0d")
+    static let dialog = Color(light: "#fefefe", dark: "#252525")
+    /// `bg.scrim`: 12% black in light, 32% in dark.
+    static let scrim = Color(light: "#0000001f", dark: "#00000052")
     /// A sheet's drop shadow, the soft part of `shadow.dialog`: 0 20 60
     /// at 25% in light, 65% in dark. The 1pt ring is the card's hairline.
     static let dialogShadow = Color(light: "#00000040", dark: "#000000a6")
     /// A footer link under the pointer.
-    static let footerLinkHover = Color(light: "#404040", dark: "#d4d4d4")
+    static let footerLinkHover = Color(light: "#0d0d0de6", dark: "#ffffffe6")
     /// A period or table tab under the pointer, on a card.
-    static let tabHover = Color(light: "#fafafa", dark: "#26262680")
+    static let tabHover = Color(light: "#0d0d0d0f", dark: "#ffffff0d")
     /// A row or tab under the pointer that sits straight on the panel.
-    /// `rowHover` and `tabHover` were measured on white cards and vanish
-    /// on the #fafafa panel, so light takes the next step, `bg.selected`.
-    static let panelHover = Color(light: "#f5f5f5", dark: "#26262680")
-    /// A whole card under the pointer (`status-row` hover): #fafafa in
-    /// light, #262626 at 60% in dark.
-    static let cardHover = Color(light: "#fafafa", dark: "#26262699")
+    static let panelHover = Color(light: "#0d0d0d0f", dark: "#ffffff0d")
+    /// A whole card under the pointer (`status-row` hover).
+    static let cardHover = Color(light: "#0d0d0d0f", dark: "#ffffff0d")
 
-    static let usageTrack = Color(light: "#f5f5f5", dark: "#40404080")
-    static let success = Color(light: "#10b981", dark: "#34d399")
-    /// Text on `success` as a fill — white on emerald-500 light,
-    /// near-black green on emerald-400 dark.
-    static let successForeground = Color(light: "#ffffff", dark: "#052e1e")
-    static let warning = Color(light: "#f59e0b", dark: "#fbbf24")
-    static let danger = Color(light: "#ef4444", dark: "#f87171")
-    /// Danger and warning for text and glyphs. The roles above are for
-    /// dots, bars and fills; as 12 to 14pt text they fall under 4.5:1 on
-    /// the light surfaces (red about 3.8, amber about 2.1).
-    static let dangerText = Color(light: "#dc2626", dark: "#f87171")
-    static let warningText = Color(light: "#b45309", dark: "#fbbf24")
+    static let usageTrack = Color(light: "#0d0d0d0f", dark: "#ffffff0d")
+    /// `text.green`, `text.orange`/`text.yellow`, `bg.destructive`.
+    static let success = Color(light: "#00a558", dark: "#00ec7e")
+    /// Text on `success` as a fill: always white on the light hue,
+    /// `text.always-black` (#0d0f0d) on the dark one.
+    static let successForeground = Color(light: "#ffffff", dark: "#0d0f0d")
+    static let warning = Color(light: "#f58e3a", dark: "#f58e3a")
+    static let danger = Color(light: "#f53b3a", dark: "#f53b3a")
+    /// Danger and warning as text: `text.destructive` both themes;
+    /// `text.yellow` is Devin's light-safe warning text (orange as 12-14pt
+    /// text reads about 2.4:1 on the light surfaces).
+    static let dangerText = Color(light: "#f53b3a", dark: "#f53b3a")
+    static let warningText = Color(light: "#a16207", dark: "#facc15")
 
     /// Heatmap steps, empty to busiest.
     static let heatmap: [Color] = [
@@ -189,9 +206,10 @@ enum Theme {
     /// The quick fade behind every hover highlight and expand toggle.
     static let fadeDuration: TimeInterval = 0.15
 
-    static let focusRing: CGFloat = 2
-    /// The keyboard focus ring: neutral, since green is kept for money and "on".
-    static let focus = textPrimary
+    /// `core.focusRing`: a 1pt accent ring (Devin draws it inside
+    /// `border.accent-primary`, offset 2px).
+    static let focusRing: CGFloat = 1
+    static let focus = interactive
 
     // MARK: Data colours
 
@@ -362,7 +380,7 @@ struct PageHeader<Actions: View>: View {
                         Text(subtitle).font(Theme.pageSubtitle).foregroundStyle(Theme.textSecondary)
                         if let link {
                             Link(link.label, destination: link.url)
-                                .font(Theme.pageSubtitle).foregroundStyle(Theme.accent)
+                                .font(Theme.pageSubtitle).foregroundStyle(Theme.link)
                         }
                     }
                 }

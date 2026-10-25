@@ -592,7 +592,7 @@ private struct NotificationsStep: View {
     @ViewBuilder private var permissionButton: some View {
         switch app.limits.notificationStatus {
         case .authorized, .provisional, .ephemeral:
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent)
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.success)
                 .accessibilityLabel("Allowed")
         case .denied:
             Button("Open System Settings", systemImage: "gear") {

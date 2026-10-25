@@ -127,7 +127,7 @@ private struct ScanStrip: View {
                          total: Double(max(progress.filesTotal, 1)))
                 .progressViewStyle(.linear)
                 .controlSize(.small)
-                .tint(Theme.accentFill)
+                .tint(Theme.interactive)
         }
     }
 }

@@ -401,7 +401,7 @@ private struct NavItem: View {
             .overlay(alignment: .topTrailing) {
                 if collapsed, badge > 0 {
                     Circle()
-                        .fill(Theme.accent)
+                        .fill(Theme.interactive)
                         .frame(width: 6, height: 6)
                         .offset(x: -3, y: 6)
                 }

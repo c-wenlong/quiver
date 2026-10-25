@@ -50,7 +50,7 @@
 }
 .pl-copy:hover { background: var(--tab-hover); color: var(--text-primary); }
 .pl-copy svg { width: 14px; height: 14px; }
-.pl-copy.copied { color: var(--accent); }
+.pl-copy.copied { color: var(--success); }
 .pl-copy.failed { color: var(--danger-text); }
 
 /* Fix and Fix all: the app's secondary and primary buttons, and the
@@ -63,7 +63,7 @@
 .pl-button.primary { background: var(--text-primary); color: var(--card); border-color: var(--text-primary); }
 .pl-button.primary:hover:not(:disabled) { background: var(--text-primary); opacity: .9; }
 .pl-button:disabled { cursor: default; opacity: .45; }
-.pl-button:focus-visible { outline: 2px solid var(--accent-fill); outline-offset: 2px; }
+.pl-button:focus-visible { outline: 1px solid var(--interactive); outline-offset: 2px; }
 .pl-running { display: grid; place-items: center; width: 44px; height: 32px; }
 .pl-spinner {
   width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border-strong);
@@ -146,7 +146,7 @@
 .pl-path { word-break: break-all; }
 .pl-skill-list { display: flex; flex-direction: column; gap: 8px; max-height: 40vh; overflow-y: auto; }
 .pl-skill { display: flex; flex-direction: column; gap: 2px; }
-#plugin-sheet a { color: var(--accent); }
+#plugin-sheet a { color: var(--link); }
 
 @media (max-width: 720px) {
   .pl-drift.runnable { grid-template-columns: 8px minmax(0, 1fr); }

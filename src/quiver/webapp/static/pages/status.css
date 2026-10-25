@@ -1,10 +1,4 @@
-/* Service status. Theme.success and Theme.cardHover have no token in
- * styles.css, so they are defined here, light and dark, by the same rules. */
-:root { --status-ok: #10b981; --status-card-hover: #fafafa; }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) { --status-ok: #34d399; --status-card-hover: rgba(38,38,38,.6); }
-}
-:root[data-theme="dark"] { --status-ok: #34d399; --status-card-hover: rgba(38,38,38,.6); }
+/* Service status. Success and hover come from the shared tokens. */
 
 .status-page { gap: 24px; }
 .status-group { display: flex; flex-direction: column; gap: 12px; }
@@ -13,7 +7,7 @@
 .status-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr)); gap: 16px; }
 
 .status-card { padding: 0; gap: 0; transition: background .15s, border-color .15s; }
-.status-card:hover { background: var(--status-card-hover); border-color: var(--border-strong); }
+.status-card:hover { background: var(--hover); border-color: var(--border-strong); }
 .status-body { flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 20px; min-width: 0; }
 .status-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .status-name { flex: 1; min-width: 0; font-size: 16px; font-weight: 500; }
@@ -27,7 +21,7 @@
 .status-health-block { display: flex; flex-direction: column; gap: 4px; }
 .status-health { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .health-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--border-strong); }
-.health-operational { background: var(--status-ok); }
+.health-operational { background: var(--success); }
 .health-maintenance { background: var(--text-secondary); }
 .health-minor { background: var(--warning); }
 .health-major, .health-critical { background: var(--danger); }

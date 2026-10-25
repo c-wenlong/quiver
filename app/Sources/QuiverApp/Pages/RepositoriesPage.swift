@@ -755,7 +755,7 @@ struct RepoSurfaces: View {
                     if let url = pages.url, let link = URL(string: url) {
                         Button { openURL(link) } label: {
                             Label(url, systemImage: "arrow.up.right.square")
-                                .font(Theme.bodySmall).foregroundStyle(Theme.accent)
+                                .font(Theme.bodySmall).foregroundStyle(Theme.link)
                         }
                         .plainButton(cornerRadius: Theme.controlRadius)
                     }
@@ -1158,7 +1158,7 @@ private struct RepoManager: View {
             Divider().overlay(Theme.rowDivider).padding(.vertical, 6)
             Button(action: onAdd) {
                 Label("Add repository…", systemImage: "plus")
-                    .font(Theme.bodySmall).foregroundStyle(Theme.accent)
+                    .font(Theme.bodySmall).foregroundStyle(Theme.link)
             }
             .plainButton()
         }

@@ -20,7 +20,7 @@ client sees it.
 
 | Piece | Where | What |
 |---|---|---|
-| Pages | `src/quiver/webapp/static/` | Plain HTML, CSS and JS. No build step, no framework, no CDN. Same TokenTracker look as the Mac app. |
+| Pages | `src/quiver/webapp/static/` | Plain HTML, CSS and JS. No build step, no framework, no CDN. Same Devin-derived look as the Mac app (`Theme.swift`); the CSS variables in `styles.css` carry the same names. |
 | Page data | `src/quiver/webapp/api.py` | Builds each page's JSON from the domain services, in process, the way `/v1/usage` does. |
 | Ledger | `src/quiver/ledger/` | The Python port of `QuiverCore/Ledger`: scans harness logs into its own SQLite store and prices tokens. |
 | Routes | `src/quiver/remote/hub.py` | `/app/` serves the pages; `/v1/app/*` serves their data. |
