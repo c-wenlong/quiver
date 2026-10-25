@@ -47,6 +47,18 @@ public enum TerminalApp: String, Codable, CaseIterable, Sendable {
             .map { NSWorkspace.shared.icon(forFile: $0.path) }
     }
 
+    /// The bundled brand mark shown when the app isn't installed and
+    /// LaunchServices has no icon to give, so the tab still says which
+    /// terminal it is. Terminal.app always resolves on its own.
+    public var toolIconID: String? {
+        switch self {
+        case .terminal: nil
+        case .iterm: "iterm"
+        case .ghostty: "ghostty"
+        case .wezterm: "wezterm"
+        }
+    }
+
     /// What a launch says when the chosen terminal is missing, instead of
     /// LaunchServices' or osascript's own error text.
     public var notInstalledMessage: String {
