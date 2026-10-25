@@ -438,6 +438,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **MCP servers: grouped by Local and Remote, in both apps.** The grid's
+  sections are now "Local: runs on <machine>", every server a harness
+  launches with a command, and "Remote", every server at a URL. They used
+  to split on whether a folder in `~/.quiver/mcp/servers` ran the server,
+  which put an `npx` server under Remote; such a folder now shows as a
+  "checkout" tag on its Local row. A server's sheet names its type
+  ("Local · stdio", "Remote · http").
+
 - **Mac app: Geist type and a pinned sidebar header.** The app's text is
   set in Geist and its code and IDs in Geist Mono, bundled with the app
   (SIL Open Font License) instead of the system font. AppKit text drawn
