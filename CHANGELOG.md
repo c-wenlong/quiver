@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mac app: Doctor installs an off-PATH harness in the app.** An
+  off-PATH finding's Run now runs `swe install <name> --via=<via>` as a
+  subprocess, with "Installing… 0:14" while it works, instead of Run in
+  Terminal. What the installer printed shows on the row after a failure,
+  with Run in Terminal beside it for an installer that needs a password,
+  and in an "Installed" card after a success. `swe doctor` itself now names
+  the method (`action: "install"`, `via`, and the fix `swe install <name>
+  --via=<via>`), which the web Doctor used to add on its own.
+
 - **Web app: add, edit, delete, reveal and copy API keys.** Settings ›
   Providers › Inference is now the Mac app's Keys and plans table, read
   from `~/.quiver/secrets/providers/.api_keys`: each key under its

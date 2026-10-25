@@ -702,7 +702,8 @@ class DoctorJsonChecksTest(unittest.TestCase):
 
     def test_off_path_harness_is_an_error_with_an_install_fix(self):
         hit = OffPathHit("claude", "/tmp/npm/bin/claude", "nvm")
-        code, doc = self.run_doctor(orphans=[("claude", "claude", hit)])
+        with patch("quiver.harness.doctor.install_method", return_value=None):
+            code, doc = self.run_doctor(orphans=[("claude", "claude", hit)])
         self.assertEqual(code, 1)
         self.assertEqual(doc["data"]["findings"], [{
             "check": "off-path",
@@ -712,6 +713,14 @@ class DoctorJsonChecksTest(unittest.TestCase):
             "fix": "swe install claude",
             "harness": "claude",
         }])
+
+    def test_off_path_with_an_installer_on_path_offers_install(self):
+        hit = OffPathHit("claude", "/tmp/npm/bin/claude", "nvm")
+        with patch("quiver.harness.doctor.install_method", return_value="npm"):
+            _, doc = self.run_doctor(orphans=[("claude", "claude", hit)])
+        finding = doc["data"]["findings"][0]
+        self.assertEqual((finding["fix"], finding["action"], finding["via"]),
+                         ("swe install claude --via=npm", "install", "npm"))
 
     def test_only_a_finding_about_one_harness_names_it(self):
         hit = OffPathHit("cc", "/tmp/npm/bin/cc", "nvm")

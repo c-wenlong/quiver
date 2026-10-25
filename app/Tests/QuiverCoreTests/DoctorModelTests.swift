@@ -181,6 +181,66 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
     }
 }
 
+/// `install`: swe doctor names the method; Run installs in the app.
+@MainActor
+@Suite struct DoctorInstallTests {
+    let offPath = Data(#"""
+    {"schema": 1, "data": {"ok": false, "findings": [
+      {"check": "off-path", "severity": "error", "message": "codex (codex) is at /tmp/codex [nvm], not on PATH",
+       "fix": "swe install codex --via=npm", "harness": "codex", "action": "install", "via": "npm"},
+      {"check": "off-path", "severity": "error", "message": "jules (jules) is at /tmp/jules [nvm], not on PATH",
+       "fix": "swe install jules", "harness": "jules", "action": "install"}
+    ]}}
+    """#.utf8)
+    let clean = Data(#"{"schema": 1, "data": {"ok": true, "findings": []}}"#.utf8)
+    let codex = DoctorReport.Finding(check: "off-path", severity: .error, message: "codex off PATH",
+                                     fix: "swe install codex --via=npm", harness: "codex",
+                                     action: .install, via: "npm")
+
+    @Test func installDecodesWithItsMethodAndNeedsOne() async {
+        let model = DoctorModel(swe: SweClient(runner: FakeRunner(.init(status: 1, stdout: offPath, stderr: ""))))
+        await model.load()
+        guard case .loaded(let report) = model.state else { Issue.record("expected loaded"); return }
+        #expect(report.findings.map(\.action) == [.install, nil])
+        #expect(report.findings.map(\.via) == ["npm", nil])
+    }
+
+    @Test func runInstallsInTheAppAndKeepsWhatItPrinted() async {
+        let runner = RoutingRunner([
+            (["install"], .init(status: 0, stdout: Data("added 1 package\nRegistered codex".utf8), stderr: "")),
+            (["doctor"], .init(status: 0, stdout: clean, stderr: "")),
+        ])
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        await model.run(codex)
+        #expect(runner.calls.contains(["install", "codex", "--via=npm"]))
+        #expect(runner.calls.last == ["doctor", "--json"])
+        #expect(model.installed?.harness == "codex")
+        #expect(model.installed?.output == "added 1 package\nRegistered codex")
+        #expect(model.runErrors.isEmpty)
+        #expect(model.runStarted == nil)
+        model.dismissInstalled()
+        #expect(model.installed == nil)
+    }
+
+    @Test func aFailedInstallKeepsItsOutputOnTheRow() async {
+        let runner = RoutingRunner([
+            (["install"], .init(status: 1, stdout: Data("==> Downloading".utf8), stderr: "sudo: a password is required")),
+            (["doctor"], .init(status: 1, stdout: offPath, stderr: "")),
+        ])
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        await model.run(codex)
+        #expect(model.installed == nil)
+        #expect(model.runErrors[codex.id] == "swe install codex exited 1.")
+        #expect(model.installOutput[codex.id] == "==> Downloading\nsudo: a password is required")
+        #expect(model.running.isEmpty)
+    }
+
+    @Test func theTailKeepsTheLastLines() {
+        let text = (1...50).map(String.init).joined(separator: "\n")
+        #expect(DoctorModel.outputTail(text, lines: 3) == "48\n49\n50")
+    }
+}
+
 /// The run guard, failure reload, and the terminal line rewrite.
 @MainActor
 @Suite struct DoctorRunDetailsTests {

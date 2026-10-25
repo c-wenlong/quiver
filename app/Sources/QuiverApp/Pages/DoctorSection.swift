@@ -14,6 +14,39 @@ struct DoctorSection: View {
     @State private var showsAll = false
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if let model, let done = model.installed {
+                installedCard(done, model: model)
+            }
+            states
+        }
+        .task(id: app.swePath) {
+            let doctor = DoctorModel(swe: app.swe)
+            model = doctor
+            await doctor.load()
+        }
+    }
+
+    /// An install that worked takes its finding with it, so what it printed
+    /// shows here until dismissed.
+    private func installedCard(_ done: (harness: String, output: String), model: DoctorModel) -> some View {
+        Card(title: "Installed \(HarnessMark(done.harness).name)",
+             accessory: {
+                 Button("Dismiss", systemImage: "xmark") { model.dismissInstalled() }
+                     .labelStyle(.iconOnly)
+                     .iconButton()
+                     .help("Hide this output")
+             }) {
+            if done.output.isEmpty {
+                Text("swe install finished without printing anything.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            } else {
+                InstallOutputView(text: DoctorModel.outputTail(done.output))
+            }
+        }
+    }
+
+    private var states: some View {
         Group {
             switch model?.state ?? .idle {
             case .idle, .loading:
@@ -28,11 +61,6 @@ struct DoctorSection: View {
             case .loaded(let report):
                 findingsCard(report)
             }
-        }
-        .task(id: app.swePath) {
-            let doctor = DoctorModel(swe: app.swe)
-            model = doctor
-            await doctor.load()
         }
     }
 
@@ -115,7 +143,16 @@ private struct FindingRow: View {
                         if finding.action != nil {
                             if model.running.contains(finding.id) {
                                 ProgressView().controlSize(.small)
-                                Text("Running…").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                                if finding.action == .install, let started = model.runStarted {
+                                    // An installer can take minutes: count them.
+                                    TimelineView(.periodic(from: started, by: 1)) { context in
+                                        Text("Installing… \(Self.elapsed(from: started, to: context.date))")
+                                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                                            .monospacedDigit()
+                                    }
+                                } else {
+                                    Text("Running…").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                                }
                             } else {
                                 Button("Run") {
                                     Task {
@@ -126,22 +163,17 @@ private struct FindingRow: View {
                                 }
                                 .primaryButton()
                                 .disabled(!model.running.isEmpty)
+                                .hoverTip(finding.action == .install
+                                          ? "Runs \(fix) here and shows what it prints" : "Runs \(fix)")
+                            }
+                            // A failed install may have stopped at a password
+                            // prompt the app can't answer: offer a terminal.
+                            if finding.action == .install, model.installOutput[finding.id] != nil,
+                               !model.running.contains(finding.id) {
+                                terminalButton(fix)
                             }
                         } else if fix.hasPrefix("swe ") {
-                            Button("Run in Terminal", systemImage: "terminal") {
-                                Task {
-                                    do {
-                                        try await app.accounts.runInTerminal(
-                                            line: DoctorModel.terminalLine(
-                                                fix: fix,
-                                                swe: SweLocation.executable(override: app.swePath)))
-                                    } catch {
-                                        model.noteError(error.localizedDescription, for: finding.id)
-                                    }
-                                }
-                            }
-                            .secondaryButton()
-                            .hoverTip("Runs \(fix) in a new terminal")
+                            terminalButton(fix)
                         }
                         CopyButton(help: "Copy the command") { copyToPasteboard(fix) }
                             .iconButton()
@@ -157,8 +189,59 @@ private struct FindingRow: View {
                         Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
                             .padding(.leading, 12)
                     }
+                    if let output = model.installOutput[finding.id], !output.isEmpty {
+                        InstallOutputView(text: DoctorModel.outputTail(output))
+                    }
                 }
             }
+        }
+    }
+
+    private func terminalButton(_ fix: String) -> some View {
+        Button("Run in Terminal", systemImage: "terminal") {
+            Task {
+                do {
+                    try await app.accounts.runInTerminal(
+                        line: DoctorModel.terminalLine(
+                            fix: fix,
+                            swe: SweLocation.executable(override: app.swePath)))
+                } catch {
+                    model.noteError(error.localizedDescription, for: finding.id)
+                }
+            }
+        }
+        .secondaryButton()
+        .hoverTip("Runs \(fix) in a new terminal")
+    }
+
+    /// 0:07, 1:42: how long the run in flight has taken.
+    static func elapsed(from start: Date, to now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(start)))
+        return "\(seconds / 60):\(String(format: "%02d", seconds % 60))"
+    }
+}
+
+/// What an install printed: mono, selectable, the end of it in view.
+private struct InstallOutputView: View {
+    var text: String
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                Text(text)
+                    .font(Theme.font(size: 11, design: .monospaced))
+                    .foregroundStyle(Theme.textSecondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .id("end")
+            }
+            // A ScrollView takes all the height it is offered: size it to
+            // the lines it holds, up to about ten.
+            .frame(height: min(160, CGFloat(text.split(separator: "\n", omittingEmptySubsequences: false).count) * 15 + 16))
+            .background(Theme.code, in: .rect(cornerRadius: Theme.controlRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.border, lineWidth: 1))
+            .onAppear { proxy.scrollTo("end", anchor: .bottom) }
         }
     }
 }

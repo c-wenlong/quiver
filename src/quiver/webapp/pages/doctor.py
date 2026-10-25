@@ -15,10 +15,10 @@ the code its swe command runs:
 - ``discover``: ``swe harness discover --apply --json``: the
   high-confidence matches (``discover_harnesses`` + ``apply_findings``).
 - ``install``: ``swe install <name> --via=<via>`` with its output captured
-  (``harness.commands.install_harness``). ``swe doctor`` itself gives an
-  off-PATH harness no action; this page adds one when swe knows an
-  installer for it, reinstalling the way the stray copy was installed
-  (``install_method``), so it lands on PATH.
+  (``harness.commands.install_harness``). ``swe doctor`` gives an
+  off-PATH harness this action when swe knows an installer for it,
+  reinstalling the way the stray copy was installed
+  (``harness.doctor.install_method``), so it lands on PATH.
 
 Nothing in the request says what to run: a finding that is not in the
 report, or that has no action, is refused. One fix runs at a time, as in
@@ -125,11 +125,9 @@ def _home(ctx) -> Path:
 def _report(ctx) -> dict:
     from quiver.harness.commands import doctor_report
 
+    # swe doctor names an off-PATH harness's install method itself
+    # (action "install", "via"), for the Mac app's Run as well as this one.
     report = doctor_report(_home(ctx)).to_json()
-    for finding in report["findings"]:
-        via = install_method(finding["harness"]) if finding["check"] == "off-path" and finding.get("harness") else None
-        if via:
-            finding.update(action="install", via=via, fix=f"swe install {finding['harness']} --via={via}")
     # The machine the checks ran on, for the confirm line ("on <machine>").
     report["machine"] = ((ctx.machine or {}).get("name") if ctx is not None else None)
     return report
@@ -191,31 +189,6 @@ def _run_discover(home: Path) -> str | None:
 
     apply_findings(discover_harnesses(), min_confidence="high")
     return None
-
-
-def install_method(name: str) -> str | None:
-    """The method a Run reinstalls an off-PATH harness with: the one that
-    put the stray copy there (an nvm npm install comes back through the
-    npm on PATH), else the first whose tool is on PATH."""
-    import os
-    import shutil
-
-    from quiver.harness.commands import _install_command_name
-    from quiver.harness.installers import METHOD_TOOL, installers_for, uninstaller_for
-    from quiver.harness.path_health import search_dirs_for_command
-    from quiver.harness.registry import load_registry_readonly
-
-    usable = [inst.via for inst in installers_for(name) if shutil.which(METHOD_TOOL[inst.via])]
-    if not usable:
-        return None
-    command = _install_command_name(name, load_registry_readonly())
-    for hit in search_dirs_for_command(command):
-        if hit.source == "path":
-            continue
-        remover = uninstaller_for(name, os.path.realpath(hit.path))
-        if remover is not None and remover.via in usable:
-            return remover.via
-    return usable[0]
 
 
 def _run_install(home: Path, name: str, via: str) -> str | None:
