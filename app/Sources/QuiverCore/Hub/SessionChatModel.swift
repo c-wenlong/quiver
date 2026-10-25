@@ -214,7 +214,8 @@ public final class SessionChatModel {
     private func follow(_ gen: Int, from last: Int) {
         streamTask?.cancel()
         streamTask = Task { [weak self, key] in
-            guard let client = try? await self?.hub.client() else { return }
+            // A stop() before the client is ready opens no stream.
+            guard let client = try? await self?.hub.client(), !Task.isCancelled else { return }
             for await event in client.events(key, last: last) {
                 guard let self, gen == self.generation else { return }
                 switch event {

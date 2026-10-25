@@ -1,20 +1,32 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import QuiverCore
 
 /// Answers the hub client's requests inside URLSession, so the real
-/// transport runs without a hub.
+/// transport runs without a hub. URLSession loads on its own thread while
+/// a test reads and resets on the main actor, so both go through a lock.
 final class HubStub: URLProtocol, @unchecked Sendable {
-    nonisolated(unsafe) static var handler: (@Sendable (URLRequest) -> (Int, Data))?
-    nonisolated(unsafe) static var requests: [URLRequest] = []
+    private static let state = Mutex<(handler: (@Sendable (URLRequest) -> (Int, Data))?, requests: [URLRequest])>((nil, []))
+    static var handler: (@Sendable (URLRequest) -> (Int, Data))? {
+        get { state.withLock { $0.handler } }
+        set { state.withLock { $0.handler = newValue } }
+    }
+    static var requests: [URLRequest] {
+        get { state.withLock { $0.requests } }
+        set { state.withLock { $0.requests = newValue } }
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func stopLoading() {}
 
     override func startLoading() {
-        Self.requests.append(request)
-        let (status, data) = Self.handler?(request) ?? (404, Data())
+        let handler = Self.state.withLock { state in
+            state.requests.append(request)
+            return state.handler
+        }
+        let (status, data) = handler?(request) ?? (404, Data())
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: data)
