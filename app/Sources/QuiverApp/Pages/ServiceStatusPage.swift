@@ -8,6 +8,7 @@ import SwiftUI
 struct ServiceStatusPage: View {
     @Environment(AppModel.self) private var app
     @State private var adding = false
+    @State private var browsing = false
 
     private var model: ServiceStatusModel { app.serviceStatus }
 
@@ -26,6 +27,8 @@ struct ServiceStatusPage: View {
                 .help("Check every status page now (⌘R)")
             Button("Add service", systemImage: "plus") { adding = true }
                 .primaryButton()
+            Button("Catalogue", systemImage: "square.grid.2x2") { browsing = true }
+                .secondaryButton()
         } content: {
             ForEach(model.groups, id: \.group) { entry in
                 VStack(alignment: .leading, spacing: 12) {
@@ -49,7 +52,11 @@ struct ServiceStatusPage: View {
                 check: { await model.probe($0) },
                 add: { name, pageURL, group in
                     Task { await model.add(name: name, pageURL: pageURL, group: group) }
-                })
+                },
+                browse: { browsing = true })
+        }
+        .quiverSheet(isPresented: $browsing) {
+            StatusCatalogueSheet(model: model)
         }
     }
 }
@@ -59,6 +66,8 @@ struct ServiceStatusPage: View {
 private struct AddServiceSheet: View {
     var check: (String) async -> ServiceStatusService.ProbeResult
     var add: (String, URL, StatusService.Group) -> Void
+    /// Opens the catalogue sheet over this one, for one-click adds.
+    var browse: () -> Void
     @Environment(\.dismissSheet) private var dismiss
     @State private var name = ""
     @State private var address = ""
@@ -100,6 +109,8 @@ private struct AddServiceSheet: View {
             Text("AI providers also show in the menu bar when they have an incident.")
                 .font(Theme.font(size: 10)).foregroundStyle(.secondary)
             HStack {
+                Button("Browse", action: browse)
+                    .secondaryButton()
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .secondaryButton()
@@ -131,6 +142,100 @@ private struct AddServiceSheet: View {
             if address == text { checked = result }
             checking = false
         }
+    }
+}
+
+/// The catalogue sheet: every verified page in `StatusCatalogue`, filtered
+/// by the group tabs, with a one-click Add that runs the same `model.add`
+/// the manual sheet does. A page already on the grid, built-in or custom,
+/// reads Added: the match is on the feed's host, so the same page under
+/// another name still counts.
+private struct StatusCatalogueSheet: View {
+    var model: ServiceStatusModel
+    @Environment(\.dismissSheet) private var dismiss
+    /// nil shows every entry, under group headings.
+    @State private var group: StatusService.Group?
+
+    private var sections: [(group: StatusService.Group, entries: [StatusService])] {
+        StatusService.Group.allCases.compactMap { group in
+            guard self.group == nil || self.group == group else { return nil }
+            let entries = StatusCatalogue.all.filter { $0.group == group }
+            return entries.isEmpty ? nil : (group, entries)
+        }
+    }
+
+    private var tracked: Set<String> {
+        Set(model.services.map { $0.host.lowercased() })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Service catalogue").font(Theme.sectionTitle).tracking(-0.5)
+            Tabs(options: [(nil, "All"), (.providers, "AI providers"), (.infrastructure, "Infrastructure")],
+                 selection: $group)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(sections, id: \.group) { section in
+                        if group == nil {
+                            Text(section.group.title)
+                                .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                                .padding(.top, 12).padding(.bottom, 6)
+                        }
+                        ForEach(section.entries) { entry in
+                            CatalogueRow(entry: entry,
+                                         tracked: tracked.contains(entry.host.lowercased())) {
+                                Task {
+                                    await model.add(name: entry.name, pageURL: entry.pageURL, group: entry.group)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 420)
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }
+                    .secondaryButton()
+                    .keyboardShortcut(.cancelAction)
+            }
+        }
+        .sheetScaffold(width: Theme.sheetWidth)
+    }
+}
+
+/// One catalogue entry: its logo where the bundle has a mark, the name,
+/// and an Add button that turns into a quiet Added once tracked.
+private struct CatalogueRow: View {
+    var entry: StatusService
+    var tracked: Bool
+    var add: () -> Void
+    /// Set on tap so a slow add can't be double-fired; `tracked` takes
+    /// over the moment the page learns of the new service.
+    @State private var added = false
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if let logo = entry.logoID {
+                HarnessIcon(harness: logo, size: 16)
+            } else {
+                Color.clear.frame(width: 16, height: 16)
+            }
+            Text(entry.name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+            Spacer(minLength: 8)
+            if tracked || added {
+                Label("Added", systemImage: "checkmark")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            } else {
+                Button("Add") { added = true; add() }
+                    .secondaryButton()
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 36)
+        .background(hovering ? Theme.rowHover : .clear, in: .rect(cornerRadius: Theme.controlRadius))
+        .onHover { hovering = $0 }
     }
 }
 

@@ -164,6 +164,34 @@ private func openGeminiIncident() throws -> Data {
     }
 }
 
+@Suite struct StatusCatalogueTests {
+    /// What the catalogue sheet promises: unique https pages whose feed is
+    /// the Statuspage summary.json at the page root, the exact shape
+    /// `model.add` builds for a manual add.
+    @Test func everyEntryIsAStatuspageFeedAtTheRoot() {
+        #expect(Set(StatusCatalogue.all.map(\.id)).count == StatusCatalogue.all.count)
+        for entry in StatusCatalogue.all {
+            #expect(!entry.name.isEmpty)
+            #expect(entry.pageURL.scheme == "https")
+            #expect(entry.feedURL == entry.pageURL.appending(path: "api/v2/summary.json"))
+        }
+        // Both group chips must have rows to offer.
+        #expect(StatusCatalogue.all.contains { $0.group == .providers })
+        #expect(StatusCatalogue.all.contains { $0.group == .infrastructure })
+    }
+
+    /// A built-in's id or feed host in the catalogue would offer a page
+    /// the grid already tracks without reading Added.
+    @Test func noOverlapWithBuiltIns() {
+        let ids = Set(StatusService.all.map(\.id))
+        let hosts = Set(StatusService.all.compactMap { $0.feedURL.host()?.lowercased() })
+        for entry in StatusCatalogue.all {
+            #expect(!ids.contains(entry.id))
+            #expect(!hosts.contains(entry.feedURL.host()?.lowercased() ?? ""))
+        }
+    }
+}
+
 @Suite struct ServiceStatusServiceTests {
     private func makeService(_ transport: FakeTransport, clock: TestClock, directory: URL? = nil) -> ServiceStatusService {
         let dir = directory ?? FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
