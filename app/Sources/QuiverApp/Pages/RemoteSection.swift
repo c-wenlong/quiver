@@ -10,7 +10,11 @@ struct RemoteSection: View {
     @Environment(AppModel.self) private var app
     @State private var model: RemoteModel?
     @State private var showsSetup = false
+    @State private var showsAllDevices = false
     @State private var target: PairTarget = .web
+
+    /// Paired devices fold after this many rows, like Doctor's findings.
+    private static let deviceFoldLimit = 2
 
     /// `swe remote setup`: whether the Hub card offers the checklist. The
     /// app keeps it, so an `--apply` still running from an earlier visit
@@ -170,9 +174,21 @@ struct RemoteSection: View {
                 }
                 .padding(.vertical, 14)
             } else {
-                ForEach(Array(live.enumerated()), id: \.element.id) { index, device in
+                let shown = RowFold.visible(live, limit: Self.deviceFoldLimit,
+                                            expanded: showsAllDevices)
+                ForEach(Array(shown.enumerated()), id: \.element.id) { index, device in
                     if index > 0 { SettingsDivider() }
                     DeviceRow(device: device, model: model)
+                }
+                let hidden = RowFold.hiddenCount(total: live.count, limit: Self.deviceFoldLimit)
+                if hidden > 0 {
+                    SettingsDivider()
+                    ExpandRow(isExpanded: showsAllDevices, hidden: hidden,
+                              help: (expand: "Show every paired device",
+                                     collapse: "Show only the first \(Self.deviceFoldLimit)"),
+                              edge: .inset) {
+                        withAnimation(.easeOut(duration: Theme.fadeDuration)) { showsAllDevices.toggle() }
+                    }
                 }
                 SettingsDivider()
                 pairButton.padding(.vertical, 10)
