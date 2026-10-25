@@ -7,7 +7,9 @@ import SwiftUI
 /// filter by what the key is known to be and by kind. A key is masked
 /// until revealed; a click on a row opens it.
 struct InferenceSection: View {
-    enum StateFilter: Hashable { case all, state(InferenceKeyState) }
+    /// `withKeys`, the default, hides every plan and provider with no key
+    /// yet; "Any status" and the per-state picks show them.
+    enum StateFilter: Hashable { case withKeys, all, state(InferenceKeyState) }
     enum KindFilter: Hashable { case all, kind(InferenceItem.Kind) }
 
     @Environment(AppModel.self) private var app
@@ -15,8 +17,9 @@ struct InferenceSection: View {
     @State private var editingPlan: InferenceItem?
     @State private var revealed: Set<String> = []
     @State private var actionError: String?
-    @State private var stateFilter = StateFilter.all
+    @State private var stateFilter = StateFilter.withKeys
     @State private var kindFilter = KindFilter.all
+    @State private var cataloguing = false
     @State private var query = ""
     @State private var tableWidth: CGFloat = 0
     /// The provider whose heading is being renamed, and its draft name.
@@ -55,6 +58,9 @@ struct InferenceSection: View {
                     .secondaryButton()
                     .disabled(model.isChecking)
                     .help("Send each key to its own provider or plan to see if it still works")
+                Button("Catalogue", systemImage: "square.grid.2x2") { cataloguing = true }
+                    .secondaryButton()
+                    .help("Every plan and provider Quiver knows; pick one to add its key")
                 Button("Add key", systemImage: "plus") { editing = KeyDraft(provider: "", name: "", value: "", isNew: true) }
                     .primaryButton()
             }
@@ -102,9 +108,23 @@ struct InferenceSection: View {
         }
         .task(id: model.path) { await model.load() }
         .onDisappear { revealed.removeAll() }
+        .quiverSheet(isPresented: $cataloguing) {
+            ProviderCatalogueSheet(entries: InferenceCatalogue.entries(keys: model.rows)) { entry in
+                switch entry.target {
+                case .plan(let plan):
+                    editingPlan = planItem(plan)
+                case .provider(let provider):
+                    editing = KeyDraft(provider: "", name: "", value: "", isNew: true,
+                                       providerID: provider.id)
+                }
+            }
+        }
         .quiverSheet(item: $editing) { draft in
             KeyEditor(draft: draft, providers: model.providers, rows: model.rows,
-                      save: { provider, name, value, tested in
+                      pickPlan: { plan in
+                editingPlan = planItem(plan)
+                editing = nil
+            }, save: { provider, name, value, tested in
                 if draft.isNew {
                     try await model.set(name: name, value: value, provider: provider, tested: tested)
                 } else {
@@ -189,7 +209,10 @@ struct InferenceSection: View {
     private func visible(_ all: [InferenceItem]) -> [InferenceItem] {
         let state: InferenceKeyState? = if case .state(let value) = stateFilter { value } else { nil }
         let kind: InferenceItem.Kind? = if case .kind(let value) = kindFilter { value } else { nil }
-        return all.filter { InferenceList.matches($0, state: state, kind: kind, query: query, stateOf: self.state(of:)) }
+        return all.filter {
+            (stateFilter != .withKeys || $0.hasKey)
+                && InferenceList.matches($0, state: state, kind: kind, query: query, stateOf: self.state(of:))
+        }
     }
 
     /// The shared filter bar: selects, then search taking the slack, then the count.
@@ -198,7 +221,8 @@ struct InferenceSection: View {
         func count(_ kind: InferenceItem.Kind) -> Int { all.filter { $0.kind == kind }.count }
         let shown = visible(all).count
         return HStack(spacing: 10) {
-            SelectMenu(options: [(StateFilter.all, "Any status (\(all.count))"),
+            SelectMenu(options: [(StateFilter.withKeys, "With keys (\(all.count - count(.noKey)))"),
+                                 (.all, "Any status (\(all.count))"),
                                  (.state(.valid), "Valid (\(count(.valid)))"),
                                  (.state(.invalid), "Invalid (\(count(.invalid)))"),
                                  (.state(.unchecked), "Not checked (\(count(.unchecked)))"),
@@ -232,8 +256,7 @@ struct InferenceSection: View {
             .padding(.horizontal, 16).padding(.vertical, 10)
             Divider().overlay(Theme.border)
             if rows.isEmpty {
-                Text(all.isEmpty ? "No keys yet. Add one and Quiver writes it to \(displayPath(app.apiKeys.path))."
-                                 : "Nothing matches these filters.")
+                Text(emptyText(all))
                     .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                     .frame(maxWidth: .infinity).padding(.vertical, 20)
             } else {
@@ -247,6 +270,32 @@ struct InferenceSection: View {
         .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { tableWidth = $0 }
+    }
+
+    /// What the table says when nothing shows. The `withKeys` default
+    /// hiding every match gets its own line, so a fresh machine (where
+    /// every row is a plan with no key) still points somewhere useful.
+    private func emptyText(_ all: [InferenceItem]) -> String {
+        if all.isEmpty {
+            return "No keys yet. Add one and Quiver writes it to \(displayPath(app.apiKeys.path))."
+        }
+        let kind: InferenceItem.Kind? = if case .kind(let value) = kindFilter { value } else { nil }
+        let hiddenMatch = all.contains {
+            !$0.hasKey
+                && InferenceList.matches($0, state: nil, kind: kind, query: query, stateOf: self.state(of:))
+        }
+        if stateFilter == .withKeys && hiddenMatch {
+            return "Only plans and providers with no key match. Open the catalogue to add one, or pick “Any status” to see them here."
+        }
+        return "Nothing matches these filters."
+    }
+
+    /// The catalogue's pick for `plan` as the plan editor expects it:
+    /// with its key when the file has one, so an existing key edits
+    /// instead of writing over a row it can't see.
+    private func planItem(_ plan: InferencePlan) -> InferenceItem {
+        InferenceItem(id: plan.keyName, plan: plan,
+                      key: app.apiKeys.rows.first { $0.name == plan.keyName })
     }
 
     /// Dropped below the last shown row: land just after it in the full
@@ -655,6 +704,9 @@ struct KeyDraft: Identifiable {
     var name: String
     var value: String
     var isNew: Bool
+    /// A catalogue pick on a new key: the `APIKeyProvider.id` to start
+    /// the provider picker with. Nil on a blank add and on edits.
+    var providerID: String? = nil
 }
 
 /// The model dropdown's row-hover fill, as the picker lists get.
@@ -687,6 +739,9 @@ private struct KeyEditor: View {
     var providers: [String]
     /// Every row in the file, for heading picks and "already set" notes.
     var rows: [APIKeysModel.Row]
+    /// A plan picked in the catalogue while this sheet is up: the sheet
+    /// closes and the plan's own editor opens for it.
+    var pickPlan: (InferencePlan) -> Void
     /// provider, name, value, the test verdict to keep.
     var save: (String, String, String, APIKeyCheckResult?) async throws -> Void
     /// heading, the variables to write, the verdict, the name it belongs to.
@@ -703,10 +758,13 @@ private struct KeyEditor: View {
     @State private var error: String?
     @State private var working = false
     /// The new-key pick: "" nothing yet, "custom" the endpoint path,
-    /// else an `APIKeyProvider.id`.
+    /// else an `APIKeyProvider.id`. A catalogue pick seeds it through
+    /// the draft's `providerID` or, while the sheet is up, Browse.
     @State private var providerChoice = ""
     /// The variable a multi-variable provider saves under.
     @State private var envVarChoice = ""
+    /// The provider catalogue over this sheet, from Browse.
+    @State private var browsing = false
     /// The last verdict and the (name, value, base) it describes; the
     /// custom path's base URL is part of the identity, so pointing the
     /// endpoint elsewhere asks for a fresh test.
@@ -745,6 +803,7 @@ private struct KeyEditor: View {
     }
 
     init(draft: KeyDraft, providers: [String], rows: [APIKeysModel.Row],
+         pickPlan: @escaping (InferencePlan) -> Void,
          save: @escaping (String, String, String, APIKeyCheckResult?) async throws -> Void,
          saveCustom: @escaping (String, [(name: String, value: String)], APIKeyCheckResult?, String) async throws -> Void,
          test: @escaping (String, String) async -> APIKeyCheckResult,
@@ -756,12 +815,16 @@ private struct KeyEditor: View {
         originalValue = draft.value
         self.providers = providers
         self.rows = rows
+        self.pickPlan = pickPlan
         self.save = save
         self.saveCustom = saveCustom
         self.test = test
         self.testCustom = testCustom
         self.fetchModels = fetchModels
         self.remove = remove
+        let prefill = draft.providerID.flatMap { APIKeyProviders.provider(forID: $0) }
+        _providerChoice = State(initialValue: prefill?.id ?? "")
+        _envVarChoice = State(initialValue: prefill?.envVars[0] ?? "")
     }
 
     /// The picked provider on a new key, nil for "custom" or none yet.
@@ -902,18 +965,21 @@ private struct KeyEditor: View {
                 Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
             }
             HStack {
-                if !draft.isNew {
-                    if confirmingRemove {
-                        Text("Delete \(originalName)?").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                            .lineLimit(1).truncationMode(.middle)
-                        Button("Delete", role: .destructive) { run { try await remove(originalName) } }
-                            .secondaryButton()
-                        Button("Keep") { confirmingRemove = false }.secondaryButton()
-                    } else {
-                        Button("Delete", role: .destructive) { confirmingRemove = true }
-                            .secondaryButton()
-                            .help("Delete \(originalName) from the keys file")
-                    }
+                if draft.isNew {
+                    Button("Browse…") { browsing = true }
+                        .secondaryButton()
+                        .help("Every plan and provider Quiver knows")
+                        .disabled(working || testing)
+                } else if confirmingRemove {
+                    Text("Delete \(originalName)?").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1).truncationMode(.middle)
+                    Button("Delete", role: .destructive) { run { try await remove(originalName) } }
+                        .secondaryButton()
+                    Button("Keep") { confirmingRemove = false }.secondaryButton()
+                } else {
+                    Button("Delete", role: .destructive) { confirmingRemove = true }
+                        .secondaryButton()
+                        .help("Delete \(originalName) from the keys file")
                 }
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).secondaryButton()
@@ -928,6 +994,14 @@ private struct KeyEditor: View {
         .background(Theme.panel)
         .onDisappear { saveTask?.cancel() }
         .task(id: fetchSeed) { await loadModels() }
+        .quiverSheet(isPresented: $browsing) {
+            ProviderCatalogueSheet(entries: InferenceCatalogue.entries(keys: rows)) { entry in
+                switch entry.target {
+                case .provider(let provider): providerChoice = provider.id
+                case .plan(let plan): pickPlan(plan)
+                }
+            }
+        }
     }
 
     /// The catalog picker a new key starts with: the built-ins, then
@@ -1214,11 +1288,12 @@ private struct KeyEditor: View {
         let name = finalName
         let value = draft.value
         let base = baseURL.trimmingCharacters(in: .whitespaces)
+        let custom = isCustom
         Task {
-            let result = isCustom ? await testCustom(value, base) : await test(name, value)
+            let result = custom ? await testCustom(value, base) : await test(name, value)
             testing = false
             testResult = result
-            testedFor = (name, value, isCustom ? base : "")
+            testedFor = (name, value, custom ? base : "")
         }
     }
 
@@ -1237,7 +1312,10 @@ private struct KeyEditor: View {
     }
 
     /// Test first, then save with the verdict. A rejection stops the save
-    /// once and turns the button into "Save anyway".
+    /// once and turns the button into "Save anyway". Everything the save
+    /// writes is captured at the tap: a pick that slips in while the test
+    /// runs (the fields disable on the next render, not at once) can't
+    /// switch the save between the provider paths mid-flight.
     private func saveTapped() {
         working = true
         error = nil
@@ -1245,21 +1323,25 @@ private struct KeyEditor: View {
         let provider = finalProvider
         let value = draft.value
         let base = baseURL.trimmingCharacters(in: .whitespaces)
+        let custom = isCustom
+        let prefix = customPrefix
+        let modelID = model.trimmingCharacters(in: .whitespaces)
+        let testable = canTest
         saveTask = Task {
             defer { working = false }
             var result = currentTest
             // A move to another provider alone keeps the key it had, so
             // it asks the provider nothing.
-            if canTest, result == nil {
+            if testable, result == nil {
                 testing = true
-                if isCustom {
+                if custom {
                     result = await testCustom(value, base)
                 } else {
                     result = await test(name, value)
                 }
                 testing = false
                 testResult = result
-                testedFor = (name, value, isCustom ? base : "")
+                testedFor = (name, value, custom ? base : "")
             }
             guard !Task.isCancelled else { return }
             if case .rejected = result, !saveAnyway {
@@ -1267,12 +1349,9 @@ private struct KeyEditor: View {
                 return
             }
             do {
-                if isCustom {
+                if custom {
                     let entries = CustomProvider.entries(
-                        prefix: customPrefix,
-                        baseURL: baseURL.trimmingCharacters(in: .whitespaces),
-                        key: value,
-                        model: model.trimmingCharacters(in: .whitespaces))
+                        prefix: prefix, baseURL: base, key: value, model: modelID)
                     try await saveCustom(provider, entries, value.isEmpty ? nil : result, name)
                 } else {
                     try await save(provider, name, value, value.isEmpty ? nil : result)
@@ -1282,5 +1361,101 @@ private struct KeyEditor: View {
                 self.error = error.localizedDescription
             }
         }
+    }
+}
+
+/// Every plan and provider Quiver knows, from the Catalogue button or
+/// Browse in a key editor: kind chips and a search over rows that each
+/// start their add-key flow on one tap. A row the keys file already
+/// covers is marked Set; picking it opens its editor all the same.
+private struct ProviderCatalogueSheet: View {
+    var entries: [InferenceCatalogue.Entry]
+    /// Runs with the pick just before the sheet closes itself.
+    var pick: (InferenceCatalogue.Entry) -> Void
+    @Environment(\.dismissSheet) private var dismiss
+    @State private var query = ""
+    /// The chip pick; nil is "All".
+    @State private var kind: InferenceItem.Kind?
+
+    private var shown: [InferenceCatalogue.Entry] {
+        InferenceCatalogue.filter(entries, kind: kind, query: query)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Provider catalogue")
+                .font(Theme.sectionTitle).tracking(-0.5).foregroundStyle(Theme.textPrimary)
+            HStack(spacing: 10) {
+                Tabs(options: [(InferenceItem.Kind?.none, "All"),
+                               (.plan, "Coding plans"), (.apiKey, "API keys")],
+                     selection: $kind, style: .table)
+                SearchField(prompt: "Search plans and providers", text: $query)
+            }
+            ScrollView {
+                if shown.isEmpty {
+                    Text("Nothing matches.")
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                        .frame(maxWidth: .infinity).padding(.vertical, 20)
+                } else {
+                    LazyVStack(spacing: 0) {
+                        ForEach(shown) { entry in
+                            CatalogueRow(entry: entry) {
+                                pick(entry)
+                                dismiss()
+                            }
+                            if entry.id != shown.last?.id { Divider().overlay(Theme.border) }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            .frame(height: 380)
+            .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
+            HStack {
+                Text("\(shown.count) of \(entries.count)")
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted).monospacedDigit()
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).secondaryButton()
+            }
+        }
+        .padding(20)
+        .frame(width: 560)
+        .background(Theme.panel)
+    }
+}
+
+/// One catalogue row: logo, name, what it is, and a Set mark when the
+/// keys file already covers it. The whole row is the button.
+private struct CatalogueRow: View {
+    var entry: InferenceCatalogue.Entry
+    var action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Group {
+                    if let logo = entry.logo { HarnessIcon(harness: logo, size: 16) } else { Color.clear }
+                }
+                .frame(width: 16, height: 16)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(entry.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    Text(entry.detail).font(Theme.caption).foregroundStyle(Theme.textMuted).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                if entry.hasKey {
+                    Label("Set", systemImage: "checkmark.circle.fill")
+                        .font(Theme.caption).foregroundStyle(Theme.success)
+                }
+                Badge(entry.kind == .plan ? "Coding plan" : "API key")
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(hovering ? Theme.rowHover : .clear)
+            .contentShape(.rect)
+        }
+        .plainButton(cornerRadius: 0)
+        .onHover { hovering = $0 }
+        .help(entry.hasKey ? "\(entry.keyName) already has a key" : "Add a key for \(entry.name)")
     }
 }
