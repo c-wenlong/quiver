@@ -235,6 +235,19 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
         #expect(model.running.isEmpty)
     }
 
+    @Test func onlyTheEndOfALongLogIsKept() async {
+        let log = (1...500).map { "line \($0)" }.joined(separator: "\n")
+        let runner = RoutingRunner([
+            (["install"], .init(status: 1, stdout: Data(log.utf8), stderr: "")),
+            (["doctor"], .init(status: 1, stdout: offPath, stderr: "")),
+        ])
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        await model.run(codex)
+        let kept = model.installOutput[codex.id]?.split(separator: "\n") ?? []
+        #expect(kept.count == 40)
+        #expect(kept.last == "line 500")
+    }
+
     @Test func theTailKeepsTheLastLines() {
         let text = (1...50).map(String.init).joined(separator: "\n")
         #expect(DoctorModel.outputTail(text, lines: 3) == "48\n49\n50")

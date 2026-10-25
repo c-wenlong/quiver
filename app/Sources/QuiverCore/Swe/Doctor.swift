@@ -183,11 +183,13 @@ public final class DoctorModel {
             case .install:
                 guard let harness = finding.harness, let via = finding.via else { break }
                 let run = try await swe.installHarness(name: harness, via: via)
+                // Only the end is shown, so only the end is kept.
+                let tail = Self.outputTail(run.output)
                 if run.succeeded {
-                    installed = (harness, run.output)
+                    installed = (harness, tail)
                 } else {
                     runErrors[finding.id] = "swe install \(harness) exited \(run.status)."
-                    installOutput[finding.id] = run.output
+                    installOutput[finding.id] = tail
                 }
             }
         } catch {

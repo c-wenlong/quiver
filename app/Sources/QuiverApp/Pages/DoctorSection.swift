@@ -6,7 +6,6 @@ import SwiftUI
 /// whenever the section is.
 struct DoctorSection: View {
     @Environment(AppModel.self) private var app
-    @State private var model: DoctorModel?
     /// The findings card folds past this many rows.
     private static let foldLimit = 8
     /// ⌘R re-runs the checks on every state card, like the old page header.
@@ -15,17 +14,18 @@ struct DoctorSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if let model, let done = model.installed {
+            if let done = model.installed {
                 installedCard(done, model: model)
             }
             states
         }
         .task(id: app.swePath) {
-            let doctor = DoctorModel(swe: app.swe)
-            model = doctor
-            await doctor.load()
+            // An install in flight re-reads the report when it ends.
+            if model.running.isEmpty { await model.load() }
         }
     }
+
+    private var model: DoctorModel { app.doctor }
 
     /// An install that worked takes its finding with it, so what it printed
     /// shows here until dismissed.
@@ -48,7 +48,7 @@ struct DoctorSection: View {
 
     private var states: some View {
         Group {
-            switch model?.state ?? .idle {
+            switch model.state {
             case .idle, .loading:
                 LoadingCard(text: "Running checks…")
             case .failed(let message):
@@ -65,11 +65,11 @@ struct DoctorSection: View {
     }
 
     private func reload() {
-        Task { await model?.load() }
+        Task { await model.load() }
     }
 
     private var isLoading: Bool {
-        switch model?.state ?? .idle {
+        switch model.state {
         case .idle, .loading: true
         case .loaded, .failed: false
         }
@@ -80,7 +80,7 @@ struct DoctorSection: View {
         return Card(title: report.findings.count == 1 ? "1 finding" : "\(report.findings.count) findings",
                     accessory: { refreshButton }) {
             ForEach(shown) { finding in
-                if let model { FindingRow(finding: finding, model: model) }
+                FindingRow(finding: finding, model: model)
                 if finding != shown.last { Divider().overlay(Theme.border) }
             }
             if RowFold.hiddenCount(total: report.findings.count, limit: Self.foldLimit) > 0 {
