@@ -413,6 +413,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and tokens for today, 7 or 30 days, a daily cost chart and each
   harness's share. Pull to refresh asks the hub for new readings.
 
+- **Mac app DMG: a drag-to-install window.** Opening the DMG now shows
+  Quiver on the left, Applications on the right and an arrow between
+  them over a Quiver background, instead of a plain folder with LICENSE
+  and THIRD_PARTY_NOTICES.md beside the app. Both files now ship inside
+  the bundle, in `Contents/Resources`.
+
 ### Changed
 
 - **Mac app: Geist type and a pinned sidebar header.** The app's text is
