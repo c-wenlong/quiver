@@ -1,7 +1,7 @@
 /// The Settings page's sub-nav, after TokenTracker's: groups of sections,
 /// each with its own title, description and cards.
 public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Sendable {
-    case general, sidebar, notifications, providers, services, integrations, paths, doctor, experimental
+    case general, sidebar, notifications, providers, services, integrations, paths, experimental
 
     public var id: String { rawValue }
 
@@ -14,7 +14,6 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .providers: "Providers"
         case .services: "Services"
         case .paths: "Paths"
-        case .doctor: "Doctor"
         case .experimental: "Experimental"
         }
     }
@@ -29,7 +28,6 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .providers: "Which harnesses show up across the app, and the inference plans and API keys behind them."
         case .services: "Keys for the services Quiver itself calls, kept in the Keychain."
         case .paths: "Where Quiver finds swe, your API keys file and your MCP server folders."
-        case .doctor: "Checks on PATH, Node and drift between quiver and your harnesses."
         case .experimental: "Features being tried out. They may change or go away."
         }
     }
@@ -44,7 +42,6 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .providers: "square.stack.3d.up"
         case .services: "key"
         case .paths: "folder"
-        case .doctor: "stethoscope"
         case .experimental: "flask"
         }
     }
@@ -54,6 +51,8 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         switch saved {
         // GitHub and Remote were their own sections before Integrations.
         case "github", "remote": self = .integrations
+        // Doctor moved to a card group on General.
+        case "doctor": self = .general
         default: self = saved.flatMap(Self.init(rawValue:)) ?? .general
         }
     }
@@ -83,7 +82,7 @@ public enum SettingsGroup: CaseIterable, Identifiable, Sendable {
         switch self {
         case .app: [.general, .sidebar, .notifications]
         case .usage: [.providers, .services]
-        case .advanced: [.integrations, .paths, .doctor, .experimental]
+        case .advanced: [.integrations, .paths, .experimental]
         }
     }
 

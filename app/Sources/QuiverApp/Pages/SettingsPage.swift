@@ -150,6 +150,10 @@ private struct SettingsSectionView: View {
                     generalCard
                     SettingsCardGroup(title: "Display") { preferencesCard }
                     SettingsCardGroup(title: "Updates") { updatesCard }
+                    SettingsCardGroup(title: "Doctor",
+                                      detail: "Checks on PATH, Node and drift between quiver and your harnesses.") {
+                        DoctorSection()
+                    }
                 }
             case .sidebar: SidebarSection()
             case .notifications: notificationsCard
@@ -167,7 +171,6 @@ private struct SettingsSectionView: View {
                     }
                 }
             case .paths: pathsCard
-            case .doctor: DoctorSection()
             case .experimental: ExperimentalSection()
             }
         }
@@ -877,8 +880,8 @@ private struct SettingsFooter: View {
         HStack(spacing: 8) {
             Text("Quiver \(version)")
             Text("·")
-            FooterLink(title: "Doctor", symbol: SettingsSection.doctor.symbol) {
-                settingsSection = SettingsSection.doctor.rawValue
+            FooterLink(title: "Doctor", symbol: "stethoscope") {
+                settingsSection = SettingsSection.general.rawValue
                 app.selection = .settings
             }
             Text("·")
