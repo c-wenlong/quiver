@@ -135,7 +135,7 @@ private struct ModelsContent: View {
         guard let updatedAt = model.updatedAt else { return false }
         let text = "Updated \(updatedAt.formatted(.relative(presentation: .named)))"
         let stamp = (text as NSString)
-            .size(withAttributes: [.font: NSFont.systemFont(ofSize: Theme.scaled(12))]).width
+            .size(withAttributes: [.font: Theme.nsFont(size: 12)]).width
         return controlsWidth + 8 + Self.searchMinWidth + 8 + stamp + 8 + trailingWidth <= toolbarWidth
     }
 
@@ -506,12 +506,12 @@ private struct BarColumn: View {
     /// sticks out sideways.
     static func labelReach(_ row: ModelsModel.Row) -> CGFloat {
         let angle = ChartCard.labelAngle * .pi / 180
-        let lineHeight = NSFont.systemFont(ofSize: Theme.scaled(ChartCard.labelFont)).boundingRectForFont.height
+        let lineHeight = Theme.nsFont(size: ChartCard.labelFont).boundingRectForFont.height
         return width(of: label(row)) * cos(angle) + lineHeight / 2 * sin(angle)
     }
 
     private static func width(of text: String) -> CGFloat {
-        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: Theme.scaled(ChartCard.labelFont))]
+        let attrs: [NSAttributedString.Key: Any] = [.font: Theme.nsFont(size: ChartCard.labelFont)]
         return (text as NSString).size(withAttributes: attrs).width
     }
 

@@ -52,7 +52,7 @@ struct MarkdownTextView: NSViewRepresentable {
         textView.isAutomaticTextReplacementEnabled = false
         textView.isAutomaticTextCompletionEnabled = false
         textView.isAutomaticLinkDetectionEnabled = false
-        textView.font = .systemFont(ofSize: 13)
+        textView.font = AppFonts.nsFont(size: 13)
         textView.textColor = NSColor(Theme.textPrimary)
         textView.insertionPointColor = NSColor(Theme.textPrimary)
         textView.delegate = context.coordinator
@@ -131,9 +131,9 @@ struct MarkdownTextView: NSViewRepresentable {
     private static func palette(zoom: Double) -> MarkdownStylePalette {
         func size(_ points: CGFloat) -> CGFloat { TextZoom.pointSize(points, at: zoom) }
         return MarkdownStylePalette(
-            bodyFont: .systemFont(ofSize: size(13)),
-            codeFont: .monospacedSystemFont(ofSize: size(12), weight: .regular),
-            headingFonts: [22, 18, 16, 14, 13, 13].map { NSFont.systemFont(ofSize: size($0), weight: .semibold) },
+            bodyFont: AppFonts.nsFont(size: size(13)),
+            codeFont: AppFonts.nsFont(size: size(12), monospaced: true),
+            headingFonts: [22, 18, 16, 14, 13, 13].map { AppFonts.nsFont(size: size($0), weight: .semibold) },
             textPrimary: NSColor(Theme.textPrimary),
             textSecondary: NSColor(Theme.textSecondary),
             textMuted: NSColor(Theme.textMuted),
