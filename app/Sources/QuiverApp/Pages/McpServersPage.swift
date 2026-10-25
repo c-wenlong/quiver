@@ -700,7 +700,7 @@ private struct TargetToggle: View {
             }
             Spacer(minLength: 8)
             Toggle(replaces ? "\(mark.name), replaces its own definition" : mark.name, isOn: $isOn)
-                .toggleStyle(GreenSwitchStyle())
+                .toggleStyle(AccentSwitchStyle())
         }
     }
 }

@@ -542,7 +542,7 @@ function setLook(mode) {
  * System. Fixed colours on purpose: it shows the mode, whatever is on now. */
 function sketch(mode) {
   const win = (dark) => {
-    const wash = dark ? "#171717" : "#f5f5f5", panel = dark ? "#212121" : "#ffffff", line = dark ? "#424242" : "#dbdbdb";
+    const wash = dark ? "#141414" : "#fcfcfc", panel = dark ? "#252525" : "#fefefe", line = dark ? "#3a3a3a" : "#e3e3e3";
     return `<rect width="200" height="110" fill="${wash}"/>
       <rect x="10" y="10" width="30" height="4" rx="2" fill="#10b981"/>
       ${[0, 1, 2].map((i) => `<rect x="10" y="${20 + i * 10}" width="38" height="4" rx="2" fill="${line}"/>`).join("")}

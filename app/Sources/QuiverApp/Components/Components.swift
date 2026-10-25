@@ -3,18 +3,19 @@ import QuiverCore
 import SwiftUI
 
 // The shared controls, sized and coloured from the TokenTracker package's
-// components.md (measured values) and tokens.json. Where TokenTracker and
-// Quiver's own rules differ, Quiver's win: sentence case, green only for
-// money and "on", and a visible neutral focus ring on every control.
+// components.md (measured values) and tokens.json, coloured per the Devin
+// desktop package's colour roles. Quiver's own rules win: sentence case,
+// emerald only for money and "on", and Devin's 1pt accent ring on every
+// keyboard-focused control.
 
 // MARK: - Focus
 
 extension View {
-    /// The neutral 2pt focus ring, driven by this view's own focus.
+    /// The 1pt accent focus ring, driven by this view's own focus.
     ///
     /// A button style never learns whether its button has focus, so the
     /// ring lives here, on the control itself: it binds a `@FocusState`
-    /// and replaces macOS's blue ring.
+    /// and replaces macOS's default ring.
     func focusRing(cornerRadius: CGFloat) -> some View {
         modifier(OwnFocusRing(cornerRadius: cornerRadius))
     }
@@ -90,8 +91,8 @@ private struct RingOverlay: ViewModifier {
 // MARK: - Buttons
 
 extension View {
-    /// Black in light, near-white in dark, never green: 28pt, radius 8,
-    /// 12/500, grows to 1.03 under the pointer.
+    /// Near-black in light, white in dark (Devin's `accent-neutral` ink
+    /// button): 28pt, radius 8, 12/500, grows to 1.03 under the pointer.
     func primaryButton() -> some View {
         buttonStyle(PrimaryButtonStyle()).focusRing(cornerRadius: Theme.controlRadius)
     }
@@ -484,15 +485,16 @@ struct Badge: View {
     }
 }
 
-/// TokenTracker's switch: green when on (an "on" state), grey when off, the
-/// same whether or not the window is focused, unlike the system switch.
-struct GreenSwitchStyle: ToggleStyle {
+/// Devin's switch: accent blue when on (a selected control), tinted track
+/// when off, the same whether or not the window is focused, unlike the
+/// system switch. 36x20 as `core.size.control.switch`.
+struct AccentSwitchStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
-        GreenSwitch(configuration: configuration)
+        AccentSwitch(configuration: configuration)
     }
 }
 
-private struct GreenSwitch: View {
+private struct AccentSwitch: View {
     let configuration: ToggleStyleConfiguration
 
     var body: some View {
@@ -500,13 +502,13 @@ private struct GreenSwitch: View {
             configuration.isOn.toggle()
         } label: {
             ZStack(alignment: configuration.isOn ? .trailing : .leading) {
-                Capsule().fill(configuration.isOn ? Theme.accentFill : Theme.usageTrack)
+                Capsule().fill(configuration.isOn ? Theme.interactive : Theme.usageTrack)
                     .overlay(Capsule().strokeBorder(Theme.border, lineWidth: configuration.isOn ? 0 : 1))
                 // A fixed knob, so the alignment moves it end to end.
-                Circle().fill(.white).frame(width: 18, height: 18).padding(3)
+                Circle().fill(.white).frame(width: 14, height: 14).padding(3)
                     .shadow(color: .black.opacity(0.15), radius: 1, y: 1)
             }
-            .frame(width: 40, height: 24)
+            .frame(width: 36, height: 20)
             .animation(.easeOut(duration: Theme.fadeDuration), value: configuration.isOn)
             .contentShape(Capsule())
         }

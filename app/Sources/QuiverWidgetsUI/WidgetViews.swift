@@ -4,19 +4,19 @@ import QuiverCore
 import SwiftUI
 import WidgetKit
 
-/// The app's colour roles, copied from `QuiverApp/Theme.swift` (the
-/// TokenTracker package's tokens.json), which the extension can't import.
-/// The widget surface is #262626 in dark, as TokenTracker's widgets sample,
-/// one step up from the app's #171717 card so it stands off a dark desktop.
+/// The app's colour roles, copied from `QuiverApp/Theme.swift` (the Devin
+/// desktop package's tokens.json), which the extension can't import.
+/// The widget surface is #262626 in dark, one step up from the app's
+/// #252525 card so it stands off a dark desktop.
 public enum Palette {
-    public static let card = Color(light: "#ffffff", dark: "#262626")
-    public static let textPrimary = Color(light: "#0a0a0a", dark: "#fafafa")
-    public static let textSecondary = Color(light: "#737373", dark: "#a3a3a3")
-    public static let track = Color(light: "#f5f5f5", dark: "#40404080")
+    public static let card = Color(light: "#fefefe", dark: "#262626")
+    public static let textPrimary = Color(light: "#0d0d0de6", dark: "#ffffffe6")
+    public static let textSecondary = Color(light: "#0d0d0d8f", dark: "#ffffff85")
+    public static let track = Color(light: "#0d0d0d0f", dark: "#ffffff0d")
     public static let accent = Color(light: "#059669", dark: "#059669")
     public static let accentFill = Color(light: "#10b981", dark: "#10b981")
-    public static let warning = Color(light: "#f59e0b", dark: "#fbbf24")
-    public static let danger = Color(light: "#ef4444", dark: "#f87171")
+    public static let warning = Color(light: "#f58e3a", dark: "#f58e3a")
+    public static let danger = Color(light: "#f53b3a", dark: "#f53b3a")
     public static let heatmap: [Color] = [
         // #404040 at 50%: the empty step must show on the #262626 surface.
         Color(light: "#ebedf0", dark: "#40404080"),

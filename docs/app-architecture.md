@@ -78,10 +78,14 @@ previews and settings, the chosen kind stored in `desktopWidgetTab`).
 `Theme` (`Theme/Theme.swift`) is an enum of tokens, never a view: surfaces
 (`wash`, `panel`, `card`, `field`, `code`, `subtle`, `hover`, `selected`),
 text roles (`textPrimary` through `textMuted`, `dangerText`...), borders and
-accents, type (`display`, `figure`, `sectionTitle`, `cardTitle`, `rowTitle`,
+accents (`accent` emerald for money and "on", `interactive` blue for links,
+focus rings and selected controls, `link` at 85% of it), type (`display`,
+`figure`, `sectionTitle`, `cardTitle`, `rowTitle`,
 `bodySmall`, `caption`, `control`, `tableHeader`...), and metrics (card and
 control radii, paddings, field/row/icon heights, sheet sizes, animation
-durations, the heatmap palette). Feature-specific numbers stay near their
+durations, the heatmap palette). The colour values come from the
+design-systems repo's `systems/devin-desktop` package: one ink at fixed
+alphas, three surfaces, blue kept for interaction. Feature-specific numbers stay near their
 view as `private static let`. `Card` (surface with optional title/accessory)
 and `Page` (title, subtitle, actions, centred 1152pt column) are the two
 scaffolds; `PageHeader` is the non-scrolling variant used by sheets.
@@ -107,7 +111,7 @@ scaffolds; `PageHeader` is the non-scrolling variant used by sheets.
 | `RailRow`, `RailIconButton` | a right-hand rail's tap row (selected/hover treatment) and its header icon button |
 | `HoverTip` | the themed tooltip modifier |
 | `MarkdownTextView` | the rich markdown editor (NSViewRepresentable) |
-| Button styles | `primaryButton`, `secondaryButton`, `iconButton`, `plainButton`, `GreenSwitchStyle`, `SegmentActionStyle` |
+| Button styles | `primaryButton`, `secondaryButton`, `iconButton`, `plainButton`, `AccentSwitchStyle`, `SegmentActionStyle` |
 | `focusRing`, `quiverField`, `sheetScaffold` | modifiers: keyboard ring, themed field, sheet frame |
 | `FlowLayout` | left-to-right wrapping layout |
 

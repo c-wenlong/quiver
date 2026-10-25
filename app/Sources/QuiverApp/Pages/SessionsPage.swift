@@ -123,7 +123,7 @@ private struct SessionsContent: View {
                         .secondaryButton()
                         if let devin = ServiceCredentials.services.first(where: { $0.id == "devin" }) {
                             Link(destination: devin.keyURL) {
-                                Text("Get a key").font(Theme.caption).foregroundStyle(Theme.accent)
+                                Text("Get a key").font(Theme.caption).foregroundStyle(Theme.link)
                             }
                         }
                         Button { devinKeyHintDismissed = true } label: {

@@ -253,7 +253,7 @@ struct PopoverSelect<Value: Hashable>: View {
                 Text(option.title).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Spacer(minLength: 12)
                 Image(systemName: "checkmark").font(Theme.font(size: 11, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Theme.interactive)
                     .opacity(on ? 1 : 0)
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
@@ -338,7 +338,7 @@ struct MultiSelectMenu<Value: Hashable>: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: on ? "checkmark.square.fill" : "square")
-                    .foregroundStyle(on ? Theme.accent : Theme.textMuted)
+                    .foregroundStyle(on ? Theme.interactive : Theme.textMuted)
                 if let icon, HarnessIcon.exists(for: icon) { HarnessIcon(harness: icon, size: 16) }
                 Text(title).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Spacer(minLength: 0)
