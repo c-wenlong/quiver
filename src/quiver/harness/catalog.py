@@ -68,6 +68,18 @@ HARNESS_CATALOG: dict[str, dict] = {
         "aliases": ["mv"],
         "primary_color": "#FF8205",
     },
+    "kimi": {
+        "command": "kimi",
+        "description": "Moonshot's Kimi Code CLI, the kimi-cli successor",
+        "tags": ["agentic", "coding", "subscription"],
+        "aliases": ["km"],
+    },
+    "grok": {
+        "command": "grok",
+        "description": "xAI's terminal agent, plans and subagents in a TUI",
+        "tags": ["agentic", "coding", "subscription"],
+        "aliases": ["gk"],
+    },
 
     # Open source and model-agnostic.
     "opencode": {
@@ -164,6 +176,33 @@ HARNESS_CATALOG: dict[str, dict] = {
         "description": "Free harness for light tasks, single thread, Chinese models only",
         "tags": ["agentic", "coding", "free"],
         "aliases": ["fb"],
+    },
+    "antigravity": {
+        # The GUI app is the product; `agy` is its terminal CLI.
+        "command": "agy",
+        "description": "Google's agent-first IDE, plus the `agy` terminal agent",
+        "tags": ["agentic", "coding", "subscription"],
+        "aliases": ["ag", "agy"],
+    },
+    "commandcode": {
+        # `command-code` is the full binary; `cmd` its macOS/Linux alias.
+        "command": "command-code",
+        "description": "Taste-learning coding agent built for open models",
+        "tags": ["agentic", "coding", "subscription"],
+        "aliases": ["cmd"],
+    },
+    "qoder": {
+        # The script and tap install `qodercli`; npm adds a `qoder` alias.
+        "command": "qodercli",
+        "description": "Alibaba's agentic coding platform, IDE plus terminal CLI",
+        "tags": ["agentic", "coding", "subscription"],
+        "aliases": ["qd"],
+    },
+    "qoder-cn": {
+        "command": "qoderclicn",
+        "description": "Qoder's China edition (qoder.com.cn)",
+        "tags": ["agentic", "coding", "subscription"],
+        "aliases": ["qc"],
     },
 }
 

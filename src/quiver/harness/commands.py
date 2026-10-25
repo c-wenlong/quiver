@@ -1843,19 +1843,42 @@ def _install_method_available(via: str) -> bool:
 def _install_json(names: list[str], tools: dict) -> dict:
     """The ``swe install --json`` document for the given registry names."""
     from quiver.harness.catalog import HARNESS_CATALOG
-    from quiver.harness.installers import METHOD_TOOL, installers_for, uninstaller_for
+    from quiver.harness.installers import (
+        METHOD_TOOL,
+        WEBSITES,
+        installed_app,
+        installed_cask,
+        installers_for,
+        uninstaller_for,
+    )
 
     harnesses = []
     for name in names:
         command = _install_command_name(name, tools)
-        path = shutil.which(command)
-        remover = uninstaller_for(name, os.path.realpath(path)) if path else None
+        binary = shutil.which(command)
+        # GUI apps never land on PATH. For a provider that is only the app
+        # (no catalog command) the bundle or its Caskroom record is the
+        # install evidence; for a CLI-bearing one they only say the app
+        # exists — `installed` keeps meaning the listed command resolves,
+        # so the sheet still offers the CLI's own methods.
+        app = installed_app(name)
+        caskroom = installed_cask(name)
+        path = binary
+        if path is None and name not in HARNESS_CATALOG:
+            path = app or caskroom
+        # The remover follows the executable's own real home first; the
+        # Caskroom names a cask only when no PATH executable claimed it.
+        remover = uninstaller_for(
+            name, os.path.realpath(binary or caskroom)
+        ) if (binary or caskroom) else None
         harnesses.append({
             "name": name,
             "command": command,
             "installed": path is not None,
             "path": path,
+            "app": app,
             "description": HARNESS_CATALOG.get(name, {}).get("description", ""),
+            "website": WEBSITES.get(name),
             "registered": name in tools,
             "methods": [{
                 "via": inst.via,
@@ -1878,7 +1901,16 @@ def _install_json(names: list[str], tools: dict) -> dict:
 def cmd_install(args):
     """Show or run a harness's install command per package manager."""
     from quiver.harness.catalog import HARNESS_CATALOG
-    from quiver.harness.installers import INSTALLERS, METHODS, METHOD_TOOL, Installer, installers_for
+    from quiver.harness.installers import (
+        INSTALLERS,
+        METHODS,
+        METHOD_TOOL,
+        WEBSITES,
+        Installer,
+        installed_app,
+        installed_cask,
+        installers_for,
+    )
 
     args, json_view = take_json_flag(list(args or []))
     err = error_stream(json_view)
@@ -1925,7 +1957,10 @@ def cmd_install(args):
 
     if name is None:
         if json_view:
-            return emit(_install_json(sorted(INSTALLERS), load_registry_readonly()))
+            # A provider with only a website still earns a row: the sheet
+            # links out instead of dead-ending on an empty methods list.
+            names = sorted(set(INSTALLERS) | set(WEBSITES))
+            return emit(_install_json(names, load_registry_readonly()))
         print(c("red", "Usage: swe install <name> [--via=<method>] [--package=<pkg>] "
                        "[--command=<cmd>] [--dry-run|-n] [--json]"))
         print(c("dim", "  Example: swe install gemini            # list its installers"))
@@ -1994,8 +2029,11 @@ def cmd_install(args):
     else:
         # Listing: print, never run. npm (or any tool) may be absent.
         if not installers:
+            site = WEBSITES.get(reg_name)
             print(c("red", f"  No known installer for '{name}'. "
                            "If it is on npm, pass --package=<npm-name>."), file=err)
+            if site:
+                print(c("dim", f"  Or get it from {site}"), file=err)
             return 1
         print(f"\n{c('bold', 'swe install')}\n")
         print(f"  name:     {reg_name}")
@@ -2004,6 +2042,16 @@ def cmd_install(args):
         if found:
             print(c("green", f"  already installed at {found}"))
             print(c("dim", "  hint: 'swe discover --apply' registers it"))
+        else:
+            app = installed_app(reg_name) or installed_cask(reg_name)
+            if app:
+                # For a provider that is only the app this is the install;
+                # for a CLI-bearing one it is just the desktop app sitting
+                # next to a missing command.
+                if reg_name in HARNESS_CATALOG:
+                    print(c("green", f"  its app is at {app}"))
+                else:
+                    print(c("green", f"  already installed at {app}"))
         print()
         for inst in installers:
             row = f"  {inst.via:<7} {inst.display()}"
@@ -2044,8 +2092,11 @@ def cmd_install(args):
     if not result.path:
         print(c("yellow", f"  install finished, but '{cmd_name}' is still not on PATH."))
         print(c("dim", "  Run: swe doctor"))
-    else:
+    elif shutil.which(cmd_name):
         print(f"  {c('green', '✓')} on PATH: {result.path}")
+    else:
+        # A GUI app install: its evidence is the bundle, not a binary.
+        print(f"  {c('green', '✓')} installed at {result.path}")
     status = c("green", "installed") if result.path else c("yellow", "registered (not on PATH yet)")
     print(f"  {c('green', '✓')} {result.action} '{reg_name}' → '{cmd_name}' ({status})"
           + (f"  v{result.version}" if result.version else ""))
@@ -2145,10 +2196,14 @@ def run_install(reg_name: str, cmd_name: str, installer, argv: list[str],
                              error=f"{installer.via} install exited with code {result.returncode}")
 
     # Re-hash PATH resolution. A command still off PATH is registered all
-    # the same, so it can be fixed later.
+    # the same, so it can be fixed later. A GUI app (a cask install) leaves
+    # a bundle or a Caskroom record instead of a binary.
     installed_path = shutil.which(cmd_name)
-
     ver = live_version(cmd_name) if installed_path else None
+    if not installed_path:
+        from quiver.harness.installers import installed_app, installed_cask
+        installed_path = installed_app(reg_name) or installed_cask(reg_name)
+
     # Fallback: read package.json next to npm global module
     if not ver and installer.via == "npm":
         try:

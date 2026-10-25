@@ -287,6 +287,111 @@ class HarnessProcessCommandTest(unittest.TestCase):
         self.assertFalse(harness["registered"])
         self.assertEqual(harness["description"], "")
 
+    def test_install_json_gui_app_reads_the_bundle_and_caskroom(self):
+        # zcode is a GUI app: no PATH binary, so evidence is the .app
+        # bundle, and the Caskroom record names the remover.
+        with patch("quiver.harness.installers.installed_app",
+                   return_value="/Applications/ZCode.app"), patch(
+                "quiver.harness.installers.installed_cask",
+                return_value="/opt/homebrew/Caskroom/zcode"):
+            code, out, run, save = self._run_install(
+                ["zcode", "--json"], which=lambda name: None)
+
+        self.assertEqual(code, 0)
+        harness = json.loads(out)["data"]["harnesses"][0]
+        self.assertTrue(harness["installed"])
+        self.assertEqual(harness["path"], "/Applications/ZCode.app")
+        self.assertEqual(harness["app"], "/Applications/ZCode.app")
+        self.assertEqual(harness["website"], "https://zcode.z.ai")
+        self.assertEqual(harness["uninstall"]["via"], "cask")
+        self.assertEqual(harness["uninstall"]["command"],
+                         "brew uninstall --cask zcode")
+
+    def test_install_json_app_bundle_does_not_hide_a_missing_cli(self):
+        # antigravity the provider is a catalog harness (command `agy`); the
+        # IDE's bundle on disk must not mark its CLI installed. The row stays
+        # installable, reports the app, and the Caskroom record still names
+        # the remover brew owns.
+        with patch("quiver.harness.installers.installed_app",
+                   return_value="/Applications/Antigravity.app"), patch(
+                "quiver.harness.installers.installed_cask",
+                return_value="/opt/homebrew/Caskroom/antigravity"):
+            code, out, run, save = self._run_install(
+                ["antigravity", "--json"], which=lambda name: None)
+
+        harness = json.loads(out)["data"]["harnesses"][0]
+        self.assertFalse(harness["installed"])
+        self.assertIsNone(harness["path"])
+        self.assertEqual(harness["app"], "/Applications/Antigravity.app")
+        self.assertEqual(harness["uninstall"]["command"],
+                         "brew uninstall --cask antigravity")
+
+    def test_install_json_binary_wins_the_uninstaller_over_a_caskroom(self):
+        # codex through npm plus a stale Caskroom record: the reported path
+        # is the npm executable, so the remover must be npm's too.
+        npm_bin = "/usr/local/lib/node_modules/@openai/codex/bin/codex"
+
+        def which(name):
+            return npm_bin if name == "codex" else None
+
+        with patch("quiver.harness.installers.installed_app", return_value=None), \
+                patch("quiver.harness.installers.installed_cask",
+                      return_value="/opt/homebrew/Caskroom/codex"):
+            code, out, run, save = self._run_install(
+                ["codex", "--json"], which=which)
+
+        harness = json.loads(out)["data"]["harnesses"][0]
+        self.assertEqual(harness["path"], npm_bin)
+        self.assertEqual(harness["uninstall"]["via"], "npm")
+        self.assertEqual(harness["uninstall"]["package"], "@openai/codex")
+
+    def test_install_json_gui_app_without_caskroom_has_no_uninstall(self):
+        # A dmg install leaves no brew record: the sheet gets the website,
+        # and no remover rather than a guessed one.
+        with patch("quiver.harness.installers.installed_app",
+                   return_value="/Applications/ZCode.app"), patch(
+                "quiver.harness.installers.installed_cask", return_value=None):
+            code, out, run, save = self._run_install(
+                ["zcode", "--json"], which=lambda name: None)
+
+        harness = json.loads(out)["data"]["harnesses"][0]
+        self.assertTrue(harness["installed"])
+        self.assertIsNone(harness["uninstall"])
+
+    def test_install_json_website_is_null_for_unaudited_names(self):
+        code, out, run, save = self._run_install(["gemini", "--json"])
+
+        harness = json.loads(out)["data"]["harnesses"][0]
+        self.assertIsNone(harness["website"])
+
+    def test_install_listing_notes_an_installed_gui_app(self):
+        with patch("quiver.harness.installers.installed_app",
+                   return_value="/Applications/ZCode.app"), patch(
+                "quiver.harness.installers.installed_cask", return_value=None):
+            code, out, run, save = self._run_install(
+                ["zcode"], which=lambda name: None)
+
+        self.assertEqual(code, 0)
+        self.assertIn("already installed at /Applications/ZCode.app", out)
+        self.assertNotIn("discover --apply", out)
+
+    def test_install_gui_app_via_cask_succeeds_on_the_bundle(self):
+        def which(name):
+            return "/usr/bin/brew" if name == "brew" else None
+
+        with patch("quiver.harness.installers.installed_app",
+                   return_value="/Applications/ZCode.app"), patch(
+                "quiver.harness.installers.installed_cask", return_value=None):
+            code, out, run, save = self._run_install(["zcode", "--via=cask"],
+                                                     which=which)
+
+        self.assertEqual(code, 0)
+        run.assert_called_once_with(
+            ["brew", "install", "--cask", "zcode"],
+            capture_output=False, text=True, timeout=600,
+        )
+        self.assertIn("installed at /Applications/ZCode.app", out)
+
     def test_install_json_for_every_name(self):
         code, out, run, save = self._run_install(["--json"])
 
