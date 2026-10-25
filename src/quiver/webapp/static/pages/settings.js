@@ -2,12 +2,13 @@
  * sub-nav (underline tabs when the page is narrow), section titles and
  * cards of rows. What belongs to the hub machine works: Integrations ›
  * Remote (hub status, paired devices with Revoke, Pair a device with a QR
- * code), the GitHub CLI, the API keys (read only, masked), the hub's
- * paths. Appearance and Sidebar are kept per browser, in localStorage.
+ * code), the GitHub CLI, the API keys (masked, with reveal, copy, Add
+ * key, edit and delete, as the Mac app's Inference tab), the hub's paths. Appearance and Sidebar are kept per browser, in localStorage.
  * Rows that configure the Mac app itself are greyed out and say
  * "Mac app only". Experimental › Session search turns the hub's transcript
  * index on and off and shows what it holds. Writes: POST
- * /v1/app/settings/pair, /revoke and /session_search.
+ * /v1/app/settings/pair, /revoke, /session_search, /key_set and
+ * /key_remove; /key_value answers one key's value for reveal and copy.
  *
  * This script also runs when the app loads, before any page is opened,
  * to apply the saved appearance and hide the pages switched off in
@@ -110,6 +111,9 @@ const SETTINGS_ICONS = {
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   warn: '<path d="M12 4 2.5 20h19zM12 10v4M12 17.5v.01"/>',
   copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h9"/>',
+  eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff: '<path d="M3 3l18 18M10.6 5.1A10.7 10.7 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4M6.6 6.6C3.9 8.4 2 12 2 12s3.6 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
 };
 const settingsIcon = (name) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${SETTINGS_ICONS[name] || ICON[name] || ""}</svg>`;
@@ -133,6 +137,11 @@ const settingsPage = {
   // Bumped by every switch write and page visit: a status read that
   // started before one is stale and never lands.
   searchGen: 0,
+  // Inference keys: values fetched for the eye (a Map, since a variable
+  // can be named constructor; forgotten on the next visit or reload, and
+  // revealGen drops an answer that lands after either), the Add key /
+  // Edit sheet's draft, a reload in flight.
+  revealed: new Map(), revealGen: 0, keyEditor: null, keyError: null, keysBusy: false,
 };
 
 function settingsSection() {
@@ -156,6 +165,9 @@ async function renderSettings() {
   p.ticket = null;
   p.confirming = null;
   p.setupStale = true;
+  p.revealed = new Map();
+  p.revealGen++;
+  p.keyEditor = null;
   if (p.data) paintSettings();
   else {
     document.getElementById("panel").innerHTML = `<div class="page">${settingsHeader()}
@@ -359,40 +371,125 @@ function providersSection() {
 function inferenceTab() {
   const prov = settingsPage.data && settingsPage.data.providers;
   if (!prov) return `<div class="card"><p class="empty">Reading…</p></div>`;
-  const rows = prov.rows || [];
-  const withKey = rows.filter((r) => r.has_key).length;
+  const rows = prov.keys || [];
+  const withValue = rows.filter((r) => r.has_value).length;
   const p = settingsPage;
   const q = p.query.trim().toLowerCase();
-  const visible = rows.filter((r) => (p.status === "all" || (p.status === "set") === r.has_key)
-    && (!q || [r.name, r.id, ...(r.env_vars || [])].some((s) => String(s || "").toLowerCase().includes(q))));
-  const subtitle = prov.exists ? `From ${prov.path}.` : `No key store at ${prov.path} yet.`;
+  const visible = rows.filter((r) => (p.status === "all" || (p.status === "set") === r.has_value)
+    && (!q || [r.name, r.provider || "Other"].some((s) => String(s).toLowerCase().includes(q))));
+  const providers = new Set(rows.map((r) => r.provider));
+  const subtitle = prov.exists ? `From ${prov.path}.` : `No keys file at ${prov.path} yet; Add key creates it.`;
   const filters = `<div class="filters set-filters">
     <select class="field" id="set-key-status" aria-label="Status">
       <option value="all"${p.status === "all" ? " selected" : ""}>Any status (${rows.length})</option>
-      <option value="set"${p.status === "set" ? " selected" : ""}>Key set (${withKey})</option>
-      <option value="none"${p.status === "none" ? " selected" : ""}>No key (${rows.length - withKey})</option>
+      <option value="set"${p.status === "set" ? " selected" : ""}>Key set (${withValue})</option>
+      <option value="none"${p.status === "none" ? " selected" : ""}>No key (${rows.length - withValue})</option>
     </select>
     <input class="field search" id="set-key-search" type="search" placeholder="Search providers or variables" value="${esc(p.query)}" aria-label="Search providers or variables">
     <span class="caption count num">${visible.length === 1 ? "1 row" : `${visible.length} rows`}</span>
   </div>`;
-  const body = prov.error ? `<p class="error set-pad">${esc(prov.error)}</p>`
-    : visible.length ? visible.map((r) => `<div class="set-key-row">
-        <div class="set-key-name"><span class="name">${esc(r.name)}</span>
-          ${r.url ? `<a class="caption" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Get a key</a>` : ""}</div>
-        <div class="set-key-value"><code class="muted">${esc(r.env_var || "")}</code>${r.has_key ? `<span class="set-masked num">${esc(r.masked)}</span>` : ""}</div>
-        <div class="set-key-type caption">API key</div>
-        <div class="set-key-status ${r.has_key ? "ok" : "muted"}">${r.has_key ? "Key set" : "No key"}</div>
-      </div>`).join("")
-    : `<p class="empty set-pad">${rows.length ? "Nothing matches these filters." : "No providers known."}</p>`;
+  const body = visible.length ? visible.map(settingsKeyRow).join("")
+    : `<p class="empty set-pad">${rows.length ? "Nothing matches these filters." : `No keys yet. Add one and Quiver writes it to ${esc(prov.path)}.`}</p>`;
   return `<div class="set-stack">
-    <div class="set-keys-head"><div class="set-group-title">Keys and plans</div><div class="caption">${esc(subtitle)}</div></div>
+    <div class="set-keys-top">
+      <div class="set-keys-head"><div class="set-group-title">Keys and plans</div><div class="caption">${esc(subtitle)}</div></div>
+      <div class="set-keys-actions">
+        <button class="set-button" id="set-keys-reload"${p.keysBusy ? " disabled" : ""} title="Read the file again">${settingsIcon("rescan")}<span>Reload</span></button>
+        <button class="set-button" id="set-key-add"${prov.stamp == null ? " disabled" : ""}>${settingsIcon("plus")}<span>Add key</span></button>
+      </div>
+    </div>
+    ${prov.error ? `<p class="error" role="alert">${esc(prov.error)}</p>` : ""}
+    ${p.keyError ? `<p class="error" role="alert">${esc(p.keyError)}</p>` : ""}
     ${filters}
     <div class="set-table">
       <div class="set-key-row set-key-header"><div>Provider</div><div>Value</div><div class="set-key-type">Type</div><div>Status</div></div>
       ${body}
     </div>
-    <div class="caption muted">${withKey} / ${rows.length} providers with keys. Values stay masked here; adding, editing and checking keys stays in the Mac app and <code>swe providers</code>. Coding plans are listed in the Mac app.</div>
+    <div class="caption muted">${rows.length} ${rows.length === 1 ? "key" : "keys"} from ${providers.size} ${providers.size === 1 ? "provider" : "providers"}. Terminals already open keep the old values until you run <code>source ${esc(prov.path)}</code>. Checking keys, renaming, moving keys between providers, custom providers and coding plans stay in the Mac app.</div>
+    ${settingsKeySheet()}
   </div>`;
+}
+
+/* One row: the heading, the variable with its value masked (or revealed)
+ * and the eye and copy buttons, the type and the status. Anywhere but
+ * those buttons opens the key, as the app's row does. */
+function settingsKeyRow(r) {
+  const shown = settingsPage.revealed.get(r.name);
+  const name = esc(r.name);
+  const value = shown != null ? shown : r.masked;
+  return `<div class="set-key-row set-key-open" data-key-open="${name}" role="button" tabindex="0" aria-label="Edit ${name}" title="Click to edit ${name}">
+    <div class="set-key-name"><span class="name">${esc(r.provider || "Other")}</span></div>
+    <div class="set-key-value"><code class="muted">${name}</code>${r.has_value ? `<span class="set-masked num${shown != null ? " revealed" : ""}">${esc(value)}</span>
+      <span class="set-key-tools">
+        <button class="icon-button set-key-icon" data-key-reveal="${name}" aria-label="${shown != null ? "Hide" : "Show"} the value" title="${shown != null ? "Hide" : "Show"} the value">${settingsIcon(shown != null ? "eyeOff" : "eye")}</button>
+        <button class="icon-button set-key-icon" data-key-copy="${name}" aria-label="Copy the value" title="Copy the value">${settingsIcon("copy")}</button>
+      </span>` : ""}</div>
+    <div class="set-key-type caption">API key</div>
+    <div class="set-key-status ${r.has_value ? "ok" : "muted"}">${r.has_value ? "Key set" : "No key"}</div>
+  </div>`;
+}
+
+/* Add a key / Edit NAME, the app's KeyEditor without Test, rename and
+ * move. A new key picks a catalog provider and is saved as its variable;
+ * an edit replaces the value where it sits. The value field is a
+ * password field the browser won't fill, emptied after every save. */
+function settingsKeySheet() {
+  const e = settingsPage.keyEditor;
+  if (!e) return "";
+  const prov = settingsPage.data.providers;
+  const catalog = [...(prov.catalog || [])].sort((a, b) => a.name.localeCompare(b.name));
+  const picked = e.isNew ? catalog.find((c) => c.id === e.provider) : null;
+  const name = settingsKeyName(e);
+  const existing = (prov.keys || []).find((k) => k.name === name);
+  const row = e.isNew ? null : existing;
+  const link = picked ? picked.url : row && (catalog.find((c) => c.env_vars.includes(row.name)) || {}).url;
+  let fields = "";
+  if (e.isNew) {
+    fields += `<label class="set-form-field"><span class="caption">Provider</span>
+      <select class="field" id="set-key-provider"${e.working ? " disabled" : ""}>
+        <option value=""${picked ? "" : " selected"}>Pick a provider</option>
+        ${catalog.map((c) => `<option value="${esc(c.id)}"${c.id === e.provider ? " selected" : ""}>${esc(c.name)}</option>`).join("")}
+      </select></label>`;
+    if (picked) {
+      const savedAs = picked.env_vars.length > 1
+        ? `<span class="caption">saved as</span><select class="field set-key-var" id="set-key-var" aria-label="Variable"${e.working ? " disabled" : ""}>${picked.env_vars.map((v) =>
+            `<option value="${esc(v)}"${v === name ? " selected" : ""}>${esc(v)}</option>`).join("")}</select>`
+        : `<code class="caption">saved as ${esc(name)}</code>`;
+      fields += `<div class="set-key-saved">${savedAs}<span class="set-key-spacer"></span>${link ? `<a class="caption" href="${esc(link)}" target="_blank" rel="noopener noreferrer">Get a key</a>` : ""}</div>`;
+      if (existing) fields += `<p class="caption set-warn">${esc(name)} is already set; saving replaces it.</p>`;
+    }
+  } else {
+    fields += `<div class="set-key-saved"><span class="caption">Under</span><span>${esc(row ? row.provider || "Other" : "")}</span>
+      <span class="set-key-spacer"></span>${link ? `<a class="caption" href="${esc(link)}" target="_blank" rel="noopener noreferrer">Get a key</a>` : ""}</div>`;
+  }
+  fields += `<label class="set-form-field"><span class="caption">Value</span>
+    <span class="set-key-input-row"><input class="field set-key-input" id="set-key-value" type="${e.show ? "text" : "password"}"
+      autocomplete="new-password" spellcheck="false" autocapitalize="off" placeholder="${e.isNew ? "sk-…" : "Paste a new value"}"
+      value="${esc(e.value)}"${e.working ? " disabled" : ""}>
+    <button type="button" class="icon-button set-key-icon" id="set-key-show" aria-label="${e.show ? "Hide" : "Show"} the value" title="${e.show ? "Hide" : "Show"} the value">${settingsIcon(e.show ? "eyeOff" : "eye")}</button></span></label>`;
+  const canSave = !e.working && name && e.value.trim() && (!e.isNew || picked);
+  const left = e.isNew ? "" : e.confirmingDelete
+    ? `<span class="caption">Delete ${esc(e.name)}?</span>
+       <button class="set-button danger" data-key-act="delete-confirm"${e.working ? " disabled" : ""}>Delete</button>
+       <button class="set-button" data-key-act="keep">Keep</button>`
+    : `<button class="set-button set-danger" data-key-act="delete" title="Delete ${esc(e.name)} from the keys file"${e.working ? " disabled" : ""}>Delete</button>`;
+  return `<dialog class="sheet set-key-sheet" id="set-key-sheet" aria-labelledby="set-key-title">
+    <div class="sheet-body set-key-form">
+      <div class="sheet-title" id="set-key-title">${e.isNew ? "Add a key" : `Edit ${esc(e.name)}`}</div>
+      ${fields}
+      ${e.error ? `<p class="error" role="alert">${esc(e.error)}</p>` : ""}
+      <div class="set-key-foot">${left}<span class="set-key-spacer"></span>
+        <button class="set-button" data-key-act="cancel">Cancel</button>
+        <button class="set-button primary" data-key-act="save"${canSave ? "" : " disabled"}>${e.working === "save" ? "Saving…" : e.isNew ? "Add key" : "Save"}</button></div>
+    </div>
+  </dialog>`;
+}
+
+function settingsKeyName(e) {
+  if (!e.isNew) return e.name;
+  const picked = (settingsPage.data.providers.catalog || []).find((c) => c.id === e.provider);
+  if (!picked) return "";
+  return picked.env_vars.includes(e.envVar) ? e.envVar : picked.env_vars[0] || "";
 }
 
 /* ------------------------------------------------------------- Services */
@@ -832,6 +929,195 @@ function bindSettings(section) {
     };
   }
   if (section === "integrations") bindRemote();
+  bindKeys();
+}
+
+/* ------------------------------------------------- Inference keys */
+
+function bindKeys() {
+  const p = settingsPage;
+  const reload = document.getElementById("set-keys-reload");
+  if (!reload) return;
+  reload.onclick = () => settingsReloadKeys("#set-keys-reload");
+  document.getElementById("set-key-add").onclick = () => {
+    p.keyEditor = { isNew: true, provider: "", envVar: "", value: "", show: false };
+    settingsKeyRepaint("#set-key-provider");
+  };
+  for (const row of document.querySelectorAll("[data-key-open]")) {
+    const open = (ev) => {
+      if (ev.target.closest("button, a")) return;
+      p.keyEditor = { isNew: false, name: row.dataset.keyOpen, value: "", show: false };
+      settingsKeyRepaint("#set-key-value");
+    };
+    row.onclick = open;
+    row.onkeydown = (ev) => { if (ev.target === row && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); open(ev); } };
+  }
+  for (const btn of document.querySelectorAll("[data-key-reveal]")) btn.onclick = () => settingsRevealKey(btn.dataset.keyReveal);
+  for (const btn of document.querySelectorAll("[data-key-copy]")) btn.onclick = () => settingsCopyKey(btn.dataset.keyCopy);
+  const sheet = document.getElementById("set-key-sheet");
+  if (!sheet) return;
+  const e = p.keyEditor;
+  if (!sheet.open) sheet.showModal();
+  sheet.oncancel = (ev) => { ev.preventDefault(); settingsCloseKey(); };
+  const provider = document.getElementById("set-key-provider");
+  if (provider) provider.onchange = () => { e.provider = provider.value; e.envVar = ""; e.error = null; settingsKeyRepaint("#set-key-provider"); };
+  const variable = document.getElementById("set-key-var");
+  if (variable) variable.onchange = () => { e.envVar = variable.value; settingsKeyRepaint("#set-key-var"); };
+  const value = document.getElementById("set-key-value");
+  const save = sheet.querySelector('[data-key-act="save"]');
+  value.oninput = () => {
+    e.value = value.value;
+    save.disabled = !!e.working || !settingsKeyName(e) || !e.value.trim();
+  };
+  value.onkeydown = (ev) => { if (ev.key === "Enter" && !save.disabled) { ev.preventDefault(); settingsSaveKey(); } };
+  document.getElementById("set-key-show").onclick = () => { e.show = !e.show; settingsKeyRepaint("#set-key-value"); };
+  for (const btn of sheet.querySelectorAll("[data-key-act]")) {
+    btn.onclick = () => {
+      const act = btn.dataset.keyAct;
+      if (act === "cancel") settingsCloseKey();
+      if (act === "save") settingsSaveKey();
+      if (act === "delete") { e.confirmingDelete = true; settingsKeyRepaint('[data-key-act="keep"]'); }
+      if (act === "keep") { e.confirmingDelete = false; settingsKeyRepaint('[data-key-act="delete"]'); }
+      if (act === "delete-confirm") settingsRemoveKey();
+    };
+  }
+}
+
+function settingsKeyRepaint(focus) {
+  if (onSettingsPage()) settingsRepaintRemote(focus);
+}
+
+function settingsCloseKey() {
+  const p = settingsPage;
+  const name = p.keyEditor && !p.keyEditor.isNew ? p.keyEditor.name : null;
+  p.keyEditor = null;
+  const sheet = document.getElementById("set-key-sheet");
+  if (sheet && sheet.open) sheet.close();
+  settingsKeyRepaint(name ? `[data-key-open="${CSS.escape(name)}"]` : "#set-key-add");
+}
+
+function settingsFailure(status, data) {
+  return (data && data.error && data.error.message)
+    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+}
+
+function settingsSignedOut(status) {
+  if (status !== 401) return false;
+  if (onSettingsPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  return true;
+}
+
+/* Reads the page again for a fresh file and stamp; revealed values go. */
+async function settingsReloadKeys(focus) {
+  const p = settingsPage;
+  const gen = routeGen;
+  const mine = ++p.gen;
+  p.keysBusy = true;
+  p.revealed = new Map();
+  p.revealGen++;
+  settingsKeyRepaint(focus);
+  const { status, data } = await api("/v1/app/settings");
+  p.keysBusy = false;
+  if (gen !== routeGen || mine !== p.gen) return;
+  if (settingsSignedOut(status)) return;
+  if (status === 200 && data) { p.data = data; p.keyError = null; } else p.keyError = settingsFailure(status, data);
+  settingsKeyRepaint(focus);
+}
+
+/* One key's value, asked for only by the eye and copy buttons. */
+async function settingsKeyValue(name) {
+  const { status, data } = await apiPost("/v1/app/settings/key_value", { name });
+  if (status === 200 && data && typeof data.value === "string") return data.value;
+  if (!settingsSignedOut(status)) settingsPage.keyError = settingsFailure(status, data);
+  return null;
+}
+
+async function settingsRevealKey(name) {
+  const p = settingsPage;
+  const focus = `[data-key-reveal="${CSS.escape(name)}"]`;
+  if (p.revealed.has(name)) { p.revealed.delete(name); return settingsKeyRepaint(focus); }
+  const gen = p.revealGen;
+  const value = await settingsKeyValue(name);
+  // A reload or a new visit since the click hid everything: stay hidden.
+  if (gen !== p.revealGen || !onSettingsPage()) return;
+  if (value != null) { p.revealed.set(name, value); p.keyError = null; }
+  settingsKeyRepaint(focus);
+}
+
+async function settingsCopyKey(name) {
+  const p = settingsPage;
+  const value = p.revealed.has(name) ? p.revealed.get(name) : await settingsKeyValue(name);
+  if (value == null) return settingsKeyRepaint(`[data-key-copy="${CSS.escape(name)}"]`);
+  let ok = false;
+  try { await navigator.clipboard.writeText(value); ok = true; } catch { /* plain http: no async clipboard */ }
+  if (!ok) {
+    const area = document.createElement("textarea");
+    area.value = value;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    try { ok = document.execCommand("copy"); } catch { ok = false; }
+    area.remove();
+  }
+  p.keyError = ok ? null : "Couldn't copy here. Reveal the value and copy it by hand.";
+  const btn = document.querySelector(`[data-key-copy="${CSS.escape(name)}"]`);
+  if (ok && btn) { btn.title = "Copied"; btn.setAttribute("aria-label", "Copied"); }
+  else settingsKeyRepaint(`[data-key-copy="${CSS.escape(name)}"]`);
+}
+
+/* key_set, then the page from the answer. The value field is emptied
+ * whether or not the hub took it. */
+async function settingsSaveKey() {
+  const p = settingsPage;
+  const e = p.keyEditor;
+  const name = e && settingsKeyName(e);
+  if (!e || e.working || !name || !e.value.trim()) return;
+  const body = { name, value: e.value, stamp: p.data.providers.stamp };
+  if (e.isNew) body.provider = e.provider;
+  e.value = "";
+  e.working = "save";
+  e.error = null;
+  settingsKeyRepaint();
+  const { status, data } = await apiPost("/v1/app/settings/key_set", body);
+  body.value = "";
+  settingsKeyDone(e, name, status, data, "#set-key-value");
+}
+
+async function settingsRemoveKey() {
+  const p = settingsPage;
+  const e = p.keyEditor;
+  if (!e || e.working) return;
+  e.working = "delete";
+  e.error = null;
+  settingsKeyRepaint();
+  const { status, data } = await apiPost("/v1/app/settings/key_remove", { name: e.name, stamp: p.data.providers.stamp });
+  settingsKeyDone(e, e.name, status, data, '[data-key-act="cancel"]');
+}
+
+function settingsKeyDone(e, name, status, data, focus) {
+  const p = settingsPage;
+  e.working = false;
+  if (settingsSignedOut(status)) return;
+  if (status === 200 && data && data.providers) {
+    p.data.providers = data.providers;
+    p.revealed.delete(name);
+    p.keyError = null;
+    if (p.keyEditor === e) settingsCloseKey();
+    else settingsKeyRepaint();
+    return;
+  }
+  e.error = settingsFailure(status, data);
+  e.confirmingDelete = false;
+  if (p.keyEditor !== e) return;
+  // The file moved under the page: read it again so a retry carries the
+  // new stamp, keeping the sheet open.
+  if (status === 409 && data && data.error && data.error.code === "changed_on_disk") {
+    e.error = "The keys file changed since this page read it. It has been read again; make the change again.";
+    return settingsReloadKeys(focus);
+  }
+  settingsKeyRepaint(focus);
 }
 
 function bindRemote() {
