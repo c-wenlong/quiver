@@ -100,6 +100,7 @@ scaffolds; `PageHeader` is the non-scrolling variant used by sheets.
 | `Badge` | a small capsule label (plan, state, count) |
 | `HarnessIcon`, `HarnessMark`, `HarnessMarkView`, `ChartSwatch` | the logo lookup: icon, icon+wordmark, grid cell, legend swatch |
 | `EmptyCard`, `LoadingCard`, `ErrorCard` | status and empty states, always inside a card |
+| `SkeletonBlock` | a placeholder bar with a light band sweeping it, for loading states laid out like their content |
 | `ExpandRow` + `RowFold` (QuiverCore) | the fold pair: `RowFold.visible`/`hiddenCount` cut the rows, `ExpandRow` draws the toggle |
 | `ProviderVisibilityCard` | the Settings provider list (order and show/hide) |
 | `ReorderableRows` | drag-to-reorder rows with grip dots |

@@ -113,8 +113,7 @@ private struct ChatTranscript: View {
                 ObservedBanner(model: model, row: row)
             }
             if model.loading {
-                LoadingCard(text: "Loading the transcript…")
-                Spacer()
+                ChatSkeleton()
             } else if model.loadError == nil {
                 log
                 Composer(model: model)
@@ -156,6 +155,52 @@ private struct ChatTranscript: View {
         // Opens on the newest message, and stays there as more arrive.
         .defaultScrollAnchor(.bottom)
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
+    }
+}
+
+/// The transcript's shape before history arrives: message shapes sweeping
+/// the way Overview's skeleton cards do, with the composer's outline where
+/// it lands.
+private struct ChatSkeleton: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            lines(trailing: [140, 60, 320])
+            userBubble(230)
+            SkeletonBlock(height: 34, radius: Theme.controlRadius)
+            lines(trailing: [40, 210])
+            userBubble(150)
+            lines(trailing: [90, 270, 160])
+            Spacer(minLength: 24)
+            composer
+        }
+        .padding(.vertical, 4)
+        .padding(.trailing, 12)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Loading the transcript")
+    }
+
+    /// A few assistant reply lines, each short of the full width.
+    private func lines(trailing: [CGFloat]) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(trailing, id: \.self) { SkeletonBlock(height: 12).padding(.trailing, $0) }
+        }
+    }
+
+    /// A right-aligned bubble where the user's own messages sit.
+    private func userBubble(_ width: CGFloat) -> some View {
+        HStack {
+            Spacer(minLength: 120)
+            SkeletonBlock(width: width, height: 38, radius: Theme.blockRadius)
+        }
+    }
+
+    /// The composer's outline: the message field and Send.
+    private var composer: some View {
+        HStack(spacing: 8) {
+            SkeletonBlock(height: Theme.fieldHeight, radius: Theme.controlRadius)
+            SkeletonBlock(width: 66, height: Theme.fieldHeight, radius: Theme.controlRadius)
+        }
     }
 }
 

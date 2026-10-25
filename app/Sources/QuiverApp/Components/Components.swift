@@ -758,3 +758,37 @@ struct LoadingCard: View {
         }
     }
 }
+
+/// A placeholder bar with a light band sweeping across it, for skeleton
+/// loading states laid out like what they stand in for. The band is an
+/// offset, so the sweep never lays the page out again.
+struct SkeletonBlock: View {
+    var width: CGFloat?
+    var height: CGFloat
+    var radius: CGFloat = 6
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var swept = false
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: radius)
+            .fill(Theme.border)
+            .overlay {
+                if !reduceMotion {
+                    GeometryReader { geometry in
+                        LinearGradient(colors: [.clear, Theme.borderStrong.opacity(0.7), .clear],
+                                       startPoint: .leading, endPoint: .trailing)
+                            .frame(width: 160)
+                            .offset(x: swept ? geometry.size.width : -160)
+                    }
+                }
+            }
+            .clipShape(.rect(cornerRadius: radius))
+            .frame(width: width, height: height)
+            .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
+            .onAppear {
+                withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) { swept = true }
+            }
+            .accessibilityHidden(true)
+    }
+}

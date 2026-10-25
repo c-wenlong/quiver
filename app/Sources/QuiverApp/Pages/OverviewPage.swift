@@ -201,39 +201,6 @@ private struct OverviewSkeleton: View {
     }
 }
 
-/// A placeholder bar with a light band sweeping across it. The band is an
-/// offset, so the sweep never lays the page out again.
-private struct SkeletonBlock: View {
-    var width: CGFloat?
-    var height: CGFloat
-    var radius: CGFloat = 6
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var swept = false
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: radius)
-            .fill(Theme.border)
-            .overlay {
-                if !reduceMotion {
-                    GeometryReader { geometry in
-                        LinearGradient(colors: [.clear, Theme.borderStrong.opacity(0.7), .clear],
-                                       startPoint: .leading, endPoint: .trailing)
-                            .frame(width: 160)
-                            .offset(x: swept ? geometry.size.width : -160)
-                    }
-                }
-            }
-            .clipShape(.rect(cornerRadius: radius))
-            .frame(width: width, height: height)
-            .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
-            .onAppear {
-                withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) { swept = true }
-            }
-            .accessibilityHidden(true)
-    }
-}
-
 /// The Activity card's grid before there are days to show: cells light up
 /// oldest first as `fraction` of the scan is read, and sweep round while
 /// the scan has no count yet.

@@ -64,7 +64,7 @@ private struct ChatBody: View {
         ScrollView(.vertical) {
             LazyVStack(alignment: .leading, spacing: 10) {
                 if model.loading {
-                    LoadingRow(text: "Loading transcript")
+                    ChatSkeleton()
                 } else if let error = model.loadError, model.items.isEmpty {
                     StateCard(icon: "exclamationmark.triangle", title: "Couldn't load this session", message: error, tone: .error)
                 } else if model.items.isEmpty {
@@ -208,6 +208,38 @@ private struct LoadsEarlierAtRest: ViewModifier {
 }
 
 // MARK: - Items
+
+/// The transcript's shape while the first page loads: message-shaped grey
+/// blocks where a reply, a prompt and tool cards will sit.
+private struct ChatSkeleton: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            lines(trailing: [60, 140, 100])
+            userBubble(210)
+            SkeletonBlock(height: 40, radius: Theme.blockRadius)
+            lines(trailing: [30, 190])
+            userBubble(140)
+            lines(trailing: [80, 250, 160])
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Loading transcript")
+    }
+
+    /// A few assistant reply lines, each short of the full width.
+    private func lines(trailing: [CGFloat]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(trailing, id: \.self) { SkeletonBlock(height: 11).padding(.trailing, $0) }
+        }
+    }
+
+    /// A right-aligned bubble where the user's own messages sit.
+    private func userBubble(_ width: CGFloat) -> some View {
+        HStack {
+            Spacer(minLength: 40)
+            SkeletonBlock(width: width, height: 37, radius: 16)
+        }
+    }
+}
 
 /// Three or more tool calls in a row fold into one "Used N tools" card,
 /// so a long agent turn doesn't bury what it said.
