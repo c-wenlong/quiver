@@ -450,6 +450,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **MCP sync no longer writes remote servers into Claude Desktop.** Its
+  config file launches local servers only (a remote one is added in
+  Claude Desktop under Settings › Connectors), but `swe mcp sync` copied
+  URL servers there too. Sync now leaves them out and says so ("1 remote
+  left out"), with the names in a new `unsupported` list in its report;
+  `swe mcp add --url --to=claude-desktop` is refused; and the web app and
+  the Mac app no longer offer Claude Desktop as a target for a remote
+  server.
+
 - **`swe providers` read escaped keys with their backslashes.** The Mac
   app and the web app save a key as `export NAME="…"` with `"`, `\`, `$`
   and a backtick escaped, as a shell expects, but swe's own reader only

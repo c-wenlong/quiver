@@ -98,6 +98,15 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
     /// `${NAME}` references in the hub's definition with no value in the
     /// secrets file. Absent from an older swe, decoded as none missing.
     public let secretsMissing: [String]
+
+    /// Reached at a URL (http, sse) rather than launched with a command on
+    /// this machine; the MCP page's Remote group.
+    public var isRemote: Bool { transport == "http" || transport == "sse" }
+
+    /// Harnesses whose config launches local servers only, as swe's
+    /// `local_only` marks them: Claude Desktop adds a remote server in the
+    /// app itself (Settings › Connectors).
+    public static let localOnly: Set<String> = ["claude-desktop"]
     /// Whether ~/.quiver/mcp.json defines this server. A hub-only row has
     /// no harnesses; an older swe sends nothing and decodes false.
     public let inHub: Bool
@@ -741,6 +750,8 @@ public final class McpModel {
     }
 
     public func targets(for server: McpServer, from source: String, in harnesses: [String]) -> SyncTargets {
+        // A config that launches local servers only can't take a URL one.
+        let harnesses = server.isRemote ? harnesses.filter { !McpServer.localOnly.contains($0) } : harnesses
         if source == "quiver" {
             // The hub isn't a matrix column: every harness lacks it, and
             // one with its own copy gets it replaced only with approval.

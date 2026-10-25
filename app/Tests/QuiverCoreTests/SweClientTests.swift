@@ -385,6 +385,16 @@ func fixture(_ name: String) throws -> Data {
         #expect(targets2.differing == ["claude"])
     }
 
+    @Test func aRemoteServerIsNotOfferedToClaudeDesktop() async {
+        let model = await McpModel()
+        let remote = McpServer(name: "r", transport: "http", url: "https://mcp.example.com/mcp",
+                               harnesses: [], inHub: true)
+        let local = McpServer(name: "l", harnesses: [], inHub: true)
+        let all = ["claude", "claude-desktop", "codex"]
+        #expect(await model.targets(for: remote, from: "quiver", in: all).missing == ["claude", "codex"])
+        #expect(await model.targets(for: local, from: "quiver", in: all).missing == all)
+    }
+
     @Test func inHubDefaultsFalseForAnOlderSwe() throws {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
