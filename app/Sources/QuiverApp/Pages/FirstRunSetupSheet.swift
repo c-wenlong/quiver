@@ -335,16 +335,12 @@ private struct LinksStep: View {
                 } else if !instructions.adoptCandidates.isEmpty {
                     HStack(spacing: 8) {
                         Text("Start from").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                        Picker("Start from", selection: $model.start) {
-                            ForEach(instructions.adoptCandidates, id: \.self) { candidate in
-                                Text("Your \(Self.tilde(candidate.path))")
-                                    .tag(FirstRunSetupModel.Start.file(candidate.path))
-                            }
-                            Text("Quiver's starter file").tag(FirstRunSetupModel.Start.seed)
-                        }
-                        .labelsHidden()
-                        .frame(maxWidth: 360)
-                        .disabled(model.outcome != nil)
+                        SelectMenu(options: instructions.adoptCandidates.map {
+                                       (FirstRunSetupModel.Start.file($0.path),
+                                        "Your \(Self.tilde($0.path))")
+                                   } + [(.seed, "Quiver's starter file")],
+                                   selection: $model.start, width: nil)
+                            .disabled(model.outcome != nil)
                     }
                 }
                 ForEach(model.untouchedCandidates, id: \.self) { candidate in
