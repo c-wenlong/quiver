@@ -2,10 +2,12 @@
 
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
 from quiver.remote import protocol
+from quiver.remote import journal as journal_mod
 from quiver.remote.journal import Journal
 
 
@@ -123,6 +125,23 @@ class TestJournal(unittest.TestCase):
         with patch("builtins.open", side_effect=OSError("read-only")):
             ev = j.append("k", protocol.event("t", "k", "m", {}))
         self.assertEqual(ev["seq"], 1)
+
+    def test_read_since_runs_under_the_lock(self):
+        # The read holds _LOCK like appends and trims do, so it can't
+        # answer from a file a trim is mid-way through replacing. While
+        # the lock is held elsewhere the read cannot even start.
+        self._append("a:x", 1)
+        done = []
+        t = threading.Thread(
+            target=lambda: done.append(self.journal.read_since("a:x", 0))
+        )
+        with journal_mod._LOCK:
+            t.start()
+            t.join(timeout=0.5)
+            self.assertEqual(done, [])
+        t.join(timeout=5)
+        self.assertEqual(len(done), 1)
+        self.assertEqual([e["seq"] for e in done[0][0]], [1])
 
     def test_seq_recovers_past_large_final_event(self):
         # A final record bigger than the initial tail window must not

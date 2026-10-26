@@ -162,32 +162,38 @@ class Journal:
 
         ``truncated`` is True when the client asked for events the ring
         already dropped: the oldest seq on disk is past ``after_seq``.
+
+        The read runs under ``_LOCK`` like appends and trims do —
+        ``_maybe_trim`` rewrites the file under it, so a reader without
+        it could answer a post-trim request from the pre-trim file and
+        report ``truncated=False`` for events the ring already dropped.
         """
-        path = self._file(session_key)
-        events: list[dict] = []
-        oldest = 0
-        try:
-            with open(path, encoding="utf-8", errors="replace") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        rec = json.loads(line)
-                    except ValueError:
-                        continue
-                    if not isinstance(rec, dict):
-                        continue
-                    seq = rec.get("seq")
-                    if not isinstance(seq, int):
-                        continue
-                    if not oldest:
-                        oldest = seq
-                    if seq > after_seq:
-                        events.append(rec)
-                        if limit is not None and len(events) >= limit:
-                            break
-        except OSError:
-            return [], False
-        truncated = bool(oldest and after_seq and after_seq < oldest - 1)
-        return events, truncated
+        with _LOCK:
+            path = self._file(session_key)
+            events: list[dict] = []
+            oldest = 0
+            try:
+                with open(path, encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            rec = json.loads(line)
+                        except ValueError:
+                            continue
+                        if not isinstance(rec, dict):
+                            continue
+                        seq = rec.get("seq")
+                        if not isinstance(seq, int):
+                            continue
+                        if not oldest:
+                            oldest = seq
+                        if seq > after_seq:
+                            events.append(rec)
+                            if limit is not None and len(events) >= limit:
+                                break
+            except OSError:
+                return [], False
+            truncated = bool(oldest and after_seq and after_seq < oldest - 1)
+            return events, truncated
