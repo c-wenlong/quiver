@@ -2585,6 +2585,50 @@ class TestSSE(HubBase):
         finally:
             conn.close()
 
+    def test_last_event_id_header_resumes_the_stream(self):
+        # An EventSource client reconnects with Last-Event-ID instead
+        # of ?last= — the header must win over the query arg and be
+        # honored at all (otherwise every reconnect is a full replay).
+        auth = self.auth()
+        key = "claude:s1"
+        self.srv.state.emit(
+            key, protocol.event(
+                "message.appended", key, "mbp",
+                protocol.message("assistant", "before"),
+            )
+        )
+        seen = self.srv.state.journal.last_seq(key)
+        self.srv.state.emit(
+            key, protocol.event(
+                "message.appended", key, "mbp",
+                protocol.message("assistant", "after"),
+            )
+        )
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.srv.port, timeout=5
+        )
+        try:
+            # Even with ?last=0 asking for everything, the header rules.
+            headers = {**auth, "Last-Event-ID": str(seen)}
+            conn.request(
+                "GET", f"/v1/sessions/{key}/events?last=0",
+                headers=headers,
+            )
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 200)
+            buf = b""
+            for _ in range(60):
+                line = resp.readline()
+                if not line:
+                    break
+                buf += line
+                if b"journal.caught-up" in buf:
+                    break
+            self.assertIn(b'"after"', buf)
+            self.assertNotIn(b'"before"', buf)
+        finally:
+            conn.close()
+
     def test_revoked_device_drops_stream(self):
         from quiver.remote import hub as hub_mod
         cred = self.srv.pair()

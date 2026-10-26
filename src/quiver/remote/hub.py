@@ -1120,6 +1120,22 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(frame.encode("utf-8"))
         self.wfile.flush()
 
+    def _sse_after(self, args) -> int:
+        """The SSE resume cursor.
+
+        The ``Last-Event-ID`` header wins — it is what an EventSource
+        client sends automatically on reconnect, matching the ``id:``
+        lines ``_sse_write`` emits. The ``?last=`` query arg is the
+        fallback for clients that drive the cursor by hand.
+        """
+        header = self.headers.get("Last-Event-ID")
+        if header is not None:
+            try:
+                return int(header.strip())
+            except ValueError:
+                pass  # unreadable header: fall through to the query arg
+        return _int_arg(args.get("last"), 0)
+
     # -- routing ----------------------------------------------------------
 
     def do_GET(self) -> None:
@@ -1302,7 +1318,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/events":
-            after = _int_arg(args.get("last"), 0)
+            after = self._sse_after(args)
             self._sse_stream(None, after, device_id=device_id)
             return
 
@@ -1313,7 +1329,7 @@ class _Handler(BaseHTTPRequestHandler):
                     422, "bad_command", "machine is required"
                 )
                 return
-            after = _int_arg(args.get("last"), 0)
+            after = self._sse_after(args)
             self._agent_stream(mid, after, device_id=device_id)
             return
 
@@ -1352,7 +1368,7 @@ class _Handler(BaseHTTPRequestHandler):
                         {"status": str(row.get("status") or "")},
                     )
             if sep and action == "events":
-                after = _int_arg(args.get("last"), 0)
+                after = self._sse_after(args)
                 self._sse_stream(key, after, device_id=device_id)
                 return
             if sep and action == "messages":

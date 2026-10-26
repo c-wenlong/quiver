@@ -171,6 +171,76 @@ class TestJsonlTailSource(unittest.TestCase):
         self._write([_claude_user("next")])
         self.assertEqual(src.poll()[0]["text"], "next")
 
+    def test_truncate_to_a_prefix_emits_nothing_until_appends(self):
+        # A file cut in place to a strict prefix of what was read
+        # (copytruncate before the next write lands) holds no new
+        # content — re-reading it would re-emit old messages.
+        self._write([_claude_user("one"), _claude_user("two"),
+                     _claude_user("three")])
+        src = tail.JsonlTailSource(self.path, "claude")
+        src.poll()
+        first_two = b"".join(
+            (json.dumps(_claude_user(t)) + "\n").encode()
+            for t in ("one", "two"))
+        self.path.write_bytes(first_two)
+        self.assertEqual(src.poll(), [])
+        # Appends after the cut still stream — the stream continues.
+        self._write([_claude_user("four")])
+        self.assertEqual([m["text"] for m in src.poll()], ["four"])
+
+    def test_copytruncate_keeps_head_emits_only_the_tail(self):
+        # Copytruncate: the head survives, the rest was cut, and the
+        # writer's new records land right after it. Only that tail is
+        # new — the head must not come through again.
+        self._write([
+            _claude_user("h" * tail._HEAD_SAMPLE),
+            _claude_user("old"),
+            _claude_user("older"),
+        ])
+        src = tail.JsonlTailSource(self.path, "claude")
+        src.poll()
+        kept = self.path.read_bytes()[: tail._HEAD_SAMPLE]
+        self.path.write_bytes(
+            kept + json.dumps(_claude_user("fresh")).encode() + b"\n")
+        out = src.poll()
+        self.assertEqual([m["text"] for m in out], ["fresh"])
+
+    def test_rewrite_with_a_new_head_reemits(self):
+        # A rotated or rewritten file whose head differs is a new
+        # stream: it is re-read from the start.
+        self._write([_claude_user("old1"), _claude_user("old2")])
+        src = tail.JsonlTailSource(self.path, "claude")
+        src.poll()
+        self.path.write_text(json.dumps(_claude_user("new1")) + "\n")
+        out = src.poll()
+        self.assertEqual([m["text"] for m in out], ["new1"])
+
+    def test_head_fingerprint_survives_a_cursor_round_trip(self):
+        # The truncation check re-arms on restore: the head hash in the
+        # cursor is verified against the file, so a copytruncate across
+        # a restart is still not re-emitted.
+        self._write([_claude_user("one"), _claude_user("two")])
+        src = tail.JsonlTailSource(self.path, "claude")
+        src.poll()
+        src2 = tail.JsonlTailSource(self.path, "claude")
+        src2.restore(src.state())
+        first = (json.dumps(_claude_user("one")) + "\n").encode()
+        self.path.write_bytes(first)
+        self.assertEqual(src2.poll(), [])
+
+    def test_restore_rejects_a_head_that_changed_while_down(self):
+        # A file rewritten while the tailer was down fails the head
+        # check: the stream is re-read instead of resumed mid-file.
+        self._write([_claude_user("one"), _claude_user("two")])
+        src = tail.JsonlTailSource(self.path, "claude")
+        src.poll()
+        state = src.state()
+        self.path.write_text(json.dumps(_claude_user("replaced")) + "\n")
+        src2 = tail.JsonlTailSource(self.path, "claude")
+        src2.restore(state)
+        self.assertEqual(
+            [m["text"] for m in src2.poll()], ["replaced"])
+
 
 class TestSnapshotSource(unittest.TestCase):
     def _session(self):
@@ -488,6 +558,59 @@ class TestOpencodeSource(unittest.TestCase):
         self._add_part("p2", 1001, {"type": "text", "text": "b"})
         self.assertEqual(src2.poll()[0]["text"], "b")
 
+    def test_same_millisecond_parts_all_delivered(self):
+        # The cursor is a (time_created, id) position: a part sharing
+        # the last row's millisecond is new, not a replay to skip.
+        self._add_part("p1", 1000, {"type": "text", "text": "one"})
+        src = tail.OpencodeSource(self.db, "sess1")
+        self.assertEqual([m["text"] for m in src.poll()], ["one"])
+        self._add_part("p2", 1000, {"type": "text", "text": "two"})
+        self.assertEqual([m["text"] for m in src.poll()], ["two"])
+        # A row that sorts behind the cursor stays behind it.
+        self._add_part("p0", 1000, {"type": "text", "text": "backfill"})
+        self.assertEqual(src.poll(), [])
+
+    def test_same_millisecond_rows_emit_in_id_order(self):
+        self._add_part("p2", 1000, {"type": "text", "text": "late"})
+        self._add_part("p1", 1000, {"type": "text", "text": "early"})
+        src = tail.OpencodeSource(self.db, "sess1")
+        self.assertEqual(
+            [m["text"] for m in src.poll()], ["early", "late"])
+
+    def test_cursor_stays_before_unread_rows_on_error(self):
+        # An error mid-iteration must not move the persisted cursor
+        # past rows it never emitted.
+        import sqlite3
+        self._add_part("p1", 1000, {"type": "text", "text": "one"})
+        self._add_part("p2", 1001, {"type": "text", "text": "two"})
+        src = tail.OpencodeSource(self.db, "sess1")
+        real = tail.OpencodeSource._role_for
+        calls = []
+
+        def flaky(self_, conn, mid):
+            calls.append(mid)
+            if len(calls) == 2:
+                raise sqlite3.Error("db gone")
+            return real(self_, conn, mid)
+
+        with patch.object(tail.OpencodeSource, "_role_for", flaky):
+            out = src.poll()
+        self.assertEqual([m["text"] for m in out], ["one"])
+        self.assertEqual(src.cursor, (1000, "p1"))
+        self.assertEqual([m["text"] for m in src.poll()], ["two"])
+
+    def test_scalar_cursor_from_before_the_fix_still_restores(self):
+        # A cursor file holding the old bare time_created resumes at
+        # that millisecond's start: the rows there are re-read once —
+        # duplicates, never a skip.
+        self._add_part("p1", 1000, {"type": "text", "text": "one"})
+        src = tail.OpencodeSource(self.db, "sess1")
+        src.restore({"source": "opencode", "cursor": 1000})
+        self.assertEqual(src.cursor, (1000, ""))
+        self._add_part("p2", 1000, {"type": "text", "text": "two"})
+        self.assertEqual(
+            [m["text"] for m in src.poll()], ["one", "two"])
+
 
 class TestTailer(unittest.TestCase):
     def setUp(self):
@@ -634,8 +757,20 @@ class TestTailManager(unittest.TestCase):
         self._add_part_skip()
         src = tail.OpencodeSource(self.db2, "sess1")
         src.skip_to_end()
-        self.assertGreater(src.cursor, 0)
+        self.assertGreater(src.cursor[0], 0)
         self.assertEqual(src.poll(), [])
+        # The skip covers every row at that millisecond: a straggler
+        # written late under the same time_created stays skipped too.
+        self._add_part_skip_late()
+        self.assertEqual(src.poll(), [])
+
+    def _add_part_skip_late(self):
+        import sqlite3
+        conn = sqlite3.connect(self.db2)
+        conn.execute("INSERT INTO part VALUES ('p-late', 'm', 'sess1', 5000, ?)",
+                     (json.dumps({"type": "text", "text": "late"}),))
+        conn.commit()
+        conn.close()
 
     def _add_part_skip(self):
         import sqlite3

@@ -83,6 +83,11 @@ TAIL_MAX_SESSIONS = 100
 # once; the remainder waits for the next poll.
 _MAX_CHUNK = 4 << 20
 
+# How much of a transcript's head the tailer keeps to tell a truncation
+# that kept the stream (copytruncate, in-place rewrite) from one that
+# replaced it — the same idea as search_writer's PRINT_SAMPLE.
+_HEAD_SAMPLE = 4096
+
 # A session the hub starts tailing with no cursor and no journal gets its
 # recent history, not all of it: the phone shows the last 500 messages,
 # and reading a hundred whole transcripts at startup held >1 GB.
@@ -419,9 +424,24 @@ class JsonlTailSource:
         # Set by start_near_end: the first read begins mid-line, so the
         # partial line up to the first newline is dropped.
         self._align = False
+        # The file's first bytes, kept so a shrink can be told apart: a
+        # copytruncate (or an in-place rewrite) keeps this head, a
+        # rotated or rewritten file does not.
+        self._head = b""
 
     def state(self) -> dict:
-        return {"source": "jsonl", "path": str(self.path), "offset": self.offset}
+        return {
+            "source": "jsonl",
+            "path": str(self.path),
+            "offset": self.offset,
+            # The head re-reads from disk on restore and is verified
+            # against this hash — enough to re-arm the truncation check
+            # without writing the bytes themselves into the cursor.
+            "head_len": len(self._head),
+            "head_sha": (
+                hashlib.sha256(self._head).hexdigest() if self._head else ""
+            ),
+        }
 
     def restore(self, state: dict) -> None:
         if state.get("source") == "jsonl" and state.get("path") == str(self.path):
@@ -429,12 +449,28 @@ class JsonlTailSource:
                 self.offset = int(state.get("offset") or 0)
             except (TypeError, ValueError):
                 self.offset = 0
+            try:
+                head_len = int(state.get("head_len") or 0)
+            except (TypeError, ValueError):
+                head_len = 0
+            head_sha = str(state.get("head_sha") or "")
+            if not (head_len and head_sha):
+                return  # a cursor from before the check: nothing to verify
+            head = self._file_head(head_len)
+            if len(head) == head_len and hashlib.sha256(head).hexdigest() == head_sha:
+                self._head = head
+            else:
+                # Not the file the cursor tracked: a rewrite that
+                # happened while down reads as a new stream.
+                self.offset = 0
+                self._head = b""
 
     def skip_to_end(self) -> None:
         try:
             self.offset = self.path.stat().st_size
         except OSError:
             pass
+        self._prime_head()
 
     def start_near_end(self, max_bytes: int | None = None) -> None:
         """Backfill only the last ``max_bytes`` (default BACKFILL_BYTES)."""
@@ -443,9 +479,47 @@ class JsonlTailSource:
             size = self.path.stat().st_size
         except OSError:
             return
+        self._prime_head()
         if size > max_bytes:
             self.offset = size - max_bytes
             self._align = True
+
+    def _file_head(self, span: int) -> bytes:
+        try:
+            with open(self.path, "rb") as fh:
+                return fh.read(span)
+        except OSError:
+            return b""
+
+    def _prime_head(self) -> None:
+        """Snapshot the file's head for the truncation check."""
+        self._head = self._file_head(_HEAD_SAMPLE)
+
+    def _resume_truncated(self, size: int) -> bool:
+        """The file shrank below the cursor: pick where to continue.
+
+        A head still on disk means the stream was cut in place
+        (logrotate's copytruncate, an in-place rewrite that kept its
+        start): the bytes already indexed still lead the file, so the
+        tail past the verified head is the new content — resume there
+        instead of re-emitting the head. A changed head is a new stream
+        (a rotated or rewritten file): restart from 0. Returns False
+        when nothing readable is left — the file is a strict prefix of
+        what was already sent and only appends can be new.
+        """
+        span = min(size, len(self._head))
+        # Either way the read begins on a line boundary owned by the
+        # current file: nothing to align.
+        self._align = False
+        if span and self._head[:span] == self._file_head(span):
+            if size <= len(self._head):
+                self.offset = size
+                return False
+            self.offset = len(self._head)
+        else:
+            self.offset = 0
+            self._head = b""
+        return True
 
     def poll(self) -> list[dict]:
         try:
@@ -453,18 +527,22 @@ class JsonlTailSource:
         except OSError:
             return []
         if size <= self.offset:
-            if size < self.offset:  # truncated/rotated: restart
-                self.offset = 0
-                # A new file starts on a whole line; nothing to align.
-                self._align = False
+            if size < self.offset:  # truncated/rotated
+                if not self._resume_truncated(size):
+                    return []
             else:
                 return []
         try:
+            start = self.offset
             with open(self.path, "rb") as fh:
-                fh.seek(self.offset)
-                chunk = fh.read(min(size - self.offset, _MAX_CHUNK))
+                fh.seek(start)
+                chunk = fh.read(min(size - start, _MAX_CHUNK))
         except OSError:
             return []
+        if start == 0:
+            # A from-scratch read refreshes the head fingerprint (the
+            # file may have been replaced since the last one).
+            self._head = chunk[:_HEAD_SAMPLE]
         if self._align:
             # Mid-line start: drop through the first newline.
             first_nl = chunk.find(b"\n")
@@ -534,21 +612,46 @@ def _completed(data: dict) -> bool:
     return isinstance(times, dict) and bool(times.get("completed"))
 
 
+def _part_cursor(value) -> tuple[int, str]:
+    """Deserialize a legacy ``part`` cursor.
+
+    Today's ``[time_created, id]`` pair, or a bare ``time_created`` int
+    written before the same-millisecond fix — that one resumes at
+    ``(time, "")`` so a part that shared the cursor's millisecond but
+    was never read is picked up (one re-read of already-seen rows at
+    that ms is the price).
+    """
+    if isinstance(value, (list, tuple)) and value:
+        try:
+            created = int(value[0])
+            part_id = str(value[1] if len(value) > 1 else "")
+            return created, part_id
+        except (TypeError, ValueError):
+            return (0, "")
+    try:
+        return int(value or 0), ""
+    except (TypeError, ValueError):
+        return (0, "")
+
+
 class OpencodeSource:
     """Incremental poll over opencode/kilo's drizzle ``part`` table, and
     the ``session_message`` rows opencode 2.x writes instead.
 
-    The two stores keep separate cursors: ``cursor`` is the newest
-    ``part.time_created`` (epoch ms) seen, ``seq`` the last v2 row
-    emitted. A v2 assistant row is written when its reply starts and
-    rewritten as it streams, so the v2 cursor stops before the first
-    assistant row with no ``time.completed`` and reads it again next poll.
+    The two stores keep separate cursors: ``cursor`` is the
+    ``(time_created, id)`` position of the last ``part`` row consumed —
+    several parts can share a millisecond, so a bare timestamp would
+    skip the ones sorted after the first row seen at it — and ``seq``
+    the last v2 row emitted. A v2 assistant row is written when its
+    reply starts and rewritten as it streams, so the v2 cursor stops
+    before the first assistant row with no ``time.completed`` and reads
+    it again next poll.
     """
 
     def __init__(self, db_path: Path, session_id: str) -> None:
         self.db_path = db_path
         self.session_id = session_id
-        self.cursor = 0  # max time_created (epoch ms) seen
+        self.cursor: tuple[int, str] = (0, "")
         self.seq: int | None = None  # last v2 row emitted; None = not placed yet
         self._roles: dict[str, str] = {}
 
@@ -556,16 +659,13 @@ class OpencodeSource:
         return {
             "source": "opencode",
             "session_id": self.session_id,
-            "cursor": self.cursor,
+            "cursor": [self.cursor[0], self.cursor[1]],
             "seq": self.seq,
         }
 
     def restore(self, state: dict) -> None:
         if state.get("source") == "opencode":
-            try:
-                self.cursor = int(state.get("cursor") or 0)
-            except (TypeError, ValueError):
-                self.cursor = 0
+            self.cursor = _part_cursor(state.get("cursor"))
             try:
                 seq = state.get("seq")
                 self.seq = None if seq is None else int(seq)
@@ -582,7 +682,9 @@ class OpencodeSource:
                 (self.session_id,),
             ).fetchone()
             if row and row[0]:
-                self.cursor = int(row[0])
+                # Past every row at that millisecond, whatever id a
+                # straggler written later happens to carry.
+                self.cursor = (int(row[0]) + 1, "")
         except sqlite3.Error:
             pass
         try:
@@ -609,8 +711,8 @@ class OpencodeSource:
         time counts as already sent, so an upgrade replays nothing."""
         if self.seq is None:
             self.seq = -1  # seq starts at 0
-            if self.cursor:
-                sent = [r for r in opencode_store.v2_rows(conn, self.session_id) if r[3] <= self.cursor]
+            if self.cursor[0]:
+                sent = [r for r in opencode_store.v2_rows(conn, self.session_id) if r[3] <= self.cursor[0]]
                 self.seq = self._settled_seq(sent, -1)
         return self.seq
 
@@ -646,63 +748,81 @@ class OpencodeSource:
         try:
             rows = conn.execute(
                 "SELECT id, message_id, time_created, data FROM part "
-                "WHERE session_id = ? AND time_created > ? "
+                "WHERE session_id = ? AND (time_created > ? "
+                "OR (time_created = ? AND id > ?)) "
                 "ORDER BY time_created, id",
-                (self.session_id, self.cursor),
+                (self.session_id, self.cursor[0],
+                 self.cursor[0], self.cursor[1]),
             ).fetchall()
             for part_id, message_id, created, raw in rows:
-                self.cursor = max(self.cursor, int(created))
                 try:
                     part = json.loads(raw)
                 except (TypeError, ValueError, RecursionError):
-                    continue
-                if not isinstance(part, dict):
-                    continue
-                ts = float(created) / 1000
-                ptype = str(part.get("type") or "").lower()
-                role = self._role_for(conn, str(message_id))
-                if ptype == "text":
-                    text = _tr._clean_text(part.get("text"))
-                    if text:
-                        out.append(protocol.message(
-                            _role_kind(role), text, ts=ts))
-                elif ptype in {"reasoning", "thinking"}:
-                    text = _tr._clean_text(part.get("text"))
-                    if text:
-                        out.append(protocol.message("thinking", text, ts=ts))
-                elif ptype in {"tool", "tool-invocation", "tool_result"}:
-                    state = part.get("state")
-                    state = state if isinstance(state, dict) else {}
-                    name = str(part.get("tool") or "tool")
-                    call_id = str(part.get("id") or part_id or "")
-                    summary, full = _summarize_args(name, state.get("input"))
-                    out.append(protocol.message(
-                        "tool_use", "",
-                        ts=ts,
-                        tool={
-                            "name": name,
-                            "call_id": call_id,
-                            "args_summary": summary,
-                            "args_full": full,
-                        },
-                    ))
-                    status = str(state.get("status") or "")
-                    if status in {"completed", "error"} or state.get("output"):
-                        out.append(protocol.message(
-                            "tool_result",
-                            _tr._clean_text(state.get("output")),
-                            ts=ts,
-                            result_ref=call_id or None,
-                        ))
-                elif "compact" in ptype:
-                    out.append(protocol.message(
-                        "compaction", "context compacted", ts=ts))
+                    part = None
+                if isinstance(part, dict):
+                    self._decode_part(
+                        conn, out, str(part_id), str(message_id),
+                        int(created), part,
+                    )
+                # The cursor lands only on rows already consumed: an
+                # error mid-row keeps it here so the row is re-read next
+                # poll instead of skipped forever.
+                self.cursor = (int(created), str(part_id))
             out.extend(self._poll_v2(conn))
         except sqlite3.Error:
             return injected.clean_all(out)
         finally:
             conn.close()
         return injected.clean_all(out)
+
+    def _decode_part(
+        self,
+        conn: sqlite3.Connection,
+        out: list[dict],
+        part_id: str,
+        message_id: str,
+        created: int,
+        part: dict,
+    ) -> None:
+        """Append one ``part`` row's events to ``out``."""
+        ts = float(created) / 1000
+        ptype = str(part.get("type") or "").lower()
+        role = self._role_for(conn, str(message_id))
+        if ptype == "text":
+            text = _tr._clean_text(part.get("text"))
+            if text:
+                out.append(protocol.message(_role_kind(role), text, ts=ts))
+        elif ptype in {"reasoning", "thinking"}:
+            text = _tr._clean_text(part.get("text"))
+            if text:
+                out.append(protocol.message("thinking", text, ts=ts))
+        elif ptype in {"tool", "tool-invocation", "tool_result"}:
+            state = part.get("state")
+            state = state if isinstance(state, dict) else {}
+            name = str(part.get("tool") or "tool")
+            call_id = str(part.get("id") or part_id or "")
+            summary, full = _summarize_args(name, state.get("input"))
+            out.append(protocol.message(
+                "tool_use", "",
+                ts=ts,
+                tool={
+                    "name": name,
+                    "call_id": call_id,
+                    "args_summary": summary,
+                    "args_full": full,
+                },
+            ))
+            status = str(state.get("status") or "")
+            if status in {"completed", "error"} or state.get("output"):
+                out.append(protocol.message(
+                    "tool_result",
+                    _tr._clean_text(state.get("output")),
+                    ts=ts,
+                    result_ref=call_id or None,
+                ))
+        elif "compact" in ptype:
+            out.append(protocol.message(
+                "compaction", "context compacted", ts=ts))
 
     def _poll_v2(self, conn: sqlite3.Connection) -> list[dict]:
         out: list[dict] = []

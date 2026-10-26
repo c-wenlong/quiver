@@ -15,6 +15,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   labelled "Mark all read" button instead of a second unlabeled icon
   beside Refresh. The web app's inbox header matches.
 
+- **Remote tail, journal and SSE read-path bugs** (issue #514). Four
+  bugs that could show duplicated, missing or stale messages on the
+  phone:
+
+  - A transcript that shrank was always re-read from byte zero, so a
+    copytruncate-style rotation (logrotate, an in-place rewrite that
+    kept the head) replayed the whole transcript as new
+    `message.appended` events. `JsonlTailSource` now fingerprints the
+    file head: an unchanged head means the stream continues past the
+    verified prefix — a strict prefix is already-sent, so nothing is
+    re-emitted — while a changed head is a new stream and still
+    restarts. The fingerprint rides in the cursor file and is verified
+    on restore.
+  - opencode `part` rows sharing a millisecond were skipped forever:
+    the cursor was a bare `time_created` and the query asked for
+    `time_created > cursor`. It is now a `(time_created, id)` position,
+    and it only advances after a row is consumed, so an error
+    mid-iteration re-reads the row instead of losing it. Cursor files
+    holding the old scalar resume at that millisecond's start.
+  - `Journal.read_since` read the file without `_LOCK` while appends
+    and ring trims mutate under it; a read racing a trim could answer
+    from the pre-trim file without `truncated=True`. The read now runs
+    under the same lock.
+  - The three SSE routes read only `?last=`, so a standard EventSource
+    client reconnecting with `Last-Event-ID` got a full replay. The
+    header is now honored as the resume cursor, with `?last=` as the
+    fallback.
+
 ## [1.1.0] - 2026-10-26
 
 ### Added
@@ -2852,6 +2880,7 @@ service / model layering, tests with an 84% coverage floor).
 - Stdlib-only core; optional FastMCP server extra for session history MCP tool
 - Test suite (15 unit tests) with isolated `$HOME` fixtures
 
+[1.1.1]: https://github.com/c-wenlong/quiver/releases/tag/v1.1.1
 [1.1.0]: https://github.com/c-wenlong/quiver/releases/tag/v1.1.0
 [1.0.0]: https://github.com/c-wenlong/quiver/releases/tag/v1.0.0
 [0.1.0]: https://github.com/c-wenlong/quiver/releases/tag/v0.1.0
