@@ -12,6 +12,7 @@ sync through cmd_hooks.
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -517,6 +518,73 @@ class ForeignRowsTest(unittest.TestCase):
             self.assertTrue(row.declared)
             self.assertIs(row.enabled, True)
             self.assertIn("PreToolUse", row.events_supported)
+
+    def _cursor_rows(self, home: Path, *commands: str) -> list[str]:
+        settings = home / ".cursor/hooks.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        settings.write_text(json.dumps({"version": 1, "hooks": {
+            "stop": [{"command": c} for c in commands]}}))
+        declared = {"cursor": harness_declarations({}, "cursor", home)}
+        rows = foreign_rows(home, {}, plan_hooks(home), declared)
+        return sorted(r.script for r in rows if r.harness == "cursor")
+
+    def _orca(self, home: Path) -> Path:
+        hook = home / ".orca/agent-hooks/cursor-hook.sh"
+        hook.parent.mkdir(parents=True)
+        hook.write_text("#!/bin/sh\n")
+        return hook
+
+    def test_a_shell_wrapper_rows_the_script_not_the_shell(self):
+        # orca's form: a test, then /bin/sh on the script. /bin/sh is a
+        # real file, so it used to row as a foreign hook named "sh".
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            self._orca(home)
+            got = self._cursor_rows(
+                home,
+                'if [ -f "${HOME-}/.orca/agent-hooks/cursor-hook.sh" ]; '
+                'then /bin/sh "${HOME-}/.orca/agent-hooks/cursor-hook.sh" '
+                '|| :; fi')
+            self.assertEqual(got, ["cursor-hook.sh"])
+
+    def test_sh_dash_c_rows_the_script_its_body_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            hook = self._orca(home)
+            inner = (f"if [ -f '{hook}' ]; then X='{{}}' /bin/sh '{hook}'; "
+                     "fi")
+            got = self._cursor_rows(home, f"/bin/sh -c {shlex.quote(inner)}")
+            self.assertEqual(got, ["cursor-hook.sh"])
+
+    def test_a_tested_file_is_not_an_executed_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            hook = self._orca(home)
+            conf = home / "conf.json"
+            conf.write_text("{}")
+            got = self._cursor_rows(home, f"[ -f {conf} ] && {hook}")
+            self.assertEqual(got, ["cursor-hook.sh"])
+
+    def test_a_quoted_executable_with_spaces_keeps_its_whole_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            helper = home / "Apps/Agent Relay.app/Contents/Agent Relay Helper"
+            helper.parent.mkdir(parents=True)
+            helper.write_text("x")
+            got = self._cursor_rows(
+                home, f"{shlex.quote(str(helper))} relay stop")
+            self.assertEqual(got, ["Agent Relay Helper"])
+
+    def test_a_hooks_root_dir_rows_only_when_something_runs_from_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            root = home / ".cursor/hooks"
+            (root / "state").mkdir(parents=True)
+            (root / "state/continual-learning.json").write_text("{}")
+            (root / "bundle").mkdir()
+            (root / "bundle/gate.py").write_text("x")
+            got = self._cursor_rows(home, f"python3 {root}/bundle/gate.py")
+            self.assertEqual(got, ["bundle"])
 
 
 class CrudCommandsTest(unittest.TestCase):

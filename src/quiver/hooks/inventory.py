@@ -286,19 +286,34 @@ def _decl_targets(decl: Declaration, path: Path, home: Path) -> bool:
 # argv, not a hook, so only the first path of each command segment rows.
 _COMMAND_POSITION_RE = re.compile(
     r"(?:python|pypy|node|deno|bun|ruby|perl|php|tsx|ts-node)[\d.]*"
-    r"|ba?sh|zsh|ksh|dash|fish|csh|tcsh|osascript|pwsh?"
+    r"|(?:ba)?sh|zsh|ksh|dash|fish|csh|tcsh|osascript|pwsh?"
     r"|env|nice|nohup|timeout|xargs|command|exec|uv|pipx?")
+# Shells whose ``-c`` argument is a whole script to read for the hook.
+_SHELL_RE = re.compile(r"(?:ba)?sh|zsh|ksh|dash")
+# ``-c``, ``-lc``, ``-ec``: any short-flag cluster carrying c.
+_INLINE_FLAG_RE = re.compile(r"-[a-zA-Z]*c[a-zA-Z]*")
 _ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
 _SEGMENT_BREAKS = frozenset({"&&", "||", "|", "|&", ";"})
+# Reserved words that open a segment without being its command.
+_SHELL_KEYWORDS = frozenset({
+    "if", "then", "elif", "else", "while", "until", "do", "!", "{", "(",
+})
+# A segment whose command is a test reads paths, it runs none of them:
+# ``[ -f /x/hook.sh ] && /bin/sh /x/hook.sh`` executes only the second.
+_TEST_COMMANDS = frozenset({"[", "[[", "test"})
 
 
-def _executed_scripts(command: str, home: Path) -> list[Path]:
+def _executed_scripts(
+    command: str, home: Path, depth: int = 0
+) -> list[Path]:
     """The file a hook command actually runs — one per shell segment.
 
     Command-position words (interpreters, env wrappers, VAR=value
     assignments) never name the hook, and neither do a script's own file
     arguments: the first resolvable path per ``&&``/``|``/``;`` segment
-    is the one. ``sh gate.py config.json`` rows only gate.py.
+    is the one. ``sh gate.py config.json`` rows only gate.py. A test
+    segment (``[ -f x ]``) runs nothing, and ``sh -c '<script>'`` is read
+    for the script its body runs, never as the shell binary itself.
     """
     scripts: list[Path] = []
     segment: list[str] = []
@@ -309,14 +324,32 @@ def _executed_scripts(command: str, home: Path) -> list[Path]:
         if token and token not in _SEGMENT_BREAKS:
             segment.append(token)
         if ends or not token or token in _SEGMENT_BREAKS:
-            first = _first_path(segment, home)
-            if first is not None:
-                scripts.append(first)
+            scripts.extend(_segment_scripts(segment, home, depth))
             segment = []
-    first = _first_path(segment, home)
-    if first is not None:
-        scripts.append(first)
+    scripts.extend(_segment_scripts(segment, home, depth))
     return scripts
+
+
+def _segment_scripts(
+    segment: list[str], home: Path, depth: int
+) -> list[Path]:
+    """What one segment runs: its first path, or what its ``-c`` body runs."""
+    words = [t for t in segment if t not in _SHELL_KEYWORDS]
+    if words and words[0] in _TEST_COMMANDS:
+        return []
+    for i, token in enumerate(words[:-2]):
+        base = token.rsplit("/", 1)[-1]
+        if _SHELL_RE.fullmatch(base) \
+                and _INLINE_FLAG_RE.fullmatch(words[i + 1]):
+            # Two levels covers sh -c 'bash -c ...'; deeper is noise.
+            if depth >= 2:
+                return []
+            return _executed_scripts(words[i + 2], home, depth + 1)
+        if not (_COMMAND_POSITION_RE.fullmatch(base)
+                or _ASSIGNMENT_RE.fullmatch(token)):
+            break
+    first = _first_path(words, home)
+    return [first] if first is not None else []
 
 
 def _first_path(segment: list[str], home: Path) -> Path | None:
@@ -345,7 +378,8 @@ def foreign_rows(
 
     Two sightings, de-duped by (harness, resolved path): a file in a
     hooks root that is not a link into the hub and shares no name with
-    a hub source, and the script a settings-declared command executes
+    a hub source (a dir only when a declaration runs something inside
+    it), and the script a settings-declared command executes
     when it resolves outside ~/.quiver (its file arguments are not
     hooks). Both keep their real path as source and dest — swe manages
     neither.
@@ -374,6 +408,11 @@ def foreign_rows(
                 if entry.name in claimed.get(name, set()):
                     continue
                 if _managed_dest(entry, hub):
+                    continue
+                if entry.is_dir() and not any(
+                        _decl_targets(d, entry, home) for d in decls):
+                    # A dir nothing runs from is the harness's own state
+                    # (cursor keeps hooks/state/), not a hook.
                     continue
                 key = (name, entry.resolve())
                 if key in seen:
