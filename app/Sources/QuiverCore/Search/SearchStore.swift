@@ -168,9 +168,11 @@ public enum IndexSessionCommit: Sendable, Equatable {
 /// Writes are not thread-safe — like `LedgerStore`, one owner serializes
 /// them (the `Ledger` actor's scan). `status()` is the exception: it runs
 /// on its own read-only connection under a lock, so a UI can poll while a
-/// scan writes. `clear()` must come after `setIndexer(nil)`: once the
-/// detach has returned the actor cannot be inside an index write, because
-/// it only touches the indexer between file reads.
+/// scan writes. `clear()` is the other: a scan can still be inside an
+/// index call when it lands — the actor binds the indexer across awaits,
+/// so a detached indexer can outlive `setIndexer(nil)` — so `storeLock`
+/// serializes the teardown against every method and calls that arrive
+/// after it throw instead of touching a closed handle.
 ///
 /// Two conventions come from Orca and are load-bearing:
 ///
@@ -207,7 +209,8 @@ public final class SearchStore: @unchecked Sendable {
     public let fts5Available: Bool
 
     /// The write connection; nil after `clear()`. Internal so tests can read
-    /// through it under `@testable`.
+    /// through it under `@testable`. Production code reaches it through
+    /// `liveDB()` — the raw handle is only safe under `storeLock`.
     var db: SQLiteDatabase!
     /// A read-only connection `status()` opens lazily and shares — a WAL
     /// reader never queues behind a scan on the write connection, the same
@@ -220,11 +223,33 @@ public final class SearchStore: @unchecked Sendable {
     /// when nothing changed.
     private var statements: [String: Statement] = [:]
 
+    /// Serializes `clear()` against every other method: the Ledger actor can
+    /// still be inside an index call when the model tears the store down,
+    /// so the lock makes the teardown atomic and `liveDB()` turns later
+    /// calls into a thrown error instead of a nil-handle trap. Recursive
+    /// because the transactional methods reach `cachedStatement` and each
+    /// other through one hold.
+    private let storeLock = NSRecursiveLock()
+
+    /// The live write connection under `storeLock`, or an error once
+    /// `clear()` ran.
+    private func liveDB() throws -> SQLiteDatabase {
+        try storeLock.withLock {
+            guard let db else {
+                throw SQLiteDatabase.Failure(
+                    code: SQLITE_MISUSE, message: "search store is cleared")
+            }
+            return db
+        }
+    }
+
     private func cachedStatement(_ sql: String) throws -> Statement {
-        if let statement = statements[sql] { return statement }
-        let statement = try db.prepare(sql)
-        statements[sql] = statement
-        return statement
+        try storeLock.withLock {
+            if let statement = statements[sql] { return statement }
+            let statement = try liveDB().prepare(sql)
+            statements[sql] = statement
+            return statement
+        }
     }
 
     /// Finalize the cached statements before the handle closes — SQLite
@@ -246,65 +271,73 @@ public final class SearchStore: @unchecked Sendable {
 
     /// Every field the index holds for `path`, or nil when it holds nothing.
     public func fileRow(for path: String) throws -> SearchFileRow? {
-        let statement = try cachedStatement("""
-            SELECT path, dev, ino, byte_offset, mtime_ms, size_bytes, session_row_id,
-                   state, fail_count, failed_mtime_ms
-            FROM files WHERE path = ?
-            """)
-        statement.bind([.text(path)])
-        guard try statement.step() else { return nil }
-        let row = Self.fileRow(statement)
-        // An unstepped statement keeps a WAL read cursor open, which holds
-        // checkpointing hostage; `bind` resets it before reuse.
-        statement.bind([])
-        return row
+        try storeLock.withLock {
+            let statement = try cachedStatement("""
+                SELECT path, dev, ino, byte_offset, mtime_ms, size_bytes, session_row_id,
+                       state, fail_count, failed_mtime_ms
+                FROM files WHERE path = ?
+                """)
+            statement.bind([.text(path)])
+            guard try statement.step() else { return nil }
+            let row = Self.fileRow(statement)
+            // An unstepped statement keeps a WAL read cursor open, which holds
+            // checkpointing hostage; `bind` resets it before reuse.
+            statement.bind([])
+            return row
+        }
     }
 
     /// Every row this index holds, path-ordered for a deterministic listing.
     public func files() throws -> [SearchFileRow] {
-        let statement = try cachedStatement("""
-            SELECT path, dev, ino, byte_offset, mtime_ms, size_bytes, session_row_id,
-                   state, fail_count, failed_mtime_ms
-            FROM files ORDER BY path
-            """)
-        statement.bind([])
-        var rows: [SearchFileRow] = []
-        while try statement.step() {
-            rows.append(Self.fileRow(statement))
+        try storeLock.withLock {
+            let statement = try cachedStatement("""
+                SELECT path, dev, ino, byte_offset, mtime_ms, size_bytes, session_row_id,
+                       state, fail_count, failed_mtime_ms
+                FROM files ORDER BY path
+                """)
+            statement.bind([])
+            var rows: [SearchFileRow] = []
+            while try statement.step() {
+                rows.append(Self.fileRow(statement))
+            }
+            return rows
         }
-        return rows
     }
 
     /// The rows under one path prefix — how synthetic container paths
     /// (`<db>#<id>`) enumerate just their own entries without dumping the
     /// whole table into memory.
     public func files(withPrefix prefix: String) throws -> [SearchFileRow] {
-        // A [prefix, prefix+max-scalar) range — an index seek rather than a
-        // `substr` scan, and no code-point counting questions.
-        let statement = try cachedStatement("""
-            SELECT path, dev, ino, byte_offset, mtime_ms, size_bytes, session_row_id,
-                   state, fail_count, failed_mtime_ms
-            FROM files WHERE path >= ? AND path < ? || char(1114111) ORDER BY path
-            """)
-        statement.bind([.text(prefix), .text(prefix)])
-        var rows: [SearchFileRow] = []
-        while try statement.step() {
-            rows.append(Self.fileRow(statement))
+        try storeLock.withLock {
+            // A [prefix, prefix+max-scalar) range — an index seek rather than a
+            // `substr` scan, and no code-point counting questions.
+            let statement = try cachedStatement("""
+                SELECT path, dev, ino, byte_offset, mtime_ms, size_bytes, session_row_id,
+                       state, fail_count, failed_mtime_ms
+                FROM files WHERE path >= ? AND path < ? || char(1114111) ORDER BY path
+                """)
+            statement.bind([.text(prefix), .text(prefix)])
+            var rows: [SearchFileRow] = []
+            while try statement.step() {
+                rows.append(Self.fileRow(statement))
+            }
+            return rows
         }
-        return rows
     }
 
     /// Just the pair a write fences on, for the cheap read outside a
     /// transaction.
     public func fileFence(for path: String) throws -> SearchFileFence? {
-        let statement = try cachedStatement(
-            "SELECT session_row_id, byte_offset FROM files WHERE path = ?")
-        statement.bind([.text(path)])
-        guard try statement.step() else { return nil }
-        let fence = SearchFileFence(sessionRowID: statement.isNull(0) ? nil : statement.int(0),
-                                  byteOffset: statement.int(1))
-        statement.bind([])
-        return fence
+        try storeLock.withLock {
+            let statement = try cachedStatement(
+                "SELECT session_row_id, byte_offset FROM files WHERE path = ?")
+            statement.bind([.text(path)])
+            guard try statement.step() else { return nil }
+            let fence = SearchFileFence(sessionRowID: statement.isNull(0) ? nil : statement.int(0),
+                                      byteOffset: statement.int(1))
+            statement.bind([])
+            return fence
+        }
     }
 
     private static func fileRow(_ row: Statement) -> SearchFileRow {
@@ -331,24 +364,26 @@ public final class SearchStore: @unchecked Sendable {
     /// recovered file stops re-reading on every pass.
     public func upsertFile(path: String, stat: SearchFileStat,
                            byteOffset: Int64, sessionRowID: Int64?) throws {
-        try cachedStatement("""
-            INSERT INTO files(path, dev, ino, byte_offset, mtime_ms, size_bytes, session_row_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(path) DO UPDATE SET
-              dev = CASE WHEN excluded.dev IS NOT NULL AND excluded.ino IS NOT NULL
-                    THEN excluded.dev ELSE files.dev END,
-              ino = CASE WHEN excluded.dev IS NOT NULL AND excluded.ino IS NOT NULL
-                    THEN excluded.ino ELSE files.ino END,
-              byte_offset = excluded.byte_offset, mtime_ms = excluded.mtime_ms,
-              size_bytes = excluded.size_bytes, session_row_id = excluded.session_row_id,
-              state = 'current', fail_count = 0, failed_mtime_ms = NULL
-            """).bind([
-            .text(path), stat.dev.map(SQLiteValue.int) ?? .null,
-            stat.ino.map(SQLiteValue.int) ?? .null,
-            .int(byteOffset), .double(stat.mtimeMs),
-            stat.sizeBytes.map(SQLiteValue.int) ?? .null,
-            sessionRowID.map(SQLiteValue.int) ?? .null,
-        ]).run()
+        try storeLock.withLock {
+            try cachedStatement("""
+                INSERT INTO files(path, dev, ino, byte_offset, mtime_ms, size_bytes, session_row_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(path) DO UPDATE SET
+                  dev = CASE WHEN excluded.dev IS NOT NULL AND excluded.ino IS NOT NULL
+                        THEN excluded.dev ELSE files.dev END,
+                  ino = CASE WHEN excluded.dev IS NOT NULL AND excluded.ino IS NOT NULL
+                        THEN excluded.ino ELSE files.ino END,
+                  byte_offset = excluded.byte_offset, mtime_ms = excluded.mtime_ms,
+                  size_bytes = excluded.size_bytes, session_row_id = excluded.session_row_id,
+                  state = 'current', fail_count = 0, failed_mtime_ms = NULL
+                """).bind([
+                .text(path), stat.dev.map(SQLiteValue.int) ?? .null,
+                stat.ino.map(SQLiteValue.int) ?? .null,
+                .int(byteOffset), .double(stat.mtimeMs),
+                stat.sizeBytes.map(SQLiteValue.int) ?? .null,
+                sessionRowID.map(SQLiteValue.int) ?? .null,
+            ]).run()
+        }
     }
 
     /// Moves a row's read state.
@@ -361,20 +396,22 @@ public final class SearchStore: @unchecked Sendable {
     /// would be retried on every pass for the life of the process. `current`
     /// and `due` only move an existing row.
     public func setFileState(_ path: String, _ state: SearchFileState, atMtimeMs: Double? = nil) throws {
-        if state == .failed {
+        try storeLock.withLock {
+            if state == .failed {
+                try cachedStatement("""
+                    INSERT INTO files(path, byte_offset, mtime_ms, state, fail_count, failed_mtime_ms)
+                    VALUES (?, 0, ?, 'failed', 1, ?)
+                    ON CONFLICT(path) DO UPDATE SET
+                      state = 'failed',
+                      fail_count = files.fail_count + 1,
+                      failed_mtime_ms = excluded.failed_mtime_ms
+                    """).bind([.text(path), .double(atMtimeMs ?? 0), .optionalDouble(atMtimeMs)]).run()
+                return
+            }
             try cachedStatement("""
-                INSERT INTO files(path, byte_offset, mtime_ms, state, fail_count, failed_mtime_ms)
-                VALUES (?, 0, ?, 'failed', 1, ?)
-                ON CONFLICT(path) DO UPDATE SET
-                  state = 'failed',
-                  fail_count = files.fail_count + 1,
-                  failed_mtime_ms = excluded.failed_mtime_ms
-                """).bind([.text(path), .double(atMtimeMs ?? 0), .optionalDouble(atMtimeMs)]).run()
-            return
+                UPDATE files SET state = ?, fail_count = 0, failed_mtime_ms = NULL WHERE path = ?
+                """).bind([.text(state.rawValue), .text(path)]).run()
         }
-        try cachedStatement("""
-            UPDATE files SET state = ?, fail_count = 0, failed_mtime_ms = NULL WHERE path = ?
-            """).bind([.text(state.rawValue), .text(path)]).run()
     }
 
     /// Deletes `path`'s row and the session it pointed at, in one
@@ -384,17 +421,20 @@ public final class SearchStore: @unchecked Sendable {
     /// `replaceSession` leaves behind. Orca's writer calls this
     /// `removeFile`.
     public func removeFile(_ path: String) throws {
-        try db.execute("BEGIN IMMEDIATE")
-        do {
-            if let sessionRowID = try fileFence(for: path)?.sessionRowID {
-                try deleteSession(sessionRowID)
-                try setOrphansPending()
+        try storeLock.withLock {
+            let db = try liveDB()
+            try db.execute("BEGIN IMMEDIATE")
+            do {
+                if let sessionRowID = try fileFence(for: path)?.sessionRowID {
+                    try deleteSession(sessionRowID)
+                    try setOrphansPending()
+                }
+                try cachedStatement("DELETE FROM files WHERE path = ?").bind([.text(path)]).run()
+                try db.execute("COMMIT")
+            } catch {
+                try? db.execute("ROLLBACK")
+                throw error
             }
-            try cachedStatement("DELETE FROM files WHERE path = ?").bind([.text(path)]).run()
-            try db.execute("COMMIT")
-        } catch {
-            try? db.execute("ROLLBACK")
-            throw error
         }
     }
 
@@ -405,22 +445,26 @@ public final class SearchStore: @unchecked Sendable {
     /// said what the session is, and `updateSession` fills it in later.
     @discardableResult
     public func createSession(_ fields: SearchSessionFields) throws -> Int64 {
-        try cachedStatement("""
-            INSERT INTO sessions(agent, session_id, file_path, title, cwd, cwd_key,
-                                 created_at, updated_at, message_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """).bind(Self.sessionValues(fields)).run()
-        return db.lastInsertRowID
+        try storeLock.withLock {
+            try cachedStatement("""
+                INSERT INTO sessions(agent, session_id, file_path, title, cwd, cwd_key,
+                                     created_at, updated_at, message_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """).bind(Self.sessionValues(fields)).run()
+            return try liveDB().lastInsertRowID
+        }
     }
 
     /// Rewrites every field of a `sessions` row — the decoded session always
     /// wins over the provisional values a chunk wrote.
     public func updateSession(_ rowID: Int64, _ fields: SearchSessionFields) throws {
-        try cachedStatement("""
-            UPDATE sessions SET agent = ?, session_id = ?, file_path = ?, title = ?,
-                cwd = ?, cwd_key = ?, created_at = ?, updated_at = ?, message_count = ?
-            WHERE id = ?
-            """).bind(Self.sessionValues(fields) + [.int(rowID)]).run()
+        try storeLock.withLock {
+            try cachedStatement("""
+                UPDATE sessions SET agent = ?, session_id = ?, file_path = ?, title = ?,
+                    cwd = ?, cwd_key = ?, created_at = ?, updated_at = ?, message_count = ?
+                WHERE id = ?
+                """).bind(Self.sessionValues(fields) + [.int(rowID)]).run()
+        }
     }
 
     /// Deletes one `sessions` row. Callers that do this inside their own
@@ -443,21 +487,23 @@ public final class SearchStore: @unchecked Sendable {
 
     /// A `sessions` row and its id, or nil when it is gone.
     public func sessionRow(_ id: Int64) throws -> SearchSession? {
-        let statement = try cachedStatement("""
-            SELECT agent, session_id, file_path, title, cwd, cwd_key,
-                   created_at, updated_at, message_count
-            FROM sessions WHERE id = ?
-            """)
-        statement.bind([.int(id)])
-        guard try statement.step() else { return nil }
-        let session = SearchSession(id: id, fields: SearchSessionFields(
-            agent: statement.text(0) ?? "", sessionID: statement.text(1) ?? "",
-            filePath: statement.text(2) ?? "", title: statement.text(3) ?? "",
-            cwd: statement.text(4), cwdKey: statement.text(5),
-            createdAt: statement.text(6), updatedAt: statement.text(7),
-            messageCount: Int(statement.int(8))))
-        statement.bind([])
-        return session
+        try storeLock.withLock {
+            let statement = try cachedStatement("""
+                SELECT agent, session_id, file_path, title, cwd, cwd_key,
+                       created_at, updated_at, message_count
+                FROM sessions WHERE id = ?
+                """)
+            statement.bind([.int(id)])
+            guard try statement.step() else { return nil }
+            let session = SearchSession(id: id, fields: SearchSessionFields(
+                agent: statement.text(0) ?? "", sessionID: statement.text(1) ?? "",
+                filePath: statement.text(2) ?? "", title: statement.text(3) ?? "",
+                cwd: statement.text(4), cwdKey: statement.text(5),
+                createdAt: statement.text(6), updatedAt: statement.text(7),
+                messageCount: Int(statement.int(8))))
+            statement.bind([])
+            return session
+        }
     }
 
     /// Points `path` at a fresh `sessions` row and deletes the old row only,
@@ -473,26 +519,29 @@ public final class SearchStore: @unchecked Sendable {
     @discardableResult
     public func replaceSession(for path: String, expected: SearchFileFence?,
                                fields: SearchSessionFields) throws -> Int64? {
-        try db.execute("BEGIN IMMEDIATE")
-        do {
-            guard let actual = try fileFence(for: path),
-                  actual.sessionRowID == expected?.sessionRowID,
-                  actual.byteOffset == expected?.byteOffset else {
-                try db.execute("ROLLBACK")
-                return nil
+        try storeLock.withLock {
+            let db = try liveDB()
+            try db.execute("BEGIN IMMEDIATE")
+            do {
+                guard let actual = try fileFence(for: path),
+                      actual.sessionRowID == expected?.sessionRowID,
+                      actual.byteOffset == expected?.byteOffset else {
+                    try db.execute("ROLLBACK")
+                    return nil
+                }
+                let rowID = try createSession(fields)
+                try cachedStatement("UPDATE files SET session_row_id = ? WHERE path = ?")
+                    .bind([.int(rowID), .text(path)]).run()
+                if let old = actual.sessionRowID {
+                    try deleteSession(old)
+                    try setOrphansPending()
+                }
+                try db.execute("COMMIT")
+                return rowID
+            } catch {
+                try? db.execute("ROLLBACK")
+                throw error
             }
-            let rowID = try createSession(fields)
-            try cachedStatement("UPDATE files SET session_row_id = ? WHERE path = ?")
-                .bind([.int(rowID), .text(path)]).run()
-            if let old = actual.sessionRowID {
-                try deleteSession(old)
-                try setOrphansPending()
-            }
-            try db.execute("COMMIT")
-            return rowID
-        } catch {
-            try? db.execute("ROLLBACK")
-            throw error
         }
     }
 
@@ -530,43 +579,46 @@ public final class SearchStore: @unchecked Sendable {
             throw SQLiteDatabase.Failure(
                 code: SQLITE_MISUSE, message: "commitFile: messages and fields need a session")
         }
-        try db.execute("BEGIN IMMEDIATE")
-        do {
-            let actual = try fileFence(for: path)
-            guard actual?.sessionRowID == expected?.sessionRowID,
-                  actual?.byteOffset == expected?.byteOffset else {
-                try db.execute("ROLLBACK")
-                return false
-            }
-            let sessionRowID: Int64?
-            switch session {
-            case .none:
-                sessionRowID = nil
-            case .existing(let rowID):
-                sessionRowID = rowID
-            case .fresh(let fields):
-                sessionRowID = try createSession(fields)
-            case .replace(let fields):
-                sessionRowID = try createSession(fields)
-                // Mint first, then cut the old row loose: the generation swap
-                // is one commit, so retrieval never sees the file unparented.
-                if let old = actual?.sessionRowID {
-                    try deleteSession(old)
-                    try setOrphansPending()
+        return try storeLock.withLock {
+            let db = try liveDB()
+            try db.execute("BEGIN IMMEDIATE")
+            do {
+                let actual = try fileFence(for: path)
+                guard actual?.sessionRowID == expected?.sessionRowID,
+                      actual?.byteOffset == expected?.byteOffset else {
+                    try db.execute("ROLLBACK")
+                    return false
                 }
-            }
-            if let sessionRowID {
-                try insertMessages(under: sessionRowID, messages)
-                if let fields {
-                    try updateSession(sessionRowID, fields)
+                let sessionRowID: Int64?
+                switch session {
+                case .none:
+                    sessionRowID = nil
+                case .existing(let rowID):
+                    sessionRowID = rowID
+                case .fresh(let fields):
+                    sessionRowID = try createSession(fields)
+                case .replace(let fields):
+                    sessionRowID = try createSession(fields)
+                    // Mint first, then cut the old row loose: the generation swap
+                    // is one commit, so retrieval never sees the file unparented.
+                    if let old = actual?.sessionRowID {
+                        try deleteSession(old)
+                        try setOrphansPending()
+                    }
                 }
+                if let sessionRowID {
+                    try insertMessages(under: sessionRowID, messages)
+                    if let fields {
+                        try updateSession(sessionRowID, fields)
+                    }
+                }
+                try upsertFile(path: path, stat: stat, byteOffset: byteOffset, sessionRowID: sessionRowID)
+                try db.execute("COMMIT")
+                return true
+            } catch {
+                try? db.execute("ROLLBACK")
+                throw error
             }
-            try upsertFile(path: path, stat: stat, byteOffset: byteOffset, sessionRowID: sessionRowID)
-            try db.execute("COMMIT")
-            return true
-        } catch {
-            try? db.execute("ROLLBACK")
-            throw error
         }
     }
 
@@ -585,7 +637,8 @@ public final class SearchStore: @unchecked Sendable {
             try insertMessage.bind([.int(sessionRowID), .text(message.role),
                                     message.ts.map(SQLiteValue.text) ?? .null]).run()
             if let insertFTS {
-                try insertFTS.bind([.int(db.lastInsertRowID), .text(message.userText),
+                let rowID = try liveDB().lastInsertRowID
+                try insertFTS.bind([.int(rowID), .text(message.userText),
                                     .text(message.assistantText), .text(message.toolText),
                                     .text(message.identifiers)]).run()
             }
@@ -631,47 +684,50 @@ public final class SearchStore: @unchecked Sendable {
     /// - Returns: rows deleted this call; call repeatedly until it returns 0.
     @discardableResult
     public func drainOrphanedMessages(limit: Int = 256) throws -> Int {
-        if try metaValue("orphans_pending") == "0" { return 0 }
-        // Scoped: an unfinalized statement that read a row keeps a cursor on
-        // messages open, which locks the deletes below with SQLITE_LOCKED.
-        let orphan: Int64? = try {
-            let probe = try cachedStatement("""
-                SELECT session_row_id FROM messages
-                WHERE session_row_id NOT IN (SELECT id FROM sessions) LIMIT 1
-                """)
-            probe.bind([])
-            return try probe.step() ? probe.int(0) : nil
-        }()
-        guard let orphan else {
-            try setMeta("orphans_pending", "0")
-            try db.execute("PRAGMA incremental_vacuum(2000)")
-            return 0
-        }
-        try db.execute("BEGIN IMMEDIATE")
-        do {
-            let ids: [Int64] = try {
-                let pick = try cachedStatement(
-                    "SELECT id FROM messages WHERE session_row_id = ? LIMIT ?")
-                pick.bind([.int(orphan), .int(limit)])
-                var ids: [Int64] = []
-                while try pick.step() { ids.append(pick.int(0)) }
-                return ids
+        try storeLock.withLock {
+            if try metaValue("orphans_pending") == "0" { return 0 }
+            // Scoped: an unfinalized statement that read a row keeps a cursor on
+            // messages open, which locks the deletes below with SQLITE_LOCKED.
+            let orphan: Int64? = try {
+                let probe = try cachedStatement("""
+                    SELECT session_row_id FROM messages
+                    WHERE session_row_id NOT IN (SELECT id FROM sessions) LIMIT 1
+                    """)
+                probe.bind([])
+                return try probe.step() ? probe.int(0) : nil
             }()
-            let deleteFTS = fts5Available
-                ? try cachedStatement("DELETE FROM messages_fts WHERE rowid = ?") : nil
-            let deleteMessage = try cachedStatement("DELETE FROM messages WHERE id = ?")
-            for id in ids {
-                if let deleteFTS {
-                    try deleteFTS.bind([.int(id)]).run()
-                }
-                try deleteMessage.bind([.int(id)]).run()
+            let db = try liveDB()
+            guard let orphan else {
+                try setMeta("orphans_pending", "0")
+                try db.execute("PRAGMA incremental_vacuum(2000)")
+                return 0
             }
-            try db.execute("COMMIT")
-            try db.execute("PRAGMA incremental_vacuum(2000)")
-            return ids.count
-        } catch {
-            try? db.execute("ROLLBACK")
-            throw error
+            try db.execute("BEGIN IMMEDIATE")
+            do {
+                let ids: [Int64] = try {
+                    let pick = try cachedStatement(
+                        "SELECT id FROM messages WHERE session_row_id = ? LIMIT ?")
+                    pick.bind([.int(orphan), .int(limit)])
+                    var ids: [Int64] = []
+                    while try pick.step() { ids.append(pick.int(0)) }
+                    return ids
+                }()
+                let deleteFTS = fts5Available
+                    ? try cachedStatement("DELETE FROM messages_fts WHERE rowid = ?") : nil
+                let deleteMessage = try cachedStatement("DELETE FROM messages WHERE id = ?")
+                for id in ids {
+                    if let deleteFTS {
+                        try deleteFTS.bind([.int(id)]).run()
+                    }
+                    try deleteMessage.bind([.int(id)]).run()
+                }
+                try db.execute("COMMIT")
+                try db.execute("PRAGMA incremental_vacuum(2000)")
+                return ids.count
+            } catch {
+                try? db.execute("ROLLBACK")
+                throw error
+            }
         }
     }
 
@@ -713,14 +769,17 @@ public final class SearchStore: @unchecked Sendable {
     }
 
     /// Closes the connections and deletes the database with every journal
-    /// file beside it. The store is unusable afterwards.
+    /// file beside it. The store is unusable afterwards: under `storeLock`
+    /// no method can be inside a call, and every later one throws.
     public func clear() {
-        // A poll holding the read connection would survive the unlink and
-        // keep reading the old file; drop it first.
-        statusConnection.withLock { $0 = nil }
-        // Finalized before the handle closes, same ordering as `deinit`.
-        statements.removeAll()
-        db = nil
-        SearchLocation.removeDatabase(at: url)
+        storeLock.withLock {
+            // A poll holding the read connection would survive the unlink
+            // and keep reading the old file; drop it first.
+            statusConnection.withLock { $0 = nil }
+            // Finalized before the handle closes, same ordering as `deinit`.
+            statements.removeAll()
+            db = nil
+            SearchLocation.removeDatabase(at: url)
+        }
     }
 }
