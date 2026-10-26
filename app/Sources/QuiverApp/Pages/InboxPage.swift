@@ -8,7 +8,7 @@ import SwiftUI
 struct InboxPage: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openURL) private var openURL
-    /// Unread first by default; the toggle widens the list to read rows.
+    /// Unread first by default; the All tab widens the list to read rows.
     @State private var unreadOnly = true
 
     private var model: GitHubModel { app.github }
@@ -16,8 +16,7 @@ struct InboxPage: View {
     var body: some View {
         Page(title: "Inbox",
              subtitle: "Your GitHub account's live notifications across every repo, via swe gh inbox.") {
-            Toggle("Unread only", isOn: $unreadOnly)
-                .toggleStyle(AccentSwitchStyle())
+            Tabs(options: [(true, "Unread"), (false, "All")], selection: $unreadOnly)
             if model.unreadCount > 0 {
                 Button {
                     Task { await model.markInboxRead([], all: true, swe: app.swe) }
@@ -25,10 +24,10 @@ struct InboxPage: View {
                     if model.actionBusy.contains("inbox:all") {
                         ProgressView().controlSize(.small)
                     } else {
-                        Image(systemName: "envelope.open")
+                        Label("Mark all read", systemImage: "envelope.open")
                     }
                 }
-                .iconButton()
+                .secondaryButton()
                 .help("Mark every notification read")
             }
             Button("Refresh", systemImage: "arrow.clockwise") {
