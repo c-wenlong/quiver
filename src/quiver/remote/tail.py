@@ -66,14 +66,19 @@ PANE_APPROVAL_S = 3.0
 
 
 def _approval_prompt_line(pane: str) -> str:
-    """A one-line summary of the on-screen permission question."""
+    """A one-line summary of the on-screen permission question.
+
+    Pane text is user-originated like tool args are: it can carry a
+    ``Bearer sk-...`` the agent asked about, so it is redacted before it
+    can reach the journal, a phone, or an ntfy body.
+    """
     for line in pane.splitlines():
         text = line.strip()
         if not text:
             continue
         low = text.lower()
         if "do you want" in low or "allow" in low or "permission" in low:
-            return text[:140]
+            return _tr._redact_secrets(text)[:140]
     return "Approval requested"
 
 # How many of the most recent sessions get a live tailer.

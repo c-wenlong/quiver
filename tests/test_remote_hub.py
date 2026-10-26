@@ -902,6 +902,89 @@ class TestHubWriteRoutes(unittest.TestCase):
             conn.close()
 
 
+class TestScopedApprovalToken(unittest.TestCase):
+    """The ntfy action-button bearer: scoped, single-use, approval-only.
+
+    A leaked token answers exactly the prompt it was minted for; the
+    paired device credential keeps working beside it for app clients.
+    """
+
+    def setUp(self):
+        self.srv = _AttachedServer()
+        self.addCleanup(self.srv.stop)
+        self.tokens = self.srv.state.approval_tokens
+
+    def _post_approval(self, body, token):
+        return self.srv.request(
+            "POST", "/v1/sessions/claude:s1/approval",
+            body=body, headers={"Authorization": f"Bearer {token}"},
+        )
+
+    def test_scoped_token_answers_approval(self):
+        tok = self.tokens.mint("claude:s1", "r1")
+        status, data = self._post_approval(
+            {"request_id": "r1", "decision": "allow"}, tok)
+        # Auth passed; headless claude just can't take the decision.
+        self.assertEqual(status, 409, data)
+        self.assertEqual(
+            json.loads(data)["error"]["code"], "approval_not_supported"
+        )
+
+    def test_scoped_token_is_single_use(self):
+        tok = self.tokens.mint("claude:s1", "r1")
+        body = {"request_id": "r1", "decision": "allow"}
+        first, _ = self._post_approval(body, tok)
+        self.assertNotEqual(first, 401)
+        second, _ = self._post_approval(body, tok)
+        self.assertEqual(second, 401)
+
+    def test_scoped_token_bound_to_request(self):
+        tok = self.tokens.mint("claude:s1", "r1")
+        status, _ = self._post_approval(
+            {"request_id": "r2", "decision": "allow"}, tok)
+        self.assertEqual(status, 401)
+
+    def test_scoped_token_bound_to_session(self):
+        tok = self.tokens.mint("claude:other", "r1")
+        status, _ = self._post_approval(
+            {"request_id": "r1", "decision": "allow"}, tok)
+        self.assertEqual(status, 401)
+
+    def test_scoped_token_expires(self):
+        past = time.time() - self.tokens.TTL_S - 1
+        tok = self.tokens.mint("claude:s1", "r1", now=past)
+        status, _ = self._post_approval(
+            {"request_id": "r1", "decision": "allow"}, tok)
+        self.assertEqual(status, 401)
+
+    def test_scoped_token_opens_no_other_route(self):
+        tok = self.tokens.mint("claude:s1", "r1")
+        for method, path, body in (
+            ("POST", "/v1/sessions/claude:s1/message", {"text": "hi"}),
+            ("POST", "/v1/sessions/claude:s1/control",
+             {"op": "interrupt"}),
+            ("GET", "/v1/sessions", None),
+        ):
+            status, _ = self.srv.request(
+                method, path, body=body,
+                headers={"Authorization": f"Bearer {tok}"},
+            )
+            self.assertEqual(status, 401, (method, path))
+
+    def test_resolved_approval_retires_token(self):
+        tok = self.tokens.mint("claude:s1", "r1")
+        self.srv.state.emit(
+            "claude:s1",
+            protocol.event(
+                "approval.resolved", "claude:s1", "m1",
+                {"request_id": "r1", "decision": "allow"},
+            ),
+        )
+        status, _ = self._post_approval(
+            {"request_id": "r1", "decision": "allow"}, tok)
+        self.assertEqual(status, 401)
+
+
 class TestInboxCutoff(unittest.TestCase):
     """catalog.inbox(): the age cutoff, dismissals and finished-today."""
 
@@ -2934,6 +3017,25 @@ class TestStartNotify(unittest.TestCase):
             try:
                 names = [t.name for t in state._threads]
                 self.assertNotIn("remote-notify", names)
+            finally:
+                state.stop()
+
+    def test_start_skips_notifier_on_partial_config(self):
+        # enabled but no url/topic: no thread, and no undrained queue
+        # left on the bus either.
+        from quiver.remote import notify
+
+        home = Path(tempfile.mkdtemp())
+        state = HubState(home)
+        state.catalog._fetch = lambda: []
+        with patch.object(
+            notify, "load_config", return_value={"enabled": True}
+        ):
+            state.start()
+            try:
+                names = [t.name for t in state._threads]
+                self.assertNotIn("remote-notify", names)
+                self.assertEqual(state.bus._subs, [])
             finally:
                 state.stop()
 

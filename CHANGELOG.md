@@ -58,6 +58,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NSAllowsLocalNetworking` covers the unqualified or `.local` names
   and IP literals — including Tailscale CGNAT addresses — a hub
   address can take; arbitrary domains are back under full ATS.
+- **An enabled-but-incomplete ntfy config no longer parks a dead
+  subscriber on the hub bus.** `enabled` without `url`/`topic`
+  subscribed a queue nothing drained; it filled to the 2000-event cap
+  and silently dropped events. The notifier now starts only when the
+  config can actually post, and unsubscribes rather than leaving the
+  queue behind.
+- **ntfy approval actions carry a scoped token, not a device
+  credential, and prompts are redacted.** The Allow/Deny/Always
+  buttons used to send `Authorization: Bearer <cred>` for the
+  `ntfy-actions` device row — a full-power credential good for every
+  attached session — through the ntfy topic, where the host (and
+  ntfy.sh's relay for iOS delivery) could read it. Each notification
+  now mints a token bound to (session, request_id): single-use, ten
+  minutes, accepted only by the approval route, and retired the moment
+  the request resolves. The prompt text also runs the transcript
+  secret-redactor plus a length cap, so a `Bearer sk-...` inside a
+  permission menu can't reach the topic either. On first start the
+  notifier revokes the legacy `ntfy-actions` device row and scrubs it
+  from `notify.json`; paired devices keep working on the approval
+  route unchanged.
 
 ## [1.1.1] - 2026-10-26
 

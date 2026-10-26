@@ -9,6 +9,9 @@ listener.
 
 Auth: every ``/v1/*`` route except ``/v1/status`` and ``/v1/pair`` wants
 ``Authorization: Bearer <device credential>`` from ``devices.json``.
+The approval POST alone also accepts a scoped, single-use ntfy action
+token (``notify.ApprovalTokens``) so a notification never carries a
+full-power credential.
 """
 
 from __future__ import annotations
@@ -232,6 +235,9 @@ class HubState:
         # not yet been answered — local panes and satellites both flow
         # through emit(), so the inbox sees them uniformly.
         self.pending_approvals: dict[str, str] = {}
+        # One-shot, minutes-lived bearer tokens the ntfy action buttons
+        # send instead of a device credential (notify.ApprovalTokens).
+        self.approval_tokens = notify.ApprovalTokens()
         # launch_id -> {machine, harness, cwd, state, key, note,
         # created_at} for every POST /v1/sessions. ``state`` goes pending
         # -> started (a ``session.launched`` event names the key) or
@@ -346,6 +352,9 @@ class HubState:
                 self.pending_approvals[key] = rid
         elif etype == "approval.resolved":
             self.pending_approvals.pop(key, None)
+            # A resolved request retires the notification's scoped
+            # token with it — the buttons must not answer twice.
+            self.approval_tokens.drop_session(key)
         elif etype in {"session.launched", "command.result"}:
             data = event.get("data") or {}
             lid = str(data.get("launch_id") or "")
@@ -382,7 +391,7 @@ class HubState:
             (self._tail_loop, "remote-tail"),
             (self._search_index_loop, "remote-search-index"),
         ]
-        if notify.load_config(self.home).get("enabled"):
+        if notify.ready(notify.load_config(self.home)):
             notifier = notify.Notifier(
                 self, self.base_url, subscribe_key=GLOBAL_KEY
             )
@@ -837,6 +846,33 @@ class _Handler(BaseHTTPRequestHandler):
         if device_id is None and not path.startswith("/v1/agent/"):
             device_id = self._owner_device()
         return device_id
+
+    def _scoped_approval_device(self, path: str) -> str | None:
+        """A minted ntfy action token as caller identity.
+
+        Action buttons carry a scoped token, not a device credential:
+        bound to ``(session key, request_id)``, single-use, minutes
+        lived, and accepted only here. The token is burned on any
+        presentation — a mismatched ``request_id`` is a failed spend,
+        not a free probe — so a topic reader holding it can answer
+        exactly the one prompt it was minted for and nothing else.
+        """
+        prefix = "/v1/sessions/"
+        suffix = "/approval"
+        if not path.startswith(prefix) or not path.endswith(suffix):
+            return None
+        key = unquote(path[len(prefix):-len(suffix)])
+        auth = self.headers.get("Authorization") or ""
+        token = auth[7:].strip() if auth.startswith("Bearer ") else ""
+        if not token:
+            return None
+        body = self._read_body() or {}
+        rid = str(body.get("request_id") or "")
+        if not self._state.approval_tokens.consume(token, key, rid):
+            return None
+        # The approval route never reads the device id back; non-None
+        # is the whole grant.
+        return "ntfy-action"
 
     def _proxied(self) -> bool:
         """True when ``tailscale serve`` relayed this request: the hub
@@ -1465,6 +1501,8 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         device_id = self._caller(path)
+        if device_id is None:
+            device_id = self._scoped_approval_device(path)
         if device_id is None:
             self._send_error(401, "unauthorized", "pair this device first")
             return
