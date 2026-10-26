@@ -98,8 +98,9 @@ git tag -a v1.1.0 -m "v1.1.0"
 git push origin v1.1.0
 ```
 
-The push fires the `Release` workflow, which runs five jobs — four in
-parallel, one gated at the end:
+The push fires the `Release` workflow, which runs five jobs. The package,
+app, and Nix builds start in parallel; the macOS wheel check waits for the
+package build, and the attachment job waits for all four:
 
 - **`Build sdist and wheel`** (Ubuntu) — checks the tag looks like `v*`,
   checks it matches `pyproject.toml` exactly, runs `python3 -m build`,
@@ -112,7 +113,8 @@ parallel, one gated at the end:
   `MACOS_CERTIFICATE` into a throwaway keychain, builds the prod bundle
   via `app/script/build-app.sh release`, reports the signature in the
   log, smoke-tests the signed app end-to-end (the embedded `swe` binary,
-  then the GUI process itself, which must stay alive 20 seconds), then
+  then the GUI process, which must stay alive 20 seconds or exit
+  cleanly), then
   hands `app/script/make-dmg.sh` the notarization credentials: it staples
   the `.app`, stages, signs, submits to Apple, and staples the DMG.
   Finally it downloads the Sparkle 2.10.0 tools archive, verifies its
@@ -197,7 +199,7 @@ themselves.
 | Symptom | What happened | Recovery |
 |---|---|---|
 | `Tag v… does not match pyproject.toml version` | Tag/version mismatch | Fix the version in both files, re-tag under a new tag |
-| `::notice::MACOS_CERTIFICATE is not set` | Signing secret missing | Set the secret; the run degraded to ad-hoc and uploaded nothing |
+| `::notice::MACOS_CERTIFICATE is not set` | Signing secret missing | Set the secret and re-run; the ad-hoc run skips the DMG and appcast, but can still attach the sdist and wheel to an existing release |
 | `No published GitHub release for …` | Release not yet published | Publish the release, then re-run the workflow with the tag |
 | Notarization rejected | Credential or Apple-side issue | Check the `make-dmg.sh` log; the `NOTARY_*` trio must match one App Store Connect account |
-| Appcast on the release but `edSignature` absent | `SPARKLE_PRIVATE_KEY` step failed | The key must pair with the app's `SUPublicEDKey`; verify locally before re-running |
+| Appcast step fails with `The release needs SPARKLE_PRIVATE_KEY`; no new assets are attached | `SPARKLE_PRIVATE_KEY` is missing | Set the secret to the private key matching the app's `SUPublicEDKey`, then re-run the workflow |
