@@ -932,6 +932,46 @@ class TestHubWriteRoutes(unittest.TestCase):
         status, _ = self.srv.request("GET", "/nope.js")
         self.assertEqual(status, 404)
 
+    def test_static_harness_logos(self):
+        """``/harness-<id>.svg`` serves the web app's bundled logos:
+        aliases resolve (``claude-code`` to ``claude``), colour wins,
+        ``-color`` asks for that variant alone."""
+        from quiver.webapp import static as webapp_static
+
+        def file_bytes(name):
+            return (webapp_static.STATIC_DIR / name).read_bytes()
+
+        cases = {
+            "/harness-claude.svg": "harness-claude-color.svg",
+            "/harness-claude-color.svg": "harness-claude-color.svg",
+            "/harness-devin.svg": "harness-devin.svg",
+            "/harness-copilot.svg": "harness-copilot.svg",
+        }
+        for path, name in cases.items():
+            status, data = self.srv.request("GET", path)
+            self.assertEqual(status, 200, path)
+            self.assertEqual(data, file_bytes(name), path)
+        # Every alias in the table answers like its harness's id:
+        # the colour file when there is one, mono otherwise, and 404
+        # when the alias's harness has no bundled logo at all.
+        for alias, hid in webapp_static._LOGO_ALIASES.items():
+            status, data = self.srv.request("GET", f"/harness-{alias}.svg")
+            color = webapp_static.STATIC_DIR / f"harness-{hid}-color.svg"
+            mono = webapp_static.STATIC_DIR / f"harness-{hid}.svg"
+            if color.is_file():
+                self.assertEqual(data, color.read_bytes(), alias)
+            elif mono.is_file():
+                self.assertEqual(data, mono.read_bytes(), alias)
+            else:
+                self.assertEqual(status, 404, alias)
+        # ``-color`` means the colour variant only: devin's is mono.
+        status, _ = self.srv.request("GET", "/harness-devin-color.svg")
+        self.assertEqual(status, 404)
+        for path in ("/harness-nosuch.svg", "/harness-../x.svg",
+                     "/harness-icons.tsv"):
+            status, _ = self.srv.request("GET", path)
+            self.assertEqual(status, 404, path)
+
     def test_bad_body_400(self):
         conn = http.client.HTTPConnection(
             "127.0.0.1", self.srv.port, timeout=5

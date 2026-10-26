@@ -202,6 +202,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   markup-bearing kind could run script in the phone UI. The role label
   is now escaped, and an off-list kind no longer adds CSS classes to
   the bubble (a crafted kind could have faked the `user` style).
+- **Remote web: the working pill names its harness.** The PWA's working
+  indicator under the last chat message now shows the session's harness
+  logo beside the pulsing dots, as the iPhone app does, with the
+  harness's name as the fallback when it has no logo. The hub serves
+  the bundled logos the Mac and iPhone apps draw at
+  `/harness-<id>.svg`, resolved through their alias table
+  (`claude-code` to `claude`, and so on), and a session row in the
+  PWA's list shows the logo in place of the harness's name.
 
 ## [1.1.0] - 2026-10-26
 

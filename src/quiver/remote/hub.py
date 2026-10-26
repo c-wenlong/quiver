@@ -2932,10 +2932,17 @@ class _Handler(BaseHTTPRequestHandler):
             "/icon-192.png": "icon-192.png",
             "/icon-512.png": "icon-512.png",
         }.get(path)
-        if name is None:
-            self._send_error(404, "not_found", "unknown route")
+        if name is not None:
+            self._send_asset(web / name)
             return
-        self._send_asset(web / name)
+        # ``/harness-<id>.svg`` is a session's logo from the web app's
+        # files: the same svgs the Mac and iPhone apps draw, resolved
+        # through their alias table so an id like ``claude-code`` works.
+        logo = webapp_static.harness_logo(path)
+        if logo is not None:
+            self._send_asset(logo)
+            return
+        self._send_error(404, "not_found", "unknown route")
 
     def _serve_webapp(self, path: str) -> None:
         """The web app (``quiver/webapp/static``) under ``/app/``.
