@@ -103,13 +103,23 @@ public struct Hook: Codable, Sendable, Equatable, Identifiable {
         case tier, enabled, eventsSupported
     }
 
+    /// The names swe's list row took in #787 (`name`, `source_path`,
+    /// `dest_path`, `link_status`, snake case undone by `SweClient`). The
+    /// older names still decode, so the snapshot and an older swe read too.
+    enum RenamedKeys: String, CodingKey { case name, sourcePath, destPath, linkStatus }
+
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        script = try c.decode(String.self, forKey: .script)
+        let r = try decoder.container(keyedBy: RenamedKeys.self)
+        script = try r.decodeIfPresent(String.self, forKey: .name)
+            ?? c.decode(String.self, forKey: .script)
         harness = try c.decode(String.self, forKey: .harness)
-        source = try c.decode(String.self, forKey: .source)
-        destination = try c.decodeIfPresent(String.self, forKey: .destination) ?? source
-        state = try c.decode(LinkState.self, forKey: .state)
+        source = try r.decodeIfPresent(String.self, forKey: .sourcePath)
+            ?? c.decode(String.self, forKey: .source)
+        destination = try r.decodeIfPresent(String.self, forKey: .destPath)
+            ?? c.decodeIfPresent(String.self, forKey: .destination) ?? source
+        state = try r.decodeIfPresent(LinkState.self, forKey: .linkStatus)
+            ?? c.decode(LinkState.self, forKey: .state)
         detail = try c.decodeIfPresent(String.self, forKey: .detail) ?? ""
         declared = try c.decodeIfPresent([HookDeclaration].self, forKey: .declared) ?? []
         // An unlisted tier reads as none: the row just groups by harness.
@@ -139,6 +149,22 @@ public struct HookDeclaration: Codable, Sendable, Equatable {
         self.timeout = timeout
         self.command = command
         self.settings = settings
+    }
+
+    enum CodingKeys: String, CodingKey { case event, matcher, timeout, command, settings }
+    /// swe now names the settings file `file`, and the list row leaves out
+    /// `command` and `timeout` (only `hooks info` carries them).
+    enum RenamedKeys: String, CodingKey { case file }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let r = try decoder.container(keyedBy: RenamedKeys.self)
+        event = try c.decode(String.self, forKey: .event)
+        matcher = try c.decodeIfPresent(String.self, forKey: .matcher) ?? ""
+        timeout = try c.decodeIfPresent(Double.self, forKey: .timeout)
+        command = try c.decodeIfPresent(String.self, forKey: .command) ?? ""
+        settings = try r.decodeIfPresent(String.self, forKey: .file)
+            ?? c.decode(String.self, forKey: .settings)
     }
 
     /// `PreToolUse:Bash`, or just `SessionStart` when there is no matcher.
@@ -216,10 +242,14 @@ public struct HookInfo: Decodable, Sendable, Equatable {
 
         public init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
+            let r = try decoder.container(keyedBy: Hook.RenamedKeys.self)
             harness = try c.decode(String.self, forKey: .harness)
-            source = try c.decode(String.self, forKey: .source)
-            destination = try c.decodeIfPresent(String.self, forKey: .destination) ?? source
-            state = try c.decode(LinkState.self, forKey: .state)
+            source = try r.decodeIfPresent(String.self, forKey: .sourcePath)
+                ?? c.decode(String.self, forKey: .source)
+            destination = try r.decodeIfPresent(String.self, forKey: .destPath)
+                ?? c.decodeIfPresent(String.self, forKey: .destination) ?? source
+            state = try r.decodeIfPresent(LinkState.self, forKey: .linkStatus)
+                ?? c.decode(LinkState.self, forKey: .state)
             detail = try c.decodeIfPresent(String.self, forKey: .detail) ?? ""
             summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
             declared = try c.decodeIfPresent([HookDeclaration].self, forKey: .declared) ?? []

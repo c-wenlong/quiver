@@ -5,18 +5,35 @@
     "harnesses": [
       {
         "harness": "claude",
-        "source": "/tmp/quiver-fixture-home/.quiver/hooks/claude/prose-guard.py",
-        "destination": "/tmp/quiver-fixture-home/.claude/hooks/prose-guard.py",
-        "state": "linked",
+        "tier": "harness",
+        "enabled": true,
+        "source_path": "/tmp/quiver-fixture-home/.quiver/hooks/claude/prose-guard.py",
+        "dest_path": "/tmp/quiver-fixture-home/.claude/hooks/prose-guard.py",
+        "link_status": "linked",
         "detail": "",
         "summary": "Blocks prompt submissions that ask for edits to prose files.",
+        "events_supported": [
+          "PreToolUse",
+          "PostToolUse",
+          "PostToolUseFailure",
+          "PermissionRequest",
+          "UserPromptSubmit",
+          "SessionStart",
+          "SessionEnd",
+          "Stop",
+          "StopFailure",
+          "SubagentStart",
+          "SubagentStop",
+          "PostCompact",
+          "TeammateIdle"
+        ],
         "declared": [
           {
             "event": "PreToolUse",
             "matcher": "Bash",
             "timeout": 10,
             "command": "~/.claude/hooks/prose-guard.py",
-            "settings": "/tmp/quiver-fixture-home/.claude/settings.json"
+            "file": "/tmp/quiver-fixture-home/.claude/settings.json"
           }
         ]
       }
