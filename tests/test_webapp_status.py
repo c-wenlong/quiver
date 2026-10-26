@@ -20,7 +20,7 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.status import catalog, parsers, poller
+from quiver.status import catalog, catalogue, parsers, poller, tracked
 from quiver.status.catalog import ComponentState, Health
 from quiver.status.parsers import Component
 from quiver.webapp.pages import status as status_page
@@ -644,6 +644,210 @@ class TestRoute(HubBase):
         for logo in ("harness-openai.svg", "harness-copilot.svg", "harness-npm.svg",
                      "harness-vercel.svg", "harness-cloudflare-color.svg"):
             self.assertEqual(self.srv.request("GET", f"/app/{logo}")[0], 200, logo)
+
+
+# -------------------------------------------------- catalogue and tracking
+
+class TestCatalogue(unittest.TestCase):
+    def test_mirrors_the_mac_catalogue(self):
+        self.assertEqual(len(catalogue.CATALOGUE), 23)
+        self.assertEqual([e.id for e in catalogue.CATALOGUE if e.group == "providers"],
+                         ["groq", "perplexity", "fireworks", "cerebras", "cohere", "baseten",
+                          "minimax", "elevenlabs", "lambda", "assemblyai"])
+        self.assertEqual([e.id for e in catalogue.CATALOGUE if e.group == "infrastructure"],
+                         ["docker", "tailscale", "sentry", "datadog", "supabase", "digitalocean",
+                          "render", "upstash", "convex", "linear", "notion", "twilio", "clerk"])
+        for e in catalogue.CATALOGUE:
+            self.assertTrue(e.page_url.startswith("https://"), e.id)
+            self.assertEqual(e.feed_url, f"{e.page_url}/api/v2/summary.json", e.id)
+            self.assertEqual(e.group in ("providers", "infrastructure"), True, e.id)
+            self.assertIsNotNone(e.logo, e.id)
+
+    def test_filter_matches_name_and_host(self):
+        self.assertEqual([e.id for e in catalogue.filter_(query=" docker ")], ["docker"])
+        self.assertEqual([e.id for e in catalogue.filter_(query="notion-status")], ["notion"])
+        self.assertEqual(catalogue.filter_(group="providers")[0].id, "groq")
+        self.assertEqual([e.id for e in catalogue.filter_(group="infrastructure", query="api")], [])
+        self.assertEqual(catalogue.filter_(query="zzz"), [])
+        # A catalogue id is never a built-in's, so tracking is one id space.
+        self.assertFalse({e.id for e in catalogue.CATALOGUE} & {s.id for s in catalog.SERVICES})
+
+
+class TestTracked(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.path = tracked.tracked_file_for(self.home)
+
+    def test_path_is_under_the_quiver_data_dir(self):
+        self.assertEqual(self.path, self.home / ".quiver" / "data" / "web-status-services.json")
+
+    def test_add_load_remove(self):
+        entry = catalogue.entry("groq")
+        service = tracked.add(self.home, entry)
+        self.assertTrue(service.custom)
+        self.assertEqual((service.id, service.name, service.group, service.host),
+                         ("groq", "Groq", "providers", "groqstatus.com"))
+        services = tracked.load(self.home)
+        self.assertEqual([s.id for s in services], ["groq"])
+        self.assertTrue(all(s.custom for s in services))
+        saved = json.loads(self.path.read_text())
+        self.assertEqual(saved["version"], 1)
+        self.assertEqual([s["id"] for s in saved["services"]], ["groq"])
+        self.assertTrue(tracked.remove(self.home, "groq"))
+        self.assertEqual(tracked.load(self.home), [])
+        self.assertFalse(tracked.remove(self.home, "groq"))
+
+    def test_adding_twice_keeps_one(self):
+        tracked.add(self.home, catalogue.entry("docker"))
+        tracked.add(self.home, catalogue.entry("docker"))
+        self.assertEqual([s.id for s in tracked.load(self.home)], ["docker"])
+
+    def test_bad_data_reads_as_empty(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text("{not json")
+        self.assertEqual(tracked.load(self.home), [])
+        self.path.write_text(json.dumps({"version": 1, "services": [{"id": "x"}, "junk", 42]}))
+        self.assertEqual(tracked.load(self.home), [])
+        self.path.write_text(json.dumps({"version": 1, "services": [
+            {"id": "x", "name": "X", "page_url": "javascript:1", "feed_url": "https://f.test/x",
+             "group": "providers"}]}))
+        self.assertEqual(tracked.load(self.home), [])
+
+
+class TestPollerForget(PollerBase):
+    def test_drops_memory_and_cache(self):
+        self.transport.reply(200, fixture("statuspage-github"))
+        p = self.make()
+        self.one(p, "github")
+        self.assertIsNotNone(p.cached([catalog.service("github")])[0].report)
+        p.forget("github")
+        status = p.cached([catalog.service("github")])[0]
+        self.assertIsNone(status.report)
+        saved = json.loads((self.dir / "web-service-status.json").read_text())
+        self.assertNotIn("github", saved["services"])
+
+    def test_a_forgotten_flight_does_not_land(self):
+        """An answer already in flight when the page is removed is dropped."""
+        self.transport.reply(200, fixture("statuspage-github"))
+        self.transport.gate = threading.Event()
+        p = self.make(wait=0.2)
+        self.one(p, "github")  # leaves the flight running in the background
+        p.forget("github")
+        self.transport.gate.set()
+        for _ in range(50):
+            if self.transport.gate.is_set() and len(self.transport.requests) == 1:
+                break
+            time.sleep(0.01)
+        time.sleep(0.05)  # let the landing attempt run
+        self.assertIsNone(p.cached([catalog.service("github")])[0].report)
+        saved = json.loads((self.dir / "web-service-status.json").read_text())
+        self.assertNotIn("github", saved.get("services", {}))
+
+
+class TestTrackRoute(HubBase):
+    def setUp(self):
+        super().setUp()
+        self.transport = FakeTransport()
+        self.transport.reply(200, fixture("statuspage-github"))
+        self.poller = poller.StatusPoller(self.srv.home / "status.json", transport=self.transport,
+                                          now=Clock(time.time()))
+        p = patch("quiver.webapp.pages.status.poller_for", return_value=self.poller)
+        p.start()
+        self.addCleanup(p.stop)
+        self.headers = self.auth()
+
+    def get(self, path):
+        status, data = self.srv.request("GET", path, headers=self.headers)
+        return status, json.loads(data)
+
+    def post(self, action, body=None, headers=None):
+        status, data = self.srv.request("POST", f"/v1/app/status/{action}", body,
+                                        headers=headers or self.headers)
+        return status, json.loads(data)
+
+    def store(self):
+        return self.srv.home / ".quiver" / "data" / "web-status-services.json"
+
+    def card(self, body, id):
+        return next((s for g in body["groups"] for s in g["services"] if s["id"] == id), None)
+
+    def test_catalogue_view(self):
+        status, body = self.get("/v1/app/status?view=catalogue")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(len(body["entries"]), 23)
+        groq = next(e for e in body["entries"] if e["id"] == "groq")
+        self.assertEqual((groq["name"], groq["host"], groq["group"], groq["logo"]),
+                         ("Groq", "groqstatus.com", "providers", "groq"))
+        self.assertFalse(any(e["added"] for e in body["entries"]))
+
+    def test_track_adds_and_persists(self):
+        status, body = self.post("track", {"id": "groq"})
+        self.assertEqual(status, 200, body)
+        groq = self.card(body, "groq")
+        self.assertIsNotNone(groq)
+        self.assertTrue(groq["custom"])
+        self.assertEqual(groq["group"], "providers")
+        saved = json.loads(self.store().read_text())
+        self.assertEqual([s["id"] for s in saved["services"]], ["groq"])
+        # The catalogue now marks it added and the next poll asks it too.
+        _, cat_body = self.get("/v1/app/status?view=catalogue")
+        self.assertTrue(next(e for e in cat_body["entries"] if e["id"] == "groq")["added"])
+        self.assertTrue(any(url == "https://groqstatus.com/api/v2/summary.json"
+                            for url, _, _ in self.transport.requests))
+
+    def test_track_validates_the_id(self):
+        for body, want in [({}, 422), ({"id": 5}, 422), ({"id": "nope"}, 404)]:
+            status, data = self.post("track", body)
+            self.assertEqual(status, want, (body, data))
+            self.assertIn(data["error"]["code"], ("bad_id", "unknown_service"))
+        self.assertFalse(self.store().exists())
+
+    def test_track_twice_is_refused(self):
+        self.assertEqual(self.post("track", {"id": "docker"})[0], 200)
+        status, data = self.post("track", {"id": "docker"})
+        self.assertEqual(status, 409, data)
+        self.assertEqual(data["error"]["code"], "already_tracked")
+        self.assertEqual(len(json.loads(self.store().read_text())["services"]), 1)
+
+    def test_untrack_removes_and_forgets(self):
+        self.post("track", {"id": "tailscale"})
+        self.get("/v1/app/status")  # a reading lands in the poll cache
+        self.assertIn("tailscale", json.loads((self.srv.home / "status.json").read_text())["services"])
+        status, body = self.post("untrack", {"id": "tailscale"})
+        self.assertEqual(status, 200, body)
+        self.assertIsNone(self.card(body, "tailscale"))
+        self.assertEqual(json.loads(self.store().read_text())["services"], [])
+        # The poll cache forgot it too.
+        self.assertNotIn("tailscale",
+                         json.loads((self.srv.home / "status.json").read_text())["services"])
+        _, cat_body = self.get("/v1/app/status?view=catalogue")
+        self.assertFalse(next(e for e in cat_body["entries"] if e["id"] == "tailscale")["added"])
+
+    def test_untrack_refuses_built_ins_and_unknown(self):
+        status, data = self.post("untrack", {"id": "npm"})
+        self.assertEqual(status, 422, data)
+        self.assertEqual(data["error"]["code"], "built_in")
+        status, data = self.post("untrack", {"id": "groq"})
+        self.assertEqual(status, 404, data)
+        self.assertEqual(data["error"]["code"], "unknown_service")
+
+    def test_posts_need_a_device_and_a_local_origin(self):
+        self.assertEqual(self.srv.request("POST", "/v1/app/status/track", {"id": "groq"})[0], 401)
+        status, data = self.srv.request(
+            "POST", "/v1/app/status/track", {"id": "groq"},
+            headers={**self.headers, "Origin": "http://evil.example"})
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(data)["error"]["code"], "bad_origin")
+        self.assertFalse(self.store().exists())
+
+    def test_tracked_services_survive_into_the_normal_view(self):
+        self.post("track", {"id": "linear"})
+        status, body = self.get("/v1/app/status?cached=1")
+        self.assertEqual(status, 200, body)
+        linear = self.card(body, "linear")
+        self.assertIsNotNone(linear)
+        self.assertEqual(linear["group"], "infrastructure")
+        self.assertTrue(linear["custom"])
 
 
 if __name__ == "__main__":

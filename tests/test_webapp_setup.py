@@ -110,6 +110,21 @@ class TestGet(_Home, unittest.TestCase):
         self.assertEqual(found, ["claude", "codex"])
         self.assertEqual(data["agents"]["starred"], ["codex", "ollama"])
 
+    def test_a_missing_agent_links_its_site_and_any_installed_app(self):
+        # The Mac setup sheet's vendor link and "already installed as an
+        # app" note ride the same fields.
+        data = setup_page.get(self.ctx(), {})
+        rows = {p["id"]: p for p in data["agents"]["providers"]}
+        self.assertEqual(rows["gemini"]["website"], "https://geminicli.com")
+        self.assertTrue(rows["gemini"]["website"].startswith("https://"))
+        # An installed agent has no install block, so no website either.
+        self.assertNotIn("website", rows["claude"])
+        self.assertNotIn("app", rows["gemini"])
+        with patch("quiver.harness.installers.installed_app",
+                   return_value="/Applications/Gemini.app"):
+            rows = {p["id"]: p for p in setup_page.get(self.ctx(), {})["agents"]["providers"]}
+        self.assertEqual(rows["gemini"]["app"], "/Applications/Gemini.app")
+
     def test_a_corrupt_registry_is_an_error_not_a_crash(self):
         self.registry_file.write_text('{"claude": "oops"}')
         data = setup_page.get(self.ctx(), {})

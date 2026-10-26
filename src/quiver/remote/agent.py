@@ -9,7 +9,6 @@ simply drops offline on the hub until it wakes and replays the queue.
 """
 
 import json
-import os
 import queue as queue_mod
 import ssl
 import sys
@@ -19,7 +18,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from quiver.paths import remote_dir_for
+from quiver.paths import atomic_write_text, remote_dir_for
 from quiver.remote import attachments, catalog as catalog_mod, slash
 from quiver.remote import inject, journal, protocol, supervise, tail
 from quiver.remote import fork as fork_mod, usage as usage_mod
@@ -49,8 +48,7 @@ def load_agent(home: Path | None = None) -> dict | None:
 def save_agent(home: Path | None, conf: dict) -> Path:
     path = agent_file_for(home)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(conf, indent=1))
-    os.chmod(path, 0o600)
+    atomic_write_text(path, json.dumps(conf, indent=1), private=True)
     return path
 
 

@@ -508,6 +508,22 @@ class TestGet(_Settings):
         catalog = {r["id"]: r for r in body["providers"]["catalog"]}
         self.assertEqual(catalog["gemini"]["env_vars"], ["GEMINI_API_KEY", "GOOGLE_API_KEY"])
         self.assertEqual(catalog["anthropic"]["name"], "Anthropic")
+        # The catalogue's Set badge: a provider has_key when the key file
+        # sets any of its variables. OPENAI_API_KEY is set; EMPTY_KEY is a
+        # variable no catalog provider claims.
+        self.assertTrue(catalog["openai"]["has_key"])
+        self.assertFalse(catalog["anthropic"]["has_key"])
+
+    def test_catalog_has_key_needs_a_value_not_only_the_variable(self):
+        keys = self.home / ".quiver" / "secrets" / "providers" / ".api_keys"
+        keys.parent.mkdir(parents=True)
+        keys.write_text("export GEMINI_API_KEY=\nexport ANTHROPIC_API_KEY=\"\"\n")
+        catalog = {r["id"]: r for r in settings_page.get(self.ctx(), {})["providers"]["catalog"]}
+        self.assertFalse(catalog["gemini"]["has_key"])
+        self.assertFalse(catalog["anthropic"]["has_key"])
+        keys.write_text("export GOOGLE_API_KEY=abc123\n")
+        catalog = {r["id"]: r for r in settings_page.get(self.ctx(), {})["providers"]["catalog"]}
+        self.assertTrue(catalog["gemini"]["has_key"])
 
     def test_providers_follow_providers_json_and_its_removals(self):
         config = self.home / ".quiver" / "config"
@@ -931,6 +947,77 @@ class TestSessionSearch(_Settings):
             settings_page._first_pass(Path(self.home))
         self.assertFalse(search_writer.is_running(self.home))
         self.assertEqual(search_writer.status(self.home)["last_error"]["message"], "too new")
+
+    def write_session(self):
+        projects = Path(self.home) / ".claude" / "projects" / "p"
+        projects.mkdir(parents=True)
+        (projects / "a.jsonl").write_text(json.dumps({
+            "type": "user", "sessionId": "s1", "timestamp": "2026-10-01T10:00:00Z",
+            "message": {"content": "resync and clear fixture"}}, separators=(",", ":")) + "\n")
+
+    def test_resync_reruns_the_pass(self):
+        from quiver.sessions import search_index
+
+        self.write_session()
+        me = self.device("laptop")
+        self.post("session_search", {"enabled": True}, me)
+        self.wait_idle()
+        first = self.get(me)["last_pass"]
+        status, data = self.post("session_search", {"resync": True}, me)
+        self.assertEqual(status, 200, data)
+        self.wait_idle()
+        ss = self.get(me)
+        # The pass ran again end to end: the file it already consumed is
+        # "current" rather than indexed twice.
+        self.assertTrue(ss["enabled"])
+        self.assertEqual(ss["sessions"], 1)
+        self.assertGreaterEqual(ss["last_pass"]["finished_at"], first["finished_at"])
+        self.assertGreaterEqual(ss["last_pass"]["files"], 1)
+        self.assertEqual(len(search_index.search(self.home, "fixture")), 1)
+
+    def test_clear_wipes_the_index_and_rebuilds_when_enabled(self):
+        self.write_session()
+        me = self.device("laptop")
+        self.post("session_search", {"enabled": True}, me)
+        self.wait_idle()
+        self.assertTrue(self.get(me)["exists"])
+        status, data = self.post("session_search", {"clear": True}, me)
+        self.assertEqual(status, 200, data)
+        ss = data["session_search"]
+        self.assertTrue(ss["enabled"], "clear keeps the switch on")
+        self.assertFalse(ss["exists"])
+        self.assertIsNone(ss["last_pass"])
+        self.wait_idle()  # the enabled index rebuilds from scratch
+        self.assertEqual(self.get(me)["sessions"], 1)
+
+    def test_clear_while_off_wipes_without_a_rebuild(self):
+        self.write_session()
+        me = self.device("laptop")
+        self.post("session_search", {"enabled": True}, me)
+        self.wait_idle()
+        self.post("session_search", {"enabled": False}, me)
+        status, data = self.post("session_search", {"clear": True}, me)
+        self.assertEqual(status, 200, data)
+        ss = data["session_search"]
+        self.assertEqual((ss["enabled"], ss["exists"], ss["running"]), (False, False, False))
+        self.assertIsNone(ss["last_error"])
+
+    def test_clear_while_a_pass_holds_the_lock_is_409(self):
+        from quiver.sessions import search_writer
+        from quiver.paths import search_index_for
+
+        me = self.device("laptop")
+        self.post("session_search", {"enabled": True}, me)
+        self.wait_idle()
+        lock = search_writer._Lock(search_index_for(Path(self.home)).parent / search_writer.LOCK_FILE)
+        lock.__enter__()
+        try:
+            status, data = self.post("session_search", {"clear": True}, me)
+        finally:
+            lock.__exit__()
+        self.assertEqual(status, 409, data)
+        self.assertEqual(data["error"]["code"], "busy")
+        self.assertTrue(self.get(me)["exists"], "a refused clear deleted nothing")
 
 
 class TestSync(_Settings):

@@ -329,7 +329,11 @@ class StatusPoller:
             except Exception:  # a parser or transport bug must not wedge the flight
                 entry = replace(attempt, problem=f"Couldn't read {service.host}", problem_until=None)
             with self._lock:
-                self._save({service.id: entry})
+                # A flight forget() unregistered must not land its answer:
+                # the page was removed (or re-added under a newer flight),
+                # and a saved entry would bring the old reading back.
+                if self._in_flight.get(service.id) is flight:
+                    self._save({service.id: entry})
         finally:
             # Whatever happened, the page is no longer in flight, or no
             # later load would ever ask it again.
@@ -337,6 +341,27 @@ class StatusPoller:
                 if self._in_flight.get(service.id) is flight:
                     del self._in_flight[service.id]
             flight.done.set()
+
+    def forget(self, service_id: str) -> None:
+        """Drop everything kept for a page: this process's memory, a
+        request in flight and the cache file. Mirrors the Mac's
+        ``ServiceStatusService.forget``: a removed page's reading must not
+        reach a same-named page added later."""
+        with self._lock:
+            self._memory.pop(service_id, None)
+            # The flight cannot be cancelled; unregistered, its landing is
+            # not saved (or the page would reappear).
+            self._in_flight.pop(service_id, None)
+            try:
+                self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(str(self.cache_path) + ".lock", "a+") as lock:
+                    if fcntl is not None:
+                        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                    entries = self._load()
+                    entries.pop(service_id, None)
+                    self._write(entries)
+            except OSError:
+                pass
 
     def _check(self, service: StatusService, entry: Entry) -> Entry:
         """One request, folded into the page's entry."""
@@ -428,21 +453,25 @@ class StatusPoller:
                 entries = self._load()
                 for id, entry in updated.items():
                     entries[id] = newer(entry, entries.get(id))  # type: ignore[assignment]
-                body = json.dumps({"version": 1, "services": {k: v.to_dict() for k, v in sorted(entries.items())}},
-                                  indent=2, sort_keys=True)
-                fd, tmp = tempfile.mkstemp(dir=self.cache_path.parent, prefix=".web-service-status-")
-                try:
-                    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                        fh.write(body)
-                    os.replace(tmp, self.cache_path)
-                except BaseException:
-                    try:
-                        os.unlink(tmp)
-                    except OSError:
-                        pass
-                    raise
+                self._write(entries)
         except OSError:
             pass
+
+    def _write(self, entries: dict[str, Entry]) -> None:
+        """The whole cache, atomically (callers hold the lock file)."""
+        body = json.dumps({"version": 1, "services": {k: v.to_dict() for k, v in sorted(entries.items())}},
+                          indent=2, sort_keys=True)
+        fd, tmp = tempfile.mkstemp(dir=self.cache_path.parent, prefix=".web-service-status-")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(body)
+            os.replace(tmp, self.cache_path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
 
 # One poller per cache file, shared by every request the hub serves, so

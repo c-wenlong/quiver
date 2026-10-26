@@ -392,8 +392,14 @@ function missingBanner(p) {
   let panel = "";
   if (open) {
     const error = page.installErrors[p.id];
+    const site = /^https?:\/\//i.test(p.website || "") ? p.website : null;
+    const host = site ? site.replace(/^https?:\/\//i, "").replace(/\/.*$/, "") : "";
+    const websiteLink = site
+      ? `<a class="setup-site-link" href="${esc(site)}" target="_blank" rel="noopener noreferrer">Get ${esc(agentName(p.id))} from ${esc(host)}</a>`
+      : "";
     panel = methods.length
       ? `<p class="caption">Install it on ${esc(machineName())} with one of these, or copy a command to run in a terminal there.</p>
+        ${p.app ? `<p class="caption">The ${esc(agentName(p.id))} app is already on ${esc(machineName())} at ${esc(p.app)}; these commands install its command line tool.</p>` : ""}
         <div class="setup-methods">${methods.map((m, i) => `<div class="setup-method${m.available ? "" : " off"}">
           <span class="setup-via">${esc(m.via)}</span>
           <code title="${esc(m.command)}">${esc(m.command)}</code>
@@ -401,8 +407,10 @@ function missingBanner(p) {
           <button class="setup-button small" data-copy="${i}" data-agent="${esc(p.id)}">${
             page.copied === `${p.id}:${i}` ? "Copied" : "Copy"}</button></div>`).join("")}</div>
         ${error ? `<p class="error setup-pre setup-install-error" role="alert">${esc(error)}</p>` : ""}
-        <p class="caption">A cask or install script that asks for a password can't finish here. Copy it into a terminal instead.</p>`
-      : `<p class="caption">swe doesn't know an installer for ${esc(agentName(p.id))}. Get it from its own website.</p>`;
+        <p class="caption">A cask or install script that asks for a password can't finish here. Copy it into a terminal instead.</p>
+        ${websiteLink}`
+      : `<p class="caption">swe doesn't know an installer for ${esc(agentName(p.id))}. Get it from its own website.</p>
+        ${site ? `<div class="setup-download"><code>${esc(host)}</code><a class="setup-button small" href="${esc(site)}" target="_blank" rel="noopener noreferrer">Download</a></div>` : ""}`;
   }
   return `<div class="setup-missing">
     <div class="setup-missing-row">

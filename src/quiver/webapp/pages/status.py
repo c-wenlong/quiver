@@ -1,9 +1,11 @@
 """Service status: ``GET /v1/app/status``.
 
-The Mac app's Service status page, from ``quiver.status``: each built-in
+The Mac app's Service status page, from ``quiver.status``: each tracked
 status page's health, its affected components and open incidents, grouped
-as the app groups them. Read only. Query parameters:
+as the app groups them. Query parameters:
 
+- ``view=catalogue``: the add sheet's catalogue (``catalogue.CATALOGUE``),
+  each entry with ``added`` for the pages this hub already tracks.
 - ``cached=1``: the last readings, without touching the network (the page
   paints these first, as the app does, then asks again without it).
 - ``force=1``: the Refresh button. Pages are still asked at most once a
@@ -11,23 +13,103 @@ as the app groups them. Read only. Query parameters:
 
 Without either, pages last asked five or more minutes ago are asked again;
 the rest come from ``~/.quiver/cache/web-service-status.json``.
+
+``POST /v1/app/status/track`` (``{"id"}``) is the catalogue sheet's Add:
+the entry joins the tracked set in ``tracked.py``'s store, the web app's
+own file under ``~/.quiver/data`` (the Mac's customs live in its
+preferences, which this does not read). ``POST /v1/app/status/untrack``
+is the custom card's Remove: only a tracked extra goes; a built-in page
+is refused, as ``ServiceStatusModel.remove`` refuses it. Both answer
+with the page's fresh payload.
 """
 
 from __future__ import annotations
 
+import threading
 import time
+from pathlib import Path
 
+from quiver.status import catalogue, tracked
 from quiver.status.catalog import GROUPS, SERVICES
 from quiver.status.poller import ServiceStatus, poller_for
+from quiver.webapp.pages import PageError
+
+# One track/untrack at a time in this process; the store's own flock
+# covers a second hub on the same home.
+_WRITE_LOCK = threading.Lock()
 
 
 def get(ctx, args: dict) -> dict:
+    if args.get("view") == "catalogue":
+        return catalogue_view(ctx.home)
     poller = poller_for(ctx.home)
+    services = _services(ctx.home)
     if args.get("cached") == "1":
-        statuses = poller.cached(SERVICES)
+        statuses = poller.cached(services)
     else:
-        statuses = poller.statuses(SERVICES, force=args.get("force") == "1")
+        statuses = poller.statuses(services, force=args.get("force") == "1")
     return payload(statuses, machine=(ctx.machine or {}).get("name"), cached=args.get("cached") == "1")
+
+
+def _services(home: Path | None) -> list:
+    """The built-ins plus the tracked extras, in card order, as the Mac's
+    ``StatusService.all + store.load()``."""
+    return list(SERVICES) + tracked.load(home)
+
+
+def catalogue_view(home: Path | None, group: str | None = None, query: str = "") -> dict:
+    """The add sheet's rows. ``added`` is the Mac's rule: a page on the
+    grid, built-in or custom, marks the entry when its feed's host is
+    already tracked, so the same page under another name still counts."""
+    hosts = {s.host.lower() for s in _services(home)}
+    entries = catalogue.filter_(group=group, query=query)
+    return {"entries": [{"id": e.id, "name": e.name, "host": e.host,
+                         "group": e.group, "logo": e.logo,
+                         "added": e.host.lower() in hosts} for e in entries]}
+
+
+def post(ctx, action: str, body: dict) -> dict:
+    if action not in ("track", "untrack"):
+        raise PageError(404, "unknown_action", f"unknown status action: {action}")
+    if not isinstance(body, dict):
+        raise PageError(422, "bad_body", "the body must be a JSON object")
+    id_ = body.get("id")
+    if not isinstance(id_, str) or not id_:
+        raise PageError(422, "bad_id", "id must name a status page")
+    home = ctx.home
+    with _WRITE_LOCK:
+        if action == "track":
+            _track(home, id_)
+        else:
+            _untrack(home, id_)
+    poller = poller_for(home)
+    statuses = poller.statuses(_services(home))
+    return payload(statuses, machine=(ctx.machine or {}).get("name"))
+
+
+def _track(home: Path | None, id: str) -> None:
+    entry = catalogue.entry(id)
+    if entry is None:
+        raise PageError(404, "unknown_service", f"The catalogue has no status page {id}.")
+    if any(s.id == id for s in SERVICES):
+        raise PageError(409, "already_tracked", f"{entry.name} is already on the page.")
+    # The Mac's sheet can only add what is not shown as Added; the same
+    # rule here: a page whose feed host is already tracked cannot land
+    # twice, under this id or another.
+    if any(s.host.lower() == entry.host.lower() for s in _services(home)):
+        raise PageError(409, "already_tracked", f"{entry.name} is already on the page.")
+    tracked.add(home, entry)
+
+
+def _untrack(home: Path | None, id: str) -> None:
+    if any(s.id == id for s in SERVICES):
+        raise PageError(422, "built_in",
+                        f"{id} is a built-in page; only pages you added can be removed.")
+    if not tracked.remove(home, id):
+        raise PageError(404, "unknown_service", f"No tracked page has id {id}.")
+    # Its poll cache goes too, so a same-named page added later cannot
+    # inherit the old reading (the Mac's service.forget(id:)).
+    poller_for(home).forget(id)
 
 
 def payload(statuses: list[ServiceStatus], machine: str | None = None, cached: bool = False,
@@ -59,6 +141,7 @@ def _service(status: ServiceStatus) -> dict:
         "group": service.group,
         "note": service.note,
         "logo": service.logo,
+        "custom": service.custom,
         "health": report.health.key if report else None,
         "health_title": report.health.title if report else None,
         "summary": report.summary if report else None,

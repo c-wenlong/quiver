@@ -148,21 +148,40 @@ def _session_search(home: Path) -> dict:
 def _set_session_search(ctx, body: dict) -> dict:
     from quiver.sessions import search_writer
 
+    home = _home(ctx)
+    if body.get("resync") is True:
+        _kick_pass(home)
+        return {"session_search": _session_search(home)}
+    if body.get("clear") is True:
+        try:
+            search_writer.clear_index(home)
+        except search_writer.IndexBusy:
+            raise PageError(409, "busy",
+                          "an index pass is running; clear once it finishes")
+        # An enabled index rebuilds from scratch, as the Mac's clear does.
+        if search_writer.status(home).get("enabled"):
+            _kick_pass(home)
+        return {"session_search": _session_search(home)}
     enabled = body.get("enabled")
     if not isinstance(enabled, bool):
         raise PageError(400, "bad_enabled", "enabled must be true or false")
-    home = _home(ctx)
     search_writer.set_enabled(home, enabled)
     if enabled:
-        threading.Thread(target=_first_pass, args=(home,),
-                         name="settings-search-index", daemon=True).start()
-        # Give the thread the lock before answering, so the page sees
-        # ``running`` and starts polling.
-        for _ in range(20):
-            if search_writer.is_running(home):
-                break
-            time.sleep(0.01)
+        _kick_pass(home)
     return {"session_search": _session_search(home)}
+
+
+def _kick_pass(home: Path) -> None:
+    from quiver.sessions import search_writer
+
+    threading.Thread(target=_first_pass, args=(home,),
+                     name="settings-search-index", daemon=True).start()
+    # Give the thread the lock before answering, so the page sees
+    # ``running`` and starts polling.
+    for _ in range(20):
+        if search_writer.is_running(home):
+            break
+        time.sleep(0.01)
 
 
 def _first_pass(home: Path) -> None:
@@ -330,6 +349,7 @@ def _providers(ctx, home: Path) -> dict:
     path = provider_keys_path_for(ctx.home)
     out = {"path": _display(path, home), "exists": path.exists(), "stamp": None,
            "keys": [], "catalog": [], "error": None}
+    set_vars: set[str] | None = None
     try:
         keys, data = keyfile.load(path)
     except keyfile.KeyFileError as exc:
@@ -341,9 +361,11 @@ def _providers(ctx, home: Path) -> dict:
             # APIKeyMask's form, never the value.
             "masked": mask(e.value),
         } for e in keys.keys]
+        set_vars = {e.name for e in keys.keys if e.value}
     try:
         registry = _provider_registry(ctx)
-        out["catalog"] = [_catalog_row(pid, info) for pid, info in registry.items()]
+        out["catalog"] = [_catalog_row(pid, info, set_vars)
+                          for pid, info in registry.items()]
     except (ValueError, TypeError, AttributeError, OSError) as exc:
         # A corrupt providers.json, or an entry whose fields have the
         # wrong types (key_filename: 123): say so in this card and keep
@@ -352,7 +374,7 @@ def _providers(ctx, home: Path) -> dict:
     return out
 
 
-def _catalog_row(pid: str, info: dict) -> dict:
+def _catalog_row(pid: str, info: dict, set_vars: set[str] | None = None) -> dict:
     env_vars = info.get("env_vars")
     if not isinstance(env_vars, list) or not all(isinstance(e, str) for e in env_vars):
         raise TypeError(f"{pid}: env_vars must be a list of names")
@@ -363,6 +385,8 @@ def _catalog_row(pid: str, info: dict) -> dict:
         "id": pid,
         "name": name or pid,
         "env_vars": env_vars,
+        # The catalogue sheet's "Set" badge: the file covers any variable.
+        "has_key": bool(set_vars) and any(v in set_vars for v in env_vars),
         # Only a web link: the page puts it in an href.
         "url": _web_url(info.get("url")),
     }

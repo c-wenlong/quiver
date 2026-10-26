@@ -1229,6 +1229,27 @@ def is_running(home: Path | None = None) -> bool:
         return False
 
 
+def clear_index(home: Path | None = None) -> None:
+    """Delete the index, its prints and the pass record, keeping
+    ``enabled``. What the hub's Clear search data does: the next pass
+    reads every transcript again.
+
+    Raises :class:`IndexBusy` while a pass holds ``index.lock`` — the
+    lock is what keeps the delete from racing a write in flight."""
+    home = Path(home) if home is not None else Path.home()
+    path = search_index_for(home)
+    with _Lock(path.parent / LOCK_FILE):
+        _remove_database(path)
+        with contextlib.suppress(OSError):
+            os.unlink(path.parent / PRINTS_FILE)
+
+        def wipe(data: dict) -> None:
+            data.pop("last_pass", None)
+            data.pop("last_error", None)
+
+        _update_state(home, wipe)
+
+
 def run_pass(home: Path | None = None, *, should_stop=None) -> PassResult:
     """Index every source under ``home`` once.
 

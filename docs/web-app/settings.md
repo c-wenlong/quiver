@@ -22,12 +22,12 @@ app's saved value does).
 | General | Open at login, Terminal, Show in Dock: Mac app only. First-run setup links to `#/setup` ("Set up this machine"). Display › Appearance (System, Light, Dark) works, per browser. App icon and Hide accidental sessions: Mac app only. Updates › Version shows the hub's swe version; Latest release and Automatic checks are Mac app only. |
 | Sidebar | A switch per page in every group, Enable all / Disable all, Overview, Accounts and Settings locked on ("Always on"), per browser. |
 | Notifications | All three rows Mac app only. |
-| Providers | Harnesses tab: Provider visibility is Mac app only, with a link to the Harnesses page. Inference tab: the API keys file, with Add key, edit, delete, reveal and copy (below). |
+| Providers | Harnesses tab: Provider visibility is Mac app only, with a link to the Harnesses page. Inference tab: the API keys file, with Add key, the provider Catalogue, edit, delete, reveal and copy (below). |
 | Services | Mac app only (keys in the Mac's Keychain). |
 | Integrations | GitHub: gh's login (with the app's warnings and a re-check button) and the synced repo catalog with Sync now. Remote: the setup checklist until it's done, the hub, paired devices, Pair a device, and pair requests waiting for approval (below). |
-| Paths | The hub's swe, API keys file and MCP servers folder, read only. Editor: Mac app only. |
+| Files | The hub's swe, API keys file and MCP servers folder, read only. Editor: Mac app only. |
 | Doctor | A link to the Doctor page (`#/doctor`); the app draws Doctor inside Settings. |
-| Experimental | Session search: a switch for the hub's transcript index (`swe session index --on`/`--off`), with its status underneath (below). |
+| Experimental | Session index: a switch for the hub's transcript index (`swe session index --on`/`--off`), its status underneath, and while it is on a resync button and Clear search data (below). |
 
 A greyed row keeps the app's title and wording, with a "Mac app only"
 badge where its control would be.
@@ -50,8 +50,9 @@ badge where its control would be.
   the hub, so the app's "No hub reachable" state can't occur here.
 - **Paired devices**: every device not revoked, its id and when it was
   last seen; the browser's own device has a "This device" badge
-  (`ctx.device_id`). Revoke opens an inline confirm in the row that says
-  what will happen. On the browser's own row the confirm says the page
+  (`ctx.device_id`). As in the app, the list folds after two rows into
+  "Show N more" / "Show less". Revoke opens an inline confirm in the row
+  that says what will happen. On the browser's own row the confirm says the page
   stops working until it is paired again, and the request carries
   `confirm_this_device`. After it the page reloads: a browser that
   only had that pairing gets the pair gate, while the hub owner's own
@@ -80,8 +81,14 @@ first one), the variable, the value masked as the app's `APIKeyMask` does
 (`sk-ant-••••••••WXYZ`: the vendor prefix up to a dash in the first eight
 characters, then the last four; eight dots for anything under 16), the
 eye to reveal it and a copy button, the type and the status. A status
-select (Any, Key set, No key), a search over headings and variables, and
-a row count; Reload reads the file again.
+select (Any, Key set, No key — Key set on open, as the app's `withKeys`
+default), a search over headings and variables, and a row count; Reload
+reads the file again.
+
+- **Catalogue** opens the app's `ProviderCatalogueSheet` (API-key
+  providers only): a search and a grid of catalog providers, a Set badge
+  on any whose variables already have a value in the file (`has_key`),
+  and a pick that opens the Add-key editor with that provider chosen.
 
 - **Add key** opens the app's "Add a key": a provider from `swe providers
   list`'s catalog, "saved as" its variable (a pick when it has several),
@@ -100,7 +107,7 @@ Checking keys, renaming a variable, moving it to another heading, custom
 providers, adding the `source` line, the shell status and coding plans
 stay in the Mac app.
 
-### Experimental › Session search
+### Experimental › Session index
 
 The switch is the hub's own setting, `enabled` in
 `~/.quiver/data/search/indexer.json`: while it is on, the hub's
@@ -115,6 +122,14 @@ does. Off, it says how much the index still holds (the Mac app's rows
 count too). A failed pass or an unreadable index shows as a warning. A
 hub from before the Python indexer sends no `session_search`, and the row
 stays greyed as Mac app only.
+
+While the switch is on, two of the app's `SessionSearchRow` actions ride
+the status line, both off mid-pass: **resync** (the app's resync — a pass
+over every transcript now, so a behind file is caught at once) and
+**Clear search data**, which deletes the index, its prints and the pass
+record while keeping `enabled`, so an enabled index rebuilds from
+scratch. A clear asked for while a pass holds `index.lock` is a 409
+`busy`; it deletes nothing.
 
 ### Kept per browser
 
@@ -149,7 +164,7 @@ app loads, not only when Settings is open, so `app.js` needs no change.
     "keys": [{"name": "OPENAI_API_KEY", "provider": "OpenAI", "has_value": true,
               "masked": "sk-proj-••••••••1234"}],
     "catalog": [{"id": "openai", "name": "OpenAI", "env_vars": ["OPENAI_API_KEY"],
-                 "url": "https://platform.openai.com/api-keys"}]
+                 "url": "https://platform.openai.com/api-keys", "has_key": true}]
   },
   "paths": {"swe": "~/.local/bin/swe", "api_keys": "~/.quiver/secrets/providers/.api_keys",
             "mcp_servers": "~/.quiver/mcp/servers"},
@@ -197,8 +212,12 @@ tailnet IP.
 `POST /v1/app/settings/session_search`, body `{"enabled": true|false}`:
 `swe session index --on`/`--off`. On also starts a pass on a background
 thread (quietly skipped if the hub loop or a CLI pass holds the lock; any
-other failure lands in `last_error`). Answers `{"session_search": …}` in
-the `get` shape; `400 bad_enabled` when `enabled` isn't a boolean.
+other failure lands in `last_error`). `{"resync": true}` starts the same
+pass without touching `enabled`; `{"clear": true}` deletes the index and
+its prints (`search_writer.clear_index`, which keeps `enabled`) and
+starts a pass when the index stays on — a 409 `busy` while a pass holds
+`index.lock`. Answers `{"session_search": …}` in the `get` shape; `400
+bad_enabled` when `enabled` isn't a boolean.
 
 `POST /v1/app/settings/sync`, body `{}`: Integrations › GitHub › Sync
 now, `swe gh sync --json` in process (`quiver.github.manage.sync_catalog`)

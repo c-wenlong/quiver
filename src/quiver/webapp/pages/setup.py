@@ -205,7 +205,7 @@ def _agents(home: Path, discovered: set[str]) -> dict:
     register (the preview's ``harness``). On a machine swe has never seen
     the registry is empty, so without them nothing would read as found;
     the Mac app asks ``swe list`` alone."""
-    from quiver.harness.installers import METHOD_TOOL, installers_for
+    from quiver.harness.installers import METHOD_TOOL, WEBSITES, installed_app, installers_for
     from quiver.harness.registry import load_registry_readonly, starred_names, state_of
     from quiver.harness.tools import is_installed
 
@@ -238,6 +238,10 @@ def _agents(home: Path, discovered: set[str]) -> dict:
                  "available": shutil.which(METHOD_TOOL[inst.via]) is not None}
                 for inst in installers_for(pid)
             ]
+            row["website"] = WEBSITES.get(pid)
+            app = installed_app(pid)
+            if app:
+                row["app"] = app
         rows.append(row)
     return {
         "providers": rows,

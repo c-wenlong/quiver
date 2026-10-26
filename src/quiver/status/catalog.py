@@ -133,6 +133,10 @@ class StatusService:
     note: str | None = None
     # The bundled logo the Mac app draws for it (StatusService.logoID).
     logo: str | None = None
+    # StatusService.isCustom: a page the user added rather than a built-in
+    # entry. Customs are the only ones that can be removed, and they
+    # persist in the hub's own store (tracked.py).
+    custom: bool = False
 
     @property
     def host(self) -> str:
