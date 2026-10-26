@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   then waited on, deadlocking itself. The first release run's `swift
   test` surfaced it; the rebuild now runs the flight's body directly.
 
+- **Inbox header controls say what they do.** The "Unread only" switch
+  read like a notification preference; it is now an Unread / All
+  segmented filter that names both states, and mark-all-read is a
+  labelled "Mark all read" button instead of a second unlabeled icon
+  beside Refresh. The web app's inbox header matches.
+
 ## [1.1.0] - 2026-10-26
 
 ### Added

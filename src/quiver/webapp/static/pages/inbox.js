@@ -14,15 +14,20 @@
   const unreadCount = () => ((inbox.data && inbox.data.notifications) || []).filter((n) => n.unread).length;
 
   function header() {
-    // GitHubModel.unreadCount > 0 shows the envelope, as in the app.
+    // GitHubModel.unreadCount > 0 shows the mark-all button, as in the app.
+    const busyAll = inbox.busy.has("*");
     const markAll = !inbox.data || inbox.data.transport || !unreadCount() ? "" : `<button type="button"
-        class="icon-button${inbox.busy.has("*") ? " spinning" : ""}" id="gh-read-all" aria-label="Mark every notification read"
-        title="Mark every notification read"${inbox.busy.has("*") || inbox.confirmAll ? " disabled" : ""}>${
-        GhUI.ico(inbox.busy.has("*") ? "running" : "envelopeOpen")}</button>`;
+        class="gh-button" id="gh-read-all"
+        title="Mark every notification read"${busyAll || inbox.confirmAll ? " disabled" : ""}>${
+        GhUI.ico(busyAll ? "running" : "envelopeOpen", busyAll ? "gh-spin" : "")}<span>Mark all read</span></button>`;
+    // The app's Unread / All Tabs: both sides of the filter are labelled.
+    const filter = `<div class="tabs" role="radiogroup" aria-label="Which notifications to list">${[["unread", "Unread"], ["all", "All"]].map(([id, label]) => {
+      const on = (id === "unread") === inbox.unreadOnly;
+      return `<button class="tab${on ? " selected" : ""}" role="radio" aria-checked="${on}" tabindex="${on ? 0 : -1}" data-inbox-show="${id}">${label}</button>`;
+    }).join("")}</div>`;
     return pageHeader("Inbox",
       "Your GitHub account's live notifications across every repo, via swe gh inbox.",
-      `<label class="gh-switch" title="Show only unread notifications"><input type="checkbox" id="gh-unread"${inbox.unreadOnly ? " checked" : ""}>
-         <span class="gh-switch-track" aria-hidden="true"></span><span>Unread only</span></label>
+      `${filter}
        ${markAll}
        <button class="icon-button${inbox.loading ? " spinning" : ""}" id="page-refresh" aria-label="Refresh" title="Fetch the inbox again">${icon("rescan")}</button>`);
   }
@@ -168,8 +173,25 @@
     GhUI.bindSetup(() => render("inbox", true));
     const again = document.getElementById("gh-inbox-retry");
     if (again) again.onclick = () => render("inbox", true);
-    const toggle = document.getElementById("gh-unread");
-    toggle.onchange = () => { inbox.unreadOnly = toggle.checked; paint(); };
+    for (const btn of document.querySelectorAll("#panel [data-inbox-show]")) {
+      const focusSelected = () => {
+        const sel = document.querySelector('#panel [data-inbox-show][aria-checked="true"]');
+        if (sel) sel.focus();
+      };
+      btn.onclick = () => {
+        inbox.unreadOnly = btn.dataset.inboxShow === "unread";
+        paint();
+        focusSelected();
+      };
+      btn.onkeydown = (e) => {
+        // radiogroup: arrows move to the other option and select it
+        if (!e.key.startsWith("Arrow")) return;
+        e.preventDefault();
+        inbox.unreadOnly = btn.dataset.inboxShow !== "unread";
+        paint();
+        focusSelected();
+      };
+    }
     for (const btn of document.querySelectorAll("#panel [data-read]")) {
       btn.onclick = (e) => { e.preventDefault(); markRead([btn.dataset.read]); };
     }
