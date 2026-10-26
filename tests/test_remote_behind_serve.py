@@ -132,8 +132,12 @@ class TestConfigure(unittest.TestCase):
             hub_mod.configure(self.state, "127.0.0.1", 8477, url)
         self.assertTrue(self.state.trust_proxy)
         self.assertEqual(self.state.base_url, url)
-        self.assertEqual(self.state.allowed_hosts,
-                         {"box.tailnet.ts.net:8477"})
+        # The public Host plus the loopback names local clients use to
+        # reach the same bind directly.
+        self.assertEqual(self.state.allowed_hosts, {
+            "box.tailnet.ts.net:8477",
+            "127.0.0.1:8477", "localhost:8477", "[::1]:8477",
+        })
         # Owner identity comes from this node's own tailnet IP.
         self.state.whois.assert_called_once_with("100.64.0.1")
         self.assertEqual(self.state.owner_login, "dev@github")
@@ -202,25 +206,79 @@ class TestConfigure(unittest.TestCase):
                          "https://box.ts.net:8477")
 
     def test_public_url_on_tailnet_bind_does_not_trust_headers(self):
-        hub_mod.configure(self.state, "100.64.0.1", 8477,
-                          "https://box.tailnet.ts.net")
+        with patch.object(hub_mod.catalog_mod, "tailscale_ip",
+                          return_value="100.64.0.1"):
+            hub_mod.configure(self.state, "100.64.0.1", 8477,
+                              "https://box.tailnet.ts.net")
         self.assertFalse(self.state.trust_proxy)
         self.assertEqual(self.state.allowed_hosts,
                          {"box.tailnet.ts.net", "box.tailnet.ts.net:443"})
 
     def test_plain_tailnet_bind_unchanged(self):
-        hub_mod.configure(self.state, "100.64.0.1", 8477)
+        with patch.object(hub_mod.catalog_mod, "tailscale_ip",
+                          return_value="100.64.0.1"):
+            hub_mod.configure(self.state, "100.64.0.1", 8477)
         self.assertFalse(self.state.trust_proxy)
         self.assertEqual(self.state.base_url, "http://100.64.0.1:8477")
         self.assertEqual(self.state.allowed_hosts, {
             "100.64.0.1:8477", "box.tailnet.ts.net:8477", "box:8477",
         })
 
+    def test_name_bind_also_allows_the_nodes_ip(self):
+        # `swe remote pair` writes the tailnet IP into its link, so a
+        # MagicDNS-name bind must answer that Host too — not just the
+        # bind spelling. whois(name) can't help (it wants an IP), so
+        # the node names come from the lookup on the node's own IP.
+        def whois(ip):
+            if ip == "100.64.0.1":
+                return {"node_name": "box.tailnet.ts.net",
+                        "node_short": "box", "login": "dev@github",
+                        "tagged": False}
+            return None
+
+        self.state.whois = MagicMock(side_effect=whois)
+        with patch.object(hub_mod.catalog_mod, "tailscale_ip",
+                          return_value="100.64.0.1"):
+            hub_mod.configure(self.state, "box.tailnet.ts.net", 8477)
+        self.assertEqual(self.state.allowed_hosts, {
+            "box.tailnet.ts.net:8477", "box:8477", "100.64.0.1:8477",
+        })
+        self.assertEqual(self.state.owner_login, "dev@github")
+
+    def test_tagged_bind_keeps_its_name_spellings(self):
+        # A tag means "no owner", not "no names": the MagicDNS name and
+        # its short form still name this node, so links that use them
+        # pass the Host check.
+        self.state.whois.return_value = {
+            "tagged": True, "node_name": "box.tailnet.ts.net",
+            "node_short": "box",
+        }
+        with patch.object(hub_mod.catalog_mod, "tailscale_ip",
+                          return_value=""):
+            hub_mod.configure(self.state, "100.64.0.1", 8477)
+        self.assertEqual(self.state.allowed_hosts, {
+            "100.64.0.1:8477", "box.tailnet.ts.net:8477", "box:8477",
+        })
+        self.assertEqual(self.state.owner_login, "")
+
+    def test_v6_bind_spells_its_host_with_brackets(self):
+        self.state.whois = MagicMock(return_value=None)
+        with patch.object(hub_mod.catalog_mod, "tailscale_ip",
+                          return_value=""):
+            hub_mod.configure(self.state, "fd7a:115c:a1e0::1234", 8477)
+        self.assertEqual(self.state.allowed_hosts,
+                         {"[fd7a:115c:a1e0::1234]:8477"})
+
     def test_loopback_without_public_url_has_no_identity(self):
         hub_mod.configure(self.state, "127.0.0.1", 8477)
         self.assertFalse(self.state.trust_proxy)
         self.state.whois.assert_not_called()
         self.assertEqual(self.state.owner_login, "")
+        # The unauthenticated routes still answer only the loopback
+        # names — the DNS-rebinding gate has values to check against.
+        self.assertEqual(self.state.allowed_hosts, {
+            "127.0.0.1:8477", "localhost:8477", "[::1]:8477",
+        })
 
     def test_no_tailscale_behind_serve(self):
         with patch.object(hub_mod.catalog_mod, "tailscale_ip",

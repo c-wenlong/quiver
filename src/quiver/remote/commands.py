@@ -10,6 +10,7 @@ devices.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import shutil
@@ -21,6 +22,7 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from quiver import __version__
 from quiver.console import c
 from quiver.flags import expand_value_flags
 from quiver.json_output import emit, error_stream, take_json_flag
@@ -49,7 +51,8 @@ _VALUE_FLAGS = {
     "--approve", "--deny", "--public-url",
 }
 _BOOL_FLAGS = {"--on", "--off", "--app", "--requests", "--install",
-               "--uninstall", "--tailnet", "--apply", "--recheck"}
+               "--uninstall", "--tailnet", "--apply", "--recheck",
+               "--unsafe-bind-any"}
 
 _USAGE = f"""\
   {c('cyan', 'swe remote serve [--host=H] [--port=N]')}   Run the hub (REST + SSE)
@@ -113,6 +116,61 @@ def _host_port(flags: dict) -> tuple[str, int]:
     return host, port
 
 
+# The hub is tailnet-only: a loopback bind for local use, or the node's
+# own Tailscale address (100.64.0.0/10, or fd7a:115c:a1e0::/48 for v6)
+# for devices. Anything else — a wildcard, a LAN address, a public name —
+# puts session control on a network it was never meant to face, so
+# ``--host`` values outside these ranges need the explicit override.
+_TAILNET_V4 = ipaddress.ip_network("100.64.0.0/10")
+_TAILNET_V6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
+
+
+def _bind_ip_ok(ip) -> bool:
+    """True for a loopback or Tailscale address ``serve`` may bind."""
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return (
+        ip.is_loopback
+        or (mapped is not None and _bind_ip_ok(mapped))
+        or ip in _TAILNET_V4
+        or ip in _TAILNET_V6
+    )
+
+
+def _bindable(host: str, port: int) -> str | None:
+    """Why ``host`` is refused as the hub's bind address, else None.
+
+    A name is checked against the addresses it resolves to, so
+    ``mbp.tail0000.ts.net`` passes like the tailnet IP it names.
+    """
+    try:
+        addrs = [ipaddress.ip_address(host)]
+    except ValueError:
+        if host == "localhost":
+            return None
+        try:
+            infos = socket.getaddrinfo(
+                host, port, type=socket.SOCK_STREAM
+            )
+        except OSError:
+            infos = []
+        addrs = []
+        for info in infos:
+            try:
+                addrs.append(ipaddress.ip_address(info[4][0]))
+            except ValueError:
+                pass
+        if not addrs:
+            return (f"--host={host} doesn't resolve to an address the hub "
+                    f"can bind; pass --unsafe-bind-any to try it anyway")
+    if any(a.is_unspecified for a in addrs):
+        return (f"--host={host} binds every interface on this machine; "
+                "pass --unsafe-bind-any if you really mean that")
+    if all(_bind_ip_ok(a) for a in addrs):
+        return None
+    return (f"--host={host} isn't a loopback or Tailscale address; "
+            "pass --unsafe-bind-any to bind it anyway")
+
+
 def _probe(host: str, port: int, timeout: float = 3.0) -> dict | None:
     url = f"http://{host}:{port}/v1/status"
     try:
@@ -157,12 +215,24 @@ def _stamp() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _serve_bind(flags: dict) -> tuple[str, int, str]:
+    """``(host, port, public_url)`` for either serve path, with the
+    ``--host`` value held to loopback-or-tailnet unless the caller
+    passed ``--unsafe-bind-any``. Raises ValueError like ``_host_port``."""
+    host, port = _host_port(flags)
+    public_url = _public_url(flags)
+    if host and not flags.get("--unsafe-bind-any"):
+        bad = _bindable(host, port)
+        if bad:
+            raise ValueError(bad)
+    return host, port, public_url
+
+
 def _cmd_serve(flags: dict) -> int:
     if flags.get("--install") or flags.get("--uninstall"):
         return _cmd_serve_launchd(flags)
     try:
-        host, port = _host_port(flags)
-        public_url = _public_url(flags)
+        host, port, public_url = _serve_bind(flags)
     except ValueError as exc:
         print(c("red", str(exc)), file=sys.stderr)
         return 1
@@ -205,13 +275,16 @@ def _cmd_serve(flags: dict) -> int:
     return rc
 
 
-def hub_program(host: str, port: int | None, public_url: str) -> tuple[list[str], str | None]:
+def hub_program(host: str, port: int | None, public_url: str,
+                unsafe_any: bool = False) -> tuple[list[str], str | None]:
     """The background service's command line, or an error saying why it
     can't run.
 
     On a Mac it runs Quiver.app's bundled swe when the app is installed,
     else this swe, unless that sits where macOS keeps launchd agents out.
-    ``port`` is left off the command line when None (the default port).
+    ``port`` is left off the command line when None (the default port);
+    ``unsafe_any`` keeps a deliberate off-tailnet bind working once the
+    program runs.
     """
     darwin = sys.platform == "darwin"
     bundled = launchd.bundled_swe() if darwin else None
@@ -232,6 +305,8 @@ def hub_program(host: str, port: int | None, public_url: str) -> tuple[list[str]
         program.append(f"--port={port}")
     if public_url:
         program.append(f"--public-url={public_url}")
+    if unsafe_any:
+        program.append("--unsafe-bind-any")
     return program, None
 
 
@@ -288,14 +363,16 @@ def _cmd_serve_launchd(flags: dict) -> int:
             print(c("dim", f"no hub {'LaunchAgent' if darwin else 'systemd unit'} was installed"))
         return 0
     try:
-        host, port = _host_port(flags)
-        public_url = _public_url(flags)
+        host, port, public_url = _serve_bind(flags)
     except ValueError as exc:
         print(c("red", str(exc)), file=sys.stderr)
         return 1
     if public_url and not host:
         host = "127.0.0.1"
-    program, err = hub_program(host, port if flags.get("--port") else None, public_url)
+    program, err = hub_program(
+        host, port if flags.get("--port") else None, public_url,
+        unsafe_any=bool(flags.get("--unsafe-bind-any")),
+    )
     if err:
         print(c("red", err), file=sys.stderr)
         return 1
@@ -417,12 +494,30 @@ def _cmd_status(flags: dict, json_view: bool) -> int:
         print(c("red", f"hub unreachable at {host}:{port}"))
         print(c("dim", f"  start it: swe remote serve --host={host}"))
     else:
-        machine = info.get("machine") or {}
-        print(
-            f"hub {c('green', 'online')} at {c('cyan', f'{host}:{port}')} "
-            f"· up {info.get('uptime_s', '?')}s · swe {info.get('version')}"
+        # /v1/status answers only {ok, v} — it is a reachability check,
+        # not a description of the hub. The local hub's machine row and
+        # version come from this machine's own files instead; a remote
+        # hub's fields stay shown when an older one still sends them.
+        local = (
+            not flags.get("--host")
+            or host in {"127.0.0.1", "localhost", "::1"}
         )
-        print(f"  machine: {machine.get('name', '?')} ({machine.get('id', '?')})")
+        machine = info.get("machine") or {}
+        version = str(info.get("version") or "")
+        if local and not machine:
+            machine = catalog_mod.local_machine()
+        if local and not version:
+            version = __version__
+        line = f"hub {c('green', 'online')} at {c('cyan', f'{host}:{port}')}"
+        uptime = info.get("uptime_s")
+        if uptime is not None:
+            line += f" · up {uptime}s"
+        if version:
+            line += f" · swe {version}"
+        print(line)
+        if machine:
+            print(f"  machine: {machine.get('name', '?')} "
+                  f"({machine.get('id', '?')})")
         if public_url:
             print(f"  phones: {c('cyan', public_url)}")
     print(f"  devices paired: {len(devices)}")

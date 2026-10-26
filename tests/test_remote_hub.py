@@ -90,6 +90,16 @@ class TestAuth(HubBase):
         self.assertEqual(status, 200)
         self.assertTrue(json.loads(data)["ok"])
 
+    def test_status_reports_only_ok_and_version(self):
+        status, data = self.srv.request("GET", "/v1/status")
+        self.assertEqual(status, 200)
+        # Machine id/name, swe version and uptime would name the box
+        # for the whole tailnet; the probe only proves the hub is up.
+        self.assertEqual(
+            json.loads(data),
+            {"ok": True, "v": protocol.PROTOCOL_VERSION},
+        )
+
     def test_sessions_requires_auth(self):
         status, _ = self.srv.request("GET", "/v1/sessions")
         self.assertEqual(status, 401)
@@ -2167,6 +2177,61 @@ class TestPairRoutes(unittest.TestCase):
         status, data = self._req()
         self.assertEqual(status, 429)
         self.assertEqual(json.loads(data)["error"]["code"], "rate_limited")
+
+    def test_exchange_rate_limited_after_five(self):
+        # Token tries get the same per-source cap as pair requests,
+        # in a budget of their own.
+        for _ in range(5):
+            status, _ = self.srv.request(
+                "POST", "/v1/pair", {"token": "bogus"})
+            self.assertEqual(status, 403)
+        status, data = self.srv.request(
+            "POST", "/v1/pair", {"token": "bogus"})
+        self.assertEqual(status, 429)
+        self.assertEqual(json.loads(data)["error"]["code"], "rate_limited")
+
+
+class TestHostCheck(unittest.TestCase):
+    """The DNS-rebinding gate on the unauthenticated routes: once the
+    hub knows which Host names it answers to, a request under any
+    other name is refused."""
+
+    def setUp(self):
+        self.srv = _Server(sessions=[])
+        self.addCleanup(self.srv.stop)
+        self.srv.state.whois = lambda ip: None
+        self.srv.state.allowed_hosts = {f"127.0.0.1:{self.srv.port}"}
+
+    def test_unauthenticated_routes_reject_foreign_host(self):
+        for method, path, body in (
+            ("GET", "/v1/status", None),
+            ("POST", "/v1/pair", {"token": "t"}),
+            ("POST", "/v1/pair/request", {}),
+            ("GET", "/v1/pair/request/r1?secret=s", None),
+        ):
+            with self.subTest(path):
+                status, data = self.srv.request(
+                    method, path, body,
+                    headers={"Host": "rebind.example"},
+                )
+                self.assertEqual(status, 403, data)
+                self.assertEqual(
+                    json.loads(data)["error"]["code"], "bad_origin")
+
+    def test_bind_host_passes(self):
+        # http.client sends Host: 127.0.0.1:<port> on its own.
+        status, _ = self.srv.request("GET", "/v1/status")
+        self.assertEqual(status, 200)
+        token = pairing.mint_pair_token(self.srv.home)
+        status, _ = self.srv.request(
+            "POST", "/v1/pair", {"token": token})
+        self.assertEqual(status, 200)
+
+    def test_empty_allowed_hosts_keeps_the_gate_open(self):
+        self.srv.state.allowed_hosts = set()
+        status, _ = self.srv.request(
+            "GET", "/v1/status", headers={"Host": "rebind.example"})
+        self.assertEqual(status, 200)
 
 
 class TestDeviceMetaCapture(unittest.TestCase):
