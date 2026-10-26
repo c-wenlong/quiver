@@ -26,6 +26,7 @@ from quiver.init.hooks import (
     DISABLED_DETAIL,
     HOOK_FALLBACK,
     RESERVED_HUB_DIRS,
+    UNKNOWN_HARNESS_DETAIL,
     hook_root,
     plan_hooks,
 )
@@ -529,9 +530,12 @@ def _declared_missing(
     root_dir = _paths.hooks_dir_for(home)
     dest_roots = {s.label: s.path.parent for s in statuses}
     # A directory hook is invoked through paths inside it, so its hub and
-    # destination dirs are candidate homes for those child paths too.
+    # destination dirs are candidate homes for those child paths too. A
+    # hub dir that names no harness is no one's hook dir: a bare basename
+    # matching a file in it is not the script another harness means.
     dir_homes = [p for s in statuses
                  if s.source is not None and s.source.is_dir()
+                 and s.detail != UNKNOWN_HARNESS_DETAIL
                  for p in (s.source, s.path)]
     out: list[HookDrift] = []
     for name, decls in declared.items():

@@ -19,7 +19,9 @@ read-only link into the store that swe must not fight.
 
 Opt-in by presence: a harness gets hooks only once ~/.quiver/hooks/<harness>/
 exists. Where they go comes from ``capabilities.hooks.root`` in harness.json,
-then ``HOOK_FALLBACK`` for a harness the registry does not describe.
+then ``HOOK_FALLBACK`` for a harness the registry does not describe. A hub dir
+named after no harness at all (a hook bundle a plugin runs straight from the
+hub) is not a harness dir: it plans as one skipped entry, never per file.
 """
 
 from __future__ import annotations
@@ -92,10 +94,22 @@ DISABLED_DETAIL = "disabled via swe hooks disable"
 NO_ROOT_DETAIL = "no hooks root, set capabilities.hooks.root in harness.json"
 UNSUPPORTED_DETAIL = "harness.json says this harness has no hooks"
 INSIDE_QUIVER_DETAIL = "hooks root is inside ~/.quiver, would link a script to itself"
+UNKNOWN_HARNESS_DETAIL = "not a known harness"
 
 
 def _reserved_dirs() -> frozenset[str]:
     return RESERVED_HUB_DIRS
+
+
+def _known_harness(registry: dict, name: str) -> bool:
+    """Whether ``name`` is a harness: a registry entry or a hooks contract.
+
+    A hub dir that is neither holds no harness's scripts, so there is no
+    harness.json fix to point at per file.
+    """
+    from quiver.hooks.contracts import CONTRACTS
+
+    return name in registry or name in CONTRACTS
 
 
 def _disabled_hook_names(harness_dir: Path) -> set[str]:
@@ -258,6 +272,13 @@ def plan_hooks(
         name = harness_dir.name
         if not harness_dir.is_dir() or name.startswith(".") \
                 or name in _SKIP_NAMES or name in _reserved_dirs():
+            continue
+        if not _known_harness(registry, name):
+            # Something else's bundle (command-guard/ holds a script, its
+            # rules and tests): one entry for the dir, not one per file.
+            statuses.append(LinkStatus(
+                name, harness_dir, "skipped", UNKNOWN_HARNESS_DETAIL,
+                harness_dir))
             continue
         root, why = hook_root(registry, name, home)
         # A dir that exists proves the harness; so does its binary on PATH.

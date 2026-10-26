@@ -20,6 +20,7 @@ from quiver.init.hooks import (
     HOOK_FALLBACK,
     INSIDE_QUIVER_DETAIL,
     NO_ROOT_DETAIL,
+    UNKNOWN_HARNESS_DETAIL,
     UNSUPPORTED_DETAIL,
     hook_root,
     plan_hooks,
@@ -169,10 +170,32 @@ class PlanHooksTest(unittest.TestCase):
     def test_harness_with_no_root_is_skipped_with_the_fix(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            src = _hook(home, "not-a-harness", "notify.sh")
+            src = _hook(home, "rootless", "notify.sh")
+            _registry(home, {"rootless": {"command": "rootless"}})
             [status] = plan_hooks(home)
             self.assertEqual((status.state, status.detail), ("skipped", NO_ROOT_DETAIL))
             self.assertEqual(status.path, src)
+
+    def test_unknown_hub_dir_is_one_skipped_entry_not_one_per_file(self):
+        # A bundle a plugin runs straight from the hub: no registry entry,
+        # no contract, so no harness.json fix applies to each file in it.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            for name in ("command_guard.py", "README.md", "rules.json"):
+                _hook(home, "command-guard", name)
+            [status] = plan_hooks(home)
+            bundle = hooks_dir(home) / "command-guard"
+            self.assertEqual(
+                (status.label, status.state, status.detail),
+                ("command-guard", "skipped", UNKNOWN_HARNESS_DETAIL))
+            self.assertEqual((status.path, status.source), (bundle, bundle))
+
+    def test_contract_harness_without_registry_entry_still_plans_per_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            _hook(home, "claude", "a.py")
+            _hook(home, "claude", "b.py")
+            self.assertEqual(_states(plan_hooks(home)), {"a.py": "create", "b.py": "create"})
 
     def test_registry_root_is_read_from_home(self):
         with tempfile.TemporaryDirectory() as tmp:
