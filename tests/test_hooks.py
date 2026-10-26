@@ -277,6 +277,23 @@ class ListCommandTest(unittest.TestCase):
                 row["declared"][0]["file"].endswith("settings.json"))
             self.assertIn("PreToolUse", row["events_supported"])
 
+    def test_unknown_hub_dir_lists_as_one_row_and_check_stays_quiet(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            for name in ("command_guard.py", "README.md", "rules.json",
+                         "test_command_guard.py"):
+                _hook(home, "command-guard", name)
+            code, out = _run(home, "list", "--json")
+            self.assertEqual(code, 0)
+            rows = [r for r in json.loads(out)["data"]["hooks"]
+                    if r["harness"] == "command-guard"]
+            self.assertEqual(
+                [(r["name"], r["link_status"]) for r in rows],
+                [("command-guard", "skipped")])
+            self.assertEqual(
+                [f for f in hook_findings(home)
+                 if f.harness == "command-guard"], [])
+
 
 class CheckCommandTest(unittest.TestCase):
     def test_declared_missing_script_is_found(self):
