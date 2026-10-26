@@ -70,6 +70,14 @@ function esc(s) {
   return d.innerHTML;
 }
 
+// RemoteMessage kinds the transcript styles. The hub already drops
+// unknown kinds at ingest; this is the second fence so a stale hub or
+// hostile journal entry can't smuggle classes or markup into a bubble.
+const MSG_KINDS = new Set([
+  "user", "assistant", "thinking", "tool_use", "tool_result",
+  "compaction", "system", "approval", "error",
+]);
+
 /* Minimal markdown-ish rendering: escape everything, then restore
  * fenced code blocks, inline code and bold. */
 function md(text) {
@@ -1682,7 +1690,9 @@ function appendMessage(msg, seq, live = true) {
   }
   if (live && kind !== "user" && kind !== "tool_result") state.awaitingReply = false;
   const div = document.createElement("div");
-  div.className = `msg ${kind}`;
+  // A kind off the known list gets no CSS class — a hostile string
+  // could otherwise add one (e.g. `user`, faking your own bubble).
+  div.className = `msg ${MSG_KINDS.has(kind) ? kind : "unknown"}`;
   const role = { user: "you", assistant: "agent", thinking: "thought", error: "error" }[kind];
   if (kind === "compaction") {
     div.innerHTML = `<div class="text">— context compacted —</div>`;
@@ -1735,7 +1745,7 @@ function appendMessage(msg, seq, live = true) {
       });
     });
   } else {
-    div.innerHTML = `<div class="role">${role || kind}</div><div class="text">${md(msg.text)}</div>`;
+    div.innerHTML = `<div class="role">${esc(role || kind)}</div><div class="text">${md(msg.text)}</div>`;
   }
   if (live) div.classList.add("arrive");
   log.appendChild(div);

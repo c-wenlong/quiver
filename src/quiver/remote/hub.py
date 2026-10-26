@@ -128,6 +128,22 @@ LAUNCH_TTL_S = 86400
 # without an expiry the item outlives the prompt itself.
 APPROVAL_TTL_S = 86400
 
+# Event types a satellite may journal via /v1/agent/events:
+# protocol.EVENT_TYPES plus the two agent→hub bookkeeping types the
+# phone never sends. Anything else is dropped, not journaled.
+_SAT_EVENT_TYPES = protocol.EVENT_TYPES | {
+    "session.launched", "command.result",
+}
+
+# Per-type ``data.kind`` vocabularies for the events that carry one.
+# The journal feeds the PWA verbatim, so an unknown kind would render
+# unvetted markup there; these events must name a known kind.
+_SAT_KIND_SETS = {
+    "message.appended": protocol.MESSAGE_KINDS,
+    "message.delta": protocol.MESSAGE_KINDS,
+    "notify": protocol.NOTIFY_KINDS,
+}
+
 
 class EventBus:
     """Fan-out to SSE subscriber queues, keyed by session or global."""
@@ -790,11 +806,13 @@ class _Handler(BaseHTTPRequestHandler):
     _unread: int | None = 0
     _must_close = False
     _body_cache: object = _UNSET
+    _device_row: dict | None = None
 
     def handle_one_request(self) -> None:
         self._unread = 0
         self._must_close = False
         self._body_cache = _UNSET
+        self._device_row = None
         super().handle_one_request()
 
     def parse_request(self) -> bool:
@@ -903,6 +921,8 @@ class _Handler(BaseHTTPRequestHandler):
         if hit is None:
             return None
         device_id, row = hit
+        # The agent routes read role/machine_id off this row.
+        self._device_row = row
         # Throttled last_seen update: a write per request would churn
         # devices.json; five-minute freshness is plenty for the list.
         seen = row.get("last_seen_at") or 0
@@ -984,6 +1004,42 @@ class _Handler(BaseHTTPRequestHandler):
         # The approval route never reads the device id back; non-None
         # is the whole grant.
         return "ntfy-action"
+    def _agent_row(self) -> dict | None:
+        """The caller's device row when it is a satellite, else None.
+
+        Rows minted before roles exist have no ``role`` and read as
+        phones here — an old credential can authenticate but never
+        speaks for a machine.
+        """
+        row = self._device_row
+        if not row or row.get("role") != "satellite":
+            return None
+        return row
+
+    def _agent_machine_ok(
+        self, device_id: str, mid: str, *, bind: bool = False
+    ) -> bool:
+        """True when ``mid`` is the machine this satellite speaks for.
+
+        ``bind`` is set by ``/v1/agent/register``: the first register
+        pins the credential's ``machine_id``, and every agent call —
+        register included — must present that same id afterwards.
+        """
+        row = self._device_row or {}
+        bound = row.get("machine_id")
+        if bound:
+            return bound == mid
+        if not bind:
+            return False
+        bound = pairing.bind_machine(self._state.home, device_id, mid)
+        if bound is not None:
+            # The stashed row predates the write; re-read so later
+            # checks in this request see the pin.
+            self._device_row = (
+                pairing.load_devices(self._state.home).get(device_id)
+                or self._device_row
+            )
+        return bound == mid
 
     def _proxied(self) -> bool:
         """True when ``tailscale serve`` relayed this request: the hub
@@ -1522,10 +1578,22 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/agent/commands":
+            if self._agent_row() is None:
+                self._send_error(
+                    403, "forbidden",
+                    "agent routes need a satellite credential",
+                )
+                return
             mid = str((args.get("machine") or [""])[0])
             if not mid:
                 self._send_error(
                     422, "bad_command", "machine is required"
+                )
+                return
+            if not self._agent_machine_ok(device_id, mid):
+                self._send_error(
+                    403, "forbidden",
+                    "credential is bound to another machine",
                 )
                 return
             after = self._sse_after(args)
@@ -1533,9 +1601,28 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/v1/agent/attachments/"):
+            if self._agent_row() is None:
+                self._send_error(
+                    403, "forbidden",
+                    "agent routes need a satellite credential",
+                )
+                return
             stem = path[len("/v1/agent/attachments/"):]
             key_part, _sep, ref = stem.rpartition("/")
-            self._pull_attachment(unquote(key_part), unquote(ref))
+            key = unquote(key_part)
+            # The staged key is hub-scoped ``local@mid``; the pull must
+            # stay inside the machine this credential speaks for.
+            _local, key_mid = protocol.split_remote_key(key)
+            if (
+                key_mid is None
+                or not self._agent_machine_ok(device_id, key_mid)
+            ):
+                self._send_error(
+                    403, "forbidden",
+                    "credential is bound to another machine",
+                )
+                return
+            self._pull_attachment(key, unquote(ref))
             return
 
         if path.startswith("/v1/sessions/"):
@@ -1621,6 +1708,7 @@ class _Handler(BaseHTTPRequestHandler):
                 meta=self._pair_meta(
                     body, node_name=self._peer_node_name()
                 ),
+                role=str(body.get("role") or ""),
             )
             if result is None:
                 self._send_error(
@@ -1680,12 +1768,31 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/agent/register":
+            if self._agent_row() is None:
+                self._send_error(
+                    403, "forbidden",
+                    "agent routes need a satellite credential",
+                )
+                return
             body = self._read_body()
             machine = (body or {}).get("machine") or {}
             mid = str(machine.get("id") or "")
             if not mid:
                 self._send_error(
                     422, "bad_command", "machine.id is required"
+                )
+                return
+            if mid == self._state.machine_id:
+                # A satellite claiming the hub's own id would shadow the
+                # local machine row and its queues.
+                self._send_error(
+                    403, "forbidden", "cannot register the hub machine"
+                )
+                return
+            if not self._agent_machine_ok(device_id, mid, bind=True):
+                self._send_error(
+                    403, "forbidden",
+                    "credential is bound to another machine",
                 )
                 return
             catalog_mod.upsert_machine(
@@ -1696,6 +1803,12 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/agent/catalog":
+            if self._agent_row() is None:
+                self._send_error(
+                    403, "forbidden",
+                    "agent routes need a satellite credential",
+                )
+                return
             body = self._read_body()
             if body is None:
                 self._send_error(400, "bad_body", "unreadable JSON body")
@@ -1706,6 +1819,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_error(
                     422, "bad_command",
                     "machine_id and rows are required",
+                )
+                return
+            if not self._agent_machine_ok(device_id, mid):
+                self._send_error(
+                    403, "forbidden",
+                    "credential is bound to another machine",
                 )
                 return
             # Snapshot ownership before the merge so attach/detach done
@@ -1739,6 +1858,12 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/agent/usage":
+            if self._agent_row() is None:
+                self._send_error(
+                    403, "forbidden",
+                    "agent routes need a satellite credential",
+                )
+                return
             body = self._read_body()
             if body is None:
                 self._send_error(400, "bad_body", "unreadable JSON body")
@@ -1747,6 +1872,12 @@ class _Handler(BaseHTTPRequestHandler):
             if not mid:
                 self._send_error(
                     422, "bad_command", "machine_id is required"
+                )
+                return
+            if not self._agent_machine_ok(device_id, mid):
+                self._send_error(
+                    403, "forbidden",
+                    "credential is bound to another machine",
                 )
                 return
             try:
@@ -1761,15 +1892,32 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/agent/events":
+            if self._agent_row() is None:
+                self._send_error(
+                    403, "forbidden",
+                    "agent routes need a satellite credential",
+                )
+                return
             body = self._read_body()
             if body is None:
                 self._send_error(400, "bad_body", "unreadable JSON body")
                 return
             events = body.get("events") or []
             mid = str(body.get("machine_id") or "")
+            if not mid:
+                self._send_error(
+                    422, "bad_command", "machine_id is required"
+                )
+                return
             if not isinstance(events, list):
                 self._send_error(
                     422, "bad_command", "events must be a list"
+                )
+                return
+            if not self._agent_machine_ok(device_id, mid):
+                self._send_error(
+                    403, "forbidden",
+                    "credential is bound to another machine",
                 )
                 return
             accepted = self._accept_agent_events(mid, events)
@@ -2117,11 +2265,26 @@ class _Handler(BaseHTTPRequestHandler):
     def _accept_agent_events(
         self, mid: str, events: list
     ) -> int:
-        """Journal upstream events under the hub-scoped ``key@mid``."""
+        """Journal upstream events under the hub-scoped ``key@mid``.
+
+        Anything outside ``_SAT_EVENT_TYPES`` is dropped, and an event
+        whose ``data.kind`` is not in that type's vocabulary is dropped:
+        the journal feeds the PWA verbatim, so an unknown kind would
+        render unvetted markup there.
+        """
         accepted = 0
         for ev in events:
-            if not isinstance(ev, dict) or "type" not in ev:
+            if not isinstance(ev, dict):
                 continue
+            etype = ev.get("type")
+            if not isinstance(etype, str) or etype not in _SAT_EVENT_TYPES:
+                continue
+            kinds = _SAT_KIND_SETS.get(etype)
+            if kinds is not None:
+                data = ev.get("data")
+                kind = data.get("kind") if isinstance(data, dict) else None
+                if not isinstance(kind, str) or kind not in kinds:
+                    continue
             local_key = str(ev.get("session") or "")
             if local_key:
                 hub_key = protocol.remote_key(mid, local_key)

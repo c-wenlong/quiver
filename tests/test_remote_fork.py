@@ -44,17 +44,34 @@ class _Hub:
         cred = data["credential"]
         self.auth = {"Authorization": f"Bearer {cred}"}
 
+    def satellite(self, mid):
+        """Pair a satellite credential and bind it to ``mid``."""
+        token = pairing.mint_pair_token(self.home)
+        _s, data = self.request(
+            "POST", "/v1/pair",
+            {"token": token, "name": "sat", "role": "satellite"},
+            auth=False)
+        sat = {"Authorization": f"Bearer {data['credential']}"}
+        status, data = self.request(
+            "POST", "/v1/agent/register", {"machine": {"id": mid}},
+            auth=sat)
+        assert status == 200, data
+        return sat
+
     def stop(self):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=3)
 
     def request(self, method, path, body=None, auth=True):
+        # auth=True sends the phone credential; a dict is sent verbatim;
+        # False sends nothing (e.g. /v1/pair).
+        headers = self.auth if auth is True else (auth or {})
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         try:
             conn.request(method, path,
                          body=json.dumps(body) if body is not None else None,
-                         headers=self.auth if auth else {})
+                         headers=headers)
             resp = conn.getresponse()
             return resp.status, json.loads(resp.read() or b"{}")
         finally:
@@ -504,6 +521,7 @@ class TestSatelliteForkRoute(unittest.TestCase):
     def setUp(self):
         self.srv = _Hub([])
         self.addCleanup(self.srv.stop)
+        self.sat = self.srv.satellite("sat-m1")
 
     def _push(self, can_fork):
         row = {"key": "claude:r1", "harness": "claude", "cwd": "/r",
@@ -511,7 +529,8 @@ class TestSatelliteForkRoute(unittest.TestCase):
         if can_fork is not None:
             row["can_fork"] = can_fork
         self.srv.request("POST", "/v1/agent/catalog",
-                         {"machine_id": "sat-m1", "rows": [row]})
+                         {"machine_id": "sat-m1", "rows": [row]},
+                         auth=self.sat)
         self.srv.state.catalog.refresh()
 
     def test_routes_through_the_command_journal(self):
@@ -532,7 +551,8 @@ class TestSatelliteForkRoute(unittest.TestCase):
             "machine_id": "sat-m1", "events": [protocol.event(
                 "command.result", "claude:r1", "sat-m1",
                 {"op": "fork", "ok": False, "launch_id": body["launch_id"],
-                 "note": "no such folder on this machine: /r"})]})
+                 "note": "no such folder on this machine: /r"})]},
+            auth=self.sat)
         launch = self.srv.state.launches[body["launch_id"]]
         self.assertEqual(launch["state"], "failed")
         self.assertIn("no such folder", launch["note"])
@@ -545,12 +565,14 @@ class TestSatelliteForkRoute(unittest.TestCase):
         self.srv.request("POST", "/v1/agent/catalog", {
             "machine_id": "sat-m1", "rows": [
                 {"key": "claude:r1", "can_fork": True},
-                {"key": "claude:n1", "ownership": "attached"}]})
+                {"key": "claude:n1", "ownership": "attached"}]},
+            auth=self.sat)
         self.srv.state.catalog.refresh()
         self.srv.request("POST", "/v1/agent/events", {
             "machine_id": "sat-m1", "events": [protocol.event(
                 "session.launched", "claude:n1", "sat-m1",
-                {"launch_id": lid})]})
+                {"launch_id": lid})]},
+            auth=self.sat)
         _s, view = self.srv.request("GET", f"/v1/launches/{lid}")
         self.assertEqual((view["state"], view["key"]),
                          ("started", "claude:n1@sat-m1"))

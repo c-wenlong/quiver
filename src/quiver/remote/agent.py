@@ -124,10 +124,16 @@ def _get_bytes(hub: str, path: str, credential: str,
 
 def pair_agent(hub: str, token: str, name: str,
                home: Path | None = None) -> dict | None:
-    """Exchange a one-time pair token for this satellite's credential."""
+    """Exchange a one-time pair token for this satellite's credential.
+
+    The claimed ``role`` lands on the device row; the hub binds it to
+    this machine at first ``/v1/agent/register`` and refuses the agent
+    routes to anything else.
+    """
     status, payload = _post(
         hub, "/v1/pair", "",  # no auth needed for /v1/pair
-        {"token": token, "name": name or "satellite"},
+        {"token": token, "name": name or "satellite",
+         "role": "satellite"},
     )
     if status != 200 or not payload.get("credential"):
         return None
@@ -158,6 +164,9 @@ class RemoteAgent:
         # Last "/" menu payload the hub accepted; see _push_catalog.
         self._slash_digest: str | None = None
         self._slash_skipped: str | None = None
+        # Set after a printed 403 register refusal, so the loop retries
+        # without re-printing; cleared on the next accepted register.
+        self._register_denied: str | None = None
         self.outbox: "list[dict]" = []
         self._outbox_lock = threading.Lock()
         self._stop = threading.Event()
@@ -389,10 +398,26 @@ class RemoteAgent:
         return True
 
     def _register(self) -> bool:
-        status, _ = _post(
+        status, reply = _post(
             self.hub, "/v1/agent/register", self.cred,
             {"machine": self.machine},
         )
+        if status == 403 and self._register_denied is None:
+            # A permanent refusal — pre-roles satellites pair as phones
+            # and the binding gate rejects them forever, so explain
+            # once instead of letting the retry loop look flaky.
+            detail = ""
+            if isinstance(reply, dict):
+                detail = str(reply.get("message") or "")
+            self._register_denied = detail or "forbidden"
+            print(
+                "swe remote agent: the hub refused this credential "
+                f"(403 {self._register_denied}); re-pair this machine "
+                "with `swe remote pair --hub <url> --token <token>`",
+                file=sys.stderr,
+            )
+        if status == 200:
+            self._register_denied = None
         return status == 200
 
     # -- downlink ----------------------------------------------------------
