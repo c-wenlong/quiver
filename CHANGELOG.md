@@ -14,6 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   segmented filter that names both states, and mark-all-read is a
   labelled "Mark all read" button instead of a second unlabeled icon
   beside Refresh. The web app's inbox header matches.
+- **App: appended transcripts index like a whole read.** A transcript
+  that grew since its last index is read from the stored cursor, and the
+  fresh decoder on that span made two mistakes: a paginated Codex
+  rollout's tail decoded as non-paginated (`response_item` rows indexed
+  over the real `item_completed` turns) and the span's first prompt
+  overwrote the stored session title, sometimes with an injected turn
+  like a `<local-command-caveat>` block. `SearchIndexer.beginFile` now
+  primes appends the way `src/quiver/sessions/search_writer.py` does:
+  the head's first `session_meta` restores the `history_mode`, and only
+  an explicit title record may rename the session. Appends are also
+  gated to claude/codex/pi, Python's `APPENDABLE` set — any other
+  harness's grown file re-reads whole.
 
 ## [1.1.0] - 2026-10-26
 

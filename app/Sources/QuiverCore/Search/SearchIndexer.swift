@@ -45,6 +45,12 @@ public final class SearchIndexer: @unchecked Sendable {
     /// file `failed`, and the re-read's new generation replaces the
     /// partial one.
     static let bufferBudgetChars = 32 * 1024 * 1024
+    /// Harnesses whose transcripts may index from the last offset —
+    /// Python's `APPENDABLE`: claude and pi decode statelessly line to
+    /// line and codex's only head state is the `session_meta` `beginFile`
+    /// re-reads. Every other decoder keeps joins an offset cannot
+    /// rebuild, so a grown file re-reads whole.
+    static let appendableHarnesses: Set<SearchDecoder.Harness> = [.claude, .codex, .pi]
 
     let store: SearchStore
     /// The flush trigger — injectable so tests exercise chunking without
@@ -117,8 +123,13 @@ public final class SearchIndexer: @unchecked Sendable {
 
     /// What the next read of `path` owes the index. `ledgerOffset` is where
     /// the ledger's own cursor sits, or nil when the ledger never read this
-    /// file — index-pure sources (devin transcripts) pass nil.
-    public func readNeed(path: String, stat: SearchFileStat, ledgerOffset: UInt64?) -> SearchReadNeed {
+    /// file — index-pure sources (devin transcripts) pass nil. `harness`
+    /// gates `.append` to `appendableHarnesses`; without it the answer can
+    /// never be `.append`.
+    public func readNeed(
+        path: String, stat: SearchFileStat, ledgerOffset: UInt64?,
+        harness: SearchDecoder.Harness? = nil
+    ) -> SearchReadNeed {
         guard shouldIndex(path: path) else { return .skip }
         guard let row = try? store.fileRow(for: path) else { return .whole }
         // Held out: failed enough times at exactly this stat. Only a change
@@ -138,8 +149,11 @@ public final class SearchIndexer: @unchecked Sendable {
             return .current
         }
         // The index cursor is exactly where the ledger resumes, and the file
-        // grew past it: the index takes the same lines the ledger appends.
-        if let ledgerOffset, let size = stat.sizeBytes,
+        // grew past it: the index takes the same lines the ledger appends —
+        // for the harnesses whose decoders can resume mid-file. The rest
+        // re-read whole, Python's `APPENDABLE` gate.
+        if let ledgerOffset, let size = stat.sizeBytes, let harness,
+           Self.appendableHarnesses.contains(harness),
            UInt64(bitPattern: row.byteOffset) == ledgerOffset, row.byteOffset < size {
             return .append
         }
@@ -150,8 +164,12 @@ public final class SearchIndexer: @unchecked Sendable {
     }
 
     /// Starts accumulating one file's decode. The decoder is always fresh —
-    /// no decoder state is persisted in v1, so an append loses join fidelity
-    /// (a devin tool result may not name the call it answers); accepted.
+    /// no decoder state is persisted in the `files` row — so an append
+    /// re-reads the file's head for what the tail cannot supply, the way
+    /// Python's `search_writer` primes the read: the span's first prompt
+    /// must not re-title the session (only an explicit title record may),
+    /// and codex's first `session_meta` decides which record type carries
+    /// the appended lines.
     /// - Parameter appending: whether this read covers only the tail past the
     ///   `files` row's offset. `finishFile` commits a tail against the row's
     ///   session and a whole read as a new session generation.
@@ -162,10 +180,41 @@ public final class SearchIndexer: @unchecked Sendable {
         path: String, harness: SearchDecoder.Harness,
         appending: Bool = false, sessionID: String? = nil
     ) {
+        let fileRow = try? store.fileRow(for: path)
+        var decoder = SearchDecoder(harness)
+        if appending {
+            decoder.primeForAppend()
+            if harness == .codex,
+               let meta = Self.headSessionMeta(path: path, before: fileRow?.byteOffset ?? 0) {
+                decoder.prime(object: meta)
+            }
+        }
         pending = Pending(
             path: path, harness: harness, appending: appending,
-            fileRow: try? store.fileRow(for: path), decoder: SearchDecoder(harness),
+            fileRow: fileRow, decoder: decoder,
             sessionIDHint: sessionID)
+    }
+
+    /// The parsed object of the first `"session_meta"`-marked line in the
+    /// already-indexed prefix — the codex `history_mode` an appended read
+    /// cannot recover from the tail. As in Python's `prime` loop, the scan
+    /// stops at the first marker line that parses, or at the offset the
+    /// tail resumes at; an unreadable head primes nothing.
+    private static func headSessionMeta(path: String, before byteOffset: Int64) -> [String: Any]? {
+        guard byteOffset > 0 else { return nil }
+        var end: UInt64 = 0
+        var found: [String: Any]?
+        struct Stop: Error {}
+        _ = try? JSONLReader().read(URL(fileURLWithPath: path), from: 0) { line in
+            end += UInt64(line.count + 1)  // the newline the reader strips
+            if line.range(of: SearchCodexDecoder.sessionMetaMarker) != nil,
+               let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] {
+                found = object
+                throw Stop()
+            }
+            if end >= UInt64(bitPattern: byteOffset) { throw Stop() }
+        }
+        return found
     }
 
     /// Whether the line *could* carry anything this file's decoder wants —

@@ -373,4 +373,132 @@ import Testing
         let row = try #require(try s.row())
         #expect(row.state == .failed && row.failCount == 1)
     }
+
+    @Test func anAppendedPromptDoesNotRetitleTheSession() async throws {
+        let s = try Setup()
+        await s.attach()
+        try s.write(userLine("first prompt"))
+        try await s.ledger.scan(roots: s.roots)
+        let before = try #require(try s.row())
+
+        // The appended span's first user text is a title candidate for a
+        // fresh decoder; primed, it must not overwrite the stored title.
+        try s.append(userLine("aardvark second prompt", ts: "2026-10-05T12:00:02.000Z"))
+        let report = try await s.ledger.scan(roots: s.roots)
+
+        #expect(report.filesRescanned == 0)
+        let after = try #require(try s.row())
+        #expect(after.sessionRowID == before.sessionRowID)
+        let session = try #require(try s.store.sessionRow(after.sessionRowID ?? -1))
+        #expect(session.fields.title == "first prompt")
+        #expect(session.fields.messageCount == 2)
+        #expect(try s.fts("aardvark").count == 1)
+    }
+
+    @Test func anAppendedExplicitTitleStillRetitles() async throws {
+        let s = try Setup()
+        await s.attach()
+        try s.write(userLine("first prompt"))
+        try await s.ledger.scan(roots: s.roots)
+
+        // Only prompts are suppressed on append — an explicit title
+        // record in the new span still renames the session.
+        try s.append(#"{"type":"custom-title","sessionId":"s1","customTitle":"Renamed session"}"# + "\n")
+        _ = try await s.ledger.scan(roots: s.roots)
+
+        let row = try #require(try s.row())
+        let session = try #require(try s.store.sessionRow(row.sessionRowID ?? -1))
+        #expect(session.fields.title == "Renamed session")
+    }
+
+    @Test func anAppendedPaginatedCodexRolloutIndexesLikeAWholeRead() async throws {
+        let temp = try TempDir()
+        let home = temp.path("codex")
+        let dir = home.appendingPathComponent("sessions/2026/10/20")
+        try FileManager.default.createDirectory(
+            at: dir, withIntermediateDirectories: true)
+        func meta(_ id: String) -> String {
+            #"{"timestamp":"2026-10-20T02:55:33.500Z","type":"session_meta","payload":{"id":"\#(id)","cwd":"/repo/app","history_mode":"paginated","title":"Fix admission loop"}}"#
+        }
+        func itemCompleted(_ type: String, _ text: String, _ ts: String) -> String {
+            #"{"type":"event_msg","timestamp":"\#(ts)","payload":{"type":"item_completed","item":{"type":"\#(type)","content":[{"type":"text","text":"\#(text)"}]}}}"#
+        }
+        func head(_ id: String) -> String {
+            [meta(id),
+             itemCompleted("UserMessage", "aardvark first prompt", "t1"),
+             itemCompleted("AgentMessage", "bobcat first reply", "t2")]
+                .map { $0 + "\n" }.joined()
+        }
+        // A paginated tail: the response_item duplicates an item_completed
+        // turn and must stay skipped; the item_completed rows carry it.
+        let tail = [
+            #"{"type":"response_item","timestamp":"t3","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"cheetah dup prompt"}]}}"#,
+            itemCompleted("UserMessage", "dingo second prompt", "t4"),
+            itemCompleted("AgentMessage", "emu second reply", "t5"),
+        ].map { $0 + "\n" }.joined()
+
+        let wholeFile = dir.appendingPathComponent("rollout-whole.jsonl")
+        try Data((head("thread-whole") + tail).utf8).write(to: wholeFile)
+        let appendFile = dir.appendingPathComponent("rollout-append.jsonl")
+        try Data(head("thread-append").utf8).write(to: appendFile)
+
+        let ledger = try Ledger(directory: temp.path("cache"))
+        let store = try SearchStore(directory: temp.path("data/search"))
+        await ledger.setIndexer(SearchIndexer(store: store))
+        _ = try await ledger.scan(roots: LedgerRoots(codexHomes: [home]))
+
+        try FileManager.default.append(tail, to: appendFile)
+        let report = try await ledger.scan(roots: LedgerRoots(codexHomes: [home]))
+        #expect(report.filesRescanned == 0)
+
+        func texts(_ sessionRowID: Int64?) throws -> [String] {
+            // The role's own column holds the text; the other two are "".
+            let statement = try store.db.prepare("""
+                SELECT messages.role,
+                       coalesce(nullif(messages_fts.user_text, ''),
+                                nullif(messages_fts.assistant_text, ''),
+                                nullif(messages_fts.tool_text, ''))
+                FROM messages JOIN messages_fts ON messages_fts.rowid = messages.id
+                WHERE messages.session_row_id = ? ORDER BY messages.id
+                """)
+            statement.bind([.int(sessionRowID ?? -1)])
+            var rows: [String] = []
+            while try statement.step() {
+                rows.append("\(statement.text(0) ?? "")|\(statement.text(1) ?? "")")
+            }
+            return rows
+        }
+        let wholeRow = try #require(
+            try store.fileRow(for: wholeFile.resolvingSymlinksInPath().path))
+        let appendRow = try #require(
+            try store.fileRow(for: appendFile.resolvingSymlinksInPath().path))
+        // The append continued the same session generation and decoded the
+        // tail in the paginated shape — response_item skipped, the
+        // item_completed rows indexed — matching the whole read.
+        #expect(appendRow.sessionRowID != nil)
+        #expect(try texts(appendRow.sessionRowID) == texts(wholeRow.sessionRowID))
+        #expect(try texts(appendRow.sessionRowID) == [
+            "user|aardvark first prompt", "assistant|bobcat first reply",
+            "user|dingo second prompt", "assistant|emu second reply"])
+        let session = try #require(try store.sessionRow(appendRow.sessionRowID ?? -1))
+        #expect(session.fields.title == "Fix admission loop")
+        #expect(session.fields.messageCount == 4)
+    }
+
+    @Test func appendNeedsAnAppendableHarness() async throws {
+        let s = try Setup()
+        await s.attach()
+        try s.write(userLine("first prompt"))
+        try await s.ledger.scan(roots: s.roots)
+        try s.append(assistantLine("more", ts: "2026-10-05T12:00:02.000Z"))
+        // The index cursor sits where the ledger resumes: an appendable
+        // harness takes the appended lines, anything else re-reads whole.
+        let offset = UInt64(bitPattern: try #require(try s.row()).byteOffset)
+        #expect(s.indexer.readNeed(path: s.path, stat: s.stat(),
+                                 ledgerOffset: offset, harness: .claude) == .append)
+        #expect(s.indexer.readNeed(path: s.path, stat: s.stat(),
+                                 ledgerOffset: offset, harness: .devin) == .whole)
+        #expect(s.indexer.readNeed(path: s.path, stat: s.stat(),
+                                 ledgerOffset: offset) == .whole)
+    }
 }
