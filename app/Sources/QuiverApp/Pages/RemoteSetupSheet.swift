@@ -253,7 +253,7 @@ private struct SetupStepRow: View {
         if let action = step.action, step.state != .ok, step.state != .blocked {
             switch action.kind {
             case .open:
-                if let url = action.url.flatMap(URL.init(string:)) {
+                if let url = action.url.flatMap(URL.init(string:)), url.isWebURL {
                     Button(action.label) { NSWorkspace.shared.open(url) }
                         .secondaryButton()
                         .hoverTip(url.absoluteString)

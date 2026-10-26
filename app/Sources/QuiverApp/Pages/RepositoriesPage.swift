@@ -647,7 +647,7 @@ struct RepoSurfaces: View {
                     Divider()
                 }
                 Button("Open on GitHub") {
-                    if let url = URL(string: pr.url) { openURL(url) }
+                    if let url = URL(string: pr.url), url.isWebURL { openURL(url) }
                 }
             }
         }
@@ -731,7 +731,7 @@ struct RepoSurfaces: View {
                 }
                 Divider()
                 Button("Open on GitHub") {
-                    if let url = URL(string: run.url) { openURL(url) }
+                    if let url = URL(string: run.url), url.isWebURL { openURL(url) }
                 }
             }
         }
@@ -752,7 +752,7 @@ struct RepoSurfaces: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(pages.cname ?? pages.url ?? "GitHub Pages")
                         .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                    if let url = pages.url, let link = URL(string: url) {
+                    if let url = pages.url, let link = URL(string: url), link.isWebURL {
                         Button { openURL(link) } label: {
                             Label(url, systemImage: "arrow.up.right.square")
                                 .font(Theme.bodySmall).foregroundStyle(Theme.link)
@@ -1066,7 +1066,7 @@ private struct OpenRow<Content: View>: View {
 
     init(url: String, open: @escaping (URL) -> Void,
          @ViewBuilder content: () -> Content) {
-        act = { if let link = URL(string: url) { open(link) } }
+        act = { if let link = URL(string: url), link.isWebURL { open(link) } }
         self.content = content()
     }
 

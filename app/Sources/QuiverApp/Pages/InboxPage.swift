@@ -67,7 +67,7 @@ struct InboxPage: View {
                             VStack(spacing: 0) {
                                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, note in
                                     NotificationRow(note: note) {
-                                        if let url = URL(string: note.url) { openURL(url) }
+                                        if let url = URL(string: note.url), url.isWebURL { openURL(url) }
                                     }
                                     .contextMenu {
                                         if note.unread {
@@ -80,7 +80,7 @@ struct InboxPage: View {
                                             Divider()
                                         }
                                         Button("Open on GitHub") {
-                                            if let url = URL(string: note.url) { openURL(url) }
+                                            if let url = URL(string: note.url), url.isWebURL { openURL(url) }
                                         }
                                     }
                                     if index < rows.count - 1 { Divider().overlay(Theme.rowDivider) }

@@ -1003,7 +1003,8 @@ final class AppModel {
     /// Resume a session in the chosen terminal, in the account it ran under.
     func resume(_ row: SessionsModel.Row) async throws {
         // A cloud session with a web page opens there instead.
-        if row.session.resume == nil, let web = row.session.webURL.flatMap(URL.init(string:)) {
+        if row.session.resume == nil, let web = row.session.webURL.flatMap(URL.init(string:)),
+           web.isWebURL {
             NSWorkspace.shared.open(web)
             return
         }
@@ -1020,7 +1021,20 @@ final class AppModel {
     /// terminal gets `cd <checkout> && <harness cli>`.
     func openPrSession(repo: String, number: Int, harness: Harness) async {
         guard let path = await github.prWorktree(repo: repo, pr: number, swe: swe) else { return }
-        let line = "cd \(LaunchPlanner.shellQuote(path)) && \(harness.command)"
+        // The registry command is pasted into a shell line: quote it word
+        // by word like a resume argv, so a metacharacter inside it can't
+        // break out of the `cd` chain. A leading ~ still expands.
+        let command = harness.command
+            .split(whereSeparator: \.isWhitespace)
+            .map { word -> String in
+                let word = String(word)
+                let expanded = word.hasPrefix("~")
+                    ? (word as NSString).expandingTildeInPath : word
+                return LaunchPlanner.shellQuote(expanded)
+            }
+            .joined(separator: " ")
+        let line = "cd \(LaunchPlanner.shellQuote(path))"
+            + (command.isEmpty ? "" : " && \(command)")
         try? await accounts.runInTerminal(line: line)
     }
 

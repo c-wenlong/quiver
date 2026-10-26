@@ -74,7 +74,7 @@ struct ProviderSetupSheet: View {
                     InstallCatalogModel.installLine(entry.name, via: method.via, swe: sweExecutable)
                 }
                 websiteLink(entry.website)
-            } else if let site = entry?.website, let url = URL(string: site) {
+            } else if let site = entry?.website, let url = URL(string: site), url.isWebURL {
                 note("swe doesn't know an installer for \(provider.name). Get it from its own website.")
                 downloadCard(url: url, site: site)
             } else {
@@ -109,7 +109,7 @@ struct ProviderSetupSheet: View {
     /// where the desktop app lives when the commands above only install
     /// a CLI (qoder, antigravity), or a second way in next to a cask.
     @ViewBuilder private func websiteLink(_ website: String?) -> some View {
-        if let website, let url = URL(string: website) {
+        if let website, let url = URL(string: website), url.isWebURL {
             Button {
                 openURL(url)
             } label: {
