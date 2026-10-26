@@ -233,9 +233,11 @@ public final class SearchIndexModel {
         lastSynced = nil
         statusError = nil
         if enabled {
-            // Through `apply()`, not `attach()` directly: a toggle landing
-            // mid-clear takes the single-flight, so two attaches never race.
-            await apply()
+            // The body, not `apply()`: this already runs inside the
+            // single-flight, so `apply()` would await its own task and
+            // hang. A mid-clear toggle still serializes — its `apply()`
+            // queues behind this flight and applies the newest value.
+            await applyOnce()
         } else {
             statusText = "Off."
         }
