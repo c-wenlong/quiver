@@ -106,7 +106,7 @@ struct ModelChartLayoutTests {
     @Test(arguments: ModelsModel.Metric.allCases)
     func everyMetricHasAHeaderTip(metric: ModelsModel.Metric) {
         let tip = ColumnTip.of(metric)
-        #expect(!tip.icon.isEmpty)
+        #expect(!metric.symbol.isEmpty)
         #expect(tip.title.split(separator: ":").count == 2)
         #expect(!tip.text.isEmpty)
     }
