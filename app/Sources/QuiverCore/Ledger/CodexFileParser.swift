@@ -127,8 +127,12 @@ struct CodexFileParser: FileLogParser {
             if let cwd = JSONValue.string(payload["cwd"]) { state.cwd = cwd }
             return []
         case "token_usage_record":
-            state.usesRecords = true
+            // Flip the flag only once a record is actually counted: a line
+            // missing `usage` or a timestamp must not silence the older
+            // `token_count` lines after it — the flag persists in the cursor,
+            // so a malformed record would undercount the file for good.
             guard let usage = payload["usage"] as? [String: Any], let lineTime else { return [] }
+            state.usesRecords = true
             let responseId = JSONValue.string(payload["response_id"])
             let key = responseId.map { "codex:resp:\($0)" }
                 ?? "codex:\(state.sessionId):\(object["timestamp"] as? String ?? ""):record"
