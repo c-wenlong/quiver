@@ -86,7 +86,7 @@ loopback bind the hub reads the client from the headers serve sets:
 |---|---|
 | `X-Forwarded-For` | the tailnet client: `tailscale whois` for pairing and approval, the pair-request rate limit |
 | `X-Forwarded-Proto` | the scheme the `Origin` check expects (`https://<Host>`) |
-| `Host` | kept as the public `host:port`; the approval path's DNS-rebinding check allows exactly it |
+| `Host` | kept as the public `host:port`; the DNS-rebinding check on the approval path and the unauthenticated routes allows it plus the loopback names the same bind answers locally |
 
 Serve replaces any `X-Forwarded-For` / `Tailscale-User-*` the client sent
 (checked on a live node, 2026-10-23), and the hub reads the headers only
@@ -841,6 +841,16 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   channel instead of trusting sshd's first answer. Tailscale SSH is not
   used: its server side needs the open-source `tailscaled` on macOS,
   not Tailscale.app.
+- Notifications leave the tailnet: whatever an ntfy body carries is
+  readable by the ntfy host (and ntfy.sh's relay for iOS delivery), so
+  no full-power credential and no raw pane text goes in one. Approval
+  action buttons POST with a token minted per notification — bound to
+  (session, request_id), single-use, ten minutes, the resolved
+  request's token dropped while overlapping requests keep theirs —
+  which only the approval route accepts (`notify.ApprovalTokens`);
+  prompts run the transcript secret-redactor and a length cap first.
+  The legacy `ntfy-actions` device row those buttons used to carry is
+  revoked at every hub start, whether or not notifications still post.
 - Threat model for the README: the hub executes on your machines by
   design; the credential gates the app layer on top of the tailnet —
   per-device revocation is what "revoke my lost phone" means without

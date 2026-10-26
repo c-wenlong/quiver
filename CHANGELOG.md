@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Landing page for the docs site.** The site root is now a
+  hand-written front page (`landing/index.html`) that says what quiver
+  is, the three ways in (terminal, Mac app, phone) and how to install
+  it. `scripts/docs_site.py` copies it to the site root, and the README
+  page moved from `/` to `/overview/`.
+
 ### Changed
 
 - **The Hooks page reads by event.** Pick a harness and its hooks sit on
@@ -19,6 +27,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its command and settings file, where it's linked, and the script in a
   raw editor. `swe hooks list --json` rows now carry `summary` and
   `detail` for it.
+
+### Security
+
+- **The remote hub refuses wildcard and non-tailnet binds.** `swe
+  remote serve --host=0.0.0.0` — or a LAN address, a link-local
+  address, or a name that resolves to one — used to be taken
+  verbatim; `serve` and `serve --install` now refuse it and name
+  `--unsafe-bind-any` as the explicit override, matching the
+  tailnet-only spec. Bind addresses may be loopback or a Tailscale
+  address (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`), by literal or by
+  resolved name, and `--install` carries the flag into the service's
+  command line when it was given.
+
+- **`GET /v1/status` answers `{ok, v}` only.** The unauthenticated
+  probe used to hand the machine's id and name, the swe version and
+  the hub's uptime to the whole tailnet; it is a reachability check
+  again. `swe remote status` now reads the machine row and version
+  from the local machine's own files (it was the only consumer of
+  those fields — the iOS client keeps an unused `status()` method,
+  and `swe remote setup` only checks whether the route answers).
+
+- **`POST /v1/pair` is rate-limited.** Token exchanges get the same
+  5-per-10-minutes per-source-IP cap as `/v1/pair/request`, counted
+  in a budget of their own and checked before the `tailscale whois`
+  fork — a flood can't turn into subprocess churn.
+
+- **The unauthenticated routes answer only Host names the hub
+  serves.** A plain loopback bind now records `127.0.0.1`, `localhost`
+  and `[::1]` (with the bound port) as its Host values — where
+  previously the DNS-rebinding check had nothing to compare against —
+  and a loopback bind behind `tailscale serve` keeps them alongside
+  the public URL's name. A tailnet bind names every spelling of its
+  own node — the bind value, the tailnet IP and the MagicDNS names —
+  so the link `swe remote pair` writes passes whichever one it uses.
+  `/v1/status`, `/v1/pair`, `/v1/pair/request` and the request poll
+  refuse any other Host with `403 bad_origin`, so a page that rebinds
+  its domain to `127.0.0.1` can't drive the pairing surface.
+
+- **iOS: the App Transport Security exception is scoped.** The
+  blanket `NSAllowsArbitraryLoads` is gone. `*.ts.net` (MagicDNS hub
+  names) gets an insecure-HTTP exception, and
+  `NSAllowsLocalNetworking` covers the unqualified or `.local` names
+  and IP literals — including Tailscale CGNAT addresses — a hub
+  address can take; arbitrary domains are back under full ATS.
+- **An enabled-but-incomplete ntfy config no longer parks a dead
+  subscriber on the hub bus.** `enabled` without `url`/`topic`
+  subscribed a queue nothing drained; it filled to the 2000-event cap
+  and silently dropped events. The notifier now starts only when the
+  config can actually post, and unsubscribes rather than leaving the
+  queue behind.
+- **ntfy approval actions carry a scoped token, not a device
+  credential, and prompts are redacted.** The Allow/Deny/Always
+  buttons used to send `Authorization: Bearer <cred>` for the
+  `ntfy-actions` device row — a full-power credential good for every
+  attached session — through the ntfy topic, where the host (and
+  ntfy.sh's relay for iOS delivery) could read it. Each notification
+  now mints a token bound to (session, request_id): single-use, ten
+  minutes, accepted only by the approval route, and retired the moment
+  that request resolves — overlapping requests on the session keep
+  their buttons. The prompt text also runs the transcript
+  secret-redactor plus a length cap, so a `Bearer sk-...` inside a
+  permission menu can't reach the topic either. Every hub start
+  revokes the legacy `ntfy-actions` device row and scrubs it from
+  `notify.json` — notifications disabled or half-configured can't
+  strand it live — and a failed revoke keeps the fields to retry
+  rather than losing the only handle on a leaked credential. Paired
+  devices keep working on the approval route unchanged.
 
 ## [1.1.1] - 2026-10-26
 
@@ -46,6 +121,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an explicit title record may rename the session. Appends are also
   gated to claude/codex/pi, Python's `APPENDABLE` set — any other
   harness's grown file re-reads whole.
+
+- **`swe remote` prints a one-line error instead of a traceback when
+  HOME is unset, empty or unwritable.** Every subcommand that writes
+  state does so under `~/.quiver/data/remote`, and creating it surfaced
+  as a bare `OSError`. The command boundary now catches it and prints
+  `can't write <dir>: <reason>`, exit 1.
+- **Cursor usage reads past the editor's encrypted token.** Cursor's
+  `state.vscdb` now stores `cursorAuth/accessToken` as an opaque
+  `cursor-safe-storage:` blob (Electron safeStorage) rather than a raw
+  JWT, and the blob shadowed the CLI auth file and the macOS keychain
+  behind it: it was taken as the session token, so the account card read
+  "Couldn't fetch usage" and doctor reported an error. The token ladder
+  now skips any value that doesn't decode as a JWT and tries the next
+  source, and the signed-in probe counts a stored file token only when
+  it decodes. An extra account's `state.vscdb` still reads alone — a
+  blob there reports signed-out rather than borrowing the default
+  account's keychain.
+
+- **Remote tail, journal and SSE read-path bugs** (issue #514). Four
+  bugs that could show duplicated, missing or stale messages on the
+  phone:
+
+  - A transcript that shrank was always re-read from byte zero, so a
+    copytruncate-style rotation (logrotate, an in-place rewrite that
+    kept the head) replayed the whole transcript as new
+    `message.appended` events. `JsonlTailSource` now keeps a sample of
+    the file head: an unchanged head means the stream was only cut
+    shorter in place — its remaining bytes were already sent, so
+    nothing is re-emitted — while a changed head is a new stream and
+    still restarts. The sample rides in the cursor file and is
+    verified on restore, even for a file cut shorter than the sample.
+  - opencode `part` rows sharing a millisecond were skipped forever:
+    the cursor was a bare `time_created` and the query asked for
+    `time_created > cursor`. It is now a `(time_created, id)` position,
+    and it only advances after a row is consumed, so an error
+    mid-iteration re-reads the row instead of losing it. Cursor files
+    holding the old scalar resume at that millisecond's start.
+  - `Journal.read_since` read the file without `_LOCK` while appends
+    and ring trims mutate under it; a read racing a trim could answer
+    from the pre-trim file without `truncated=True`. The read now runs
+    under the same lock.
+  - The three SSE routes read only `?last=`, so a standard EventSource
+    client reconnecting with `Last-Event-ID` got a full replay. The
+    header is now honored as the resume cursor, with `?last=` as the
+    fallback.
 
 ## [1.1.0] - 2026-10-26
 
