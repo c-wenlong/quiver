@@ -312,11 +312,15 @@ jobs:
           fi
           # Sparkle's own generator writes the appcast for the archives in
           # a folder; the version pins to what the app links (Package.swift)
-          # so the enclosure signature matches SUPublicEDKey.
+          # so the enclosure signature matches SUPublicEDKey. The zip's
+          # SHA-256 is pinned too — it runs next, with SPARKLE_PRIVATE_KEY
+          # on its stdin, so a swapped upstream asset must not reach it.
           tools="$RUNNER_TEMP/sparkle"
           mkdir -p "$tools"
           curl -fsSL "https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-for-Swift-Package-Manager.zip" \
             -o "$tools/sparkle.zip"
+          echo "17e28312b8e18ab7cdbbe09a6fb28cc55a5479ec6c371dbc07cdecd2a14fd959  $tools/sparkle.zip" \
+            | shasum -a 256 -c -
           ditto -x -k "$tools/sparkle.zip" "$tools"
           chmod +x "$tools/bin/"*
           # --ed-key-file - reads the key from stdin, so the secret never
