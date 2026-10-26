@@ -27,6 +27,7 @@ process — transcript text is not user-originated.
 
 from __future__ import annotations
 
+import base64
 import glob
 import hashlib
 import json
@@ -434,9 +435,16 @@ class JsonlTailSource:
             "source": "jsonl",
             "path": str(self.path),
             "offset": self.offset,
-            # The head re-reads from disk on restore and is verified
-            # against this hash — enough to re-arm the truncation check
-            # without writing the bytes themselves into the cursor.
+            # The head sample itself rides in the cursor: hashing alone
+            # can only verify a file that still reaches head_len, but a
+            # transcript may have been cut *shorter* than that while the
+            # hub was down — then every remaining byte needs comparing
+            # against the stored prefix. head_len/head_sha stay so a
+            # cursor written here still verifies on the previous build.
+            "head": (
+                base64.b64encode(self._head).decode("ascii")
+                if self._head else ""
+            ),
             "head_len": len(self._head),
             "head_sha": (
                 hashlib.sha256(self._head).hexdigest() if self._head else ""
@@ -449,6 +457,26 @@ class JsonlTailSource:
                 self.offset = int(state.get("offset") or 0)
             except (TypeError, ValueError):
                 self.offset = 0
+            stored = state.get("head")
+            if isinstance(stored, str) and stored:
+                try:
+                    head = base64.b64decode(stored.encode("ascii"))
+                except ValueError:
+                    head = b""
+                if head:
+                    cur = self._file_head(len(head))
+                    if cur == head[: len(cur)]:
+                        # Verified — possibly a prefix shorter than the
+                        # sample, when the file was truncated while down.
+                        self._head = head
+                    else:
+                        # Not the file the cursor tracked: a rewrite
+                        # that happened while down reads as a new stream.
+                        self.offset = 0
+                        self._head = b""
+                    return
+            # A cursor written before the bytes were stored verifies
+            # only a file that still reaches the sampled length.
             try:
                 head_len = int(state.get("head_len") or 0)
             except (TypeError, ValueError):
@@ -460,8 +488,6 @@ class JsonlTailSource:
             if len(head) == head_len and hashlib.sha256(head).hexdigest() == head_sha:
                 self._head = head
             else:
-                # Not the file the cursor tracked: a rewrite that
-                # happened while down reads as a new stream.
                 self.offset = 0
                 self._head = b""
 
@@ -500,25 +526,29 @@ class JsonlTailSource:
 
         A head still on disk means the stream was cut in place
         (logrotate's copytruncate, an in-place rewrite that kept its
-        start): the bytes already indexed still lead the file, so the
-        tail past the verified head is the new content — resume there
-        instead of re-emitting the head. A changed head is a new stream
-        (a rotated or rewritten file): restart from 0. Returns False
-        when nothing readable is left — the file is a strict prefix of
-        what was already sent and only appends can be new.
+        start): everything left on disk is a prefix of what was
+        already sent, so resume at the cut — the next read sees only
+        bytes appended after it, and nothing replays. Resuming inside
+        the file instead (right after the sample) would replay
+        retained records as new and could land mid-record.
+
+        Only the first ``_HEAD_SAMPLE`` bytes are verifiable, so a
+        prefix longer than that is trusted on the head's say-so: a
+        rewrite could hide new content between the sample and the
+        cut, but replaying retained records is the worse failure for
+        a chat tail. A changed head is a new stream (a rotated or
+        rewritten file): restart from 0. Returns False when nothing
+        readable is left.
         """
-        span = min(size, len(self._head))
-        # Either way the read begins on a line boundary owned by the
-        # current file: nothing to align.
+        # Either way the read begins at a file position that owns the
+        # next bytes written: nothing to align.
         self._align = False
+        span = min(size, len(self._head))
         if span and self._head[:span] == self._file_head(span):
-            if size <= len(self._head):
-                self.offset = size
-                return False
-            self.offset = len(self._head)
-        else:
-            self.offset = 0
-            self._head = b""
+            self.offset = size
+            return False
+        self.offset = 0
+        self._head = b""
         return True
 
     def poll(self) -> list[dict]:
@@ -726,19 +756,28 @@ class OpencodeSource:
 
     def _role_for(self, conn: sqlite3.Connection, message_id: str) -> str:
         role = self._roles.get(message_id)
-        if role is None:
-            role = ""
-            try:
-                row = conn.execute(
-                    "SELECT data FROM message WHERE id = ?", (message_id,)
-                ).fetchone()
-                if row:
-                    data = json.loads(row[0])
-                    role = _role_kind(data.get("role"))
-            except Exception:
-                role = ""
-            self._roles[message_id] = role or "assistant"
-        return self._roles[message_id]
+        if role is not None:
+            return role
+        # sqlite3.Error propagates to poll(): the row keeps its place
+        # under the cursor and is retried next poll. Catching it here
+        # and caching the fallback would pin a user message as
+        # "assistant" forever.
+        row = conn.execute(
+            "SELECT data FROM message WHERE id = ?", (message_id,)
+        ).fetchone()
+        if row is None:
+            # The message row can commit after the part that references
+            # it; answer the fallback but do not cache it, so a later
+            # poll still resolves the real role.
+            return "assistant"
+        try:
+            data = json.loads(row[0])
+        except (TypeError, ValueError, RecursionError):
+            data = None
+        role = _role_kind(data.get("role")) if isinstance(data, dict) else ""
+        role = role or "assistant"
+        self._roles[message_id] = role
+        return role
 
     def poll(self) -> list[dict]:
         conn = self._open()

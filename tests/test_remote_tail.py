@@ -200,10 +200,31 @@ class TestJsonlTailSource(unittest.TestCase):
         src = tail.JsonlTailSource(self.path, "claude")
         src.poll()
         kept = self.path.read_bytes()[: tail._HEAD_SAMPLE]
-        self.path.write_bytes(
-            kept + json.dumps(_claude_user("fresh")).encode() + b"\n")
-        out = src.poll()
-        self.assertEqual([m["text"] for m in out], ["fresh"])
+        self.path.write_bytes(kept)
+        self.assertEqual(src.poll(), [])
+        # Appends after the cut still stream — the stream continues.
+        self._write([_claude_user("fresh")])
+        self.assertEqual([m["text"] for m in src.poll()], ["fresh"])
+
+    def test_truncate_past_the_head_sample_replays_nothing(self):
+        # A file cut in place to a prefix LONGER than the head sample
+        # keeps several complete records the fingerprint can't cover;
+        # resuming right after the sample would replay them (and start
+        # mid-record), so the cut point is where the tail resumes.
+        self._write([
+            _claude_user("h" * tail._HEAD_SAMPLE),
+            _claude_user("kept-a"), _claude_user("kept-b"),
+            _claude_user("kept-c"), _claude_user("gone"),
+        ])
+        src = tail.JsonlTailSource(self.path, "claude")
+        src.poll()
+        lines = self.path.read_bytes().splitlines(keepends=True)
+        kept = b"".join(lines[:4])  # the big record + three more
+        self.assertGreater(len(kept), tail._HEAD_SAMPLE)
+        self.path.write_bytes(kept)
+        self.assertEqual(src.poll(), [])
+        self._write([_claude_user("new")])
+        self.assertEqual([m["text"] for m in src.poll()], ["new"])
 
     def test_rewrite_with_a_new_head_reemits(self):
         # A rotated or rewritten file whose head differs is a new
@@ -240,6 +261,45 @@ class TestJsonlTailSource(unittest.TestCase):
         src2.restore(state)
         self.assertEqual(
             [m["text"] for m in src2.poll()], ["replaced"])
+
+    def test_restore_verifies_a_file_cut_shorter_than_the_sample(self):
+        # Save the cursor, then cut the file to a prefix shorter than
+        # the stored head before restoring: every remaining byte still
+        # matches the stored prefix, so the kept record must not
+        # replay. A hash of the full sample could not check this — the
+        # file never reaches head_len — which is why the bytes ride in
+        # the cursor.
+        self._write([_claude_user("one"), _claude_user("two")])
+        src = tail.JsonlTailSource(self.path, "claude")
+        src.poll()
+        state = src.state()
+        first = (json.dumps(_claude_user("one")) + "\n").encode()
+        self.path.write_bytes(first)
+        src2 = tail.JsonlTailSource(self.path, "claude")
+        src2.restore(state)
+        self.assertEqual(src2.poll(), [])
+        self._write([_claude_user("three")])
+        self.assertEqual([m["text"] for m in src2.poll()], ["three"])
+
+    def test_restore_after_truncate_to_a_prefix_past_the_sample(self):
+        # Same cut while down, but the surviving prefix is longer than
+        # the head sample: the file is checked only as far as the
+        # stored bytes reach.
+        self._write([
+            _claude_user("h" * tail._HEAD_SAMPLE),
+            _claude_user("kept"), _claude_user("kept2"),
+            _claude_user("dropped"),
+        ])
+        src = tail.JsonlTailSource(self.path, "claude")
+        src.poll()
+        state = src.state()
+        lines = self.path.read_bytes().splitlines(keepends=True)
+        self.path.write_bytes(b"".join(lines[:3]))  # drop the last record
+        src2 = tail.JsonlTailSource(self.path, "claude")
+        src2.restore(state)
+        self.assertEqual(src2.poll(), [])
+        self._write([_claude_user("new")])
+        self.assertEqual([m["text"] for m in src2.poll()], ["new"])
 
 
 class TestSnapshotSource(unittest.TestCase):
@@ -598,6 +658,56 @@ class TestOpencodeSource(unittest.TestCase):
         self.assertEqual([m["text"] for m in out], ["one"])
         self.assertEqual(src.cursor, (1000, "p1"))
         self.assertEqual([m["text"] for m in src.poll()], ["two"])
+
+    def test_lookup_error_retries_the_row_not_the_role(self):
+        # A SQLite error inside _role_for's own message lookup must
+        # propagate: caching the "assistant" fallback would pin a user
+        # message's role forever once the cursor moved past the row.
+        import sqlite3
+        conn = sqlite3.connect(self.db)
+        conn.execute("INSERT INTO message VALUES ('mu', ?)",
+                     (json.dumps({"role": "user"}),))
+        conn.execute(
+            "INSERT INTO part VALUES ('p1', 'mu', 'sess1', 1000, ?)",
+            (json.dumps({"type": "text", "text": "user words"}),))
+        conn.execute(
+            "INSERT INTO part VALUES ('p2', 'm1', 'sess1', 1001, ?)",
+            (json.dumps({"type": "text", "text": "reply"}),))
+        conn.commit()
+        conn.close()
+
+        src = tail.OpencodeSource(self.db, "sess1")
+        real_open = src._open
+        break_lookup = {"on": True}
+
+        class FlakyConn:
+            """Proxies the read-only conn; dies on message lookups."""
+
+            def __init__(self, real):
+                self._real = real
+
+            def execute(self, sql, params=()):
+                if break_lookup["on"] and "FROM message" in sql:
+                    raise sqlite3.Error("database is locked")
+                return self._real.execute(sql, params)
+
+            def close(self):
+                self._real.close()
+
+        def flaky_open():
+            conn = real_open()
+            return None if conn is None else FlakyConn(conn)
+
+        src._open = flaky_open
+        # The first part's lookup dies: nothing consumed, cursor unmoved.
+        self.assertEqual(src.poll(), [])
+        self.assertEqual(src.cursor, (0, ""))
+        break_lookup["on"] = False
+        out = src.poll()
+        self.assertEqual(
+            [(m["kind"], m["text"]) for m in out],
+            [("user", "user words"), ("assistant", "reply")],
+        )
 
     def test_scalar_cursor_from_before_the_fix_still_restores(self):
         # A cursor file holding the old bare time_created resumes at

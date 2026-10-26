@@ -22,12 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A transcript that shrank was always re-read from byte zero, so a
     copytruncate-style rotation (logrotate, an in-place rewrite that
     kept the head) replayed the whole transcript as new
-    `message.appended` events. `JsonlTailSource` now fingerprints the
-    file head: an unchanged head means the stream continues past the
-    verified prefix — a strict prefix is already-sent, so nothing is
-    re-emitted — while a changed head is a new stream and still
-    restarts. The fingerprint rides in the cursor file and is verified
-    on restore.
+    `message.appended` events. `JsonlTailSource` now keeps a sample of
+    the file head: an unchanged head means the stream was only cut
+    shorter in place — its remaining bytes were already sent, so
+    nothing is re-emitted — while a changed head is a new stream and
+    still restarts. The sample rides in the cursor file and is
+    verified on restore, even for a file cut shorter than the sample.
   - opencode `part` rows sharing a millisecond were skipped forever:
     the cursor was a bare `time_created` and the query asked for
     `time_created > cursor`. It is now a `(time_created, id)` position,
