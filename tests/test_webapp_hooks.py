@@ -163,6 +163,18 @@ class TestDetail(_HooksHome, unittest.TestCase):
         d = page.get(self.ctx, {"hook": "guard.py", "harness": "cc"})
         self.assertEqual(d["harness"], "claude")
 
+    def test_tier_picks_between_same_name_and_harness(self):
+        # The shared tier's guard.py deploys to claude, so two rows answer
+        # to (guard.py, claude): only the tier tells them apart.
+        _hook(self.home, "claude", "guard.py", "print('harness')\n")
+        _hook(self.home, "shared", "guard.py", "# events: [PreToolUse]\nprint('shared')\n")
+        shared = page.get(self.ctx, {"hook": "guard.py", "harness": "claude", "tier": "shared"})
+        self.assertEqual((shared["tier"], shared["source_path"]),
+                         ("shared", str(self.home / ".quiver/hooks/shared/guard.py")))
+        own = page.get(self.ctx, {"hook": "guard.py", "harness": "claude", "tier": "harness"})
+        self.assertEqual((own["tier"], own["source_path"]),
+                         ("harness", str(self.home / ".quiver/hooks/claude/guard.py")))
+
     def test_full_declarations_with_command_and_timeout(self):
         settings = _settings(self.home, ".claude/settings.json",
                              _decl('python3 "~/.claude/hooks/guard.py"', timeout=30))

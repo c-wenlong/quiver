@@ -10,7 +10,7 @@ the New hook sheet offers. A ``.linkignore`` that cannot be read sets
 reports the same thing; a check that fails sets ``check_error`` and the
 list still shows, the Mac app's own rule.
 
-``GET /v1/app/hooks?hook=<name>[&harness=<h>]`` is the detail: one row,
+``GET /v1/app/hooks?hook=<name>[&harness=<h>][&tier=<t>]`` is the detail: one row,
 found the way ``swe hooks info`` finds it (exact filename, else stem;
 ``harness`` scopes it through the registry's aliases), plus the docstring
 summary, whether the source exists and sits inside ``~/.quiver/hooks``
@@ -172,6 +172,10 @@ def detail(ctx, home: Path, args: dict) -> dict:
     if args.get("harness"):
         wanted = _resolve_harness(args["harness"], registry, {r.harness for r in rows})
         matches = [r for r in matches if r.harness == wanted]
+    # A shared script and a per-harness one can share name and harness:
+    # only the tier tells them apart.
+    if args.get("tier"):
+        matches = [r for r in matches if r.tier == args["tier"]]
     if not matches:
         raise PageError(404, "unknown_hook",
                         f"No hook script named {args['hook']} under ~/.quiver/hooks.")

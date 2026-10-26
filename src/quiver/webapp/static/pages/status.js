@@ -262,17 +262,22 @@ function statusOnPage() {
  * payload, so the card list repaints without it. */
 async function statusUntrack(id) {
   const p = statusPage;
+  // Bump the generation like renderStatus does: a list read still in
+  // flight began before this write and must not put the card back. The
+  // same stamp orders two writes, so only the latest reply is applied.
+  const mine = ++p.gen;
   const { status, data } = await apiPost("/v1/app/status/untrack", { id });
   if (status === 401) return statusGate();
-  if (!statusOnPage()) { if (status === 200 && data) statusKeep(data); return; }
   if (status === 200 && data) {
+    if (mine !== p.gen) return;
     p.removing = null;
     p.removeError = "";
     p.expanded.delete(id);
     statusKeep(data);
-    paintStatus();
+    if (statusOnPage()) paintStatus();
     return;
   }
+  if (!statusOnPage()) return;
   p.removeError = statusError(status, data);
   paintStatus();
 }
@@ -465,20 +470,27 @@ async function statusTrack(id) {
   c.adding.add(id);
   c.error = "";
   statusPaintCatalogue();
+  // Bump the generation as in statusUntrack, before the request goes
+  // out: stale list reads and earlier write replies must not win.
+  const mine = ++statusPage.gen;
   const { status, data } = await apiPost("/v1/app/status/track", { id });
-  if (statusPage.catalogue !== c) return;
-  c.adding.delete(id);
+  // The page's truth lands whether the sheet stayed open or not: the
+  // service exists once the hub took the write.
   if (status === 401) {
     if (dlg && dlg.open) dlg.close();
     return statusGate();
   }
-  if (status === 200 && data) {
+  if (status === 200 && data && mine === statusPage.gen) {
     statusKeep(data);
+    if (statusOnPage()) paintStatus();
+  }
+  if (statusPage.catalogue !== c) return;
+  c.adding.delete(id);
+  if (status === 200 && data) {
     if (c.data) {
       const entry = c.data.entries.find((e) => e.id === id);
       if (entry) entry.added = true;
     }
-    if (statusOnPage()) paintStatus();
     statusPaintCatalogue();
     return;
   }

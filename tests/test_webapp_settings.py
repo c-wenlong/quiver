@@ -6,6 +6,7 @@ import shutil
 import struct
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 import xml.etree.ElementTree as ET
@@ -980,14 +981,32 @@ class TestSessionSearch(_Settings):
         me = self.device("laptop")
         self.post("session_search", {"enabled": True}, me)
         self.wait_idle()
-        self.assertTrue(self.get(me)["exists"])
-        status, data = self.post("session_search", {"clear": True}, me)
-        self.assertEqual(status, 200, data)
-        ss = data["session_search"]
-        self.assertTrue(ss["enabled"], "clear keeps the switch on")
-        self.assertFalse(ss["exists"])
-        self.assertIsNone(ss["last_pass"])
-        self.wait_idle()  # the enabled index rebuilds from scratch
+        self.assertEqual(self.get(me)["sessions"], 1)
+        # Hold the rebuild so the cleared state can't race the answer:
+        # the gate's release is what lets the index fill again.
+        started, release, done = threading.Event(), threading.Event(), threading.Event()
+        real_pass = settings_page._first_pass
+
+        def gated(home):
+            try:
+                started.set()
+                release.wait(30)
+                real_pass(home)
+            finally:
+                done.set()
+
+        try:
+            with patch.object(settings_page, "_first_pass", side_effect=gated):
+                status, data = self.post("session_search", {"clear": True}, me)
+            self.assertEqual(status, 200, data)
+            self.assertTrue(started.wait(10), "an enabled index rebuilds")
+            ss = self.get(me)
+            self.assertTrue(ss["enabled"], "clear keeps the switch on")
+            self.assertEqual(ss["sessions"], 0)
+            self.assertIsNone(ss["last_pass"])
+        finally:
+            release.set()
+        self.assertTrue(done.wait(30), "the rebuild finished")
         self.assertEqual(self.get(me)["sessions"], 1)
 
     def test_clear_while_off_wipes_without_a_rebuild(self):
@@ -999,8 +1018,11 @@ class TestSessionSearch(_Settings):
         status, data = self.post("session_search", {"clear": True}, me)
         self.assertEqual(status, 200, data)
         ss = data["session_search"]
-        self.assertEqual((ss["enabled"], ss["exists"], ss["running"]), (False, False, False))
+        # The file stays — a writer holding it open keeps the inode —
+        # but every row is gone and nothing rebuilds while it is off.
+        self.assertEqual((ss["enabled"], ss["sessions"], ss["running"]), (False, 0, False))
         self.assertIsNone(ss["last_error"])
+        self.assertIsNone(ss["last_pass"])
 
     def test_clear_while_a_pass_holds_the_lock_is_409(self):
         from quiver.sessions import search_writer

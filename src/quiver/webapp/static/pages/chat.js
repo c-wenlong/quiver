@@ -1010,15 +1010,18 @@ const SessionChat = (() => {
     const focus = document.activeElement;
     const focusKey = focus && list.contains(focus) && focus.dataset ? focus.dataset.key : null;
     const sessions = railSessions();
+    // The open session rides into the rows even when the list itself is
+    // empty (a cached empty list and a chat opened from a link).
+    const rows = sessions ? railRows() : null;
     let html;
     if (chat.rail.error) {
       html = `<div class="cr-note">${esc(chat.rail.error)}</div>`;
-    } else if (!sessions) {
+    } else if (!rows) {
       html = `<div class="cr-note">${chat.rail.loading ? "Listing sessions…" : "No sessions listed."}</div>`;
-    } else if (!sessions.length) {
+    } else if (!rows.length) {
       html = '<div class="cr-note">No sessions listed.</div>';
     } else {
-      html = railGroups(railRows()).map(({ day, rows }) => {
+      html = railGroups(rows).map(({ day, rows }) => {
         const [y, m, dd] = day.split("-").map(Number);
         const label = new Date(y, m - 1, dd).toLocaleDateString("en-US",
           { month: "short", day: "numeric", year: "numeric" });

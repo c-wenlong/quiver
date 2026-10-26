@@ -126,10 +126,12 @@ stays greyed as Mac app only.
 While the switch is on, two of the app's `SessionSearchRow` actions ride
 the status line, both off mid-pass: **resync** (the app's resync — a pass
 over every transcript now, so a behind file is caught at once) and
-**Clear search data**, which deletes the index, its prints and the pass
-record while keeping `enabled`, so an enabled index rebuilds from
-scratch. A clear asked for while a pass holds `index.lock` is a 409
-`busy`; it deletes nothing.
+**Clear search data**, which empties the index in place, drops its
+prints and the pass record while keeping `enabled`, so an enabled index
+rebuilds from scratch. The rows go rather than the file because the Mac
+app shares the database without taking `index.lock`: an unlink under
+its open connection would strand it on a ghost inode. A clear asked for
+while a pass holds `index.lock` is a 409 `busy`; it deletes nothing.
 
 ### Kept per browser
 
@@ -213,8 +215,8 @@ tailnet IP.
 `swe session index --on`/`--off`. On also starts a pass on a background
 thread (quietly skipped if the hub loop or a CLI pass holds the lock; any
 other failure lands in `last_error`). `{"resync": true}` starts the same
-pass without touching `enabled`; `{"clear": true}` deletes the index and
-its prints (`search_writer.clear_index`, which keeps `enabled`) and
+pass without touching `enabled`; `{"clear": true}` empties the index and
+drops its prints (`search_writer.clear_index`, which keeps `enabled`) and
 starts a pass when the index stays on — a 409 `busy` while a pass holds
 `index.lock`. Answers `{"session_search": …}` in the `get` shape; `400
 bad_enabled` when `enabled` isn't a boolean.

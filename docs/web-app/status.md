@@ -97,8 +97,10 @@ exactly like a built-in.
 catalogue entry: 404 `unknown_service` for an id the catalogue does not
 have, 422 `bad_id` for a missing or non-string id, 409 `already_tracked`
 when its feed host is already on the page. `POST /v1/app/status/untrack`
-removes a tracked extra (and its poll-cache entry, as the app's
-`service.forget(id:)` does): 422 `built_in` for a built-in page, 404
+removes a tracked extra; its poll-cache entry becomes a tombstone
+(`removed_at`, as the app's `service.forget(id:)` clears state), so a
+reading that lands late from another hub sharing the cache cannot bring
+the card back: 422 `built_in` for a built-in page, 404
 `unknown_service` for an id nothing tracks. Both answer with the normal
 payload, freshly checked as floors allow.
 

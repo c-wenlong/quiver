@@ -724,7 +724,9 @@ class TestPollerForget(PollerBase):
         status = p.cached([catalog.service("github")])[0]
         self.assertIsNone(status.report)
         saved = json.loads((self.dir / "web-service-status.json").read_text())
-        self.assertNotIn("github", saved["services"])
+        # A tombstone stays where the reading was, so a late landing from
+        # another hub merges against it instead of an empty slot.
+        self.assertIsInstance(saved["services"]["github"]["removed_at"], float)
 
     def test_a_forgotten_flight_does_not_land(self):
         """An answer already in flight when the page is removed is dropped."""
@@ -741,7 +743,41 @@ class TestPollerForget(PollerBase):
         time.sleep(0.05)  # let the landing attempt run
         self.assertIsNone(p.cached([catalog.service("github")])[0].report)
         saved = json.loads((self.dir / "web-service-status.json").read_text())
-        self.assertNotIn("github", saved.get("services", {}))
+        self.assertIsInstance(saved["services"]["github"]["removed_at"], float)
+
+    def test_another_hubs_stale_landing_does_not_resurrect_the_page(self):
+        """A second poller sharing the cache file lands a reading that
+        started before the removal: the tombstone beats it, on disk and
+        in that poller's own reads."""
+        self.transport.reply(200, fixture("statuspage-github"))
+        self.transport.gate = threading.Event()
+        other = self.make(wait=0.2)  # another hub, same cache file
+        self.one(other, "github")  # its flight starts, held at the gate
+        p = self.make()
+        p.forget("github")
+        self.transport.gate.set()
+        for _ in range(100):
+            if "github" not in other._in_flight:  # the landing ran
+                break
+            time.sleep(0.01)
+        self.assertIsNone(p.cached([catalog.service("github")])[0].report)
+        self.assertIsNone(other.cached([catalog.service("github")])[0].report)
+        saved = json.loads((self.dir / "web-service-status.json").read_text())
+        entry = saved["services"]["github"]
+        self.assertIsInstance(entry["removed_at"], float)
+        self.assertIsNone(entry["report"])
+
+    def test_a_readded_page_polls_over_its_tombstone(self):
+        """Track again after untrack: the tombstone is not a reading and
+        the fresh answer lands over it."""
+        self.transport.reply(200, fixture("statuspage-github"))
+        p = self.make()
+        p.forget("github")
+        self.clock.now += 60  # re-added later; its attempt is newer
+        status = self.one(p, "github", force=True)
+        self.assertIsNotNone(status.report)
+        saved = json.loads((self.dir / "web-service-status.json").read_text())
+        self.assertIsNone(saved["services"]["github"]["removed_at"])
 
 
 class TestTrackRoute(HubBase):
@@ -817,9 +853,11 @@ class TestTrackRoute(HubBase):
         self.assertEqual(status, 200, body)
         self.assertIsNone(self.card(body, "tailscale"))
         self.assertEqual(json.loads(self.store().read_text())["services"], [])
-        # The poll cache forgot it too.
-        self.assertNotIn("tailscale",
-                         json.loads((self.srv.home / "status.json").read_text())["services"])
+        # The poll cache keeps only a tombstone, so a stale landing from
+        # another hub cannot bring the card back.
+        tomb = json.loads((self.srv.home / "status.json").read_text())["services"]["tailscale"]
+        self.assertIsInstance(tomb["removed_at"], float)
+        self.assertIsNone(tomb["report"])
         _, cat_body = self.get("/v1/app/status?view=catalogue")
         self.assertFalse(next(e for e in cat_body["entries"] if e["id"] == "tailscale")["added"])
 

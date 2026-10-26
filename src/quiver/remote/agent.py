@@ -9,6 +9,7 @@ simply drops offline on the hub until it wakes and replays the queue.
 """
 
 import json
+import os
 import queue as queue_mod
 import ssl
 import sys
@@ -49,6 +50,9 @@ def save_agent(home: Path | None, conf: dict) -> Path:
     path = agent_file_for(home)
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, json.dumps(conf, indent=1), private=True)
+    # private=True floors a new file at 0600 but keeps an existing mode,
+    # so a restored or hand-written file must be tightened on every save.
+    os.chmod(path, 0o600)
     return path
 
 

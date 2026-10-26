@@ -123,8 +123,18 @@ def add(home: Path | None, service: StatusService) -> StatusService:
 
 
 def remove(home: Path | None, id: str) -> bool:
-    """Stop tracking a page. False when no tracked extra has the id."""
+    """Stop tracking a page. False when no tracked extra has the id.
+
+    The check rides inside the locked edit: another hub sharing this home
+    may add or drop a page between a pre-read and the write, and only the
+    snapshot the lock guards can say the id was really there."""
     path = tracked_file_for(home)
-    before = _load(path)
-    services = _edit(path, lambda services: [s for s in services if s.id != id])
-    return len(services) != len(before)
+    removed = False
+
+    def change(services: list[StatusService]) -> list[StatusService]:
+        nonlocal removed
+        removed = any(s.id == id for s in services)
+        return [s for s in services if s.id != id]
+
+    _edit(path, change)
+    return removed

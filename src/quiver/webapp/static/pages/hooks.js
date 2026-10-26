@@ -70,7 +70,7 @@ const hooksOnRoute = () => /^#\/hooks(\?|$)/.test(location.hash);
 function renderHooks() {
   const q = new URLSearchParams((location.hash.split("?")[1]) || "");
   const hook = q.get("hook");
-  if (hook) return renderHookDetail(hook, q.get("harness") || "");
+  if (hook) return renderHookDetail(hook, q.get("harness") || "", q.get("tier") || "");
   return renderHooksList();
 }
 
@@ -121,8 +121,7 @@ function paintHooks() {
       ${hkLinksStrip(d)}
       ${d.findings.length ? hkFindingsCard(d) : ""}
       ${body}
-    </div>
-    <dialog class="sheet hk-new-sheet" id="hk-new-sheet" aria-label="New hook"></dialog></div>`;
+    </div></div>`;
   bindHooksHeader();
   const addEmpty = document.getElementById("hk-new-empty");
   if (addEmpty) addEmpty.onclick = () => openNewHook();
@@ -228,7 +227,7 @@ function hkRow(h) {
   const events = (h.events_supported || []).map((e) => `<span class="badge">${esc(e)}</span>`).join("");
   const undeclared = h.link_status === "linked" && !(h.declared || []).length;
   const enabled = h.enabled == null ? "" : `<span class="badge">${h.enabled ? "Enabled" : "Disabled"}</span>`;
-  const to = `#/hooks?hook=${encodeURIComponent(h.name)}&harness=${encodeURIComponent(h.harness)}`;
+  const to = `#/hooks?hook=${encodeURIComponent(h.name)}&harness=${encodeURIComponent(h.harness)}&tier=${encodeURIComponent(h.tier)}`;
   return `<a class="hk-row" href="${esc(to)}" title="Open ${esc(h.name)}">
     <span class="hk-main">
       <span class="hk-title"><span class="name">${esc(h.name)}</span>
@@ -243,13 +242,14 @@ function hkRow(h) {
 
 /* ---------------------------------------------------------------- detail */
 
-async function renderHookDetail(name, harness) {
+async function renderHookDetail(name, harness, tier) {
   const p = hooksPage, gen = routeGen, mine = ++p.seq;
   document.getElementById("panel").innerHTML = `<div class="page">${hooksHeader(false)}${hkBack()}
     <div class="card"><p class="empty">Reading the hook…</p></div></div>`;
   bindHooksHeader();
   const q = new URLSearchParams({ hook: name });
   if (harness) q.set("harness", harness);
+  if (tier) q.set("tier", tier);
   const { status, data } = await api(`/v1/app/hooks?${q}`);
   if (gen !== routeGen || mine !== p.seq) return;
   if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
@@ -302,8 +302,7 @@ function paintHookDetail(d) {
         ${events}
       </div>
       ${doc}
-    </div>
-    <dialog class="sheet hk-new-sheet" id="hk-new-sheet" aria-label="New hook"></dialog></div>`;
+    </div></div>`;
   bindHooksHeader();
 }
 
@@ -348,12 +347,30 @@ function hkNameProblem(name) {
   return HK_NAME_RULE.test(name) ? null : "Letters, digits, '_' and '-', starting with a letter or digit";
 }
 
+/* The sheet lives on document.body, so a list or detail repaint behind
+ * it (the refresh that lands after it was opened) cannot close it. A
+ * close repaints the list: a created hook's row should be there when
+ * Done closes the success view. */
+function hkNewSheet() {
+  let sheet = document.getElementById("hk-new-sheet");
+  if (sheet) return sheet;
+  sheet = document.createElement("dialog");
+  sheet.id = "hk-new-sheet";
+  sheet.className = "sheet hk-new-sheet";
+  sheet.setAttribute("aria-label", "New hook");
+  sheet.addEventListener("close", () => {
+    if (hooksOnRoute() && !new URLSearchParams((location.hash.split("?")[1]) || "").get("hook")
+        && hooksPage.data) paintHooks();
+  });
+  document.body.appendChild(sheet);
+  return sheet;
+}
+
 /* NewHookSheet: swe hooks new <harness> <name> on the hub, POST
  * /v1/app/hooks/new. The sheet stays open on "Created …" so the stanza
  * to paste is not lost. */
 function openNewHook() {
-  const sheet = document.getElementById("hk-new-sheet");
-  if (!sheet) return;
+  const sheet = hkNewSheet();
   const d = hooksPage.data || {};
   const names = [...new Set([...(d.harnesses || ["claude"]), "shared"])];
   const picked = names.includes("claude") ? "claude" : names[0] || "shared";
