@@ -7,8 +7,9 @@ around it.
 
 ## 1. Pre-flight
 
-- [ ] `version` in `pyproject.toml` bumped to the release version; the
-      workflow rejects a tag that does not match it.
+- [ ] `version` in `pyproject.toml` and `__version__` in
+      `src/quiver/__init__.py` bumped to the release version; the
+      workflow rejects a tag that does not match `pyproject.toml`.
 - [ ] `CHANGELOG.md` has an entry for the release.
 - [ ] CI is green on `main` (all shards, Coverage, Greptile Review).
 - [ ] Every PR merged since the last release is in the installed app:
