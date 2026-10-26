@@ -1010,6 +1010,66 @@ public final class GitHubModel {
         }
     }
 
+    // MARK: - Issue detail + comments
+
+    /// An issue detail keyed `owner/name#number`, read the same way as
+    /// `prDetails`: fresh on every open, the last good read on screen
+    /// while the new one lands.
+    public private(set) var issueDetails: [String: Loadable<GhIssueDetail>] = [:]
+
+    public func loadIssueDetail(repo: String, number: Int, swe: SweClient) async {
+        let key = "\(repo)#\(number)"
+        if case .loading = issueDetails[key] { return }
+        if issueDetails[key] == nil { issueDetails[key] = .loading }
+        do {
+            let reply = try await swe.ghIssueView(repo: repo, number: number)
+            if let github = reply.github {
+                env = github
+                probed = true
+            }
+            issueDetails[key] = reply.issue.map { .loaded($0) }
+                ?? .failed(reply.error ?? "GitHub returned \(reply.status)")
+        } catch is CancellationError {
+            if case .loading = issueDetails[key] { issueDetails[key] = nil }
+        } catch {
+            issueDetails[key] = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Whether a comment on this issue is being posted.
+    public func commenting(repo: String, number: Int) -> Bool {
+        actionBusy.contains("comment:\(repo)#\(number)")
+    }
+
+    /// Post `body` as a comment through `gh` on this Mac, then read the
+    /// issue again so the sheet lists it. Returns the failure, or nil.
+    @discardableResult
+    public func commentOnIssue(repo: String, number: Int, body: String,
+                               swe: SweClient) async -> String? {
+        let text = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        let key = "comment:\(repo)#\(number)"
+        guard actionBusy.insert(key).inserted else { return "A comment is already posting." }
+        defer { actionBusy.remove(key) }
+        do {
+            let reply = try await swe.ghIssueComment(repo: repo, number: number, body: text)
+            if let github = reply.github { env = github }
+            if let error = reply.error { return error }
+            guard reply.comment != nil else {
+                return "GitHub returned \(reply.status ?? "no comment")."
+            }
+        } catch is CancellationError {
+            return "Cancelled."
+        } catch {
+            return error.localizedDescription
+        }
+        // The issues surface's comment count moved too.
+        fetched[BoardKey(repo: repo, tab: .issues)] = nil
+        focusFetched[BoardKey(repo: repo, tab: .issues)] = nil
+        await loadIssueDetail(repo: repo, number: number, swe: swe)
+        return nil
+    }
+
     /// Merge a PR, or arm auto-merge — the reply's `error` is the
     /// verdict, so a blocked env reads the same as a declined merge.
     /// On success the pulls surface forgets its fetch time and the

@@ -73,6 +73,35 @@ private struct SessionsContent: View {
         .quiverSheet(item: $detail) { row in
             SessionDetail(row: row, resume: { resume(row) }, close: { detail = nil })
         }
+        // Another page started a session (Resolve with agent) and asked
+        // for its chat.
+        .task(id: app.pendingChat) {
+            guard let key = app.pendingChat else { return }
+            app.pendingChat = nil
+            await openChat(key: key)
+        }
+    }
+
+    /// Opens `key`'s chat directly. The ledger may not list a session
+    /// the hub started seconds ago, so its row comes from the hub's
+    /// listing instead, and the ledger lists again behind it.
+    private func openChat(key: String) async {
+        let click = UUID()
+        opening = click
+        var hubRow: HubSessionRow?
+        let listed = model.rows.contains {
+            HubSessionRow.key(harness: $0.session.harness, id: $0.session.id) == key
+        }
+        if !listed {
+            hubRow = try? await app.hub.withClient { try await $0.sessions() }.first { $0.key == key }
+        }
+        guard opening == click,
+              let row = SessionsModel.chatRow(for: key, rows: model.rows, hub: hubRow) else { return }
+        detail = nil
+        chat = row
+        async let keys: Void = app.hub.refreshKeys()
+        await model.load(for: app.swePath)
+        await keys
     }
 
     private var listPage: some View {
