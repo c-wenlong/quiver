@@ -7,7 +7,7 @@ docs_dir = "build/docs-site"
 site_dir = "site"
 
 nav = [
-  { "Home" = "index.md" },
+  { "Overview" = "overview.md" },
   { "CLI reference" = "cli.md" },
   { "Harness support" = "harness-support.md" },
   { "macOS app" = [
