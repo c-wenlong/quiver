@@ -2282,10 +2282,8 @@ class _Handler(BaseHTTPRequestHandler):
             kinds = _SAT_KIND_SETS.get(etype)
             if kinds is not None:
                 data = ev.get("data")
-                if (
-                    not isinstance(data, dict)
-                    or data.get("kind") not in kinds
-                ):
+                kind = data.get("kind") if isinstance(data, dict) else None
+                if not isinstance(kind, str) or kind not in kinds:
                     continue
             local_key = str(ev.get("session") or "")
             if local_key:

@@ -1128,6 +1128,26 @@ class TestAgentEdges(unittest.TestCase):
         # A launched or forked session starts mid-turn: tail it hot.
         self.assertTrue(ag.tail_manager.is_hot("claude:new"))
 
+    def test_register_403_prints_repair_once(self):
+        # A permanently rejected credential must tell the user to
+        # re-pair, not retry silently forever.
+        import io
+        from contextlib import redirect_stderr
+        ag = self._agent()
+        buf = io.StringIO()
+        with patch.object(agent_mod, "_post",
+                          return_value=(403, {"error": "forbidden",
+                                              "message": "no satellite"})):
+            with redirect_stderr(buf):
+                self.assertFalse(ag._register())
+                self.assertFalse(ag._register())
+        self.assertEqual(buf.getvalue().count("re-pair"), 1)
+        self.assertIn("--hub", buf.getvalue())
+        # A later accepted register clears the latch.
+        with patch.object(agent_mod, "_post", return_value=(200, {})):
+            self.assertTrue(ag._register())
+        self.assertIsNone(ag._register_denied)
+
     def test_visibility_change_re_registers(self):
         ag = self._agent()
         items = [{"name": "kilo", "command": "kilo", "display_name": "Kilo",

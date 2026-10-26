@@ -489,6 +489,17 @@ def bind_machine(
         bound = row.get("machine_id")
         if bound:
             return str(bound)
+        # A machine_id belongs to one live credential: a fresh satellite
+        # can't claim a machine another unrevoked device already speaks
+        # for. Revoking the old row frees the id — that is the
+        # credential-replacement path.
+        for other_id, other in devices.items():
+            if (
+                other_id != device_id
+                and str(other.get("machine_id") or "") == machine_id
+                and not other.get("revoked_at")
+            ):
+                return None
         row["machine_id"] = machine_id
         _save_devices(home_path, devices)
         return machine_id

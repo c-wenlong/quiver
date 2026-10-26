@@ -3248,6 +3248,32 @@ class TestAgentSecurity(HubBase):
             self._post("/v1/agent/catalog",
                        {"machine_id": "sat-m1", "rows": []}, sat2), 403)
 
+    def test_fresh_satellite_cannot_claim_a_bound_machine(self):
+        # Registering is how a credential pins its machine; a second
+        # live credential must not grab one that is already spoken for.
+        self._sat("sat-m1")
+        cred = self.srv.pair(role="satellite")
+        sat2 = {"Authorization": f"Bearer {cred['credential']}"}
+        status = self._post(
+            "/v1/agent/register",
+            {"machine": {"id": "sat-m1"}}, sat2)
+        self.assertEqual(status, 403)
+
+    def test_revoked_binding_frees_the_machine(self):
+        # Credential replacement: revoke the old satellite, then a
+        # re-paired one can register the same machine.
+        cred = self.srv.pair(role="satellite")
+        sat1 = {"Authorization": f"Bearer {cred['credential']}"}
+        self.assertEqual(
+            self._post("/v1/agent/register",
+                       {"machine": {"id": "sat-m1"}}, sat1), 200)
+        pairing.revoke_device(self.srv.home, cred["device_id"])
+        cred2 = self.srv.pair(role="satellite")
+        sat2 = {"Authorization": f"Bearer {cred2['credential']}"}
+        self.assertEqual(
+            self._post("/v1/agent/register",
+                       {"machine": {"id": "sat-m1"}}, sat2), 200)
+
     # -- event ingest -------------------------------------------------------
 
     def _events(self, sat, events, mid="sat-m1"):
@@ -3310,6 +3336,21 @@ class TestAgentSecurity(HubBase):
                            {"kind": "finished", "status": "done"}),
             protocol.event("notify", "claude:r1", "sat-m1",
                            {"kind": "assistant", "status": "done"}),
+        ])
+        self.assertEqual(status, 200)
+        self.assertEqual(body["accepted"], 1)
+
+    def test_nonstring_kind_values_drop_not_crash(self):
+        # A list or dict in data.kind used to reach frozenset
+        # membership and raise TypeError, killing the whole batch.
+        sat = self._sat()
+        status, body = self._events(sat, [
+            protocol.event("message.appended", "claude:r1", "sat-m1",
+                           {"kind": ["assistant"], "text": "x"}),
+            protocol.event("message.appended", "claude:r1", "sat-m1",
+                           {"kind": {"v": "assistant"}, "text": "x"}),
+            protocol.event("message.appended", "claude:r1", "sat-m1",
+                           protocol.message("assistant", "real")),
         ])
         self.assertEqual(status, 200)
         self.assertEqual(body["accepted"], 1)
