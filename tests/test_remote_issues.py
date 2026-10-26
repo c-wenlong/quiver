@@ -44,7 +44,7 @@ class TestResolveRoute(unittest.TestCase):
 
     @contextlib.contextmanager
     def _stubs(self, env=OK_ENV, installed=True, tmux=True, fetched=None,
-               worktree=None, launch=None):
+               worktree=None, launch=None, blocker=None):
         fetched = fetched or gh.GhResult("ok", data=self.issue)
         with patch("quiver.remote.catalog.launch_command",
                    return_value="claude" if installed else None), \
@@ -54,6 +54,8 @@ class TestResolveRoute(unittest.TestCase):
                    return_value=["old"]), \
              patch("quiver.remote.supervise.tmux_bin",
                    return_value="/usr/bin/tmux" if tmux else None), \
+             patch("quiver.remote.supervise.fork_blocker",
+                   return_value=blocker), \
              patch("quiver.github.gh.probe_env", return_value=env), \
              patch("quiver.github.issues.fetch", return_value=fetched), \
              patch("quiver.github.manage.issue_worktree",
@@ -160,6 +162,52 @@ class TestResolveRoute(unittest.TestCase):
             self.assertEqual(self._view(body["launch_id"])["note"],
                              "Cloning mirror…")
             gate.set()
+
+    def test_a_second_resolve_waits_for_the_first(self):
+        gate = threading.Event()
+        seen = threading.Event()
+
+        def slow(repo, number, home=None, progress=None):
+            seen.set()
+            gate.wait(5)
+            return self._worktree_ok(repo, number, home, progress)
+
+        req = {"repo": "o/r", "number": 5, "harness": "claude"}
+        with self._stubs(worktree=slow) as (_wt, ln):
+            status, first = self._post(req)
+            self.assertEqual(status, 202, first)
+            self.assertTrue(seen.wait(5))
+            status, body = self._post(req)
+            self.assertEqual((status, body["error"]["code"]),
+                             (409, "resolve_pending"))
+            # Another issue in the same repo is not held up.
+            status, other = self._post({**req, "number": 6})
+            self.assertEqual(status, 202, other)
+            gate.set()
+        self.assertEqual(ln.call_count, 2)
+        # Once launch_new has run, its pending marker is the guard.
+        with self._stubs(blocker="qv-other") as (_wt, ln):
+            status, body = self._post(req)
+        self.assertEqual((status, body["error"]["code"]),
+                         (409, "resolve_pending"))
+        ln.assert_not_called()
+        with self._stubs() as (_wt, ln):
+            status, _body = self._post(req)
+        self.assertEqual(status, 202)
+
+    def test_prompt_and_context_must_fit_with_the_header(self):
+        cap = protocol.MAX_LAUNCH_PROMPT
+        base = {"repo": "o/r", "number": 5, "harness": "claude",
+                "context": "x"}
+        with self.assertRaises(ValueError):
+            issues_mod.parse_body({**base, "prompt": "p" * (cap - 1)})
+        with self.assertRaises(ValueError):
+            issues_mod.parse_body({**base, "prompt": "p" * (cap - 80)})
+        cmd = issues_mod.parse_body({**base, "prompt": "p" * (cap - 81)})
+        text = issues_mod.final_prompt(cmd, None, "/w", "x" * 39)
+        self.assertLessEqual(len(text), cap)
+        # Without a prompt the built one is capped on its own.
+        issues_mod.parse_body({**base, "context": "c" * 8000})
 
     def test_worktree_failure_fails_the_launch(self):
         fail = lambda *a, **k: gh.GhResult(  # noqa: E731

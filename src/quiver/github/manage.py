@@ -432,7 +432,10 @@ def issue_worktree(repo: str, number, home: Path | None = None,
                            error="Fetch failed: could not tell the "
                                  "repository's default branch")
     base = f"origin/{default}"
-    result = run_git(["-C", mirror, "fetch", "origin",
+    # --no-write-fetch-head: pr_worktree checks out FETCH_HEAD in this
+    # same mirror, and this fetch must never swap that under it.
+    result = run_git(["-C", mirror, "fetch", "--no-write-fetch-head",
+                      "origin",
                       f"+refs/heads/{default}:refs/remotes/{base}"],
                      timeout=300)
     if result.status != "ok":
@@ -446,6 +449,17 @@ def issue_worktree(repo: str, number, home: Path | None = None,
     # A checkout folder deleted by hand stays listed (and its branch
     # "checked out" there) until pruned, so the folder must exist too.
     if os.path.isdir(path) and _is_registered(mirror, path):
+        # Someone may have switched branches in there; an agent told it
+        # is on quiver/issue-<n> must not commit to something else.
+        head = run_git(["-C", path, "symbolic-ref", "--quiet", "--short",
+                        "HEAD"])
+        current = (head.data or "").strip() if head.status == "ok" else ""
+        if current != branch:
+            return gh.GhResult(
+                "upstream-error",
+                error=f"Worktree is on {current or 'a detached HEAD'}, not "
+                      f"{branch}: switch {path} back to {branch} or "
+                      "remove that folder")
         return gh.GhResult("ok", data=data)
 
     say(f"Creating worktree {branch}…")

@@ -153,6 +153,30 @@ class TestIssueWorktree(unittest.TestCase):
             _git("rev-parse", "--abbrev-ref", "HEAD", cwd=path),
             "quiver/issue-7")
 
+    def test_a_switched_checkout_is_refused_not_reused(self):
+        first, _ = self.make()
+        path = first.data["path"]
+        _git("switch", "-q", "-c", "elsewhere", cwd=path)
+        again, _ = self.make()
+        self.assertNotEqual(again.status, "ok")
+        self.assertIn("on elsewhere, not quiver/issue-7", again.error)
+        _git("switch", "-q", "--detach", cwd=path)
+        again, _ = self.make()
+        self.assertIn("detached HEAD", again.error)
+        _git("switch", "-q", "quiver/issue-7", cwd=path)
+        again, _ = self.make()
+        self.assertEqual(again.status, "ok", again.error)
+
+    def test_the_fetch_leaves_fetch_head_alone(self):
+        # pr_worktree checks out FETCH_HEAD in the same mirror.
+        self.make()
+        head = manage.mirror_path("o/r", self.home) / "FETCH_HEAD"
+        head.write_text("sentinel\n")
+        self.push_commit("two\n")
+        result, _ = self.make(8)
+        self.assertEqual(result.status, "ok", result.error)
+        self.assertEqual(head.read_text(), "sentinel\n")
+
     def test_fetch_failure_names_the_step(self):
         self.make()
         mirror = manage.mirror_path("o/r", self.home)

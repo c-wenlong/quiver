@@ -2,7 +2,8 @@
 
 Body ``{repo: "owner/repo", number, harness, prompt?, context?}``. The
 hub checks what a client can act on straight away (a pinned repo, a
-harness that starts here, tmux, a signed-in ``gh``) and answers ``202
+harness that starts here, tmux, a signed-in ``gh``, no other resolve of
+the issue still starting: ``409 resolve_pending``) and answers ``202
 {launch_id, state: "pending", note}``; the rest runs on a thread behind
 that launch id, the way a ``POST /v1/sessions`` launch does:
 
@@ -35,6 +36,18 @@ from quiver.remote import protocol, sessionmeta, supervise
 
 # "Your context" is a paragraph or two typed on a phone or in a sheet.
 MAX_CONTEXT = 8_000
+# Room for the "Context for this run, from <login>:" line (a GitHub
+# login is at most 39 characters) when context joins a client's prompt.
+_CONTEXT_HEADER_ROOM = 80
+
+# Issues whose resolve is still between the 202 and launch_new's
+# pending marker, as (repo lower, number). A second resolve of one of
+# them, or of one whose marker still waits for adoption in the same
+# checkout, is refused: adoption has only the folder and start time to
+# go on, so two launches waiting there could each claim the other's
+# session, or neither.
+_preparing: set[tuple[str, int]] = set()
+_preparing_lock = threading.Lock()
 
 
 def parse_body(body) -> dict:
@@ -67,7 +80,8 @@ def parse_body(body) -> dict:
         raise ValueError("context must be a string")
     if len(context) > MAX_CONTEXT:
         raise ValueError(f"context is over {MAX_CONTEXT} characters")
-    if len(prompt) + len(context) > protocol.MAX_LAUNCH_PROMPT:
+    room = _CONTEXT_HEADER_ROOM if prompt.strip() and context.strip() else 0
+    if len(prompt) + len(context) + room > protocol.MAX_LAUNCH_PROMPT:
         raise ValueError(
             f"prompt and context are over {protocol.MAX_LAUNCH_PROMPT} "
             "characters together")
@@ -128,6 +142,16 @@ def request(state, body: dict | None) -> tuple[int, dict]:
     tracked = harness not in catalog_mod.untracked(
         catalog_mod.launchable_harnesses())
     rows = state.catalog.tail_rows()
+    ref = (repo.lower(), cmd["number"])
+    tree = manage.issue_worktree_path(repo, cmd["number"], state.home)
+    with _preparing_lock:
+        if ref in _preparing or supervise.fork_blocker(
+                state.home, harness, tree):
+            return 409, protocol.error(
+                "resolve_pending",
+                f"an agent for {repo}#{cmd['number']} is still starting in "
+                f"its worktree; resolve again once its session shows up")
+        _preparing.add(ref)
     launch_id = state.new_launch(state.machine_id, harness, "")
     state.settle_launch(launch_id, note="preparing worktree")
     threading.Thread(
@@ -141,6 +165,30 @@ def request(state, body: dict | None) -> tuple[int, dict]:
 
 def _run(state, launch_id: str, cmd: dict, binary: str, tracked: bool,
          rows, login: str) -> None:
+    def fail(text: str) -> None:
+        state.settle_launch(launch_id, state="failed", note=text)
+
+    try:
+        failure = _prepare_and_launch(state, launch_id, cmd, binary, rows,
+                                      login)
+        if failure:
+            fail(failure)
+        elif not tracked:
+            state.settle_launch(launch_id, state="untracked", note=(
+                f"{cmd['harness']} is running under tmux, but swe can't "
+                f"read its sessions, so there's no chat to open"))
+    except Exception as exc:  # a launch must never stay pending forever
+        fail(f"Resolve failed: {exc}")
+    finally:
+        # launch_new has written its pending marker by now (or failed),
+        # so fork_blocker takes over guarding the checkout.
+        with _preparing_lock:
+            _preparing.discard((cmd["repo"].lower(), cmd["number"]))
+
+
+def _prepare_and_launch(state, launch_id: str, cmd: dict, binary: str,
+                        rows, login: str) -> str:
+    """Issue, worktree, prompt, ``launch_new``; the failure note, or ""."""
     repo, number, harness = cmd["repo"], cmd["number"], cmd["harness"]
 
     def note(text: str) -> None:
@@ -148,45 +196,35 @@ def _run(state, launch_id: str, cmd: dict, binary: str, tracked: bool,
         # note never revives a launch that already settled.
         state.settle_launch(launch_id, note=text)
 
-    def fail(text: str) -> None:
-        state.settle_launch(launch_id, state="failed", note=text)
+    fetched = gh_issues.fetch(repo, number, state.home)
+    issue = fetched.data if fetched.status == "ok" else None
+    if issue is None and not cmd["prompt"]:
+        return (f"Couldn't read {repo}#{number}: "
+                f"{fetched.error or fetched.status}")
+    title = f"{repo}#{number}"
+    if issue and issue.get("title"):
+        title += f" {issue['title']}"
+    state.settle_launch(launch_id, title=title)
 
-    try:
-        fetched = gh_issues.fetch(repo, number, state.home)
-        issue = fetched.data if fetched.status == "ok" else None
-        if issue is None and not cmd["prompt"]:
-            fail(f"Couldn't read {repo}#{number}: "
-                 f"{fetched.error or fetched.status}")
-            return
-        title = f"{repo}#{number}"
-        if issue and issue.get("title"):
-            title += f" {issue['title']}"
-        state.settle_launch(launch_id, title=title)
+    made = manage.issue_worktree(repo, number, state.home, progress=note)
+    if made.status != "ok":
+        return made.error or made.status
+    cwd = made.data["path"]
+    state.settle_launch(launch_id, cwd=cwd)
+    prompt = final_prompt(cmd, issue, cwd, login)
+    if len(prompt) > protocol.MAX_LAUNCH_PROMPT:
+        return (f"The prompt is over {protocol.MAX_LAUNCH_PROMPT} "
+                "characters; shorten it or the context")
 
-        made = manage.issue_worktree(repo, number, state.home, progress=note)
-        if made.status != "ok":
-            fail(made.error or made.status)
-            return
-        cwd = made.data["path"]
-        state.settle_launch(launch_id, cwd=cwd)
-        prompt = final_prompt(cmd, issue, cwd, login)
-
-        note(f"Starting {harness}…")
-        # Every same-cwd session that exists now (a resumed checkout can
-        # have some): adoption refuses these ids.
-        known = catalog_mod.known_session_ids(rows, harness, cwd)
-        ok, msg, _name = supervise.launch_new(
-            state.home, harness, cwd, prompt,
-            known_ids=known, launch_id=launch_id, binary=binary,
-        )
-        if not ok:
-            fail(msg)
-        elif not tracked:
-            state.settle_launch(launch_id, state="untracked", note=(
-                f"{harness} is running under tmux, but swe can't read "
-                f"its sessions, so there's no chat to open"))
-    except Exception as exc:  # a launch must never stay pending forever
-        fail(f"Resolve failed: {exc}")
+    note(f"Starting {harness}…")
+    # Every same-cwd session that exists now (a resumed checkout can have
+    # some): adoption refuses these ids.
+    known = catalog_mod.known_session_ids(rows, harness, cwd)
+    ok, msg, _name = supervise.launch_new(
+        state.home, harness, cwd, prompt,
+        known_ids=known, launch_id=launch_id, binary=binary,
+    )
+    return "" if ok else (msg or "the harness did not start")
 
 
 def title_adopted(state, launch_id: str, key: str) -> None:

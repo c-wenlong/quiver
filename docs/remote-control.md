@@ -544,7 +544,11 @@ only. It answers what a client can fix at once with a 422: `bad_command`
 for a bad body, `not_pinned` for a repo not pinned on the hub (`swe gh
 repo add`), `not_launchable`, `launch_failed` (no tmux), and
 `gh_unavailable` when `gh` is missing or signed out, with the message
-saying which. Otherwise it answers `202 {launch_id, state: "pending",
+saying which. A second resolve of an issue whose last one is still
+starting (preparing, or its pane not yet adopted) gets `409
+resolve_pending`: adoption has only the folder and start time to go on,
+so two launches waiting in one checkout could claim each other's
+sessions. Otherwise it answers `202 {launch_id, state: "pending",
 note: "preparing worktree"}` and does the rest on a thread, like a
 new-session launch. It reads the issue, then runs `swe gh issue
 worktree`'s `manage.issue_worktree`: the repo's bare mirror (cloned on
