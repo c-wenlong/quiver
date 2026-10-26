@@ -133,4 +133,27 @@ import Testing
         var migrated = CodexFileParser(file: url, accountHome: "/h", savedState: legacy)
         #expect(migrated.records(fromLine: line(total: 300, last: 100, at: 57)).isEmpty)
     }
+
+    /// A `token_usage_record` that cannot be read (no `usage`, or a timestamp
+    /// that does not parse) must not suppress the `token_count` lines after
+    /// it: `usesRecords` used to flip before the guard, and the flag persists
+    /// in the cursor, so one malformed record silenced every count for good.
+    @Test func aMalformedUsageRecordDoesNotSuppressTokenCounts() throws {
+        let url = URL(fileURLWithPath: "/tmp/rollout-x.jsonl")
+        var parser = CodexFileParser(file: url, accountHome: "/h", savedState: nil)
+        let noUsage = Data(#"{"timestamp":"2026-10-04T09:00:01.000Z","type":"token_usage_record","payload":{"turn_id":"turn-1"}}"#.utf8)
+        let noTime = Data(#"{"timestamp":"not-a-date","type":"token_usage_record","payload":{"turn_id":"turn-1","usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}}"#.utf8)
+        #expect(parser.records(fromLine: noUsage).isEmpty)
+        #expect(parser.records(fromLine: noTime).isEmpty)
+
+        let count = Data(#"{"timestamp":"2026-10-04T09:00:02.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}}"#.utf8)
+        #expect(parser.records(fromLine: count).map(\.event.totalTokens) == [15])
+
+        // The flag still flips on the first well-formed record: counts after
+        // one are suppressed exactly as before.
+        let record = Data(#"{"timestamp":"2026-10-04T09:00:03.000Z","type":"token_usage_record","payload":{"turn_id":"turn-2","response_id":"resp-1","usage":{"input_tokens":20,"output_tokens":7,"total_tokens":27}}}"#.utf8)
+        #expect(parser.records(fromLine: record).map(\.event.totalTokens) == [27])
+        let laterCount = Data(#"{"timestamp":"2026-10-04T09:00:04.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":99,"output_tokens":9,"total_tokens":108}}}}"#.utf8)
+        #expect(parser.records(fromLine: laterCount).isEmpty)
+    }
 }
