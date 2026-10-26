@@ -2,6 +2,7 @@
 
 import io
 import json
+import socket
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -248,6 +249,96 @@ class TestServe(unittest.TestCase):
         self.assertIn("launchd retries", err)
         hub.assert_not_called()
 
+    def _fake_state(self):
+        state = MagicMock()
+        state.machine = {"name": "srv"}
+        state.machine_id = "m1"
+        return state
+
+    def test_serve_refuses_wildcard_bind(self):
+        for host in ("0.0.0.0", "::"):
+            with self.subTest(host):
+                rc, _, err = _run(["serve", f"--host={host}"])
+                self.assertEqual(rc, 1)
+                self.assertIn("--unsafe-bind-any", err)
+
+    def test_serve_refuses_a_lan_bind(self):
+        for host in ("192.168.1.5", "10.0.0.4", "fe80::1"):
+            with self.subTest(host):
+                rc, _, err = _run(["serve", f"--host={host}"])
+                self.assertEqual(rc, 1)
+                self.assertIn("--unsafe-bind-any", err)
+
+    def test_serve_refuses_a_name_off_the_tailnet(self):
+        infos = [(socket.AF_INET, socket.SOCK_STREAM, 6, "",
+                  ("93.184.216.34", 8477))]
+        with patch("socket.getaddrinfo", return_value=infos):
+            rc, _, err = _run(["serve", "--host=box.example.com"])
+        self.assertEqual(rc, 1)
+        self.assertIn("--unsafe-bind-any", err)
+
+    def test_serve_allows_tailnet_and_loopback_binds(self):
+        for host in ("127.0.0.1", "localhost", "100.64.1.2",
+                     "fd7a:115c:a1e0::1234"):
+            with self.subTest(host):
+                with patch.object(commands, "HubState",
+                                  return_value=self._fake_state()), \
+                     patch.object(commands, "serve", lambda *a: 0):
+                    rc, _, err = _run(["serve", f"--host={host}"])
+                self.assertEqual(rc, 0, err)
+
+    def test_serve_tailnet_name_passes_after_resolving(self):
+        infos = [(socket.AF_INET, socket.SOCK_STREAM, 6, "",
+                  ("100.64.1.2", 8477))]
+        with patch.object(commands, "HubState",
+                          return_value=self._fake_state()), \
+             patch.object(commands, "serve", lambda *a: 0), \
+             patch("socket.getaddrinfo", return_value=infos) as lookup:
+            rc, _, err = _run(["serve", "--host=box.tail0000.ts.net"])
+        self.assertEqual(rc, 0, err)
+        lookup.assert_called_once()
+
+    def test_serve_unsafe_bind_any_allows_wildcard(self):
+        seen = {}
+
+        def fake_serve(state, host, port, public_url=""):
+            seen["host"] = host
+            return 0
+
+        with patch.object(commands, "HubState",
+                          return_value=self._fake_state()), \
+             patch.object(commands, "serve", fake_serve):
+            rc, _, err = _run(
+                ["serve", "--host=0.0.0.0", "--unsafe-bind-any"])
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(seen["host"], "0.0.0.0")
+
+    def test_install_refuses_a_wildcard_bind(self):
+        with patch.object(commands.sys, "platform", "darwin"):
+            rc, _, err = _run(["serve", "--install", "--host=0.0.0.0"])
+        self.assertEqual(rc, 1)
+        self.assertIn("--unsafe-bind-any", err)
+
+    def test_install_passes_the_unsafe_flag_to_the_service(self):
+        seen = {}
+
+        def fake_install(program, log_path, path_env, **_kw):
+            seen["program"] = program
+            return Path("/h/Library/LaunchAgents/x.plist")
+
+        with patch.object(commands.sys, "platform", "darwin"), \
+             patch.object(commands.sys, "argv", ["/opt/swe/bin/swe"]), \
+             patch("quiver.remote.commands.os.access", return_value=True), \
+             patch.object(commands.launchd, "bundled_swe", return_value=None), \
+             patch.object(commands.launchd, "loaded_pid",
+                          return_value=(False, None)), \
+             patch.object(commands.launchd, "install", fake_install), \
+             patch.object(commands, "_probe", return_value={"ok": True}):
+            rc, _, err = _run(["serve", "--install", "--host=0.0.0.0",
+                               "--unsafe-bind-any"])
+        self.assertEqual(rc, 0, err)
+        self.assertIn("--unsafe-bind-any", seen["program"])
+
     def test_install_hands_the_hub_to_launchd(self):
         seen = {}
 
@@ -372,7 +463,7 @@ class TestServe(unittest.TestCase):
              patch.object(commands.launchd, "bundled_swe", return_value=Path("/A/swe")), \
              patch.object(commands.launchd, "loaded_pid", return_value=(True, 1)), \
              patch.object(commands.launchd, "install", side_effect=RuntimeError("denied")):
-            rc, _, err = _run(["serve", "--install", "--host=100.1.2.3"])
+            rc, _, err = _run(["serve", "--install", "--host=100.64.1.2"])
         self.assertEqual(rc, 1)
         self.assertIn("could not load the hub: denied", err)
 

@@ -107,9 +107,13 @@ included, to run the tests with.
 
 `project.yml` carries the pieces that matter: bundle id
 `com.quiver.remote`, the `quiver` URL scheme so pair QRs open the app,
-`NSAllowsArbitraryLoads` (the hub is plain HTTP on the tailnet), the
-camera prompt for the QR scanner, iOS 17+, and `DEVELOPMENT_TEAM`. The
-icon is the Mac app's dark icon (`app/Icons/AppIcon-dark.png`) at 1024.
+the scoped ATS exceptions for a plain-HTTP hub on the tailnet
+(`NSAllowsLocalNetworking` for IP literals and local names — which is
+what covers Tailscale CGNAT addresses — plus an `NSExceptionDomains`
+entry for `*.ts.net` MagicDNS names; arbitrary domains still get full
+ATS),
+the camera prompt for the QR scanner, iOS 17+, and `DEVELOPMENT_TEAM`.
+The icon is the Mac app's dark icon (`app/Icons/AppIcon-dark.png`) at 1024.
 
 On-device launch needs Developer Mode (Settings, Privacy and Security,
 Developer Mode).
