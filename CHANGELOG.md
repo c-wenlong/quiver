@@ -163,6 +163,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reports and the hub. docs/remote-control.md's status line reflects that
   R1–R5 shipped, and the README gains a remote-control section with the
   threat model.
+- **Satellite command queue bugs (#513).** The hub's per-satellite
+  backlog floor (`_sat_acked`) only moved when the command stream
+  reconnected, so a healthy satellite eventually hit 429s after
+  `MAX_SAT_PENDING` commands; `command.result` events now act as the
+  in-band ack — the hub maps `command_id` back to the queued seq and
+  advances the floor mid-stream. An agent restart could re-run a
+  command that had finished out of order (e.g. a `control` completed
+  while a long `message` send still ran): the done set above the
+  contiguous cursor floor now persists in `agent-cursor.json`, and the
+  replayed seq is skipped instead of re-dispatched. Inbox approvals no
+  longer linger forever when a satellite dies or a pane is killed
+  mid-prompt: pending entries expire after `APPROVAL_TTL_S` (24 h) on
+  inbox read. `queue_command` is now typed `dict | None`, matching its
+  backlog-full `None` return.
 
 ## [1.1.0] - 2026-10-26
 

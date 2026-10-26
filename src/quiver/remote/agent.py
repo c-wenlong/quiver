@@ -33,6 +33,10 @@ CATALOG_PUSH_S = 10.0
 # stays under it with room to spare.
 CATALOG_BODY_MAX = (4 << 20) - (64 << 10)
 OUTBOX_KEY = "_outbox"             # journal key for unsent uplink events
+# Cap on the out-of-order done seqs the command cursor file carries —
+# enough to cover any realistic number of commands finished while a
+# lower seq still runs.
+DONE_TRACKED_MAX = 1024
 
 
 def agent_file_for(home: Path | None) -> Path:
@@ -173,10 +177,12 @@ class RemoteAgent:
         # Two cursors: ``_last_cmd_seq`` dedups frames seen on the wire;
         # ``_done_cmd_seq`` is the persisted *completed* floor the
         # ``?last=`` replay starts from — a crash mid-dispatch replays
-        # the command instead of skipping it.
-        self._last_cmd_seq = self._load_cmd_cursor()
+        # the command instead of skipping it. ``_done_set`` is the
+        # persisted out-of-order completions above that floor, so a
+        # replayed command that already finished is skipped, not run
+        # twice.
+        self._last_cmd_seq, self._done_set = self._load_cmd_cursor()
         self._done_cmd_seq = self._last_cmd_seq
-        self._done_set: set[int] = set()
         # The stream thread, the work loop and fork threads all finish
         # commands; the cursor advance must not interleave.
         self._done_lock = threading.Lock()
@@ -208,30 +214,43 @@ class RemoteAgent:
     def _cmd_cursor_file(self) -> Path:
         return agent_file_for(self.home).parent / "agent-cursor.json"
 
-    def _load_cmd_cursor(self) -> int:
-        """Last *completed* command seq for this hub; 0 for a new one."""
+    def _load_cmd_cursor(self) -> tuple[int, set[int]]:
+        """(Last *completed* seq, out-of-order done seqs); zeroed for a
+        new or re-paired hub."""
         path = self._cmd_cursor_file()
         try:
             data = json.loads(path.read_text())
             if isinstance(data, dict) and data.get("hub") == self.hub:
-                return int(data.get("seq") or 0)
-            return 0  # paired to a different hub — replay its queue
+                done = {
+                    s for s in (data.get("done") or [])
+                    if isinstance(s, int) and not isinstance(s, bool)
+                }
+                return int(data.get("seq") or 0), done
+            return 0, set()  # paired to a different hub — replay its queue
         except (OSError, ValueError):
             pass
         # Pre-migration cursor was a bare int for whatever hub was
         # paired then; honor it once rather than replay the backlog.
         legacy = path.with_name("agent-cursor")
         try:
-            return int(legacy.read_text().strip())
+            return int(legacy.read_text().strip()), set()
         except (OSError, ValueError):
-            return 0
+            return 0, set()
 
     def _save_cmd_cursor(self) -> None:
         path = self._cmd_cursor_file()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(
-                {"hub": self.hub, "seq": self._done_cmd_seq}))
+            path.write_text(json.dumps({
+                "hub": self.hub,
+                "seq": self._done_cmd_seq,
+                # Done seqs above the contiguous floor — without them a
+                # restart replays and re-runs a command that already
+                # finished. Bounded to the most recent: a floor stuck
+                # under a long-running seq could otherwise grow the
+                # file without limit.
+                "done": sorted(self._done_set)[-DONE_TRACKED_MAX:],
+            }))
         except OSError:
             pass
 
@@ -419,6 +438,12 @@ class RemoteAgent:
             return
         seq = ev.get("seq")
         if isinstance(seq, int):
+            if seq in self._done_set:
+                # Finished before a restart, above the contiguous
+                # floor the replay started from: seen it, don't run
+                # it again. The wire cursor still moves.
+                self._last_cmd_seq = max(self._last_cmd_seq, seq)
+                return
             if seq <= self._last_cmd_seq:
                 return
             self._last_cmd_seq = seq

@@ -123,6 +123,11 @@ _PAIR_ATTEMPT_S = 600
 # long; past it the tmux pane has long since been adopted or abandoned.
 LAUNCH_TTL_S = 86400
 
+# An unanswered approval expires from the inbox after this long: a dead
+# satellite or a killed pane can never emit ``approval.resolved``, so
+# without an expiry the item outlives the prompt itself.
+APPROVAL_TTL_S = 86400
+
 
 class EventBus:
     """Fan-out to SSE subscriber queues, keyed by session or global."""
@@ -185,8 +190,15 @@ class HubState:
         self._cmd_lock = threading.Lock()
         # Last command-stream seq each satellite connected with — the
         # floor of what it has executed. queue_command refuses to grow a
-        # backlog it would silently trim.
+        # backlog it would silently trim. ``command.result`` events move
+        # it between reconnects through ``_sat_cmd_seqs``.
         self._sat_acked: dict[str, int] = {}
+        # machine_id -> {command_id: journal seq} for commands queued
+        # since this hub started — how a ``command.result`` finds the
+        # queue position it acks. Entries at or under the ack floor are
+        # pruned; a hub restart starts the map over (the agent's own
+        # floor survives in its cursor file).
+        self._sat_cmd_seqs: dict[str, dict[str, int]] = {}
         # Message sends run here — a headless turn or a queue-until-idle
         # wait must not hold the phone's POST open.
         self.sendq = sendq.SendQueue()
@@ -238,6 +250,10 @@ class HubState:
         # One-shot, minutes-lived bearer tokens the ntfy action buttons
         # send instead of a device credential (notify.ApprovalTokens).
         self.approval_tokens = notify.ApprovalTokens()
+        # When each pending approval was requested: entries expire on
+        # APPROVAL_TTL_S, since a dead satellite or killed pane can
+        # never emit the approval.resolved that would clear them.
+        self._approval_at: dict[str, float] = {}
         # launch_id -> {machine, harness, cwd, state, key, note,
         # created_at} for every POST /v1/sessions. ``state`` goes pending
         # -> started (a ``session.launched`` event names the key) or
@@ -350,6 +366,7 @@ class HubState:
             rid = str((event.get("data") or {}).get("request_id") or "")
             if rid:
                 self.pending_approvals[key] = rid
+                self._approval_at[key] = time.time()
         elif etype == "approval.resolved":
             self.pending_approvals.pop(key, None)
             # Retire only the resolved request's token — a different
@@ -357,8 +374,15 @@ class HubState:
             # holds approvals independently) keeps its buttons live.
             rid = str((event.get("data") or {}).get("request_id") or "")
             self.approval_tokens.drop(key, rid)
+            self._approval_at.pop(key, None)
         elif etype in {"session.launched", "command.result"}:
             data = event.get("data") or {}
+            if etype == "command.result":
+                # A result is the satellite's in-band ack: between
+                # reconnects this is what moves the backlog floor.
+                self._sat_result_acked(
+                    str(event.get("machine") or ""),
+                    str(data.get("command_id") or ""))
             lid = str(data.get("launch_id") or "")
             if lid and etype == "session.launched":
                 self.settle_launch(
@@ -382,6 +406,22 @@ class HubState:
             mirrored = self.journal.append(GLOBAL_KEY, written)
             self.bus.publish(GLOBAL_KEY, mirrored)
         return written
+
+    def expire_pending_approvals(self) -> None:
+        """Sweep ``pending_approvals`` entries past ``APPROVAL_TTL_S``.
+
+        ``approval.resolved`` clears a live one; a dead satellite or a
+        pane killed mid-prompt never sends it, so without this the
+        inbox shows the prompt forever. Runs lazily where the inbox is
+        read — it is the only consumer.
+        """
+        if not self._approval_at:
+            return
+        cutoff = time.time() - APPROVAL_TTL_S
+        for key, at in list(self._approval_at.items()):
+            if at <= cutoff:
+                self._approval_at.pop(key, None)
+                self.pending_approvals.pop(key, None)
 
     def start(self) -> None:
         self._register_machine()
@@ -479,9 +519,39 @@ class HubState:
             ),
         )
 
+    def _prune_sat_cmd_seqs(self, mid: str) -> None:
+        """Drop result-map entries at or under the ack floor — a result
+        naming one could never move the floor again."""
+        seqs = self._sat_cmd_seqs.get(mid)
+        if not seqs:
+            return
+        floor = self._sat_acked.get(mid, 0)
+        for cid in [c for c, s in seqs.items() if s <= floor]:
+            del seqs[cid]
+
+    def _sat_result_acked(self, mid: str, command_id: str) -> None:
+        """Move a satellite's backlog floor on a ``command.result``.
+
+        The stream's ``?last=`` sets the floor at connect time; this is
+        the in-band ack that keeps it honest while the stream stays
+        open, so ``queue_command`` measures commands the satellite has
+        actually picked up rather than its distance from a stale floor.
+        An id the map doesn't know — a hub-local result, or a command
+        queued before a hub restart — changes nothing.
+        """
+        seqs = self._sat_cmd_seqs.get(mid)
+        if not seqs or not command_id:
+            return
+        seq = seqs.pop(command_id, None)
+        if seq is None:
+            return
+        if seq > self._sat_acked.get(mid, 0):
+            self._sat_acked[mid] = seq
+        self._prune_sat_cmd_seqs(mid)
+
     def queue_command(
         self, mid: str, op: str, session_key: str, data: dict
-    ) -> dict:
+    ) -> dict | None:
         """Append a command to the satellite's journal; returns the envelope.
 
         The satellite replays ``_sat_<mid>`` on reconnect, so this IS the
@@ -511,6 +581,9 @@ class HubState:
         local_key, _mid = protocol.split_remote_key(session_key)
         cmd = protocol.command(op, local_key, mid, command_id, data)
         written = self.journal.append(self.sat_journal_key(mid), cmd)
+        seq = written.get("seq")
+        if isinstance(seq, int):
+            self._sat_cmd_seqs.setdefault(mid, {})[command_id] = seq
         self.bus.publish(self.sat_journal_key(mid), written)
         if session_key:
             self.emit(
@@ -1153,8 +1226,13 @@ class _Handler(BaseHTTPRequestHandler):
         """Command SSE for one satellite; presence = this stream's lifetime."""
         state = self._state
         # The seq the satellite acknowledges: new queues past
-        # MAX_SAT_PENDING over this floor are refused.
+        # MAX_SAT_PENDING over this floor are refused. A restarted
+        # agent reports its contiguous done floor, which can sit below
+        # the seqs already acked here — follow it down; the replay
+        # dedups what it finished. Map entries at or under it are for
+        # commands that will never report a result again.
         state._sat_acked[mid] = after_seq
+        state._prune_sat_cmd_seqs(mid)
         state.sat_connected(mid)
         try:
             self._sse_stream(
@@ -1391,6 +1469,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/v1/inbox":
             done =str((args.get("done") or [""])[0])
+            self._state.expire_pending_approvals()
             self._send_json(200, {
                 "items": self._state.catalog.inbox(
                     pending=self._state.pending_approvals,
