@@ -363,7 +363,9 @@ private struct ServiceCard: View {
             if let logo = status.service.logoID { HarnessIcon(harness: logo, size: 16) }
             Text(status.service.name).font(Self.nameFont).foregroundStyle(Theme.textPrimary)
             Spacer(minLength: 8)
-            Button("Open status page", systemImage: "arrow.up.right.square") { openURL(status.service.pageURL) }
+            Button("Open status page", systemImage: "arrow.up.right.square") {
+                if status.service.pageURL.isWebURL { openURL(status.service.pageURL) }
+            }
                 .labelStyle(.iconOnly)
                 .plainButton(cornerRadius: Theme.smallRadius)
                 .foregroundStyle(Theme.textSecondary)
@@ -411,7 +413,7 @@ private struct ServiceDetailsSheet: View {
             .frame(maxHeight: 420)
             HStack {
                 Button("Open status page", systemImage: "arrow.up.right.square") {
-                    openURL(status.service.pageURL)
+                    if status.service.pageURL.isWebURL { openURL(status.service.pageURL) }
                 }
                 .secondaryButton()
                 Spacer()
@@ -524,7 +526,7 @@ private struct IncidentView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(incident.name).font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
-                if let url = incident.url {
+                if let url = incident.url, url.isWebURL {
                     Button("Open incident", systemImage: "arrow.up.right") { openURL(url) }
                         .labelStyle(.iconOnly)
                         .plainButton(cornerRadius: Theme.smallRadius)
