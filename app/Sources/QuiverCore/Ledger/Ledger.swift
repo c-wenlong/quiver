@@ -1298,7 +1298,9 @@ public actor Ledger {
         let saved = try store.cursor(for: path)
         let indexStat = SearchFileStat(
             ino: Int64(info.inode), mtimeMs: info.modified * 1000, sizeBytes: Int64(info.size))
-        let indexNeed = indexer?.readNeed(path: path, stat: indexStat, ledgerOffset: saved?.offset) ?? .skip
+        let indexNeed = indexer?.readNeed(
+            path: path, stat: indexStat, ledgerOffset: saved?.offset,
+            harness: P.searchHarness) ?? .skip
 
         var start: UInt64 = 0
         var state: Data?

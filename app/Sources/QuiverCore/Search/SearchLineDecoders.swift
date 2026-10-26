@@ -7,8 +7,10 @@ import Foundation
 /// `session_meta` says `history_mode`, devin's `chat_message` rows join a
 /// tool result to its call by id across lines, and every decoder stops
 /// emitting the first-user-prompt title candidate once an explicit title
-/// record lands. A resumable scan keeps the state with the file's cursor via
-/// `savedState()`, so an appended file picks up where the last scan stopped.
+/// record lands. The index persists no decoder state, so an appended read
+/// instead primes a fresh decoder from the file's head —
+/// `primeForAppend()`/`prime(object:)`, which is all the appendable
+/// harnesses need — and `savedState()` still round-trips the rest.
 ///
 /// Lines that cannot carry messages are rejected on a cheap `Data.range(of:)`
 /// marker before JSON parsing (the `ClaudeLogParser` trick), a malformed line
@@ -79,6 +81,24 @@ public struct SearchDecoder {
             codebuddy: codebuddy.state,
             kimi: kimi.state,
             muse: muse.state))
+    }
+
+    /// The appended-span setup Python spells `prompt_title_sent = True`:
+    /// the span's first user prompt must not re-title the session — only
+    /// an explicit title record in the appended lines may.
+    public mutating func primeForAppend() {
+        promptTitleSent = true
+    }
+
+    /// Feed a line from before an append's offset for its decoder state
+    /// only — Python's `Decoder.prime`. Codex's first `session_meta`
+    /// decides which record type carries the conversation, and a fresh
+    /// decoder on the tail never saw it; other records and harnesses
+    /// carry nothing an append needs.
+    public mutating func prime(object: [String: Any]) {
+        if harness == .codex, object["type"] as? String == "session_meta" {
+            _ = codex.decode(object: object)
+        }
     }
 
     /// Whether the line's bytes pass the harness's marker gate — the check
@@ -269,6 +289,10 @@ struct SearchCodexDecoder {
     static let markers = [
         #""response_item""#, #""event_msg""#, #""session_meta""#, #""turn_context""#,
     ].map { Data($0.utf8) }
+
+    /// The record an append's head re-scan looks for — the one line a
+    /// fresh decoder needs from before the offset (`Decoder.prime`).
+    static let sessionMetaMarker = Data(#""session_meta""#.utf8)
 
     mutating func decode(line: Data) -> (messages: [SearchMessage], hints: SearchHints) {
         guard Self.markers.contains(where: { line.range(of: $0) != nil }),
