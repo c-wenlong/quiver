@@ -257,12 +257,12 @@ final class PrimitiveHome {
         """
         var fields = PluginManifestFields(parsing: text)
         fields.version = "2.0.0"
-        fields.authorName = "Kai"
+        fields.authorName = "Dev"
         fields.authorEmail = "k@x.dev"
         let edited = try fields.apply(to: text)
         let parsed = PluginManifestFields(parsing: edited)
         #expect(parsed.version == "2.0.0")
-        #expect(parsed.authorName == "Kai")
+        #expect(parsed.authorName == "Dev")
         #expect(parsed.authorEmail == "k@x.dev")
         // `extra` untouched and still ahead of `author` in the file.
         #expect(edited.contains("\"extra\": [1, 2]"))

@@ -118,7 +118,7 @@ if __name__ == "__main__":
 
 _PEER = {
     "node_name": "test-iphone.tail0000.ts.net",
-    "node_short": "iphone-13",
+    "node_short": "test-iphone",
     "node_id": "nABC",
     "login": "dev@github",
     "ip": "100.66.1.2",
@@ -149,7 +149,7 @@ class TestPairRequests(unittest.TestCase):
             x for x in pairing._load_requests(self.tmp)
             if x["request_id"] == r["request_id"]
         ][0]
-        self.assertEqual(row["name"], "iphone-13")
+        self.assertEqual(row["name"], "test-iphone")
 
     def test_poll_bad_secret_and_unknown_id(self):
         r = self._request()
@@ -462,14 +462,14 @@ class TestDeviceMetadata(unittest.TestCase):
         cred = pairing.exchange(
             self.tmp, token, "phone",
             meta={"kind": "iphone", "client": "Quiver Web",
-                  "os": "iOS 18.5", "node_name": "iphone-13.ts.net",
+                  "os": "iOS 18.5", "node_name": "test-iphone.ts.net",
                   "display_name": "nope", "credential_hash": "nope"},
         )
         row = pairing.load_devices(self.tmp)[cred["device_id"]]
         self.assertEqual(row["paired_via"], "token")
         self.assertEqual(row["kind"], "iphone")
         self.assertEqual(row["os"], "iOS 18.5")
-        self.assertEqual(row["node_name"], "iphone-13.ts.net")
+        self.assertEqual(row["node_name"], "test-iphone.ts.net")
         # Only metadata keys pass through — display_name is rename-only
         # and credential_hash is the mint's own.
         self.assertNotIn("display_name", row)

@@ -1920,10 +1920,10 @@ class TestWaitingRegistry(unittest.TestCase):
 
 _PHONE = {
     "node_name": "test-iphone.tail0000.ts.net",
-    "node_short": "iphone-13",
+    "node_short": "test-iphone",
     "node_id": "nPHONE",
     "login": "dev@github",
-    "display_name": "Kai",
+    "display_name": "Dev",
     "tagged": False,
 }
 _MAC = {
@@ -1931,7 +1931,7 @@ _MAC = {
     "node_short": "macbook",
     "node_id": "nMAC",
     "login": "dev@github",
-    "display_name": "Kai",
+    "display_name": "Dev",
     "tagged": False,
 }
 

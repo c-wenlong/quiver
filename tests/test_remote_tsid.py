@@ -17,7 +17,7 @@ _WHOIS = """{
   "Node": {"Name": "test-iphone.tail0000.ts.net.",
            "StableID": "npKjnYUTsZ11CNTRL", "Tags": null,
            "Hostinfo": {"Hostname": "test-iphone"}},
-  "UserProfile": {"LoginName": "c-wenlong@github", "DisplayName": "Kai"}
+  "UserProfile": {"LoginName": "c-wenlong@github", "DisplayName": "Dev"}
 }"""
 
 
@@ -33,7 +33,7 @@ class TestWhois(unittest.TestCase):
         self.assertEqual(out["node_short"], "test-iphone")
         self.assertEqual(out["node_id"], "npKjnYUTsZ11CNTRL")
         self.assertEqual(out["login"], "c-wenlong@github")
-        self.assertEqual(out["display_name"], "Kai")
+        self.assertEqual(out["display_name"], "Dev")
         self.assertFalse(out["tagged"])
         self.assertEqual(
             list(run.call_args[0][0]),

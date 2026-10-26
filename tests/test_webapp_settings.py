@@ -442,7 +442,7 @@ class TestGet(_Settings):
         pairing.update_device(
             self.home, phone["device_id"],
             display_name="Dev's iPhone", kind="iphone", os="iOS 18.5",
-            node_name="iphone-13.ts.net")
+            node_name="test-iphone.ts.net")
         laptop = self.device("laptop")
         status, data = self.srv.request(
             "GET", "/v1/app/settings",
@@ -456,7 +456,7 @@ class TestGet(_Settings):
         self.assertEqual(row["display_name"], "Dev's iPhone")
         self.assertEqual(row["kind"], "iphone")
         self.assertEqual(row["os"], "iOS 18.5")
-        self.assertEqual(row["node_name"], "iphone-13.ts.net")
+        self.assertEqual(row["node_name"], "test-iphone.ts.net")
         self.assertNotIn("credential_hash", row)
 
     def test_remote_setup_is_its_own_part_and_reads_this_machine(self):

@@ -453,7 +453,7 @@ class TestDevicesList(unittest.TestCase):
             "name": "phone", "display_name": "Dev's",
             "kind": "iphone", "model": "iPhone16,2",
             "client": "Quiver Remote 1.0", "os": "iOS 18.5",
-            "node_name": "iphone-13.ts.net", "paired_via": "tailscale",
+            "node_name": "test-iphone.ts.net", "paired_via": "tailscale",
             "credential_hash": "secret-hash",
             "created_at": 1, "last_seen_at": 1_700_000_000,
         }}
@@ -465,7 +465,7 @@ class TestDevicesList(unittest.TestCase):
         self.assertEqual(row["display_name"], "Dev's")
         self.assertEqual(row["kind"], "iphone")
         self.assertEqual(row["client"], "Quiver Remote 1.0")
-        self.assertEqual(row["node_name"], "iphone-13.ts.net")
+        self.assertEqual(row["node_name"], "test-iphone.ts.net")
         self.assertNotIn("credential_hash", row)
         self.assertNotIn("credential", row)
 
@@ -473,7 +473,7 @@ class TestDevicesList(unittest.TestCase):
         devices = {"d1": {
             "name": "phone", "display_name": "Dev's",
             "kind": "iphone", "os": "iOS 18.5",
-            "node_name": "iphone-13.ts.net", "created_at": 1,
+            "node_name": "test-iphone.ts.net", "created_at": 1,
         }}
         with patch.object(commands.pairing, "load_devices",
                           lambda *a: devices):
@@ -482,7 +482,7 @@ class TestDevicesList(unittest.TestCase):
         self.assertIn("Dev's", out)
         self.assertIn("iphone", out)
         self.assertIn("iOS 18.5", out)
-        self.assertIn("iphone-13.ts.net", out)
+        self.assertIn("test-iphone.ts.net", out)
 
 
 class TestAttachFail(unittest.TestCase):
@@ -636,7 +636,7 @@ if __name__ == "__main__":
 
 _PEER = {
     "node_name": "test-iphone.tail0000.ts.net",
-    "node_short": "iphone-13",
+    "node_short": "test-iphone",
     "node_id": "nABC",
     "login": "dev@github",
     "ip": "100.66.1.2",
