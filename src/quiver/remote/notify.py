@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import queue
 import secrets
+import sys
 import threading
 import time
 import urllib.parse
@@ -38,7 +39,7 @@ import urllib.request
 from pathlib import Path
 
 from quiver.paths import atomic_write_text, remote_dir_for
-from quiver.remote import pairing
+from quiver.remote import pairing, sshkeys
 from quiver.reports import transcripts as _tr
 
 CONFIG_FILE = "notify.json"
@@ -106,28 +107,51 @@ def ready(cfg: dict) -> bool:
     )
 
 
-def _retire_action_credential(home: Path | None, cfg: dict) -> None:
+def _warn(msg: str) -> None:
+    """A non-fatal problem the hub operator should see: stderr lands
+    in the launchd/systemd unit log."""
+    print(f"swe remote notify: {msg}", file=sys.stderr)
+
+
+def retire_action_credential(home: Path | None, cfg: dict) -> None:
     """Revoke the legacy ``ntfy-actions`` device row, best-effort.
 
     Scoped approval tokens replaced it; every copy already sent to a
     topic transited the ntfy host, so the credential is treated as
     leaked — revoked like a lost phone, then scrubbed from notify.json.
-    A failure only means the row or file stays as it was.
+    The config fields stay until the revocation is on disk: scrubbing
+    them on a failed revoke would leave the exposed credential active
+    with nothing left to name it for the next attempt.
     """
     device_id = str(cfg.get("action_device_id") or "")
     if not device_id and "action_credential" not in cfg:
         return
-    try:
-        if device_id:
+    if device_id:
+        try:
             pairing.revoke_device(home, device_id)
-    except Exception:
-        pass
+        except sshkeys.KeysNotSynced as exc:
+            # revoke_device saves the revocation before the
+            # authorized_keys rewrite, so the credential is dead
+            # either way — warn about the leftover key line and scrub.
+            _warn(
+                f"revoked legacy action device {device_id}, but its "
+                f"SSH key line remains in authorized_keys: {exc}"
+            )
+        except Exception as exc:
+            # Nothing was revoked — keep the fields so the next start
+            # retries instead of stranding a live credential.
+            _warn(
+                f"could not revoke legacy action device {device_id} "
+                f"({exc}); will retry on next start"
+            )
+            return
     cfg.pop("action_device_id", None)
     cfg.pop("action_credential", None)
     try:
         save_config(home, cfg)
-    except OSError:
-        pass
+    except OSError as exc:
+        _warn(f"could not scrub the legacy action fields from "
+              f"notify.json: {exc}")
 
 
 class ApprovalTokens:
@@ -136,8 +160,9 @@ class ApprovalTokens:
     A notification's Allow/Deny/Always buttons share one token bound to
     ``(session key, request_id)``: the approval route — and no other
     route — accepts it in place of a device credential, once, inside
-    ``TTL_S``. Minting for a session drops the previous token, so only
-    the newest notification's buttons can answer.
+    ``TTL_S``. Tokens coexist per session because approvals overlap —
+    a Codex app-server holds them independently — so minting or
+    resolving one request never touches another's buttons.
 
     In-memory like the pending approvals it answers: a hub restart loses
     the tokens with the prompts, and the re-emitted ``approval.requested``
@@ -158,7 +183,11 @@ class ApprovalTokens:
         token = secrets.token_urlsafe(24)
         with self._lock:
             self._prune(now)
-            self._drop_key(key)
+            # A re-mint of the same request replaces its token — the
+            # newest notification's buttons answer. A *different*
+            # pending request keeps its token: overlapping approvals
+            # must not kill each other's buttons.
+            self._drop(key, request_id)
             if len(self._tokens) >= self._MAX:
                 oldest = min(
                     self._tokens,
@@ -191,11 +220,24 @@ class ApprovalTokens:
             and entry["request_id"] == request_id
         )
 
+    def drop(self, key: str, request_id: str) -> None:
+        """Retire the tokens answering ``request_id`` on ``key`` — that
+        approval resolved, so its buttons are dead either way. Other
+        pending requests on the session keep working."""
+        with self._lock:
+            self._drop(key, request_id)
+
     def drop_session(self, key: str) -> None:
-        """Retire every token minted for ``key`` — the approval they
-        answered is resolved, so the buttons are dead either way."""
+        """Retire every token minted for ``key`` — e.g. the session
+        detached, so none of its approval buttons can act."""
         with self._lock:
             self._drop_key(key)
+
+    def _drop(self, key: str, request_id: str) -> None:
+        self._tokens = {
+            t: e for t, e in self._tokens.items()
+            if not (e["key"] == key and e["request_id"] == request_id)
+        }
 
     def _drop_key(self, key: str) -> None:
         self._tokens = {
@@ -244,7 +286,9 @@ class Notifier:
             # leave nothing on the bus that would fill and drop.
             self._unsubscribe()
             return
-        _retire_action_credential(self._state.home, cfg)
+        # start() already tried this; a failed revoke kept the fields
+        # so the retry here can still finish it.
+        retire_action_credential(self._state.home, cfg)
         self.subscribe()
         q = self._q
         try:

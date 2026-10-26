@@ -352,9 +352,11 @@ class HubState:
                 self.pending_approvals[key] = rid
         elif etype == "approval.resolved":
             self.pending_approvals.pop(key, None)
-            # A resolved request retires the notification's scoped
-            # token with it — the buttons must not answer twice.
-            self.approval_tokens.drop_session(key)
+            # Retire only the resolved request's token — a different
+            # still-pending request on the session (a Codex app-server
+            # holds approvals independently) keeps its buttons live.
+            rid = str((event.get("data") or {}).get("request_id") or "")
+            self.approval_tokens.drop(key, rid)
         elif etype in {"session.launched", "command.result"}:
             data = event.get("data") or {}
             lid = str(data.get("launch_id") or "")
@@ -386,12 +388,18 @@ class HubState:
         # A keep or adopt cut short by a crash leaves a key in both
         # the supervised and kept registries; settle it before serving.
         supervise.reconcile_kept(self.home)
+        notify_cfg = notify.load_config(self.home)
+        # Copies of the legacy ntfy action credential already sent to a
+        # topic still authenticate as a paired device, so retire it at
+        # boot whether or not notifications still post — a disabled or
+        # incomplete config must not strand the row live.
+        notify.retire_action_credential(self.home, notify_cfg)
         targets: list = [
             (self._catalog_loop, "remote-catalog"),
             (self._tail_loop, "remote-tail"),
             (self._search_index_loop, "remote-search-index"),
         ]
-        if notify.ready(notify.load_config(self.home)):
+        if notify.ready(notify_cfg):
             notifier = notify.Notifier(
                 self, self.base_url, subscribe_key=GLOBAL_KEY
             )

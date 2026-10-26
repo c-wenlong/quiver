@@ -984,6 +984,25 @@ class TestScopedApprovalToken(unittest.TestCase):
             {"request_id": "r1", "decision": "allow"}, tok)
         self.assertEqual(status, 401)
 
+    def test_resolved_approval_keeps_other_requests_tokens(self):
+        # Overlapping approvals on one session: resolving r1 retires
+        # r1's token only — r2's buttons must keep working.
+        dead = self.tokens.mint("claude:s1", "r1")
+        live = self.tokens.mint("claude:s1", "r2")
+        self.srv.state.emit(
+            "claude:s1",
+            protocol.event(
+                "approval.resolved", "claude:s1", "m1",
+                {"request_id": "r1", "decision": "allow"},
+            ),
+        )
+        status, _ = self._post_approval(
+            {"request_id": "r1", "decision": "allow"}, dead)
+        self.assertEqual(status, 401)
+        status, data = self._post_approval(
+            {"request_id": "r2", "decision": "allow"}, live)
+        self.assertNotEqual(status, 401, data)
+
 
 class TestInboxCutoff(unittest.TestCase):
     """catalog.inbox(): the age cutoff, dismissals and finished-today."""
@@ -3038,6 +3057,43 @@ class TestStartNotify(unittest.TestCase):
                 self.assertEqual(state.bus._subs, [])
             finally:
                 state.stop()
+
+    def test_start_retires_legacy_credential_when_disabled(self):
+        # Notifications off must not strand the legacy ntfy-actions
+        # device row: copies already sent to a topic still authenticate
+        # as a paired device until the row is revoked.
+        from quiver.remote import notify, pairing
+
+        home = Path(tempfile.mkdtemp())
+        device_id = "deadbeef02"
+        with pairing._state_lock(home):
+            devices = pairing.load_devices(home)
+            devices[device_id] = {
+                "name": "ntfy-actions",
+                "credential_hash": pairing._hash_credential("legacy"),
+                "created_at": time.time(),
+                "last_seen_at": None,
+                "revoked_at": None,
+            }
+            pairing._save_devices(home, devices)
+        notify.save_config(home, {
+            "enabled": False,
+            "action_device_id": device_id,
+            "action_credential": "legacy",
+        })
+        state = HubState(home)
+        state.catalog._fetch = lambda: []
+        state.start()
+        try:
+            row = pairing.load_devices(home)[device_id]
+            self.assertTrue(row["revoked_at"])
+            self.assertIsNone(
+                pairing.device_for_credential(home, "legacy"))
+            saved = notify.load_config(home)
+            self.assertNotIn("action_device_id", saved)
+            self.assertNotIn("action_credential", saved)
+        finally:
+            state.stop()
 
 
 if __name__ == "__main__":

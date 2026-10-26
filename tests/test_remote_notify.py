@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from quiver.remote import notify, pairing, protocol
+from quiver.remote import notify, pairing, protocol, sshkeys
 from quiver.remote.hub import GLOBAL_KEY, HubState
 
 
@@ -95,14 +95,29 @@ class TestApprovalTokens(unittest.TestCase):
         later = now + self.tokens.TTL_S + 1
         self.assertFalse(self.tokens.consume(tok, "k1", "r1", now=later))
 
-    def test_remint_supersedes_session_token(self):
+    def test_remint_same_request_supersedes(self):
         old = self.tokens.mint("k1", "r1")
-        new = self.tokens.mint("k1", "r2")
+        new = self.tokens.mint("k1", "r1")
         self.assertFalse(self.tokens.consume(old, "k1", "r1"))
-        self.assertTrue(self.tokens.consume(new, "k1", "r2"))
-        # Other sessions' tokens are untouched.
+        self.assertTrue(self.tokens.consume(new, "k1", "r1"))
+
+    def test_other_requests_tokens_coexist(self):
+        # Codex app-server approvals overlap on one session: minting B
+        # must not kill A's buttons.
+        a = self.tokens.mint("k1", "r1")
+        b = self.tokens.mint("k1", "r2")
+        self.assertTrue(self.tokens.consume(a, "k1", "r1"))
+        self.assertTrue(self.tokens.consume(b, "k1", "r2"))
+        # Other sessions' tokens are untouched either way.
         other = self.tokens.mint("k2", "r9")
         self.assertTrue(self.tokens.consume(other, "k2", "r9"))
+
+    def test_drop_retires_only_the_resolved_request(self):
+        a = self.tokens.mint("k1", "r1")
+        b = self.tokens.mint("k1", "r2")
+        self.tokens.drop("k1", "r1")
+        self.assertFalse(self.tokens.consume(a, "k1", "r1"))
+        self.assertTrue(self.tokens.consume(b, "k1", "r2"))
 
     def test_drop_session_retires_tokens(self):
         tok = self.tokens.mint("k1", "r1")
@@ -140,7 +155,7 @@ class TestRetireActionCredential(unittest.TestCase):
 
     def test_revokes_row_and_scrubs_config(self):
         cfg, device_id = self._legacy_cfg()
-        notify._retire_action_credential(self.home, cfg)
+        notify.retire_action_credential(self.home, cfg)
         row = pairing.load_devices(self.home)[device_id]
         self.assertTrue(row["revoked_at"])
         # The credential no longer resolves as a device.
@@ -152,14 +167,50 @@ class TestRetireActionCredential(unittest.TestCase):
 
     def test_noop_without_legacy_keys(self):
         cfg = _cfg(self.home)
-        notify._retire_action_credential(self.home, cfg)
+        notify.retire_action_credential(self.home, cfg)
         self.assertEqual(pairing.load_devices(self.home), {})
 
     def test_unknown_device_still_scrubs(self):
         cfg = _cfg(self.home, action_device_id="ghost",
                    action_credential="c")
-        notify._retire_action_credential(self.home, cfg)
+        notify.retire_action_credential(self.home, cfg)
         saved = notify.load_config(self.home)
+        self.assertNotIn("action_credential", saved)
+
+    def test_failed_revoke_keeps_fields_for_retry(self):
+        # Revoking before the save fails must not scrub the config —
+        # the fields are the only handle the next start has, and the
+        # exposed credential would stay live forever without them.
+        cfg, device_id = self._legacy_cfg()
+        with patch.object(
+            pairing, "revoke_device", side_effect=OSError("disk full")
+        ):
+            with patch("sys.stderr", io.StringIO()) as err:
+                notify.retire_action_credential(self.home, cfg)
+        self.assertIn("could not revoke", err.getvalue())
+        self.assertFalse(
+            pairing.load_devices(self.home)[device_id]["revoked_at"])
+        saved = notify.load_config(self.home)
+        self.assertEqual(saved["action_device_id"], device_id)
+        self.assertEqual(saved["action_credential"], "legacy-cred")
+        # The credential still resolves — retirement must retry.
+        self.assertIsNotNone(
+            pairing.device_for_credential(self.home, "legacy-cred"))
+
+    def test_keys_not_synced_still_scrubs(self):
+        # KeysNotSynced is raised *after* the revocation is saved, so
+        # the credential is dead and the fields can go; the leftover
+        # authorized_keys line is warned about, not retried here.
+        cfg, device_id = self._legacy_cfg()
+        with patch.object(
+            pairing, "revoke_device",
+            side_effect=sshkeys.KeysNotSynced("boom"),
+        ):
+            with patch("sys.stderr", io.StringIO()) as err:
+                notify.retire_action_credential(self.home, cfg)
+        self.assertIn("SSH key", err.getvalue())
+        saved = notify.load_config(self.home)
+        self.assertNotIn("action_device_id", saved)
         self.assertNotIn("action_credential", saved)
 
 

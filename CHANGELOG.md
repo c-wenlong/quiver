@@ -72,12 +72,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ntfy.sh's relay for iOS delivery) could read it. Each notification
   now mints a token bound to (session, request_id): single-use, ten
   minutes, accepted only by the approval route, and retired the moment
-  the request resolves. The prompt text also runs the transcript
+  that request resolves — overlapping requests on the session keep
+  their buttons. The prompt text also runs the transcript
   secret-redactor plus a length cap, so a `Bearer sk-...` inside a
-  permission menu can't reach the topic either. On first start the
-  notifier revokes the legacy `ntfy-actions` device row and scrubs it
-  from `notify.json`; paired devices keep working on the approval
-  route unchanged.
+  permission menu can't reach the topic either. Every hub start
+  revokes the legacy `ntfy-actions` device row and scrubs it from
+  `notify.json` — notifications disabled or half-configured can't
+  strand it live — and a failed revoke keeps the fields to retry
+  rather than losing the only handle on a leaked credential. Paired
+  devices keep working on the approval route unchanged.
 
 ## [1.1.1] - 2026-10-26
 
