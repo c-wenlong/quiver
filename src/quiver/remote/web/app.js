@@ -392,7 +392,7 @@ function probeLogo(harness) {
 function logoReady(id, logo) {
   logoCache[id] = logo;
   if (state.view === "sessions") renderSessions();
-  else if (state.view === "inbox") loadInbox();
+  else if (state.view === "inbox") renderInbox();
   updateWorking();
 }
 
@@ -1907,11 +1907,19 @@ async function loadInbox() {
   const { status, data } = await api("/v1/inbox");
   if (status !== 200 || !data) return;
   const items = data.items || [];
+  state.inboxItems = items;
   state.inboxCount = items.length;
   for (const it of items) probeLogo(it.harness);
   const badge = el("inbox-badge");
   badge.classList.toggle("hidden", !items.length);
   badge.textContent = items.length || "";
+  renderInbox();
+}
+
+/* Repaints the inbox rows from the cached list — logo probes landing
+ * call this instead of loadInbox so an image arrival never refetches. */
+function renderInbox() {
+  const items = state.inboxItems || [];
   if (state.view !== "inbox") return;
   el("inbox-list").innerHTML = items.length
     ? items.map((it) => `
