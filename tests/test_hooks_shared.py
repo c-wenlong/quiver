@@ -586,6 +586,53 @@ class ForeignRowsTest(unittest.TestCase):
             got = self._cursor_rows(home, f"python3 {root}/bundle/gate.py")
             self.assertEqual(got, ["bundle"])
 
+    def test_a_dir_hook_run_through_sh_dash_c_still_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            root = home / ".cursor/hooks"
+            (root / "bundle").mkdir(parents=True)
+            (root / "bundle/gate.py").write_text("x")
+            got = self._cursor_rows(
+                home, f"sh -c 'python3 {root}/bundle/gate.py'")
+            self.assertEqual(got, ["bundle"])
+
+    def test_a_state_file_passed_as_an_argument_does_not_row_its_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            hook = self._orca(home)
+            state = home / ".cursor/hooks/state"
+            state.mkdir(parents=True)
+            (state / "x.json").write_text("{}")
+            got = self._cursor_rows(home, f"{hook} {state}/x.json")
+            self.assertEqual(got, ["cursor-hook.sh"])
+
+    def test_a_quoted_path_with_spaces_inside_sh_dash_c(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            gate = home / "My Hooks/gate.py"
+            gate.parent.mkdir(parents=True)
+            gate.write_text("x")
+            got = self._cursor_rows(home, f"sh -c \"python3 '{gate}'\"")
+            self.assertEqual(got, ["gate.py"])
+
+    def test_a_test_behind_an_assignment_or_wrapper_runs_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            hook = self._orca(home)
+            conf = home / "conf.json"
+            conf.write_text("{}")
+            for prefix in ("MODE=check test", "env -i MODE=x test"):
+                got = self._cursor_rows(
+                    home, f"{prefix} -f {conf} && {hook}")
+                self.assertEqual(got, ["cursor-hook.sh"], prefix)
+
+    def test_a_test_line_does_not_swallow_the_hook_on_the_next_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            hook = self._orca(home)
+            got = self._cursor_rows(home, f"test -f {hook}\n{hook}")
+            self.assertEqual(got, ["cursor-hook.sh"])
+
 
 class CrudCommandsTest(unittest.TestCase):
     def test_disable_then_enable_round_trips_the_link(self):
