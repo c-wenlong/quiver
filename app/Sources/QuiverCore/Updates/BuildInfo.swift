@@ -95,7 +95,7 @@ public struct UpdatePreferences {
     public func checkout(build: BuildInfo,
                          fileManager: FileManager = .default) -> String? {
         let stored = checkoutOverride.trimmingCharacters(in: .whitespaces)
-        if !stored.isEmpty {
+        if !stored.isEmpty, PathSafety.rejection(of: stored) == nil {
             return (stored as NSString).expandingTildeInPath
         }
         if let stamped = build.sourcePath,

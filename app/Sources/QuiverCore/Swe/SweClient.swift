@@ -165,7 +165,12 @@ public enum SweLocation {
         guard let path = override?.trimmingCharacters(in: .whitespaces), !path.isEmpty else {
             return bundled ?? "swe"
         }
-        return path
+        let expanded = (path as NSString).expandingTildeInPath
+        guard FileManager.default.isExecutableFile(atPath: expanded),
+              PathSafety.rejection(of: expanded) == nil else {
+            return bundled ?? "swe"
+        }
+        return expanded
     }
 }
 
