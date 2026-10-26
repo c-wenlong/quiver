@@ -62,8 +62,8 @@ class TestPairing(unittest.TestCase):
         self.assertIn("#pair=tok", url)
 
     def test_pair_payload_carries_name(self):
-        payload = pairing.pair_payload("h", 1, "tok", "kai's phone")
-        self.assertIn("name=kai%27s%20phone", payload)
+        payload = pairing.pair_payload("h", 1, "tok", "dev's phone")
+        self.assertIn("name=dev%27s%20phone", payload)
         url = pairing.pair_url("h", 1, "tok", "iphone 13")
         self.assertIn("name=iphone%2013", url)
 
@@ -117,10 +117,10 @@ if __name__ == "__main__":
 
 
 _PEER = {
-    "node_name": "iphone-13.taild6a23f.ts.net",
+    "node_name": "test-iphone.tail0000.ts.net",
     "node_short": "iphone-13",
     "node_id": "nABC",
-    "login": "kai@github",
+    "login": "dev@github",
     "ip": "100.66.1.2",
     "tagged": False,
 }
@@ -138,7 +138,7 @@ class TestPairRequests(unittest.TestCase):
         self.assertEqual(len(r["code"]), 6)
         self.assertTrue(r["code"].isdigit())
         self.assertEqual(r["expires_in_s"], pairing.REQUEST_TTL_S)
-        self.assertEqual(r["node"]["name"], "iphone-13.taild6a23f.ts.net")
+        self.assertEqual(r["node"]["name"], "test-iphone.tail0000.ts.net")
         out = pairing.poll_request(self.tmp, r["request_id"], r["poll_secret"])
         self.assertEqual(out["status"], "pending")
         self.assertGreater(out["expires_in_s"], 0)
@@ -179,7 +179,7 @@ class TestPairRequests(unittest.TestCase):
         row = hit[1]
         self.assertEqual(row["paired_via"], "tailscale")
         self.assertEqual(row["tailscale_node"], "nABC")
-        self.assertEqual(row["tailscale_login"], "kai@github")
+        self.assertEqual(row["tailscale_login"], "dev@github")
 
     def test_approve_wrong_code_and_lockout(self):
         r = self._request()
@@ -534,10 +534,10 @@ class TestDeviceMetadata(unittest.TestCase):
         cred = pairing.exchange(self.tmp, token, "phone")
         did = cred["device_id"]
         self.assertTrue(
-            pairing.update_device(self.tmp, did, display_name="Kai's")
+            pairing.update_device(self.tmp, did, display_name="Dev's")
         )
         row = pairing.load_devices(self.tmp)[did]
-        self.assertEqual(row["display_name"], "Kai's")
+        self.assertEqual(row["display_name"], "Dev's")
         # Clearing removes the field, back to the paired name.
         self.assertTrue(
             pairing.update_device(self.tmp, did, display_name=None)

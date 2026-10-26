@@ -11,7 +11,7 @@ from quiver.sessions.parsers import parse_pi
 
 
 def _session_record():
-    return {"type": "session", "id": "s1", "cwd": "/Users/kaichen/project"}
+    return {"type": "session", "id": "s1", "cwd": "/Users/dev/project"}
 
 
 def _user_message(text: str):
@@ -36,7 +36,7 @@ class ParsePiTitleSourceTest(unittest.TestCase):
     def _run(self, records):
         with tempfile.TemporaryDirectory() as tmp:
             sessions_root = Path(tmp) / "sessions"
-            project_dir = sessions_root / "--Users-kaichen-project--"
+            project_dir = sessions_root / "--Users-dev-project--"
             project_dir.mkdir(parents=True)
             jsonl = project_dir / "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl"
             with open(jsonl, "w") as f:
@@ -56,7 +56,7 @@ class ParsePiTitleSourceTest(unittest.TestCase):
     def test_no_session_info_uses_first_prompt(self):
         sess = self._run([_session_record(), _user_message("Fix the login bug")])
         self.assertEqual(sess.tool_name, "pi")
-        self.assertEqual(sess.path, "/Users/kaichen/project")
+        self.assertEqual(sess.path, "/Users/dev/project")
         self.assertEqual(sess.title, "Fix the login bug")
         self.assertEqual(sess.title_source, "")
 
@@ -129,7 +129,7 @@ class ParsePiSessionsPerFileTest(unittest.TestCase):
     def _run(self, files):
         with tempfile.TemporaryDirectory() as tmp:
             sessions_root = Path(tmp) / "sessions"
-            project_dir = sessions_root / "--Users-kaichen-project--"
+            project_dir = sessions_root / "--Users-dev-project--"
             project_dir.mkdir(parents=True)
             for name, records in files.items():
                 with open(project_dir / name, "w") as f:

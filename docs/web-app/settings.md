@@ -130,7 +130,7 @@ app loads, not only when Settings is open, so `app.js` needs no change.
 
 ```json
 {
-  "machine": "kai-home-server",
+  "machine": "home-server",
   "version": "1.0.0",
   "remote": {
     "caller": {"kind": "device", "device_id": "1fc1…"},

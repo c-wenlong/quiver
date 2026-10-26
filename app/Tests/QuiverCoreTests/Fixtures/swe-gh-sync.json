@@ -3,7 +3,7 @@
   "data": {
     "repos": 128,
     "synced_at": 1792530000.5,
-    "owners": ["c-wenlong", "cortexairobot"],
+    "owners": ["c-wenlong", "test-bot"],
     "failed": [
       {
         "owner": "dead-org",

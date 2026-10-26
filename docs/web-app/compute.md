@@ -57,7 +57,7 @@ sample taken at most every two seconds.
 
 ```json
 {
-  "supported": true, "machine": "kai-home-server", "sampled_at": 1792780571.9,
+  "supported": true, "machine": "home-server", "sampled_at": 1792780571.9,
   "matchers_loaded": true, "starred": ["claude"], "error": null,
   "totals": {"memory_bytes": 0, "cpu_percent": 0, "threads": 0, "process_count": 0},
   "harnesses": [{"harness": "claude", "process_count": 2, "threads": 30, "memory_bytes": 0,

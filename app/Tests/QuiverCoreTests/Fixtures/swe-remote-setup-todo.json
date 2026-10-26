@@ -16,7 +16,7 @@
         "id": "tailscale.signed_in",
         "title": "Signed in to Tailscale",
         "state": "ok",
-        "detail": "kai.github as mac",
+        "detail": "devbox as mac",
         "action": null
       },
       {

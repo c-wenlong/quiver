@@ -63,7 +63,7 @@ The page says this in a card above the table.
     "list_price": null
   }],
   "notes": [],
-  "machine": "kai-home-server"
+  "machine": "home-server"
 }
 ```
 

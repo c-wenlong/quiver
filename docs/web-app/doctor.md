@@ -26,7 +26,7 @@ harness and a logo ships for it, the message, the check id in mono, and,
 when the finding has a fix, the fix command in a code block with a copy
 button. A finding with an `action` gets Run there. Run opens a confirm
 panel under the block that says what will happen on which machine
-("This runs swe init on kai-home-server: it links the shared AGENTS.md
+("This runs swe init on home-server: it links the shared AGENTS.md
 …"); its "Run swe init" button sends the request. While a fix runs its row
 says "Running…" and every other Run is off, since the app runs one repair
 at a time. The report then repaints from the hub's answer. A failure shows
@@ -43,7 +43,7 @@ the list with "Replace and back up…", which asks first and then runs
 machine name:
 
 ```json
-{"ok": true, "machine": "kai-home-server",
+{"ok": true, "machine": "home-server",
  "findings": [{"check": "setup.unlinked", "severity": "warning",
                "message": "Claude doesn't read the shared AGENTS.md yet",
                "fix": "swe init", "harness": "claude", "action": "init"}]}

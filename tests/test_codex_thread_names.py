@@ -47,7 +47,7 @@ def _iso(epoch_s):
     )
 
 
-def _session_meta(cwd="/Users/kaichen/project"):
+def _session_meta(cwd="/Users/dev/project"):
     return {
         "type": "session_meta",
         "payload": {"id": THREAD_ID, "session_id": THREAD_ID, "cwd": cwd},
@@ -124,7 +124,7 @@ class ParseCodexTitleTest(unittest.TestCase):
     def test_no_store_and_no_index_uses_the_first_prompt(self):
         sess = self._run()
         self.assertEqual(sess.tool_name, "codex")
-        self.assertEqual(sess.path, "/Users/kaichen/project")
+        self.assertEqual(sess.path, "/Users/dev/project")
         self.assertEqual(sess.title, "Fix the login bug")
         self.assertEqual(sess.title_source, "")
 

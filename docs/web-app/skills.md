@@ -113,8 +113,8 @@ payload plus `action: "new"`, `created` (the SKILL.md's path) and `skill`
 `GET /v1/app/skills`:
 
 ```json
-{"machine": "kai-home-server", "home": "/home/kai",
- "shared_dir": "/home/kai/.quiver/skills",
+{"machine": "home-server", "home": "/home/dev",
+ "shared_dir": "/home/dev/.quiver/skills",
  "harnesses": [{"name": "codex", "label": "codex", "path": "…/.codex/skills",
                 "state": "keep", "detail": "6 of 6 skills exist nowhere else", "archived": false}],
  "skills": [{"name": "tdd", "description": "…", "path": "…", "root": "shared",

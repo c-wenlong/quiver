@@ -24,8 +24,8 @@ from quiver.sessions.parsers import (
 )
 
 REAL_EXPANDUSER = os.path.expanduser
-PROJECT = "-Users-kaichen-project"
-CWD = "/Users/kaichen/project"
+PROJECT = "-Users-dev-project"
+CWD = "/Users/dev/project"
 
 
 def _user(text):

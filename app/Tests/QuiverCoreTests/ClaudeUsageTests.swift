@@ -26,10 +26,10 @@ import Testing
     }
 
     @Test func theAccountIsTheUserNameOrClaudeCodesFallback() {
-        #expect(ClaudeKeychain.account(environmentUser: "kai", systemUser: "other") == "kai")
-        #expect(ClaudeKeychain.account(environmentUser: nil, systemUser: "kai.chen") == "kai.chen")
-        #expect(ClaudeKeychain.account(environmentUser: "", systemUser: "kai") == "kai")
-        #expect(ClaudeKeychain.account(environmentUser: "kai chen", systemUser: "kai") == "claude-code-user")
+        #expect(ClaudeKeychain.account(environmentUser: "dev", systemUser: "other") == "dev")
+        #expect(ClaudeKeychain.account(environmentUser: nil, systemUser: "dev.chen") == "dev.chen")
+        #expect(ClaudeKeychain.account(environmentUser: "", systemUser: "dev") == "dev")
+        #expect(ClaudeKeychain.account(environmentUser: "dev chen", systemUser: "dev") == "claude-code-user")
     }
 }
 
@@ -115,9 +115,9 @@ import Testing
         let h = UsageHarness()
         h.secrets.set(service: "Claude Code-credentials", account: user, claudeCredentialsJSON())
         // Without an override Claude Code keeps it beside the home: ~/.claude.json.
-        h.files.set("/Users/test/.claude.json", #"{"oauthAccount": {"emailAddress": "kai@example.com"}}"#)
+        h.files.set("/Users/test/.claude.json", #"{"oauthAccount": {"emailAddress": "dev@example.com"}}"#)
         h.transport.reply(200, body: try fixture("claude-usage"))
-        #expect(await h.makeService().usage(for: claudeKey, force: false).email == "kai@example.com")
+        #expect(await h.makeService().usage(for: claudeKey, force: false).email == "dev@example.com")
 
         let custom = AccountKey(provider: .claude, configHome: "/Users/test/claude-work", isDefault: false)
         h.secrets.set(service: "Claude Code-credentials-ba8216bd", account: user, claudeCredentialsJSON())

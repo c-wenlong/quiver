@@ -1,7 +1,7 @@
 {
   "user_id": "user-test",
   "account_id": "acct-123",
-  "email": "kai@example.com",
+  "email": "dev@example.com",
   "plan_type": "pro",
   "rate_limit": {
     "allowed": true,

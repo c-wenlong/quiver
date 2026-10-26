@@ -13,7 +13,7 @@ class ParseDroidTest(unittest.TestCase):
     def test_parse_droid_reads_session_start_and_title(self):
         with tempfile.TemporaryDirectory() as tmp:
             sessions_root = Path(tmp) / "sessions"
-            project_dir = sessions_root / "-Users-kaichen-project"
+            project_dir = sessions_root / "-Users-dev-project"
             project_dir.mkdir(parents=True)
             session_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
             jsonl = project_dir / f"{session_id}.jsonl"
@@ -22,7 +22,7 @@ class ParseDroidTest(unittest.TestCase):
                     "type": "session_start",
                     "id": session_id,
                     "title": "Wire droid session support",
-                    "cwd": "/Users/kaichen/project",
+                    "cwd": "/Users/dev/project",
                 },
                 {
                     "type": "message",
@@ -65,13 +65,13 @@ class ParseDroidTest(unittest.TestCase):
             self.assertEqual(session.tool_name, "droid")
             self.assertEqual(session.agent, "Droid")
             self.assertEqual(session.session_id, session_id)
-            self.assertEqual(session.path, "/Users/kaichen/project")
+            self.assertEqual(session.path, "/Users/dev/project")
             self.assertEqual(session.title, "Wire droid session support")
 
     def test_parse_droid_falls_back_to_encoded_dir_and_user_message(self):
         with tempfile.TemporaryDirectory() as tmp:
             sessions_root = Path(tmp) / "sessions"
-            project_dir = sessions_root / "-Users-kaichen-project"
+            project_dir = sessions_root / "-Users-dev-project"
             project_dir.mkdir(parents=True)
             session_id = "11111111-2222-3333-4444-555555555555"
             jsonl = project_dir / f"{session_id}.jsonl"
@@ -103,7 +103,7 @@ class ParseDroidTest(unittest.TestCase):
 
             self.assertEqual(len(sessions), 1)
             session = sessions[0]
-            self.assertEqual(session.path, "/Users/kaichen/project")
+            self.assertEqual(session.path, "/Users/dev/project")
             self.assertEqual(session.title, "Add droid resume support")
             self.assertEqual(session.session_id, session_id)
 

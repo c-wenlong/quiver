@@ -1919,18 +1919,18 @@ class TestWaitingRegistry(unittest.TestCase):
 
 
 _PHONE = {
-    "node_name": "iphone-13.taild6a23f.ts.net",
+    "node_name": "test-iphone.tail0000.ts.net",
     "node_short": "iphone-13",
     "node_id": "nPHONE",
-    "login": "kai@github",
+    "login": "dev@github",
     "display_name": "Kai",
     "tagged": False,
 }
 _MAC = {
-    "node_name": "macbook.taild6a23f.ts.net",
+    "node_name": "macbook.tail0000.ts.net",
     "node_short": "macbook",
     "node_id": "nMAC",
-    "login": "kai@github",
+    "login": "dev@github",
     "display_name": "Kai",
     "tagged": False,
 }
@@ -1944,7 +1944,7 @@ class TestPairRoutes(unittest.TestCase):
         self.srv.state.whois = (
             lambda ip: dict(_PHONE) if ip == "127.0.0.1" else None
         )
-        self.srv.state.owner_login = "kai@github"
+        self.srv.state.owner_login = "dev@github"
 
     def _req(self, name=""):
         return self.srv.request(
@@ -2045,7 +2045,7 @@ class TestPairRoutes(unittest.TestCase):
     def test_tagged_peer_cannot_approve(self):
         _, data = self._req()
         r = json.loads(data)
-        tagged = {**_MAC, "tagged": True, "login": "kai@github"}
+        tagged = {**_MAC, "tagged": True, "login": "dev@github"}
         status, _ = self._approve(r["code"], r["request_id"], node=tagged)
         self.assertEqual(status, 401)
 
@@ -2086,7 +2086,7 @@ class TestPairRoutes(unittest.TestCase):
         self.srv.state.owner_login = ""
         status, _ = self.srv.request("GET", "/v1/pair/requests")
         self.assertEqual(status, 401)
-        self.srv.state.owner_login = "kai@github"
+        self.srv.state.owner_login = "dev@github"
         # Owner identity alone (no bearer) lists them too — with the
         # CSRF header a cross-site page can't send.
         status, data = self.srv.request(
@@ -2215,7 +2215,7 @@ class TestDeviceMetaCapture(unittest.TestCase):
         self.assertEqual(row["client"], "Chrome 125.0.6422.165")
 
     def test_request_flow_mints_meta(self):
-        self.srv.state.owner_login = "kai@github"
+        self.srv.state.owner_login = "dev@github"
         status, data = self.srv.request(
             "POST", "/v1/pair/request",
             {"device": {"kind": "iphone", "client": "Quiver Remote 1.0",
@@ -2269,7 +2269,7 @@ class TestDeviceSelfService(unittest.TestCase):
     def test_me_owner_stub(self):
         # No bearer; the owner's own tailnet device gets a stub row
         # instead of a 404.
-        self.srv.state.owner_login = "kai@github"
+        self.srv.state.owner_login = "dev@github"
         self.srv.state.allowed_hosts = {"127.0.0.1"}
         self.srv.state.whois = lambda ip: dict(_MAC)
         self.srv.state._whois_cache.clear()  # the pair cached a miss
@@ -2289,12 +2289,12 @@ class TestDeviceSelfService(unittest.TestCase):
 
     def test_rename_sets_and_clears(self):
         status, data = self.srv.request(
-            "POST", "/v1/devices/rename", {"name": "Kai's phone"},
+            "POST", "/v1/devices/rename", {"name": "Dev's phone"},
             headers=self.auth)
         self.assertEqual(status, 200, data)
-        self.assertEqual(json.loads(data)["name"], "Kai's phone")
+        self.assertEqual(json.loads(data)["name"], "Dev's phone")
         row = pairing.load_devices(self.srv.home)[self.cred["device_id"]]
-        self.assertEqual(row["display_name"], "Kai's phone")
+        self.assertEqual(row["display_name"], "Dev's phone")
         # Empty name clears display_name, back to the paired name.
         status, data = self.srv.request(
             "POST", "/v1/devices/rename", {"name": "  "},
@@ -2312,7 +2312,7 @@ class TestDeviceSelfService(unittest.TestCase):
         self.assertEqual(len(row["display_name"]), 80)
 
     def test_rename_owner_device_needs_pairing(self):
-        self.srv.state.owner_login = "kai@github"
+        self.srv.state.owner_login = "dev@github"
         self.srv.state.allowed_hosts = {"127.0.0.1"}
         self.srv.state.whois = lambda ip: dict(_MAC)
         self.srv.state._whois_cache.clear()  # the pair cached a miss

@@ -50,8 +50,8 @@ HELLO_M = [
     "#######.#...#####.#.#",
 ]
 
-PAIR_URL = "https://kai-home-server.taild6a23f.ts.net:8477/#pair=0Ol_Evny-OSYVP3QLNEl6GxapePaqECo"
-DEEP_LINK = ("quiver://pair?host=kai-home-server.taild6a23f.ts.net&port=8477"
+PAIR_URL = "https://home-server.tail0000.ts.net:8477/#pair=0Ol_Evny-OSYVP3QLNEl6GxapePaqECo"
+DEEP_LINK = ("quiver://pair?host=home-server.tail0000.ts.net&port=8477"
              "&token=oiXzLUI8gplt6g-ofdf9jvOSUE9C6eZz&scheme=https")
 
 # Format information, by (level, mask), from ISO/IEC 18004 table C.1,
@@ -441,7 +441,7 @@ class TestGet(_Settings):
         phone = self.device("phone")
         pairing.update_device(
             self.home, phone["device_id"],
-            display_name="Kai's iPhone", kind="iphone", os="iOS 18.5",
+            display_name="Dev's iPhone", kind="iphone", os="iOS 18.5",
             node_name="iphone-13.ts.net")
         laptop = self.device("laptop")
         status, data = self.srv.request(
@@ -453,7 +453,7 @@ class TestGet(_Settings):
             for d in json.loads(data)["remote"]["devices"]
         }
         row = rows[phone["device_id"]]
-        self.assertEqual(row["display_name"], "Kai's iPhone")
+        self.assertEqual(row["display_name"], "Dev's iPhone")
         self.assertEqual(row["kind"], "iphone")
         self.assertEqual(row["os"], "iOS 18.5")
         self.assertEqual(row["node_name"], "iphone-13.ts.net")
@@ -817,8 +817,8 @@ class TestOwnerTailnetCaller(_Settings):
         super().setUp()
         state = self.srv.state
         state.trust_proxy = True
-        state.owner_login = "kai@github"
-        state.whois = lambda ip: ({"node_id": "n-laptop", "login": "kai@github", "tagged": False}
+        state.owner_login = "dev@github"
+        state.whois = lambda ip: ({"node_id": "n-laptop", "login": "dev@github", "tagged": False}
                                   if ip == self.OWNER_IP else None)
 
     def headers(self, post=False):

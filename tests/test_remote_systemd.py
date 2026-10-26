@@ -43,7 +43,7 @@ class UnitTest(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
         self.log = self.home / ".quiver/data/remote/serve.log"
-        self.program = ["/home/kai/.local/bin/swe", "remote", "serve", "--host=127.0.0.1",
+        self.program = ["/home/dev/.local/bin/swe", "remote", "serve", "--host=127.0.0.1",
                         "--public-url=https://box.tail.ts.net:8477"]
 
     def test_install_writes_a_restarting_unit_enables_and_restarts_it(self):

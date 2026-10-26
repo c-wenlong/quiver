@@ -129,7 +129,7 @@ func makeJWT(_ claims: [String: Any]) -> String {
 func codexAuthJSON(
     accessToken: String = "codex-access-SECRET-1",
     accountID: String? = "acct-123",
-    email: String = "kai@example.com",
+    email: String = "dev@example.com",
     plan: String = "plus"
 ) -> String {
     var tokens: [String: Any] = [

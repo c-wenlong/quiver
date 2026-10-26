@@ -18,14 +18,14 @@ import Testing
         #expect(overview.repos[0].addedAt == Date(timeIntervalSince1970: 1_792_528_202))
         let catalog = try #require(overview.catalog)
         #expect(catalog.repos == 128)
-        #expect(catalog.owners == ["c-wenlong", "cortexairobot"])
+        #expect(catalog.owners == ["c-wenlong", "test-bot"])
         #expect(catalog.syncedAt?.date != nil)
     }
 
     @Test func syncDecodesSummaryAndFailures() async throws {
         let reply = try await client("swe-gh-sync").ghSync()
         #expect(reply.repos == 128)
-        #expect(reply.owners == ["c-wenlong", "cortexairobot"])
+        #expect(reply.owners == ["c-wenlong", "test-bot"])
         #expect(reply.syncedAt?.date != nil)
         #expect(reply.failed.map(\.owner) == ["dead-org"])
     }
@@ -129,7 +129,7 @@ import Testing
         #expect(inbox.github.status == .ok)
         #expect(inbox.status == "ok")
         let note = try #require(inbox.notifications.first)
-        #expect(note.repo == "c-wenlong/sources")
+        #expect(note.repo == "octocat/sources")
         #expect(note.type == "CheckSuite")
         #expect(note.reason == "ci_activity")
         #expect(note.unread == true)

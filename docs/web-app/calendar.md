@@ -104,7 +104,7 @@ Ported from `Activity.swift`, `ActivityBlocks.swift` and
   "legend": [{"harness": "claude", "total_s": 29460.0,
               "accounts": [{"home": "/home/me/.claude", "label": "Claude: Default", "total_s": 29460.0}]}],
   "sessions": {"<catalog key>": {"…": "a /v1/app/sessions row"}},
-  "scanned_at": 1792780645.9, "notes": [], "machine": "kai-home-server"
+  "scanned_at": 1792780645.9, "notes": [], "machine": "home-server"
 }
 ```
 

@@ -68,9 +68,9 @@ refresh button reads everything again and starts the steps over.
 
 ```json
 {
-  "machine": "kai-home-server",
-  "home": "/home/kai",
-  "agents_file": "/home/kai/.quiver/AGENTS.md",
+  "machine": "home-server",
+  "home": "/home/dev",
+  "agents_file": "/home/dev/.quiver/AGENTS.md",
   "first_run": true,
   "agents": {
     "providers": [
@@ -102,7 +102,7 @@ refresh button reads everything again and starts the steps over.
   `AGENTS.md`.
 
 `POST /v1/app/setup/apply` with `{"starred": ["claude", "gemini"],
-"adopt": "/home/kai/.claude/CLAUDE.md" | null}` is `swe setup --apply
+"adopt": "/home/dev/.claude/CLAUDE.md" | null}` is `swe setup --apply
 --json --starred=claude,gemini [--adopt=<file>]`, in process
 (`quiver.setup.commands.apply_setup`, which Doctor's setup fix also
 runs), and makes the starred set exactly that list. The page

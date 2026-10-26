@@ -6,8 +6,8 @@ import Testing
 @Suite struct KeychainCLITests {
     @Test func asksSecurityForThePasswordOfOneServiceAndAccount() async {
         let runner = FakeRunner(.init(status: 0, stdout: Data("{\"claudeAiOauth\":{}}\n".utf8), stderr: ""))
-        let value = await KeychainCLI(runner: runner).genericPassword(service: "Claude Code-credentials", account: "kai")
-        #expect(runner.calls == [["find-generic-password", "-s", "Claude Code-credentials", "-a", "kai", "-w"]])
+        let value = await KeychainCLI(runner: runner).genericPassword(service: "Claude Code-credentials", account: "dev")
+        #expect(runner.calls == [["find-generic-password", "-s", "Claude Code-credentials", "-a", "dev", "-w"]])
         #expect(value == "{\"claudeAiOauth\":{}}")
     }
 

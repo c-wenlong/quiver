@@ -34,7 +34,7 @@ class ExtractVersionNumberTest(unittest.TestCase):
             "Error: unknown flag: --version",
             "Usage: mastracode --prompt <text> [options]",
             "Warning: could not connect to a running Ollama instance",
-            "Failed to change directory to /Users/kai",
+            "Failed to change directory to /Users/dev",
             "",
             "not a version line",
         ]

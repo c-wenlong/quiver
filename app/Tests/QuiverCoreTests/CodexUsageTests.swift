@@ -26,7 +26,7 @@ import Testing
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer codex-access-SECRET-1")
         #expect(request.value(forHTTPHeaderField: "ChatGPT-Account-Id") == "acct-123")
         #expect(usage == AccountUsage(
-            status: .ok, plan: "Pro 20x", email: "kai@example.com",
+            status: .ok, plan: "Pro 20x", email: "dev@example.com",
             windows: [
                 UsageWindow(label: "5h", usedPercent: 23, resetsAt: Date(timeIntervalSince1970: 1_791_727_200)),
                 UsageWindow(label: "7d", usedPercent: 41.5, resetsAt: Date(timeIntervalSince1970: 1_792_051_200)),

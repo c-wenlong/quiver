@@ -285,7 +285,7 @@ class McpSyncCodexPeerTest(unittest.TestCase):
         'command = "/Applications/Codex.app/Contents/Resources/cua_node/bin/node_repl"\n'
         'startup_timeout_sec = 120\n\n'
         '[mcp_servers.node_repl.env]\n'
-        'CODEX_HOME = "/Users/kaichen/.codex"\n\n'
+        'CODEX_HOME = "/Users/dev/.codex"\n\n'
         '[mcp_servers.miro-mcp]\n'
         "url = 'https://mcp.miro.com/'\n"
     )

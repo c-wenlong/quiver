@@ -482,7 +482,7 @@ class TestCommands(unittest.TestCase):
         run = _gh_run({
             "pr list": _Proc(stdout=json.dumps([{
                 "number": 12, "title": "Add thing", "state": "OPEN",
-                "isDraft": False, "author": {"login": "kai"},
+                "isDraft": False, "author": {"login": "dev"},
                 "headRefName": "feat/x", "baseRefName": "main",
                 "labels": [], "mergeable": "MERGEABLE",
                 "reviewDecision": "APPROVED",
@@ -507,7 +507,7 @@ class TestCommands(unittest.TestCase):
         run = _gh_run({
             "pr list": _Proc(stdout=json.dumps([{
                 "number": 12, "title": "Add thing", "state": "MERGED",
-                "author": {"login": "kai"}, "headRefName": "feat/x",
+                "author": {"login": "dev"}, "headRefName": "feat/x",
                 "statusCheckRollup": [],
                 "updatedAt": "2026-10-20T00:00:00Z",
             }])),

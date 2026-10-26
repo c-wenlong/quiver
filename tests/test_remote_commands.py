@@ -286,7 +286,7 @@ class TestServe(unittest.TestCase):
             return Path("/h/.config/systemd/user/quiver-remote-hub.service"), "sudo loginctl enable-linger $USER"
 
         with patch.object(commands.sys, "platform", "linux"), \
-             patch.object(commands.sys, "argv", ["/home/kai/.local/bin/swe"]), \
+             patch.object(commands.sys, "argv", ["/home/dev/.local/bin/swe"]), \
              patch("quiver.remote.commands.os.access", return_value=True), \
              patch.object(commands.systemd, "available", return_value=True), \
              patch.object(commands.systemd, "status", return_value=(None, False)), \
@@ -294,7 +294,7 @@ class TestServe(unittest.TestCase):
              patch.object(commands, "_probe", side_effect=[None, {"ok": True}]):
             rc, out, err = _run(["serve", "--install", "--public-url=https://box.tail.ts.net:8477"])
         self.assertEqual(rc, 0)
-        self.assertEqual(seen["program"], ["/home/kai/.local/bin/swe", "remote", "serve", "--host=127.0.0.1",
+        self.assertEqual(seen["program"], ["/home/dev/.local/bin/swe", "remote", "serve", "--host=127.0.0.1",
                                            "--public-url=https://box.tail.ts.net:8477"])
         self.assertIn("quiver-remote-hub.service", out)
         self.assertIn("starts at boot", out)
@@ -450,7 +450,7 @@ class TestDevicesList(unittest.TestCase):
 
     def test_json_emits_device_metadata(self):
         devices = {"d1": {
-            "name": "phone", "display_name": "Kai's",
+            "name": "phone", "display_name": "Dev's",
             "kind": "iphone", "model": "iPhone16,2",
             "client": "Quiver Remote 1.0", "os": "iOS 18.5",
             "node_name": "iphone-13.ts.net", "paired_via": "tailscale",
@@ -462,7 +462,7 @@ class TestDevicesList(unittest.TestCase):
             rc, out, _ = _run(["devices", "--json"])
         self.assertEqual(rc, 0)
         row = json.loads(out)["data"]["devices"][0]
-        self.assertEqual(row["display_name"], "Kai's")
+        self.assertEqual(row["display_name"], "Dev's")
         self.assertEqual(row["kind"], "iphone")
         self.assertEqual(row["client"], "Quiver Remote 1.0")
         self.assertEqual(row["node_name"], "iphone-13.ts.net")
@@ -471,7 +471,7 @@ class TestDevicesList(unittest.TestCase):
 
     def test_pretty_list_shows_display_name_and_meta(self):
         devices = {"d1": {
-            "name": "phone", "display_name": "Kai's",
+            "name": "phone", "display_name": "Dev's",
             "kind": "iphone", "os": "iOS 18.5",
             "node_name": "iphone-13.ts.net", "created_at": 1,
         }}
@@ -479,7 +479,7 @@ class TestDevicesList(unittest.TestCase):
                           lambda *a: devices):
             rc, out, _ = _run(["devices"])
         self.assertEqual(rc, 0)
-        self.assertIn("Kai's", out)
+        self.assertIn("Dev's", out)
         self.assertIn("iphone", out)
         self.assertIn("iOS 18.5", out)
         self.assertIn("iphone-13.ts.net", out)
@@ -635,10 +635,10 @@ if __name__ == "__main__":
 
 
 _PEER = {
-    "node_name": "iphone-13.taild6a23f.ts.net",
+    "node_name": "test-iphone.tail0000.ts.net",
     "node_short": "iphone-13",
     "node_id": "nABC",
-    "login": "kai@github",
+    "login": "dev@github",
     "ip": "100.66.1.2",
     "tagged": False,
 }

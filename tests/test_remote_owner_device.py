@@ -18,12 +18,12 @@ from tests.test_remote_hub import _Server, _session
 
 _OWNER_IP = "100.64.0.9"
 _PEERS = {
-    _OWNER_IP: {"node_id": "n-laptop", "login": "kai@github",
+    _OWNER_IP: {"node_id": "n-laptop", "login": "dev@github",
                 "node_name": "laptop.ts.net", "node_short": "laptop",
                 "tagged": False},
     "100.64.0.20": {"node_id": "n-friend", "login": "friend@github",
                     "tagged": False},
-    "100.64.0.30": {"node_id": "n-server", "login": "kai@github",
+    "100.64.0.30": {"node_id": "n-server", "login": "dev@github",
                     "tagged": True},
 }
 
@@ -33,7 +33,7 @@ class OwnerBase(unittest.TestCase):
         self.srv = _Server(sessions=[_session()])
         self.addCleanup(self.srv.stop)
         self.srv.state.trust_proxy = True
-        self.srv.state.owner_login = "kai@github"
+        self.srv.state.owner_login = "dev@github"
         self.calls = []
 
         def whois(ip):

@@ -243,8 +243,8 @@ final class GroupingTests: XCTestCase {
         let now = Date().timeIntervalSince1970
         XCTAssertTrue(row("a", cwd: "/x", status: "followup", ago: 3600, now: now).needsYouNow)
         XCTAssertFalse(row("b", cwd: "/x", status: "followup", ago: 4 * 86_400, now: now).needsYouNow)
-        XCTAssertEqual(Machine(id: "m", name: "kais-macbook-pro.local", os: nil, online: nil, lastSeenAt: nil, harnesses: nil).displayName,
-                       "kais-macbook-pro")
+        XCTAssertEqual(Machine(id: "m", name: "dev-macbook-pro.local", os: nil, online: nil, lastSeenAt: nil, harnesses: nil).displayName,
+                       "dev-macbook-pro")
     }
 
     func testDecodesHubRowWithUnknownStatus() throws {

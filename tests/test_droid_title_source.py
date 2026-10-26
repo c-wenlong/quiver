@@ -24,7 +24,7 @@ def _user_message(text: str) -> dict:
 def _parse_with(session_start: dict, tmp: str):
     """Write one droid transcript under a fake ~/.factory/sessions and parse it."""
     sessions_root = Path(tmp) / "sessions"
-    project_dir = sessions_root / "-Users-kaichen-project"
+    project_dir = sessions_root / "-Users-dev-project"
     project_dir.mkdir(parents=True, exist_ok=True)
     jsonl = project_dir / f"{SESSION_ID}.jsonl"
     records = [
@@ -63,7 +63,7 @@ class DroidTitleSourceTest(unittest.TestCase):
                     "title": "My renamed session",
                     "isSessionTitleManuallySet": True,
                     "sessionTitleAutoStage": "first_message",
-                    "cwd": "/Users/kaichen/project",
+                    "cwd": "/Users/dev/project",
                 },
                 tmp,
             )
@@ -80,7 +80,7 @@ class DroidTitleSourceTest(unittest.TestCase):
                     "title": "Wire droid session support",
                     "isSessionTitleManuallySet": False,
                     "sessionTitleAutoStage": "first_file_edit",
-                    "cwd": "/Users/kaichen/project",
+                    "cwd": "/Users/dev/project",
                 },
                 tmp,
             )
@@ -95,7 +95,7 @@ class DroidTitleSourceTest(unittest.TestCase):
                     "type": "session_start",
                     "id": SESSION_ID,
                     "title": "Titled but unflagged",
-                    "cwd": "/Users/kaichen/project",
+                    "cwd": "/Users/dev/project",
                 },
                 tmp,
             )
@@ -110,7 +110,7 @@ class DroidTitleSourceTest(unittest.TestCase):
                     "type": "session_start",
                     "id": SESSION_ID,
                     "title": "New Session",
-                    "cwd": "/Users/kaichen/project",
+                    "cwd": "/Users/dev/project",
                 },
                 tmp,
             )
@@ -124,7 +124,7 @@ class DroidTitleSourceTest(unittest.TestCase):
                 {
                     "type": "session_start",
                     "id": SESSION_ID,
-                    "cwd": "/Users/kaichen/project",
+                    "cwd": "/Users/dev/project",
                 },
                 tmp,
             )
@@ -141,7 +141,7 @@ class DroidTitleSourceTest(unittest.TestCase):
                     "id": SESSION_ID,
                     "title": "New Session",
                     "isSessionTitleManuallySet": True,
-                    "cwd": "/Users/kaichen/project",
+                    "cwd": "/Users/dev/project",
                 },
                 tmp,
             )
@@ -157,7 +157,7 @@ class DroidTitleSourceTest(unittest.TestCase):
                     "id": SESSION_ID,
                     "title": "Odd flag value",
                     "isSessionTitleManuallySet": "yes",
-                    "cwd": "/Users/kaichen/project",
+                    "cwd": "/Users/dev/project",
                 },
                 tmp,
             )

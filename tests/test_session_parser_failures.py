@@ -30,7 +30,7 @@ def _cursor_home(tmp: str, uuid: str = "f36fd647-90f5-454e-b460-1f37ce0653b9",
                  with_paths: bool = True) -> Path:
     """A cursor layout: projects/<enc>/agent-transcripts/<uuid>/<uuid>.jsonl"""
     home = Path(tmp)
-    enc = home / ".cursor" / "projects" / "Users-kaichen-Desktop-proj"
+    enc = home / ".cursor" / "projects" / "Users-dev-Desktop-proj"
     d = enc / "agent-transcripts" / uuid
     d.mkdir(parents=True)
     lines = [{"role": "user", "message": {"content": "fix the parser"}}]
@@ -75,7 +75,7 @@ class CursorParserTest(unittest.TestCase):
             with mock.patch.dict("os.environ", {"HOME": str(home)}):
                 got = parse_cursor()
             self.assertEqual(len(got), 1)
-            self.assertIn("Users-kaichen-Desktop-proj", got[0].path)
+            self.assertIn("Users-dev-Desktop-proj", got[0].path)
 
     def test_path_is_inferred_from_mentioned_files(self):
         with tempfile.TemporaryDirectory() as tmp:

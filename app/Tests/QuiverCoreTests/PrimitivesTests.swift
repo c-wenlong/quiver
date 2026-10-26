@@ -236,11 +236,11 @@ final class PrimitiveHome {
     }
 
     @Test func insertsIntoAnExistingObject() throws {
-        let text = "{\n  \"author\": {\n    \"name\": \"kai\"\n  }\n}\n"
+        let text = "{\n  \"author\": {\n    \"name\": \"dev\"\n  }\n}\n"
         let edited = try JSONTextEdit.set("k@x.dev", at: ["author", "email"], in: text)
         let object = try JSONSerialization.jsonObject(with: Data(edited.utf8)) as? [String: Any]
         let author = object?["author"] as? [String: Any]
-        #expect(author?["name"] as? String == "kai")
+        #expect(author?["name"] as? String == "dev")
         #expect(author?["email"] as? String == "k@x.dev")
     }
 }

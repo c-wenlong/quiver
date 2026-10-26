@@ -21,7 +21,7 @@ from tests.test_remote_commands import _run
 from tests.test_remote_hub import _Server
 
 _PHONE_IP = "100.64.0.9"
-_PHONE = {"node_id": "n-phone", "login": "kai@github", "node_name":
+_PHONE = {"node_id": "n-phone", "login": "dev@github", "node_name":
           "iphone.tailnet.ts.net", "node_short": "iphone", "tagged": False}
 
 
@@ -121,7 +121,7 @@ class TestConfigure(unittest.TestCase):
         self.home = Path(tempfile.mkdtemp())
         self.state = hub_mod.HubState(self.home)
         self.state.whois = MagicMock(return_value={
-            "login": "kai@github", "node_name": "box.tailnet.ts.net",
+            "login": "dev@github", "node_name": "box.tailnet.ts.net",
             "node_short": "box", "tagged": False,
         })
 
@@ -136,7 +136,7 @@ class TestConfigure(unittest.TestCase):
                          {"box.tailnet.ts.net:8477"})
         # Owner identity comes from this node's own tailnet IP.
         self.state.whois.assert_called_once_with("100.64.0.1")
-        self.assertEqual(self.state.owner_login, "kai@github")
+        self.assertEqual(self.state.owner_login, "dev@github")
         self.assertIsNone(self.state.owner_retry)
         # Saved by serve() once it holds the port, not here.
         self.assertEqual(hub_mod.load_hub_config(self.home), {})
@@ -163,7 +163,7 @@ class TestConfigure(unittest.TestCase):
                 self.assertEqual(self.state.owner(), "")
             self.assertEqual(ip.call_count, 1)
             ip.return_value = "100.64.0.1"
-            self.assertEqual(self.state.owner(), "kai@github")
+            self.assertEqual(self.state.owner(), "dev@github")
         self.assertIsNone(self.state.owner_retry)
         self.state.whois.assert_called_once_with("100.64.0.1")
 

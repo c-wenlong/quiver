@@ -20,7 +20,7 @@ def _session(agent="Codex CLI", age_ms=0, title="a title", now_ms=1_700_000_000_
     return Session(
         timestamp=now_ms - age_ms,
         agent=agent,
-        path="/Users/kaichen/project",
+        path="/Users/dev/project",
         title=title,
         session_id="sid",
         tool_name="codex",

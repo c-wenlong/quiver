@@ -29,7 +29,7 @@ final class HubListTests: XCTestCase {
         var list = HubList()
         list.adopt(hub("mac"))
         list.adopt(hub("server"))
-        list.names[hub("server").id] = "kai-home-server"
+        list.names[hub("server").id] = "home-server"
         list.remove(hub("server").id)
         XCTAssertEqual(list.active?.baseURL.host, "mac")
         XCTAssertNil(list.names[hub("server").id])
@@ -42,8 +42,8 @@ final class HubListTests: XCTestCase {
         let h = hub("100.66.100.47")
         list.adopt(h)
         XCTAssertEqual(list.name(of: h), "100.66.100.47")
-        list.names[h.id] = "kais-macbook-pro.local"
-        XCTAssertEqual(list.name(of: h), "kais-macbook-pro.local")
+        list.names[h.id] = "dev-macbook-pro.local"
+        XCTAssertEqual(list.name(of: h), "dev-macbook-pro.local")
     }
 
     func testAnAddressShowsItsPortOnlyWhenItIsntTheDefault() {

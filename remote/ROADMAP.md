@@ -14,7 +14,7 @@ work each one needs.
 | Look | The TokenTracker style package (`systems/tokentracker` in design-systems), dark first, the same as the Mac app. Near-black page, `#171717` hairline cards, white primary buttons, green only for "active" and "on", amber for "needs you", red for errors and destructive actions, sentence case everywhere, a visible focus ring. Values come from its `tokens.json`. |
 | Icon | The Mac app's dark icon (`app/Icons/AppIcon-dark.png`) |
 | Client | Native SwiftUI on iPhone (`remote/ios/`), decided 2026-10-23. The PWA stays as the client for browsers and other devices. See "SwiftUI or PWA" below. |
-| Signing | Paid team `MAK855QGSV`, so profiles last a year and APNs, TestFlight, widgets and Live Activities are all available |
+| Signing | A paid Apple Developer team, so profiles last a year and APNs, TestFlight, widgets and Live Activities are all available |
 | Push | ntfy stays the push path until the APNs work under "Features" lands |
 | Shared code | Protocol DTOs only. Decoding stays on the hub; most of QuiverCore is AppKit-bound. |
 

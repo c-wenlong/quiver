@@ -55,7 +55,7 @@ Files: `src/quiver/webapp/pages/pricing.py`, `src/quiver/webapp/pages/_brands.py
   "unpriced": [{"model": "swe-2-max", "unpriced_tokens": 317100000,
                 "harnesses": ["devin"], "brand": {"...": "..."}}],
   "notes": [],
-  "machine": "kai-home-server"
+  "machine": "home-server"
 }
 ```
 

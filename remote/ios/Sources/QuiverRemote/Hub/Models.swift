@@ -20,7 +20,7 @@ struct Machine: Codable, Identifiable, Hashable {
     /// no chat ever opens.
     var untrackedHarnesses: [String]? = nil
 
-    /// "kais-macbook-pro.local" reads as "kais-macbook-pro".
+    /// "dev-macbook-pro.local" reads as "dev-macbook-pro".
     var displayName: String {
         let n = name ?? id
         return n.hasSuffix(".local") ? String(n.dropLast(6)) : n

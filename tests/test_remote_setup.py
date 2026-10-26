@@ -26,7 +26,7 @@ def running(**over):
         "AuthURL": "",
         "Self": {"DNSName": NAME + "."},
         "MagicDNSSuffix": "tail1234.ts.net",
-        "CurrentTailnet": {"Name": "kai.github", "MagicDNSEnabled": True},
+        "CurrentTailnet": {"Name": "devbox", "MagicDNSEnabled": True},
         "CertDomains": [NAME],
     }
     status.update(over)
@@ -67,7 +67,7 @@ class EvaluateTest(unittest.TestCase):
         self.assertTrue(report["ready"])
         self.assertEqual(report["url"], URL)
         self.assertEqual(set(states(report).values()), {setup.OK})
-        self.assertEqual(step(report, "tailscale.signed_in")["detail"], "kai.github as mac")
+        self.assertEqual(step(report, "tailscale.signed_in")["detail"], "devbox as mac")
 
     def test_no_tailscale_points_at_the_download_and_blocks_the_rest(self):
         report = setup.evaluate(facts(exe=None, status=None, https_ok=False, devices=0))
@@ -98,7 +98,7 @@ class EvaluateTest(unittest.TestCase):
         self.assertEqual(s["action"]["command"], "sudo tailscale up")
 
     def test_magicdns_and_https_send_an_admin_to_the_dns_page(self):
-        off = running(CurrentTailnet={"Name": "kai.github", "MagicDNSEnabled": False})
+        off = running(CurrentTailnet={"Name": "devbox", "MagicDNSEnabled": False})
         r = setup.evaluate(facts(status=off, https_ok=False))
         self.assertEqual(step(r, "tailscale.magicdns")["action"]["url"], setup.ADMIN_DNS_URL)
         self.assertEqual(step(r, "tailscale.https")["state"], setup.BLOCKED)

@@ -87,7 +87,7 @@ Its writes are a server's Sync, with its Preview, and its Remove.
                        "has_changes": true, "is_repo": true},
                "used_by": ["linear"]}]
   },
-  "machine": "kai-home-server"
+  "machine": "home-server"
 }
 ```
 

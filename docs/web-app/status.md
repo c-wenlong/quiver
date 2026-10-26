@@ -62,7 +62,7 @@ and shows on the next load.
 
 ```json
 {
-  "machine": "kai-home-server",
+  "machine": "home-server",
   "checked_at": 1791720000.0,
   "cached": false,
   "server_time": 1791720030.0,

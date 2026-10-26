@@ -35,7 +35,7 @@ import Testing
         let usage = await h.makeService().usage(for: codexKey, force: true)
         #expect(usage == AccountUsage(
             status: .rateLimited(until: usageEpoch.addingTimeInterval(600)),
-            plan: "Plus", email: "kai@example.com"))
+            plan: "Plus", email: "dev@example.com"))
     }
 
     @Test func a429WithAnHTTPDateCoolsDownUntilThatDate() async {
@@ -116,7 +116,7 @@ import Testing
 
         #expect(h.transport.requests.count == requestsBefore)
         #expect(during == AccountUsage(
-            status: .rateLimited(until: until), plan: "Pro 20x", email: "kai@example.com",
+            status: .rateLimited(until: until), plan: "Pro 20x", email: "dev@example.com",
             windows: first.windows, fetchedAt: usageEpoch, isStale: true))
     }
 
@@ -189,7 +189,7 @@ import Testing
         let usage = await h.makeService().usage(for: codexKey, force: true)
 
         #expect(usage == AccountUsage(
-            status: .error("could not reach the usage API"), plan: "Pro 20x", email: "kai@example.com",
+            status: .error("could not reach the usage API"), plan: "Pro 20x", email: "dev@example.com",
             windows: first.windows, fetchedAt: usageEpoch, isStale: true))
     }
 
@@ -199,7 +199,7 @@ import Testing
         h.transport.fail()
         let failed = await h.makeService().usage(for: codexKey, force: true)
         #expect(failed == AccountUsage(
-            status: .error("could not reach the usage API"), plan: "Plus", email: "kai@example.com"))
+            status: .error("could not reach the usage API"), plan: "Plus", email: "dev@example.com"))
 
         h.transport.reply(429)
         let limited = await h.makeService().usage(for: codexKey, force: true)

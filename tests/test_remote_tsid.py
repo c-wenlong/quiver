@@ -14,9 +14,9 @@ def _cp(rc=0, stdout=""):
 
 
 _WHOIS = """{
-  "Node": {"Name": "iphone-13.taild6a23f.ts.net.",
+  "Node": {"Name": "test-iphone.tail0000.ts.net.",
            "StableID": "npKjnYUTsZ11CNTRL", "Tags": null,
-           "Hostinfo": {"Hostname": "iphone-13"}},
+           "Hostinfo": {"Hostname": "test-iphone"}},
   "UserProfile": {"LoginName": "c-wenlong@github", "DisplayName": "Kai"}
 }"""
 
@@ -29,8 +29,8 @@ class TestWhois(unittest.TestCase):
 
     def test_parses_fields(self):
         out, run = self._run()
-        self.assertEqual(out["node_name"], "iphone-13.taild6a23f.ts.net")
-        self.assertEqual(out["node_short"], "iphone-13")
+        self.assertEqual(out["node_name"], "test-iphone.tail0000.ts.net")
+        self.assertEqual(out["node_short"], "test-iphone")
         self.assertEqual(out["node_id"], "npKjnYUTsZ11CNTRL")
         self.assertEqual(out["login"], "c-wenlong@github")
         self.assertEqual(out["display_name"], "Kai")

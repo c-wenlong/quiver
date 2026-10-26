@@ -26,7 +26,7 @@ final class KeychainHubStoreTests: XCTestCase {
         var list = HubList()
         list.adopt(hub("mac", "c1"))
         list.adopt(hub("server", "c2"))
-        list.names[hub("mac").id] = "kais-macbook-pro.local"
+        list.names[hub("mac").id] = "dev-macbook-pro.local"
         list.activeId = hub("mac").id
         for h in list.hubs { XCTAssertTrue(store.saveCredential(h)) }
         store.saveIndex(list)
