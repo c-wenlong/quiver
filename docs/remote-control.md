@@ -329,6 +329,7 @@ GET  /v1/app/overview                the web app's Overview (docs/web-app.md)
 GET  /v1/app/sessions                the web app's Sessions: catalog rows + usage
 GET  /v1/app/harnesses               the web app's Harnesses: swe list --scope=all rows
 GET  /app/                           the web app's pages, static
+GET  /harness-<id>.svg               a harness's bundled logo, static (aliases resolve, colour wins)
 POST /v1/inbox/dismiss               {key, last_active_at} → cleared for this device
 POST /v1/pair                        QR payload → device credential; optional {device:{kind,model,client,os}} metadata
 GET  /v1/devices/me                  this device's row: kind, model, client, os, node_name, display_name, timestamps
