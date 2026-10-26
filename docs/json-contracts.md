@@ -68,8 +68,8 @@ replays the journal.
 
 | Route | Returns |
 |---|---|
-| `GET /v1/status` | `{ok, v, version, machine, uptime_s}` (unauthenticated) |
-| `POST /v1/pair` | `{device_id, credential, name}` for a live pair token |
+| `GET /v1/status` | `{ok, v}` (unauthenticated reachability check) |
+| `POST /v1/pair` | `{device_id, credential, name}` for a live pair token; `429 rate_limited` past 5 attempts/600s per IP |
 | `POST /v1/pair/request` | unauthenticated; identifies the caller via `tailscale whois` on the peer IP (behind `tailscale serve`, the `X-Forwarded-For` client). `201 {request_id, poll_secret, code, expires_in_s, node: {name, login}}`; `403 not_tailnet` when the peer can't be identified; `429 rate_limited` past 5 requests/600s per IP; `429 busy` past the pending cap |
 | `GET /v1/pair/request/{id}?secret=` | unauthenticated; `200 {status: pending, expires_in_s}` or `{status: denied}` or `{status: approved, device_id, credential, name}` (approved answers once, then the row is gone); `404 unknown_request` |
 | `GET /v1/pair/requests` | `{requests: [{request_id, name, node_name, login, peer_ip, created_at, expires_in_s}]}`; a paired bearer OR a peer whose tailnet login matches the hub owner's |
@@ -131,7 +131,7 @@ The CLI side of remote also speaks `--json`:
 
 | Command | `data` |
 |---|---|
-| `swe remote status --json` | `{hub: {ok, version, uptime_s, machine} or {ok:false}, hub_addr, machines: [{id, name, online, last_seen_at}], devices: [DeviceRow]}`; exits 1 when the hub is unreachable but still emits the envelope |
+| `swe remote status --json` | `{hub: {ok, v} or {ok:false}, hub_addr, machines: [{id, name, online, last_seen_at}], devices: [DeviceRow]}`; exits 1 when the hub is unreachable but still emits the envelope |
 | `swe remote devices --json` | `{devices: [DeviceRow]}`; `--revoke=<id>` → `{revoked, ok}`; `--requests` → `{requests: [PairRequestRow]}`; `--approve=<code>` → `{ok, device_id, name, node_name}`; `--deny=<code>` → `{ok}` |
 | `swe remote pair --json` | `{host, port, token, name, url, deep_link, expires_in_s}` — `url` opens the PWA, `deep_link` is the `quiver://pair?…` form for the iOS shell; `expires_in_s` is the token TTL |
 | `swe remote setup --json` | `{ready, platform, url, steps: [SetupStep]}` in order: `tailscale.installed`, `tailscale.signed_in`, `tailscale.magicdns`, `tailscale.https`, `tailscale.cert`, `hub.service`, `hub.reachable`, `phone.paired`. `SetupStep` is `{id, title, state, detail, action}`; `state` is `ok`, `todo` (Quiver does it with `--apply`), `needs_you`, `failed` or `blocked` (waits for an earlier step). `action` is null or `{kind, label, url? , app?, command?}` with `kind` `open` (a URL), `launch` (a macOS app), `command` (to copy), `apply` (run `swe remote setup --apply`) or `pair`. `url` is the https address phones reach, or `""` before MagicDNS. `--apply` emits the report after doing every `todo` it can; `--recheck` fetches the certificate again instead of using the cached result |
