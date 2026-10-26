@@ -51,8 +51,23 @@ public struct HubDeviceStore: Sendable {
                                     attributes: [.posixPermissions: 0o700])
         let data = try JSONEncoder().encode(Saved(hub: hub, deviceId: credential.deviceId,
                                                   credential: credential.credential))
-        try data.write(to: url, options: .atomic)
-        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        // A credential is never world-readable, even for an instant: the
+        // temp file is born 0600, then renamed over the old one.
+        let temp = url.appendingPathExtension("tmp-\(UUID().uuidString)")
+        let fd = open(temp.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+        guard fd >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        do {
+            try handle.write(contentsOf: data)
+            try handle.synchronize()
+            try handle.close()
+            try manager.moveItem(at: temp, to: url)
+        } catch {
+            try? manager.removeItem(at: temp)
+            throw error
+        }
     }
 
     public func clear() {
@@ -94,6 +109,9 @@ public final class LocalHub {
     }
 
     /// `http://host:port` for swe's `host:port`, brackets around IPv6.
+    /// The address only ever earns plain HTTP when it stays on this Mac
+    /// or inside the tailnet: anywhere else the bearer credential would
+    /// cross the wire readable.
     nonisolated static func baseURL(_ address: String) -> URL? {
         guard let colon = address.lastIndex(of: ":") else { return nil }
         var host = String(address[..<colon])
@@ -101,8 +119,24 @@ public final class LocalHub {
         guard !host.isEmpty, Int(port) != nil else { return nil }
         if host == "0.0.0.0" { host = "127.0.0.1" }
         if host == "::" { host = "::1" }
+        guard localHubHost(host) else { return nil }
         if host.contains(":"), !host.hasPrefix("[") { host = "[\(host)]" }
         return URL(string: "http://\(host):\(port)")
+    }
+
+    /// Loopback or tailnet — the only places a plain-HTTP credential is
+    /// safe to send. A hub bound to a LAN address is a misconfiguration
+    /// this refuses rather than leaks over.
+    nonisolated static func localHubHost(_ host: String) -> Bool {
+        let host = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
+        if host == "localhost" || host.hasSuffix(".localhost") || host == "::1" { return true }
+        if host.hasSuffix(".ts.net") { return true }
+        if host.hasPrefix("127.") { return true }
+        // Tailscale's carrier-grade NAT range, 100.64.0.0/10.
+        if host.hasPrefix("100."),
+           let second = host.split(separator: ".").dropFirst().first.flatMap({ Int($0) }),
+           (64...127).contains(second) { return true }
+        return false
     }
 
     /// A client holding a credential, pairing first when there is none.

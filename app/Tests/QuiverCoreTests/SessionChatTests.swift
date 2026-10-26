@@ -96,6 +96,21 @@ final class FakeLocator: HubLocating, @unchecked Sendable {
         #expect(LocalHub.baseURL("::1:9000")?.absoluteString == "http://[::1]:9000")
         #expect(LocalHub.baseURL("nonsense") == nil)
     }
+
+    @Test func plainHTTPOnlyReachesThisMacOrTheTailnet() {
+        // Loopback, localhost and the tailnet keep http; anything else
+        // would put the bearer credential on a wire readable by others.
+        #expect(LocalHub.baseURL("localhost:8477")?.absoluteString == "http://localhost:8477")
+        #expect(LocalHub.baseURL("mac.tail1234.ts.net:8477")?.absoluteString
+            == "http://mac.tail1234.ts.net:8477")
+        #expect(LocalHub.baseURL("100.64.1.2:8477")?.absoluteString == "http://100.64.1.2:8477")
+        #expect(LocalHub.baseURL("100.127.255.254:8477") != nil)
+        #expect(LocalHub.baseURL("192.168.1.5:8477") == nil)
+        #expect(LocalHub.baseURL("10.0.0.4:8477") == nil)
+        #expect(LocalHub.baseURL("100.200.1.1:8477") == nil)
+        #expect(LocalHub.baseURL("8.8.8.8:8477") == nil)
+        #expect(LocalHub.baseURL("hub.example.com:8477") == nil)
+    }
 }
 
 /// Every suite that answers through `HubStub`, one test at a time: they
