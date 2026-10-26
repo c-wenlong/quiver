@@ -1027,14 +1027,20 @@ final class AppModel {
     static func keysFile(path: String) -> URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let trimmed = path.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return APIKeysStore.defaultURL(home: home) }
+        guard !trimmed.isEmpty,
+              PathSafety.rejection(of: trimmed) == nil else {
+            return APIKeysStore.defaultURL(home: home)
+        }
         return URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath)
     }
 
     static func mcpServersFolder(path: String) -> URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let trimmed = path.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return home.appending(path: ".quiver/mcp/servers") }
+        guard !trimmed.isEmpty,
+              PathSafety.rejection(of: trimmed) == nil else {
+            return home.appending(path: ".quiver/mcp/servers")
+        }
         return URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath)
     }
 

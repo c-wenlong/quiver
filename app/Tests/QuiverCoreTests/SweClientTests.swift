@@ -215,10 +215,10 @@ func fixture(_ name: String) throws -> Data {
 
 @Suite struct SweLocationTests {
     @Test func aChosenPathWinsOverTheBundledOneAndPATH() {
-        #expect(SweLocation.executable(override: "/opt/quiver/bin/swe", bundled: "/A/swe")
-            == "/opt/quiver/bin/swe")
-        #expect(SweLocation.executable(override: "/opt/quiver/bin/swe", bundled: nil)
-            == "/opt/quiver/bin/swe")
+        // A real executable: anything missing, non-executable, or planted
+        // under a world-writable folder falls back instead of running.
+        #expect(SweLocation.executable(override: "/bin/ls", bundled: "/A/swe") == "/bin/ls")
+        #expect(SweLocation.executable(override: "/bin/ls", bundled: nil) == "/bin/ls")
     }
 
     @Test func blankOrMissingOverrideMeansTheBundledSwe() {
