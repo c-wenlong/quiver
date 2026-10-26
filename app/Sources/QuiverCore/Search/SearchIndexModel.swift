@@ -177,9 +177,11 @@ public final class SearchIndexModel {
         polling = nil
         if indexer != nil {
             indexer = nil
-            // The actor only calls the indexer inside per-file reads, never
-            // across an await between files — so once this returns, no index
-            // write can still be in flight and the store can go away.
+            // The actor can still be inside an index call — its scan binds
+            // the indexer across awaits — but the detached store stays open
+            // under the indexer's hold, so late writes commit harmlessly to
+            // the same file the next attach reopens. Tearing the file away
+            // is `clearData`'s path, and the store's lock covers that.
             await ledger?.setIndexer(nil)
         }
         store = nil
@@ -195,7 +197,22 @@ public final class SearchIndexModel {
     /// from zero. Re-reading every transcript is the honest cost of
     /// clearing; the reconcile tick would do it anyway, the kick just
     /// doesn't wait a minute for it.
+    ///
+    /// The whole sequence runs inside the `applying` flight: a toggle that
+    /// lands while `setIndexer(nil)` is still in the ledger's queue must not
+    /// run `attach()` against the store this clear is about to delete.
     public func clearData() async {
+        while let applying {
+            await applying.value
+            await Task.yield()
+        }
+        let task = Task { await self.clearOnce() }
+        applying = task
+        await task.value
+        applying = nil
+    }
+
+    private func clearOnce() async {
         reconciling?.cancel()
         reconciling = nil
         polling?.cancel()
@@ -216,7 +233,9 @@ public final class SearchIndexModel {
         lastSynced = nil
         statusError = nil
         if enabled {
-            await attach()
+            // Through `apply()`, not `attach()` directly: a toggle landing
+            // mid-clear takes the single-flight, so two attaches never race.
+            await apply()
         } else {
             statusText = "Off."
         }

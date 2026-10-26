@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Testing
 @testable import QuiverCore
 
@@ -299,5 +300,90 @@ import Testing
         for suffix in ["", "-wal", "-shm", "-journal"] {
             #expect(!exists(url, suffix), "search.sqlite\(suffix) survived clear()")
         }
+    }
+
+    /// Settings' Clear button can land while the ledger's scan still holds
+    /// the indexer — the actor binds it across awaits. Every call after
+    /// `clear()` must throw on the normal error path, not trap on the
+    /// closed handle.
+    @Test func callsAfterClearThrowInsteadOfTouchingTheDeadHandle() throws {
+        let temp = try TempDir()
+        let store = try store(temp)
+        try store.upsertFile(path: "/t/one.jsonl", stat: stat(), byteOffset: 1, sessionRowID: nil)
+
+        store.clear()
+
+        #expect(throws: (any Error).self) { try store.fileRow(for: "/t/one.jsonl") }
+        #expect(throws: (any Error).self) { try store.files() }
+        #expect(throws: (any Error).self) { try store.files(withPrefix: "/t/") }
+        #expect(throws: (any Error).self) { try store.fileFence(for: "/t/one.jsonl") }
+        #expect(throws: (any Error).self) {
+            try store.upsertFile(path: "/t/x.jsonl", stat: stat(), byteOffset: 0, sessionRowID: nil)
+        }
+        #expect(throws: (any Error).self) { try store.setFileState("/t/x.jsonl", .due) }
+        #expect(throws: (any Error).self) { try store.removeFile("/t/one.jsonl") }
+        #expect(throws: (any Error).self) { try store.createSession(fields) }
+        #expect(throws: (any Error).self) { try store.sessionRow(1) }
+        #expect(throws: (any Error).self) { try store.drainOrphanedMessages() }
+        #expect(throws: (any Error).self) {
+            try store.commitFile(path: "/t/x.jsonl", expected: nil, stat: stat(),
+                                 byteOffset: 0, session: .none, messages: [])
+        }
+        #expect(throws: (any Error).self) { try store.status() }
+    }
+
+    /// The scan's own path: an indexer that outlives its store keeps
+    /// answering read decisions (a cleared row reads as a whole read), and
+    /// its finishing write throws — which is what aborts the in-flight scan.
+    @Test func anIndexerOnAClearedStoreReadsWholeAndFailsItsWrite() throws {
+        let temp = try TempDir()
+        let store = try store(temp)
+        let indexer = SearchIndexer(store: store)
+
+        store.clear()
+
+        #expect(indexer.readNeed(path: "/t/one.jsonl", stat: stat(), ledgerOffset: nil) == .whole)
+        indexer.beginFile(path: "/t/one.jsonl", harness: .claude)
+        indexer.consume(line: Data(#"{"type":"user","message":{"content":"hi"}}"#.utf8))
+        #expect(throws: (any Error).self) {
+            try indexer.finishFile(path: "/t/one.jsonl", stat: stat(), byteOffset: 10)
+        }
+    }
+
+    /// `clear()` must wait out a call already inside `storeLock`, not
+    /// delete the handle under it. A thread holds the lock — `lock()`
+    /// cannot straddle an `await` — so the overlap is deterministic: the
+    /// clearer can only finish once the holder lets go.
+    @Test func clearWaitsForACallInsideTheLock() async throws {
+        let temp = try TempDir()
+        let store = try store(temp)
+        let holding = OSAllocatedUnfairLock(initialState: false)
+        let release = OSAllocatedUnfairLock(initialState: false)
+        let cleared = OSAllocatedUnfairLock(initialState: false)
+
+        Thread.detachNewThread {
+            store.storeLock.withLock {
+                holding.withLock { $0 = true }
+                while !release.withLock({ $0 }) {
+                    Thread.sleep(forTimeInterval: 0.005)
+                }
+            }
+        }
+        while !holding.withLock({ $0 }) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        let clearer = Task.detached {
+            store.clear()
+            cleared.withLock { $0 = true }
+        }
+        // Long enough for the clearer to be scheduled many times over.
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(!cleared.withLock { $0 }, "clear() ran while another call held the lock")
+
+        release.withLock { $0 = true }
+        await clearer.value
+        #expect(cleared.withLock { $0 })
+        #expect(throws: (any Error).self) { try store.files() }
     }
 }
