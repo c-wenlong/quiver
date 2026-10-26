@@ -178,6 +178,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mid-prompt: pending entries expire after `APPROVAL_TTL_S` (24 h) on
   inbox read. `queue_command` is now typed `dict | None`, matching its
   backlog-full `None` return.
+- **Paired devices can no longer impersonate satellites.** Any device
+  credential used to reach every `/v1/agent/*` route with a
+  caller-supplied machine id, so one paired phone could open another
+  machine's command stream, fake its presence, overwrite its catalog,
+  and journal events into its sessions. Device rows now carry a `role`
+  (`phone`, `satellite`, `actions`): satellites claim theirs when they
+  pair (`swe remote agent --token`), and the first
+  `/v1/agent/register` pins the credential to that `machine_id` for
+  good. Every agent route — register, catalog, usage, events, the
+  command stream and attachment pulls — now requires a satellite
+  credential bound to the machine it names and answers 403 otherwise,
+  including for the `ntfy-actions` row and for devices paired before
+  roles existed (they read as phones). A satellite also cannot
+  register the hub's own machine id.
+- **Agent event ingest is allowlisted.** `POST /v1/agent/events`
+  journaled any event `type` and message `kind` a credential sent;
+  events outside the protocol's vocabulary — and `message.*`/`notify`
+  events whose `data.kind` is not in that type's known set — are now
+  dropped instead of journaled.
+- **The PWA escapes a message's kind.** `appendMessage` interpolated
+  `kind` into `innerHTML` unescaped, so a journaled message with a
+  markup-bearing kind could run script in the phone UI. The role label
+  is now escaped, and an off-list kind no longer adds CSS classes to
+  the bubble (a crafted kind could have faked the `user` style).
 
 ## [1.1.0] - 2026-10-26
 

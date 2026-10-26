@@ -43,13 +43,25 @@ class _Hub:
         cred = self._pair()
         self.auth = {"Authorization": f"Bearer {cred['credential']}"}
 
-    def _pair(self):
+    def _pair(self, role=""):
         token = pairing.mint_pair_token(self.home)
-        status, data = self.request(
-            "POST", "/v1/pair", {"token": token, "name": "dev"}
-        )
+        body = {"token": token, "name": "dev"}
+        if role:
+            body["role"] = role
+        status, data = self.request("POST", "/v1/pair", body)
         assert status == 200, data
         return json.loads(data)
+
+    def satellite(self, mid):
+        """Pair a satellite credential and bind it to ``mid`` via
+        /v1/agent/register; returns its Authorization headers."""
+        cred = self._pair(role="satellite")
+        auth = {"Authorization": f"Bearer {cred['credential']}"}
+        status, data = self.request(
+            "POST", "/v1/agent/register", {"machine": {"id": mid}},
+            headers=auth)
+        assert status == 200, data
+        return auth
 
     def stop(self):
         self.server.shutdown()
@@ -507,7 +519,15 @@ class TestAgentState(unittest.TestCase):
 
 
 class _AgentHub(_Hub):
-    """Hub + a paired satellite credential (no RemoteAgent needed)."""
+    """Hub + a satellite credential bound to sat-m1 (no RemoteAgent).
+
+    ``self.auth`` is a plain phone credential for the session routes;
+    ``self.sat_auth`` is the satellite's for ``/v1/agent/*``.
+    """
+
+    def __init__(self, sessions=None):
+        super().__init__(sessions)
+        self.sat_auth = self.satellite("sat-m1")
 
 
 class TestAgentRoutes(unittest.TestCase):
@@ -520,13 +540,13 @@ class TestAgentRoutes(unittest.TestCase):
         return self.srv.request(
             "POST", "/v1/agent/catalog",
             {"machine_id": self.mid, "rows": rows},
-            headers=self.srv.auth)
+            headers=self.srv.sat_auth)
 
     def test_register_machine(self):
         status, data = self.srv.request(
             "POST", "/v1/agent/register",
             {"machine": {"id": self.mid, "name": "mbp", "os": "macos"}},
-            headers=self.srv.auth)
+            headers=self.srv.sat_auth)
         self.assertEqual(status, 200)
         row = catalog_mod.load_machines(self.srv.home)[self.mid]
         self.assertEqual(row["name"], "mbp")
@@ -534,7 +554,7 @@ class TestAgentRoutes(unittest.TestCase):
     def test_register_requires_id(self):
         status, _ = self.srv.request(
             "POST", "/v1/agent/register", {"machine": {}},
-            headers=self.srv.auth)
+            headers=self.srv.sat_auth)
         self.assertEqual(status, 422)
 
     def test_catalog_push_merges_rows(self):
@@ -564,7 +584,7 @@ class TestAgentRoutes(unittest.TestCase):
                     "message.appended", "claude:r1", self.mid,
                     protocol.message("user", "hi from satellite")),
             ]},
-            headers=self.srv.auth)
+            headers=self.srv.sat_auth)
         self.assertEqual(status, 200)
         events, _ = self.srv.state.journal.read_since(
             "claude:r1@sat-m1", 0)
@@ -643,7 +663,7 @@ class TestAgentRoutes(unittest.TestCase):
             {"machine_id": self.mid, "events": [protocol.event(
                 "session.launched", "claude:r9", self.mid,
                 {"launch_id": launch_id})]},
-            headers=self.srv.auth)
+            headers=self.srv.sat_auth)
         _, view = self.srv.request(
             "GET", f"/v1/launches/{launch_id}", headers=self.srv.auth)
         view = json.loads(view)
@@ -663,7 +683,7 @@ class TestAgentRoutes(unittest.TestCase):
                 "command.result", "", self.mid,
                 {"op": "launch", "ok": False, "launch_id": launch_id,
                  "note": "no such folder on this machine: /tmp/x"})]},
-            headers=self.srv.auth)
+            headers=self.srv.sat_auth)
         launch = self.srv.state.launches[launch_id]
         self.assertEqual(launch["state"], "failed")
         self.assertIn("no such folder", launch["note"])
@@ -683,7 +703,7 @@ class TestAgentRoutes(unittest.TestCase):
             {"machine_id": self.mid, "events": [protocol.event(
                 "command.result", "", self.mid,
                 {"op": "launch", "ok": True, "launch_id": launch_id})]},
-            headers=self.srv.auth)
+            headers=self.srv.sat_auth)
         self.assertEqual(self.srv.state.launches[launch_id]["state"],
                          "untracked")
 
@@ -743,7 +763,7 @@ class TestAgentCommandStream(unittest.TestCase):
 
     def _open_stream(self, last=0):
         """Raw-socket SSE client; returns (sock, buffered reader)."""
-        cred = self.srv.auth["Authorization"]
+        cred = self.srv.sat_auth["Authorization"]
         sock = socket.create_connection(
             ("127.0.0.1", self.srv.port), timeout=10)
         sock.sendall(
@@ -822,7 +842,7 @@ class TestAgentCommandStream(unittest.TestCase):
 
     def test_commands_requires_machine_param(self):
         status, _ = self.srv.request(
-            "GET", "/v1/agent/commands", headers=self.srv.auth)
+            "GET", "/v1/agent/commands", headers=self.srv.sat_auth)
         self.assertEqual(status, 422)
 
     def test_pull_attachment_route(self):
@@ -835,7 +855,7 @@ class TestAgentCommandStream(unittest.TestCase):
             "GET",
             "/v1/agent/attachments/claude%3Ar1%40sat-m1/"
             + payload["ref"],
-            headers=self.srv.auth)
+            headers=self.srv.sat_auth)
         resp = conn.getresponse()
         self.assertEqual(resp.status, 200)
         self.assertEqual(resp.read(), b"PNGDATA")
@@ -847,7 +867,7 @@ class TestAgentCommandStream(unittest.TestCase):
         conn.request(
             "GET",
             "/v1/agent/attachments/claude%3Anone%40sat-m1/missing.png",
-            headers=self.srv.auth)
+            headers=self.srv.sat_auth)
         resp = conn.getresponse()
         self.assertEqual(resp.status, 404)
         conn.close()
@@ -864,7 +884,9 @@ class TestEndToEnd(unittest.TestCase):
         with patch("quiver.remote.hub._SSE_HEARTBEAT_S", 0.1):
             srv = _AgentHub()
             try:
-                cred = srv.auth["Authorization"].split(" ", 1)[1]
+                # A fresh satellite credential, unbound: the agent's own
+                # register binds it to its generated machine_id.
+                cred = srv._pair(role="satellite")["credential"]
                 sat_home = Path(tempfile.mkdtemp())
                 agent = agent_mod.RemoteAgent(
                     srv.base, cred, home=sat_home)
@@ -1008,12 +1030,15 @@ class TestAgentEdges(unittest.TestCase):
     def test_pair_agent_success_and_failure(self):
         with patch.object(agent_mod, "_post",
                           return_value=(200, {"credential": "c1",
-                                              "device_id": "d1"})):
+                                              "device_id": "d1"})) as post:
             conf = agent_mod.pair_agent("http://h/", "tok", "mbp",
                                         self.home)
         self.assertEqual(conf["credential"], "c1")
         self.assertEqual(conf["hub"], "http://h")
         self.assertEqual(agent_mod.load_agent(self.home), conf)
+        # The satellite claims its role at pair time; the hub binds it
+        # to this machine at first register.
+        self.assertEqual(post.call_args[0][3]["role"], "satellite")
         with patch.object(agent_mod, "_post", return_value=(401, {})):
             self.assertIsNone(
                 agent_mod.pair_agent("http://h", "tok", "", self.home))
@@ -1179,7 +1204,7 @@ class TestAgentRouteValidation(unittest.TestCase):
         conn = http.client.HTTPConnection("127.0.0.1", self.srv.port,
                                           timeout=5)
         conn.request(method, path, body=data,
-                     headers={**self.srv.auth, "Content-Type": ctype})
+                     headers={**self.srv.sat_auth, "Content-Type": ctype})
         resp = conn.getresponse()
         body = resp.read()
         conn.close()
@@ -1194,7 +1219,7 @@ class TestAgentRouteValidation(unittest.TestCase):
         self.assertEqual(status, 400)
         status, _ = self.srv.request(
             "POST", "/v1/agent/catalog", {"rows": []},
-            headers=self.srv.auth)
+            headers=self.srv.sat_auth)
         self.assertEqual(status, 422)
 
     def test_events_bad_body_and_non_list(self):
@@ -1203,13 +1228,17 @@ class TestAgentRouteValidation(unittest.TestCase):
         status, _ = self.srv.request(
             "POST", "/v1/agent/events",
             {"machine_id": self.mid, "events": "x"},
-            headers=self.srv.auth)
+            headers=self.srv.sat_auth)
         self.assertEqual(status, 422)
-        # Events that aren't dicts are skipped, not fatal.
+        # Events that aren't dicts are skipped, not fatal. A notify
+        # event with no kind is dropped too — kinds are vetted.
         status, data = self.srv.request(
             "POST", "/v1/agent/events",
-            {"machine_id": self.mid, "events": [42, {"type": "notify"}]},
-            headers=self.srv.auth)
+            {"machine_id": self.mid, "events": [
+                42, {"type": "notify", "data": {"kind": "finished"}},
+                {"type": "notify"},
+            ]},
+            headers=self.srv.sat_auth)
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(data)["accepted"], 1)
 
@@ -1219,7 +1248,7 @@ class TestAgentRouteValidation(unittest.TestCase):
             {"machine_id": self.mid, "rows": [
                 {"key": "claude:r1", "ownership": "attached",
                  "status": "idle"}]},
-            headers=self.srv.auth)
+            headers=self.srv.sat_auth)
         self.srv.state.catalog.refresh()
         key = "claude%3Ar1%40sat-m1"
         status, _ = self.srv.request(
@@ -1248,7 +1277,7 @@ class TestAgentRouteValidation(unittest.TestCase):
             {"machine_id": self.mid, "rows": [
                 {"key": "claude:r1", "ownership": "attached",
                  "status": "active"}]},
-            headers=self.srv.auth)
+            headers=self.srv.sat_auth)
         self.srv.state.catalog.refresh()
         key = "claude%3Ar1%40sat-m1"
         status, data = self.srv.request(
@@ -1271,7 +1300,7 @@ class TestAgentRouteValidation(unittest.TestCase):
             "POST", "/v1/agent/catalog",
             {"machine_id": self.mid, "rows": [
                 {"key": "claude:r1", "ownership": "observed"}]},
-            headers=self.srv.auth)
+            headers=self.srv.sat_auth)
         self.srv.state.catalog.refresh()
         status, _ = self.srv.request(
             "POST", "/v1/sessions/claude%3Ar1%40sat-m1/control",
@@ -1445,7 +1474,7 @@ class TestUploadRouteEdges(unittest.TestCase):
             "POST", "/v1/agent/catalog",
             {"machine_id": "sat-m1", "rows": [
                 {"key": "claude:r1", "ownership": "attached"}]},
-            headers=self.srv.auth)
+            headers=self.srv.sat_auth)
         self.srv.state.catalog.refresh()
 
     def test_empty_upload_400(self):
@@ -1478,15 +1507,15 @@ class TestUploadRouteEdges(unittest.TestCase):
     def test_pull_attachment_unreadable(self):
         # Stage on the hub key, then delete the file: read fails → 404.
         payload, err = attachments.stage(
-            self.srv.home, "claude:k@m1", "x.png", b"PNG")
+            self.srv.home, "claude:k@sat-m1", "x.png", b"PNG")
         self.assertIsNone(err)
         Path(payload["path"]).unlink()
         conn = http.client.HTTPConnection("127.0.0.1", self.srv.port,
                                           timeout=5)
         conn.request(
             "GET",
-            f"/v1/agent/attachments/claude%3Ak%40m1/{payload['ref']}",
-            headers=self.srv.auth)
+            f"/v1/agent/attachments/claude%3Ak%40sat-m1/{payload['ref']}",
+            headers=self.srv.sat_auth)
         resp = conn.getresponse()
         resp.read()
         conn.close()
@@ -1574,7 +1603,7 @@ class TestUploadVariants(unittest.TestCase):
             "POST", "/v1/agent/catalog",
             {"machine_id": "sat-m1", "rows": [
                 {"key": "claude:r1", "ownership": "attached"}]},
-            headers=self.srv.auth)
+            headers=self.srv.sat_auth)
         self.srv.state.catalog.refresh()
 
     def _post_raw(self, path, data, ctype):
@@ -1601,15 +1630,15 @@ class TestUploadVariants(unittest.TestCase):
 
     def test_pull_attachment_read_failure(self):
         payload, err = attachments.stage(
-            self.srv.home, "claude:k@m1", "x.png", b"PNG")
+            self.srv.home, "claude:k@sat-m1", "x.png", b"PNG")
         self.assertIsNone(err)
         with patch.object(Path, "read_bytes", side_effect=OSError):
             conn = http.client.HTTPConnection("127.0.0.1",
                                               self.srv.port, timeout=5)
             conn.request(
                 "GET",
-                f"/v1/agent/attachments/claude%3Ak%40m1/{payload['ref']}",
-                headers=self.srv.auth)
+                f"/v1/agent/attachments/claude%3Ak%40sat-m1/{payload['ref']}",
+                headers=self.srv.sat_auth)
             resp = conn.getresponse()
             resp.read()
             conn.close()

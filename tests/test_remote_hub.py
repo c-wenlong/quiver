@@ -61,13 +61,25 @@ class _Server:
         finally:
             conn.close()
 
-    def pair(self):
+    def pair(self, role=""):
         token = pairing.mint_pair_token(self.home)
-        status, data = self.request(
-            "POST", "/v1/pair", {"token": token, "name": "test"}
-        )
+        body = {"token": token, "name": "test"}
+        if role:
+            body["role"] = role
+        status, data = self.request("POST", "/v1/pair", body)
         assert status == 200, data
         return json.loads(data)
+
+    def satellite(self, mid):
+        """Pair a satellite credential and bind it to ``mid`` via
+        /v1/agent/register; returns its Authorization headers."""
+        cred = self.pair(role="satellite")
+        auth = {"Authorization": f"Bearer {cred['credential']}"}
+        status, data = self.request(
+            "POST", "/v1/agent/register", {"machine": {"id": mid}},
+            headers=auth)
+        assert status == 200, data
+        return auth
 
 
 class TestHub(_Server, unittest.TestCase):
@@ -3082,6 +3094,225 @@ class TestKeepAliveAfterRefusal(HubBase):
                 reply = self._raw(self._post_head(extra),
                                   b"5\r\nhello\r\n0\r\n\r\n")
                 self._assert_closed_cleanly(reply, 409)
+
+
+class TestAgentSecurity(HubBase):
+    """Issue #509: agent routes need a satellite credential bound to
+    the machine it names — not any paired device."""
+
+    def _sat(self, mid="sat-m1"):
+        return self.srv.satellite(mid)
+
+    def _post(self, path, body, auth):
+        return self.srv.request("POST", path, body, headers=auth)[0]
+
+    # -- role at pair time --------------------------------------------------
+
+    def test_pairing_assigns_role_and_register_binds(self):
+        cred = self.srv.pair(role="satellite")
+        row = pairing.load_devices(self.srv.home)[cred["device_id"]]
+        self.assertEqual(row["role"], "satellite")
+        self.assertNotIn("machine_id", row)
+        auth = {"Authorization": f"Bearer {cred['credential']}"}
+        status = self._post(
+            "/v1/agent/register", {"machine": {"id": "sat-m1"}}, auth)
+        self.assertEqual(status, 200)
+        row = pairing.load_devices(self.srv.home)[cred["device_id"]]
+        self.assertEqual(row["machine_id"], "sat-m1")
+
+    def test_pair_defaults_to_phone_and_rejects_unknown_role(self):
+        cred = self.srv.pair()
+        row = pairing.load_devices(self.srv.home)[cred["device_id"]]
+        self.assertEqual(row["role"], "phone")
+        cred = self.srv.pair(role="actions")
+        row = pairing.load_devices(self.srv.home)[cred["device_id"]]
+        self.assertEqual(row["role"], "phone")
+
+    # -- non-satellite credentials ------------------------------------------
+
+    def test_phone_denied_on_every_agent_route(self):
+        auth = self.auth()
+        self.assertEqual(
+            self._post("/v1/agent/register",
+                       {"machine": {"id": "m1"}}, auth), 403)
+        self.assertEqual(
+            self._post("/v1/agent/catalog",
+                       {"machine_id": "m1", "rows": []}, auth), 403)
+        self.assertEqual(
+            self._post("/v1/agent/usage",
+                       {"machine_id": "m1", "harnesses": []}, auth), 403)
+        self.assertEqual(
+            self._post("/v1/agent/events",
+                       {"machine_id": "m1", "events": []}, auth), 403)
+        status, _ = self.srv.request(
+            "GET", "/v1/agent/commands?machine=m1", headers=auth)
+        self.assertEqual(status, 403)
+        status, _ = self.srv.request(
+            "GET", "/v1/agent/attachments/claude%3Ax%40m1/r.png",
+            headers=auth)
+        self.assertEqual(status, 403)
+
+    def test_legacy_row_without_role_is_a_phone(self):
+        # Devices paired before roles exist have no ``role`` field —
+        # they must not reach the agent routes.
+        cred = self.srv.pair()
+        did = cred["device_id"]
+        devices = pairing.load_devices(self.srv.home)
+        del devices[did]["role"]
+        pairing._save_devices(self.srv.home, devices)
+        auth = {"Authorization": f"Bearer {cred['credential']}"}
+        self.assertEqual(
+            self._post("/v1/agent/register",
+                       {"machine": {"id": "m1"}}, auth), 403)
+
+    def test_actions_credential_denied_on_agent_routes(self):
+        # The ntfy action-button row: approval POSTs, never agent calls.
+        cred = self.srv.pair()
+        pairing.update_device(
+            self.srv.home, cred["device_id"], role="actions")
+        auth = {"Authorization": f"Bearer {cred['credential']}"}
+        self.assertEqual(
+            self._post("/v1/agent/register",
+                       {"machine": {"id": "m1"}}, auth), 403)
+        status, _ = self.srv.request(
+            "GET", "/v1/agent/commands?machine=m1", headers=auth)
+        self.assertEqual(status, 403)
+
+    # -- machine binding ----------------------------------------------------
+
+    def test_binding_denies_other_machines(self):
+        sat = self._sat("sat-m1")
+        other = "sat-m2"
+        self.assertEqual(
+            self._post("/v1/agent/register",
+                       {"machine": {"id": other}}, sat), 403)
+        self.assertEqual(
+            self._post("/v1/agent/catalog",
+                       {"machine_id": other, "rows": []}, sat), 403)
+        self.assertEqual(
+            self._post("/v1/agent/usage",
+                       {"machine_id": other, "harnesses": []}, sat), 403)
+        self.assertEqual(
+            self._post("/v1/agent/events",
+                       {"machine_id": other, "events": []}, sat), 403)
+        status, _ = self.srv.request(
+            "GET", f"/v1/agent/commands?machine={other}", headers=sat)
+        self.assertEqual(status, 403)
+
+    def test_binding_denies_other_machines_attachment(self):
+        sat = self._sat("sat-m1")
+        status, _ = self.srv.request(
+            "GET", "/v1/agent/attachments/claude%3Ax%40sat-m2/r.png",
+            headers=sat)
+        self.assertEqual(status, 403)
+        # A local key with no @mid is not for a satellite at all.
+        status, _ = self.srv.request(
+            "GET", "/v1/agent/attachments/claude%3Ax/r.png",
+            headers=sat)
+        self.assertEqual(status, 403)
+
+    def test_unbound_satellite_must_register_first(self):
+        cred = self.srv.pair(role="satellite")
+        sat = {"Authorization": f"Bearer {cred['credential']}"}
+        # No register yet: no binding, so the other routes refuse.
+        self.assertEqual(
+            self._post("/v1/agent/catalog",
+                       {"machine_id": "m1", "rows": []}, sat), 403)
+        self.assertEqual(
+            self._post("/v1/agent/events",
+                       {"machine_id": "m1", "events": []}, sat), 403)
+        status, _ = self.srv.request(
+            "GET", "/v1/agent/commands?machine=m1", headers=sat)
+        self.assertEqual(status, 403)
+
+    def test_register_is_idempotent_for_the_bound_machine(self):
+        sat = self._sat("sat-m1")
+        status = self._post(
+            "/v1/agent/register", {"machine": {"id": "sat-m1"}}, sat)
+        self.assertEqual(status, 200)
+
+    def test_register_cannot_claim_the_hub_machine(self):
+        cred = self.srv.pair(role="satellite")
+        sat = {"Authorization": f"Bearer {cred['credential']}"}
+        status = self._post(
+            "/v1/agent/register",
+            {"machine": {"id": self.srv.state.machine_id}}, sat)
+        self.assertEqual(status, 403)
+
+    def test_second_satellite_cannot_take_the_machine(self):
+        # A credential stays bound to ITS machine even when another
+        # machine is already registered by a different satellite.
+        self._sat("sat-m1")
+        sat2 = self._sat("sat-m2")
+        self.assertEqual(
+            self._post("/v1/agent/catalog",
+                       {"machine_id": "sat-m1", "rows": []}, sat2), 403)
+
+    # -- event ingest -------------------------------------------------------
+
+    def _events(self, sat, events, mid="sat-m1"):
+        status, data = self.srv.request(
+            "POST", "/v1/agent/events",
+            {"machine_id": mid, "events": events}, headers=sat)
+        return status, json.loads(data)
+
+    def test_unknown_event_types_are_dropped(self):
+        sat = self._sat()
+        status, body = self._events(sat, [
+            protocol.event("message.appended", "claude:r1", "sat-m1",
+                           protocol.message("assistant", "real")),
+            {"type": "command", "session": "claude:r1",
+             "data": {"op": "message"}},
+            {"type": "session.ownership", "session": "claude:r1",
+             "data": {"ownership": "observed"}},
+            {"type": "made.up", "session": "claude:r1", "data": {}},
+        ])
+        self.assertEqual(status, 200)
+        self.assertEqual(body["accepted"], 1)
+        events, _ = self.srv.state.journal.read_since(
+            "claude:r1@sat-m1", 0)
+        self.assertEqual([e["type"] for e in events],
+                         ["message.appended"])
+
+    def test_unknown_message_kinds_are_dropped(self):
+        sat = self._sat()
+        status, body = self._events(sat, [
+            protocol.event("message.appended", "claude:r1", "sat-m1",
+                           {"kind": "<img src=x onerror=alert(1)>",
+                            "text": "xss"}),
+            protocol.event("message.appended", "claude:r1", "sat-m1",
+                           {"text": "kindless"}),
+            protocol.event("message.appended", "claude:r1", "sat-m1",
+                           protocol.message("assistant", "real")),
+        ])
+        self.assertEqual(status, 200)
+        self.assertEqual(body["accepted"], 1)
+        events, _ = self.srv.state.journal.read_since(
+            "claude:r1@sat-m1", 0)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["data"]["kind"], "assistant")
+
+    def test_agent_bookkeeping_event_types_survive(self):
+        sat = self._sat()
+        status, body = self._events(sat, [
+            protocol.event("session.launched", "claude:r1", "sat-m1",
+                           {"launch_id": "l1"}),
+            protocol.event("command.result", "claude:r1", "sat-m1",
+                           {"op": "message", "ok": True}),
+        ])
+        self.assertEqual(status, 200)
+        self.assertEqual(body["accepted"], 2)
+
+    def test_notify_kind_checked_against_its_own_set(self):
+        sat = self._sat()
+        status, body = self._events(sat, [
+            protocol.event("notify", "claude:r1", "sat-m1",
+                           {"kind": "finished", "status": "done"}),
+            protocol.event("notify", "claude:r1", "sat-m1",
+                           {"kind": "assistant", "status": "done"}),
+        ])
+        self.assertEqual(status, 200)
+        self.assertEqual(body["accepted"], 1)
 
 
 class TestStartNotify(unittest.TestCase):

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 from quiver.harness.models import RateLimitInfo
 from quiver.remote import agent as agent_mod
-from quiver.remote import usage
+from quiver.remote import pairing, usage
 
 from tests.test_remote_hub import HubBase
 
@@ -225,7 +225,7 @@ class TestAgentUsageRoute(HubBase):
         self.assertEqual(status, 401)
 
     def test_rejects_missing_machine_and_bad_rows(self):
-        auth = self.auth()
+        auth = self.srv.satellite("mbp")
         for body in ({"harnesses": []},
                      {"machine_id": "mbp", "harnesses": {"a": 1}}):
             status, _ = self.srv.request(
@@ -234,7 +234,7 @@ class TestAgentUsageRoute(HubBase):
             self.assertEqual(status, 422, body)
 
     def test_satellite_report_listed_after_hub(self):
-        auth = self.auth()
+        auth = self.srv.satellite("mbp")
         status, _ = self.srv.request(
             "POST", "/v1/agent/register",
             {"machine": {"id": "mbp", "name": "MacBook"}}, headers=auth,
@@ -265,7 +265,7 @@ class TestAgentUsageRoute(HubBase):
                                           timeout=5)
         try:
             conn.request("POST", "/v1/agent/usage", body="{nope",
-                         headers={**self.auth(),
+                         headers={**self.srv.satellite("mbp"),
                                   "Content-Type": "application/json"})
             self.assertEqual(conn.getresponse().status, 400)
         finally:
@@ -276,14 +276,19 @@ class TestAgentUsageRoute(HubBase):
                           side_effect=OSError("disk full")):
             status, data = self.srv.request(
                 "POST", "/v1/agent/usage",
-                {"machine_id": "mbp", "harnesses": []}, headers=self.auth(),
+                {"machine_id": "mbp", "harnesses": []},
+                headers=self.srv.satellite("mbp"),
             )
         self.assertEqual(status, 503)
         self.assertEqual(json.loads(data)["error"]["code"],
                          "usage_unavailable")
 
     def test_unregistered_satellite_named_by_id(self):
-        auth = self.auth()
+        # Bound to "ghost" without a register call, so no machine row
+        # exists: the usage listing falls back to id-as-name.
+        cred = self.srv.pair(role="satellite")
+        pairing.bind_machine(self.srv.home, cred["device_id"], "ghost")
+        auth = {"Authorization": f"Bearer {cred['credential']}"}
         self.srv.request("POST", "/v1/agent/usage",
                          {"machine_id": "ghost", "harnesses": []},
                          headers=auth)
@@ -291,12 +296,22 @@ class TestAgentUsageRoute(HubBase):
         self.assertEqual(sat["machine"], {"id": "ghost", "name": "ghost"})
 
     def test_report_under_hub_id_ignored(self):
+        # A satellite cannot claim the hub's own machine_id: register
+        # refuses it outright, so a usage report never binds to it.
+        cred = self.srv.pair(role="satellite")
+        sat = {"Authorization": f"Bearer {cred['credential']}"}
+        status, _ = self.srv.request(
+            "POST", "/v1/agent/register",
+            {"machine": {"id": self.srv.state.machine_id}}, headers=sat,
+        )
+        self.assertEqual(status, 403)
         auth = self.auth()
-        self.srv.request(
+        status, _ = self.srv.request(
             "POST", "/v1/agent/usage",
             {"machine_id": self.srv.state.machine_id, "harnesses": []},
-            headers=auth,
+            headers=sat,
         )
+        self.assertEqual(status, 403)
         self.assertEqual(len(self._usage(auth)["machines"]), 1)
 
 

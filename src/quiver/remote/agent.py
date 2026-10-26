@@ -124,10 +124,16 @@ def _get_bytes(hub: str, path: str, credential: str,
 
 def pair_agent(hub: str, token: str, name: str,
                home: Path | None = None) -> dict | None:
-    """Exchange a one-time pair token for this satellite's credential."""
+    """Exchange a one-time pair token for this satellite's credential.
+
+    The claimed ``role`` lands on the device row; the hub binds it to
+    this machine at first ``/v1/agent/register`` and refuses the agent
+    routes to anything else.
+    """
     status, payload = _post(
         hub, "/v1/pair", "",  # no auth needed for /v1/pair
-        {"token": token, "name": name or "satellite"},
+        {"token": token, "name": name or "satellite",
+         "role": "satellite"},
     )
     if status != 200 or not payload.get("credential"):
         return None

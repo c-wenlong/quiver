@@ -421,13 +421,16 @@ class TestSatellite(_Home):
         cred = self.srv.pair()
         self.auth = {"Authorization": f"Bearer {cred['credential']}"}
         self.mid = "sat-1"
+        # Catalog pushes need a satellite credential bound to the
+        # machine; the phone credential stays for the session routes.
+        self.sat_auth = self.srv.satellite(self.mid)
         self.row = {"key": "claude:r1", "harness": "claude",
                     "cwd": str(self.proj), "ownership": "observed"}
 
     def push(self, extra=None):
         body = {"machine_id": self.mid, "rows": [self.row], **(extra or {})}
         status, data = self.srv.request(
-            "POST", "/v1/agent/catalog", body, headers=self.auth)
+            "POST", "/v1/agent/catalog", body, headers=self.sat_auth)
         self.assertEqual(status, 200)
         return json.loads(data)
 
