@@ -844,8 +844,10 @@ def cmd_remote(args: list[str]) -> int:
         # Every subcommand's write lands under ~/.quiver/data/remote
         # (pairing._state_lock mkdirs it, journals and registries sit in
         # it), so an unset, empty or read-only HOME surfaces here as one
-        # bare OSError. Name the place instead of dumping a traceback.
-        print(c("red", f"can't write {_remote_state_dir()}: "
+        # bare OSError — but `serve --install` also writes under
+        # ~/Library/LaunchAgents or ~/.config/systemd/user, so name the
+        # path that actually failed, not the state dir it usually is.
+        print(c("red", f"can't write {exc.filename or _remote_state_dir()}: "
                        f"{exc.strerror or exc}"),
               file=error_stream(json_view))
         return 1

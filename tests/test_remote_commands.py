@@ -761,6 +761,21 @@ class TestUnwritableHome(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("no paired", out)
 
+    def test_error_names_the_path_that_failed(self):
+        # The write that fails can sit outside the state dir —
+        # `serve --install` writes under ~/Library/LaunchAgents or
+        # ~/.config/systemd/user — so the line names exc.filename,
+        # not the remote dir the error usually comes from.
+        boom = PermissionError(13, "Permission denied",
+                               "/h/Library/LaunchAgents/x.plist")
+        with patch.object(commands.pairing, "list_requests",
+                          side_effect=boom):
+            rc, out, _ = _run(["devices", "--requests"])
+        self.assertEqual(rc, 1)
+        self.assertIn("/h/Library/LaunchAgents/x.plist", out)
+        self.assertIn("Permission denied", out)
+        self.assertNotIn("data/remote", out)
+
     def test_unresolvable_home_errors_cleanly(self):
         # HOME unset and the uid missing from passwd: Path.home() gives
         # up with RuntimeError before any mkdir is attempted.
