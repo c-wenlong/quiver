@@ -63,10 +63,16 @@ public struct HubDeviceStore: Sendable {
             try handle.write(contentsOf: data)
             try handle.synchronize()
             try handle.close()
-            try manager.moveItem(at: temp, to: url)
         } catch {
             try? manager.removeItem(at: temp)
             throw error
+        }
+        // rename(2), not moveItem: the old credential must be replaced,
+        // and FileManager refuses to overwrite it.
+        guard Darwin.rename(temp.path, url.path) == 0 else {
+            let code = POSIXErrorCode(rawValue: errno) ?? .EIO
+            try? manager.removeItem(at: temp)
+            throw POSIXError(code)
         }
     }
 
@@ -131,12 +137,17 @@ public final class LocalHub {
         let host = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
         if host == "localhost" || host.hasSuffix(".localhost") || host == "::1" { return true }
         if host.hasSuffix(".ts.net") { return true }
-        if host.hasPrefix("127.") { return true }
-        // Tailscale's carrier-grade NAT range, 100.64.0.0/10.
-        if host.hasPrefix("100."),
-           let second = host.split(separator: ".").dropFirst().first.flatMap({ Int($0) }),
-           (64...127).contains(second) { return true }
-        return false
+        // A numeric host has to be a real dotted quad — "127.evil.example"
+        // carries a loopback-looking prefix but resolves wherever DNS
+        // points, and "0127.0.0.1" parses octal under inet_aton. Every
+        // octet, in canonical decimal.
+        let octets = host.split(separator: ".")
+        guard octets.count == 4, octets.allSatisfy({ part in
+            guard let value = Int(part), (0...255).contains(value) else { return false }
+            return String(value) == String(part)
+        }) else { return false }
+        let quad = octets.compactMap { Int($0) }
+        return quad[0] == 127 || (quad[0] == 100 && (64...127).contains(quad[1]))
     }
 
     /// A client holding a credential, pairing first when there is none.
