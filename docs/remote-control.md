@@ -841,6 +841,16 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   channel instead of trusting sshd's first answer. Tailscale SSH is not
   used: its server side needs the open-source `tailscaled` on macOS,
   not Tailscale.app.
+- Notifications leave the tailnet: whatever an ntfy body carries is
+  readable by the ntfy host (and ntfy.sh's relay for iOS delivery), so
+  no full-power credential and no raw pane text goes in one. Approval
+  action buttons POST with a token minted per notification — bound to
+  (session, request_id), single-use, ten minutes, the resolved
+  request's token dropped while overlapping requests keep theirs —
+  which only the approval route accepts (`notify.ApprovalTokens`);
+  prompts run the transcript secret-redactor and a length cap first.
+  The legacy `ntfy-actions` device row those buttons used to carry is
+  revoked at every hub start, whether or not notifications still post.
 - Threat model for the README: the hub executes on your machines by
   design; the credential gates the app layer on top of the tailnet —
   per-device revocation is what "revoke my lost phone" means without
