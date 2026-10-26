@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   labelled "Mark all read" button instead of a second unlabeled icon
   beside Refresh. The web app's inbox header matches.
 
+- **`swe remote` prints a one-line error instead of a traceback when
+  HOME is unset, empty or unwritable.** Every subcommand that writes
+  state does so under `~/.quiver/data/remote`, and creating it surfaced
+  as a bare `OSError`. The command boundary now catches it and prints
+  `can't write <dir>: <reason>`, exit 1.
+
 ## [1.1.0] - 2026-10-26
 
 ### Added

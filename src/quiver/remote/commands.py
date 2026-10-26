@@ -772,18 +772,17 @@ def _cmd_ssh(flags: dict, json_view: bool) -> int:
     return 0
 
 
-def cmd_remote(args: list[str]) -> int:
+def _remote_state_dir() -> str:
+    """The remote state dir for an error line. ``remote_dir_for`` is
+    itself what dies when the home can't be resolved, so the handler
+    falls back to the ``~/`` spelling rather than raise inside it."""
     try:
-        sub, flags, rest, json_view = _parse_flags(list(args))
-    except ValueError as exc:
-        print(c("red", str(exc)), file=sys.stderr)
-        return 1
-    if not sub or sub not in _SUBCOMMANDS:
-        print(_USAGE)
-        if sub:
-            print(c("red", f"unknown subcommand: {sub}"), file=sys.stderr)
-            return 1
-        return 0
+        return str(remote_dir_for())
+    except Exception:
+        return "~/.quiver/data/remote"
+
+
+def _dispatch(sub: str, flags: dict, rest: list[str], json_view: bool) -> int:
     if sub == "serve":
         if rest:
             print(c("red", f"unexpected args: {' '.join(rest)}"), file=sys.stderr)
@@ -825,3 +824,38 @@ def cmd_remote(args: list[str]) -> int:
             return 1
         return _cmd_ssh(flags, json_view)
     return 0
+
+
+def cmd_remote(args: list[str]) -> int:
+    try:
+        sub, flags, rest, json_view = _parse_flags(list(args))
+    except ValueError as exc:
+        print(c("red", str(exc)), file=sys.stderr)
+        return 1
+    if not sub or sub not in _SUBCOMMANDS:
+        print(_USAGE)
+        if sub:
+            print(c("red", f"unknown subcommand: {sub}"), file=sys.stderr)
+            return 1
+        return 0
+    try:
+        return _dispatch(sub, flags, rest, json_view)
+    except OSError as exc:
+        # Every subcommand's write lands under ~/.quiver/data/remote
+        # (pairing._state_lock mkdirs it, journals and registries sit in
+        # it), so an unset, empty or read-only HOME surfaces here as one
+        # bare OSError. Name the place instead of dumping a traceback.
+        print(c("red", f"can't write {_remote_state_dir()}: "
+                       f"{exc.strerror or exc}"),
+              file=error_stream(json_view))
+        return 1
+    except RuntimeError as exc:
+        # HOME unset and the uid has no passwd entry: Path.home() gives
+        # up with "Could not determine home directory" — the same dead
+        # end as an unwritable one. Any other RuntimeError is a bug and
+        # keeps its traceback.
+        if "home directory" not in str(exc):
+            raise
+        print(c("red", f"can't write ~/.quiver/data/remote: {exc}"),
+              file=error_stream(json_view))
+        return 1
