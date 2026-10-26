@@ -180,6 +180,21 @@ extension HubStubbed {
         await #expect(throws: HubError.self) { try await local.client() }
     }
 
+    @Test func aHubOnAnUntrustedAddressIsBlockedNotReportedDown() async {
+        let local = hub(FakeLocator(address: "192.168.1.5:8477"))
+        await local.refreshKeys()
+        #expect(local.keys == .unavailable)
+        do {
+            _ = try await local.client()
+            Issue.record("a LAN hub address should be refused")
+        } catch let error as HubError {
+            #expect(error.code == "hub_blocked")
+            #expect(error.message.contains("192.168.1.5"))
+        } catch {
+            Issue.record("expected a HubError, got \(error)")
+        }
+    }
+
     @Test func keysStayUnknownUntilPairedAndThenFollowTheHub() async throws {
         let local = hub(FakeLocator(address: "127.0.0.1:8477"))
         await local.refreshKeys()

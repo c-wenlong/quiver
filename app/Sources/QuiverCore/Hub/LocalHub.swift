@@ -164,10 +164,15 @@ public final class LocalHub {
     }
 
     private func connect() async throws -> HubClient {
-        guard let address = try await locator.hubAddress(), let base = Self.baseURL(address) else {
+        guard let address = try await locator.hubAddress() else {
             keys = .unavailable
             throw HubError(status: 0, code: "hub_down",
                            message: "This Mac's hub isn't running. Start it in Settings › Remote.")
+        }
+        guard let base = Self.baseURL(address) else {
+            keys = .unavailable
+            throw HubError(status: 0, code: "hub_blocked",
+                           message: "The hub at \(address) is running, but not on this Mac or the tailnet — sending its credential there would go over plain HTTP. Bind the hub to 127.0.0.1 or a Tailscale address.")
         }
         if let saved = store.credential(for: address) { return makeClient(base, saved) }
         let token = try await locator.pairToken(name: Self.deviceName)
