@@ -7,7 +7,8 @@ branch — upgrading is `pipx install --force git+https://github.com/c-wenlong/q
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.2.x   | :white_check_mark: |
+| 1.0.x   | :white_check_mark: |
+| 0.2.x   | :x:                |
 | 0.1.x   | :x:                |
 
 ## Reporting a Vulnerability
@@ -15,14 +16,8 @@ branch — upgrading is `pipx install --force git+https://github.com/c-wenlong/q
 If you discover a security issue, please **do not** open a public GitHub issue
 describing it.
 
-GitHub's [private vulnerability reporting](https://github.com/c-wenlong/quiver/security/advisories/new)
-is the preferred channel, but it is **not enabled on this repository yet** — the
-link only works once a maintainer turns it on under Settings → Code security.
-Until it is, open a public issue titled `Security: request for private contact`
-that contains **no details of the vulnerability** — not the affected command,
-not the file, not a reproduction. A maintainer will reply on that issue with a
-private channel to send the details to. Once the form above is enabled this
-section will point at it and nothing else.
+Use GitHub's [private vulnerability reporting](https://github.com/c-wenlong/quiver/security/advisories/new):
+it opens a private draft advisory only maintainers can see.
 
 Include, once you have somewhere private to send it:
 
