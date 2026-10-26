@@ -3,83 +3,167 @@
   "data": {
     "hooks": [
       {
-        "script": "beacon.py",
+        "name": "beacon.py",
         "harness": "claude",
-        "source": "/tmp/quiver-fixture-home/.quiver/hooks/claude/beacon.py",
-        "destination": "/tmp/quiver-fixture-home/.claude/hooks/beacon.py",
-        "state": "linked",
-        "detail": "",
-        "declared": []
+        "tier": "harness",
+        "source_path": "/tmp/quiver-fixture-home/.quiver/hooks/claude/beacon.py",
+        "dest_path": "/tmp/quiver-fixture-home/.claude/hooks/beacon.py",
+        "link_status": "linked",
+        "enabled": true,
+        "declared": [],
+        "events_supported": [
+          "PreToolUse",
+          "PostToolUse",
+          "PostToolUseFailure",
+          "PermissionRequest",
+          "UserPromptSubmit",
+          "SessionStart",
+          "SessionEnd",
+          "Stop",
+          "StopFailure",
+          "SubagentStart",
+          "SubagentStop",
+          "PostCompact",
+          "TeammateIdle"
+        ]
       },
       {
-        "script": "fixture-hook.py",
+        "name": "fixture-hook.py",
         "harness": "claude",
-        "source": "/tmp/quiver-fixture-home/.quiver/hooks/claude/fixture-hook.py",
-        "destination": "/tmp/quiver-fixture-home/.claude/hooks/fixture-hook.py",
-        "state": "create",
-        "detail": "",
-        "declared": []
+        "tier": "harness",
+        "source_path": "/tmp/quiver-fixture-home/.quiver/hooks/claude/fixture-hook.py",
+        "dest_path": "/tmp/quiver-fixture-home/.claude/hooks/fixture-hook.py",
+        "link_status": "create",
+        "enabled": true,
+        "declared": [],
+        "events_supported": [
+          "PreToolUse",
+          "PostToolUse",
+          "PostToolUseFailure",
+          "PermissionRequest",
+          "UserPromptSubmit",
+          "SessionStart",
+          "SessionEnd",
+          "Stop",
+          "StopFailure",
+          "SubagentStart",
+          "SubagentStop",
+          "PostCompact",
+          "TeammateIdle"
+        ]
       },
       {
-        "script": "night-watch.py",
+        "name": "night-watch.py",
         "harness": "claude",
-        "source": "/tmp/quiver-fixture-home/.quiver/hooks/claude/night-watch.py",
-        "destination": "/tmp/quiver-fixture-home/.claude/hooks/night-watch.py",
-        "state": "create",
-        "detail": "",
-        "declared": []
+        "tier": "harness",
+        "source_path": "/tmp/quiver-fixture-home/.quiver/hooks/claude/night-watch.py",
+        "dest_path": "/tmp/quiver-fixture-home/.claude/hooks/night-watch.py",
+        "link_status": "create",
+        "enabled": true,
+        "declared": [],
+        "events_supported": [
+          "PreToolUse",
+          "PostToolUse",
+          "PostToolUseFailure",
+          "PermissionRequest",
+          "UserPromptSubmit",
+          "SessionStart",
+          "SessionEnd",
+          "Stop",
+          "StopFailure",
+          "SubagentStart",
+          "SubagentStop",
+          "PostCompact",
+          "TeammateIdle"
+        ]
       },
       {
-        "script": "prose-guard.py",
+        "name": "prose-guard.py",
         "harness": "claude",
-        "source": "/tmp/quiver-fixture-home/.quiver/hooks/claude/prose-guard.py",
-        "destination": "/tmp/quiver-fixture-home/.claude/hooks/prose-guard.py",
-        "state": "linked",
-        "detail": "",
+        "tier": "harness",
+        "source_path": "/tmp/quiver-fixture-home/.quiver/hooks/claude/prose-guard.py",
+        "dest_path": "/tmp/quiver-fixture-home/.claude/hooks/prose-guard.py",
+        "link_status": "linked",
+        "enabled": true,
         "declared": [
           {
             "event": "PreToolUse",
             "matcher": "Bash",
-            "timeout": 10,
-            "command": "~/.claude/hooks/prose-guard.py",
-            "settings": "/tmp/quiver-fixture-home/.claude/settings.json"
+            "file": "/tmp/quiver-fixture-home/.claude/settings.json"
           }
+        ],
+        "events_supported": [
+          "PreToolUse",
+          "PostToolUse",
+          "PostToolUseFailure",
+          "PermissionRequest",
+          "UserPromptSubmit",
+          "SessionStart",
+          "SessionEnd",
+          "Stop",
+          "StopFailure",
+          "SubagentStart",
+          "SubagentStop",
+          "PostCompact",
+          "TeammateIdle"
         ]
       },
       {
-        "script": "block-rm.py",
+        "name": "block-rm.py",
         "harness": "codex",
-        "source": "/tmp/quiver-fixture-home/.quiver/hooks/codex/block-rm.py",
-        "destination": "/tmp/quiver-fixture-home/.codex/hooks/block-rm.py",
-        "state": "create",
-        "detail": "",
+        "tier": "harness",
+        "source_path": "/tmp/quiver-fixture-home/.quiver/hooks/codex/block-rm.py",
+        "dest_path": "/tmp/quiver-fixture-home/.codex/hooks/block-rm.py",
+        "link_status": "create",
+        "enabled": true,
         "declared": [
           {
             "event": "SessionStart",
             "matcher": "",
-            "timeout": null,
-            "command": "~/.codex/hooks/block-rm.py",
-            "settings": "/tmp/quiver-fixture-home/.codex/hooks.json"
+            "file": "/tmp/quiver-fixture-home/.codex/hooks.json"
           }
+        ],
+        "events_supported": [
+          "PreToolUse",
+          "PostToolUse",
+          "PostToolUseFailure",
+          "PermissionRequest",
+          "UserPromptSubmit",
+          "SessionStart",
+          "SessionEnd",
+          "Stop",
+          "StopFailure",
+          "SubagentStart",
+          "SubagentStop",
+          "PostCompact",
+          "TeammateIdle",
+          "Interrupt",
+          "PreModelRequest",
+          "PostModelRequest",
+          "PreCompact"
         ]
       },
       {
-        "script": "probe.py",
+        "name": "probe.py",
         "harness": "fixturetool",
-        "source": "/tmp/quiver-fixture-home/.quiver/hooks/fixturetool/probe.py",
-        "destination": "/tmp/quiver-fixture-home/.quiver/hooks/fixturetool/probe.py",
-        "state": "skipped",
-        "detail": "no hooks root, set capabilities.hooks.root in harness.json",
-        "declared": []
+        "tier": "harness",
+        "source_path": "/tmp/quiver-fixture-home/.quiver/hooks/fixturetool/probe.py",
+        "dest_path": "/tmp/quiver-fixture-home/.quiver/hooks/fixturetool/probe.py",
+        "link_status": "skipped",
+        "enabled": true,
+        "declared": [],
+        "events_supported": []
       },
       {
-        "script": "legacy.sh",
+        "name": "legacy.sh",
         "harness": "oldtool",
-        "source": "/tmp/quiver-fixture-home/.quiver/hooks/oldtool/legacy.sh",
-        "destination": "/tmp/quiver-fixture-home/.oldtool/hooks/legacy.sh",
-        "state": "ignored",
-        "detail": "archived in harness.json",
-        "declared": []
+        "tier": "harness",
+        "source_path": "/tmp/quiver-fixture-home/.quiver/hooks/oldtool/legacy.sh",
+        "dest_path": "/tmp/quiver-fixture-home/.oldtool/hooks/legacy.sh",
+        "link_status": "skipped",
+        "enabled": true,
+        "declared": [],
+        "events_supported": []
       }
     ]
   }
