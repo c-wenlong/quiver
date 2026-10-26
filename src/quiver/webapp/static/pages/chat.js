@@ -30,6 +30,10 @@ const SessionChat = (() => {
     // showed, looking for one waiting approval (restoreApproval).
     history: null,
     confirmAttach: false, attaching: false, stopping: false,
+    // The session rail (the Mac app's SessionRail): its own load state,
+    // and a copy of the list's rows for when sessions.js's page state
+    // isn't there (a chat opened from a link, the list never visited).
+    rail: { loading: false, error: "" }, railData: null,
   };
 
   const STATUS = { active: "Active", done: "Done", followup: "Waiting", error: "Error",
@@ -314,6 +318,8 @@ const SessionChat = (() => {
 
   function paintShell() {
     $("panel").innerHTML = `<div class="page chat-page">
+      <div class="chat-dash">
+      <div class="chat-main">
       <div class="chat-bar" id="chat-bar"></div>
       <div class="card error-card hidden" id="chat-error"></div>
       <div class="card chat-banner hidden" id="chat-banner"></div>
@@ -336,9 +342,13 @@ const SessionChat = (() => {
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></svg></button>
         <button type="submit" class="chat-send" id="chat-send" disabled>Send</button>
       </form>
+      </div>
+      <aside class="chat-rail" id="chat-rail" aria-label="Sessions"></aside>
+      </div>
     </div>
     <dialog class="sheet" id="session-sheet"></dialog>`;
     paintBar();
+    paintRail();
     bindComposer();
   }
 
@@ -418,6 +428,7 @@ const SessionChat = (() => {
     paintBanner(chat.rowKnown && observed, canAttach, busy);
     updateWorking();
     paintBar();
+    paintRailRows();
   }
 
   function paintBanner(show, canAttach, busy) {
@@ -908,6 +919,159 @@ const SessionChat = (() => {
     return item ? String(item.request_id) : "";
   }
 
+  /* ----------------------------------------------------------------- rail
+     The Mac app's SessionRail (SessionsPage.swift): the sessions the page
+     lists, grouped by day the same way, so a chat can switch sessions
+     without going back to the list. Rows come from the page's own data
+     when it has loaded, else one fetch kept in the page's state; the
+     open session stays listed even when that data predates it. */
+
+  /* sessions.js's page state, guarded so the script stands alone. */
+  const railPage = () => (typeof sessionsPage !== "undefined" ? sessionsPage : null);
+
+  /* The page's sessions array, or the rail's own copy of an answer. */
+  function railSessions() {
+    const page = railPage();
+    const d = (page && page.data) || chat.railData;
+    return d && Array.isArray(d.sessions) ? d.sessions : null;
+  }
+
+  /* The list's day bucket (sessions.js's localDay): the local calendar
+   * day an epoch falls on. */
+  function railDay(epoch) {
+    if (typeof localDay === "function") return localDay(epoch);
+    const d = new Date(epoch * 1000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+
+  /* The list's badge colours as a rail dot (styles.css's .badge.status-*,
+   * plus the chat bar's status-approval); nothing for a finished one. */
+  const RAIL_DOT = { active: "status-active", error: "status-error",
+    followup: "status-followup", interrupted: "status-interrupted", approval: "status-approval" };
+
+  /* The rail's rows: every session the page lists, its own filters left
+   * to the page. The open one merges in what the stream last said, and
+   * joins when the data predates it or the filters would leave it out. */
+  function railRows() {
+    const rows = (railSessions() || []).slice()
+      .sort((a, b) => (b.last_active_at || 0) - (a.last_active_at || 0));
+    const i = chat.key ? rows.findIndex((r) => r.key === chat.key) : -1;
+    if (i >= 0) {
+      if (chat.row) {
+        rows[i] = Object.assign({}, rows[i], {
+          status: "status" in chat.row ? chat.row.status : rows[i].status,
+          title: chat.row.title || rows[i].title,
+        });
+      }
+    } else if (chat.key && chat.row) {
+      rows.push(chat.row);
+      rows.sort((a, b) => (b.last_active_at || 0) - (a.last_active_at || 0));
+    }
+    return rows;
+  }
+
+  /* The list's day grouping (sessionsTable) over the rail's rows. */
+  function railGroups(rows) {
+    const days = [];
+    for (const r of rows) {
+      const day = railDay(r.last_active_at || 0);
+      if (!days.length || days[days.length - 1].day !== day) days.push({ day, rows: [] });
+      days[days.length - 1].rows.push(r);
+    }
+    return days;
+  }
+
+  function railRowHtml(r) {
+    const sel = r.key === chat.key;
+    const dot = r.status && RAIL_DOT[r.status]
+      ? `<span class="cr-dot ${RAIL_DOT[r.status]}" title="${esc(STATUS[r.status] || r.status)}"></span>` : "";
+    return `<button type="button" class="cr-row${sel ? " selected" : ""}" data-key="${esc(r.key)}"
+        ${sel ? 'aria-current="true" ' : ""}title="${esc(r.title || r.id || "Untitled")}">
+      <span class="cr-logo">${Fmt.logo(r.harness)}</span><span class="cr-name">${esc(r.title || r.id || "Untitled")}</span>
+      <span class="cr-spacer"></span>${dot}</button>`;
+  }
+
+  function paintRail() {
+    const rail = $("chat-rail");
+    if (!rail) return;
+    rail.innerHTML = `<div class="cr-head"><span class="caption">Sessions</span><span class="cr-spacer"></span>
+      <button type="button" class="cr-btn${chat.rail.loading ? " spinning" : ""}" id="cr-refresh"
+        title="List sessions again" aria-label="List sessions again">${icon("rescan")}</button></div>
+    <div class="cr-list" id="cr-list"></div>`;
+    $("cr-refresh").onclick = () => loadRail(chat.gen, true);
+    paintRailRows();
+  }
+
+  function paintRailRows() {
+    const list = $("cr-list");
+    if (!list) return;
+    // A repaint for a status change rebuilds the rows; keep a focused
+    // row's focus instead of dropping it to <body>.
+    const focus = document.activeElement;
+    const focusKey = focus && list.contains(focus) && focus.dataset ? focus.dataset.key : null;
+    const sessions = railSessions();
+    // The open session rides into the rows even when the list itself is
+    // empty (a cached empty list and a chat opened from a link).
+    const rows = sessions ? railRows() : null;
+    let html;
+    if (chat.rail.error) {
+      html = `<div class="cr-note">${esc(chat.rail.error)}</div>`;
+    } else if (!rows) {
+      html = `<div class="cr-note">${chat.rail.loading ? "Listing sessions…" : "No sessions listed."}</div>`;
+    } else if (!rows.length) {
+      html = '<div class="cr-note">No sessions listed.</div>';
+    } else {
+      html = railGroups(rows).map(({ day, rows }) => {
+        const [y, m, dd] = day.split("-").map(Number);
+        const label = new Date(y, m - 1, dd).toLocaleDateString("en-US",
+          { month: "short", day: "numeric", year: "numeric" });
+        return `<div class="cr-day">${label}</div>${rows.map(railRowHtml).join("")}`;
+      }).join("");
+    }
+    list.innerHTML = html;
+    for (const btn of list.querySelectorAll(".cr-row")) {
+      btn.onclick = () => {
+        // A row opens its chat the way the list's do: the hash is the
+        // chat, so Back returns to whichever session was open before.
+        if (btn.dataset.key !== chat.key) {
+          location.hash = `#/sessions?chat=${encodeURIComponent(btn.dataset.key)}`;
+        }
+      };
+    }
+    if (focusKey) {
+      const again = list.querySelector(`.cr-row[data-key="${CSS.escape(focusKey)}"]`);
+      if (again) again.focus();
+    }
+  }
+
+  /* The rail's rows are the page's `/v1/app/sessions` answer: its own
+   * copy when the list already loaded, else one fetch (a plain relist;
+   * the refresh button adds rescan, like the page's own) that also fills
+   * the page's state for when the chat is left. */
+  async function loadRail(gen, rescan = false) {
+    if (railSessions() && !rescan) { paintRail(); return; }
+    if (chat.rail.loading) return;
+    chat.rail.loading = true;
+    chat.rail.error = "";
+    paintRail();
+    const { status, data } = await api(`/v1/app/sessions${rescan ? "?rescan=1" : ""}`);
+    if (gen !== chat.gen) return;
+    chat.rail.loading = false;
+    if (status === 401) {
+      renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      return;
+    }
+    if (status !== 200 || !data) {
+      chat.rail.error = errorText(data)
+        || (status ? `The hub answered ${status}.` : "Couldn't list the sessions.");
+      paintRail();
+      return;
+    }
+    const page = railPage();
+    if (page) page.data = data; else chat.railData = data;
+    paintRail();
+  }
+
   /* -------------------------------------------------------------- opening */
 
   /* The catalog row: ownership, attachable and status as the hub has them
@@ -966,8 +1130,12 @@ const SessionChat = (() => {
     chat.attaching = false;
     chat.stopping = false;
     chat.connState = "connecting";
+    chat.rail = { loading: false, error: "" };
     paintShell();
     updateOwnership();
+    // The rail lists what the page already knows at once, and fills in
+    // after its own fetch when the list never loaded (a chat from a link).
+    loadRail(gen);
     // The catalog is read after the backfill, never before: an attach or a
     // status change journaled before the backfill's last message is then
     // already in the row, and one after it comes with the stream.
@@ -1135,7 +1303,8 @@ const SessionChat = (() => {
     open, close, keyFromHash,
     get key() { return chat.key; },
     // Pure helpers, for tests.
-    _test: { md, diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay },
+    _test: { md, diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay,
+      railDay, railGroups },
   };
 })();
 

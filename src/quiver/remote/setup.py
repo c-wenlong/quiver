@@ -122,7 +122,11 @@ def _step(sid: str, title: str, state: str, detail: str = "",
             "action": action}
 
 
-def _open(url: str, label: str) -> dict:
+def _open(url: str, label: str) -> dict | None:
+    """An ``open`` action for a web address only: the page puts the URL in
+    an href, and the ones a status read reports are someone else's text."""
+    if not url.lower().startswith(("https://", "http://")):
+        return None
     return {"kind": "open", "label": label, "url": url}
 
 

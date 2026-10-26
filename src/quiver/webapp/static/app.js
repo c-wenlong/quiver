@@ -51,6 +51,7 @@ const ICON = {
   skills: '<path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/>',
   agents: '<path d="M6 3h8l4 4v14H6zM14 3v4h4M9 12h6M9 16h6"/>',
   mcp: '<path d="M9 3v5M15 3v5M7 8h10v4a5 5 0 0 1-10 0zM12 17v4"/>',
+  hooks: '<path d="m13 2-9 12h6l-1 8 9-12h-6z"/>',
   models: '<path d="m12 3 8 4.5v9L12 21l-8-4.5v-9zM4 7.5l8 4.5 8-4.5M12 12v9"/>',
   menubar: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 8h18"/>',
   widgets: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
@@ -67,7 +68,7 @@ const SIDEBAR = [
   ["Usage", [["overview", "Overview"], ["sessions", "Sessions"], ["calendar", "Calendar"], ["pricing", "Pricing"]]],
   ["GitHub", [["repositories", "Repositories"], ["inbox", "Inbox"]]],
   ["Manage", [["accounts", "Accounts"], ["harnesses", "Harnesses"], ["compute", "Compute"]]],
-  ["Primitives", [["plugins", "Plugins"], ["skills", "Skills"], ["agents", "AGENTS.md"], ["mcp", "MCP servers"], ["models", "Models"]]],
+  ["Primitives", [["plugins", "Plugins"], ["skills", "Skills"], ["agents", "AGENTS.md"], ["mcp", "MCP servers"], ["hooks", "Hooks"], ["models", "Models"]]],
   ["System", [["menubar", "Menu bar"], ["widgets", "Widgets"], ["status", "Service status"], ["settings", "Settings"]]],
 ];
 
@@ -288,7 +289,9 @@ function marbleCapacity() {
 
 function totalCard(d) {
   const t = d.totals;
-  const shares = d.harnesses.filter((h) => h.tokens > 0);
+  // Biggest spender first, so the logo row reads as a ranking like the Mac's.
+  const shares = d.harnesses.filter((h) => h.tokens > 0)
+    .sort((a, b) => b.cost_usd - a.cost_usd || b.tokens - a.tokens);
   overview.scale = Fmt.marbleScale(shares, marbleCapacity());
   const chips = shares.map((h) => `<span class="harness-chip" data-harness="${esc(h.harness)}"
       title="${esc(Fmt.harnessName(h.harness))}" tabindex="0">${Fmt.logo(h.harness)}</span>`).join("");
@@ -296,7 +299,6 @@ function totalCard(d) {
     <div class="tabs" role="tablist">${PERIODS.map(([id, label]) =>
       `<button class="tab${id === d.period ? " selected" : ""}" data-period="${id}" role="tab" aria-selected="${id === d.period}">${label}</button>`).join("")}</div>
     <div class="total-figures">
-      <div class="caption" id="total-label">Total tokens</div>
       <div class="total-tokens num" id="total-tokens">${Fmt.tokens(t.tokens)}</div>
       <div class="total-cost num" id="total-cost">${Fmt.dollars(t.cost_usd)}</div>
       <div class="total-range num" id="total-detail">${esc(rangeCaption(d, overview.scale))}</div>
@@ -314,11 +316,14 @@ function bindHarnessFocus() {
   const reset = () => {
     row.classList.remove("focusing");
     row.querySelectorAll(".harness-chip").forEach((c) => { c.classList.remove("focus"); c.style.borderColor = ""; });
-    document.getElementById("total-label").textContent = "Total tokens";
     document.getElementById("total-tokens").textContent = Fmt.tokens(d.totals.tokens);
     document.getElementById("total-cost").textContent = Fmt.dollars(d.totals.cost_usd);
     document.getElementById("total-detail").textContent = rangeCaption(d, overview.scale);
   };
+  // The Mac's "<Name> · <pct> of spend · N models": percent falls back to
+  // the token share when nothing is priced, and squeezes to "<0.1%".
+  const pct = (part) => part > 0 && part < 0.001 ? "<0.1%"
+    : `${part < 0.1 ? (part * 100).toFixed(1) : Math.round(part * 100)}%`;
   for (const chip of row.querySelectorAll(".harness-chip")) {
     const focus = () => {
       const h = d.harnesses.find((x) => x.harness === chip.dataset.harness);
@@ -326,13 +331,13 @@ function bindHarnessFocus() {
       row.classList.add("focusing");
       chip.classList.add("focus");
       chip.style.borderColor = Fmt.harnessColor(h.harness);
-      const share = d.totals.cost_usd > 0 ? h.cost_usd / d.totals.cost_usd : 0;
-      const pct = share < 0.1 ? (share * 100).toFixed(1) : Math.round(share * 100);
-      document.getElementById("total-label").textContent = `${Fmt.harnessName(h.harness)} tokens`;
+      const costTotal = d.totals.cost_usd;
+      const part = costTotal > 0 ? h.cost_usd / costTotal
+        : d.totals.tokens > 0 ? h.tokens / d.totals.tokens : 0;
       document.getElementById("total-tokens").textContent = Fmt.tokens(h.tokens);
       document.getElementById("total-cost").textContent = Fmt.dollars(h.cost_usd);
       document.getElementById("total-detail").textContent =
-        `${pct}% of spend · ${h.models} model${h.models === 1 ? "" : "s"}`;
+        `${Fmt.harnessName(h.harness)} · ${pct(part)} of ${costTotal > 0 ? "spend" : "tokens"} · ${h.models} model${h.models === 1 ? "" : "s"}`;
     };
     chip.onmouseenter = focus; chip.onfocus = focus;
     chip.onmouseleave = reset; chip.onblur = reset;

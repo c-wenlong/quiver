@@ -194,3 +194,15 @@ dialog.set-key-sheet { width: min(520px, calc(100vw - 32px)); }
 .set-key-input { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .set-warn { color: var(--warning-text, var(--text-secondary)); margin: 0; }
 .set-key-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* Session index row actions + paired-devices fold + provider catalogue */
+.set-search-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.set-fold { width: 100%; justify-content: center; margin-top: 10px; }
+.set-cat-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 14px 0; max-height: 50vh; overflow-y: auto; }
+.set-cat-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px; text-align: left; border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--text-primary); cursor: pointer; }
+.set-cat-cell:hover { background: var(--hover); }
+.set-cat-logo { width: 20px; height: 20px; }
+.set-cat-mono { display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; background: var(--hover); font-size: 12px; font-weight: 600; }
+.set-cat-name { font-size: 13px; font-weight: 600; }
+.set-cat-cell .caption { font-size: 11px; overflow-wrap: anywhere; }
+@media (max-width: 520px) { .set-cat-grid { grid-template-columns: minmax(0, 1fr); } }

@@ -139,6 +139,26 @@ class TestCodex(unittest.TestCase):
         self.assertEqual(r.key, "codex:resp:resp_1")
         self.assertEqual(self.p.records(_tc({"input_tokens": 99, "output_tokens": 9})), [])
 
+    def test_a_malformed_record_does_not_suppress_token_counts(self):
+        # No `usage`: the line can't count, so token_count lines stay live.
+        self.assertEqual(self.p.records(_codex("token_usage_record", {
+            "response_id": "resp_1"})), [])
+        [a] = self.p.records(_tc({"input_tokens": 7, "output_tokens": 3},
+                                 ts="2026-10-03T10:00:01Z"))
+        self.assertEqual(a.event.input, 7)
+        # An unparseable timestamp is the same.
+        self.assertEqual(self.p.records(
+            _codex("token_usage_record",
+                   {"usage": {"input_tokens": 1, "output_tokens": 1}},
+                   ts="not-a-time")), [])
+        [b] = self.p.records(_tc({"input_tokens": 12, "output_tokens": 4},
+                                 ts="2026-10-03T10:00:02Z"))
+        self.assertEqual(b.event.input, 5)
+        # A record that does count still flips the file into record mode.
+        self.assertEqual(len(self.p.records(_codex("token_usage_record", {
+            "response_id": "resp_2", "usage": {"input_tokens": 1, "output_tokens": 1}}))), 1)
+        self.assertEqual(self.p.records(_tc({"input_tokens": 50, "output_tokens": 8})), [])
+
     def test_service_tier(self):
         self.p.records(_codex("event_msg", {"type": "thread_settings_applied",
                                             "thread_settings": {"service_tier": "fast"}}))

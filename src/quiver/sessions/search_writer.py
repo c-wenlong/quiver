@@ -202,6 +202,40 @@ def _remove_database(path: Path) -> None:
             pass
 
 
+def _empty_database(path: Path) -> None:
+    """Every row but ``meta`` (schema version, incarnation) out of the
+    file itself. ``status`` then reads an empty index rather than no
+    index; either way a rebuild starts from nothing. A file SQLite
+    cannot open is unlinked, the old clear's behaviour."""
+    if not path.exists():
+        return
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=rw", uri=True)
+        try:
+            # FTS5 shadow tables (…_data/_idx/_config/…) clear through the
+            # virtual table: a DELETE on the virtual table empties them all.
+            # Deleting messages_fts_config's rows directly erases the
+            # format marker and every later insert fails "invalid fts5
+            # file format".
+            fts = {row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+                " AND sql LIKE '%USING fts5%'")}
+            shadows = {f"{t}{s}" for t in fts
+                       for s in ("_data", "_idx", "_content", "_docsize",
+                                 "_config", "_segments", "_segdir", "_stat")}
+            names = [row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+                " AND name NOT LIKE 'sqlite_%' AND name != 'meta'")
+                if row[0] not in shadows]
+            with conn:
+                for name in names:
+                    conn.execute(f'DELETE FROM "{name}"')
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        _remove_database(path)
+
+
 def _unusable(error: sqlite3.Error) -> bool:
     message = str(error).lower()
     return "not a database" in message or "malformed" in message
@@ -1227,6 +1261,34 @@ def is_running(home: Path | None = None) -> bool:
             return True
         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         return False
+
+
+def clear_index(home: Path | None = None) -> None:
+    """Empty the index, drop its prints and the pass record, keeping
+    ``enabled``. What the hub's Clear search data does: the next pass
+    reads every transcript again.
+
+    The rows go rather than the file: the Mac app shares this database
+    and does not take ``index.lock``, so an unlink under its open
+    connection would strand it on a ghost inode while a rebuild writes
+    a different file. Deleting in place keeps every open handle on the
+    index that fills again. A file that cannot be opened as a database
+    is unlinked as before.
+
+    Raises :class:`IndexBusy` while a pass holds ``index.lock`` — the
+    lock is what keeps the clear from racing a Python write in flight."""
+    home = Path(home) if home is not None else Path.home()
+    path = search_index_for(home)
+    with _Lock(path.parent / LOCK_FILE):
+        _empty_database(path)
+        with contextlib.suppress(OSError):
+            os.unlink(path.parent / PRINTS_FILE)
+
+        def wipe(data: dict) -> None:
+            data.pop("last_pass", None)
+            data.pop("last_error", None)
+
+        _update_state(home, wipe)
 
 
 def run_pass(home: Path | None = None, *, should_stop=None) -> PassResult:
