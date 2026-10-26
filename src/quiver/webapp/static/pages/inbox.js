@@ -23,7 +23,7 @@
     // The app's Unread / All Tabs: both sides of the filter are labelled.
     const filter = `<div class="tabs" role="radiogroup" aria-label="Which notifications to list">${[["unread", "Unread"], ["all", "All"]].map(([id, label]) => {
       const on = (id === "unread") === inbox.unreadOnly;
-      return `<button class="tab${on ? " selected" : ""}" role="radio" aria-checked="${on}" data-inbox-show="${id}">${label}</button>`;
+      return `<button class="tab${on ? " selected" : ""}" role="radio" aria-checked="${on}" tabindex="${on ? 0 : -1}" data-inbox-show="${id}">${label}</button>`;
     }).join("")}</div>`;
     return pageHeader("Inbox",
       "Your GitHub account's live notifications across every repo, via swe gh inbox.",
@@ -174,7 +174,23 @@
     const again = document.getElementById("gh-inbox-retry");
     if (again) again.onclick = () => render("inbox", true);
     for (const btn of document.querySelectorAll("#panel [data-inbox-show]")) {
-      btn.onclick = () => { inbox.unreadOnly = btn.dataset.inboxShow === "unread"; paint(); };
+      const focusSelected = () => {
+        const sel = document.querySelector('#panel [data-inbox-show][aria-checked="true"]');
+        if (sel) sel.focus();
+      };
+      btn.onclick = () => {
+        inbox.unreadOnly = btn.dataset.inboxShow === "unread";
+        paint();
+        focusSelected();
+      };
+      btn.onkeydown = (e) => {
+        // radiogroup: arrows move to the other option and select it
+        if (!e.key.startsWith("Arrow")) return;
+        e.preventDefault();
+        inbox.unreadOnly = btn.dataset.inboxShow !== "unread";
+        paint();
+        focusSelected();
+      };
     }
     for (const btn of document.querySelectorAll("#panel [data-read]")) {
       btn.onclick = (e) => { e.preventDefault(); markRead([btn.dataset.read]); };
