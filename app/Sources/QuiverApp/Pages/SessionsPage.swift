@@ -77,8 +77,10 @@ private struct SessionsContent: View {
         // for its chat.
         .task(id: app.pendingChat) {
             guard let key = app.pendingChat else { return }
-            app.pendingChat = nil
+            // Cleared only once the chat is open: clearing changes this
+            // task's id, which would cancel the hub lookup mid-way.
             await openChat(key: key)
+            if app.pendingChat == key { app.pendingChat = nil }
         }
     }
 
@@ -99,9 +101,15 @@ private struct SessionsContent: View {
               let row = SessionsModel.chatRow(for: key, rows: model.rows, hub: hubRow) else { return }
         detail = nil
         chat = row
-        async let keys: Void = app.hub.refreshKeys()
-        await model.load(for: app.swePath)
-        await keys
+        // Not tied to the task above, which ends when the key clears.
+        let hub = app.hub
+        let model = model
+        let swePath = app.swePath
+        Task {
+            async let keys: Void = hub.refreshKeys()
+            await model.load(for: swePath)
+            await keys
+        }
     }
 
     private var listPage: some View {

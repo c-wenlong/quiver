@@ -143,6 +143,83 @@ import Testing
         #expect(router.calls.count == 1)
     }
 
+    /// Holds the first `gh issue view` until released; later ones answer
+    /// at once with a title that says which read it was.
+    final class GatedRunner: CommandRunning, @unchecked Sendable {
+        private let lock = NSLock()
+        private var gate: CheckedContinuation<Void, Never>?
+        private var gated = false
+        private(set) var views = 0
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        private func body(_ title: String) -> Data {
+            Data(#"{"schema": 1, "data": {"repo": "o/r", "status": "ok", "issue": {"number": 5, "title": "\#(title)", "state": "open"}}}"#.utf8)
+        }
+
+        func run(_ arguments: [String]) async throws -> CommandResult {
+            let first: Bool = lock.withLock {
+                views += 1
+                defer { gated = true }
+                return !gated
+            }
+            if first {
+                await withCheckedContinuation { continuation in
+                    lock.withLock {
+                        gate = continuation
+                        waiters.forEach { $0.resume() }
+                        waiters = []
+                    }
+                }
+                return .init(status: 0, stdout: body("old"), stderr: "")
+            }
+            return .init(status: 0, stdout: body("new"), stderr: "")
+        }
+        func run(_ arguments: [String], input: Data?) async throws -> CommandResult {
+            try await run(arguments)
+        }
+        /// Returns once the first read is held at the gate.
+        func held() async {
+            await withCheckedContinuation { continuation in
+                lock.withLock {
+                    if gate != nil { continuation.resume() } else { waiters.append(continuation) }
+                }
+            }
+        }
+        func release() { lock.withLock { gate?.resume(); gate = nil } }
+    }
+
+    @Test func aSecondOpenerJoinsTheReadInFlight() async {
+        let runner = GatedRunner()
+        let swe = SweClient(runner: runner)
+        let model = GitHubModel()
+        async let first: Void = model.loadIssueDetail(repo: "o/r", number: 5, swe: swe)
+        await runner.held()
+        async let second: Void = model.loadIssueDetail(repo: "o/r", number: 5, swe: swe)
+        runner.release()
+        _ = await (first, second)
+        #expect(runner.views == 1)
+        guard case .loaded(let issue) = model.issueDetails["o/r#5"] else {
+            Issue.record("expected the joined read to land"); return
+        }
+        #expect(issue.title == "old")
+    }
+
+    @Test func aFreshReadWinsOverAnOlderSlowOne() async {
+        let runner = GatedRunner()
+        let swe = SweClient(runner: runner)
+        let model = GitHubModel()
+        async let slow: Void = model.loadIssueDetail(repo: "o/r", number: 5, swe: swe)
+        await runner.held()
+        await model.loadIssueDetail(repo: "o/r", number: 5, swe: swe, fresh: true)
+        runner.release()
+        await slow
+        #expect(runner.views == 2)
+        guard case .loaded(let issue) = model.issueDetails["o/r#5"] else {
+            Issue.record("expected a loaded detail"); return
+        }
+        #expect(issue.title == "new")
+    }
+
     @Test func aBlankCommentPostsNothing() async {
         let router = Router([:])
         let error = await GitHubModel().commentOnIssue(repo: "o/r", number: 4, body: " \n ",
@@ -219,6 +296,9 @@ import Testing
         #expect(IssueResolve.postsComment(context: "Use v2", ticked: true))
         #expect(!IssueResolve.postsComment(context: "Use v2", ticked: false))
         #expect(!IssueResolve.postsComment(context: "  \n", ticked: true))
+        // A retried Start doesn't post the same context twice; new text does.
+        #expect(!IssueResolve.postsComment(context: "Use v2 ", ticked: true, posted: "Use v2"))
+        #expect(IssueResolve.postsComment(context: "Use v3", ticked: true, posted: "Use v2"))
     }
 
     @Test func localMachineIdReadsMachineJson() throws {

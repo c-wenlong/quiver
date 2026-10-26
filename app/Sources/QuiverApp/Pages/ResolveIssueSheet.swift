@@ -21,8 +21,12 @@ struct ResolveIssueSheet: View {
     @State private var context = ""
     @State private var postContext = true
     @State private var prompt = ""
-    /// The prompt was filled from the detail once; later reads leave edits alone.
-    @State private var promptFilled = false
+    /// The suggested prompt last put in the field. A newer read replaces
+    /// it only while the field still holds it, so edits stay.
+    @State private var filledPrompt: String?
+    /// The context that already posted as a comment on this opening, so
+    /// a retried Start doesn't post it again.
+    @State private var postedContext: String?
     @State private var flow = IssueLaunchFlow()
     @State private var launch: Task<Void, Never>?
 
@@ -38,15 +42,17 @@ struct ResolveIssueSheet: View {
             switch state {
             case .idle, .loading:
                 LoadingCard(text: "Fetching the issue…")
-                footer(ready: false)
             case .failed(let message):
                 ErrorCard(message: message, actionTitle: "Refresh") {
                     Task { await loadIssue() }
                 }
-                footer(ready: false)
             case .loaded(let issue):
                 form(issue)
             }
+            // Outside the switch: a failed issue read after a launch
+            // started must not hide how the launch is going.
+            status
+            footer(ready: harness != nil && issueLoaded)
         }
         .sheetScaffold(width: 700)
         // A click on the scrim or Esc closes it only while nothing runs;
@@ -82,10 +88,8 @@ struct ResolveIssueSheet: View {
             .disabled(flow.busy)
         }
         .frame(maxHeight: 540)
-        status
-        footer(ready: harness != nil)
-            .onAppear { fillPrompt(issue) }
-            .onChange(of: issue.suggestedPrompt) { fillPrompt(issue) }
+        .onAppear { fillPrompt(issue) }
+        .onChange(of: issue.suggestedPrompt) { fillPrompt(issue) }
     }
 
     /// Where the run happens. Informational: v1 resolves only on the hub.
@@ -237,11 +241,16 @@ struct ResolveIssueSheet: View {
 
     // MARK: - Actions
 
+    /// Every opening reads the issue again (joining a read already
+    /// running), so the title and suggested prompt aren't a stale copy;
+    /// a cached read shows meanwhile.
     private func loadIssue() async {
-        // A detail the issue sheet just read is enough; the resolve sheet
-        // opened straight from a row reads it here.
-        if case .loaded = state { return }
         await model.loadIssueDetail(repo: selection.repo, number: selection.number, swe: app.swe)
+    }
+
+    private var issueLoaded: Bool {
+        if case .loaded = state { return true }
+        return false
     }
 
     /// The hub's own machine row says what it can start. A hub that is
@@ -271,9 +280,10 @@ struct ResolveIssueSheet: View {
     }
 
     private func fillPrompt(_ issue: GhIssueDetail) {
-        guard !promptFilled, let suggested = issue.suggestedPrompt else { return }
-        promptFilled = true
-        if prompt.isEmpty { prompt = suggested }
+        guard let suggested = issue.suggestedPrompt,
+              prompt.isEmpty || prompt == filledPrompt else { return }
+        prompt = suggested
+        filledPrompt = suggested
     }
 
     private func start() async {
@@ -282,12 +292,18 @@ struct ResolveIssueSheet: View {
         let number = selection.number
         let context = context
         let prompt = prompt
-        let posts = IssueResolve.postsComment(context: context, ticked: postContext)
+        let posts = IssueResolve.postsComment(context: context, ticked: postContext,
+                                              posted: postedContext)
         let model = model
         let swe = app.swe
         let hub = app.hub
         let comment: (() async -> String?)? = posts
-            ? { await model.commentOnIssue(repo: repo, number: number, body: context, swe: swe) }
+            ? {
+                let failure = await model.commentOnIssue(repo: repo, number: number,
+                                                         body: context, swe: swe)
+                if failure == nil { postedContext = context }
+                return failure
+            }
             : nil
         let key = await flow.run(
             comment: comment,

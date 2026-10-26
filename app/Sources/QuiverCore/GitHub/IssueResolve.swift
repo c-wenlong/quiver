@@ -53,10 +53,13 @@ public enum IssueResolve {
         return id
     }
 
-    /// The context posts as a comment only when it holds text and the
-    /// box is ticked.
-    public static func postsComment(context: String, ticked: Bool) -> Bool {
-        ticked && !context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    /// The context posts as a comment only when it holds text, the box is
+    /// ticked, and that text didn't already post (a Start retried after a
+    /// failed launch must not comment twice).
+    public static func postsComment(context: String, ticked: Bool, posted: String? = nil) -> Bool {
+        let text = context.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard ticked, !text.isEmpty else { return false }
+        return text != posted?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

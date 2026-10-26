@@ -1016,24 +1016,50 @@ public final class GitHubModel {
     /// `prDetails`: fresh on every open, the last good read on screen
     /// while the new one lands.
     public private(set) var issueDetails: [String: Loadable<GhIssueDetail>] = [:]
+    /// The read in flight per issue, owned by the model so a sheet that
+    /// closes mid-read can't strand the slot, and another sheet joins it.
+    private var issueReads: [String: (generation: Int, task: Task<Void, Never>)] = [:]
+    /// The newest read started per issue; an older reply that lands
+    /// later is dropped.
+    private var issueGenerations: [String: Int] = [:]
 
-    public func loadIssueDetail(repo: String, number: Int, swe: SweClient) async {
+    /// Reads the issue, or waits for the read already running. `fresh`
+    /// starts a new read regardless (after a write), and the one it
+    /// overtakes no longer writes the slot.
+    public func loadIssueDetail(repo: String, number: Int, swe: SweClient,
+                                fresh: Bool = false) async {
         let key = "\(repo)#\(number)"
-        if case .loading = issueDetails[key] { return }
+        if !fresh, let running = issueReads[key] {
+            await running.task.value
+            return
+        }
+        let generation = (issueGenerations[key] ?? 0) + 1
+        issueGenerations[key] = generation
         if issueDetails[key] == nil { issueDetails[key] = .loading }
+        let task = Task { await self.readIssue(repo: repo, number: number, key: key,
+                                               generation: generation, swe: swe) }
+        issueReads[key] = (generation, task)
+        await task.value
+        if issueReads[key]?.generation == generation { issueReads[key] = nil }
+    }
+
+    private func readIssue(repo: String, number: Int, key: String, generation: Int,
+                           swe: SweClient) async {
+        let next: Loadable<GhIssueDetail>
         do {
             let reply = try await swe.ghIssueView(repo: repo, number: number)
+            guard issueGenerations[key] == generation else { return }
             if let github = reply.github {
                 env = github
                 probed = true
             }
-            issueDetails[key] = reply.issue.map { .loaded($0) }
+            next = reply.issue.map { .loaded($0) }
                 ?? .failed(reply.error ?? "GitHub returned \(reply.status)")
-        } catch is CancellationError {
-            if case .loading = issueDetails[key] { issueDetails[key] = nil }
         } catch {
-            issueDetails[key] = .failed(error.localizedDescription)
+            next = .failed(error.localizedDescription)
         }
+        guard issueGenerations[key] == generation else { return }
+        issueDetails[key] = next
     }
 
     /// Whether a comment on this issue is being posted.
@@ -1066,7 +1092,8 @@ public final class GitHubModel {
         // The issues surface's comment count moved too.
         fetched[BoardKey(repo: repo, tab: .issues)] = nil
         focusFetched[BoardKey(repo: repo, tab: .issues)] = nil
-        await loadIssueDetail(repo: repo, number: number, swe: swe)
+        // Fresh: a read started before the post would not list it.
+        await loadIssueDetail(repo: repo, number: number, swe: swe, fresh: true)
         return nil
     }
 
