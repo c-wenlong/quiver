@@ -26,22 +26,24 @@ around it.
 `NOTARY_KEY`, `NOTARY_KEY_ID`, `NOTARY_ISSUER`, `SPARKLE_PRIVATE_KEY`.
 
 Check presence without printing values in GitHub repo settings under
-Secrets and variables → Actions. If any is missing, the macOS job fails
-partway: fix the secret, delete the tag, re-tag, re-run.
+Secrets and variables → Actions. A missing `MACOS_CERTIFICATE` does
+**not** fail the job: the workflow deliberately degrades to an ad-hoc
+build, prints `::notice::MACOS_CERTIFICATE is not set`, and skips
+signing, notarization and the release upload. `SPARKLE_PRIVATE_KEY`
+missing *does* fail the appcast step. Confirm the secrets exist up
+front, and after the run confirm the DMG and appcast actually landed on
+the release — a green run alone does not prove it.
 
 ## 3. Cut the release
 
-Either push a tag:
+The tag must be `v` + dotted version and match `pyproject.toml`.
 
 ```bash
 git tag -a v1.0.1 -m "v1.0.1"
 git push origin v1.0.1
 ```
 
-or run the workflow manually: Actions → Release → Run workflow → enter the
-tag (e.g. `v1.0.1`). The tag must be `v` + dotted version.
-
-The pipeline then runs without further input:
+The tag push runs the pipeline:
 
 - builds and `twine check`s the sdist/wheel, smoke-tests the wheel in a
   clean venv on Linux and macOS,
@@ -49,8 +51,18 @@ The pipeline then runs without further input:
   smoke-tests the bundle, notarizes it and packages the DMG,
 - downloads Sparkle 2.10.0 tools, verifies the pinned SHA-256, signs the
   appcast with `SPARKLE_PRIVATE_KEY` (stdin, never argv/files), validates
-  the XML, uploads the `macos-app` artifact and creates the GitHub
-  Release with the DMG + appcast.
+  the XML, and uploads a `macos-app` workflow artifact.
+
+**The workflow never creates the GitHub Release.** It attaches assets
+only to a release that already exists. So:
+
+1. Publish the GitHub Release for the tag yourself — Releases → Draft a
+   new release → pick the tag → release notes (state macOS 26+, Apple
+   Silicon only) → Publish. `gh release create v1.0.1 --notes "..."` works
+   too.
+2. Re-run the workflow to attach the built artifacts: Actions → Release →
+   Run workflow → enter the existing tag. Manual dispatch requires an
+   already-pushed tag; it is a re-run path, not a way to mint the tag.
 
 ## 4. Verify before announcing
 
@@ -66,8 +78,8 @@ The pipeline then runs without further input:
 
 ## 5. Afterwards
 
-- [ ] Reinstall the app from the release commit (`app/script/install-app.sh`)
-      and verify `QuiverCommit` again.
+- [ ] Reinstall as usual (`app/script/install-app.sh` builds `origin/main`,
+      not the tag) and verify `QuiverCommit` again.
 - [ ] Close or re-milestone issues shipped by the release.
 
 ## Hard rules
