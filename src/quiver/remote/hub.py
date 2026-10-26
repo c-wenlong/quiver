@@ -50,6 +50,7 @@ from quiver.remote import (
     usage as usage_mod,
 )
 from quiver.remote import fork as fork_mod
+from quiver.remote import issues as issues_mod
 from quiver.remote.detach import PendingDetaches
 from quiver.remote.journal import Journal
 from quiver.webapp import (
@@ -244,13 +245,17 @@ class HubState:
             }
         return launch_id
 
-    def settle_launch(self, launch_id: str, **fields) -> None:
+    def settle_launch(self, launch_id: str, **fields) -> bool:
+        """Update a pending launch; False when it is gone or settled.
+        Without ``state`` it only notes progress (``note``, ``cwd``)."""
         with self._launch_lock:
             entry = self.launches.get(launch_id)
             # A launch settles once: a late failure note for one that
             # already started must not flip it back.
             if entry is not None and entry["state"] == "pending":
                 entry.update(fields)
+                return True
+            return False
 
     def _settle_untracked(self, launch_id: str) -> None:
         """A satellite started a harness swe can't read sessions of: no
@@ -331,6 +336,7 @@ class HubState:
     # The one funnel: every event is journaled, then fanned out.
     def emit(self, key: str, event: dict) -> dict:
         etype = event.get("type")
+        adopted = None
         if etype == "approval.requested":
             rid = str((event.get("data") or {}).get("request_id") or "")
             if rid:
@@ -341,10 +347,9 @@ class HubState:
             data = event.get("data") or {}
             lid = str(data.get("launch_id") or "")
             if lid and etype == "session.launched":
-                self.settle_launch(
-                    lid, state="started",
-                    key=str(event.get("session") or key),
-                )
+                started = str(event.get("session") or key)
+                if self.settle_launch(lid, state="started", key=started):
+                    adopted = (lid, started)
             elif lid and data.get("op") in {"launch", "fork"} \
                     and not data.get("ok"):
                 self.settle_launch(
@@ -361,6 +366,9 @@ class HubState:
             # with replay.
             mirrored = self.journal.append(GLOBAL_KEY, written)
             self.bus.publish(GLOBAL_KEY, mirrored)
+        if adopted:
+            # An issue resolve names its session after the issue.
+            issues_mod.title_adopted(self, *adopted)
         return written
 
     def start(self) -> None:
@@ -1549,6 +1557,11 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/v1/sessions":
             self._launch()
+            return
+
+        if path == "/v1/issues/resolve":  # issues.py: worktree + launch
+            self._send_json(*issues_mod.request(
+                self._state, self._read_body()))
             return
 
         if path.startswith("/v1/sessions/"):

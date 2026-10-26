@@ -1,7 +1,9 @@
 """Pinning, repo search and the catalog sync, for any home.
 
 ``swe gh repo add``, ``swe gh repo search``, ``swe gh sync`` and
-``swe gh pr worktree`` print what these return; the web app's Repositories and Settings pages call
+``swe gh pr worktree`` and ``swe gh issue worktree`` print what these
+return (the hub's ``POST /v1/issues/resolve`` calls ``issue_worktree``
+too); the web app's Repositories and Settings pages call
 them in process for the hub's own home. Nothing here prints. Every
 function takes ``home`` (``None`` is the real one) and reads its pins,
 catalog and owner cache from that home's ``~/.quiver``.
@@ -287,6 +289,39 @@ def _registered_worktrees(mirror: str) -> list[str]:
             if line.startswith("worktree ")]
 
 
+def _fail(step: str, result: gh.GhResult) -> gh.GhResult:
+    """A failed step, named first ("Clone failed: …")."""
+    return gh.GhResult(result.status if result.status != "ok" else "upstream-error",
+                       error=f"{step}: {result.error or result.status}")
+
+
+def mirror_path(repo: str, home: Path | None = None) -> Path:
+    """Where ``repo``'s bare mirror lives (it may not exist yet)."""
+    return mirrors_dir(home) / (repo.replace("/", "__") + ".git")
+
+
+def _ensure_mirror(repo: str,
+                   home: Path | None) -> tuple[str, gh.GhResult | None]:
+    """``(mirror, failure)``: clone the bare, blob-filtered mirror when
+    it is missing. ``failure`` is None once the mirror is there."""
+    mirror = mirror_path(repo, home)
+    if not mirror.is_dir():
+        mirrors_dir(home).mkdir(parents=True, exist_ok=True)
+        result = gh.run_gh(
+            ["repo", "clone", repo, str(mirror), "--",
+             "--bare", "--filter=blob:none"], timeout=300)
+        if result.status != "ok":
+            return str(mirror), _fail("Clone failed", result)
+    return str(mirror), None
+
+
+def _is_registered(mirror: str, path: str) -> bool:
+    # git lists checkouts by their real path: a home under a symlink
+    # (macOS's /var is /private/var) must still match its own checkout.
+    registered = {os.path.realpath(p) for p in _registered_worktrees(mirror)}
+    return os.path.realpath(path) in registered
+
+
 def pr_worktree(repo: str, number: str, home: Path | None = None) -> gh.GhResult:
     """``swe gh pr worktree``: a detached checkout of PR ``number``'s
     head under the home's ``~/.quiver/worktrees``.
@@ -297,39 +332,133 @@ def pr_worktree(repo: str, number: str, home: Path | None = None) -> gh.GhResult
     the existing checkout. ``data`` is ``{"path", "head", "created"}``;
     a failure's ``error`` names the step ("Clone failed: …").
     """
-    def fail(step: str, result: gh.GhResult) -> gh.GhResult:
-        return gh.GhResult(result.status if result.status != "ok" else "upstream-error",
-                           error=f"{step}: {result.error or result.status}")
-
-    mirrors = mirrors_dir(home)
-    mirror = str(mirrors / (repo.replace("/", "__") + ".git"))
-    if not Path(mirror).is_dir():
-        mirrors.mkdir(parents=True, exist_ok=True)
-        result = gh.run_gh(
-            ["repo", "clone", repo, mirror, "--",
-             "--bare", "--filter=blob:none"], timeout=300)
-        if result.status != "ok":
-            return fail("Clone failed", result)
+    mirror, failed = _ensure_mirror(repo, home)
+    if failed is not None:
+        return failed
 
     result = run_git(["-C", mirror, "fetch", "origin",
                       f"refs/pull/{number}/head"], timeout=120)
     if result.status != "ok":
-        return fail("Fetch failed", result)
+        return _fail("Fetch failed", result)
     sha = run_git(["-C", mirror, "rev-parse", "--short=12", "FETCH_HEAD"])
     head = (sha.data or "").strip() if sha.status == "ok" else None
 
     trees = worktrees_dir(home)
     path = str(trees / f"{repo.replace('/', '__')}-pr{number}")
     created = False
-    # git lists checkouts by their real path: a home under a symlink
-    # (macOS's /var is /private/var) must still match its own checkout.
-    registered = {os.path.realpath(p) for p in _registered_worktrees(mirror)}
-    if os.path.realpath(path) not in registered:
+    if not _is_registered(mirror, path):
         trees.mkdir(parents=True, exist_ok=True)
         result = run_git(["-C", mirror, "worktree", "add", "--detach",
                           path, "FETCH_HEAD"], timeout=300)
         if result.status != "ok":
-            return fail("Worktree failed", result)
+            return _fail("Worktree failed", result)
         created = True
     return gh.GhResult("ok", data={"path": path, "head": head,
                                    "created": created})
+
+
+# ------------------------------------------------------------------ issue worktree
+
+def issue_branch(number) -> str:
+    """The branch an agent resolving issue ``number`` works on."""
+    return f"quiver/issue-{int(number)}"
+
+
+def issue_worktree_path(repo: str, number, home: Path | None = None) -> str:
+    """Where ``issue_worktree`` puts issue ``number``'s checkout."""
+    return str(worktrees_dir(home)
+               / f"{repo.replace('/', '__')}-issue{int(number)}")
+
+
+def _default_branch(mirror: str) -> str | None:
+    """The remote's default branch, asked of the remote so a rename on
+    GitHub is followed. A bare clone keeps no ``refs/remotes/origin/HEAD``;
+    its own ``HEAD`` (the default when it was cloned) is the fallback."""
+    remote = run_git(["-C", mirror, "ls-remote", "--symref", "origin",
+                      "HEAD"], timeout=60)
+    if remote.status == "ok":
+        for line in (remote.data or "").splitlines():
+            if line.startswith("ref: refs/heads/"):
+                name = line[len("ref: refs/heads/"):].split()[0]
+                if name:
+                    return name
+    local = run_git(["-C", mirror, "symbolic-ref", "--short", "HEAD"])
+    name = (local.data or "").strip() if local.status == "ok" else ""
+    return name or None
+
+
+def _branch_exists(mirror: str, branch: str) -> bool:
+    found = run_git(["-C", mirror, "rev-parse", "--verify", "--quiet",
+                     f"refs/heads/{branch}"])
+    return found.status == "ok"
+
+
+def issue_worktree(repo: str, number, home: Path | None = None,
+                   progress: Callable[[str], None] | None = None,
+                   ) -> gh.GhResult:
+    """``swe gh issue worktree``: a checkout of a new branch
+    ``quiver/issue-<n>`` off the default branch's tip, for an agent to
+    resolve the issue on.
+
+    Unlike a PR checkout this is a named branch, since the agent's job
+    ends in a push and a PR. The mirror's default branch is fetched
+    first (into ``origin/<default>``, with ``origin/HEAD`` pointed at
+    it), so the branch starts from today's tip. Asking again resumes: a
+    registered checkout comes back as is (``created`` false), and a
+    branch whose checkout folder was deleted is checked out again
+    rather than recreated, so the commits on it survive.
+
+    ``progress`` hears each slow step ("Cloning mirror…", "Creating
+    worktree quiver/issue-<n>…"); the hub shows them as the launch note.
+    ``data`` is ``{"path", "branch", "base", "created"}``, ``base`` the
+    ``origin/<default>`` ref the branch was cut from. A failure's
+    ``error`` names the step, as ``pr_worktree``'s does.
+    """
+    def say(text: str) -> None:
+        if progress is not None:
+            progress(text)
+
+    number = int(number)
+    branch = issue_branch(number)
+    if not mirror_path(repo, home).is_dir():
+        say("Cloning mirror…")
+    mirror, failed = _ensure_mirror(repo, home)
+    if failed is not None:
+        return failed
+
+    default = _default_branch(mirror)
+    if not default:
+        return gh.GhResult("upstream-error",
+                           error="Fetch failed: could not tell the "
+                                 "repository's default branch")
+    base = f"origin/{default}"
+    result = run_git(["-C", mirror, "fetch", "origin",
+                      f"+refs/heads/{default}:refs/remotes/{base}"],
+                     timeout=300)
+    if result.status != "ok":
+        return _fail("Fetch failed", result)
+    # Best effort: lets the agent say origin/HEAD inside the checkout.
+    run_git(["-C", mirror, "symbolic-ref", "refs/remotes/origin/HEAD",
+             f"refs/remotes/{base}"])
+
+    path = issue_worktree_path(repo, number, home)
+    data = {"path": path, "branch": branch, "base": base, "created": False}
+    # A checkout folder deleted by hand stays listed (and its branch
+    # "checked out" there) until pruned, so the folder must exist too.
+    if os.path.isdir(path) and _is_registered(mirror, path):
+        return gh.GhResult("ok", data=data)
+
+    say(f"Creating worktree {branch}…")
+    run_git(["-C", mirror, "worktree", "prune"])
+    worktrees_dir(home).mkdir(parents=True, exist_ok=True)
+    if _branch_exists(mirror, branch):
+        args = ["-C", mirror, "worktree", "add", path, branch]
+    else:
+        # --no-track: the agent's first push sets the upstream; tracking
+        # the default branch would make a bare `git push` refuse.
+        args = ["-C", mirror, "worktree", "add", "--no-track", "-b",
+                branch, path, f"refs/remotes/{base}"]
+    result = run_git(args, timeout=300)
+    if result.status != "ok":
+        return _fail("Worktree failed", result)
+    return gh.GhResult("ok", data={**data, "created": True})

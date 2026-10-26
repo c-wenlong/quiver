@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Resolve a GitHub issue with an agent (hub side).** `POST
+  /v1/issues/resolve {repo, number, harness, prompt?, context?}` makes
+  branch `quiver/issue-<n>` off the pinned repo's default branch in a
+  worktree under `~/.quiver/worktrees`, starts the harness there with a
+  prompt built from the issue and its comments, and names the session
+  `<owner>/<repo>#<n> <title>` once it is adopted. `GET
+  /v1/launches/<id>` shows each step in `note` while it runs. Asking
+  again for the same issue resumes in the same checkout.
+- **`swe gh issue view|comment|worktree`.** `view` shows one issue with
+  its comments and the `suggested_prompt` the hub would start with;
+  `comment --body=TEXT` posts a comment as you (the text reaches `gh` on
+  stdin, so any text is safe); `worktree` makes or reuses the
+  `quiver/issue-<n>` checkout. `swe gh issue` and `swe gh issue list`
+  list issues as before.
+
 ## [1.1.1] - 2026-10-26
 
 ### Fixed

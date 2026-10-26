@@ -316,6 +316,7 @@ POST /v1/sessions/{id}/title         {title: string} → display name, "" clears
 POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill|detach {mode: now|when_idle|keep}
 POST /v1/sessions                    new session {machine, harness, cwd, prompt} → launch_id
 POST /v1/sessions/{id}/fork          {prompt?} new session from this one's history → launch_id
+POST /v1/issues/resolve              {repo, number, harness, prompt?, context?} worktree + agent for a GitHub issue → launch_id
 GET  /v1/folders?path=                subfolders of one folder on the hub machine (new-session browser)
 GET  /v1/sessions/{id}/files?q=     paths under the session's folder for the prompt box's @ menu
 GET  /v1/launches/{launch_id}        pending|started|failed; started carries the session key
@@ -536,6 +537,36 @@ failed `command.result` (echoing `launch_id`) turns the launch `failed`,
 and its `session.launched` names the new key. The hub refuses a
 satellite row without `can_fork`, which covers satellites too old to
 send the field or run the op.
+
+`POST /v1/issues/resolve {repo, number, harness, prompt?, context?}`
+(`issues.py`) starts an agent on a GitHub issue, on the hub machine
+only. It answers what a client can fix at once with a 422: `bad_command`
+for a bad body, `not_pinned` for a repo not pinned on the hub (`swe gh
+repo add`), `not_launchable`, `launch_failed` (no tmux), and
+`gh_unavailable` when `gh` is missing or signed out, with the message
+saying which. Otherwise it answers `202 {launch_id, state: "pending",
+note: "preparing worktree"}` and does the rest on a thread, like a
+new-session launch. It reads the issue, then runs `swe gh issue
+worktree`'s `manage.issue_worktree`: the repo's bare mirror (cloned on
+first use), a fetch of its default branch, and branch
+`quiver/issue-<n>` checked out under
+`~/.quiver/worktrees/<owner>__<repo>-issue<n>`. A second resolve of the
+same issue resumes in that checkout. The harness then starts there under
+tmux with the client's `prompt`, or the one `swe gh issue view` shows as
+`suggested_prompt` when none was sent. A non-empty `context` is added as
+a "Context for this run" block either way, unless the client's prompt
+already holds that text.
+
+While the launch is pending, `GET /v1/launches/{launch_id}` reads as
+progress: `note` steps through "Cloning mirror…" (first run only),
+"Creating worktree quiver/issue-<n>…" and "Starting <harness>…", and
+`cwd` becomes the worktree. A failure at any step settles it `failed`
+with a readable note. The entry also carries `title`, `<owner>/<repo>#<n>
+<issue title>`: when `session.launched` adopts the new session, the hub
+stores that as the session's display name (as `POST
+/v1/sessions/{id}/title` would) and emits `session.meta` on the global
+stream only, since an event in the session's own journal before its
+tailer starts would make the tailer skip the first turn.
 
 `GET /v1/folders?path=` lists one folder's subfolders on the hub machine
 for the phone's folder browser: `{path, parent, folders: [{name, path}],
