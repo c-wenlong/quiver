@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 from quiver.remote import protocol
 from quiver.remote import tail
-from quiver.remote.hub import HubState, make_server
+from quiver.remote.hub import APPROVAL_TTL_S, HubState, make_server
 from quiver.remote import pairing
 from quiver.sessions.models import Session
 
@@ -609,6 +609,38 @@ class TestHubWriteRoutes(unittest.TestCase):
         status, data = srv.request("GET", "/v1/inbox", headers=hdr)
         items = json.loads(data)["items"]
         self.assertEqual([i["status"] for i in items], ["approval"])
+
+    def test_inbox_drops_expired_phantom_approval(self):
+        # A satellite that died mid-prompt can never emit
+        # approval.resolved — the entry expires on its TTL instead of
+        # pinning the inbox row forever.
+        srv = _Server(sessions=[_session(sid="a3")],
+                      statuses=lambda ss: ["active"])
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        hdr = {"Authorization": f"Bearer {cred['credential']}"}
+        srv.state.emit("claude:a3", protocol.event(
+            "approval.requested", "claude:a3", "mbp",
+            {"request_id": "req-3", "prompt": "run it?"}))
+        srv.state._approval_at["claude:a3"] = (
+            time.time() - APPROVAL_TTL_S - 1)
+        status, data = srv.request("GET", "/v1/inbox", headers=hdr)
+        self.assertEqual(json.loads(data)["items"], [])
+        self.assertNotIn("claude:a3", srv.state.pending_approvals)
+        self.assertNotIn("claude:a3", srv.state._approval_at)
+
+    def test_inbox_keeps_fresh_approval(self):
+        srv = _Server(sessions=[_session(sid="a4")],
+                      statuses=lambda ss: ["active"])
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        hdr = {"Authorization": f"Bearer {cred['credential']}"}
+        srv.state.emit("claude:a4", protocol.event(
+            "approval.requested", "claude:a4", "mbp",
+            {"request_id": "req-4"}))
+        status, data = srv.request("GET", "/v1/inbox", headers=hdr)
+        items = json.loads(data)["items"]
+        self.assertEqual([i["request_id"] for i in items], ["req-4"])
 
     def test_advertise_url_never_wildcard(self):
         from quiver.remote import catalog, hub

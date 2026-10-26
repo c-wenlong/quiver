@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 from quiver.remote import agent as agent_mod
 from quiver.remote import attachments, catalog as catalog_mod
 from quiver.remote import inject, journal, pairing, protocol, supervise
+from quiver.remote import hub
 from quiver.remote.hub import HubState, make_server
 from quiver.sessions.models import Session
 
@@ -1664,7 +1665,49 @@ class TestReviewFixes(unittest.TestCase):
         ag._done_cmd_seq = 7
         ag._save_cmd_cursor()
         data = json.loads(ag._cmd_cursor_file().read_text())
-        self.assertEqual(data, {"hub": "http://h:1", "seq": 7})
+        self.assertEqual(data, {"hub": "http://h:1", "seq": 7,
+                                "done": []})
+
+    def test_done_set_persists_across_restart(self):
+        ag = self._agent()
+        for s in (1, 2, 3, 4):
+            ag._mark_done(s)
+        # seq 5 (a long headless send) still runs when seq 6 finishes:
+        # the floor holds at 4 and 6 lands in the done set.
+        ag._mark_done(6)
+        self.assertEqual(ag._done_cmd_seq, 4)
+        self.assertEqual(ag._done_set, {6})
+        data = json.loads(ag._cmd_cursor_file().read_text())
+        self.assertEqual(data["done"], [6])
+        b = self._agent()
+        self.assertEqual(b._done_cmd_seq, 4)
+        self.assertEqual(b._done_set, {6})
+
+    def test_done_set_scoped_to_hub(self):
+        ag = self._agent()
+        ag._mark_done(2)
+        other = agent_mod.RemoteAgent("http://other:9", "c", self.home)
+        self.assertEqual(other._done_cmd_seq, 0)
+        self.assertEqual(other._done_set, set())
+
+    def test_replayed_done_seq_is_not_run_twice(self):
+        ag = self._agent()
+        for s in (1, 2, 3, 4):
+            ag._mark_done(s)
+        ag._mark_done(6)  # seq 5 still running; 6 is done above floor
+        b = self._agent()  # restarted: resumes the stream at ?last=4
+        b._dispatch = MagicMock()
+        # seq 5's message op parks on the work queue — not done yet.
+        b._handle_frame(json.dumps({
+            "type": "command", "seq": 5,
+            "data": {"op": "message", "command_id": "c5"}}).encode())
+        b._handle_frame(json.dumps({
+            "type": "command", "seq": 6,
+            "data": {"op": "control", "command_id": "c6"}}).encode())
+        b._dispatch.assert_not_called()   # 5 waits on _work_q, 6 skipped
+        self.assertEqual(b._work_q.get_nowait()[0], 5)
+        self.assertEqual(b._last_cmd_seq, 6)  # wire cursor still moved
+        self.assertEqual(b._done_cmd_seq, 4)  # floor waits on seq 5
 
     def test_outbox_durable_across_restart(self):
         ag = self._agent()
@@ -1750,3 +1793,69 @@ class TestReviewHubFixes(unittest.TestCase):
         with patch.object(st.journal, "last_seq", return_value=3000):
             self.assertIsNotNone(
                 st.queue_command("sat-m1", "message", "k", {}))
+
+    def test_command_result_advances_ack_floor(self):
+        # The in-band ack: a command.result emitted the way the
+        # satellite's uplink delivers it moves the floor mid-stream,
+        # not only on reconnect.
+        st = self.srv.state
+        cmd = st.queue_command("sat-m1", "control", "", {"ctl": "ping"})
+        seq = cmd["seq"]
+        with patch.object(st.journal, "last_seq",
+                          return_value=hub.MAX_SAT_PENDING):
+            self.assertIsNone(
+                st.queue_command("sat-m1", "control", "", {"ctl": "x"}))
+        st.emit("claude:r1@sat-m1", protocol.event(
+            "command.result", "claude:r1@sat-m1", "sat-m1",
+            {"command_id": cmd["data"]["command_id"],
+             "op": "control", "ok": True}))
+        self.assertEqual(st._sat_acked["sat-m1"], seq)
+        with patch.object(st.journal, "last_seq",
+                          return_value=hub.MAX_SAT_PENDING):
+            self.assertIsNotNone(
+                st.queue_command("sat-m1", "control", "", {"ctl": "x"}))
+
+    def test_ack_floor_moves_only_over_contiguous_results(self):
+        # A control that finishes while an earlier message op still
+        # sits in the agent's work queue must not raise the floor —
+        # replay after a restart still owes seq 1, so the pending
+        # count has to keep covering it.
+        st = self.srv.state
+        c1 = st.queue_command("sat-m1", "message", "", {"text": "x"})
+        c2 = st.queue_command("sat-m1", "control", "", {"ctl": "b"})
+        st.emit("k", protocol.event(
+            "command.result", "k", "sat-m1",
+            {"command_id": c2["data"]["command_id"],
+             "op": "control", "ok": True}))
+        self.assertEqual(st._sat_acked.get("sat-m1", 0), 0)
+        self.assertEqual(st._sat_done["sat-m1"], {2})
+        st.emit("k", protocol.event(
+            "command.result", "k", "sat-m1",
+            {"command_id": c1["data"]["command_id"],
+             "op": "message", "ok": True}))
+        self.assertEqual(st._sat_acked["sat-m1"], 2)
+        self.assertEqual(st._sat_done["sat-m1"], set())
+
+    def test_unknown_result_id_keeps_floor(self):
+        # Results for commands queued before a hub restart (or the
+        # agent's own command_id-less detach reports) move nothing.
+        st = self.srv.state
+        st.emit("claude:r1@sat-m1", protocol.event(
+            "command.result", "claude:r1@sat-m1", "sat-m1",
+            {"command_id": "c999", "op": "control", "ok": True}))
+        st.emit("claude:r1@sat-m1", protocol.event(
+            "command.result", "claude:r1@sat-m1", "sat-m1",
+            {"command_id": "", "op": "detach", "ok": True}))
+        self.assertNotIn("sat-m1", st._sat_acked)
+
+    def test_cmd_seq_map_prunes_at_floor(self):
+        st = self.srv.state
+        first = st.queue_command("sat-m1", "control", "", {"ctl": "a"})
+        st.queue_command("sat-m1", "control", "", {"ctl": "b"})
+        st.emit("k", protocol.event(
+            "command.result", "k", "sat-m1",
+            {"command_id": first["data"]["command_id"],
+             "op": "control", "ok": True}))
+        seqs = st._sat_cmd_seqs["sat-m1"]
+        self.assertNotIn(first["data"]["command_id"], seqs)
+        self.assertEqual(len(seqs), 1)  # the unacked command stays
