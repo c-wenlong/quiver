@@ -41,6 +41,44 @@ import Testing
         #expect(PathSafety.rejection(of: file.path) != nil)
     }
 
+    /// Greptile: a clean-looking link under ~ can hop through a folder
+    /// another user writes before reaching a good file — today /bin/ls,
+    /// tomorrow a planted binary. Every hop's home has to pass, not just
+    /// the written chain or the final target.
+    @Test func aMiddleHopInAWorldWritableFolderIsRejected() throws {
+        let temp = try TempDir()
+        let shared = temp.url.appendingPathComponent("shared", isDirectory: true)
+        try FileManager.default.createDirectory(at: shared, withIntermediateDirectories: true)
+        let hop = shared.appendingPathComponent("hop")
+        try FileManager.default.createSymbolicLink(atPath: hop.path, withDestinationPath: "/bin/ls")
+        let link = temp.url.appendingPathComponent("swe")
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: hop.path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o777], ofItemAtPath: shared.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shared.path)
+        }
+        #expect(PathSafety.rejection(of: link.path) != nil)
+    }
+
+    /// A link chain that stays inside safe folders is still fine.
+    @Test func aLinkChainThroughSafeFoldersIsTrusted() throws {
+        let temp = try TempDir()
+        let inner = temp.url.appendingPathComponent("inner")
+        try FileManager.default.createSymbolicLink(atPath: inner.path, withDestinationPath: "/bin/ls")
+        let outer = temp.url.appendingPathComponent("outer")
+        try FileManager.default.createSymbolicLink(atPath: outer.path, withDestinationPath: inner.path)
+        #expect(PathSafety.rejection(of: outer.path) == nil)
+    }
+
+    /// A link cycle has nothing to judge and nothing to loop on.
+    @Test func aLinkCycleTerminates() throws {
+        let temp = try TempDir()
+        let a = temp.url.appendingPathComponent("a"), b = temp.url.appendingPathComponent("b")
+        try FileManager.default.createSymbolicLink(atPath: a.path, withDestinationPath: b.path)
+        try FileManager.default.createSymbolicLink(atPath: b.path, withDestinationPath: a.path)
+        #expect(PathSafety.rejection(of: a.path) == nil)
+    }
+
     @Test func aWorldWritableExecutableIsRejected() throws {
         let temp = try TempDir()
         let file = temp.url.appendingPathComponent("swe")
