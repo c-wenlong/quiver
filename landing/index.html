@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>quiver</title>
+<meta name="description" content="Home base for every AI coding agent you run. Launch, resume and track Claude Code, Codex, Gemini CLI and more from one command, your Mac, or your phone.">
+<meta property="og:title" content="quiver">
+<meta property="og:description" content="Home base for every AI coding agent you run.">
+<meta property="og:image" content="mascot.jpg">
+<link rel="icon" href="app/Icons/AppIcon-dark.png">
+<style>
+:root {
+  --bg: #141210;
+  --bg-raised: #1c1916;
+  --bg-term: #0f0d0b;
+  --line: #2f2a25;
+  --line-strong: #463f37;
+  --text: #f3eee5;
+  --text-2: #b3ab9e;
+  --text-3: #857d71;
+  --accent: #f0a63a;
+  --accent-ink: #1a1206;
+  --red: #ff4d42;
+  --green: #2fd65a;
+  --blue: #2aa4ff;
+  --yellow: #ffd23f;
+  --purple: #b35cff;
+  --radius: 10px;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #faf6ef;
+    --bg-raised: #ffffff;
+    --bg-term: #16130f;
+    --line: #e7dfd2;
+    --line-strong: #d3c8b6;
+    --text: #1e1a15;
+    --text-2: #5c5449;
+    --text-3: #8a8174;
+    --accent: #b86a00;
+    --accent-ink: #ffffff;
+    color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.6 var(--sans);
+}
+a { color: inherit; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+code, pre, .mono { font-family: var(--mono); }
+
+nav { display: flex; align-items: center; gap: 12px; padding: 20px 0; }
+nav .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; text-decoration: none; font-size: 17px; }
+nav .brand img { width: 28px; height: 28px; border-radius: 7px; }
+nav .links { margin-left: auto; display: flex; gap: 22px; font-size: 14px; }
+nav .links a { color: var(--text-2); text-decoration: none; }
+nav .links a:hover { color: var(--text); }
+
+.hero { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 48px; align-items: center; padding: 56px 0 72px; }
+.eyebrow { font-size: 13px; color: var(--text-3); margin: 0 0 14px; font-family: var(--mono); }
+h1 { font-size: 52px; line-height: 1.08; letter-spacing: -0.02em; margin: 0 0 18px; font-weight: 650; }
+.lede { font-size: 18px; color: var(--text-2); margin: 0 0 28px; max-width: 34em; }
+
+.install { display: flex; align-items: center; gap: 10px; background: var(--bg-term); color: #e8e2d8; border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 10px 10px 10px 14px; font: 14px var(--mono); max-width: 100%; }
+.install code { overflow-x: auto; white-space: nowrap; flex: 1; min-width: 0; scrollbar-width: none; }
+.install code::-webkit-scrollbar { display: none; }
+.install .p { color: var(--accent); user-select: none; }
+.copy { flex: none; background: transparent; color: #b3ab9e; border: 1px solid #3a342d; border-radius: 7px; font: 12px var(--sans); padding: 5px 10px; cursor: pointer; }
+.copy:hover { color: #f3eee5; border-color: #5a5147; }
+.note { font-size: 14px; color: var(--text-3); margin: 12px 0 28px; }
+.note code { color: var(--text-2); }
+
+.ctas { display: flex; gap: 12px; flex-wrap: wrap; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: var(--radius); font-size: 15px; font-weight: 550; text-decoration: none; border: 1px solid var(--line-strong); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn:hover { filter: brightness(1.08); }
+
+.term { background: var(--bg-term); color: #d9d2c6; border: 1px solid var(--line-strong); border-radius: 12px; overflow: hidden; font: 12.5px/1.75 var(--mono); }
+.term .bar { display: flex; gap: 7px; padding: 11px 14px; border-bottom: 1px solid #2a251f; }
+.term .bar i { width: 11px; height: 11px; border-radius: 50%; background: #3a342d; }
+.term pre { margin: 0; padding: 14px 16px 16px; overflow-x: auto; }
+.term .c { color: #f0a63a; }
+.term .d { color: #7d7468; }
+.term .s { color: #ffd23f; }
+.term .ok { color: #2fd65a; }
+
+section { padding: 64px 0; border-top: 1px solid var(--line); }
+h2 { font-size: 30px; letter-spacing: -0.01em; margin: 0 0 10px; font-weight: 620; }
+.sub { color: var(--text-2); margin: 0 0 36px; max-width: 40em; }
+
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.card { background: var(--bg-raised); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
+.card h3 { font-size: 17px; margin: 0 0 6px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+.card p { margin: 0; color: var(--text-2); font-size: 15px; }
+.card code { font-size: 13px; color: var(--text); }
+.tag { font: 12px var(--mono); color: var(--text-3); margin: 0 0 10px; }
+
+.arrow { flex: none; width: 10px; height: 10px; border-radius: 2px; transform: rotate(45deg); }
+.a-red { background: var(--red); } .a-green { background: var(--green); } .a-blue { background: var(--blue); }
+.a-yellow { background: var(--yellow); } .a-purple { background: var(--purple); } .a-orange { background: var(--accent); }
+
+.harnesses { display: flex; flex-wrap: wrap; gap: 10px; }
+.harnesses span { border: 1px solid var(--line-strong); border-radius: 999px; padding: 6px 14px; font-size: 14px; color: var(--text-2); }
+.harnesses .more { border-style: dashed; color: var(--text-3); }
+
+.start { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 40px; align-items: center; }
+.steps { display: grid; gap: 14px; }
+.step { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; align-items: start; }
+.step .n { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--line-strong); display: grid; place-items: center; font: 13px var(--mono); color: var(--text-2); }
+.step p { margin: 2px 0 8px; color: var(--text-2); font-size: 15px; }
+.step .install { font-size: 13px; }
+.start figure { margin: 0; }
+.mascot { border-radius: 14px; border: 1px solid var(--line-strong); width: 100%; height: auto; display: block; image-rendering: pixelated; }
+.caption { font-size: 13px; color: var(--text-3); margin: 10px 0 0; text-align: center; }
+
+footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--text-3); font-size: 14px; display: flex; flex-wrap: wrap; gap: 8px 24px; }
+footer a { color: var(--text-2); text-decoration: none; }
+footer .right { margin-left: auto; display: flex; gap: 20px; }
+
+@media (max-width: 880px) {
+  .hero { grid-template-columns: minmax(0, 1fr); gap: 36px; padding: 32px 0 56px; }
+  h1 { font-size: 40px; }
+  .grid3 { grid-template-columns: minmax(0, 1fr); }
+  .start { grid-template-columns: minmax(0, 1fr); }
+  .start figure { max-width: 240px; margin: 0 auto; }
+}
+@media (max-width: 520px) {
+  .wrap { padding: 0 16px; }
+  nav .links { gap: 14px; }
+  nav .links .wide { display: none; }
+  h1 { font-size: 34px; }
+  .lede { font-size: 16px; }
+  section { padding: 48px 0; }
+  h2 { font-size: 25px; }
+  .term { font-size: 11px; }
+  footer .right { margin-left: 0; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="./"><img src="app/Icons/AppIcon-dark.png" alt="">quiver</a>
+  <div class="links">
+    <a href="overview/">Docs</a>
+    <a class="wide" href="cli/">CLI reference</a>
+    <a class="wide" href="changelog/">Changelog</a>
+    <a href="https://github.com/c-wenlong/quiver">GitHub</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div>
+    <p class="eyebrow">open source · MIT · Python 3.11+</p>
+    <h1>Home base for every coding agent you run.</h1>
+    <p class="lede">Launch and resume Claude Code, Codex, Gemini CLI and the rest from one command. See usage and quotas across all of them. Steer live sessions from your Mac or your phone.</p>
+    <div class="install">
+      <code><span class="p">$ </span>pipx install git+https://github.com/c-wenlong/quiver.git</code>
+      <button class="copy" type="button" data-copy="pipx install git+https://github.com/c-wenlong/quiver.git">Copy</button>
+    </div>
+    <p class="note">You install <code>quiver</code>. You type <code>swe</code>.</p>
+    <div class="ctas">
+      <a class="btn primary" href="overview/">Read the docs</a>
+      <a class="btn" href="https://github.com/c-wenlong/quiver">View on GitHub</a>
+    </div>
+  </div>
+  <div class="term" aria-label="Example output of swe list --usage">
+    <div class="bar"><i></i><i></i><i></i></div>
+<pre><span class="c">$</span> swe list --usage
+
+  <span class="d">NAME      ALIAS  100d  QUOTA</span>
+<span class="s">★</span> claude    cc      412  ◕ 5h:3h12m
+<span class="s">★</span> codex     cx      288  ◑ 5d19h
+  opencode  oc       96  —
+  droid     df       31  —
+  gemini    gg       12  —
+
+  <span class="ok">6/6 installed</span> <span class="d">· 2 starred</span>
+
+<span class="c">$</span> swe use cc <span class="d"># launch Claude Code</span></pre>
+  </div>
+</header>
+
+<section>
+  <h2>One home, three ways in</h2>
+  <p class="sub">The same registry and session history sit behind every surface, under <code>~/.quiver</code> on your machine.</p>
+  <div class="grid3">
+    <div class="card">
+      <p class="tag">swe</p>
+      <h3><span class="arrow a-red"></span>Terminal</h3>
+      <p>Launch any agent by name or alias, resume a session from any of them, and keep skills and MCP servers in sync. Arguments pass straight through to the real tool.</p>
+    </div>
+    <div class="card">
+      <p class="tag">Quiver.app</p>
+      <h3><span class="arrow a-green"></span>Mac app</h3>
+      <p>Usage, limits and sessions at a glance, plus accounts, skills, AGENTS.md and MCP servers, without remembering commands. Widgets included.</p>
+    </div>
+    <div class="card">
+      <p class="tag">swe remote</p>
+      <h3><span class="arrow a-blue"></span>Phone</h3>
+      <p>Watch and steer running sessions from your phone. A small hub on your machine talks to the web app and iOS app over your tailnet, so no third party stores your transcripts.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Everything your agents scatter, in one place</h2>
+  <p class="sub">quiver reads each tool's own logs and configs read-only and shells out to the real binaries. It never wraps or replaces them.</p>
+  <div class="grid3">
+    <div class="card">
+      <h3><span class="arrow a-red"></span>Sessions</h3>
+      <p>One time-sorted list of recent sessions across 21 agents. <code>swe session use 3</code> moves you into the folder and resumes it.</p>
+    </div>
+    <div class="card">
+      <h3><span class="arrow a-green"></span>Usage and quotas</h3>
+      <p>Model usage from every tool's logs, and the remaining quota with a reset countdown for the harnesses you star.</p>
+    </div>
+    <div class="card">
+      <h3><span class="arrow a-blue"></span>Skills</h3>
+      <p>Find every <code>SKILL.md</code> across harness roots, then link, move or catalog them so each agent sees the same set.</p>
+    </div>
+    <div class="card">
+      <h3><span class="arrow a-yellow"></span>MCP sync</h3>
+      <p>Compare, validate and copy MCP server definitions between tools, instead of pasting the same block into five configs.</p>
+    </div>
+    <div class="card">
+      <h3><span class="arrow a-purple"></span>Reports</h3>
+      <p>Daily and weekly summaries of what your agents did, with a cost preview before anything runs and follow-ups you can launch later.</p>
+    </div>
+    <div class="card">
+      <h3><span class="arrow a-orange"></span>Providers</h3>
+      <p>API keys and metadata for 27 built-in LLM providers plus your own, kept in one place for every harness.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Works with the agents you already use</h2>
+  <p class="sub"><code>swe harness discover</code> scans your PATH and registers anything it recognises.</p>
+  <div class="harnesses">
+    <span>Claude Code</span><span>Codex</span><span>Gemini CLI</span><span>Cursor CLI</span>
+    <span>opencode</span><span>Copilot</span><span>Droid</span><span>Devin</span>
+    <span>Freebuff</span><span>Qwen Code</span><span>Aider</span>
+    <span class="more">and more</span>
+  </div>
+</section>
+
+<section>
+  <div class="start">
+    <div>
+      <h2>Up and running in a minute</h2>
+      <p class="sub">The core CLI uses only the Python standard library. Nothing else gets installed.</p>
+      <div class="steps">
+        <div class="step"><span class="n">1</span><div>
+          <p>Install with pipx (or <a href="overview/#nix">Nix</a>).</p>
+          <div class="install"><code><span class="p">$ </span>pipx install git+https://github.com/c-wenlong/quiver.git</code><button class="copy" type="button" data-copy="pipx install git+https://github.com/c-wenlong/quiver.git">Copy</button></div>
+        </div></div>
+        <div class="step"><span class="n">2</span><div>
+          <p>Run the setup wizard. It finds your agents, providers, MCP servers and skills.</p>
+          <div class="install"><code><span class="p">$ </span>swe setup</code><button class="copy" type="button" data-copy="swe setup">Copy</button></div>
+        </div></div>
+        <div class="step"><span class="n">3</span><div>
+          <p>Pick up where you left off, in any agent.</p>
+          <div class="install"><code><span class="p">$ </span>swe session -i</code><button class="copy" type="button" data-copy="swe session -i">Copy</button></div>
+        </div></div>
+      </div>
+    </div>
+    <figure>
+      <img class="mascot" src="mascot.jpg" width="421" height="480" alt="The quiver mascot: a pixel-art leather quiver with a terminal prompt on its front, holding five coloured arrows">
+      <p class="caption">One quiver, every arrow.</p>
+    </figure>
+  </div>
+</section>
+
+<footer>
+  <span>quiver is MIT licensed.</span>
+  <div class="right">
+    <a href="overview/">Docs</a>
+    <a href="contributing/">Contributing</a>
+    <a href="https://github.com/c-wenlong/quiver">GitHub</a>
+  </div>
+</footer>
+
+</div>
+<script>
+document.querySelectorAll(".copy").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    var text = btn.getAttribute("data-copy");
+    var done = function () {
+      btn.textContent = "Copied";
+      setTimeout(function () { btn.textContent = "Copy"; }, 1500);
+    };
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(done, function () {});
+    }
+  });
+});
+</script>
+</body>
+</html>

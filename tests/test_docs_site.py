@@ -112,6 +112,8 @@ class StageTests(unittest.TestCase):
             "ARCHITECTURE.md": "# arch\nlink to [cli](src/x.py)",
             "src/x.py": "x",
             "assets/b.png": "png",
+            "landing/index.html": "<h1>landing</h1>",
+            "landing/mascot.jpg": "jpg",
         })
         pages = [("README.md", "index.md"), ("ARCHITECTURE.md", "architecture/index.md")]
         stage_dir = root / "build" / "docs-site"
@@ -129,6 +131,20 @@ class StageTests(unittest.TestCase):
         self.assertTrue((stage_dir / "assets/b.png").is_file())
         arch = (stage_dir / "architecture/index.md").read_text()
         self.assertIn("(https://github.com/c-wenlong/quiver/blob/main/src/x.py)", arch)
+        self.assertEqual((stage_dir / "index.html").read_text(), "<h1>landing</h1>")
+        self.assertTrue((stage_dir / "mascot.jpg").is_file())
+
+    def test_stage_fails_without_landing_page(self):
+        root = _repo(self, {"README.md": "hi"})
+        orig = (docs_site.PAGES, docs_site.ASSETS, docs_site.cli_page)
+        try:
+            docs_site.PAGES = [("README.md", "overview.md")]
+            docs_site.ASSETS = []
+            docs_site.cli_page = lambda _root: "# CLI reference\n"
+            code = docs_site.stage(root=root, stage_dir=root / "out")
+        finally:
+            docs_site.PAGES, docs_site.ASSETS, docs_site.cli_page = orig
+        self.assertEqual(code, 1)
 
     def test_stage_fails_on_missing_target(self):
         root = _repo(self, {"README.md": "[gone](NOPE.md)", "ARCHITECTURE.md": "x"})

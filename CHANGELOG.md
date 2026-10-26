@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Landing page for the docs site.** The site root is now a
+  hand-written front page (`landing/index.html`) that says what quiver
+  is, the three ways in (terminal, Mac app, phone) and how to install
+  it. `scripts/docs_site.py` copies it to the site root, and the README
+  page moved from `/` to `/overview/`.
+
 ## [1.1.1] - 2026-10-26
 
 ### Fixed

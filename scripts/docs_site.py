@@ -25,7 +25,7 @@ GITHUB_TREE = "https://github.com/c-wenlong/quiver/tree/main/"
 
 # repo-relative source -> staged path, in nav order. cli.md is generated.
 PAGES: list[tuple[str, str]] = [
-    ("README.md", "index.md"),
+    ("README.md", "overview.md"),
     ("docs/harness-support.md", "harness-support.md"),
     ("app/README.md", "app/index.md"),
     ("app/ROADMAP.md", "app/roadmap.md"),
@@ -46,7 +46,11 @@ PAGES: list[tuple[str, str]] = [
 ]
 
 # Extra repo files the site itself needs (logo, favicon).
-ASSETS = ["app/Icons/AppIcon-light.png"]
+ASSETS = ["app/Icons/AppIcon-light.png", "app/Icons/AppIcon-dark.png"]
+
+# The hand-written landing page. Its files are copied to the site root as
+# they are, so landing/index.html becomes the site's front page.
+LANDING = "landing"
 
 # Extensions copied into the site and served, rather than linked to GitHub.
 ASSET_SUFFIXES = {
@@ -189,6 +193,14 @@ def stage(root: Path = ROOT, stage_dir: Path = STAGE) -> int:
         dst.write_text(text, encoding="utf-8")
 
     (stage_dir / "cli.md").write_text(cli_page(root), encoding="utf-8")
+
+    landing = root / LANDING
+    if (landing / "index.html").is_file():
+        for src in landing.iterdir():
+            if src.is_file():
+                shutil.copyfile(src, stage_dir / src.name)
+    else:
+        missing.append(f"{LANDING}/index.html: landing page is missing")
 
     for asset in set(ASSETS) | assets:
         src = root / asset
