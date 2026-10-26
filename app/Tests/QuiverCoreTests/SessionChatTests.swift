@@ -110,6 +110,14 @@ final class FakeLocator: HubLocating, @unchecked Sendable {
         #expect(LocalHub.baseURL("100.200.1.1:8477") == nil)
         #expect(LocalHub.baseURL("8.8.8.8:8477") == nil)
         #expect(LocalHub.baseURL("hub.example.com:8477") == nil)
+        // A dotted name is not an IP: prefixes can't judge where DNS lands.
+        #expect(LocalHub.baseURL("127.evil.example:8477") == nil)
+        #expect(LocalHub.baseURL("100.64.evil.example:8477") == nil)
+        #expect(LocalHub.baseURL("127.0.0.1.evil.example:8477") == nil)
+        // Non-canonical octets read differently to inet_aton — "0127" is
+        // octal there, so it must not count as loopback here either.
+        #expect(LocalHub.baseURL("0127.0.0.1:8477") == nil)
+        #expect(LocalHub.baseURL("127.0.0.1:8477") != nil)
     }
 }
 
@@ -149,6 +157,19 @@ extension HubStubbed {
         #expect(locator.tokens == 1)
         // A hub at another address pairs afresh.
         #expect(store.credential(for: "127.0.0.1:9999") == nil)
+    }
+
+    /// A hub that moved leaves its file behind: re-pairing saves a new
+    /// credential over the old one, which only an overwriting rename can
+    /// do — `moveItem` would throw and the app could never reconnect.
+    @Test func savingOverAnExistingCredentialReplacesIt() throws {
+        let file = store.url
+        try store.save(HubCredential(deviceId: "d1", credential: "old"), for: "127.0.0.1:8477")
+        try store.save(HubCredential(deviceId: "d2", credential: "new"), for: "127.0.0.1:9000")
+        #expect(store.credential(for: "127.0.0.1:9000") == "new")
+        #expect(store.credential(for: "127.0.0.1:8477") == nil)
+        let mode = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int
+        #expect(mode == 0o600)
     }
 
     @Test func aDownHubOpensDetailsInstead() async {
