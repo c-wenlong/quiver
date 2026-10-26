@@ -89,6 +89,7 @@ xml_escape() {
 
 swift build -c "$config" --product Quiver
 swift build -c "$config" --product QuiverWidgets
+swift build -c "$config" --product QuiverFanHelper
 bindir="$(swift build -c "$config" --show-bin-path)"
 bin="$bindir/Quiver"
 
@@ -96,6 +97,9 @@ bundle="$build_dir/Quiver.app"
 rm -rf "$bundle"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp "$bin" "$bundle/Contents/MacOS/Quiver"
+# The root fan helper the Compute page installs. Its own executable, since
+# a copy of Quiver's outside the bundle can't find Sparkle.framework.
+cp "$bindir/QuiverFanHelper" "$bundle/Contents/MacOS/QuiverFanHelper"
 # QuiverCore's resources (the pricing snapshot, the harness logos). Inside
 # Contents/Resources, since codesign refuses anything at the bundle root;
 # CoreResources looks here. The widget extension gets its own copy below.
@@ -324,6 +328,10 @@ find "$frameworks" -depth -type d \
   done
 codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} \
   --entitlements "$here/script/QuiverWidgets.entitlements" "$appex" >/dev/null
+# The bundle's signature only covers its main executable as code; the fan
+# helper beside it is signed on its own, like the frameworks above.
+codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} \
+  "$bundle/Contents/MacOS/QuiverFanHelper" >/dev/null
 # Hardened runtime audit for the app itself (see the commit for the full
 # list): the bundled libcrypto is re-signed here with the same identity,
 # which is all library validation asks, so no entitlements file is needed.

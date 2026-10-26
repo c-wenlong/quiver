@@ -55,7 +55,7 @@ public struct AdministratorInstaller: FanHelperInstalling {
         return "/bin/mkdir -p /Library/PrivilegedHelperTools"
             + " && /usr/bin/install -m 755 -o root -g wheel \(shell(executable)) \(tool)"
             + " && { [ \"$(/usr/bin/shasum -a 256 \(tool) | /usr/bin/cut -d ' ' -f 1)\" = \(shell(sha256)) ]"
-            + " || { /bin/rm -f \(tool); echo 'The Quiver executable changed during install.' >&2; exit 1; }; }"
+            + " || { /bin/rm -f \(tool); echo 'The fan helper changed during install.' >&2; exit 1; }; }"
             + " && /usr/bin/codesign --force --sign - \(tool)"
             + " && /usr/bin/printf '%s' \(shell(FanHelper.plistLine(control: control))) > \(job)"
             + " && /usr/sbin/chown root:wheel \(job) && /bin/chmod 644 \(job)"
@@ -220,7 +220,7 @@ public final class FanControl {
                 status: @escaping @Sendable () -> FanHelperStatus? = { FanHelperStatus.read() },
                 installer: any FanHelperInstalling = AdministratorInstaller(),
                 isInstalled: @escaping @Sendable (URL) -> Bool = FanControl.helperReady,
-                executable: String = Bundle.main.executablePath ?? CommandLine.arguments[0],
+                executable: String = FanHelper.bundledExecutable(appExecutable: Bundle.main.executablePath),
                 owner: Int32 = getpid(),
                 clock: @escaping @Sendable () -> Date = { .now },
                 sleep: @escaping @Sendable (TimeInterval) async -> Void = { try? await Task.sleep(for: .seconds($0)) },
@@ -241,16 +241,18 @@ public final class FanControl {
         threshold = defaults.object(forKey: Self.thresholdKey) as? Double ?? Self.defaultThreshold
     }
 
-    /// The helper is installed, steered by this control file, and loaded:
-    /// files left by a half-finished install, or a job another account
-    /// installed for its own file, count as not installed, so Set speed
-    /// reinstalls rather than waits on a helper that will never come.
+    /// The helper is installed, steered by this control file, at this
+    /// version, and loaded: files left by a half-finished install, a job
+    /// another account installed for its own file, or an older helper
+    /// (one from before `FanHelper.version`, which crashed at launch)
+    /// count as not installed, so Set speed reinstalls rather than waits
+    /// on a helper that will never come.
     public nonisolated static func helperReady(control: URL) -> Bool {
         guard FileManager.default.isExecutableFile(atPath: FanHelper.installedExecutable),
               let data = FileManager.default.contents(atPath: FanHelper.installedPlist),
               let job = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
               let arguments = job["ProgramArguments"] as? [String],
-              arguments == [FanHelper.installedExecutable, FanHelper.flag, "--control", control.path]
+              arguments == FanHelper.programArguments(control: control)
         else { return false }
         return exitStatus(of: "/bin/launchctl", ["print", "system/\(FanHelper.label)"],
                           within: launchctlTimeout) == 0
