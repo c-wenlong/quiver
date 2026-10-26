@@ -3915,6 +3915,7 @@ class CursorFetcherTest(unittest.TestCase):
     def test_state_db_without_token_falls_back_to_keychain(self):
         from quiver.harness.rate_limits import _get_cursor_access_token
 
+        token = self._token()
         with tempfile.TemporaryDirectory() as tmp:
             path = self._state_db(tmp, None)
             with patch(
@@ -3925,12 +3926,107 @@ class CursorFetcherTest(unittest.TestCase):
                 return_value="/usr/bin/security",
             ), patch(
                 "quiver.harness.rate_limits.subprocess.run",
-                return_value=MagicMock(returncode=0, stdout="kc-token\n"),
+                return_value=MagicMock(returncode=0, stdout=token + "\n"),
             ) as run:
-                self.assertEqual(_get_cursor_access_token(), "kc-token")
+                self.assertEqual(_get_cursor_access_token(), token)
             args = run.call_args[0][0]
             self.assertEqual(args[:2], ["security", "find-generic-password"])
             self.assertIn("cursor-access-token", args)
+
+    def test_encrypted_state_token_falls_through_to_the_keychain(self):
+        """The editor's safeStorage blob is skipped, not trusted: the
+        keychain's real JWT wins."""
+        from quiver.harness.rate_limits import _get_cursor_access_token
+
+        keychain_token = self._token()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._state_db(tmp, "cursor-safe-storage:AAAA")
+            with patch(
+                "quiver.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
+                (path,),
+            ), patch(
+                "quiver.harness.rate_limits._read_cursor_keychain_token",
+                return_value=keychain_token,
+            ) as keychain:
+                self.assertEqual(_get_cursor_access_token(), keychain_token)
+            keychain.assert_called_once()
+
+    def test_undecodable_tokens_everywhere_read_as_signed_out(self):
+        """Opaque values in every source: no crash, no request, and the
+        signed-in probe agrees there is no credential."""
+        from quiver.harness import rate_limits
+        from quiver.harness.rate_limits import (
+            _fetch_cursor, fetch_cursor_usage_events,
+        )
+
+        blob = "cursor-safe-storage:AAAA"
+        with patch(
+            "quiver.harness.rate_limits._read_cursor_state_token",
+            return_value=blob,
+        ), patch(
+            "quiver.harness.rate_limits._read_cursor_cli_token",
+            return_value=blob,
+        ), patch(
+            "quiver.harness.rate_limits._read_cursor_keychain_token",
+            return_value=blob,
+        ), patch(
+            "quiver.harness.rate_limits._keychain_item_exists",
+            return_value=False,
+        ), patch("quiver.harness.rate_limits._fetch_json") as fetch:
+            self.assertIsNone(_fetch_cursor())
+            status, events, account_id = fetch_cursor_usage_events()
+            self.assertFalse(rate_limits._SIGNED_IN["cursor"][1]())
+        self.assertEqual(status, "signed-out")
+        self.assertEqual(events, [])
+        self.assertIsNone(account_id)
+        fetch.assert_not_called()
+
+    def test_signed_in_probe_skips_undecodable_file_tokens(self):
+        """The probe mirrors the fetcher's ladder for the two file
+        sources, and keeps its existence-only keychain check."""
+        from quiver.harness import rate_limits
+
+        probe = rate_limits._SIGNED_IN["cursor"][1]
+        blob = "cursor-safe-storage:AAAA"
+        with patch.object(
+            rate_limits, "_read_cursor_state_token", return_value=blob,
+        ), patch.object(
+            rate_limits, "_read_cursor_cli_token", return_value=None,
+        ), patch.object(
+            rate_limits, "_keychain_item_exists", return_value=False,
+        ):
+            self.assertFalse(probe())
+        with patch.object(
+            rate_limits, "_read_cursor_state_token", return_value=blob,
+        ), patch.object(
+            rate_limits, "_read_cursor_cli_token",
+            return_value=self._token(),
+        ):
+            self.assertTrue(probe())
+        with patch.object(
+            rate_limits, "_read_cursor_state_token", return_value=None,
+        ), patch.object(
+            rate_limits, "_read_cursor_cli_token", return_value=None,
+        ), patch.object(
+            rate_limits, "_keychain_item_exists", return_value=True,
+        ):
+            self.assertTrue(probe())
+
+    def test_fetch_with_an_account_state_db_stays_strict(self):
+        """An extra account's ``state_db`` is read alone: an opaque token
+        reports nothing and the default sources are never asked."""
+        from quiver.harness.rate_limits import _fetch_cursor
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self._state_db(tmp, "cursor-safe-storage:AAAA")
+            with patch(
+                "quiver.harness.rate_limits._get_cursor_access_token",
+            ) as default_token, patch(
+                "quiver.harness.rate_limits._read_cursor_keychain_token",
+            ) as keychain:
+                self.assertIsNone(_fetch_cursor(db))
+        default_token.assert_not_called()
+        keychain.assert_not_called()
 
     def test_no_token_anywhere_returns_none(self):
         from quiver.harness.rate_limits import _fetch_cursor
@@ -4443,6 +4539,34 @@ class CursorUsageEventsTest(unittest.TestCase):
         self.assertIsNone(account_id)
         self.assertEqual(seen, [(db,)])
         default_token.assert_not_called()
+
+    def test_account_state_db_blob_never_falls_back(self):
+        """An extra account's opaque token reports signed-out on its
+        own; the default token ladder is never asked."""
+        from quiver.harness.rate_limits import fetch_cursor_usage_events
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = os.path.join(tmp, "state.vscdb")
+            connection = sqlite3.connect(db)
+            connection.execute(
+                "CREATE TABLE ItemTable (key TEXT UNIQUE, value BLOB)")
+            connection.execute(
+                "INSERT INTO ItemTable VALUES (?, ?)",
+                ("cursorAuth/accessToken", "cursor-safe-storage:AAAA"))
+            connection.commit()
+            connection.close()
+            with patch(
+                "quiver.harness.rate_limits._get_cursor_access_token",
+            ) as default_token, patch(
+                "quiver.harness.rate_limits._read_cursor_keychain_token",
+            ) as keychain:
+                status, events, account_id = fetch_cursor_usage_events(db)
+
+        self.assertEqual(status, "signed-out")
+        self.assertEqual(events, [])
+        self.assertIsNone(account_id)
+        default_token.assert_not_called()
+        keychain.assert_not_called()
 
     def test_account_id_is_the_token_sub(self):
         status, _, account_id, _ = self._fetch([[]], now=1_800_000_000.0)
@@ -5105,19 +5229,23 @@ class CursorCliTokenTest(unittest.TestCase):
 
     def test_token_ladder_is_editor_then_cli_file_then_keychain(self):
         from quiver.harness import rate_limits
+        jwt = CursorFetcherTest._jwt
+        editor_token = jwt({"sub": "editor"})
+        cli_token = jwt({"sub": "cli"})
+        keychain_token = jwt({"sub": "keychain"})
         with tempfile.TemporaryDirectory() as tmp:
-            path = self._write(tmp, {"accessToken": "cli.token.x"})
+            path = self._write(tmp, {"accessToken": cli_token})
             with patch.object(rate_limits, "_CURSOR_CLI_AUTH_FILE", path), \
                  patch.object(rate_limits, "_read_cursor_keychain_token",
-                              return_value="keychain.token.x") as keychain:
+                              return_value=keychain_token) as keychain:
                 with patch.object(rate_limits, "_read_cursor_state_token",
-                                  return_value="editor.token.x"):
-                    self.assertEqual(rate_limits._get_cursor_access_token(), "editor.token.x")
+                                  return_value=editor_token):
+                    self.assertEqual(rate_limits._get_cursor_access_token(), editor_token)
                 with patch.object(rate_limits, "_read_cursor_state_token", return_value=None):
-                    self.assertEqual(rate_limits._get_cursor_access_token(), "cli.token.x")
+                    self.assertEqual(rate_limits._get_cursor_access_token(), cli_token)
                     keychain.assert_not_called()
                     os.remove(path)
-                    self.assertEqual(rate_limits._get_cursor_access_token(), "keychain.token.x")
+                    self.assertEqual(rate_limits._get_cursor_access_token(), keychain_token)
 
 
 class NoReadingReasonTest(unittest.TestCase):

@@ -91,6 +91,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   state does so under `~/.quiver/data/remote`, and creating it surfaced
   as a bare `OSError`. The command boundary now catches it and prints
   `can't write <dir>: <reason>`, exit 1.
+- **Cursor usage reads past the editor's encrypted token.** Cursor's
+  `state.vscdb` now stores `cursorAuth/accessToken` as an opaque
+  `cursor-safe-storage:` blob (Electron safeStorage) rather than a raw
+  JWT, and the blob shadowed the CLI auth file and the macOS keychain
+  behind it: it was taken as the session token, so the account card read
+  "Couldn't fetch usage" and doctor reported an error. The token ladder
+  now skips any value that doesn't decode as a JWT and tries the next
+  source, and the signed-in probe counts a stored file token only when
+  it decodes. An extra account's `state.vscdb` still reads alone — a
+  blob there reports signed-out rather than borrowing the default
+  account's keychain.
 
 ## [1.1.0] - 2026-10-26
 
