@@ -153,6 +153,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     client reconnecting with `Last-Event-ID` got a full replay. The
     header is now honored as the resume cursor, with `?last=` as the
     fallback.
+- **Remote: docs and CLI drift.** `swe remote status --json` now exits 1
+  when the hub is unreachable while still emitting the envelope, matching
+  docs/json-contracts.md and the Mac app's caller. `swe remote devices`
+  and `swe remote attach` reject stray positional args like every other
+  subcommand, and the `attach` usage line lists the real `--mode` set
+  (`auto|tmux|headless|serve|appserver`). `import quiver.cli` no longer
+  pulls `quiver.remote` in, so `swe version` and friends skip sessions,
+  reports and the hub. docs/remote-control.md's status line reflects that
+  R1–R5 shipped, and the README gains a remote-control section with the
+  threat model.
 
 ## [1.1.0] - 2026-10-26
 
