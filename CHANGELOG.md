@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-26
+
 ### Fixed
+
+- **"Clear search data" could hang the app.** With the session-index
+  switch still on, the clear ran its rebuild inside the same flight it
+  then waited on, deadlocking itself. The first release run's `swift
+  test` surfaced it; the rebuild now runs the flight's body directly.
 
 - **Inbox header controls say what they do.** The "Unread only" switch
   read like a notification preference; it is now an Unread / All
@@ -2864,6 +2871,7 @@ service / model layering, tests with an 84% coverage floor).
 - Stdlib-only core; optional FastMCP server extra for session history MCP tool
 - Test suite (15 unit tests) with isolated `$HOME` fixtures
 
+[1.1.1]: https://github.com/c-wenlong/quiver/releases/tag/v1.1.1
 [1.1.0]: https://github.com/c-wenlong/quiver/releases/tag/v1.1.0
 [1.0.0]: https://github.com/c-wenlong/quiver/releases/tag/v1.0.0
 [0.1.0]: https://github.com/c-wenlong/quiver/releases/tag/v0.1.0
