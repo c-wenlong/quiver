@@ -3945,6 +3945,9 @@ class CursorFetcherTest(unittest.TestCase):
                 "quiver.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
                 (path,),
             ), patch(
+                "quiver.harness.rate_limits._read_cursor_cli_token",
+                return_value=None,
+            ), patch(
                 "quiver.harness.rate_limits._read_cursor_keychain_token",
                 return_value=keychain_token,
             ) as keychain:
