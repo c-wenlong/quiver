@@ -86,7 +86,7 @@ loopback bind the hub reads the client from the headers serve sets:
 |---|---|
 | `X-Forwarded-For` | the tailnet client: `tailscale whois` for pairing and approval, the pair-request rate limit |
 | `X-Forwarded-Proto` | the scheme the `Origin` check expects (`https://<Host>`) |
-| `Host` | kept as the public `host:port`; the approval path's DNS-rebinding check allows exactly it |
+| `Host` | kept as the public `host:port`; the DNS-rebinding check on the approval path and the unauthenticated routes allows it plus the loopback names the same bind answers locally |
 
 Serve replaces any `X-Forwarded-For` / `Tailscale-User-*` the client sent
 (checked on a live node, 2026-10-23), and the hub reads the headers only

@@ -49,9 +49,20 @@ targets:
         CFBundleURLTypes:
           - CFBundleURLName: com.quiver.remote.pair
             CFBundleURLSchemes: [quiver]
-        # The hub is plain HTTP on the tailnet, not TLS.
+        # The hub is plain HTTP on the tailnet, not TLS, and its address
+        # can only take a few shapes: a MagicDNS name (always *.ts.net —
+        # the one named exception), or a tailnet CGNAT IP, unqualified/
+        # .local name or IP literal typed by hand — NSAllowsLocalNetworking
+        # covers those (NSExceptionDomains matches DNS names, so an IP
+        # range can't be listed there). Residual scope: HTTP to *.ts.net
+        # plus local names and IP literals; arbitrary domains still get
+        # full ATS.
         NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
+          NSExceptionDomains:
+            ts.net:
+              NSIncludesSubdomains: true
+              NSExceptionAllowsInsecureHTTPLoads: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.quiver.remote

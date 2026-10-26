@@ -24,6 +24,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `quiver/issue-<n>` checkout. `swe gh issue` and `swe gh issue list`
   list issues as before.
 
+### Security
+
+- **The remote hub refuses wildcard and non-tailnet binds.** `swe
+  remote serve --host=0.0.0.0` — or a LAN address, a link-local
+  address, or a name that resolves to one — used to be taken
+  verbatim; `serve` and `serve --install` now refuse it and name
+  `--unsafe-bind-any` as the explicit override, matching the
+  tailnet-only spec. Bind addresses may be loopback or a Tailscale
+  address (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`), by literal or by
+  resolved name, and `--install` carries the flag into the service's
+  command line when it was given.
+
+- **`GET /v1/status` answers `{ok, v}` only.** The unauthenticated
+  probe used to hand the machine's id and name, the swe version and
+  the hub's uptime to the whole tailnet; it is a reachability check
+  again. `swe remote status` now reads the machine row and version
+  from the local machine's own files (it was the only consumer of
+  those fields — the iOS client keeps an unused `status()` method,
+  and `swe remote setup` only checks whether the route answers).
+
+- **`POST /v1/pair` is rate-limited.** Token exchanges get the same
+  5-per-10-minutes per-source-IP cap as `/v1/pair/request`, counted
+  in a budget of their own and checked before the `tailscale whois`
+  fork — a flood can't turn into subprocess churn.
+
+- **The unauthenticated routes answer only Host names the hub
+  serves.** A plain loopback bind now records `127.0.0.1`, `localhost`
+  and `[::1]` (with the bound port) as its Host values — where
+  previously the DNS-rebinding check had nothing to compare against —
+  and a loopback bind behind `tailscale serve` keeps them alongside
+  the public URL's name. A tailnet bind names every spelling of its
+  own node — the bind value, the tailnet IP and the MagicDNS names —
+  so the link `swe remote pair` writes passes whichever one it uses.
+  `/v1/status`, `/v1/pair`, `/v1/pair/request` and the request poll
+  refuse any other Host with `403 bad_origin`, so a page that rebinds
+  its domain to `127.0.0.1` can't drive the pairing surface.
+
+- **iOS: the App Transport Security exception is scoped.** The
+  blanket `NSAllowsArbitraryLoads` is gone. `*.ts.net` (MagicDNS hub
+  names) gets an insecure-HTTP exception, and
+  `NSAllowsLocalNetworking` covers the unqualified or `.local` names
+  and IP literals — including Tailscale CGNAT addresses — a hub
+  address can take; arbitrary domains are back under full ATS.
+
 ## [1.1.1] - 2026-10-26
 
 ### Fixed
@@ -50,6 +94,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an explicit title record may rename the session. Appends are also
   gated to claude/codex/pi, Python's `APPENDABLE` set — any other
   harness's grown file re-reads whole.
+
+- **`swe remote` prints a one-line error instead of a traceback when
+  HOME is unset, empty or unwritable.** Every subcommand that writes
+  state does so under `~/.quiver/data/remote`, and creating it surfaced
+  as a bare `OSError`. The command boundary now catches it and prints
+  `can't write <dir>: <reason>`, exit 1.
 
 ## [1.1.0] - 2026-10-26
 

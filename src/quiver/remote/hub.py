@@ -27,7 +27,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 
-from quiver import __version__
 from quiver.paths import atomic_write_text, remote_dir_for
 from quiver.remote import (
     attachments,
@@ -112,6 +111,11 @@ MAX_SAT_PENDING = 2000
 
 # /v1/folders lists at most this many subfolders of one folder.
 FOLDER_LIST_CAP = 500
+
+# The unauthenticated pair routes (/v1/pair, /v1/pair/request) allow
+# this many attempts per source IP per window.
+_PAIR_ATTEMPT_MAX = 5
+_PAIR_ATTEMPT_S = 600
 
 # A launch the phone started stays answerable at /v1/launches/<id> this
 # long; past it the tmux pane has long since been adopted or abandoned.
@@ -206,11 +210,16 @@ class HubState:
         # calls it again, at most every _OWNER_RETRY_S.
         self.owner_retry = None
         self._owner_tried_at = 0.0
-        # Unauthenticated /v1/pair/request rate limit: ip → timestamps.
+        # Unauthenticated pair-route rate limits: ip → timestamps, one
+        # bucket per route so token tries and request floods don't
+        # share a budget. One lock guards both.
         self._pair_req_times: dict[str, list[float]] = {}
+        self._pair_ex_times: dict[str, list[float]] = {}
         self._pair_req_lock = threading.Lock()
-        # Host values the owner-identity approval path accepts (filled
-        # by serve() from the bind host + whois); empty disables it.
+        # Host values this hub answers to — the owner-identity approval
+        # path requires one, and the unauthenticated routes answer only
+        # these (filled by serve() from the bind host + whois); empty
+        # disables both checks.
         self.allowed_hosts: set[str] = set()
         # The hub's reachable base — set by serve() before start() so
         # ntfy action buttons can point back at this host.
@@ -903,21 +912,44 @@ class _Handler(BaseHTTPRequestHandler):
             return ""
         return str((peer or {}).get("node_name") or "")
 
-    def _pair_request(self) -> None:
+    def _local_host_ok(self) -> bool:
+        """The DNS-rebinding gate on the unauthenticated routes: once
+        ``allowed_hosts`` names the addresses this hub answers to, a
+        request under any other Host came through a name that isn't
+        this hub's — a page that rebound its domain to this address.
+        Browsers can't forge Host, so the check is quiet for clients
+        that dialed the hub's own address."""
+        allowed = self._state.allowed_hosts
+        return not allowed or (self.headers.get("Host") or "") in allowed
+
+    def _attempt_ok(self, bucket: dict[str, list[float]]) -> bool:
+        """The per-source attempt cap on the unauthenticated pair
+        routes: ``_PAIR_ATTEMPT_MAX`` per ``_PAIR_ATTEMPT_S``. Locked:
+        read-check-append must be atomic across handler threads."""
         ip = self._client_ip()
         now = time.time()
-        # Rate limit BEFORE the whois fork — a flood must not spawn a
-        # subprocess per request. Locked: read-check-append must be
-        # atomic across handler threads.
         with self._state._pair_req_lock:
-            times = [t for t in self._state._pair_req_times.get(ip, [])
-                     if now - t < 600]
-            if len(times) >= 5:
-                self._send_error(429, "rate_limited",
-                                 "too many pair requests")
-                return
+            times = [t for t in bucket.get(ip, [])
+                     if now - t < _PAIR_ATTEMPT_S]
+            if len(times) >= _PAIR_ATTEMPT_MAX:
+                return False
             times.append(now)
-            self._state._pair_req_times[ip] = times
+            bucket[ip] = times
+        return True
+
+    def _pair_request(self) -> None:
+        if not self._local_host_ok():
+            self._send_error(
+                403, "bad_origin", "request blocked by origin policy"
+            )
+            return
+        # Rate limit BEFORE the whois fork — a flood must not spawn a
+        # subprocess per request.
+        if not self._attempt_ok(self._state._pair_req_times):
+            self._send_error(429, "rate_limited",
+                             "too many pair requests")
+            return
+        ip = self._client_ip()
         peer = self._state.whois(ip)
         if peer is None:
             self._send_error(
@@ -1136,18 +1168,27 @@ class _Handler(BaseHTTPRequestHandler):
         args = parse_qs(parsed.query)
 
         if path == "/v1/status":
+            if not self._local_host_ok():
+                self._send_error(
+                    403, "bad_origin", "request blocked by origin policy"
+                )
+                return
+            # A reachability check only: machine id, version and uptime
+            # tell the whole tailnet more than a caller needs.
             self._send_json(200, {
                 "ok": True,
                 "v": protocol.PROTOCOL_VERSION,
-                "version": __version__,
-                "machine": self._state.machine,
-                "uptime_s": round(time.time() - self._state.started_at),
             })
             return
 
         # The requester's poll is unauthenticated — the request id +
         # poll secret it carries are the capability.
         if path.startswith("/v1/pair/request/"):
+            if not self._local_host_ok():
+                self._send_error(
+                    403, "bad_origin", "request blocked by origin policy"
+                )
+                return
             rid = unquote(path[len("/v1/pair/request/"):])
             secret = str((args.get("secret") or [""])[0])
             result = pairing.poll_request(self._state.home, rid, secret)
@@ -1391,6 +1432,18 @@ class _Handler(BaseHTTPRequestHandler):
         path = parsed.path
 
         if path == "/v1/pair":
+            if not self._local_host_ok():
+                self._send_error(
+                    403, "bad_origin", "request blocked by origin policy"
+                )
+                return
+            # Same per-source cap as /v1/pair/request: the 192-bit
+            # token isn't brute-forceable, but a flood shouldn't get
+            # unlimited tries (or a whois fork each).
+            if not self._attempt_ok(self._state._pair_ex_times):
+                self._send_error(429, "rate_limited",
+                                 "too many pair attempts")
+                return
             body = self._read_body()
             if body is None:
                 self._send_error(400, "bad_body", "unreadable JSON body")
@@ -2877,6 +2930,21 @@ def _public_hosts(public_url: str) -> set[str]:
     return hosts
 
 
+def _loopback_hosts(port: int) -> set[str]:
+    """Host values a client on this machine uses for a loopback bind.
+    A browser drops the http default port, so 80 is allowed bare."""
+    hosts = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+    if port == 80:
+        hosts |= {"127.0.0.1", "localhost", "[::1]"}
+    return hosts
+
+
+def _hostport(name: str, port: int) -> str:
+    """``name:port`` spelled the way a Host header carries it — a v6
+    literal needs brackets to be told apart from the port."""
+    return f"[{name}]:{port}" if ":" in name else f"{name}:{port}"
+
+
 def _hub_file(home: Path | None) -> Path:
     return remote_dir_for(home) / "hub.json"
 
@@ -2915,9 +2983,10 @@ def configure(state: HubState, host: str, port: int,
     forwarded-client headers trusted.
     """
     # The listen address and the advertised URL are different things:
-    # `0.0.0.0` is fine to bind but unreachable as a link target, so
-    # ntfy action buttons must point at a real address — the public
-    # URL, else the tailnet IP, then the machine hostname.
+    # ntfy action buttons need a dialable address — the public URL,
+    # else the tailnet IP, then the machine hostname. (The CLI refuses
+    # a wildcard bind without --unsafe-bind-any; _advertise_url still
+    # turns one into something reachable.)
     state.base_url = public_url or _advertise_url(host, port)
     # Owner identity for pair-request approval: the tailnet login that
     # owns this node. A plain loopback bind and tagged nodes get none;
@@ -2925,6 +2994,10 @@ def configure(state: HubState, host: str, port: int,
     if public_url:
         state.allowed_hosts = _public_hosts(public_url)
         if host in {"127.0.0.1", "::1", "localhost"}:
+            # The loopback bind still answers local clients directly
+            # (swe remote status, a browser on this machine), so its
+            # own Host names stay allowed next to the public URL's.
+            state.allowed_hosts |= _loopback_hosts(port)
             state.trust_proxy = True
 
             def lookup() -> bool:
@@ -2941,16 +3014,36 @@ def configure(state: HubState, host: str, port: int,
             if not lookup():
                 state.owner_retry = lookup
             return
+    elif host in {"127.0.0.1", "::1", "localhost"}:
+        # A loopback bind is where a DNS-rebinding page lands, so the
+        # unauthenticated routes answer only the loopback names a
+        # local client would use.
+        state.allowed_hosts = _loopback_hosts(port)
+        return
     if host not in {"127.0.0.1", "::1", "localhost", "0.0.0.0"}:
         peer = state.whois(host)
+        own_ip = catalog_mod.tailscale_ip()
+        if peer is None and own_ip and own_ip != host:
+            # whois wants an IP; a bind by MagicDNS name is looked up
+            # through the node's own address.
+            peer = state.whois(own_ip)
         if not public_url:
-            state.allowed_hosts = {f"{host}:{port}"}
+            # Every spelling this node answers to — the bind value,
+            # the tailnet IP and the MagicDNS names — so a pairing
+            # link reaches the hub whichever one it names (`swe
+            # remote pair` defaults the phone address to the tailnet
+            # IP). The names belong to the node even when it is
+            # tagged; a tag only means there is no owner login.
+            state.allowed_hosts = {_hostport(host, port)}
+            if own_ip:
+                state.allowed_hosts.add(_hostport(own_ip, port))
+            if peer:
+                for name in (peer.get("node_name"),
+                             peer.get("node_short")):
+                    if name:
+                        state.allowed_hosts.add(_hostport(name, port))
         if peer and not peer.get("tagged"):
             state.owner_login = str(peer.get("login") or "")
-            if not public_url:
-                for name in (peer.get("node_name"), peer.get("node_short")):
-                    if name:
-                        state.allowed_hosts.add(f"{name}:{port}")
 
 
 def serve(state: HubState, host: str, port: int,
