@@ -1815,6 +1815,27 @@ class TestReviewHubFixes(unittest.TestCase):
             self.assertIsNotNone(
                 st.queue_command("sat-m1", "control", "", {"ctl": "x"}))
 
+    def test_ack_floor_moves_only_over_contiguous_results(self):
+        # A control that finishes while an earlier message op still
+        # sits in the agent's work queue must not raise the floor —
+        # replay after a restart still owes seq 1, so the pending
+        # count has to keep covering it.
+        st = self.srv.state
+        c1 = st.queue_command("sat-m1", "message", "", {"text": "x"})
+        c2 = st.queue_command("sat-m1", "control", "", {"ctl": "b"})
+        st.emit("k", protocol.event(
+            "command.result", "k", "sat-m1",
+            {"command_id": c2["data"]["command_id"],
+             "op": "control", "ok": True}))
+        self.assertEqual(st._sat_acked.get("sat-m1", 0), 0)
+        self.assertEqual(st._sat_done["sat-m1"], {2})
+        st.emit("k", protocol.event(
+            "command.result", "k", "sat-m1",
+            {"command_id": c1["data"]["command_id"],
+             "op": "message", "ok": True}))
+        self.assertEqual(st._sat_acked["sat-m1"], 2)
+        self.assertEqual(st._sat_done["sat-m1"], set())
+
     def test_unknown_result_id_keeps_floor(self):
         # Results for commands queued before a hub restart (or the
         # agent's own command_id-less detach reports) move nothing.

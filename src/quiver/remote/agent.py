@@ -33,10 +33,6 @@ CATALOG_PUSH_S = 10.0
 # stays under it with room to spare.
 CATALOG_BODY_MAX = (4 << 20) - (64 << 10)
 OUTBOX_KEY = "_outbox"             # journal key for unsent uplink events
-# Cap on the out-of-order done seqs the command cursor file carries —
-# enough to cover any realistic number of commands finished while a
-# lower seq still runs.
-DONE_TRACKED_MAX = 1024
 
 
 def agent_file_for(home: Path | None) -> Path:
@@ -246,10 +242,13 @@ class RemoteAgent:
                 "seq": self._done_cmd_seq,
                 # Done seqs above the contiguous floor — without them a
                 # restart replays and re-runs a command that already
-                # finished. Bounded to the most recent: a floor stuck
-                # under a long-running seq could otherwise grow the
-                # file without limit.
-                "done": sorted(self._done_set)[-DONE_TRACKED_MAX:],
+                # finished. Every entry sits above the floor by
+                # construction (_mark_done drops them as it climbs),
+                # and the hub's backlog cap bounds how many can pile
+                # up while one seq below them still runs — evicting
+                # any would re-run that command, so the whole set
+                # persists.
+                "done": sorted(self._done_set),
             }))
         except OSError:
             pass
