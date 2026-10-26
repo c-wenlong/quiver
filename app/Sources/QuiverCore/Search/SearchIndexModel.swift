@@ -197,7 +197,22 @@ public final class SearchIndexModel {
     /// from zero. Re-reading every transcript is the honest cost of
     /// clearing; the reconcile tick would do it anyway, the kick just
     /// doesn't wait a minute for it.
+    ///
+    /// The whole sequence runs inside the `applying` flight: a toggle that
+    /// lands while `setIndexer(nil)` is still in the ledger's queue must not
+    /// run `attach()` against the store this clear is about to delete.
     public func clearData() async {
+        while let applying {
+            await applying.value
+            await Task.yield()
+        }
+        let task = Task { await self.clearOnce() }
+        applying = task
+        await task.value
+        applying = nil
+    }
+
+    private func clearOnce() async {
         reconciling?.cancel()
         reconciling = nil
         polling?.cancel()

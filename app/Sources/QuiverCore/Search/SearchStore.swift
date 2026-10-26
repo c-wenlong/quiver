@@ -228,8 +228,9 @@ public final class SearchStore: @unchecked Sendable {
     /// so the lock makes the teardown atomic and `liveDB()` turns later
     /// calls into a thrown error instead of a nil-handle trap. Recursive
     /// because the transactional methods reach `cachedStatement` and each
-    /// other through one hold.
-    private let storeLock = NSRecursiveLock()
+    /// other through one hold. Internal so a test can hold it and prove
+    /// `clear()` waits.
+    let storeLock = NSRecursiveLock()
 
     /// The live write connection under `storeLock`, or an error once
     /// `clear()` ran.
