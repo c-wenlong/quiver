@@ -10,9 +10,11 @@ import Foundation
 /// code execution or a secret hand-off across users.
 ///
 /// So the rule is about the path, not the preference: absolute, and no
-/// component is other-writable, checked two ways. Same-user and
-/// admin-group writes are left alone — group-writable is how Homebrew
-/// installs /opt/homebrew, and an admin peer is trusted for this anyway.
+/// component the path can land on is other-writable — following each
+/// symlink hop, since a link's target is only as safe as the folder the
+/// link sits in. Same-user and admin-group writes are left alone —
+/// group-writable is how Homebrew installs /opt/homebrew, and an admin
+/// peer is trusted for this anyway.
 public enum PathSafety {
     /// Why a path fails the check, or nil when it is safe to trust.
     /// `path` may still carry `~`; it is expanded before the check.
@@ -22,47 +24,72 @@ public enum PathSafety {
                                  fileManager: FileManager = .default) -> String? {
         let expanded = (path as NSString).expandingTildeInPath
         guard expanded.hasPrefix("/") else { return "not an absolute path" }
+        var visited = Set<String>()
+        return rejectionInResolved(path: expanded, visited: &visited,
+                                   fileManager: fileManager)
+    }
 
-        func mode(_ path: String) -> Int? {
-            try? fileManager.attributesOfItem(atPath: path)[.posixPermissions] as? Int
-        }
-        func writableByOthers(_ path: String) -> String? {
-            guard let mode = mode(path), mode & 0o002 != 0 else { return nil }
-            return "\(path) is writable by other users"
-        }
-
-        // The path as written: any other-writable folder in it could
-        // swap the next entry for another user's file. A symlink's own
-        // mode says nothing about its target — that is judged below.
-        var component = expanded
+    /// Walks `path` and its ancestors; where a component is a symlink its
+    /// target is walked too. Checking only the written chain misses the
+    /// folders a middle hop passes through: a 0755 link under ~ could
+    /// land in another user's writable folder, and whoever owns that
+    /// folder swaps where the path ends up between checks. Checking only
+    /// the fully resolved destination misses them the same way, since
+    /// realpath(3) jumps straight to the end of the hop chain.
+    private static func rejectionInResolved(path: String, visited: inout Set<String>,
+                                            fileManager: FileManager) -> String? {
+        // A path already walked cannot fail again — this also ends link
+        // cycles.
+        guard visited.insert(path).inserted else { return nil }
+        var component = path
         while true {
-            if let why = writableByOthers(component) { return why }
+            let attributes = try? fileManager.attributesOfItem(atPath: component)
+            if (attributes?[.type] as? FileAttributeType) == .typeSymbolicLink {
+                // A link's own mode is ignored by the kernel — its target,
+                // and every folder that target lives under, is what can
+                // swap the outcome. readlink(2), not FileManager: firmlinks
+                // like /tmp make destinationOfSymbolicLink answer the link
+                // itself, which would walk in place.
+                if let destination = readDestination(component) {
+                    let resolved = destination.hasPrefix("/") ? destination
+                        : ((component as NSString).deletingLastPathComponent as NSString)
+                            .appendingPathComponent(destination)
+                    if let why = rejectionInResolved(path: normalize(resolved),
+                                                     visited: &visited,
+                                                     fileManager: fileManager) {
+                        return why
+                    }
+                }
+            } else if let mode = attributes?[.posixPermissions] as? Int, mode & 0o002 != 0 {
+                return "\(component) is writable by other users"
+            }
             let parent = (component as NSString).deletingLastPathComponent
             if parent == component || parent.isEmpty { break }
             component = parent
         }
-
-        // The path as resolved: attributesOfItem reports a link's own
-        // mode, so /tmp reads 0755 while its target /private/tmp is
-        // world-writable. realpath(3) only resolves what exists, so
-        // climb to the deepest real component, then walk the canonical
-        // chain it lands in.
-        var deepest = expanded
-        while !deepest.isEmpty, deepest != "/" {
-            guard let buffer = realpath(deepest, nil) else {
-                deepest = (deepest as NSString).deletingLastPathComponent
-                continue
-            }
-            component = String(cString: buffer)
-            free(buffer)
-            while true {
-                if let why = writableByOthers(component) { return why }
-                let parent = (component as NSString).deletingLastPathComponent
-                if parent == component || parent.isEmpty { break }
-                component = parent
-            }
-            return nil
-        }
         return nil
+    }
+
+    /// `.`/`..` removed, links left spelled out: standardizingPath runs
+    /// the platform's own resolution, which names firmlinks by their
+    /// link (/private/tmp comes back /tmp) and would undo the hop.
+    private static func normalize(_ path: String) -> String {
+        var parts: [String] = []
+        for part in path.split(separator: "/", omittingEmptySubsequences: true) {
+            if part == ".." {
+                if !parts.isEmpty { parts.removeLast() }
+            } else if part != "." {
+                parts.append(String(part))
+            }
+        }
+        return "/" + parts.joined(separator: "/")
+    }
+
+    /// One hop of a symlink, or nil when it can't be read.
+    private static func readDestination(_ path: String) -> String? {
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        let length = readlink(path, &buffer, buffer.count)
+        guard length > 0 else { return nil }
+        return String(decoding: buffer[..<length].map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }
 }
