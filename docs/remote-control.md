@@ -1,6 +1,10 @@
 # Remote control
 
-Status: design proposal. Nothing here exists yet.
+Status: shipped. R1–R5 all landed — `swe remote serve|setup|agent|pair|
+status|devices|attach|notify|ssh`, the hub-served PWA, the iOS app and
+the macOS app's Settings › Remote checklist all exist. This doc stays as
+the design record: what follows describes the build as it is, and the
+milestones table at the end is history, not a plan.
 
 Watch and steer CLI coding sessions (Claude Code, Codex, opencode and the
 rest of the registry) from a phone. Read the chat, send prompts, see new

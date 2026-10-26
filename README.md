@@ -80,6 +80,7 @@ If you juggle more than one AI coding agent you end up with a mess:
 | **Favourites** | Pin harnesses to the top of `swe list` and opt them into usage polling |
 | **Autocomplete** | Shell tab-completion for zsh, bash, and fish (tool names, aliases, tags, flags) |
 | **Providers** | Manage API keys and metadata for 27 built-in LLM providers, plus your own |
+| **Remote control** | Watch and steer sessions from a phone: hub + web app + iOS app over Tailscale |
 
 ## Install
 
@@ -252,6 +253,7 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 | `swe aliases` | | List alias → tool mappings |
 | `swe mcp <subcommand> …` | | MCP server management (see below) |
 | `swe providers [<subcommand>] …` | `pv` | Provider API key + metadata management |
+| `swe remote <subcommand> …` | | Watch and steer sessions from a phone: `serve` (hub), `agent` (satellite), `setup`, `pair`, `status`, `devices`, `attach`, `notify`, `ssh` |
 | `swe help [command]` | `-h` | Full or per-command help |
 
 Run `swe <command> --help` for detailed help on any command.
@@ -327,6 +329,36 @@ Built-in providers (27): `openai`, `anthropic`, `gemini`, `deepseek`, `zai`, `mi
 
 Flags for `sync`: `--only=a,b`, `--all`, `--force`, `--skip-conflicts`, `--dry-run`,
 `--prune`, `--strict`. Every subcommand has its own `swe mcp <name> help`.
+
+### Remote control
+
+`swe remote serve` runs a hub on this machine: it tails every session's
+transcript and serves the phone clients (a web app the hub hosts, plus the
+native iOS app) over REST + SSE. Sessions list as read-only `observed`
+until they run under quiver's supervisor (`swe remote attach`, or Attach in
+the app), which makes them writable from the phone: send a prompt, answer
+an approval, interrupt, compact, launch a new session. `swe remote agent`
+on a second machine dials out to the hub as a satellite, so one hub covers
+every machine's sessions. `swe remote setup` checks each step from nothing
+to a paired phone, and `swe remote serve --install` keeps the hub running
+across reboots (LaunchAgent on macOS, systemd user unit on Linux).
+
+Only your tailnet can reach the hub: it binds this machine's Tailscale IP,
+or loopback behind `tailscale serve`, so no LAN or WAN port ever opens. A
+phone pairs by opening the URL or QR `swe remote pair` prints (`--app` for
+the iOS deep link), or by posting a pair request an owner approves with
+`swe remote devices --approve=<code>`; both paths mint a per-device
+credential in `~/.quiver/data/remote/devices.json` (mode 600).
+`swe remote devices --revoke=<id>` cuts one device's access without
+touching the rest.
+
+Threat model, in one paragraph: the hub executes commands on your machines
+by design — that is the feature — so the tailnet is the transport boundary
+and the per-device credential is the app-layer gate on top of it. Revoking
+a lost phone means revoking its credential, nothing more; the tailnet is
+never disturbed. The full model (pairing flows, owner-device rules,
+forwarded headers, SSH console keys) is in
+[docs/remote-control.md](docs/remote-control.md).
 
 ## Skills
 

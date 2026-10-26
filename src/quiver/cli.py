@@ -30,7 +30,6 @@ from quiver.github import main as github_main
 from quiver.mcp import main as mcp_main
 from quiver.plugins import cmd_plugins
 from quiver.providers import cli as providers_cli
-from quiver.remote import cmd_remote
 from quiver.reports.commands import cmd_report
 from quiver.sessions.commands import cmd_models, cmd_session
 from quiver.setup.commands import cmd_harness, cmd_setup
@@ -47,6 +46,13 @@ def cmd_gh(args):
 
 def cmd_providers(args):
     return providers_cli.main(args)
+
+
+def cmd_remote(args):
+    # Function-local on purpose: quiver.remote pulls sessions, reports and
+    # the hub in, and `swe version` shouldn't pay for any of them.
+    from quiver.remote import cmd_remote as remote_main
+    return remote_main(args)
 
 
 _HELP_NAME = {"-v": "version", "-V": "version", "--version": "version"}
