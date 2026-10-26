@@ -125,7 +125,7 @@ struct PrDetailSheet: View {
             }
             Spacer()
             Button {
-                if let url = URL(string: pr.url) { openURL(url) }
+                if let url = URL(string: pr.url), url.isWebURL { openURL(url) }
             } label: {
                 Image(systemName: "arrow.up.right.square")
             }
@@ -239,7 +239,7 @@ struct PrDetailSheet: View {
                 } else {
                     Text(check.status).font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
-                if let url = URL(string: check.url), !check.url.isEmpty {
+                if let url = URL(string: check.url), url.isWebURL {
                     Button { openURL(url) } label: {
                         Image(systemName: "arrow.up.right.square")
                             .font(Theme.font(size: 11)).foregroundStyle(Theme.textMuted)
