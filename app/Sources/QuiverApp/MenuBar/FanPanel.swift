@@ -150,16 +150,10 @@ private struct PanelFanPopover: View {
             HStack {
                 Text("Fans up above").font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
                 Spacer()
-                Picker("Fans up above", selection: thresholdPick) {
-                    Text("Off").tag(0.0)
-                    ForEach(Self.thresholdSteps, id: \.self) { degrees in
-                        Text("\(degrees) °C").tag(Double(degrees))
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .fixedSize()
-                .disabled(fans.busy)
+                SelectMenu(options: [(0.0, "Off")]
+                               + Self.thresholdSteps.map { (Double($0), "\($0) °C") },
+                           selection: thresholdPick, width: nil)
+                    .disabled(fans.busy)
             }
             if fans.thresholdEnabled {
                 speedSlider("Speed above it", value: thresholdLevel)

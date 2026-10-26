@@ -25,6 +25,19 @@ public final class ModelsModel {
             }
         }
 
+        /// The SF Symbol that heads the metric's table column and marks
+        /// its row in the metric picker.
+        public var symbol: String {
+            switch self {
+            case .intelligence: "brain"
+            case .coding: "terminal"
+            case .reasoning: "graduationcap"
+            case .speed: "gauge.with.dots.needle.67percent"
+            case .ttft: "timer"
+            case .cost: "dollarsign"
+            }
+        }
+
         /// The card title over the chart.
         public var chartTitle: String {
             switch self {

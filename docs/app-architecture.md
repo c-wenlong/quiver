@@ -97,7 +97,7 @@ scaffolds; `PageHeader` is the non-scrolling variant used by sheets.
 | `Card`, `Page`, `PageHeader` | the card surface and the page scaffold (Theme) |
 | `Tabs` | the one tab switcher; `.underline`, `.segmented`, `.period` styles; `onSelect` fires on reselect |
 | `ExpandRow` | the "Show N more" / "Show less" fold row; `.cardBottom` at a card's edge, `.inset` inside one |
-| `SelectMenu` | the themed dropdown; the icons init draws a harness logo per option |
+| `SelectMenu` | the themed dropdown; Quiver-drawn list (`SelectOptionList`), `icons` draws a logo per option, `symbols` an SF Symbol |
 | `SearchField` | the filter text field |
 | `EllipsisMenu` | a row's "more" menu: quiet ellipsis, hover shape |
 | `FormField` | a labelled sheet field with an optional hint/problem |

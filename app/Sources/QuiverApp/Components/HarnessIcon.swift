@@ -49,30 +49,6 @@ struct HarnessIcon: View {
         return (image, icon.isColor)
     }
 
-    @MainActor private static var menuCache: [String: NSImage] = [:]
-
-    /// The logo as a `size`-point square image for a menu item, where only
-    /// an image (not a view) can sit beside the title. The logo is fitted
-    /// into the square, so non-square marks keep their shape and every
-    /// item's title starts at the same x. A single-colour mark stays a
-    /// template, so the menu tints it like its text. Nil without a logo.
-    @MainActor static func menuImage(for harness: String, size: CGFloat = 16) -> NSImage? {
-        let key = "\(harness)@\(size)"
-        if let cached = menuCache[key] { return cached }
-        guard let (source, isColor) = image(for: harness) else { return nil }
-        let natural = source.size
-        let square = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
-            guard natural.width > 0, natural.height > 0 else { return false }
-            let scale = min(rect.width / natural.width, rect.height / natural.height)
-            let fitted = NSSize(width: natural.width * scale, height: natural.height * scale)
-            source.draw(in: NSRect(x: (rect.width - fitted.width) / 2, y: (rect.height - fitted.height) / 2,
-                                   width: fitted.width, height: fitted.height))
-            return true
-        }
-        square.isTemplate = !isColor
-        menuCache[key] = square
-        return square
-    }
 }
 
 /// The harness's chart colour, beside its logo wherever a chart shows it:

@@ -80,7 +80,9 @@ private struct ModelsContent: View {
                 SelectMenu(options: ModelsModel.Metric.allCases.map { ($0, $0.title) },
                            selection: Binding(get: { model.metric },
                                               set: { model.set(metric: $0) }),
-                           width: nil)
+                           width: nil,
+                           symbols: Dictionary(uniqueKeysWithValues:
+                               ModelsModel.Metric.allCases.map { ($0, $0.symbol) }))
                 SelectMenu(options: ModelsModel.Scope.allCases.map { ($0, $0.title) },
                            selection: Binding(get: { model.scope },
                                               set: { model.set(scope: $0) }),
@@ -630,13 +632,13 @@ struct TableCard: View {
     }
 }
 
-/// A benchmark column's header: the metric's icon, with a tip naming
+/// A benchmark column's header: the metric's symbol, with a tip naming
 /// what it measures.
 @MainActor private func iconHeader(_ metric: ModelsModel.Metric) -> some View {
     let tip = ColumnTip.of(metric)
     // No padding around the glyph: its right edge lines up with the
     // right-aligned figures under it.
-    return Image(systemName: tip.icon)
+    return Image(systemName: metric.symbol)
         .font(Theme.font(size: 13))
         .hoverTip(tip.text, title: tip.title)
 }
@@ -644,31 +646,25 @@ struct TableCard: View {
 /// What a header's tip says: "<Domain>: <measure>" in bold, then a line
 /// on what the number means.
 struct ColumnTip: Equatable {
-    var icon: String
     var title: String
     var text: String
 
     static func of(_ metric: ModelsModel.Metric) -> ColumnTip {
         switch metric {
         case .intelligence:
-            ColumnTip(icon: "brain",
-                      title: "Intelligence: Artificial Analysis Intelligence Index",
+            ColumnTip(title: "Intelligence: Artificial Analysis Intelligence Index",
                       text: "A blend of Artificial Analysis's independent evaluations: reasoning, knowledge, coding and agentic tasks. Higher is better.")
         case .coding:
-            ColumnTip(icon: "terminal",
-                      title: "Coding: Terminal-Bench 4.0",
+            ColumnTip(title: "Coding: Terminal-Bench 4.0",
                       text: "Percent of agentic coding and terminal tasks passed, run by Artificial Analysis. It replaces their Coding Index, which stopped covering new models in September 2026.")
         case .reasoning:
-            ColumnTip(icon: "graduationcap",
-                      title: "Reasoning: Humanity's Last Exam",
+            ColumnTip(title: "Reasoning: Humanity's Last Exam",
                       text: "Percent of expert-level questions answered correctly, about 40% of them maths. It replaces Artificial Analysis's Maths Index, retired in January 2026.")
         case .speed:
-            ColumnTip(icon: "gauge.with.dots.needle.67percent",
-                      title: "Speed: Median output speed",
+            ColumnTip(title: "Speed: Median output speed",
                       text: "Output tokens per second (t/s), the median across the providers Artificial Analysis tests.")
         case .ttft:
-            ColumnTip(icon: "timer",
-                      title: "Latency: Time to first token",
+            ColumnTip(title: "Latency: Time to first token",
                       text: "Median seconds until the first token arrives, lower is better.")
         case .cost:
             blended
@@ -676,12 +672,10 @@ struct ColumnTip: Equatable {
     }
 
     static let listPrice = ColumnTip(
-        icon: "dollarsign",
         title: "Cost: LiteLLM list price",
         text: "Per 1M tokens: input · output · cache read. The price the ledger charges your usage; hover a row's price for its key and cache-write rate.")
 
     static let blended = ColumnTip(
-        icon: "dollarsign",
         title: "Cost: Artificial Analysis blended price",
         text: "One price per 1M tokens, weighting input to output 3 to 1. The bar ranks it against every priced model on Artificial Analysis, cheapest on the left.")
 }
