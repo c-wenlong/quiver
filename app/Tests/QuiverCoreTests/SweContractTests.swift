@@ -262,14 +262,48 @@ import Testing
         #expect(result.harness.displayName == "Codex")
     }
 
-    /// Captured from `swe hooks list --json` against a throwaway HOME.
+    /// Captured from `swe hooks list --json` against a throwaway HOME. The
+    /// row shape since #787: `name`, `source_path`, `dest_path`,
+    /// `link_status`, declarations naming their `file` with no command.
     @Test func hooksListDecodesStatesAndDeclarations() async throws {
         let (swe, runner) = try client("swe-hooks")
         let inventory = try await swe.hooksList()
         #expect(runner.calls.last == ["hooks", "list", "--json"])
         #expect(inventory.hooks.count == 7)
-        // The current swe sends no tier/enabled/events_supported yet:
-        // they decode to nil rather than failing the row.
+        let beacon = try #require(inventory.hooks.first)
+        #expect(beacon.script == "beacon.py")
+        #expect(beacon.harness == "claude")
+        #expect(beacon.source == "/tmp/quiver-fixture-home/.quiver/hooks/claude/beacon.py")
+        #expect(beacon.destination == "/tmp/quiver-fixture-home/.claude/hooks/beacon.py")
+        #expect(beacon.state == .linked)
+        #expect(beacon.tier == .harness)
+        #expect(beacon.enabled == true)
+        #expect(beacon.eventsSupported?.contains("PreToolUse") == true)
+        #expect(beacon.isUndeclared)
+
+        let guard_ = try #require(inventory.hooks.first { $0.script == "prose-guard.py" })
+        let declared = try #require(guard_.declared.first)
+        #expect(declared.label == "PreToolUse:Bash")
+        #expect(declared.timeout == nil)
+        #expect(declared.command == "")
+        #expect(declared.settings == "/tmp/quiver-fixture-home/.claude/settings.json")
+
+        let block = try #require(inventory.hooks.first { $0.script == "block-rm.py" })
+        #expect(block.declared.first?.label == "SessionStart")
+        #expect(block.state == .create)
+
+        let probe = try #require(inventory.hooks.first { $0.script == "probe.py" })
+        #expect(probe.state == .skipped)
+        #expect(probe.harness == "fixturetool")
+    }
+
+    /// The row shape before #787 (`script`, `source`, `state`, declarations
+    /// with `command` and `settings`), from an older swe on PATH or a
+    /// saved snapshot: it still decodes, and the new fields read nil.
+    @Test func hooksListDecodesTheLegacyShape() async throws {
+        let (swe, _) = try client("swe-hooks-legacy")
+        let inventory = try await swe.hooksList()
+        #expect(inventory.hooks.count == 7)
         let beacon = try #require(inventory.hooks.first)
         #expect(beacon.script == "beacon.py")
         #expect(beacon.harness == "claude")
@@ -323,8 +357,24 @@ import Testing
         let claude = try #require(info.harnesses.first)
         #expect(claude.harness == "claude")
         #expect(claude.state == .linked)
+        #expect(claude.source == "/tmp/quiver-fixture-home/.quiver/hooks/claude/prose-guard.py")
+        #expect(claude.destination == "/tmp/quiver-fixture-home/.claude/hooks/prose-guard.py")
         #expect(claude.summary == "Blocks prompt submissions that ask for edits to prose files.")
-        #expect(claude.declared.first?.label == "PreToolUse:Bash")
+        let declared = try #require(claude.declared.first)
+        #expect(declared.label == "PreToolUse:Bash")
+        #expect(declared.timeout == 10)
+        #expect(declared.command == "~/.claude/hooks/prose-guard.py")
+        #expect(declared.settings == "/tmp/quiver-fixture-home/.claude/settings.json")
+    }
+
+    /// `swe hooks info` before #787 still decodes.
+    @Test func hooksInfoDecodesTheLegacyShape() async throws {
+        let (swe, _) = try client("swe-hooks-info-legacy")
+        let info = try await swe.hookInfo(name: "prose-guard")
+        let claude = try #require(info.harnesses.first)
+        #expect(claude.state == .linked)
+        #expect(claude.destination == "/tmp/quiver-fixture-home/.claude/hooks/prose-guard.py")
+        #expect(claude.declared.first?.settings == "/tmp/quiver-fixture-home/.claude/settings.json")
     }
 
     /// Captured from `swe hooks new claude guard --json`: the script, the
