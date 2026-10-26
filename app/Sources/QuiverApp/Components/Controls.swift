@@ -50,10 +50,13 @@ struct SearchField: View {
 
 /// TokenTracker's select: 36pt, radius 6, 14/20 at 400 on the field fill,
 /// a chevron, and a border that strengthens under the pointer. An optional
-/// "Label:" prefix and symbol. A menu underneath, so it reads as a popup.
-/// An option that stands for a harness can carry its id: the menu item and,
-/// once picked, the closed label then draw its logo. A harness with no
-/// bundled logo shows its title only.
+/// "Label:" prefix and symbol. The list underneath is Quiver-drawn, not
+/// the system menu: each row keeps its icon before the title and the
+/// current pick checks at the trailing edge.
+/// An option that stands for a harness or brand can carry its id: the row
+/// and, once picked, the closed label then draw its logo. An option whose
+/// glyph is an SF Symbol instead goes in `symbols`. An option with neither
+/// shows its title only; with no icons at all the icon column drops out.
 struct SelectMenu<Value: Hashable>: View {
     var label: String? = nil
     var symbol: String? = nil
@@ -65,55 +68,28 @@ struct SelectMenu<Value: Hashable>: View {
     /// pass it when the selection can drop out of `options` (a filter whose
     /// value vanished on refresh) so the menu still says what it's set to.
     var title: String? = nil
-    /// The harness id whose logo goes beside an option, by option value.
-    /// The three-part options initialiser fills it in.
+    /// The harness or brand id whose logo goes beside an option, by option
+    /// value. The three-part options initialiser fills it in.
     var icons: [Value: String] = [:]
+    /// The SF Symbol beside an option, by option value, for rows with a
+    /// glyph but no bundled logo (the benchmark metrics).
+    var symbols: [Value: String] = [:]
+    @State private var open = false
     @State private var hovering = false
 
     private var current: String {
         title ?? options.first { $0.value == selection }?.title ?? ""
     }
 
-    /// The selected option's harness, when it has a logo to draw.
-    private var currentIcon: String? {
-        guard let id = icons[selection], HarnessIcon.exists(for: id) else { return nil }
-        return id
-    }
-
     var body: some View {
-        Menu {
-            ForEach(options, id: \.value) { option in
-                if icons.isEmpty {
-                    Button {
-                        selection = option.value
-                    } label: {
-                        if option.value == selection {
-                            Label(option.title, systemImage: "checkmark")
-                        } else {
-                            Text(option.title)
-                        }
-                    }
-                } else {
-                    // The logo takes the item's image, so the checkmark goes
-                    // in the menu's own state column instead.
-                    Toggle(isOn: Binding(get: { option.value == selection },
-                                         set: { if $0 { selection = option.value } })) {
-                        if let id = icons[option.value], let image = HarnessIcon.menuImage(for: id) {
-                            Label { Text(option.title) } icon: { Image(nsImage: image) }
-                        } else {
-                            Text(option.title)
-                        }
-                    }
-                }
-            }
-        } label: {
+        Button { open.toggle() } label: {
             HStack(spacing: 6) {
                 if let symbol { Image(systemName: symbol).foregroundStyle(Theme.textSecondary) }
                 if let label {
                     // The prefix keeps its width; the value truncates instead.
                     Text("\(label):").foregroundStyle(Theme.textSecondary).lineLimit(1).fixedSize()
                 }
-                if let currentIcon { HarnessIcon(harness: currentIcon, size: 16) }
+                selectOptionIcon(id: icons[selection], symbol: symbols[selection])
                 Text(current).foregroundStyle(Theme.textPrimary).lineLimit(1).truncationMode(.tail)
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.down").font(Theme.font(size: 12))
@@ -125,14 +101,121 @@ struct SelectMenu<Value: Hashable>: View {
             .fixedSize(horizontal: width == nil, vertical: false)
             .background(Theme.field, in: .rect(cornerRadius: Theme.selectRadius))
             .overlay(RoundedRectangle(cornerRadius: Theme.selectRadius)
-                .strokeBorder(hovering ? Theme.borderHover : Theme.border, lineWidth: 1))
+                .strokeBorder(hovering || open ? Theme.borderHover : Theme.border, lineWidth: 1))
             .contentShape(.rect(cornerRadius: Theme.selectRadius))
         }
-        .menuStyle(.button)
-        .menuIndicator(.hidden)
         .plainButton(cornerRadius: Theme.selectRadius)
         .onHover { hovering = $0 }
         .fixedSize()
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            SelectOptionList(options: options, selection: selection,
+                             pick: { selection = $0; open = false },
+                             icons: icons, symbols: symbols,
+                             minWidth: max(200, width ?? 0))
+        }
+    }
+}
+
+/// A select option's icon: the bundled logo a harness or brand id names,
+/// else the named SF Symbol in `text.secondary`, else nothing.
+@MainActor @ViewBuilder private func selectOptionIcon(id: String?, symbol: String?) -> some View {
+    if let id, HarnessIcon.exists(for: id) {
+        HarnessIcon(harness: id, size: 16)
+    } else if let symbol {
+        Image(systemName: symbol)
+            .font(Theme.font(size: 13))
+            .foregroundStyle(Theme.textSecondary)
+    }
+}
+
+/// The open half a select draws: a scrollable, key-navigable option list.
+/// Each row is icon slot, title and a trailing check on the current pick;
+/// the icon column drops out when no option carries one. It opens on the
+/// selection so the pick isn't below the fold, and the arrow keys walk the
+/// highlight the way the system menu's do.
+struct SelectOptionList<Value: Hashable>: View {
+    var options: [(value: Value, title: String)]
+    /// The pick the check and the opening highlight sit on.
+    var selection: Value
+    /// Called with the clicked or Returned row's value.
+    var pick: (Value) -> Void
+    /// A harness or brand logo id per option, drawn by `HarnessIcon`.
+    var icons: [Value: String] = [:]
+    /// An SF Symbol per option without a bundled logo.
+    var symbols: [Value: String] = [:]
+    /// The popover's floor; the select passes its face's width where that
+    /// tops it.
+    var minWidth: CGFloat = 200
+    /// The row the arrow keys are on; Return picks it.
+    @State private var highlighted: Value?
+    @FocusState private var listFocused: Bool
+
+    /// Rows keep an icon column once any option carries one, so titles
+    /// still line up.
+    private var hasIcons: Bool { !icons.isEmpty || !symbols.isEmpty }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(options, id: \.value) { option in
+                        row(option).id(option.value)
+                    }
+                }
+                .padding(.vertical, 6)
+            }
+            .focusable()
+            .focusEffectDisabled()
+            .focused($listFocused)
+            .onAppear {
+                highlighted = selection
+                listFocused = true
+                proxy.scrollTo(selection, anchor: .center)
+            }
+            .onKeyPress(.upArrow) { step(-1, proxy) }
+            .onKeyPress(.downArrow) { step(1, proxy) }
+            .onKeyPress(.return) {
+                guard let highlighted else { return .ignored }
+                pick(highlighted)
+                return .handled
+            }
+        }
+        .frame(minWidth: minWidth, maxHeight: 360)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func step(_ by: Int, _ proxy: ScrollViewProxy) -> KeyPress.Result {
+        guard !options.isEmpty else { return .ignored }
+        let index = options.firstIndex { $0.value == highlighted } ?? (by > 0 ? -1 : options.count)
+        let next = options[min(max(index + by, 0), options.count - 1)].value
+        highlighted = next
+        proxy.scrollTo(next)
+        return .handled
+    }
+
+    private func row(_ option: (value: Value, title: String)) -> some View {
+        let on = option.value == selection
+        return Button {
+            pick(option.value)
+        } label: {
+            HStack(spacing: 8) {
+                if hasIcons {
+                    selectOptionIcon(id: icons[option.value], symbol: symbols[option.value])
+                        .frame(width: 16, height: 16)
+                }
+                Text(option.title).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                Spacer(minLength: 12)
+                Image(systemName: "checkmark").font(Theme.font(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.interactive)
+                    .opacity(on ? 1 : 0)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(option.value == highlighted ? Theme.rowHover : .clear)
+            .contentShape(.rect)
+        }
+        .plainButton(cornerRadius: 0)
+        .onHover { if $0 { highlighted = option.value } }
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
 
@@ -148,24 +231,29 @@ extension SelectMenu {
     }
 }
 
-/// SelectMenu's face over one pick from a list drawn by Quiver, not the
-/// system menu: each row has its logo, a check on the current one, and the
-/// app's own hover. A click picks it and closes the list; a long list
-/// scrolls. For lists whose rows carry logos (providers, harnesses).
+/// SelectMenu's face over one pick, for lists whose rows carry logos
+/// (providers, harnesses). Its face draws the picked option's logo, or
+/// nothing while a `title` stands in for the selection; the open list is
+/// the shared `SelectOptionList`.
 struct PopoverSelect<Value: Hashable>: View {
     var options: [(value: Value, title: String, icon: String?)]
     @Binding var selection: Value
-    /// What the face shows; the selected option's title when nil.
+    /// What the face shows; the selected option's title when nil. A title
+    /// also keeps the face from drawing the picked option's logo.
     var title: String? = nil
     @State private var open = false
     @State private var hovering = false
-    /// The row the arrow keys are on; Return picks it.
-    @State private var highlighted: Value?
-    @FocusState private var listFocused: Bool
 
     private var current: (title: String, icon: String?) {
         let picked = options.first { $0.value == selection }
         return (title ?? picked?.title ?? "", title == nil ? picked?.icon : nil)
+    }
+
+    /// The options' logo ids keyed by value, for the list's icon column.
+    private var icons: [Value: String] {
+        var found: [Value: String] = [:]
+        for option in options { if let icon = option.icon { found[option.value] = icon } }
+        return found
     }
 
     var body: some View {
@@ -190,79 +278,11 @@ struct PopoverSelect<Value: Hashable>: View {
         .onHover { hovering = $0 }
         .fixedSize()
         .popover(isPresented: $open, arrowEdge: .bottom) {
-            // Opens on the current pick, so it isn't below the fold. The
-            // arrow keys move the highlight, like the system menu's.
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(options, id: \.value) { option in
-                            row(option).id(option.value)
-                        }
-                    }
-                    .padding(.vertical, 6)
-                }
-                .focusable()
-                .focusEffectDisabled()
-                .focused($listFocused)
-                .onAppear {
-                    highlighted = selection
-                    listFocused = true
-                    proxy.scrollTo(selection, anchor: .center)
-                }
-                .onKeyPress(.upArrow) { step(-1, proxy) }
-                .onKeyPress(.downArrow) { step(1, proxy) }
-                .onKeyPress(.return) {
-                    guard let highlighted else { return .ignored }
-                    pick(highlighted)
-                    return .handled
-                }
-            }
-            .frame(minWidth: 220, maxHeight: 360)
-            .fixedSize(horizontal: true, vertical: false)
+            SelectOptionList(options: options.map { ($0.value, $0.title) },
+                             selection: selection,
+                             pick: { selection = $0; open = false },
+                             icons: icons, minWidth: 220)
         }
-    }
-
-    private func pick(_ value: Value) {
-        selection = value
-        open = false
-    }
-
-    private func step(_ by: Int, _ proxy: ScrollViewProxy) -> KeyPress.Result {
-        guard !options.isEmpty else { return .ignored }
-        let index = options.firstIndex { $0.value == highlighted } ?? (by > 0 ? -1 : options.count)
-        let next = options[min(max(index + by, 0), options.count - 1)].value
-        highlighted = next
-        proxy.scrollTo(next)
-        return .handled
-    }
-
-    private func row(_ option: (value: Value, title: String, icon: String?)) -> some View {
-        let on = option.value == selection
-        return Button {
-            pick(option.value)
-        } label: {
-            HStack(spacing: 8) {
-                Group {
-                    if let icon = option.icon, HarnessIcon.exists(for: icon) {
-                        HarnessIcon(harness: icon, size: 16)
-                    } else {
-                        Color.clear
-                    }
-                }
-                .frame(width: 16, height: 16)
-                Text(option.title).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                Spacer(minLength: 12)
-                Image(systemName: "checkmark").font(Theme.font(size: 11, weight: .semibold))
-                    .foregroundStyle(Theme.interactive)
-                    .opacity(on ? 1 : 0)
-            }
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(option.value == highlighted ? Theme.rowHover : .clear)
-            .contentShape(.rect)
-        }
-        .plainButton(cornerRadius: 0)
-        .onHover { if $0 { highlighted = option.value } }
-        .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
 

@@ -108,9 +108,9 @@ final class StatusItemController: NSObject {
         panel.makeKeyAndOrderFront(nil)
         // Clicks in other apps arrive at the global monitor; clicks in
         // Quiver's own windows only at a local one. Either closes the panel,
-        // except a click on the panel itself, on a popover it is hosting
-        // (a child window, like the fan popover's), or on the status item
-        // (which toggles it).
+        // except a click on the panel itself, on a popover it hosts or one
+        // nested deeper (a child window like the fan popover's, or a select
+        // opened inside one), or on the status item (which toggles it).
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
         ) { [weak self] _ in
@@ -119,13 +119,22 @@ final class StatusItemController: NSObject {
         localClickMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
         ) { [weak self] event in
-            if let self, event.window !== self.panel,
-               event.window?.parent !== self.panel,
-               event.window !== self.item.button?.window {
-                self.close()
-            }
+            if let self, !self.hosts(event.window) { self.close() }
             return event
         }
+    }
+
+    /// Whether `window` is the panel, the status item's own window, or a
+    /// popover anywhere down the panel's child chain — a select's list
+    /// inside the fan popover is the panel's grandchild, not a direct
+    /// child.
+    private func hosts(_ window: NSWindow?) -> Bool {
+        var window = window
+        while let current = window {
+            if current === panel || current === item.button?.window { return true }
+            window = current.parent
+        }
+        return false
     }
 
     /// Resizes the open panel to its content, keeping the top edge where
