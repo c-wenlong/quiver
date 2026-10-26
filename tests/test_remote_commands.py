@@ -786,3 +786,101 @@ class TestDeviceRequests(unittest.TestCase):
         self.assertTrue(data["device_id"])
         rc, out, _ = _run(["devices", "--approve=000000"])
         self.assertEqual(rc, 1)
+
+
+class TestUnwritableHome(unittest.TestCase):
+    """#523: an unset, empty or read-only HOME is a one-line error and
+    exit 1, not an OSError traceback."""
+
+    def _locked_home(self) -> Path:
+        """A HOME nothing can be created under; skips when the mode
+        can't bite (root writes anyway)."""
+        import os
+        import stat
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        home.chmod(0o500)
+        self.addCleanup(home.chmod, stat.S_IRWXU)
+        if os.access(home, os.W_OK):
+            self.skipTest("running as a user that ignores modes")
+        return home
+
+    def test_approve_request_errors_cleanly(self):
+        import os
+
+        home = self._locked_home()
+        with patch.dict(os.environ, {"HOME": str(home)}):
+            rc, out, err = _run(["devices", "--approve=123456"])
+        self.assertEqual(rc, 1)
+        self.assertIn("can't write", out)
+        self.assertIn(".quiver", out)
+        self.assertNotIn("Traceback", out + err)
+
+    def test_error_moves_to_stderr_under_json(self):
+        import os
+
+        home = self._locked_home()
+        with patch.dict(os.environ, {"HOME": str(home)}):
+            rc, out, err = _run(["devices", "--approve=123456", "--json"])
+        self.assertEqual(rc, 1)
+        self.assertIn("can't write", err)
+        # stdout stays clean of anything the app would try to decode.
+        self.assertEqual("", out.strip())
+
+    def test_pair_errors_cleanly(self):
+        import os
+
+        home = self._locked_home()
+        with patch.dict(os.environ, {"HOME": str(home)}), \
+             patch("quiver.remote.commands._tailscale_ip",
+                   return_value="100.1.2.3"):
+            rc, out, err = _run(["pair"])
+        self.assertEqual(rc, 1)
+        self.assertIn("can't write", out)
+        self.assertNotIn("Traceback", out + err)
+
+    def test_read_only_subcommand_still_works(self):
+        # load_devices never writes; a locked HOME must not turn a
+        # devices listing into an error.
+        import os
+
+        home = self._locked_home()
+        with patch.dict(os.environ, {"HOME": str(home)}):
+            rc, out, _ = _run(["devices"])
+        self.assertEqual(rc, 0)
+        self.assertIn("no paired", out)
+
+    def test_error_names_the_path_that_failed(self):
+        # The write that fails can sit outside the state dir —
+        # `serve --install` writes under ~/Library/LaunchAgents or
+        # ~/.config/systemd/user — so the line names exc.filename,
+        # not the remote dir the error usually comes from.
+        boom = PermissionError(13, "Permission denied",
+                               "/h/Library/LaunchAgents/x.plist")
+        with patch.object(commands.pairing, "list_requests",
+                          side_effect=boom):
+            rc, out, _ = _run(["devices", "--requests"])
+        self.assertEqual(rc, 1)
+        self.assertIn("/h/Library/LaunchAgents/x.plist", out)
+        self.assertIn("Permission denied", out)
+        self.assertNotIn("data/remote", out)
+
+    def test_unresolvable_home_errors_cleanly(self):
+        # HOME unset and the uid missing from passwd: Path.home() gives
+        # up with RuntimeError before any mkdir is attempted.
+        with patch.object(Path, "home",
+                          side_effect=RuntimeError(
+                              "Could not determine home directory")):
+            rc, out, err = _run(["devices"])
+        self.assertEqual(rc, 1)
+        self.assertIn("can't write", out)
+        self.assertIn("home directory", out)
+        self.assertNotIn("Traceback", out + err)
+
+    def test_other_runtime_errors_still_raise(self):
+        with patch.object(commands.pairing, "load_devices",
+                          side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                _run(["devices"])
