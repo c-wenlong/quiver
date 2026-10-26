@@ -76,10 +76,14 @@ public struct Hook: Codable, Sendable, Equatable, Identifiable {
     public let enabled: Bool?
     /// The events the script says it handles, when swe reports them.
     public let eventsSupported: [String]?
+    /// The script's header line (docstring or leading comment); empty when
+    /// it has none or swe predates the field.
+    public let summary: String
 
     public init(script: String, harness: String, source: String, destination: String,
                 state: LinkState, detail: String = "", declared: [HookDeclaration] = [],
-                tier: Tier? = nil, enabled: Bool? = nil, eventsSupported: [String]? = nil) {
+                tier: Tier? = nil, enabled: Bool? = nil, eventsSupported: [String]? = nil,
+                summary: String = "") {
         self.script = script
         self.harness = harness
         self.source = source
@@ -90,6 +94,7 @@ public struct Hook: Codable, Sendable, Equatable, Identifiable {
         self.tier = tier
         self.enabled = enabled
         self.eventsSupported = eventsSupported
+        self.summary = summary
     }
 
     /// Linked into a harness but declared by no settings file, so it will
@@ -100,7 +105,7 @@ public struct Hook: Codable, Sendable, Equatable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case script, harness, source, destination, state, detail, declared
-        case tier, enabled, eventsSupported
+        case tier, enabled, eventsSupported, summary
     }
 
     /// The names swe's list row took in #787 (`name`, `source_path`,
@@ -126,6 +131,7 @@ public struct Hook: Codable, Sendable, Equatable, Identifiable {
         tier = try? c.decodeIfPresent(Tier.self, forKey: .tier)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled)
         eventsSupported = try c.decodeIfPresent([String].self, forKey: .eventsSupported)
+        summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
     }
 }
 

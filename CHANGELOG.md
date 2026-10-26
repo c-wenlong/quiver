@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Hooks page reads by event.** Pick a harness and its hooks sit on
+  the events that fire them, in session order: PreToolUse with each
+  script's tool (Bash, Task, any tool) and one-line description, Stop
+  below it. Events nothing fires on fold into one line. Other tools'
+  hooks (herdr, Agent Relay) are off by default behind one checkbox, and
+  scripts nothing declares get a "Not running" card with the reason.
+  Clicking a hook opens it in a panel beside the list: what fires it,
+  its command and settings file, where it's linked, and the script in a
+  raw editor. `swe hooks list --json` rows now carry `summary` and
+  `detail` for it.
+
 ## [1.1.1] - 2026-10-26
 
 ### Fixed

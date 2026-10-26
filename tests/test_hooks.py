@@ -256,7 +256,8 @@ class ListCommandTest(unittest.TestCase):
     def test_json_rows_carry_declarations(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            _hook(home, "claude", "guard.py")
+            _hook(home, "claude", "guard.py",
+                  '"""Stop hook: block replies that break the rules."""\n')
             _settings(home, ".claude/settings.json", {
                 "Stop": [{"hooks": [{"command": "guard.py"}]}],
             })
@@ -267,7 +268,8 @@ class ListCommandTest(unittest.TestCase):
             # The stable schema the app page consumes.
             for key in ("name", "harness", "tier", "source_path",
                         "dest_path", "link_status", "enabled",
-                        "declared", "events_supported"):
+                        "declared", "events_supported", "summary",
+                        "detail"):
                 self.assertIn(key, row, key)
             self.assertEqual(row["name"], "guard.py")
             self.assertEqual(row["tier"], "harness")
@@ -276,6 +278,8 @@ class ListCommandTest(unittest.TestCase):
             self.assertTrue(
                 row["declared"][0]["file"].endswith("settings.json"))
             self.assertIn("PreToolUse", row["events_supported"])
+            self.assertEqual(row["summary"],
+                             "Stop hook: block replies that break the rules.")
 
     def test_unknown_hub_dir_lists_as_one_row_and_check_stays_quiet(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -290,6 +294,8 @@ class ListCommandTest(unittest.TestCase):
             self.assertEqual(
                 [(r["name"], r["link_status"]) for r in rows],
                 [("command-guard", "skipped")])
+            # The app says why it never runs, from the row alone.
+            self.assertEqual(rows[0]["detail"], "not a known harness")
             self.assertEqual(
                 [f for f in hook_findings(home)
                  if f.harness == "command-guard"], [])

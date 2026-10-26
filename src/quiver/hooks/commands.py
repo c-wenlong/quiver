@@ -180,6 +180,7 @@ def _row_json(r: HookRow) -> dict:
         "source_path": str(r.source),
         "dest_path": str(r.dest),
         "link_status": r.state,
+        "detail": r.detail,
         "enabled": r.enabled,
         "declared": [{
             "event": d.event,
@@ -187,6 +188,9 @@ def _row_json(r: HookRow) -> dict:
             "file": str(d.settings),
         } for d in r.declared],
         "events_supported": r.events_supported,
+        # The header line the app shows beside the name; a directory hook
+        # has no single file to read it from.
+        "summary": script_summary(r.source) if r.source.is_file() else "",
     }
 
 
