@@ -81,17 +81,25 @@ public struct Issue: Codable, Sendable, Equatable, Identifiable {
     }
 
     /// The summary line a toast or card shows: the remedy's when swe
-    /// named a fix, else a plain reading of the status.
+    /// named a fix, else a plain reading of the status. An extra
+    /// account's label tags along so two accounts' identical failures
+    /// still read differently.
     public var message: String {
-        if let text = remedy?.summary, !text.isEmpty { return text }
-        return switch status {
-        case .signedOut: "\(harness) isn't signed in"
-        case .authRequired: "\(harness)'s stored login is stale"
-        case .permissionRequired: "macOS won't let Quiver read \(harness)'s credentials"
-        case .unavailable: "\(harness)'s usage couldn't be fetched"
-        case .timeout: "\(harness)'s usage fetch timed out"
-        case .ok: "\(harness) is fine"
+        var base: String
+        if let text = remedy?.summary, !text.isEmpty {
+            base = text
+        } else {
+            base = switch status {
+            case .signedOut: "\(harness) isn't signed in"
+            case .authRequired: "\(harness)'s stored login is stale"
+            case .permissionRequired: "macOS won't let Quiver read \(harness)'s credentials"
+            case .unavailable: "\(harness)'s usage couldn't be fetched"
+            case .timeout: "\(harness)'s usage fetch timed out"
+            case .ok: "\(harness) is fine"
+            }
         }
+        if let account, !account.isEmpty { return "\(base) (\(account))" }
+        return base
     }
 }
 
@@ -158,6 +166,16 @@ public struct IssueStore: Sendable {
             let key = accountKey ?? account
             let id = Self.id(harness: harness, status: status, account: key)
             let now = now()
+            // One open issue per slot: whatever else is open for this
+            // harness+account closes, whether this verdict reopens an
+            // older issue in the slot or opens a new one.
+            for (other, issue) in issues where !issue.resolved
+                && issue.harness == harness && issue.accountKey == key
+                && other != id {
+                var closed = issue
+                closed.resolved = true
+                issues[other] = closed
+            }
             if var existing = issues[id] {
                 if !existing.resolved {
                     // Same failure still failing: count it, refresh its
@@ -178,16 +196,6 @@ public struct IssueStore: Sendable {
                     notify = Outcome(issue: existing, shouldNotify: true)
                 }
             } else {
-                // A different failure for the same slot closes the old
-                // issue: one open issue per harness+account, and the new
-                // one is told.
-                for (other, issue) in issues where !issue.resolved
-                    && issue.harness == harness && issue.accountKey == key
-                    && other != id {
-                    var closed = issue
-                    closed.resolved = true
-                    issues[other] = closed
-                }
                 let issue = Issue(id: id, harness: harness, account: account,
                                   accountKey: key, status: status,
                                   remedy: remedy, at: now)
@@ -197,6 +205,25 @@ public struct IssueStore: Sendable {
             write(issues)
         }
         return notify
+    }
+
+    /// An account that no longer exists can't fail again: its open
+    /// issues close. `live` maps each harness to the account keys still
+    /// registered for it; an issue slot absent there is gone, not fixed.
+    public func resolveMissing(live: [String: Set<String>]) {
+        withFileLock {
+            var issues = load()
+            var changed = false
+            for (id, issue) in issues where !issue.resolved
+                && issue.accountKey != nil
+                && !(live[issue.harness]?.contains(issue.accountKey!) ?? false) {
+                var closed = issue
+                closed.resolved = true
+                issues[id] = closed
+                changed = true
+            }
+            if changed { write(issues) }
+        }
     }
 
     /// A successful read closes that harness's (or account's) open issues.
@@ -273,7 +300,10 @@ public final class IssuesModel {
     public private(set) var open: [Issue] = []
     /// The issue the window's toast is showing; nil while nothing new
     /// needs telling.
-    public private(set) var toast: Issue?
+    public var toast: Issue? { queue.first }
+    /// Actionable issues not yet shown: one poll can find several, and
+    /// each waits for the one on screen to dismiss before its turn.
+    private var queue: [Issue] = []
     private let store: IssueStore
 
     public init(store: IssueStore) {
@@ -298,15 +328,22 @@ public final class IssuesModel {
                                        remedy: remedy, account: account,
                                        accountKey: accountKey)
             if outcome.shouldNotify, outcome.issue.status.actionable {
-                toast = outcome.issue
+                queue.append(outcome.issue)
                 store.markNotified(outcome.issue.id)
             }
         }
         open = store.open()
     }
 
+    /// Accounts that were removed can't fail again: their open issues
+    /// close. `live` maps each harness to its remaining account keys.
+    public func dropMissingAccounts(live: [String: Set<String>]) {
+        store.resolveMissing(live: live)
+        open = store.open()
+    }
+
     public func dismissToast() {
-        toast = nil
+        if !queue.isEmpty { queue.removeFirst() }
     }
 
     /// The doctor findings these issues would make: the same check id,

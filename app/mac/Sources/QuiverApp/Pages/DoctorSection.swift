@@ -54,7 +54,8 @@ struct DoctorSection: View {
             case .failed(let message):
                 ErrorCard(message: message, actionTitle: "Try again",
                           actionShortcut: Self.refreshShortcut, action: reload)
-            case .loaded(let report) where report.findings.isEmpty:
+            case .loaded(let report) where report.findings.isEmpty
+                    && app.issues.findings.isEmpty:
                 EmptyCard(text: "Everything checks out.", icon: "checkmark.seal",
                           actionTitle: "Check again", actionShortcut: Self.refreshShortcut,
                           action: reload)

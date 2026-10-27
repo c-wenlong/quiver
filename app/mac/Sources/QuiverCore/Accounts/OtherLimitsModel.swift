@@ -288,9 +288,15 @@ public final class OtherLimitsModel {
         // the list call so the starred set is current: a vendor just
         // starred gets its extras read, one just unstarred is skipped.
         let extras = extraAccounts().filter { !$0.0.isDefault && !$0.0.vendor.hasDefaultProfile }
-        // A removed profile's reading is never asked for again.
+        // A removed profile's reading is never asked for again — and
+        // its open issues close, since a deleted account can't fail again.
         let live = Set(extras.map { $0.0.id })
         extraReadings = extraReadings.filter { live.contains($0.key) }
+        var liveKeys: [String: Set<String>] = [:]
+        for (profile, _) in extras {
+            liveKeys[profile.vendor.rawValue, default: []].insert(Self.accountKey(for: profile))
+        }
+        issues?.dropMissingAccounts(live: liveKeys)
         do {
             // An swe too old for a flag fails the whole call, so each
             // attempt drops what the last error named: the new usage
