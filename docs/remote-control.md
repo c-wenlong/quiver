@@ -151,6 +151,7 @@ remote/
   catalog.py     # session registry: local + satellite rows, machine-scoped
   dismissals.py  # per-device inbox dismissals (inbox_dismissals.json, 0600)
   sessionmeta.py # pins and display names, hub-wide (session_meta.json, 0600)
+  tasks.py       # work-item store: sessions/launches linked to tasks (tasks.json, 0600)
   tail.py        # byte-offset transcript readers → events (read path)
   inject.py      # per-harness send/approval/interrupt registry (write path)
   supervise.py   # tmux lifecycle for attached sessions
@@ -170,7 +171,7 @@ remote/
 Layering: `remote` may import `sessions`, `reports`, `github`, `paths`,
 `console`, `flags`; nothing imports `remote` back. State under
 `~/.quiver/data/remote/` (`devices.json` 0600, `inbox_dismissals.json`
-0600, `session_meta.json` 0600, `cursors/`, `journal/`) —
+0600, `session_meta.json` 0600, `tasks.json` 0600, `cursors/`, `journal/`) —
 gitignored like the rest of `data/`. New commands run the usual
 checklist: `completion.py`, `help_text.py`, `docs/json-contracts.md`.
 
@@ -326,6 +327,9 @@ POST /v1/issues/resolve              {repo, number, harness, prompt?, context?} 
 GET  /v1/pulls                       every pinned repo's open PRs, each row plus `mine` and `review_requested`
 GET  /v1/pulls/<o>/<r>/<n>           one PR in full: row + body, per-check runs, reviews, worktree, suggested_prompt
 POST /v1/pulls/<o>/<r>/<n>/open      {harness, prompt?} detached PR-head worktree + agent → launch_id
+GET  /v1/tasks                       the task store over the sources' open items: state, sessions, agent_running
+POST /v1/sessions/{id}/task          {task_ref} link a work item to this session
+DELETE /v1/sessions/{id}/task        {task_ref}? unlink one task, or all without a ref
 GET  /v1/folders?path=                subfolders of one folder on the hub machine (new-session browser)
 GET  /v1/sessions/{id}/files?q=     paths under the session's folder for the prompt box's @ menu
 GET  /v1/launches/{launch_id}        pending|started|failed; started carries the session key
@@ -364,6 +368,25 @@ Each session row carries `pinned`, `pinned_at` (epoch seconds or
 `POST /v1/sessions/{id}/title`, else the harness's own) and
 `harness_title` (always the harness's own). Both routes answer those
 fields and emit `session.meta` so open clients update.
+
+The task store (`tasks.py`, `tasks.json` on the hub) is the "what am I
+working on" half of remote: a normalized work item, a `task_ref` —
+`{source: github|linear|notion, kind: issue|pull|card|page,
+repo?|project?, ref, title, url}` — mapped to the sessions and launches
+the hub ran for it. Links land three ways: a resolve or a PR open
+stamps `origin` on its launch record and adoption links the session and
+launch to the task; `POST /v1/sessions/{id}/task` links by hand;
+`DELETE` unlinks one task (or every task, without a `task_ref`). `GET
+/v1/tasks` merges the store over what the sources list — today GitHub,
+the pinned repos' open issues and PRs behind the same 60-second `gh`
+cache `/v1/pulls` uses — so a row answers "what's happening on X": the
+derived `state` (`open` → `in_progress` → `pr_open` → `merged|closed`),
+`sessions`, `agent_running` (a linked session is active, or its launch
+is still pending), `last_active_at`, and `pr` — for an issue the PR its
+`quiver/issue-<n>` branch produced, so a merged PR reads `merged` even
+after it leaves the open list. `/v1/pulls` rows carry `agent_running`
+from the same store, and `GET /v1/launches/{id}` shows a launch's
+`origin` while pending and after it settles.
 
 The phone shows queue-mode sends that are still waiting in a tray above
 the prompt box. `GET /v1/sessions/{id}/queue` lists them, oldest first:
