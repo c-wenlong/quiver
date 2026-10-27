@@ -679,6 +679,46 @@ class SummaryTest(unittest.TestCase):
             self.assertEqual(script_summary(home / "gone.py"), "")
             self.assertEqual(script_summary(long_sh), "one two")
 
+    def test_reads_only_the_head(self):
+        # The list reads a summary per row on every refresh: a long script
+        # is read from its head, and a binary is skipped.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            filler = "x = 1\n" * 10_000  # past the 16 KiB head
+            long_py = _hook(home, "claude", "long.py",
+                            '#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n'
+                            '"""Stop hook: guard the gate.\n\nMore."""\n'
+                            + filler)
+            cut_py = _hook(home, "claude", "cut.py",
+                           '"""' + "a" * 20_000 + '"""\n')
+            long_sh = _hook(home, "claude", "long.sh",
+                            "#!/bin/sh\n# Guards things.\n" + "echo hi\n" * 5_000)
+            binary = home / "helper"
+            binary.write_bytes(b"\xcf\xfa\xed\xfe\0\0" + b"\0" * 64)
+            self.assertEqual(script_summary(long_py), "Stop hook: guard the gate.")
+            # A docstring that runs past the head has no closing quotes in
+            # it, so there is nothing safe to show.
+            self.assertEqual(script_summary(cut_py), "")
+            self.assertEqual(script_summary(long_sh), "Guards things.")
+            self.assertEqual(script_summary(binary), "")
+
+    def test_list_reads_a_shared_script_once(self):
+        # A shared script is a row per harness: one listing reads it once.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            source = _hook(home, "shared", "guard.py", '"""Guards."""\n')
+            rows = [HookRow(script="guard.py", harness=h, source=source,
+                            dest=home / f".{h}/hooks/_generated/guard.py",
+                            state="linked", detail="", declared=[],
+                            tier="shared")
+                    for h in ("claude", "codex")]
+            summaries: dict[Path, str] = {}
+            with mock.patch.object(hooks_commands, "script_summary",
+                                   wraps=script_summary) as read:
+                out = [hooks_commands._row_json(r, summaries) for r in rows]
+            self.assertEqual(read.call_count, 1)
+            self.assertEqual([o["summary"] for o in out], ["Guards."] * 2)
+
 
 class DispatchTest(unittest.TestCase):
     def test_help_and_unknown_subcommand(self):

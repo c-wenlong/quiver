@@ -17,6 +17,13 @@ struct HooksPage: View {
     @AppStorage("hooksHarness") private var harness = ""
     /// Lay out herdr's, Agent Relay's and other installers' hooks too.
     @AppStorage("hooksShowForeign") private var showForeign = false
+    /// The board's width, for the narrow layout; 0 until the first layout.
+    @State private var boardWidth: CGFloat = 0
+
+    /// Under this, the list and a 440pt panel can't sit side by side: the
+    /// open hook takes the board's place until it's closed. 900pt windows
+    /// leave about 610pt here.
+    private static let sideBySideWidth: CGFloat = 980
 
     /// App-wide, so a list outlives a trip to another page and the last
     /// one shows at once.
@@ -76,40 +83,71 @@ struct HooksPage: View {
     }
 
     /// The harness tabs and its timeline, the scripts nothing fires, and
-    /// the open hook's panel to the right.
+    /// the open hook's panel to the right; in a narrow window the open
+    /// hook takes the board's place instead.
     private func board(_ hooks: [Hook]) -> some View {
         let tabs = HookTimeline.harnesses(in: hooks)
         let current = tabs.contains(harness) ? harness : (tabs.first ?? "")
         let timeline = HookTimeline(harness: current, hooks: hooks, includeForeign: showForeign)
         let idle = HookTimeline.notRunning(in: hooks)
-        return HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 16) {
-                if !tabs.isEmpty {
-                    HStack(spacing: 12) {
-                        Tabs(options: tabs.map { ($0, HarnessMark($0).name, Optional($0)) },
-                             selection: Binding(get: { current }, set: { harness = $0 }))
-                        Spacer(minLength: 12)
-                        if timeline.foreignCount > 0 {
-                            Toggle("Other tools (\(timeline.foreignCount))", isOn: $showForeign)
-                                .toggleStyle(.checkbox)
-                                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                                .fixedSize()
-                                .help("Scripts herdr, Agent Relay and other installers declared. Quiver lists them but doesn't manage them.")
+        let wide = boardWidth == 0 || boardWidth >= Self.sideBySideWidth
+        return Group {
+            if let opened, !wide {
+                panel(for: opened, in: hooks)
+            } else {
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        if !tabs.isEmpty {
+                            // The tabs refuse to shrink: past one row they
+                            // wrap into a grid, the checkbox below them.
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: 12) {
+                                    harnessTabs(tabs, current: current)
+                                    Spacer(minLength: 12)
+                                    foreignToggle(timeline.foreignCount)
+                                }
+                                VStack(alignment: .leading, spacing: 8) {
+                                    harnessTabs(tabs, current: current, columns: 4)
+                                    foreignToggle(timeline.foreignCount)
+                                }
+                            }
+                            TimelineCard(timeline: timeline, opened: opened) { opened = $0 }
+                        }
+                        if !idle.isEmpty {
+                            NotRunningCard(hooks: idle, opened: opened) { opened = $0 }
                         }
                     }
-                    TimelineCard(timeline: timeline, opened: opened) { opened = $0 }
-                }
-                if !idle.isEmpty {
-                    NotRunningCard(hooks: idle, opened: opened) { opened = $0 }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if let opened {
+                        panel(for: opened, in: hooks).frame(width: 440)
+                    }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            if let opened {
-                // A reload swaps the inventory: follow the same script's row.
-                let hook = hooks.first { $0.rowKey == opened.rowKey } ?? opened
-                HookDetailView(hook: hook, onBack: { self.opened = nil })
-                    .frame(width: 440)
-            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { boardWidth = $0 }
+    }
+
+    private func panel(for opened: Hook, in hooks: [Hook]) -> some View {
+        // A reload swaps the inventory: follow the same script's row.
+        let hook = hooks.first { $0.rowKey == opened.rowKey } ?? opened
+        return HookDetailView(hook: hook, onBack: { self.opened = nil })
+    }
+
+    private func harnessTabs(_ tabs: [String], current: String, columns: Int = 1) -> some View {
+        Tabs(options: tabs.map { ($0, HarnessMark($0).name) },
+             selection: Binding(get: { current }, set: { harness = $0 }),
+             icons: Dictionary(uniqueKeysWithValues: tabs.map { ($0, $0) }),
+             fillWidth: columns > 1, columns: columns)
+    }
+
+    @ViewBuilder private func foreignToggle(_ count: Int) -> some View {
+        if count > 0 {
+            Toggle("Other tools (\(count))", isOn: $showForeign)
+                .toggleStyle(.checkbox)
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                .fixedSize()
+                .help("Scripts herdr, Agent Relay and other installers declared. Quiver lists them but doesn't manage them.")
         }
     }
 
@@ -460,8 +498,10 @@ private struct HookDetailView: View {
     /// path it was worked out for; nil until the first lands.
     @State private var found: (path: String, check: HookScript)?
     /// `swe hooks info`'s take on the script, for the command line and
-    /// timeout the list leaves out.
-    @State private var info: HookInfo?
+    /// timeout the list leaves out, with the source it was asked for: the
+    /// panel stays up while another hook loads, and must not show the
+    /// last one's details under the new name.
+    @State private var info: (source: String, info: HookInfo)?
     /// Bumped by `reload()` so the check is worked out again after a save.
     @State private var refresh = 0
     /// A directory hook (a bundle of scripts) has no one file to edit.
@@ -477,7 +517,8 @@ private struct HookDetailView: View {
     }
     /// The placement swe's info call reports for this harness.
     private var placement: HookInfo.Placement? {
-        info?.harnesses.first { $0.harness == hook.harness }
+        guard let info, info.source == hook.source else { return nil }
+        return info.info.harnesses.first { $0.harness == hook.harness }
     }
 
     var body: some View {
@@ -536,7 +577,10 @@ private struct HookDetailView: View {
         // Refetch on a refreshed row or a save: the row the list hands
         // down may differ from what the first look fetched.
         .task(id: InfoKey(hook: hook, refresh: refresh)) {
-            info = try? await app.swe.hookInfo(name: hook.script)
+            let source = hook.source
+            let fetched = try? await app.swe.hookInfo(name: hook.script)
+            guard !Task.isCancelled else { return }
+            info = fetched.map { (source, $0) }
         }
         .onChange(of: app.navReselects) { leave() }
         // Invisible, but its shortcut closes the panel: reselecting the
@@ -671,25 +715,27 @@ private struct HookDetailView: View {
         app.hooks.findings.contains { $0.kind == "managed" && $0.message.hasPrefix(path) }
     }
 
-    /// Close with nothing unsaved; otherwise ask first.
+    /// This hook's own draft. Another hook's edit stays in the drafts
+    /// store when the panel switches to this one: the app's quit check
+    /// still sees it, and reopening that hook brings it back. So closing
+    /// asks about, saves or discards this script only.
+    private var draft: InstructionDocument? {
+        drafts.documents[hook.source].flatMap { $0.isDirty ? $0 : nil }
+    }
+
+    /// Close with nothing unsaved here; otherwise ask first.
     private func leave() {
-        if drafts.dirty.isEmpty { onBack() } else { leaving = true }
+        if draft == nil { onBack() } else { leaving = true }
     }
 
     /// Save the script, then close; a save that fails keeps the panel open
     /// and says why.
     private func saveAndLeave() {
-        var failed: [String] = []
-        for (path, document) in drafts.dirty {
-            if document.save() != .saved {
-                failed.append(URL(fileURLWithPath: path).lastPathComponent)
-            }
-        }
-        if failed.isEmpty {
+        if let draft, draft.save() != .saved {
+            leaveError = "Couldn't save \(hook.script)."
+        } else {
             leaveError = nil
             onBack()
-        } else {
-            leaveError = "Couldn't save \(failed.joined(separator: ", "))."
         }
     }
 
