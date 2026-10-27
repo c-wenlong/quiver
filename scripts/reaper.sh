@@ -31,9 +31,10 @@
 #      or whose tip is exactly a merged PR's head, which is the squash-merge
 #      case: the commits were pushed to the PR and stay fetchable through
 #      GitHub's pull refs.
-#   c. app/mac/.build, build/ and .build/ dirs with no file modified in the last
-#      N days — in the main checkout and in surviving worktrees (build dirs
-#      inside removed worktrees go away with them). Only git-ignored dirs
+#   c. app/mac/.build, app/.build (the old layout), build/ and .build/
+#      dirs with no file modified in the last N days — in the main
+#      checkout and in surviving worktrees (build dirs inside removed
+#      worktrees go away with them). Only git-ignored dirs
 #      are pruned; a fresh checkout needs no pruning, hence the age check.
 #
 # A dry run never writes: no deletions and no `git fetch` either — remote
@@ -388,7 +389,7 @@ while IFS=$'\t' read -r wt _ _ _ _; do
 done < <(git worktree list --porcelain | awk '/^worktree /{print substr($0,10)}')
 
 for root in "${roots[@]}"; do
-	for rel in "app/mac/.build" "build" ".build"; do
+	for rel in "app/mac/.build" "app/.build" "build" ".build"; do
 		d="$root/$rel"
 		[[ -d "$d" ]] || continue
 		label="${root#"$MAIN_ROOT"}"; label="${label#/}"; label="${label:+$label/}$rel"

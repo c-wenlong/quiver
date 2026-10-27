@@ -89,9 +89,13 @@ echo "install-app: building $ref ($commit), $config"
 
 # Stamp the user's checkout as the source, as a build from it would be:
 # Settings > Updates compares against it and rebuilds from it.
+# A QUIVER_INSTALL_REF from before the app moved to app/mac has its build
+# script at app/script.
+builder="$src/app/mac/script/build-app.sh"
+[ -f "$builder" ] || builder="$src/app/script/build-app.sh"
 rm -rf "$out"
 QUIVER_BUILD_DIR="$out" QUIVER_SOURCE_PATH="$repo" \
-  "$src/app/mac/script/build-app.sh" "$config" >/dev/null
+  "$builder" "$config" >/dev/null
 
 # Stage next to the destination first, so the swap below is two renames
 # on one volume and the running app is down only for the restart.
