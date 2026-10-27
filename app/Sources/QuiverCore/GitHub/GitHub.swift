@@ -443,6 +443,90 @@ public struct GhPrView: Decodable, Sendable {
     public let error: String?
 }
 
+/// One comment on an issue, oldest first in `GhIssueDetail.comments`.
+public struct GhIssueComment: Decodable, Equatable, Sendable {
+    public let author: String
+    public let body: String
+    public let createdAt: GhTime?
+    public let url: String?
+
+    public init(author: String, body: String, createdAt: GhTime? = nil, url: String? = nil) {
+        self.author = author
+        self.body = body
+        self.createdAt = createdAt
+        self.url = url
+    }
+}
+
+/// `swe gh issue view`'s detail row: the list row's fields plus the
+/// body, every comment, and where a resolve run would start — the
+/// `quiver/issue-<n>` branch, its worktree path on the hub machine, and
+/// the first prompt the hub would send (the body and comments folded in).
+public struct GhIssueDetail: Decodable, Equatable, Sendable, Identifiable {
+    public var id: Int { number }
+    public let number: Int
+    public let title: String
+    public let state: GhIssue.State
+    public let author: String
+    public let labels: [String]
+    public let assignees: [String]
+    public let url: String
+    public let body: String
+    public let createdAt: GhTime?
+    public let updatedAt: GhTime?
+    public let comments: [GhIssueComment]
+    /// `quiver/issue-<n>`, off the repo's default branch.
+    public let branch: String?
+    /// The checkout's absolute path under ~/.quiver/worktrees.
+    public let worktree: String?
+    public let suggestedPrompt: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case number, title, state, author, labels, assignees, url, body
+        case createdAt, updatedAt, comments, branch, worktree, suggestedPrompt
+    }
+
+    /// Lists and text the CLI may leave out decode as empty, so an older
+    /// or trimmed reply still opens the sheet.
+    public init(from decoder: any Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        number = try box.decode(Int.self, forKey: .number)
+        title = try box.decode(String.self, forKey: .title)
+        state = try box.decode(GhIssue.State.self, forKey: .state)
+        author = try box.decodeIfPresent(String.self, forKey: .author) ?? ""
+        labels = try box.decodeIfPresent([String].self, forKey: .labels) ?? []
+        assignees = try box.decodeIfPresent([String].self, forKey: .assignees) ?? []
+        url = try box.decodeIfPresent(String.self, forKey: .url) ?? ""
+        body = try box.decodeIfPresent(String.self, forKey: .body) ?? ""
+        createdAt = try box.decodeIfPresent(GhTime.self, forKey: .createdAt)
+        updatedAt = try box.decodeIfPresent(GhTime.self, forKey: .updatedAt)
+        comments = try box.decodeIfPresent([GhIssueComment].self, forKey: .comments) ?? []
+        branch = try box.decodeIfPresent(String.self, forKey: .branch)
+        worktree = try box.decodeIfPresent(String.self, forKey: .worktree)
+        suggestedPrompt = try box.decodeIfPresent(String.self, forKey: .suggestedPrompt)
+    }
+}
+
+/// `swe gh issue view --json`: `issue` is null on any failure, read the
+/// same way as `GhPrView`.
+public struct GhIssueView: Decodable, Sendable {
+    public let github: GhEnv?
+    public let repo: String?
+    public let status: String
+    public let issue: GhIssueDetail?
+    public let error: String?
+}
+
+/// `swe gh issue comment --json`: the posted comment, or `error`.
+public struct GhIssueCommentReply: Decodable, Sendable {
+    public let github: GhEnv?
+    public let repo: String?
+    public let status: String?
+    public let issue: Int?
+    public let comment: GhIssueComment?
+    public let error: String?
+}
+
 /// `swe gh pr merge --json`: `merged` is false under `--auto` —
 /// arming is not merging.
 public struct GhMerge: Decodable, Sendable {
@@ -618,6 +702,21 @@ extension SweClient {
     /// `swe gh pr view <ref> --repo=<repo> --json` — the detail pane's read.
     public func ghPrView(repo: String, ref: String) async throws -> GhPrView {
         try await call(["gh", "pr", "view", ref, "--repo=\(repo)", "--json"],
+                       allowFailure: true)
+    }
+
+    /// `swe gh issue view <n> --repo=<repo> --json` — the issue sheet's read.
+    public func ghIssueView(repo: String, number: Int) async throws -> GhIssueView {
+        try await call(["gh", "issue", "view", "\(number)", "--repo=\(repo)", "--json"],
+                       allowFailure: true)
+    }
+
+    /// `swe gh issue comment <n> --repo=<repo> --body=<text> --json` —
+    /// posts as the `gh` login on this Mac. A refusal exits non-zero
+    /// with `error` in the reply, so `allowFailure` stays on.
+    public func ghIssueComment(repo: String, number: Int, body: String) async throws -> GhIssueCommentReply {
+        try await call(["gh", "issue", "comment", "\(number)", "--repo=\(repo)",
+                        "--body=\(body)", "--json"],
                        allowFailure: true)
     }
 

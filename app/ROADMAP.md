@@ -79,6 +79,7 @@ Modelled on TokenTracker's Sessions page.
 - [x] Resume action: opens the session in your terminal, in its folder and account
 - [x] Session detail sheet
 - [x] Chat from the local hub, as in the web app: live transcript ([#708](https://github.com/c-wenlong/quiver/pull/708)); composer with Queue/Steer and Stop ([#710](https://github.com/c-wenlong/quiver/pull/710)); Attach and approvals
+- [x] Resolve a GitHub issue with an agent ([#816](https://github.com/c-wenlong/quiver/issues/816)): issue rows open a detail sheet with comments and a composer (`swe gh issue view|comment`); Resolve starts a session through the hub (`POST /v1/issues/resolve`) in a `quiver/issue-<n>` worktree, shows the hub's steps, then opens its chat in Sessions
 
 ### M5. Manage
 - [x] Skills, built on quiver hub: per-harness link chips, link and unlink through `swe skills` ([#144](https://github.com/c-wenlong/quiver/pull/144))

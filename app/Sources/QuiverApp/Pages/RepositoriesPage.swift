@@ -16,6 +16,8 @@ struct RepositoriesPage: View {
     @State private var adding = false
     /// The PR whose detail sheet is open, if any.
     @State private var detail: PrSelection?
+    /// The issue whose detail or resolve sheet is open, if any.
+    @State private var issue: IssueSelection?
 
     private var model: GitHubModel { app.github }
 
@@ -95,6 +97,9 @@ struct RepositoriesPage: View {
         }
         .quiverSheet(item: $detail) { selection in
             PrDetailSheet(selection: selection)
+        }
+        .quiverSheet(item: $issue) { selection in
+            IssueSheet(selection: selection) { issue = $0 }
         }
     }
 
@@ -222,9 +227,9 @@ struct RepositoriesPage: View {
                                  tab: model.tab, query: model.query,
                                  unfiltered: model.showsAllRows(pin.name),
                                  preview: 5,
-                                 expandEdge: index == repos.count - 1 ? .cardBottom : .inset) {
-                        detail = PrSelection(repo: pin.name, number: $0)
-                    }
+                                 expandEdge: index == repos.count - 1 ? .cardBottom : .inset,
+                                 openPr: { detail = PrSelection(repo: pin.name, number: $0) },
+                                 openIssue: { issue = $0 })
                 }
             }
             .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
@@ -500,6 +505,9 @@ struct RepoSurfaces: View {
     var expandEdge: ExpandRow.Edge = .cardBottom
     /// A PR row tap opens the page's detail sheet.
     var openPr: (Int) -> Void
+    /// An issue row opens its detail sheet; its Resolve button and menu
+    /// item open the resolve sheet.
+    var openIssue: (IssueSelection) -> Void = { _ in }
     /// "repo:surface" keys opened past their 3-row preview — this
     /// view's own set, so expanding one repo never unfolds another's.
     @State private var expanded: Set<String> = []
@@ -665,7 +673,8 @@ struct RepoSurfaces: View {
                     expandKey: "\(repo):issues", expanded: $expanded,
                     preview: preview, edge: expandEdge,
                     window: window(for: .issues, rows: count(state))) { issue in
-            OpenRow(url: issue.url, open: openURL.callAsFunction) {
+            IssueRow(open: { openIssue(IssueSelection(repo: repo, number: issue.number, mode: .detail)) },
+                     resolve: { openIssue(IssueSelection(repo: repo, number: issue.number, mode: .resolve)) }) { resolveShown in
                 Image(systemName: issue.state == .open ? "exclamationmark.circle" : "checkmark.circle")
                     .font(Theme.font(size: 15))
                     .foregroundStyle(issue.state == .open ? Theme.success : Theme.textMuted)
@@ -682,8 +691,24 @@ struct RepoSurfaces: View {
                         .lineLimit(1).truncationMode(.middle)
                 }
                 Spacer(minLength: 12)
-                ForEach(issue.assignees.prefix(2), id: \.self) {
-                    Badge("@\($0)")
+                // The Resolve button takes the badges' place while it shows.
+                if !resolveShown {
+                    ForEach(issue.assignees.prefix(2), id: \.self) {
+                        Badge("@\($0)")
+                    }
+                }
+            }
+            .contextMenu {
+                Button("Resolve with agent") {
+                    openIssue(IssueSelection(repo: repo, number: issue.number, mode: .resolve))
+                }
+                Divider()
+                Button("Open on GitHub") {
+                    if let url = URL(string: issue.url), url.isWebURL { openURL(url) }
+                }
+                Button("Copy link") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(issue.url, forType: .string)
                 }
             }
         }
@@ -1088,6 +1113,53 @@ private struct OpenRow<Content: View>: View {
                 .contentShape(.rect(cornerRadius: Theme.controlRadius))
         }
         .buttonStyle(RingedPlainStyle(cornerRadius: Theme.controlRadius))
+        .onHover { hovering = $0 }
+    }
+}
+
+/// An issue row: a click opens the issue sheet, like `OpenRow`, and a
+/// Resolve button shows at its trailing end while the pointer is over
+/// the row or the keyboard is on it. The button sits over the row, not
+/// inside its label, so it takes its own clicks; `content` hears whether
+/// it shows, to give up the space it covers.
+private struct IssueRow<Content: View>: View {
+    var open: () -> Void
+    var resolve: () -> Void
+    @ViewBuilder var content: (Bool) -> Content
+    @State private var hovering = false
+    @FocusState private var focus: Part?
+
+    private enum Part: Hashable { case row, resolve }
+
+    private var resolveShown: Bool { hovering || focus != nil }
+
+    var body: some View {
+        Button(action: open) {
+            HStack(alignment: .top, spacing: 12) { content(resolveShown) }
+                .padding(.vertical, 10)
+                .padding(.leading, 14)
+                .padding(.trailing, resolveShown ? 112 : 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(hovering ? Theme.rowHover : .clear,
+                            in: .rect(cornerRadius: Theme.controlRadius))
+                .contentShape(.rect(cornerRadius: Theme.controlRadius))
+        }
+        .buttonStyle(RingedPlainStyle(cornerRadius: Theme.controlRadius))
+        .focused($focus, equals: .row)
+        .focusRing(focus == .row, cornerRadius: Theme.controlRadius)
+        .overlay(alignment: .trailing) {
+            if resolveShown {
+                Button(action: resolve) {
+                    Label("Resolve", systemImage: "sparkles")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .fixedSize()
+                .focused($focus, equals: .resolve)
+                .focusRing(focus == .resolve, cornerRadius: Theme.controlRadius)
+                .padding(.trailing, 14)
+                .accessibilityLabel("Resolve with agent")
+            }
+        }
         .onHover { hovering = $0 }
     }
 }

@@ -20,6 +20,8 @@ struct RepoDetailPage: View {
 
     /// The PR whose detail sheet is open, if any.
     @State private var detail: PrSelection?
+    /// The issue whose detail or resolve sheet is open, if any.
+    @State private var issue: IssueSelection?
     /// The row filter — this page's own, not the dashboard's.
     @State private var filter = ""
 
@@ -88,9 +90,9 @@ struct RepoDetailPage: View {
                                  board: model.focusBoard(for: repo),
                                  tab: model.focusTab,
                                  query: query,
-                                 scrollFetch: true) {
-                        detail = PrSelection(repo: repo, number: $0)
-                    }
+                                 scrollFetch: true,
+                                 openPr: { detail = PrSelection(repo: repo, number: $0) },
+                                 openIssue: { issue = $0 })
                     .padding(.horizontal, -Theme.cardPadding)
                     .padding(.bottom, -Theme.cardPadding)
                 }
@@ -112,6 +114,9 @@ struct RepoDetailPage: View {
         }
         .quiverSheet(item: $detail) { selection in
             PrDetailSheet(selection: selection)
+        }
+        .quiverSheet(item: $issue) { selection in
+            IssueSheet(selection: selection) { issue = $0 }
         }
         // Reselecting the Repositories sidebar item goes back, the same
         // route the other detail pages take.
