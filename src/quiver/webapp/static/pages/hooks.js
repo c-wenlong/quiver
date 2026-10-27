@@ -456,8 +456,8 @@ function hkCreated(sheet, c) {
   }
   if (c.stanza) {
     block = `<p class="caption">Declare it yourself — quiver never writes a settings file. Paste this into ${esc(where)}:</p>
-      <div class="hk-stanza"><pre class="hk-text">${esc(c.stanza)}</pre>
-        <button class="hk-button hk-copy" id="hk-copy" type="button" title="Copy the stanza">Copy</button></div>`;
+      <div class="hk-stanza command-wrap"><pre class="hk-text">${esc(c.stanza)}</pre>
+        <button type="button" class="icon-button command-copy" id="hk-copy" aria-label="Copy the stanza" title="Copy the stanza">${Fmt.copyIcon()}</button></div>`;
   } else if (c.commands && Object.keys(c.commands).length) {
     const lines = Object.keys(c.commands).sort().filter((k) => c.commands[k])
       .map((k) => `${k}: ${c.commands[k]}`).join("\n");
@@ -472,10 +472,13 @@ function hkCreated(sheet, c) {
     <p class="caption">Then swe init links it into place.</p>
     <div class="sheet-actions"><button class="hk-button primary" type="button" id="hk-new-done">Done</button></div>`;
   document.getElementById("hk-new-done").onclick = () => sheet.close();
-  const copy = document.getElementById("hk-copy");
-  if (copy) copy.onclick = () => {
-    try { navigator.clipboard.writeText(c.stanza); copy.textContent = "Copied"; } catch { /* no clipboard */ }
-  };
+  // copyTick awaits the write before the tick; a failed copy (plain http
+  // has no clipboard API) selects the stanza to grab by hand.
+  Fmt.copyTick(document.getElementById("hk-copy"), c.stanza, (btn) => {
+    btn.title = "Couldn't copy — select it by hand";
+    const el = sheet.querySelector(".hk-stanza .hk-text");
+    if (el) window.getSelection().selectAllChildren(el);
+  });
   document.getElementById("hk-new-done").focus();
 }
 

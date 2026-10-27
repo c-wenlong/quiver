@@ -191,6 +191,12 @@ def build(rows: list[dict], usage: dict[tuple[str, str], dict], hub_machine_id: 
             # re-reads both from /v1/sessions when it opens.
             "ownership": row.get("ownership") or "observed",
             "attachable": bool(row.get("attachable")),
+            # Supervision detail for the chat chip and the details sheet:
+            # the attach mode, the qv-… pane name, and whether an observed
+            # row's pane was kept running.
+            "mode": row.get("mode") or "",
+            "tmux": row.get("tmux") or "",
+            "kept": bool(row.get("kept")),
             "usage": u and {k: v for k, v in u.items() if k != "cwd"},
             "duration_s": (u["last_ts"] - u["first_ts"]) if u else None,
             "trivial": is_trivial(harness, u, scanned) if here else False,

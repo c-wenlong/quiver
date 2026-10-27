@@ -122,7 +122,7 @@ const settingsPage = {
   // `swe remote setup`'s steps for this machine, and a load in flight.
   // Stale once Settings is opened again: a step can come undone (the
   // last phone revoked, the hub stopped), so each visit checks again.
-  setup: null, setupBusy: false, setupCopied: null, setupStale: false,
+  setup: null, setupBusy: false, setupStale: false,
   query: "", status: "set", catalogQuery: "", catalog: false,
   // Remote writes: the minted ticket and which code it shows, the device
   // whose revoke is being confirmed, rows waiting on the hub, errors.
@@ -674,8 +674,8 @@ function setupRow(step) {
   if (live && a.kind === "open" && a.url) {
     control += ` <a class="set-button" href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.label || "Open")}</a>`;
   } else if (live && a.kind === "command" && a.command) {
-    const copied = settingsPage.setupCopied === step.id;
-    control += ` <button class="set-button" data-setup-copy="${esc(step.id)}">${copied ? "Copied" : esc(a.label || "Copy command")}</button>`;
+    const label = a.label || "Copy command";
+    control += ` <button class="icon-button" data-setup-copy="${esc(step.id)}" aria-label="${esc(label)}" title="${esc(label)}">${Fmt.copyIcon()}</button>`;
   } else if (live && a.kind === "pair") {
     control += ` <button class="set-button primary" data-setup-pair>${esc(a.label || "Pair a phone")}</button>`;
   }
@@ -699,21 +699,6 @@ async function settingsLoadSetup() {
     ? data.remote_setup
     : { error: (data && data.error && data.error.message) || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.") };
   if (gen === routeGen && onSettingsPage() && settingsSection() === "integrations") settingsRepaintRemote();
-}
-
-async function settingsCopySetup(id) {
-  const p = settingsPage;
-  const step = p.setup && p.setup.steps && p.setup.steps.find((x) => x.id === id);
-  const cmd = step && step.action && step.action.command;
-  if (!cmd) return;
-  try {
-    await navigator.clipboard.writeText(cmd);
-    p.setupCopied = id;
-  } catch {
-    // Plain http has no clipboard API; the command is in the row to copy by hand.
-    p.setupCopied = null;
-  }
-  settingsRepaintRemote(`[data-setup-copy="${CSS.escape(id)}"]`);
 }
 
 function deviceRow(dev) {
@@ -767,7 +752,7 @@ function pairSheet() {
           <p class="caption">${esc(instructions)}</p>
           <code class="set-payload" id="set-payload">${esc(payload)}</code>
           <div class="set-pair-actions">
-            <button class="set-button" data-act="copy">${settingsIcon("copy")}<span id="set-copy-label">Copy link</span></button>
+            <button class="set-button" data-act="copy">${settingsIcon("copy")}<span>Copy link</span></button>
             <span id="set-countdown">${settingsCountdown()}</span>
           </div>
         </div>
@@ -1052,7 +1037,18 @@ function bindKeys() {
     row.onkeydown = (ev) => { if (ev.target === row && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); open(ev); } };
   }
   for (const btn of document.querySelectorAll("[data-key-reveal]")) btn.onclick = () => settingsRevealKey(btn.dataset.keyReveal);
-  for (const btn of document.querySelectorAll("[data-key-copy]")) btn.onclick = () => settingsCopyKey(btn.dataset.keyCopy);
+  for (const btn of document.querySelectorAll("[data-key-copy]")) {
+    const name = btn.dataset.keyCopy;
+    Fmt.copyTick(btn, async () => {
+      const value = p.revealed.get(name) ?? await settingsKeyValue(name);
+      if (value == null) settingsKeyRepaint(`[data-key-copy="${CSS.escape(name)}"]`);
+      else p.keyError = null;
+      return value;
+    }, () => {
+      p.keyError = "Couldn't copy here. Reveal the value and copy it by hand.";
+      settingsKeyRepaint(`[data-key-copy="${CSS.escape(name)}"]`);
+    });
+  }
   const sheet = document.getElementById("set-key-sheet");
   if (!sheet) return;
   const e = p.keyEditor;
@@ -1143,29 +1139,6 @@ async function settingsRevealKey(name) {
   settingsKeyRepaint(focus);
 }
 
-async function settingsCopyKey(name) {
-  const p = settingsPage;
-  const value = p.revealed.has(name) ? p.revealed.get(name) : await settingsKeyValue(name);
-  if (value == null) return settingsKeyRepaint(`[data-key-copy="${CSS.escape(name)}"]`);
-  let ok = false;
-  try { await navigator.clipboard.writeText(value); ok = true; } catch { /* plain http: no async clipboard */ }
-  if (!ok) {
-    const area = document.createElement("textarea");
-    area.value = value;
-    area.setAttribute("readonly", "");
-    area.style.position = "fixed";
-    area.style.opacity = "0";
-    document.body.appendChild(area);
-    area.select();
-    try { ok = document.execCommand("copy"); } catch { ok = false; }
-    area.remove();
-  }
-  p.keyError = ok ? null : "Couldn't copy here. Reveal the value and copy it by hand.";
-  const btn = document.querySelector(`[data-key-copy="${CSS.escape(name)}"]`);
-  if (ok && btn) { btn.title = "Copied"; btn.setAttribute("aria-label", "Copied"); }
-  else settingsKeyRepaint(`[data-key-copy="${CSS.escape(name)}"]`);
-}
-
 /* key_set, then the page from the answer. The value field is emptied
  * whether or not the hub took it. */
 async function settingsSaveKey() {
@@ -1225,7 +1198,13 @@ function bindRemote() {
   if ((!p.setup || p.setupStale) && !p.setupBusy) settingsLoadSetup();
   const recheck = document.getElementById("set-setup-recheck");
   if (recheck) recheck.onclick = () => settingsLoadSetup();
-  for (const btn of document.querySelectorAll("[data-setup-copy]")) btn.onclick = () => settingsCopySetup(btn.dataset.setupCopy);
+  for (const btn of document.querySelectorAll("[data-setup-copy]")) {
+    // Plain http has no clipboard API; the command is in the row to copy by hand.
+    Fmt.copyTick(btn, () => {
+      const step = p.setup && p.setup.steps && p.setup.steps.find((x) => x.id === btn.dataset.setupCopy);
+      return step && step.action && step.action.command;
+    }, (b) => { b.title = "Couldn't copy — select it by hand"; });
+  }
   for (const btn of document.querySelectorAll("[data-setup-pair]")) btn.onclick = () => settingsMint();
   const gh = document.getElementById("set-gh-refresh");
   if (gh) gh.onclick = () => settingsLoadGithub(true);
@@ -1253,7 +1232,13 @@ function bindRemote() {
       btn.onclick = () => { p.target = btn.dataset.target; settingsRepaintRemote(`[data-target="${p.target}"]`); };
     }
     sheet.querySelector('[data-act="done"]').onclick = settingsDismissTicket;
-    sheet.querySelector('[data-act="copy"]').onclick = settingsCopyLink;
+    Fmt.copyTick(sheet.querySelector('[data-act="copy"]'),
+      () => p.ticket && (p.target === "web" ? p.ticket.url : p.ticket.deep_link),
+      () => {
+        // Couldn't write the clipboard: put the link under the selection.
+        const code = document.getElementById("set-payload");
+        if (code) window.getSelection().selectAllChildren(code);
+      });
     bindRemint(sheet);
     if (!p.timer) {
       // Looks the sheet up on every tick: a repaint (the Browser / Quiver
@@ -1367,34 +1352,6 @@ async function settingsRefreshRemote(focus) {
   if (gen !== routeGen || mine !== settingsPage.gen) return;
   if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
   if (status === 200 && data) { settingsPage.data = data; settingsRepaintRemote(focus); }
-}
-
-async function settingsCopyLink() {
-  const p = settingsPage;
-  if (!p.ticket) return;
-  const text = p.target === "web" ? p.ticket.url : p.ticket.deep_link;
-  let ok = false;
-  try { await navigator.clipboard.writeText(text); ok = true; } catch { /* plain http: no async clipboard */ }
-  if (!ok) {
-    // Over plain http the async clipboard is off; a selected textarea
-    // and the old copy command still work there.
-    const area = document.createElement("textarea");
-    area.value = text;
-    area.setAttribute("readonly", "");
-    area.style.position = "fixed";
-    area.style.opacity = "0";
-    document.getElementById("set-pair-sheet").appendChild(area);
-    area.select();
-    try { ok = document.execCommand("copy"); } catch { ok = false; }
-    area.remove();
-  }
-  const label = document.getElementById("set-copy-label");
-  if (label) label.textContent = ok ? "Copied" : "Select the link to copy it";
-  if (ok) setTimeout(() => { const l = document.getElementById("set-copy-label"); if (l) l.textContent = "Copy link"; }, 1500);
-  if (!ok) {
-    const code = document.getElementById("set-payload");
-    if (code) window.getSelection().selectAllChildren(code);
-  }
 }
 
 async function settingsRevoke(id) {

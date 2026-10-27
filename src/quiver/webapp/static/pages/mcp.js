@@ -652,40 +652,18 @@ function mcpBindSecrets(sheet, s, st) {
     };
   }
   for (const btn of sheet.querySelectorAll("[data-mcp-secret-copy]")) {
-    btn.onclick = async () => {
+    const name = btn.dataset.mcpSecretCopy;
+    Fmt.copyTick(btn, async () => {
       st.secretError = null;
-      const name = btn.dataset.mcpSecretCopy;
-      const value = st.revealed.has(name) ? st.revealed.get(name) : await mcpSecretValue(name, st);
-      if (value == null) { if (mcpPage.sheet === st) mcpRepaintSheet(s); return; }
-      if (await mcpCopyText(value)) {
-        btn.innerHTML = mcpSvg("check");
-        setTimeout(() => { if (btn.isConnected) btn.innerHTML = mcpSvg("copy"); }, 1500);
-      } else {
-        st.secretError = "The browser didn't allow copying. Use Show and copy it by hand.";
-        if (mcpPage.sheet === st) mcpRepaintSheet(s);
-      }
-    };
+      const value = st.revealed.get(name) ?? await mcpSecretValue(name, st);
+      // The fetch failed and set secretError: repaint so it shows.
+      if (value == null && mcpPage.sheet === st) mcpRepaintSheet(s);
+      return value;
+    }, () => {
+      st.secretError = "The browser didn't allow copying. Use Show and copy it by hand.";
+      if (mcpPage.sheet === st) mcpRepaintSheet(s);
+    });
   }
-}
-
-/* Copies text, by the clipboard API where the page is a secure context
- * and the browser allows it, else by the older copy command. Resolves
- * true only once the text went through. */
-async function mcpCopyText(text) {
-  if (navigator.clipboard && window.isSecureContext) {
-    try { await navigator.clipboard.writeText(text); return true; } catch { /* denied: try the old way */ }
-  }
-  const area = document.createElement("textarea");
-  area.value = text;
-  area.setAttribute("readonly", "");
-  area.style.position = "fixed";
-  area.style.opacity = "0";
-  (document.querySelector("dialog[open]") || document.body).appendChild(area);
-  area.select();
-  let ok = false;
-  try { ok = document.execCommand("copy"); } catch { ok = false; }
-  area.remove();
-  return ok;
 }
 
 /* set_secret on the hub, as swe mcp secret set NAME does. The field clears either way; the

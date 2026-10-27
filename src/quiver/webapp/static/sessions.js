@@ -348,6 +348,12 @@ function openSheet(r) {
     : `<p class="caption">${r.remote ? "Usage is read on the hub machine only; this session ran on " + esc(r.machine) + "."
       : "No token usage recorded for this session in the ledger."}</p>`;
   const line = resumeLine(r);
+  // The supervised channel: the attach mode, and the qv-… pane name for
+  // tmux runs (a kept one stays alive detached until adopted or reaped).
+  const supervised = (r.ownership === "attached" || r.kept) && (r.mode || r.tmux);
+  const tmuxLine = r.tmux ? `tmux attach -t ${r.tmux}` : "";
+  const canOpenTerminal = !!(tmuxLine && !r.remote &&
+    sessionsPage.data && sessionsPage.data.open_terminal);
   sheet.innerHTML = `<form method="dialog" class="sheet-body">
     <div class="sheet-title">${Fmt.logo(r.harness)}<span>${esc(r.title || r.id || "Untitled")}</span>
       ${STATUS_BADGE[r.status] ? `<span class="badge status-${r.status}">${STATUS_BADGE[r.status]}</span>` : ""}</div>
@@ -357,47 +363,49 @@ function openSheet(r) {
       ${field("Location", esc(r.location))}
       ${field("Folder", esc(r.cwd || "Unknown"))}
       ${field("Last active", esc(lastActive))}
-      ${field("Session id", `<code>${esc(r.id || "")}</code>`)}
+      ${field("Session id", `<code>${esc(r.id || "")}</code><button type="button" class="icon-button copy-inline" id="copy-id" aria-label="Copy session ID" title="Copy session ID">${Fmt.copyIcon()}</button>`)}
       ${u ? field("Models", u.models.map((m) => esc(m.model)).join(", ")) : ""}
+      ${supervised ? field("Supervised",
+        `${esc(r.mode || "tmux")}${r.tmux ? ` · <code>${esc(r.tmux)}</code>` : ""}${r.kept ? " (kept)" : ""}`) : ""}
       ${field("Ran for", esc(duration(r.duration_s)))}
     </div>
     ${figures}
-    ${line ? `<div class="caption">Resume</div><pre class="command" id="resume-line">${esc(line)}</pre>` : ""}
+    ${line ? `<div class="caption">Resume</div><div class="command-wrap"><pre class="command" id="resume-line">${esc(line)}</pre>
+      <button type="button" class="icon-button command-copy" id="copy-resume" aria-label="Copy resume command" title="Copy resume command">${Fmt.copyIcon()}</button></div>` : ""}
+    ${tmuxLine ? `<div class="caption">Attach from a terminal</div><div class="command-wrap"><pre class="command" id="tmux-line">${esc(tmuxLine)}</pre>
+      <button type="button" class="icon-button command-copy" id="copy-tmux" aria-label="Copy attach command" title="Copy attach command">${Fmt.copyIcon()}</button></div>` : ""}
     <div class="sheet-actions">
-      <button type="button" class="tab" id="copy-id">Copy session ID</button>
-      ${line ? '<button type="button" class="tab" id="copy-resume">Copy resume command</button>' : ""}
+      ${canOpenTerminal ? '<button type="button" class="tab" id="run-terminal">Run in terminal</button>' : ""}
       <button class="tab selected" value="close">Close</button>
     </div>
   </form>`;
-  // navigator.clipboard exists only on https or localhost; a hub reached
-  // over plain http gets the older copy command, then a manual hint.
-  const copy = (text, btn) => {
-    const done = () => { btn.textContent = "Copied"; };
-    const fallback = () => {
-      const area = document.createElement("textarea");
-      area.value = text;
-      area.setAttribute("readonly", "");
-      area.style.position = "absolute";
-      area.style.left = "-9999px";
-      sheet.appendChild(area);
-      area.select();
-      let ok = false;
-      try { ok = document.execCommand("copy"); } catch { ok = false; }
-      area.remove();
-      if (ok) return done();
-      btn.textContent = "Select and copy it by hand";
-      const pre = sheet.querySelector("#resume-line");
-      if (pre && text === line) window.getSelection().selectAllChildren(pre);
-    };
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(text).then(done, fallback);
-    } else {
-      fallback();
-    }
+  // Plain http has no clipboard API: Fmt.copy's fallback still fails on
+  // some browsers, so a failed copy selects the text to grab by hand.
+  const byHand = (sel) => (btn) => {
+    btn.title = "Couldn't copy — select it by hand";
+    const el = sel ? sheet.querySelector(sel)
+      : btn.parentElement && btn.parentElement.querySelector("code");
+    if (el) window.getSelection().selectAllChildren(el);
   };
-  sheet.querySelector("#copy-id").onclick = (e) => copy(r.id || "", e.target);
-  const cr = sheet.querySelector("#copy-resume");
-  if (cr) cr.onclick = (e) => copy(line, e.target);
+  Fmt.copyTick(sheet.querySelector("#copy-id"), () => r.id || "", byHand(null));
+  Fmt.copyTick(sheet.querySelector("#copy-resume"), () => line, byHand("#resume-line"));
+  Fmt.copyTick(sheet.querySelector("#copy-tmux"), () => tmuxLine, byHand("#tmux-line"));
+  const run = sheet.querySelector("#run-terminal");
+  if (run) {
+    run.onclick = async () => {
+      run.disabled = true;
+      const { status, data } = await apiPost("/v1/app/sessions/open_terminal", { key: r.key });
+      run.disabled = false;
+      if (status === 200) {
+        run.textContent = "Opened";
+        setTimeout(() => { if (document.contains(run)) run.textContent = "Run in terminal"; }, 2000);
+      } else {
+        run.textContent = "Couldn't open";
+        run.title = (data && data.error && data.error.message) ||
+          (status ? `The hub answered ${status}.` : "Couldn't reach the hub.");
+      }
+    };
+  }
   sheet.showModal();
 }
 
@@ -475,6 +483,14 @@ async function sessionDetails(key) {
   // The answer may land after the chat was left for another page.
   const chat = sessionChat();
   if (!r || (chat && chat.key !== key) || !document.getElementById("session-sheet")) return false;
+  // The open chat's row is freshest on supervised fields (attach/detach
+  // land there over SSE long before the list's data is refetched).
+  if (chat && chat.row) {
+    r = Object.assign({}, r, {
+      ownership: chat.row.ownership, mode: chat.row.mode,
+      tmux: chat.row.tmux, kept: chat.row.kept, status: chat.row.status,
+    });
+  }
   openSheet(r);
   return true;
 }

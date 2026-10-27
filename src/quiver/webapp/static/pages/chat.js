@@ -30,6 +30,9 @@ const SessionChat = (() => {
     // showed, looking for one waiting approval (restoreApproval).
     history: null,
     confirmAttach: false, attaching: false, stopping: false,
+    // A detach mode=when_idle the hub still holds: it fires when the
+    // turn ends, or an attach cancels it.
+    detaching: false,
     // The session rail (the Mac app's SessionRail): its own load state,
     // and a copy of the list's rows for when sessions.js's page state
     // isn't there (a chat opened from a link, the list never visited).
@@ -361,6 +364,10 @@ const SessionChat = (() => {
     // below, and an attached one shows an enabled composer.
     const sub = [harnessLabel(chat.row), r.cwd, r.remote ? r.machine : ""]
       .filter(Boolean).map(esc).join(" · ");
+    // The tmux pane name rides the catalog row for an attached tmux-mode
+    // session and for a kept one; the chip copies its attach command.
+    const tmuxChip = r.tmux
+      ? `<button type="button" class="tmux-chip" id="chat-tmux" title="Copy: tmux attach -t ${esc(r.tmux)}">${esc(r.tmux)}${Fmt.copyIcon()}</button>` : "";
     bar.innerHTML = `
       <a class="icon-button chat-back" href="#/sessions" aria-label="Back to Sessions" title="Back to Sessions">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14.5 6-6 6 6 6"/></svg></a>
@@ -369,11 +376,17 @@ const SessionChat = (() => {
         <h1 class="chat-title">${esc(r.title || r.id || chat.key || "Session")}</h1>
         <div class="chat-sub">${sub}</div>
       </div>
-      <div class="chat-badges">${status}</div>
+      <div class="chat-badges">${status}${tmuxChip}</div>
       <span class="chat-conn" id="chat-conn"><span class="dot"></span><span class="caption" id="chat-conn-label"></span></span>
+      ${r.ownership === "attached" ? `<button type="button" class="icon-button" id="chat-detach" aria-label="Detach" title="Detach, or keep it running in tmux">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg></button>` : ""}
       ${chat.details ? `<button type="button" class="icon-button" id="chat-details" aria-label="Details" title="Details">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg></button>` : ""}`;
     setConn(chat.connState || "connecting");
+    const chip = $("chat-tmux");
+    if (chip) Fmt.copyTick(chip, () => `tmux attach -t ${(chat.row || {}).tmux}`);
+    const detachBtn = $("chat-detach");
+    if (detachBtn) detachBtn.onclick = openDetachSheet;
     const details = $("chat-details");
     if (details) {
       details.onclick = async () => {
@@ -421,11 +434,13 @@ const SessionChat = (() => {
     $("chat-mode").classList.toggle("hidden", observed);
     // attachable means "has resume flags"; the hub also refuses while the
     // session is mid-turn, so the button hides then rather than have every
-    // click bounce off the 409.
+    // click bounce off the 409. A kept tmux pane is the exception: attach
+    // adopts it as it is, so mid-turn is fine.
     const busy = !!row && row.status === "active";
-    const canAttach = observed && !!row && !!row.attachable && !busy;
+    const kept = !!row && !!row.kept;
+    const canAttach = observed && !!row && (!!row.attachable || kept) && (!busy || kept);
     if (!canAttach) chat.confirmAttach = false;
-    paintBanner(chat.rowKnown && observed, canAttach, busy);
+    paintBanner(chat.rowKnown && (observed || chat.detaching), canAttach, busy);
     updateWorking();
     paintBar();
     paintRailRows();
@@ -437,26 +452,113 @@ const SessionChat = (() => {
     banner.classList.toggle("hidden", !show);
     if (!show) { banner.innerHTML = ""; return; }
     const r = chat.row || {};
-    const text = canAttach ? "Observed session: read-only until attached."
+    const kept = !!r.kept;
+    // A detach that waits out the turn: say it's pending, with a way to
+    // keep the session attached instead.
+    if (chat.detaching && r.ownership === "attached") {
+      banner.innerHTML = `<div class="chat-banner-text"><p>Detaches when this turn ends.</p></div>
+        <div class="chat-banner-actions"><button type="button" class="tab" id="chat-detach-cancel">Stay attached</button></div>`;
+      $("chat-detach-cancel").onclick = cancelDetach;
+      return;
+    }
+    const text = kept ? `Still running in tmux${r.tmux ? ` as ${r.tmux}` : ""}: read-only here, but the pane is alive for a terminal.`
+      : canAttach ? "Observed session: read-only until attached."
       : busy ? "Observed session: mid-turn. Attach once it is idle."
         : "Observed session: read-only (this harness can't be attached).";
     if (canAttach && chat.confirmAttach) {
       const where = r.remote && r.machine ? ` on ${r.machine}` : "";
-      banner.innerHTML = `<div class="chat-banner-text"><div class="card-title">Attach this session?</div>
-          <p class="caption">Attach stops ${esc(harnessLabel(r) || "the harness")} in the terminal running this session${esc(where)},
-          then resumes the session under Quiver so you can send to it from here.</p></div>
+      const [title, note, go] = kept
+        ? ["Reattach to the running tmux session?",
+          `The pane ${r.tmux || ""} is still alive${esc(where)}: attach takes it back as it is, mid-turn included. Nothing is stopped or relaunched.`,
+          "Reattach"]
+        : ["Attach this session?",
+          `Attach stops ${esc(harnessLabel(r) || "the harness")} in the terminal running this session${esc(where)},
+          then resumes the session under Quiver so you can send to it from here.`,
+          "Stop it and attach"];
+      banner.innerHTML = `<div class="chat-banner-text"><div class="card-title">${esc(title)}</div>
+          <p class="caption">${note}</p></div>
         <div class="chat-banner-actions">
           <button type="button" class="tab" id="chat-attach-cancel">Cancel</button>
-          <button type="button" class="chat-send" id="chat-attach-go"${chat.attaching ? " disabled" : ""}>${chat.attaching ? "Attaching…" : "Stop it and attach"}</button>
+          <button type="button" class="chat-send" id="chat-attach-go"${chat.attaching ? " disabled" : ""}>${chat.attaching ? "Attaching…" : esc(go)}</button>
         </div>`;
       $("chat-attach-cancel").onclick = () => { chat.confirmAttach = false; updateOwnership(); };
       $("chat-attach-go").onclick = attach;
       return;
     }
     banner.innerHTML = `<div class="chat-banner-text"><p>${esc(text)}</p></div>${canAttach
-      ? '<div class="chat-banner-actions"><button type="button" class="chat-send" id="chat-attach">Attach</button></div>' : ""}`;
+      ? `<div class="chat-banner-actions"><button type="button" class="chat-send" id="chat-attach">${kept ? "Reattach" : "Attach"}</button></div>` : ""}`;
     const btn = $("chat-attach");
     if (btn) btn.onclick = () => { chat.confirmAttach = true; updateOwnership(); };
+  }
+
+  /* ------------------------------------------------------------- detach */
+
+  /* The lifecycle the hub supports for an attached session: the phone's
+   * detach sheet, with "keep" only where a tmux pane exists to keep. */
+  function openDetachSheet() {
+    const sheet = $("session-sheet");
+    const r = chat.row || {};
+    if (!sheet || r.ownership !== "attached") return;
+    const tmux = r.mode === "tmux" && !!r.tmux;
+    const busy = r.status === "active";
+    const opt = (mode, name, desc, danger = false) =>
+      `<button type="button" class="detach-opt${danger ? " danger" : ""}" data-detach="${mode}">
+        <span class="opt-name">${name}</span><span class="opt-desc">${desc}</span></button>`;
+    sheet.innerHTML = `<form method="dialog" class="sheet-body">
+      <div class="sheet-title">Detach this session?</div>
+      <p class="caption" style="margin:0">Detaching stops Quiver's control of it;
+        the transcript stays readable here either way.</p>
+      <div class="detach-options">
+        ${opt("when_idle", "Detach when it finishes",
+          busy ? "Waits out the current turn, then detaches." : "Detaches as soon as the hub next checks.")}
+        ${tmux ? opt("keep", "Keep it running in tmux",
+          `Leaves <code>${esc(r.tmux)}</code> alive for <code>tmux attach -t ${esc(r.tmux)}</code>. Auto-closed after 12h idle.`) : ""}
+        ${opt("now", "Detach now",
+          busy ? "Detaches immediately, stopping the turn." : "Detaches immediately.", true)}
+      </div>
+      <div class="sheet-actions"><button class="tab selected" value="cancel">Cancel</button></div>
+    </form>`;
+    for (const b of sheet.querySelectorAll("[data-detach]")) {
+      b.onclick = () => { sheet.close(); detach(b.dataset.detach); };
+    }
+    sheet.showModal();
+  }
+
+  async function detach(mode) {
+    if (!chat.key) return;
+    const gen = chat.gen;
+    const { status, data } = await post(sessionPath(chat.key, "control"), { op: "detach", mode });
+    if (gen !== chat.gen) return;
+    if (status === 200 || status === 202) {
+      if (mode === "when_idle") {
+        // The hub detaches when the turn ends (or at once when idle):
+        // the ownership event, or a detach command.result, closes it.
+        chat.detaching = true;
+      } else if (status === 200 && chat.row) {
+        chat.detaching = false;
+        chat.row.ownership = "observed";
+        if (mode === "keep") chat.row.kept = true;
+        else { delete chat.row.kept; delete chat.row.tmux; }
+        delete chat.row.mode;
+      }
+      updateOwnership();
+      return;
+    }
+    appendMessage({ kind: "error", text: `Detach failed: ${errorText(data) || (status ? `the hub answered ${status}` : "connection lost")}` }, true);
+    noteRefusal(data);
+    scrollBottom();
+  }
+
+  /* A pending when_idle detach is cancelled by attaching again; one that
+   * already fired re-attaches, which is what Stay attached means either
+   * way. */
+  async function cancelDetach() {
+    if (!chat.key) return;
+    const { status } = await post(sessionPath(chat.key, "control"), { op: "attach" });
+    if (status === 200 || status === 202) {
+      chat.detaching = false;
+      updateOwnership();
+    }
   }
 
   /* --------------------------------------------------------------- events */
@@ -479,6 +581,12 @@ const SessionChat = (() => {
     } else if (ev.type === "session.ownership") {
       if (chat.row && ev.session === chat.key) {
         chat.row.ownership = d.ownership || chat.row.ownership;
+        // Newer hubs carry the supervised fields so the chip and banner
+        // repaint right; absent keys mean an older hub — leave them.
+        if ("tmux" in d) { if (d.tmux) chat.row.tmux = d.tmux; else delete chat.row.tmux; }
+        if ("mode" in d) { if (d.mode) chat.row.mode = d.mode; else delete chat.row.mode; }
+        if ("kept" in d) chat.row.kept = !!d.kept;
+        if (chat.row.ownership !== "attached") chat.detaching = false;
         updateOwnership();
       }
     } else if (ev.type === "approval.requested") {
@@ -528,6 +636,17 @@ const SessionChat = (() => {
           updateWorking();
         }
       }
+    }
+    // Any reported detach outcome ends the pending banner: a fired one
+    // (the when_idle firing as the turn ended, or another client's) flips
+    // ownership; an expired or cancelled one leaves the session attached
+    // with nothing pending.
+    if (d.op === "detach") {
+      chat.detaching = false;
+      if (d.ok === true && chat.row && chat.row.ownership === "attached") {
+        chat.row.ownership = "observed";
+      }
+      updateOwnership();
     }
     if (d.op === "approval" && d.request_id) {
       for (const card of log.querySelectorAll(".msg.approval")) {
@@ -1129,6 +1248,7 @@ const SessionChat = (() => {
     chat.confirmAttach = false;
     chat.attaching = false;
     chat.stopping = false;
+    chat.detaching = false;
     chat.connState = "connecting";
     chat.rail = { loading: false, error: "" };
     paintShell();
@@ -1275,8 +1395,14 @@ const SessionChat = (() => {
     chat.confirmAttach = false;
     if (status === 200) {
       // The hub also emits session.ownership; its answer is enough to
-      // open the composer now.
+      // open the composer now. A kept pane is adopted under its old tmux
+      // name, and the note names a fresh one ("attached under tmux qv-…"),
+      // so the chip can show before the ownership event lands.
+      chat.detaching = false;
       chat.row.ownership = "attached";
+      if (chat.row.kept) delete chat.row.kept;
+      const m = data && String(data.note || "").match(/\bqv-[a-z0-9]+\b/i);
+      if (m) chat.row.tmux = m[0];
     } else if (status === 202) {
       // The attach went to a satellite's command journal: ownership
       // changes when its command.result lands.

@@ -675,7 +675,12 @@ class HubState:
                             protocol.event(
                                 "session.ownership", row["key"],
                                 self.machine_id,
-                                {"ownership": new_own},
+                                {
+                                    "ownership": new_own,
+                                    "tmux": row.get("tmux"),
+                                    "mode": row.get("mode"),
+                                    "kept": bool(row.get("kept")),
+                                },
                             ),
                         )
                 rows, as_of = self.catalog.tail_snapshot()
@@ -1852,12 +1857,18 @@ class _Handler(BaseHTTPRequestHandler):
             self._state.catalog.refresh()
             for hub_key, ownership in before.items():
                 if ownership and ownership != old.get(hub_key):
+                    hub_row = self._state.catalog.row_for(hub_key) or {}
                     self._state.emit(
                         hub_key,
                         protocol.event(
                             "session.ownership", hub_key,
                             self._state.machine_id,
-                            {"ownership": ownership},
+                            {
+                                "ownership": ownership,
+                                "tmux": hub_row.get("tmux"),
+                                "mode": hub_row.get("mode"),
+                                "kept": bool(hub_row.get("kept")),
+                            },
                         ),
                     )
             self._send_json(200, {
@@ -2817,11 +2828,33 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _emit_ownership(self, key: str) -> None:
         row = self._state.catalog.row_for(key) or {}
+        # This emit follows the registry write, but the catalog row can
+        # still hold the old supervised fields until the next refresh, so
+        # they come from the registries themselves. A remote row has no
+        # local registry: its fields ride the satellite's rows.
+        meta = supervise.meta_for(self._state.home, key)
+        krow = meta is None and supervise.kept(self._state.home).get(key)
+        if meta is not None:
+            tmux, mode, kept = meta.get("tmux"), meta.get("mode"), False
+        elif krow:
+            tmux, mode, kept = krow.get("tmux"), krow.get("mode"), True
+        elif row.get("remote"):
+            tmux = row.get("tmux")
+            mode = row.get("mode")
+            kept = bool(row.get("kept"))
+        else:
+            tmux = mode = None
+            kept = False
         self._state.emit(
             key,
             protocol.event(
                 "session.ownership", key, self._state.machine_id,
-                {"ownership": row.get("ownership")},
+                {
+                    "ownership": row.get("ownership"),
+                    "tmux": tmux,
+                    "mode": mode,
+                    "kept": kept,
+                },
             ),
         )
 

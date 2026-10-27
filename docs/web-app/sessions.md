@@ -33,13 +33,15 @@ the chat, like the Repositories rail's fold.
 
 | Part | What |
 |---|---|
-| Top bar | Back, harness logo, title, harness · folder (· machine for a satellite), the status badge, Attached or Observed, a Live / Reconnecting dot, and Details: the sheet the row used to open (harness, machine, folder, last active, id, models, tokens and spend, copy id, copy resume command). |
+| Top bar | Back, harness logo, title, harness · folder (· machine for a satellite), the status badge, a `qv-…` tmux chip when the row names a pane (click copies `tmux attach -t qv-…`), a Live / Reconnecting dot, Detach (attached sessions only), and Details: the sheet the row used to open (harness, machine, folder, last active, id, models, the supervised mode and pane, tokens and spend, icon copy buttons, Run in terminal on macOS hubs). |
 | Rail | Every session the page lists, grouped by day like the list: harness logo, title and a status dot (the badge colours; nothing for a finished one). A row swaps the chat to that session; the open one is marked and stays listed even when the list's data or filters would leave it out. The header button relists; under 960 px the rail is a strip of chips above the chat. |
 | Transcript | The last 500 messages from `GET /v1/sessions/{key}/messages?limit=500`, then live events. User text right in a bubble, assistant text left, both with the PWA's markdown (fenced code, inline code, bold; everything else escaped). Thinking folds under "Thought". Tool calls are cards ("Edit src/x.py") that open to their arguments and output; Edit, MultiEdit, Write, NotebookEdit and apply_patch cards show a diff instead. Compaction is a "Context compacted" rule; system notes are centred captions; errors are red. |
 | Approval card | "Approval needed", the prompt, and Allow, Always, Deny. Once answered it dims and says Allowed, Always allowed or Denied. |
 | Working dots | While the session is active, a send waits for its reply, or live messages are still being revealed. |
 | Composer | Queue or Steer, the message box (Enter sends, Shift+Enter is a new line), Stop and Send. Off, reading "Read-only until this session is attached", unless the session is attached. |
-| Observed banner | "Observed session: read-only until attached." with Attach when the hub says the session is `attachable` and it isn't mid-turn; otherwise why it can't be attached (mid-turn, or a harness that can't be resumed). |
+| Observed banner | "Observed session: read-only until attached." with Attach when the hub says the session is `attachable` and it isn't mid-turn; otherwise why it can't be attached (mid-turn, or a harness that can't be resumed). A `kept` row reads "Still running in tmux…" and offers Reattach even mid-turn — the pane is adopted, nothing restarts. |
+| Detaching banner | While a `when_idle` detach is pending: "Detaches when this turn ends." with Stay attached, which posts `op: attach` to cancel it. |
+| Detach sheet | From the bar's Detach button, an attached session gets the phone's three-way choice as stacked options: Detach when it finishes (`when_idle`), Keep it running in tmux (`keep`, only when the mode has a pane), Detach now (`now`). |
 
 ## How it talks to the hub
 
@@ -81,7 +83,9 @@ Writes, all with the device bearer:
 | Send | `POST .../message {text, mode: queue\|steer, client_id}` | `202 {client_id, waiting}`: the bubble reads "Queued until the agent is idle" or "Sent", then settles on its `command.result` (dropped on success, "Sent (queued: …)" when degraded, red with the note on failure) or when the transcript echoes the message. |
 | Allow, Always, Deny | `POST .../approval {request_id, decision}` | `200` resolves the card; `202` (a satellite's session) reads "Queued: waiting for the satellite" until its `command.result`; a refusal re-enables the buttons with the hub's message. |
 | Stop | `POST .../control {op: interrupt}` | Off while the request runs; a refusal adds an error line. |
-| Attach | `POST .../control {op: attach}` after a confirm in the banner: "Attach stops <harness> in the terminal running this session, then resumes the session under Quiver so you can send to it from here." | `200` opens the composer at once (the hub's `session.ownership` follows); `202` (a satellite) adds "Attach queued: waiting for the satellite"; `409 not_idle` and `422 not_attachable` show as an error line with the hub's reason. |
+| Attach | `POST .../control {op: attach}` after a confirm in the banner: "Attach stops <harness> in the terminal running this session, then resumes the session under Quiver so you can send to it from here." — for a `kept` row the confirm reads "Reattach to the running tmux session?" since the pane is adopted live. | `200` opens the composer at once (the hub's `session.ownership` follows); `202` (a satellite) adds "Attach queued: waiting for the satellite"; `409 not_idle` and `422 not_attachable` show as an error line with the hub's reason. |
+| Detach | `POST .../control {op: detach, mode: now\|when_idle\|keep}` from the sheet. | `200`/`202`: `when_idle` marks the banner pending until the hub fires (its `session.ownership`, or a `detach` `command.result`, clears it); `now`/`keep` flip the row to observed at once, `keep` leaving `tmux`/`kept` set. A refusal adds an error line. |
+| Run in terminal | `POST /v1/app/sessions/open_terminal {key}` from the details sheet, shown only when the hub is macOS and the row is local with a pane. | `200` opens Terminal.app attached to the `qv-…` session; `409 no_tmux`, `422 unsupported`, `502 open_failed` land on the button. |
 
 Any write answered `409 not_attached` means the session went back to
 observed: the composer locks and the banner returns.

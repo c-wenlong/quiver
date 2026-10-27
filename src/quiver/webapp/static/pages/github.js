@@ -107,18 +107,11 @@ const GhUI = (() => {
     if (btn) btn.onclick = refresh;
     const copyBtn = document.getElementById("gh-copy");
     const cmd = document.getElementById("gh-command");
-    if (copyBtn && cmd) copyBtn.onclick = () => copyText(cmd.textContent, copyBtn, cmd);
-  }
-
-  /* navigator.clipboard needs https or localhost; otherwise select the
-   * text so the user can copy it. */
-  function copyText(text, btn, node) {
-    const done = () => { btn.classList.add("copied"); btn.title = "Copied"; };
-    const select = () => { if (node) window.getSelection().selectAllChildren(node); };
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(text).then(done, select);
-    } else {
-      select();
+    /* On a copy that can't land, select the command so the user can copy
+     * it by hand. */
+    if (copyBtn && cmd) {
+      Fmt.copyTick(copyBtn, () => cmd.textContent,
+        () => window.getSelection().selectAllChildren(cmd));
     }
   }
 
@@ -446,6 +439,6 @@ const GhUI = (() => {
     return renderSegments(segments(String(body || "").replace(/\r\n?/g, "\n")));
   }
 
-  return { ico, ago, envSetup, setupCard, bindSetup, copyText, poll, hashParams, post, failMessage, keepFocus, markdown };
+  return { ico, ago, envSetup, setupCard, bindSetup, poll, hashParams, post, failMessage, keepFocus, markdown };
 })();
 globalThis.GhUI = GhUI;

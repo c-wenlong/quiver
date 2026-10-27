@@ -327,32 +327,59 @@ def load_remote_rows(home: Path | None) -> list[dict]:
     return out
 
 
-def _supervised_keys(home: Path | None) -> set[str]:
-    """Session keys under our supervisor; dead tmux entries prune out."""
+def _supervised(home: Path | None) -> dict[str, dict]:
+    """Supervised entries by key; dead tmux entries prune out on read."""
     from quiver.remote import supervise
 
-    return supervise.supervised_keys(home)
+    return supervise.supervised(home)
+
+
+def _kept(home: Path | None) -> dict[str, dict]:
+    """Kept tmux sessions by key (observed, pane still recorded)."""
+    from quiver.remote import supervise
+
+    return supervise.kept(home)
 
 
 def session_to_row(
     session: Session,
     status: str,
     machine_id: str,
-    supervised: set[str],
+    supervised: dict[str, dict],
+    kept: dict[str, dict] | None = None,
 ) -> tuple[str, dict]:
-    """``Session`` → (key, ``/v1/sessions`` row)."""
+    """``Session`` → (key, ``/v1/sessions`` row).
+
+    An attached row carries the supervised ``mode`` and, for tmux mode,
+    the ``qv-…`` pane name. An observed row left running by a ``keep``
+    detach carries ``kept`` and the pane name, so a client can offer the
+    pane back: attach adopts it live instead of relaunching.
+    """
     key = protocol.session_key(
         session.tool_name, session.session_id, session.path
     )
-    attached = key in supervised
+    meta = supervised.get(key)
     row = SessionRow.of(session, status, resume_json(session)).to_json()
     row["key"] = key
     row["machine_id"] = machine_id
     row["ownership"] = (
-        protocol.OWNERSHIP_ATTACHED if attached else protocol.OWNERSHIP_OBSERVED
+        protocol.OWNERSHIP_ATTACHED
+        if meta is not None else protocol.OWNERSHIP_OBSERVED
     )
-    # Whether Attach is even possible: a resumable harness on this machine.
-    row["attachable"] = row["resume"] is not None
+    if meta is not None:
+        if meta.get("mode"):
+            row["mode"] = meta["mode"]
+        if meta.get("tmux"):
+            row["tmux"] = meta["tmux"]
+    elif kept and key in kept:
+        row["kept"] = True
+        if kept[key].get("mode"):
+            row["mode"] = kept[key]["mode"]
+        if kept[key].get("tmux"):
+            row["tmux"] = kept[key]["tmux"]
+    # Whether Attach is even possible: a resumable harness on this
+    # machine, or a kept pane attach can adopt without resume flags.
+    row["attachable"] = row["resume"] is not None or bool(row.get("kept"))
     # Whether Fork is: the harness's CLI has a fork command line.
     row["can_fork"] = fork_mod.can_fork(session)
     return key, row
@@ -415,11 +442,12 @@ class Catalog:
             statuses = self._status_of(sessions)
         except Exception:
             statuses = [""] * len(sessions)
-        supervised = _supervised_keys(self.home)
+        supervised = _supervised(self.home)
+        kept = _kept(self.home)
         rows: list[tuple[str, Session | None, dict, str]] = []
         for session, status in zip(sessions, statuses):
             key, row = session_to_row(
-                session, status, self.machine_id, supervised
+                session, status, self.machine_id, supervised, kept
             )
             rows.append((key, session, row, status))
         # Satellite sessions travel as row dicts (no Session object — the
