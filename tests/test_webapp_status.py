@@ -343,7 +343,7 @@ class TestPoller(PollerBase):
         self.transport.reply(200, fixture("statuspage-github"))
         p = self.make()
         first = self.one(p, "cursor")
-        self.assertEqual(first.problem, "status.cursor.com asked us to wait until")
+        self.assertEqual(first.problem, "status.x.ai asked us to wait until")
         self.assertEqual(first.problem_until, EPOCH + 1200)
         self.clock.now += 900
         self.one(p, "cursor", force=True)
@@ -447,7 +447,7 @@ class TestPoller(PollerBase):
         self.clock.now += 600
         waiting = self.one(p, "cursor", force=True)
         self.assertEqual(len(self.transport.requests), 1)
-        self.assertEqual(waiting.problem, "status.cursor.com asked us to wait until")
+        self.assertEqual(waiting.problem, "status.x.ai asked us to wait until")
 
     def test_newer_entry_wins(self):
         """Another hub's later attempt wins over this one's older entry."""

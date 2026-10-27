@@ -159,7 +159,12 @@ SERVICES: tuple[StatusService, ...] = (
     _statuspage("claude", "Claude", "https://status.claude.com", "providers", "claude"),
     _statuspage("openai", "OpenAI / Codex", "https://status.openai.com", "providers", "openai"),
     _statuspage("github", "GitHub / Copilot", "https://www.githubstatus.com", "providers", "copilot"),
-    _statuspage("cursor", "Cursor", "https://status.cursor.com", "providers", "cursor"),
+    # Cursor's page moved to status.x.ai, which serves the Statuspage
+    # shape under /api/compat rather than /api/v2.
+    StatusService(
+        id="cursor", name="Cursor", page_url="https://status.x.ai",
+        feed_url="https://status.x.ai/api/compat/summary.json",
+        group="providers", logo="cursor"),
     # AI Studio's status page has no JSON behind it; Google Cloud's feed
     # covers the Gemini API on Vertex (renamed "Gemini on Agent Platform").
     StatusService(

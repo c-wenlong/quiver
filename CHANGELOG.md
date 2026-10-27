@@ -39,6 +39,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the Apple mark. Until a release has one they keep pointing at the
   install commands.
 
+- **Mac app: editable Service status.** Every card on the Service status
+  page can be edited or removed, not just the pages the user added: an
+  edit to a built-in is kept in preferences as an override (name, page
+  address, feed, group) and a remove hides it, beside the custom pages
+  under `customStatusServices`. The catalogue sheet now lists the
+  built-ins too, so a removed or edited page is tracked again — and an
+  edited one reset — from the same one-click list, and the Check probe
+  also tries `/api/compat/summary.json`, the path Cursor's new host
+  serves.
+
 ### Changed
 
 - **Both Swift apps live under `app/`.** The macOS app moved from `app/`
@@ -60,6 +70,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its command and settings file, where it's linked, and the script in a
   raw editor. `swe hooks list --json` rows now carry `summary` and
   `detail` for it.
+
+### Fixed
+
+- **Cursor's status page moved.** status.cursor.com now redirects to
+  status.x.ai, which serves the Statuspage feed under
+  /api/compat/summary.json; the app's transport follows no redirects, so
+  its card read "answered 301". Both catalogs (the app's and the web
+  app's Python port) point at the final URL.
 
 ### Security
 

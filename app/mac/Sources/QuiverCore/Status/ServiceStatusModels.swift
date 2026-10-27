@@ -184,6 +184,22 @@ public struct StatusService: Sendable, Hashable, Identifiable {
         return HarnessIcons.icon(for: id) != nil ? id : nil
     }
 
+    /// The service an edit to a built-in turns it into. A `pageURL` edit
+    /// on a Statuspage service moves its feed to the checked one the edit
+    /// sheet probed (or the derived `api/v2/summary.json` when none is
+    /// given); feeds of other kinds keep reading the catalog's.
+    public func applying(_ edit: StatusServicePrefs.Edit?) -> StatusService {
+        guard let edit else { return self }
+        var s = self
+        if let name = edit.name { s.name = name }
+        if let pageURL = edit.pageURL { s.pageURL = pageURL }
+        if let group = edit.group { s.group = group }
+        if case .statuspage = s.feed, edit.pageURL != nil || edit.feedURL != nil {
+            s.feed = .statuspage(edit.feedURL ?? s.pageURL.appending(path: "api/v2/summary.json"))
+        }
+        return s
+    }
+
     /// "custom-groq-cloud-a1b2c3d4" for "Groq Cloud": lowercased,
     /// non-alphanumerics as "-", trimmed, then a random suffix so a removed
     /// page's id is never reused (its poll cache is keyed by id). The "-2",
@@ -208,12 +224,15 @@ public struct StatusService: Sendable, Hashable, Identifiable {
 
     /// Every service on the page, in order. Each URL is the final one: the
     /// transport follows no redirects, so status.anthropic.com (which
-    /// redirects to status.claude.com) would fail.
+    /// redirects to status.claude.com) would fail. Cursor's page moved to
+    /// status.x.ai, which serves the Statuspage shape under /api/compat.
     public static let all: [StatusService] = [
         statuspage("claude", "Claude", "https://status.claude.com", .providers),
         statuspage("openai", "OpenAI / Codex", "https://status.openai.com", .providers),
         statuspage("github", "GitHub / Copilot", "https://www.githubstatus.com", .providers),
-        statuspage("cursor", "Cursor", "https://status.cursor.com", .providers),
+        StatusService(id: "cursor", name: "Cursor", pageURL: URL(string: "https://status.x.ai")!,
+                      feed: .statuspage(URL(string: "https://status.x.ai/api/compat/summary.json")!),
+                      group: .providers),
         // AI Studio's status page has no JSON behind it; Google Cloud's feed
         // covers the Gemini API on Vertex (renamed "Gemini on Agent Platform").
         StatusService(
