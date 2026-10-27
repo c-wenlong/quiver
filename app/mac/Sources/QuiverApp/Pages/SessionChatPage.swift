@@ -383,17 +383,16 @@ private struct Composer: View {
                     .quiverField(multiline: true)
                     .disabled(observed)
                     .focused($focused)
-                    // With the `/` menu open Return or Tab picks, the
-                    // arrows move the highlight and Escape closes it;
-                    // otherwise Return sends and Shift-Return a line.
+                    // Shift-Return always starts a line. With the `/`
+                    // menu open Return or Tab picks, the arrows move
+                    // the highlight and Escape closes it; otherwise
+                    // Return sends.
                     .onKeyPress(.return, phases: .down) { press in
-                        if model.commands.isOpen {
-                            // With no rows yet, Return waits for the list.
-                            if let command = activeCommand { pick(command) }
-                            return .handled
-                        }
                         if press.modifiers.contains(.shift) {
                             newline()
+                        } else if model.commands.isOpen {
+                            // With no rows yet, Return waits for the list.
+                            if let command = activeCommand { pick(command) }
                         } else {
                             submit()
                         }
