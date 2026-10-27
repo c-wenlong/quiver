@@ -305,12 +305,13 @@ struct SkeletonBlock: View {
     }
 }
 
-/// The verbs the working indicator cycles through. One list for the
-/// whole app, so every surface says the agent is working the same way.
+/// The verbs the working indicator cycles through — the same list the
+/// desktop client uses, so every surface says the agent is working the
+/// same way.
 enum WorkingVerbs {
     static let all = [
-        "Working", "Thinking", "Reading", "Writing",
-        "Building", "Checking", "Pondering", "Scanning",
+        "Investigating", "Tinkering", "Building",
+        "Thinking", "Working", "Analyzing",
     ]
 }
 
@@ -318,10 +319,13 @@ enum WorkingVerbs {
 /// shared "the agent is working" readout. The widest verb is laid out
 /// invisibly beside it so a word swap never resizes the pill it sits in.
 struct WorkingVerb: View {
-    /// Seconds a verb stays up; the band sweeps it once per verb.
-    static let verbSeconds: Double = 1.8
+    /// Seconds a verb stays up.
+    static let verbSeconds: Double = 2.4
+    /// Share of a verb's stay the band takes to cross it; the word then
+    /// rests unlit until the next verb slides in.
+    static let sweepShare: Double = 0.7
     /// Half the band's width as a fraction of the word's width.
-    static let bandHalf: Double = 0.18
+    static let bandHalf: Double = 0.26
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -332,15 +336,15 @@ struct WorkingVerb: View {
             TimelineView(.animation) { context in
                 let t = context.date.timeIntervalSinceReferenceDate
                 let index = Int(t / Self.verbSeconds) % WorkingVerbs.all.count
-                let sweep = t.truncatingRemainder(dividingBy: Self.verbSeconds)
+                let f = t.truncatingRemainder(dividingBy: Self.verbSeconds)
                     / Self.verbSeconds
                 ZStack(alignment: .leading) {
                     Text("\(Self.widest)…").opacity(0)
-                    shimmering(WorkingVerbs.all[index], sweep: sweep)
+                    shimmering(WorkingVerbs.all[index], sweep: min(1, f / Self.sweepShare))
                         .id(index)
                         .transition(.opacity)
                 }
-                .animation(.easeInOut(duration: 0.25), value: index)
+                .animation(.easeInOut(duration: 0.3), value: index)
             }
         }
     }
@@ -351,13 +355,15 @@ struct WorkingVerb: View {
     }
 
     /// `word` in the quiet colour, its brighter copy revealed only
-    /// inside the sweeping band.
+    /// inside the sweeping band, with a faint bloom so the sheen reads
+    /// as light rather than a recolour.
     private func shimmering(_ word: String, sweep: Double) -> some View {
         Text("\(word)…")
             .foregroundStyle(Theme.textSecondary)
             .overlay {
                 Text("\(word)…")
                     .foregroundStyle(Theme.textPrimary)
+                    .shadow(color: Theme.textPrimary.opacity(0.5), radius: 3)
                     .mask(band(at: sweep))
             }
             .accessibilityHidden(true)
@@ -377,6 +383,28 @@ struct WorkingVerb: View {
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
+    }
+}
+
+/// The elapsed count under the working pill — "0:42" ticking once a
+/// second while the agent runs.
+struct WorkingClock: View {
+    /// When the turn started.
+    let since: Date
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            Text(Self.format(context.date.timeIntervalSince(since)))
+        }
+        .font(.system(size: 11))
+        .monospacedDigit()
+        .foregroundStyle(Theme.textSecondary)
+    }
+
+    /// `s` seconds as "m:ss".
+    static func format(_ s: TimeInterval) -> String {
+        let t = max(0, Int(s))
+        return String(format: "%d:%02d", t / 60, t % 60)
     }
 }
 
