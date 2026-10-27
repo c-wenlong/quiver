@@ -484,12 +484,13 @@ class TestChatScript(unittest.TestCase):
             custom: T.insertCommand("/$", { start: 0, end: 2, query: "$" }, { name: "x", insert: "$x" }),
             insert: T.commandInsert({ name: "model", insert: "$fast " }),
             labels: [T.sourceLabel("builtin"), T.sourceLabel("plugin"), T.sourceLabel(""), T.sourceLabel("odd")],
-            keys: [T.menuKey({ key: "Escape" }, 2), T.menuKey({ key: "ArrowDown" }, 2),
-                   T.menuKey({ key: "ArrowUp" }, 2), T.menuKey({ key: "Enter" }, 2),
-                   T.menuKey({ key: "Tab" }, 2), T.menuKey({ key: "Enter" }, 0),
-                   T.menuKey({ key: "Tab" }, 0), T.menuKey({ key: "ArrowDown" }, 0),
-                   T.menuKey({ key: "Enter", shiftKey: true }, 2),
-                   T.menuKey({ key: "Enter", isComposing: true }, 2), T.menuKey({ key: "x" }, 2)],
+            keys: [T.menuKey({ key: "Escape" }, 2, false), T.menuKey({ key: "ArrowDown" }, 2, true),
+                   T.menuKey({ key: "ArrowUp" }, 2, true), T.menuKey({ key: "Enter" }, 2, false),
+                   T.menuKey({ key: "Tab" }, 2, true), T.menuKey({ key: "Enter" }, 0, true),
+                   T.menuKey({ key: "Enter" }, 0, false),
+                   T.menuKey({ key: "Tab" }, 0, false), T.menuKey({ key: "ArrowDown" }, 0, true),
+                   T.menuKey({ key: "Enter", shiftKey: true }, 2, true),
+                   T.menuKey({ key: "Enter", isComposing: true }, 2, false), T.menuKey({ key: "x" }, 2, false)],
           };""")
         # A /token lives only at the start, inside the first word; the
         # caret on the word's end still counts, one space in ends it.
@@ -512,11 +513,12 @@ class TestChatScript(unittest.TestCase):
         self.assertEqual(out["custom"], {"text": "$x ", "caret": 3})
         self.assertEqual(out["insert"], "$fast ")
         self.assertEqual(out["labels"], ["Built-in", "Plugin", "", "Odd"])
-        # Escape closes, arrows move only with rows, Enter picks or waits
-        # while they load, and Tab moves focus without them. Shift-Enter
-        # falls through to the box's newline, menu open or not.
+        # Escape closes, arrows move only with rows, Enter picks, waits
+        # only while the first fetch is out, then sends on an answered
+        # empty list. Tab moves focus without rows, and Shift-Enter falls
+        # through to the box's newline, menu open or not.
         self.assertEqual(out["keys"], ["dismiss", "next", "prev", "pick", "pick",
-                                       "wait", None, None, None, None, None])
+                                       "wait", None, None, None, None, None, None])
 
 
 if __name__ == "__main__":

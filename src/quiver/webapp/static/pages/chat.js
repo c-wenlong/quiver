@@ -1371,7 +1371,10 @@ const SessionChat = (() => {
     input.onkeydown = (e) => {
       if (menu.open) {
         const rows = menu.rows.length;
-        const key = menuKey(e, rows);
+        // Enter waits only while the first fetch is still out; an
+        // answered list with nothing pickable sends the text as typed.
+        const waiting = cmds.loading && !(cmds.response && cmds.key === chat.key);
+        const key = menuKey(e, rows, waiting);
         if (key === "dismiss") {
           e.preventDefault();
           menu.dismissed = menu.token;
@@ -1384,9 +1387,9 @@ const SessionChat = (() => {
           renderMenu();
           return;
         }
-        // While the menu is open Enter picks, or waits for rows; it
-        // sends once the menu is closed (Escape sends the text as
-        // typed).
+        // While the menu is open Enter picks, or waits for the first
+        // fetch; it sends once the list answered empty, and once the
+        // menu is closed (Escape sends the text as typed).
         if (key === "pick" || key === "wait") {
           e.preventDefault();
           if (key === "pick") pickMenu(menu.active);
@@ -1590,15 +1593,16 @@ const SessionChat = (() => {
   }
 
   /* A key with the / menu open: "dismiss", "next"/"prev" over the rows,
-   * "pick", or "wait" while the list is empty. Null falls through to the
-   * box's usual keys — Shift-Enter's newline and a no-row Tab's focus
-   * move among them. */
-  function menuKey(e, rows) {
+   * "pick", or "wait" while the first fetch is still out and the list is
+   * empty. Null falls through to the box's usual keys — Shift-Enter's
+   * newline, Enter's send on an answered-but-empty list, and a no-row
+   * Tab's focus move among them. */
+  function menuKey(e, rows, waiting) {
     if (e.isComposing) return null;
     if (e.key === "Escape") return "dismiss";
     if (rows && (e.key === "ArrowDown" || e.key === "ArrowUp"))
       return e.key === "ArrowDown" ? "next" : "prev";
-    if (e.key === "Enter") return e.shiftKey ? null : rows ? "pick" : "wait";
+    if (e.key === "Enter") return e.shiftKey ? null : rows ? "pick" : waiting ? "wait" : null;
     if (e.key === "Tab") return rows ? "pick" : null;
     return null;
   }
