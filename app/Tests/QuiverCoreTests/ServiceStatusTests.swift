@@ -165,10 +165,11 @@ private func openGeminiIncident() throws -> Data {
 }
 
 @Suite struct StatusCatalogueTests {
-    /// What the catalogue sheet promises: unique https pages whose feed is
-    /// the Statuspage summary.json at the page root, the exact shape
-    /// `model.add` builds for a manual add.
-    @Test func everyEntryIsAStatuspageFeedAtTheRoot() {
+    /// What the catalogue sheet promises: the built-ins first (a removed
+    /// or edited one is tracked again from here), then unique https pages
+    /// each serving a Statuspage summary.json.
+    @Test func everyEntryIsATrackableStatuspage() {
+        #expect(Array(StatusCatalogue.all.prefix(StatusService.all.count)) == StatusService.all)
         #expect(Set(StatusCatalogue.all.map(\.id)).count == StatusCatalogue.all.count)
         // Rows are matched against tracked pages by feed host, so two
         // entries on one host would both read Added after adding either.
@@ -177,22 +178,18 @@ private func openGeminiIncident() throws -> Data {
         for entry in StatusCatalogue.all {
             #expect(!entry.name.isEmpty)
             #expect(entry.pageURL.scheme == "https")
-            #expect(entry.feedURL == entry.pageURL.appending(path: "api/v2/summary.json"))
+            #expect(entry.feedURL.scheme == "https")
+            // Gemini's built-in feed is Google Cloud's; the rest serve a
+            // Statuspage summary.json (status.x.ai files it under /api/compat).
+            if entry.feed != StatusService.all.first(where: { $0.id == entry.id })?.feed {
+                #expect(entry.feedURL.path.hasSuffix("summary.json"))
+            } else if case .statuspage = entry.feed {
+                #expect(entry.feedURL.path.hasSuffix("summary.json"))
+            }
         }
         // Both group chips must have rows to offer.
         #expect(StatusCatalogue.all.contains { $0.group == .providers })
         #expect(StatusCatalogue.all.contains { $0.group == .infrastructure })
-    }
-
-    /// A built-in's id or feed host in the catalogue would offer a page
-    /// the grid already tracks without reading Added.
-    @Test func noOverlapWithBuiltIns() {
-        let ids = Set(StatusService.all.map(\.id))
-        let hosts = Set(StatusService.all.compactMap { $0.feedURL.host()?.lowercased() })
-        for entry in StatusCatalogue.all {
-            #expect(!ids.contains(entry.id))
-            #expect(!hosts.contains(entry.feedURL.host()?.lowercased() ?? ""))
-        }
     }
 
     /// The sheet's mark column: every catalogue row and every built-in
@@ -325,7 +322,7 @@ private func openGeminiIncident() throws -> Data {
         let status = makeService(transport, clock: clock)
         let cursor = [try service("cursor")]
         let first = try #require(await status.statuses(for: cursor, force: false).first)
-        #expect(first.problem?.hasPrefix("status.cursor.com asked us to wait until") == true)
+        #expect(first.problem?.hasPrefix("status.x.ai asked us to wait until") == true)
         clock.advance(900)
         _ = await status.statuses(for: cursor, force: true)
         #expect(transport.requests.count == 1)
@@ -410,7 +407,7 @@ private func openGeminiIncident() throws -> Data {
         clock.advance(600)
         let waiting = try #require(await status.statuses(for: cursor, force: true).first)
         #expect(transport.requests.count == 1)
-        #expect(waiting.problem?.hasPrefix("status.cursor.com asked us to wait until") == true)
+        #expect(waiting.problem?.hasPrefix("status.x.ai asked us to wait until") == true)
     }
 
     /// Another running copy's later attempt wins over this one's older entry.
@@ -555,13 +552,33 @@ private func openGeminiIncident() throws -> Data {
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = CustomStatusServices(defaults: defaults)
-        #expect(store.load().isEmpty)
+        #expect(store.load() == StatusServicePrefs())
+        var prefs = StatusServicePrefs()
         let acme = customService("custom-acme", "Acme", .infrastructure)
-        store.save([acme])
-        #expect(try #require(store.load().first) == acme)
+        prefs.custom = [acme]
+        prefs.hidden = ["vercel"]
+        prefs.overrides = ["cursor": .init(pageURL: URL(string: "https://status.x.ai")!,
+                                           feedURL: URL(string: "https://status.x.ai/api/compat/summary.json")!)]
+        store.save(prefs)
+        #expect(store.load() == prefs)
         // Only customs are ever written; a built-in passed in is dropped.
-        store.save([acme, try service("claude")])
-        #expect(store.load().map(\.id) == ["custom-acme"])
+        prefs.custom.append(try service("claude"))
+        store.save(prefs)
+        #expect(store.load().custom.map(\.id) == ["custom-acme"])
+    }
+
+    /// Records written before feeds could sit off /api/v2 still load.
+    @Test func aLegacyStoreFileStillReads() throws {
+        let suite = "quiver-test-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = CustomStatusServices(defaults: defaults)
+        defaults.set(Data(#"[{"id":"custom-x","name":"X","pageURL":"https://x.test","group":"providers"}]"#.utf8),
+                     forKey: CustomStatusServices.defaultsKey)
+        let loaded = store.load()
+        #expect(loaded.custom.map(\.id) == ["custom-x"])
+        #expect(loaded.custom.first?.feedURL == URL(string: "https://x.test/api/v2/summary.json"))
+        #expect(loaded.hidden.isEmpty && loaded.overrides.isEmpty)
     }
 
     @Test func badStoreDataReadsAsEmpty() throws {
@@ -570,10 +587,10 @@ private func openGeminiIncident() throws -> Data {
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = CustomStatusServices(defaults: defaults)
         defaults.set(Data("<not json".utf8), forKey: CustomStatusServices.defaultsKey)
-        #expect(store.load().isEmpty)
+        #expect(store.load() == StatusServicePrefs())
         defaults.set(Data(#"[{"id":"custom-x","name":"X","pageURL":"https://x.test","group":"bogus"}]"#.utf8),
                      forKey: CustomStatusServices.defaultsKey)
-        #expect(store.load().isEmpty)
+        #expect(store.load() == StatusServicePrefs())
     }
 
     /// Adding puts the card in its group as unknown until the load fills
@@ -589,20 +606,22 @@ private func openGeminiIncident() throws -> Data {
             store: memory)
         let added = await model.add(name: "OpenRouter",
                                     pageURL: URL(string: "https://status.openrouter.ai")!,
+                                    feedURL: URL(string: "https://status.openrouter.ai/api/v2/summary.json")!,
                                     group: .providers)
         #expect(added.id.hasPrefix("custom-openrouter-"))
         #expect(added.isCustom)
         #expect(added.feedURL.absoluteString == "https://status.openrouter.ai/api/v2/summary.json")
         #expect(model.services.last == added)
-        #expect(memory.saved.map(\.id) == [added.id])
+        #expect(memory.saved.custom.map(\.id) == [added.id])
         #expect(model.groups.first { $0.group == .providers }?.statuses.last?.service == added)
         // The fetch ran: the card is filled, not left unknown.
         #expect(model.statuses.last?.report?.health == .operational)
         #expect(model.statuses.last?.checkedAt == usageEpoch)
     }
 
-    /// Only customs can go; a built-in id is left alone.
-    @MainActor @Test func removeDropsOnlyCustomServices() async throws {
+    /// Customs are deleted; a built-in goes hidden, its id kept free for
+    /// the catalogue's Add to bring back.
+    @MainActor @Test func removeDeletesCustomsAndHidesBuiltIns() async throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
         let memory = MemoryStatusStore()
         let model = ServiceStatusModel(
@@ -610,14 +629,98 @@ private func openGeminiIncident() throws -> Data {
                                         cacheURL: dir.appending(path: "service-status.json")),
             store: memory)
         let added = await model.add(name: "Acme", pageURL: URL(string: "https://status.acme.test")!,
+                                    feedURL: URL(string: "https://status.acme.test/api/v2/summary.json")!,
                                     group: .infrastructure)
         await model.remove(id: "claude")
-        #expect(model.services.contains { $0.id == "claude" })
-        #expect(memory.saved.map(\.id) == [added.id])
+        #expect(!model.services.contains { $0.id == "claude" })
+        #expect(memory.saved.hidden == ["claude"])
+        #expect(memory.saved.custom.map(\.id) == [added.id])
         await model.remove(id: added.id)
         #expect(!model.services.contains { $0.id == added.id })
         #expect(!model.statuses.contains { $0.service.id == added.id })
-        #expect(memory.saved.isEmpty)
+        #expect(memory.saved.custom.isEmpty)
+    }
+
+    /// The catalogue's Add on a built-in row restores the catalog's
+    /// entry: a removed card comes back, an edited one loses its override.
+    @MainActor @Test func trackRestoresABuiltIn() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let memory = MemoryStatusStore()
+        let model = ServiceStatusModel(
+            service: ServiceStatusService(transport: StubStatusTransport(body: try statusFixture("statuspage-github")),
+                                        cacheURL: dir.appending(path: "service-status.json")),
+            store: memory)
+        await model.remove(id: "cursor")
+        #expect(!model.services.contains { $0.id == "cursor" })
+        let cursor = try #require(StatusCatalogue.all.first { $0.id == "cursor" })
+        _ = await model.track(cursor)
+        #expect(model.services.contains { $0.id == "cursor" })
+        #expect(try model.services.first { $0.id == "cursor" } == service("cursor"))
+        #expect(memory.saved.hidden.isEmpty)
+        // A non-built-in row lands as a custom page.
+        let groq = try #require(StatusCatalogue.all.first { $0.id == "groq" })
+        let added = await model.track(groq)
+        #expect(added.isCustom)
+        #expect(added.feedURL == groq.feedURL)
+    }
+
+    /// The editor's Save on a built-in keeps the difference from the
+    /// catalog as an override, and Reset puts the catalog's entry back.
+    @MainActor @Test func updateOverridesAndResetRestoresABuiltIn() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let memory = MemoryStatusStore()
+        let model = ServiceStatusModel(
+            service: ServiceStatusService(transport: StubStatusTransport(body: try statusFixture("statuspage-github")),
+                                        cacheURL: dir.appending(path: "service-status.json")),
+            store: memory)
+        await model.update(id: "cursor", name: "Cursor", pageURL: URL(string: "https://status.cursor.sh")!,
+                           feedURL: URL(string: "https://status.cursor.sh/api/v2/summary.json")!,
+                           group: .providers)
+        let edited = try #require(model.services.first { $0.id == "cursor" })
+        #expect(edited.pageURL == URL(string: "https://status.cursor.sh"))
+        #expect(edited.feedURL == URL(string: "https://status.cursor.sh/api/v2/summary.json"))
+        #expect(model.isEdited("cursor"))
+        #expect(memory.saved.overrides["cursor"]?.feedURL?.host() == "status.cursor.sh")
+        await model.reset(id: "cursor")
+        #expect(try model.services.first { $0.id == "cursor" } == service("cursor"))
+        #expect(!model.isEdited("cursor"))
+        #expect(memory.saved.overrides.isEmpty)
+    }
+
+    /// An edit that returns a built-in to its default writes no override.
+    @MainActor @Test func anEditBackToTheDefaultWritesNoOverride() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let model = ServiceStatusModel(
+            service: ServiceStatusService(transport: StubStatusTransport(body: try statusFixture("statuspage-github")),
+                                        cacheURL: dir.appending(path: "service-status.json")),
+            store: MemoryStatusStore())
+        let claude = try service("claude")
+        await model.update(id: "claude", name: claude.name, pageURL: claude.pageURL,
+                           feedURL: claude.feedURL, group: claude.group)
+        #expect(!model.isEdited("claude"))
+        #expect(model.services.first { $0.id == "claude" } == claude)
+    }
+
+    /// The editor's Save on a custom page rewrites its record.
+    @MainActor @Test func updateRewritesACustomService() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let memory = MemoryStatusStore()
+        let model = ServiceStatusModel(
+            service: ServiceStatusService(transport: StubStatusTransport(body: try statusFixture("statuspage-github")),
+                                        cacheURL: dir.appending(path: "service-status.json")),
+            store: memory)
+        let added = await model.add(name: "Acme", pageURL: URL(string: "https://status.acme.test")!,
+                                    feedURL: URL(string: "https://status.acme.test/api/v2/summary.json")!,
+                                    group: .providers)
+        await model.update(id: added.id, name: "Acme Two",
+                           pageURL: URL(string: "https://status.acme.example")!,
+                           feedURL: URL(string: "https://status.acme.example/api/v2/summary.json")!,
+                           group: .infrastructure)
+        let edited = try #require(model.services.last)
+        #expect(edited.name == "Acme Two")
+        #expect(edited.group == .infrastructure)
+        #expect(edited.feedURL.host() == "status.acme.example")
+        #expect(memory.saved.custom == [edited])
     }
 
     /// A load parked mid-flight cannot bring a page removed while it was
@@ -626,7 +729,7 @@ private func openGeminiIncident() throws -> Data {
         let transport = GatedTransport(body: try statusFixture("statuspage-claude"))
         let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
         let memory = MemoryStatusStore()
-        memory.saved = [customService("custom-acme-aaaa0001", "Acme")]
+        memory.saved.custom = [customService("custom-acme-aaaa0001", "Acme")]
         let model = ServiceStatusModel(
             service: ServiceStatusService(transport: transport,
                                         cacheURL: dir.appending(path: "service-status.json")),
@@ -652,6 +755,7 @@ private func openGeminiIncident() throws -> Data {
             body: try statusFixture("statuspage-claude")), cacheURL: cacheFile)
         let model = ServiceStatusModel(service: statusService, store: MemoryStatusStore())
         let first = await model.add(name: "Acme", pageURL: URL(string: "https://status.acme.test")!,
+                                    feedURL: URL(string: "https://status.acme.test/api/v2/summary.json")!,
                                     group: .providers)
         #expect(model.statuses.last?.report?.health == .minor)
         await model.remove(id: first.id)
@@ -662,6 +766,7 @@ private func openGeminiIncident() throws -> Data {
         // And a cached read for it is unknown, as for a page never seen.
         #expect(await statusService.cached(for: [first]).first?.report == nil)
         let second = await model.add(name: "Acme", pageURL: URL(string: "https://status.acme.test")!,
+                                     feedURL: URL(string: "https://status.acme.test/api/v2/summary.json")!,
                                      group: .providers)
         #expect(second.id != first.id)
     }
@@ -670,14 +775,31 @@ private func openGeminiIncident() throws -> Data {
         let transport = FakeTransport()
         transport.reply(200, body: try statusFixture("statuspage-github"))
         let result = await probeService(transport).probe("status.example.com/some/path?x=1")
-        guard case .ok(let pageURL, let report) = result else {
+        guard case .ok(let pageURL, let feedURL, let report) = result else {
             Issue.record("expected ok, got \(result)")
             return
         }
         #expect(pageURL == URL(string: "https://status.example.com/"))
+        #expect(feedURL == URL(string: "https://status.example.com/api/v2/summary.json"))
         #expect(report.health == .operational)
         #expect(transport.requests.first?.url?.absoluteString
             == "https://status.example.com/api/v2/summary.json")
+    }
+
+    /// A page without the /api/v2 feed still reads when it serves the same
+    /// shape under /api/compat, the way status.x.ai does.
+    @Test func probeFallsBackToTheCompatFeed() async throws {
+        let transport = FakeTransport()
+        transport.reply(403)
+        transport.reply(200, body: try statusFixture("statuspage-github"))
+        let result = await probeService(transport).probe("status.example.com")
+        guard case .ok(_, let feedURL, _) = result else {
+            Issue.record("expected ok, got \(result)")
+            return
+        }
+        #expect(feedURL == URL(string: "https://status.example.com/api/compat/summary.json"))
+        #expect(transport.requests.map { $0.url?.path }
+            == ["/api/v2/summary.json", "/api/compat/summary.json"])
     }
 
     /// The polling transport follows no redirects, so the probe asks the
@@ -687,7 +809,7 @@ private func openGeminiIncident() throws -> Data {
         transport.reply(200, body: try statusFixture("statuspage-github"))
         let result = await probeService(transport) { _ in URL(string: "https://real.example.org/deep/path") }
             .probe("https://status.example.com/")
-        guard case .ok(let pageURL, _) = result else {
+        guard case .ok(let pageURL, _, _) = result else {
             Issue.record("expected ok, got \(result)")
             return
         }
@@ -707,9 +829,10 @@ private func openGeminiIncident() throws -> Data {
         for (status, body) in [(404, Data()), (200, Data("<html>".utf8))] {
             let transport = FakeTransport()
             transport.reply(status, body: body)
+            transport.reply(status, body: body)
             let result = await probeService(transport).probe("status.example.com")
             #expect(result == .failure("Quiver can read Atlassian Statuspage and incident.io pages, "
-                + "which serve /api/v2/summary.json. status.example.com doesn't."))
+                + "which serve a JSON feed under /api. status.example.com doesn't."))
         }
     }
 
@@ -721,11 +844,11 @@ private func openGeminiIncident() throws -> Data {
     }
 }
 
-/// Where the model's customs go, in memory.
-private final class MemoryStatusStore: CustomStatusStoring, @unchecked Sendable {
-    var saved: [StatusService] = []
-    func load() -> [StatusService] { saved }
-    func save(_ services: [StatusService]) { saved = services }
+/// Where the model's prefs go, in memory.
+private final class MemoryStatusStore: StatusServiceStoring, @unchecked Sendable {
+    var saved = StatusServicePrefs()
+    func load() -> StatusServicePrefs { saved }
+    func save(_ prefs: StatusServicePrefs) { saved = prefs }
 }
 
 /// Always answers 200 with the same body: `add` polls every page, and the

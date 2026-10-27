@@ -9,6 +9,8 @@ struct ServiceStatusPage: View {
     @Environment(AppModel.self) private var app
     @State private var adding = false
     @State private var browsing = false
+    /// The card being edited, when one is.
+    @State private var editing: StatusService?
 
     private var model: ServiceStatusModel { app.serviceStatus }
 
@@ -36,8 +38,10 @@ struct ServiceStatusPage: View {
                     EqualRowGrid(minimumColumnWidth: 360, spacing: Theme.gutter) {
                         ForEach(entry.statuses) { status in
                             ServiceCard(status: status, isLoading: model.isLoading,
-                                        remove: status.service.isCustom
-                                            ? { Task { await model.remove(id: status.id) } } : nil)
+                                        edit: { editing = status.service },
+                                        reset: model.isEdited(status.id)
+                                            ? { Task { await model.reset(id: status.id) } } : nil,
+                                        remove: { Task { await model.remove(id: status.id) } })
                         }
                     }
                 }
@@ -48,12 +52,20 @@ struct ServiceStatusPage: View {
         }
         .task { await model.load(force: false) }
         .quiverSheet(isPresented: $adding) {
-            AddServiceSheet(
+            ServiceEditorSheet(
                 check: { await model.probe($0) },
-                add: { name, pageURL, group in
-                    Task { await model.add(name: name, pageURL: pageURL, group: group) }
+                save: { name, pageURL, feedURL, group in
+                    Task { await model.add(name: name, pageURL: pageURL, feedURL: feedURL ?? pageURL.appending(path: "api/v2/summary.json"), group: group) }
                 },
                 browse: { browsing = true })
+        }
+        .quiverSheet(item: $editing) { service in
+            ServiceEditorSheet(editing: service,
+                               check: { await model.probe($0) },
+                               save: { name, pageURL, feedURL, group in
+                                   Task { await model.update(id: service.id, name: name, pageURL: pageURL,
+                                                             feedURL: feedURL, group: group) }
+                               })
         }
         .quiverSheet(isPresented: $browsing) {
             StatusCatalogueSheet(model: model)
@@ -61,13 +73,18 @@ struct ServiceStatusPage: View {
     }
 }
 
-/// The "Track a status page" sheet: name, address and group, with a Check
-/// button that reads the page's summary.json before Add is allowed.
-private struct AddServiceSheet: View {
+/// The "Track a status page" sheet — and, given `editing`, "Edit service":
+/// name, address and group, with a Check button that reads the page's
+/// feed before Add (or Save on a changed address) is allowed.
+private struct ServiceEditorSheet: View {
+    /// Set when the sheet edits a card rather than adding a page.
+    var editing: StatusService? = nil
     var check: (String) async -> ServiceStatusService.ProbeResult
-    var add: (String, URL, StatusService.Group) -> Void
+    /// `(name, pageURL, feedURL, group)`: the feed the last Check read,
+    /// or nil when the address never changed and the service keeps its own.
+    var save: (String, URL, URL?, StatusService.Group) -> Void
     /// Opens the catalogue sheet over this one, for one-click adds.
-    var browse: () -> Void
+    var browse: (() -> Void)? = nil
     @Environment(\.dismissSheet) private var dismiss
     @State private var name = ""
     @State private var address = ""
@@ -76,60 +93,101 @@ private struct AddServiceSheet: View {
     /// The last Check's answer, cleared when the address is edited.
     @State private var checked: ServiceStatusService.ProbeResult?
 
+    /// Whether the address can be probed and moved: a Statuspage feed's
+    /// comes from the page's root, other feeds (Gemini's Google Cloud
+    /// reading) are fixed.
+    private var editableAddress: Bool {
+        guard let service = editing else { return true }
+        if case .statuspage = service.feed { return true }
+        return false
+    }
+
+    private var addressChanged: Bool {
+        guard let service = editing else { return true }
+        return address.trimmingCharacters(in: .whitespaces) != service.pageURL.absoluteString
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Track a status page").font(Theme.sectionTitle).tracking(-0.5)
+            Text(editing == nil ? "Track a status page" : "Edit service")
+                .font(Theme.sectionTitle).tracking(-0.5)
             TextField("Name, like OpenRouter", text: $name)
                 .quiverField()
             TextField("https://status.example.com", text: $address)
                 .quiverField()
+                .disabled(!editableAddress)
                 .onChange(of: address) { checked = nil }
-            HStack {
-                Button("Check") { runCheck() }
-                    .secondaryButton()
-                    .disabled(checking || address.trimmingCharacters(in: .whitespaces).isEmpty)
-                if checking {
-                    ProgressView().controlSize(.small)
+            if editableAddress {
+                HStack {
+                    Button("Check") { runCheck() }
+                        .secondaryButton()
+                        .disabled(checking || address.trimmingCharacters(in: .whitespaces).isEmpty)
+                    if checking {
+                        ProgressView().controlSize(.small)
+                    }
                 }
-            }
-            switch checked {
-            case .ok(let pageURL, let report):
-                HStack(spacing: 8) {
-                    HealthDot(health: report.health)
-                    Text("\(report.health.title) · Reads \(pageURL.host() ?? pageURL.absoluteString)")
-                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                switch checked {
+                case .ok(let pageURL, _, let report):
+                    HStack(spacing: 8) {
+                        HealthDot(health: report.health)
+                        Text("\(report.health.title) · Reads \(pageURL.host() ?? pageURL.absoluteString)")
+                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    }
+                case .failure(let problem):
+                    Text(problem).font(Theme.caption).foregroundStyle(Theme.danger)
+                case nil:
+                    EmptyView()
                 }
-            case .failure(let problem):
-                Text(problem).font(Theme.caption).foregroundStyle(Theme.danger)
-            case nil:
-                EmptyView()
+            } else {
+                Text("This service reads a fixed status feed; only its name and group can change.")
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
             Tabs(options: [(.providers, "AI providers"), (.infrastructure, "Infrastructure")],
                  selection: $group)
             Text("AI providers also show in the menu bar when they have an incident.")
                 .font(Theme.font(size: 10)).foregroundStyle(.secondary)
             HStack {
-                Button("Browse", action: browse)
-                    .secondaryButton()
+                if let browse {
+                    Button("Browse", action: browse)
+                        .secondaryButton()
+                }
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .secondaryButton()
-                Button("Add") {
-                    if case .ok(let pageURL, _) = checked {
-                        add(name.trimmingCharacters(in: .whitespaces), pageURL, group)
+                Button(editing == nil ? "Add" : "Save") {
+                    if case .ok(let pageURL, let feedURL, _) = checked {
+                        save(name.trimmingCharacters(in: .whitespaces), pageURL, feedURL, group)
+                    } else if let service = editing {
+                        save(name.trimmingCharacters(in: .whitespaces),
+                             URL(string: address.trimmingCharacters(in: .whitespaces)) ?? service.pageURL,
+                             nil, group)
                     }
                     dismiss()
                 }
                 .primaryButton()
                 .keyboardShortcut(.defaultAction)
-                .disabled(!canAdd)
+                .disabled(!canSave)
             }
         }
         .sheetScaffold(width: Theme.formSheetWidth, padding: Theme.formSheetPadding)
+        .onAppear {
+            if let service = editing {
+                name = service.name
+                address = service.pageURL.absoluteString
+                group = service.group
+            }
+        }
     }
 
-    private var canAdd: Bool {
-        if case .ok = checked { return !name.trimmingCharacters(in: .whitespaces).isEmpty }
+    private var canSave: Bool {
+        if name.trimmingCharacters(in: .whitespaces).isEmpty { return false }
+        if let service = editing {
+            if !editableAddress { return true }
+            if !addressChanged { return true }
+            if case .ok = checked { return true }
+            return URL(string: address.trimmingCharacters(in: .whitespaces)) == service.pageURL
+        }
+        if case .ok = checked { return true }
         return false
     }
 
@@ -218,7 +276,7 @@ private struct StatusCatalogueSheet: View {
         CatalogueRow(logo: entry.logoID, name: entry.name, detail: entry.host,
                      done: tracked.contains(entry.host.lowercased()) ? "Added" : nil) {
             Task {
-                await model.add(name: entry.name, pageURL: entry.pageURL, group: entry.group)
+                await model.track(entry)
             }
         }
     }
@@ -306,8 +364,12 @@ private extension ServiceStatus {
 private struct ServiceCard: View {
     var status: ServiceStatus
     var isLoading: Bool
-    /// Set for a page the user added; built-ins cannot be removed.
-    var remove: (() -> Void)? = nil
+    /// Opens the editor sheet on this service.
+    var edit: () -> Void
+    /// Set for a built-in the user edited: puts the catalog's entry back.
+    var reset: (() -> Void)? = nil
+    /// Stops tracking the page: customs are deleted, built-ins hidden.
+    var remove: () -> Void
     @State private var hovering = false
     @State private var confirmingRemove = false
     @State private var showingDetails = false
@@ -370,13 +432,15 @@ private struct ServiceCard: View {
                 .plainButton(cornerRadius: Theme.smallRadius)
                 .foregroundStyle(Theme.textSecondary)
                 .help(status.service.pageURL.absoluteString)
-            if let remove {
-                EllipsisMenu {
-                    Button("Remove…") { confirmingRemove = true }
+            EllipsisMenu {
+                Button("Edit…", action: edit)
+                if let reset {
+                    Button("Reset to default", action: reset)
                 }
-                .confirmationDialog("Stop tracking \(status.service.name)?", isPresented: $confirmingRemove) {
-                    Button("Stop tracking", role: .destructive, action: remove)
-                }
+                Button("Remove…") { confirmingRemove = true }
+            }
+            .confirmationDialog("Stop tracking \(status.service.name)?", isPresented: $confirmingRemove) {
+                Button("Stop tracking", role: .destructive, action: remove)
             }
         }
     }
