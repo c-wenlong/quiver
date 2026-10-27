@@ -657,8 +657,15 @@ const SessionChat = (() => {
           const note = card.querySelector(".approval-note");
           if (note) note.remove();
         } else {
-          const chosen = card.querySelector(".approval-actions .chosen");
-          if (chosen) chosen.classList.remove("chosen");
+          // A rejection after the card folded: unfold it so the failure
+          // note and the re-enabled rows are visible.
+          card.classList.remove("resolved", "open");
+          const t = card.querySelector(".approval-toggle");
+          if (t) { t.hidden = true; t.setAttribute("aria-expanded", "false"); }
+          const v = card.querySelector(".approval-verdict");
+          if (v) v.textContent = "";
+          card.querySelectorAll(".approval-actions .chosen")
+            .forEach((b) => b.classList.remove("chosen"));
           card.querySelectorAll(".approval-actions button").forEach((b) => { b.disabled = false; });
           approvalNote(card).textContent = `Approval failed: ${d.note || "the satellite rejected it"}`;
         }
@@ -786,13 +793,23 @@ const SessionChat = (() => {
   /* An answer folds the card like a folded tool callout: the chevron
    * row carries the picked option and expands back to the full card. */
   function settleCard(card, decision) {
-    const btn = card.querySelector(".approval-actions .chosen")
-      || card.querySelector(`[data-dec="${CSS.escape(decision || "")}"]`);
+    // The event's decision beats a locally-picked row: another client may
+    // have answered first. The .chosen mark is only the fallback for a
+    // bare command.result that carries none.
+    const btn = (decision
+        ? card.querySelector(`[data-dec="${CSS.escape(decision)}"]`)
+        : null)
+      || card.querySelector(".approval-actions .chosen");
     const said = DECISIONS[decision]
       || (btn && btn.textContent.trim()) || "Answered";
-    card.querySelectorAll(".approval-actions button").forEach((b) => { b.disabled = true; });
-    if (btn) btn.classList.add("chosen");
-    card.classList.remove("open");
+    card.querySelectorAll(".approval-actions button").forEach((b) => {
+      b.disabled = true;
+      b.classList.toggle("chosen", b === btn);
+    });
+    // A second settle (command.result, then approval.resolved, for the
+    // same answer) refreshes the verdict but must not re-fold a card the
+    // user opened in between.
+    if (!card.classList.contains("resolved")) card.classList.remove("open");
     card.classList.add("resolved");
     const t = card.querySelector(".approval-toggle");
     if (t) t.hidden = false;
