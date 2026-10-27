@@ -1371,25 +1371,25 @@ const SessionChat = (() => {
     input.onkeydown = (e) => {
       if (menu.open) {
         const rows = menu.rows.length;
-        if (e.key === "Escape") {
+        const key = menuKey(e, rows);
+        if (key === "dismiss") {
           e.preventDefault();
           menu.dismissed = menu.token;
           closeMenu();
           return;
         }
-        if (rows && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        if (key === "next" || key === "prev") {
           e.preventDefault();
-          menu.active = (menu.active + (e.key === "ArrowDown" ? 1 : rows - 1)) % rows;
+          menu.active = (menu.active + (key === "next" ? 1 : rows - 1)) % rows;
           renderMenu();
           return;
         }
-        if ((e.key === "Enter" || e.key === "Tab") && !e.isComposing) {
-          // While the menu is open Enter picks, or waits for rows; it
-          // sends once the menu is closed (Escape sends the text as
-          // typed). Tab with no rows moves focus as usual.
-          if (!rows && e.key === "Tab") return;
+        // While the menu is open Enter picks, or waits for rows; it
+        // sends once the menu is closed (Escape sends the text as
+        // typed).
+        if (key === "pick" || key === "wait") {
           e.preventDefault();
-          if (rows) pickMenu(menu.active);
+          if (key === "pick") pickMenu(menu.active);
           return;
         }
       }
@@ -1589,6 +1589,20 @@ const SessionChat = (() => {
     return { text: inserted + text.slice(end), caret: inserted.length + (reuse ? 1 : 0) };
   }
 
+  /* A key with the / menu open: "dismiss", "next"/"prev" over the rows,
+   * "pick", or "wait" while the list is empty. Null falls through to the
+   * box's usual keys — Shift-Enter's newline and a no-row Tab's focus
+   * move among them. */
+  function menuKey(e, rows) {
+    if (e.isComposing) return null;
+    if (e.key === "Escape") return "dismiss";
+    if (rows && (e.key === "ArrowDown" || e.key === "ArrowUp"))
+      return e.key === "ArrowDown" ? "next" : "prev";
+    if (e.key === "Enter") return e.shiftKey ? null : rows ? "pick" : "wait";
+    if (e.key === "Tab") return rows ? "pick" : null;
+    return null;
+  }
+
   /* The / menu's list: fetched once per chat on the first /, filtered
    * as you type. A failed load retries the next time the menu opens. */
   const cmds = { key: null, response: null, loading: false, error: "", gen: 0 };
@@ -1780,7 +1794,7 @@ const SessionChat = (() => {
     get key() { return chat.key; },
     // Pure helpers, for tests.
     _test: { md, diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay,
-      railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand },
+      railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey },
   };
 })();
 
