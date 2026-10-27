@@ -581,6 +581,9 @@ private struct HarnessAccountCard: View {
                     }
                 }
             }
+            if let email = limit?.email {
+                Text(email).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            }
             if let limit, limit.status == .ok { usageSection(limit) }
             HStack {
                 Group {

@@ -259,6 +259,11 @@ class RateLimitInfo:
     extra_usage_usd: float | None = None
     # Usage billed beyond the plan, as ``_cursor_on_demand()`` describes it.
     on_demand: dict | None = None
+    # The sign-in's own address, where the credential files or the usage
+    # reply carry one (Claude's .claude.json, Codex's id_token, Cursor's
+    # state db, Devin's userStatus). Identity, not usage: kept on
+    # auth-required readings too, so a signed-out card can still say who.
+    email: str | None = None
     fetched_at: float = 0.0    # when the reading was actually taken;
                                # 0 means "just now", the common case.
                                # Lets a fetcher hand back a saved reading
@@ -305,6 +310,9 @@ class RateLimitInfo:
             ] if status == "ok" else [],
             "extra_usage_usd": self.extra_usage_usd if status == "ok" else None,
             "on_demand": self.on_demand if status == "ok" else None,
+            # Identity stays on a failed reading: a re-login card still
+            # names the account it is about.
+            "email": self.email,
             "fetched_at": self.fetched_at or None,
         }
 

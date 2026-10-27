@@ -40,6 +40,16 @@ private let older = #"""
         #expect(limit.extraUsageUSD == nil)
     }
 
+    @Test func theEmailDecodesAndBlankReadsAsNone() throws {
+        let with = older.replacingOccurrences(of: #""fetched_at""#, with:
+            #""email":" kai@work.com ","fetched_at""#)
+        #expect(try decode(with).email == "kai@work.com")
+        let blank = older.replacingOccurrences(of: #""fetched_at""#, with:
+            #""email":"  ","fetched_at""#)
+        #expect(try decode(blank).email == nil)
+        #expect(try decode(older).email == nil)
+    }
+
     @Test func eachWindowBecomesItsOwnReading() throws {
         let row = OtherLimitsModel.Row(name: "devin", limit: try decode(devin))
         let readings = LimitReading.all(cards: [], others: [row], now: Date(timeIntervalSince1970: 1789190000))

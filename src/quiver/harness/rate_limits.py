@@ -396,8 +396,8 @@ def _register_codex() -> None:
              signed_in=lambda: _read_codex_access_token() is not None)
 
 
-def _read_codex_access_token() -> str | None:
-    """The ChatGPT OAuth ``access_token`` from ``~/.codex/auth.json``."""
+def _read_codex_auth() -> dict | None:
+    """The parsed ``~/.codex/auth.json``, or None when absent or unreadable."""
     auth_path = os.path.expanduser("~/.codex/auth.json")
     if not os.path.exists(auth_path):
         return None
@@ -406,9 +406,13 @@ def _read_codex_access_token() -> str | None:
             auth = json.load(f)
     except (json.JSONDecodeError, OSError, RecursionError):
         return None
-    if not isinstance(auth, dict):
-        return None
-    tokens = auth.get("tokens") or {}
+    return auth if isinstance(auth, dict) else None
+
+
+def _read_codex_access_token() -> str | None:
+    """The ChatGPT OAuth ``access_token`` from ``~/.codex/auth.json``."""
+    auth = _read_codex_auth()
+    tokens = auth.get("tokens") if auth else None
     access_token = tokens.get("access_token") if isinstance(tokens, dict) else None
     return access_token or None
 
@@ -417,11 +421,18 @@ def _fetch_codex() -> RateLimitInfo | None:
     """Fetch Codex rate limits from the ChatGPT backend-api.
 
     Uses the OAuth ``access_token`` from ``~/.codex/auth.json`` to query
-    ``https://chatgpt.com/backend-api/wham/usage``.
+    ``https://chatgpt.com/backend-api/wham/usage``. The sign-in's address
+    rides the ``id_token`` claims, as the app's Codex reader takes it.
     """
-    access_token = _read_codex_access_token()
+    auth = _read_codex_auth()
+    tokens = auth.get("tokens") if auth else None
+    tokens = tokens if isinstance(tokens, dict) else {}
+    access_token = tokens.get("access_token")
     if not access_token:
         return None
+    claims = _jwt_payload(tokens.get("id_token"))
+    email = claims.get("email") if claims else None
+    email = email.strip() if isinstance(email, str) and email.strip() else None
 
     url = "https://chatgpt.com/backend-api/wham/usage"
     req = urllib.request.Request(
@@ -472,6 +483,7 @@ def _fetch_codex() -> RateLimitInfo | None:
         reset_at=reset_at,
         plan_type=plan_type,
         window_seconds=window_seconds,
+        email=email,
     )
 
 
@@ -805,6 +817,18 @@ def _read_claude_keychain_credentials() -> dict | None:
     return oauth if isinstance(oauth.get("accessToken"), str) else None
 
 
+def _read_claude_email() -> str | None:
+    """The signed-in address from ``~/.claude.json``'s ``oauthAccount``."""
+    try:
+        with open(os.path.expanduser("~/.claude.json")) as f:
+            config = json.load(f)
+    except (OSError, json.JSONDecodeError, RecursionError):
+        return None
+    account = config.get("oauthAccount") if isinstance(config, dict) else None
+    email = account.get("emailAddress") if isinstance(account, dict) else None
+    return email.strip() if isinstance(email, str) and email.strip() else None
+
+
 def _claude_expires_at_seconds(oauth: dict) -> float:
     """``expiresAt`` as epoch seconds; accepts ms or s, 0.0 when
     missing/unparseable."""
@@ -965,6 +989,9 @@ def _fetch_claude() -> RateLimitInfo | None:
     token = oauth.get("accessToken") if oauth else None
     if not token:
         return None
+    # The OAuth credential itself names no account; the global config
+    # does, same file the app's Claude reader asks.
+    email = _read_claude_email()
 
     # quiver never refreshes tokens, so an expired token always 401s.
     # Whether the login is actually dead is the refreshToken's call:
@@ -980,6 +1007,7 @@ def _fetch_claude() -> RateLimitInfo | None:
             info, _retry_at, _fp, fetched_at = _load_claude_state()
             if info is not None:
                 info.fetched_at = fetched_at
+                info.email = info.email or email
             return info
         return RateLimitInfo(
             tool_name="claude",
@@ -988,6 +1016,7 @@ def _fetch_claude() -> RateLimitInfo | None:
             reset_at=0.0,
             plan_type="auth-required",
             window_seconds=0,
+            email=email,
         )
 
     credential_fingerprint = _claude_credential_fingerprint(token)
@@ -1000,6 +1029,7 @@ def _fetch_claude() -> RateLimitInfo | None:
     ):
         if stale_info is not None:
             stale_info.fetched_at = fetched_at
+            stale_info.email = stale_info.email or email
         return stale_info
 
     req = urllib.request.Request(
@@ -1028,6 +1058,7 @@ def _fetch_claude() -> RateLimitInfo | None:
             )
             if stale_info is not None:
                 stale_info.fetched_at = fetched_at
+                stale_info.email = stale_info.email or email
             return stale_info
         # Any other failure (TLS, 401, timeout, network) is reported as no
         # reading. The aggregator's own 24h fallback then shows the last
@@ -1065,6 +1096,7 @@ def _fetch_claude() -> RateLimitInfo | None:
         plan_type="—",
         window_seconds=0,
         window=_CLAUDE_WINDOWS[best_window_key],
+        email=email,
     )
     _save_claude_state(info, credential_fingerprint=credential_fingerprint)
     return info
@@ -1809,6 +1841,59 @@ _CURSOR_BUCKETS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _read_cursor_state_row(path: str, keys: tuple[str, ...]) -> dict:
+    """The given ``ItemTable`` values from one ``state.vscdb`` file."""
+    uri = "file:" + urllib.parse.quote(path) + "?mode=ro"
+    try:
+        connection = sqlite3.connect(uri, uri=True, timeout=1.0)
+    except sqlite3.Error:
+        return {}
+    out = {}
+    try:
+        for key in keys:
+            row = connection.execute(
+                "SELECT value FROM ItemTable WHERE key = ?",
+                (key,),
+            ).fetchone()
+            if not row:
+                continue
+            value = row[0]
+            if isinstance(value, bytes):
+                try:
+                    value = value.decode("utf-8")
+                except UnicodeDecodeError:
+                    continue
+            if isinstance(value, str) and value.strip():
+                out[key] = value.strip()
+    except sqlite3.Error:
+        pass
+    finally:
+        connection.close()
+    return out
+
+
+def _read_cursor_state_value(
+    key: str,
+    candidates: tuple[str, ...] | None = None,
+) -> str | None:
+    """Return one ``ItemTable`` value from the editor's ``state.vscdb``.
+
+    ``candidates`` overrides the default search list — an extra account's
+    ``--user-data-dir`` db is passed as the sole candidate so an empty
+    account can never fall through to the default account's data.
+    """
+    for candidate in (
+        candidates if candidates is not None else _CURSOR_STATE_DB_CANDIDATES
+    ):
+        path = os.path.expanduser(candidate)
+        if not os.path.isfile(path):
+            continue
+        value = _read_cursor_state_row(path, (key,)).get(key)
+        if value is not None:
+            return value
+    return None
+
+
 def _read_cursor_state_token(
     candidates: tuple[str, ...] | None = None,
 ) -> str | None:
@@ -1818,37 +1903,7 @@ def _read_cursor_state_token(
     ``--user-data-dir`` db is passed as the sole candidate so an empty
     account can never fall through to the default account's token.
     """
-    for candidate in (
-        candidates if candidates is not None else _CURSOR_STATE_DB_CANDIDATES
-    ):
-        path = os.path.expanduser(candidate)
-        if not os.path.isfile(path):
-            continue
-        uri = "file:" + urllib.parse.quote(path) + "?mode=ro"
-        try:
-            connection = sqlite3.connect(uri, uri=True, timeout=1.0)
-        except sqlite3.Error:
-            continue
-        try:
-            row = connection.execute(
-                "SELECT value FROM ItemTable WHERE key = ?",
-                ("cursorAuth/accessToken",),
-            ).fetchone()
-        except sqlite3.Error:
-            continue
-        finally:
-            connection.close()
-        if not row:
-            continue
-        value = row[0]
-        if isinstance(value, bytes):
-            try:
-                value = value.decode("utf-8")
-            except UnicodeDecodeError:
-                continue
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
+    return _read_cursor_state_value("cursorAuth/accessToken", candidates)
 
 
 def _read_cursor_keychain_token() -> str | None:
@@ -1901,9 +1956,11 @@ def _get_cursor_access_token() -> str | None:
     return None
 
 
-def _cursor_token_claims(token: str) -> dict | None:
-    """Decode the JWT payload without verifying it; only ``sub`` and
-    ``exp`` are read, and the server still checks the signature."""
+def _jwt_payload(token) -> dict | None:
+    """Decode a JWT payload without verifying the signature; display
+    fields only (``sub``, ``exp``, ``email``), the server still checks."""
+    if not isinstance(token, str):
+        return None
     try:
         payload = token.split(".")[1]
         payload += "=" * (-len(payload) % 4)
@@ -1911,6 +1968,12 @@ def _cursor_token_claims(token: str) -> dict | None:
     except (IndexError, ValueError, RecursionError):
         return None
     return claims if isinstance(claims, dict) else None
+
+
+def _cursor_token_claims(token: str) -> dict | None:
+    """Decode the JWT payload without verifying it; only ``sub`` and
+    ``exp`` are read, and the server still checks the signature."""
+    return _jwt_payload(token)
 
 
 def _cursor_session_cookie(token: str, claims: dict) -> str | None:
@@ -2084,6 +2147,48 @@ def _warn_cursor_401() -> None:
     )
 
 
+# The identity rows the editor writes beside the session token: the
+# address itself and the profile it belongs to.
+_CURSOR_IDENTITY_KEYS = (
+    "cursorAuth/accessToken",
+    "cursorAuth/cachedEmail",
+    "cursorAuth/cachedScopedProfile",
+)
+
+
+def _cursor_email(state_db: str | None, token: str, claims: dict) -> str | None:
+    """The address of the account whose token fetched usage, or None.
+
+    ``cachedEmail`` is the only place the address exists — the JWT
+    itself has no email claim. A token read from the same db row set is
+    that account's by construction, but the CLI's auth-file or keychain
+    token can belong to a different sign-in than the editor's. Then the
+    email only counts once the ``cachedScopedProfile`` authId stored
+    beside it matches the token's own ``sub``: an editor signed in as
+    someone else must not lend its address to the CLI account's usage.
+    """
+    candidates = (
+        (state_db,) if state_db is not None else _CURSOR_STATE_DB_CANDIDATES
+    )
+    rows = []
+    for candidate in candidates:
+        path = os.path.expanduser(candidate)
+        if os.path.isfile(path):
+            rows.append(_read_cursor_state_row(path, _CURSOR_IDENTITY_KEYS))
+    for row in rows:
+        if row.get("cursorAuth/accessToken") == token:
+            return row.get("cursorAuth/cachedEmail")
+    for row in rows:
+        profile = row.get("cursorAuth/cachedScopedProfile")
+        try:
+            auth_id = json.loads(profile).get("authId") if profile else None
+        except (ValueError, RecursionError):
+            auth_id = None
+        if isinstance(auth_id, str) and auth_id and auth_id == claims.get("sub"):
+            return row.get("cursorAuth/cachedEmail")
+    return None
+
+
 def _fetch_cursor(state_db: str | None = None) -> RateLimitInfo | None:
     """Read the current billing period's included usage for Cursor.
 
@@ -2101,6 +2206,7 @@ def _fetch_cursor(state_db: str | None = None) -> RateLimitInfo | None:
     claims = _cursor_token_claims(token)
     if claims is None:
         return None
+    email = _cursor_email(state_db, token, claims)
 
     expires_at = claims.get("exp")
     if (
@@ -2117,6 +2223,7 @@ def _fetch_cursor(state_db: str | None = None) -> RateLimitInfo | None:
             reset_at=0.0,
             plan_type="auth-required",
             window_seconds=0,
+            email=email,
         )
 
     cookie = _cursor_session_cookie(token, claims)
@@ -2195,6 +2302,7 @@ def _fetch_cursor(state_db: str | None = None) -> RateLimitInfo | None:
     info = _parse_cursor_usage(data) if isinstance(data, dict) else None
     if info is None:
         return None
+    info.email = email
     plan = plan_info.get("planInfo") if plan_info else None
     plan_name = plan.get("planName") if isinstance(plan, dict) else None
     if isinstance(plan_name, str) and plan_name.strip():
@@ -2502,6 +2610,10 @@ def _parse_devin_status(data: dict) -> RateLimitInfo | None:
     plan = status.get("planStatus") if isinstance(status, dict) else None
     if not isinstance(plan, dict):
         return None
+    # ``name`` sits beside it, but the card shows one line and the address
+    # is what a sign-in is identified by.
+    email = status.get("email") if isinstance(status, dict) else None
+    email = email.strip() if isinstance(email, str) and email.strip() else None
     info = plan.get("planInfo") if isinstance(plan.get("planInfo"), dict) else {}
     plan_name = info.get("planName")
     plan_type = (
@@ -2558,6 +2670,7 @@ def _parse_devin_status(data: dict) -> RateLimitInfo | None:
             window=best_label,
             windows=windows,
             extra_usage_usd=extra_usage_usd,
+            email=email,
         )
 
     try:
@@ -2581,6 +2694,7 @@ def _parse_devin_status(data: dict) -> RateLimitInfo | None:
         remaining_units=remaining,
         total_units=total,
         extra_usage_usd=extra_usage_usd,
+        email=email,
     )
 
 

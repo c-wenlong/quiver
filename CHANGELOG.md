@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Account emails on every rate-limit card.** `swe list --usage --json`
+  and `swe harness usage` now carry an `email` field where the sign-in
+  names one: Claude's `~/.claude.json`, Codex's `id_token` claims,
+  Cursor's `cursorAuth/cachedEmail` in its state db, and Devin's
+  `userStatus`. The Mac app's Accounts page shows it on the Cursor,
+  Devin and other harness cards, like it already did for Claude and
+  Codex, and keeps showing it on a re-login card so a signed-out
+  account still says who it is.
+
 - **Resolve a GitHub issue with an agent (hub side).** `POST
   /v1/issues/resolve {repo, number, harness, prompt?, context?}` makes
   branch `quiver/issue-<n>` off the pinned repo's default branch in a
