@@ -452,7 +452,10 @@ struct PullDetail: Decodable {
 }
 
 /// One `statusCheckRollup` entry, folded to `checks`' state words.
-struct CheckRun: Decodable, Identifiable, Hashable {
+/// Not `Identifiable`: several providers can report the same
+/// `workflow/name`, so the fields can't key a `ForEach` — the detail
+/// page keys rows by their slot in the reply.
+struct CheckRun: Decodable, Hashable {
     let name: String?
     let workflow: String?
     let status: String?
@@ -460,7 +463,6 @@ struct CheckRun: Decodable, Identifiable, Hashable {
     /// passing | failing | running | none
     let state: String?
     let url: String?
-    var id: String { "\(workflow ?? "")/\(name ?? "")" }
 }
 
 /// One `latestReviews` entry; `review_requests` decodes as names.

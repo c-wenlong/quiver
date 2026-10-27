@@ -13,11 +13,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from quiver.github import cli as ghcli
 from quiver.github import gh, manage, repos
 from quiver.github import pulls as gh_pulls
 from quiver.remote import pulls as pulls_mod
 from quiver.remote import protocol
 from quiver.webapp.pages import _github as G
+from quiver.webapp.pages import repositories
 
 from tests.test_remote_hub import _Server, _session
 
@@ -247,6 +249,42 @@ class TestDetail(_Base):
     def test_needs_a_paired_device(self):
         status, _ = self.srv.request("GET", "/v1/pulls/o/r/5")
         self.assertEqual(status, 401)
+
+    def test_a_page_populated_entry_still_carries_the_extra_fields(self):
+        """The Repositories page caches the same ``("pr", hk, repo, n)``
+        key with a plain ``_pr_detail`` row — a phone read of that
+        entry must still carry ``worktree`` and ``suggested_prompt``,
+        and must not pay for a second ``gh pr view``."""
+        key = ("pr", G.home_key(self.srv.home), "o/r", "5")
+        G.CACHE.get(key, lambda: {
+            "repo": "o/r", "status": "ok",
+            "pr": ghcli._pr_detail(RAW_PR, "o/r")})
+        with self._stubs(view=gh.GhResult("upstream-error",
+                                          error="must not be read")):
+            status, body = self._get("/v1/pulls/o/r/5")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["pr"]["title"], "Fix the thing")
+        self.assertTrue(body["pr"]["worktree"].endswith("o__r-pr5"))
+        self.assertTrue(body["pr"]["suggested_prompt"].startswith(
+            "Review https://github.com/o/r/pull/5"))
+
+
+class TestDropRepo(_Base):
+    def test_merge_invalidation_covers_the_phone_reads(self):
+        """``repositories._drop_repo`` runs after a merge or check
+        rerun; the phone's list and detail entries for the repo must
+        go with it."""
+        hk = G.home_key(self.srv.home)
+        list_key = ("pulls", hk, "o/r")
+        detail_key = ("pr", hk, "o/r", "5")
+        for key in (list_key, detail_key):
+            G.CACHE.get(key, lambda: {"stale": True})
+        repositories._drop_repo(self.srv.home, "o/r")
+        fresh = {"fresh": True}
+        for key in (list_key, detail_key):
+            value, _at = G.CACHE.get(key, lambda: fresh)
+            self.assertIs(value, fresh, key)
 
 
 class TestOpen(_Base):
@@ -491,6 +529,23 @@ class TestBuildPrompt(unittest.TestCase):
             "Review https://github.com/o/r/pull/9"))
         self.assertIn("(no description)", text)
         self.assertNotIn("checks", text.lower())
+
+    def test_limit_budgets_the_whole_prompt(self):
+        """``suggested_prompt`` goes back to the open route verbatim,
+        so the whole assembled prompt — body, the checks line and the
+        closing — must fit the cap it will be validated against."""
+        pr = {"number": 5, "title": "t", "body": "x" * 60_000,
+              "checks": "failing",
+              "check_runs": [{"name": f"ci-check-{i}-" + "n" * 120,
+                              "state": "failing"} for i in range(200)],
+              "url": "", "base": "main", "branch": "b"}
+        text = gh_pulls.build_prompt("o/r", pr, "/w",
+                                     limit=protocol.MAX_LAUNCH_PROMPT)
+        self.assertLessEqual(len(text), protocol.MAX_LAUNCH_PROMPT)
+        self.assertTrue(text.startswith("Review https://"))
+        self.assertIn("Failing checks: ", text)
+        tighter = gh_pulls.build_prompt("o/r", pr, "/w", limit=8_000)
+        self.assertLessEqual(len(tighter), 8_000)
 
 
 if __name__ == "__main__":

@@ -11,8 +11,15 @@ struct PullsView: View {
     var body: some View {
         let sections = PullGrouping.sections(of: model.repos, filter: filter)
         PageScroll {
-            if model.loaded, model.envBlocked == nil, model.error == nil {
+            if model.loaded, model.envBlocked == nil, !model.repos.isEmpty {
                 filterBar
+            }
+            // A failed refresh keeps the rows it already had — the
+            // notice says why they're stale rather than replacing them.
+            if let error = model.error, !model.repos.isEmpty {
+                Label("Couldn't refresh: \(error)", systemImage: "exclamationmark.triangle")
+                    .font(Theme.caption).foregroundStyle(Theme.warningText)
+                    .lineLimit(2)
             }
             if !model.loaded {
                 LoadingRow(text: "Loading pull requests")

@@ -50,19 +50,6 @@ LIST_LIMIT = 50
 _preparing: set[tuple[str, int]] = set()
 _preparing_lock = threading.Lock()
 
-# One worktree call at a time per repo mirror, ``(home, repo)``: two
-# PRs of one repo share the mirror's FETCH_HEAD, so a second fetch
-# landing between the first's fetch and checkout would hand it the
-# wrong head. The web app's worktree action holds the same lock.
-_MIRROR_LOCKS: dict = {}
-_MIRROR_LOCKS_GUARD = threading.Lock()
-
-
-def _mirror_lock(home, repo: str) -> threading.Lock:
-    with _MIRROR_LOCKS_GUARD:
-        return _MIRROR_LOCKS.setdefault(
-            (G.home_key(home), repo.lower()), threading.Lock())
-
 
 def _refresh(args) -> bool:
     """A query dict's ``refresh=1``/``refresh=true``."""
@@ -175,15 +162,29 @@ def detail(state, owner: str, name: str, number_raw: str,
                      "error": gh.env_error(env)}
 
     def fetch():
-        result = gh_pulls.fetch(pinned, number, state.home)
+        result = gh_pulls.fetch(pinned, number, state.home,
+                                prompt_limit=protocol.MAX_LAUNCH_PROMPT)
         if result.status != "ok":
             return {"repo": pinned, "status": result.status, "pr": None,
                     "error": result.error or result.status}
         return {"repo": pinned, "status": "ok", "pr": result.data}
 
+    # The Repositories page caches the same PR under ("pr", hk, repo,
+    # n): one entry keeps the phone and the page on the same read, and
+    # its merge/rerun invalidation (_drop_repo) covers us too. A
+    # page-populated entry lacks the two fields only this route adds,
+    # so they're filled in on the way out (both are pure).
     value, at = G.CACHE.get(
-        ("pull", G.home_key(state.home), pinned, number), fetch,
+        ("pr", G.home_key(state.home), pinned, str(number)), fetch,
         refresh=_refresh(args), ok=lambda v: v["status"] == "ok")
+    pr = value.get("pr")
+    if isinstance(pr, dict) and "worktree" not in pr:
+        worktree = gh_pulls.worktree_path(pinned, number, state.home)
+        pr = {**pr, "worktree": worktree,
+              "suggested_prompt": gh_pulls.build_prompt(
+                  pinned, pr, worktree,
+                  limit=protocol.MAX_LAUNCH_PROMPT)}
+        value = {**value, "pr": pr}
     return 200, {**base, **value, "fetched_at": at}
 
 
@@ -311,7 +312,10 @@ def _prepare_and_launch(state, launch_id: str, repo: str, number: int,
         note("Cloning mirror…")
     else:
         note(f"Checking out PR #{number}…")
-    with _mirror_lock(state.home, repo):
+    # One checkout at a time per repo mirror — the same table the web
+    # app's worktree action holds, so a phone open and a page open of
+    # two PRs in one repo can't interleave on FETCH_HEAD.
+    with G.mirror_lock(state.home, repo):
         made = manage.pr_worktree(repo, str(number), state.home)
     if made.status != "ok":
         return made.error or made.status
@@ -319,7 +323,8 @@ def _prepare_and_launch(state, launch_id: str, repo: str, number: int,
     state.settle_launch(launch_id, cwd=cwd)
 
     prompt = cmd["prompt"] or gh_pulls.build_prompt(
-        repo, pr or {"number": number}, cwd)
+        repo, pr or {"number": number}, cwd,
+        limit=protocol.MAX_LAUNCH_PROMPT)
     if len(prompt) > protocol.MAX_LAUNCH_PROMPT:
         return (f"The prompt is over {protocol.MAX_LAUNCH_PROMPT} "
                 "characters; shorten it")

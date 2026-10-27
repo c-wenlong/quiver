@@ -19,6 +19,13 @@ struct PullDetailView: View {
     var body: some View {
         PageScroll {
             if let pr = reply?.pr {
+                // A failed refresh keeps the PR it already had — the
+                // notice says why it's stale rather than replacing it.
+                if let error {
+                    Label("Couldn't refresh: \(error)", systemImage: "exclamationmark.triangle")
+                        .font(Theme.caption).foregroundStyle(Theme.warningText)
+                        .lineLimit(2)
+                }
                 header(pr)
                 actions(pr)
                 checksSection(pr)
@@ -142,7 +149,8 @@ struct PullDetailView: View {
         let runs = pr.checkRuns ?? []
         if !runs.isEmpty {
             GroupLabel(text: "Checks", trailing: pr.checks)
-            CardList(data: runs) { run in
+            CardList(data: runs.enumerated().map(CheckSlot.init)) { slot in
+                let run = slot.run
                 let row = HStack(spacing: 12) {
                     ChecksGlyph(state: run.state)
                     Text(run.name ?? "check").font(Theme.control).foregroundStyle(Theme.textPrimary).lineLimit(1)
@@ -203,6 +211,24 @@ struct PullDetailView: View {
 
 extension PullDetail {
     var updatedDate: Date? { GitHubTime.date(updatedAt) }
+}
+
+/// Two providers can report a check under the same `workflow/name`,
+/// so the row fields can't key a `ForEach` — the check's slot in the
+/// reply is its identity.
+private struct CheckSlot: Identifiable {
+    let offset: Int
+    let run: CheckRun
+    var id: Int { offset }
+
+    init(offset: Int, run: CheckRun) {
+        self.offset = offset
+        self.run = run
+    }
+
+    init(_ pair: EnumeratedSequence<[CheckRun]>.Element) {
+        self.init(offset: pair.offset, run: pair.element)
+    }
 }
 
 /// The Open-in-session sheet: the PR's worktree is chosen by the hub,
