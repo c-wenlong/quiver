@@ -47,6 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   latest GitHub release and, when it carries a `.dmg`, link straight to it
   with the Apple mark. Until a release has one they keep pointing at the
   install commands.
+- **Pixel logos drift behind the landing page hero.** Every harness and
+  inference provider from Settings › Providers (68 marks from the app's
+  icon set) floats up as pixel art. It pauses off screen, thins out on
+  phones and stays still under reduced motion.
 
 - **Mac app: editable Service status.** Every card on the Service status
   page can be edited or removed, not just the pages the user added: an
