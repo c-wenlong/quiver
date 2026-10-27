@@ -652,6 +652,13 @@ to use their own login state and environment."""
                                             ~/.quiver/worktrees (a session's
                                             launch point)
   {c('cyan', 'swe gh issue [--repo=R]')}          Issues
+  {c('cyan', 'swe gh issue view <N>')}           One issue: body, comments, and the
+                                            prompt an agent resolving it gets
+  {c('cyan', 'swe gh issue comment <N> --body=TEXT')}
+                                            Comment on an issue as you
+  {c('cyan', 'swe gh issue worktree <N>')}       Branch quiver/issue-N off the default
+                                            branch, checked out under
+                                            ~/.quiver/worktrees
   {c('cyan', 'swe gh run [--repo=R]')}            Workflow runs (alias: actions)
   {c('cyan', 'swe gh run rerun <id> [--failed]')}  Re-run a workflow run
   {c('cyan', 'swe gh pages [--repo=R]')}          GitHub Pages site + latest build
@@ -671,14 +678,16 @@ to use their own login state and environment."""
   {c('cyan', '--limit=N')}            Rows to fetch (default 30, cap 200)
   {c('cyan', '--all')}                inbox: include read notifications
   {c('cyan', '--web')}                Open the matching github.com page instead
+  {c('cyan', '--body=TEXT')}          issue comment: the comment, as one argument
+                          (it reaches gh on stdin, so any text is safe)
   {c('cyan', '--json')}               {{schema, data}} envelope; data is
                           {{github: {{status, login}}, results: [...]}} with one
                           entry per repo: ok → rows, else a typed status
                           (not-found, upstream-error) plus the error text
 
   Auth is ambient: swe gh uses your {c('cyan', 'gh auth login')} and never
-  stores tokens. The few writes (merge, rerun, inbox read) are explicit
-  commands, never side effects of a read."""
+  stores tokens. The few writes (merge, rerun, inbox read, issue comment)
+  are explicit commands, never side effects of a read."""
     ),
     "remote": (
         "Watch and steer sessions from a phone",

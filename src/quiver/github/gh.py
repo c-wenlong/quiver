@@ -78,12 +78,18 @@ def probe_env() -> GhEnv:
     return env
 
 
-def run_gh(args: list[str], timeout: int = GH_TIMEOUT) -> GhResult:
-    """Run ``gh <args>`` and return the raw stdout, never raising."""
+def run_gh(args: list[str], timeout: int = GH_TIMEOUT,
+           stdin: str | None = None) -> GhResult:
+    """Run ``gh <args>`` and return the raw stdout, never raising.
+
+    ``stdin`` is written to the process's standard input: free text such
+    as a comment body goes there (``--body-file -``), never into argv.
+    """
     try:
         done = subprocess.run(
             ["gh", *args],
             capture_output=True, text=True, timeout=timeout,
+            input=stdin,
         )
     except FileNotFoundError:
         return GhResult("unavailable", error="gh is not installed")
