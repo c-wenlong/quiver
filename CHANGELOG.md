@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Slash commands in the web app's chat.** Typing `/` at the start of a
+  session's prompt box lists the commands that session's harness runs —
+  the phone app's "/" menu on the web: built-ins plus user, project,
+  skill and plugin commands from `GET /v1/sessions/{key}/commands`, with
+  each command's argument hint, description and source tag. Arrows
+  highlight, Enter or Tab inserts `/name ` (or the command's own insert
+  text, like a Codex skill's `$name`), and the harness expands the
+  command when the message arrives, whatever the session's channel.
+
 - **Slash-command menu in the Mac app's session chat.** Typing `/` at
   the start of the prompt box opens the commands this session's harness
   will run — built-ins, user and project commands, skills and plugin

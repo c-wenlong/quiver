@@ -305,6 +305,81 @@ struct SkeletonBlock: View {
     }
 }
 
+/// The verbs the working indicator cycles through. One list for the
+/// whole app, so every surface says the agent is working the same way.
+enum WorkingVerbs {
+    static let all = [
+        "Working", "Thinking", "Reading", "Writing",
+        "Building", "Checking", "Pondering", "Scanning",
+    ]
+}
+
+/// A cycling verb with a light band sweeping diagonally across it — the
+/// shared "the agent is working" readout. The widest verb is laid out
+/// invisibly beside it so a word swap never resizes the pill it sits in.
+struct WorkingVerb: View {
+    /// Seconds a verb stays up; the band sweeps it once per verb.
+    static let verbSeconds: Double = 1.8
+    /// Half the band's width as a fraction of the word's width.
+    static let bandHalf: Double = 0.18
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if reduceMotion {
+            Text("Working…").foregroundStyle(Theme.textSecondary)
+        } else {
+            TimelineView(.animation) { context in
+                let t = context.date.timeIntervalSinceReferenceDate
+                let index = Int(t / Self.verbSeconds) % WorkingVerbs.all.count
+                let sweep = t.truncatingRemainder(dividingBy: Self.verbSeconds)
+                    / Self.verbSeconds
+                ZStack(alignment: .leading) {
+                    Text("\(Self.widest)…").opacity(0)
+                    shimmering(WorkingVerbs.all[index], sweep: sweep)
+                        .id(index)
+                        .transition(.opacity)
+                }
+                .animation(.easeInOut(duration: 0.25), value: index)
+            }
+        }
+    }
+
+    /// The verb that pins the pill's width.
+    private static var widest: String {
+        WorkingVerbs.all.max { $0.count < $1.count } ?? "Working"
+    }
+
+    /// `word` in the quiet colour, its brighter copy revealed only
+    /// inside the sweeping band.
+    private func shimmering(_ word: String, sweep: Double) -> some View {
+        Text("\(word)…")
+            .foregroundStyle(Theme.textSecondary)
+            .overlay {
+                Text("\(word)…")
+                    .foregroundStyle(Theme.textPrimary)
+                    .mask(band(at: sweep))
+            }
+            .accessibilityHidden(true)
+    }
+
+    /// A clear→white→clear gradient aimed diagonally, its centre at
+    /// `sweep` between off-left (0) and off-right (1).
+    private func band(at sweep: Double) -> LinearGradient {
+        let half = Self.bandHalf
+        let centre = -half + (1 + half * 2) * sweep
+        return LinearGradient(
+            stops: [
+                .init(color: .clear, location: max(0, centre - half)),
+                .init(color: .white, location: min(1, max(0, centre))),
+                .init(color: .clear, location: min(1, centre + half)),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+}
+
 // MARK: - Harness logos
 
 /// A harness shown as its logo, the way the Mac app's `HarnessIcon` does:

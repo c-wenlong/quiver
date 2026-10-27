@@ -464,6 +464,62 @@ class TestChatScript(unittest.TestCase):
         self.assertEqual(out["delays"], [None, 180, 60, None])
         self.assertEqual(out["keys"], ["claude:s1@mac", None, None])
 
+    def test_slash_command_menu_helpers(self):
+        """The / menu's token, filtering and insertion, as the hub PWA's
+        prompt menu has them."""
+        out = self.run_js("""
+          const rows = [
+            { name: "clear", description: "Clear history", source: "builtin" },
+            { name: "compact", source: "builtin", argument_hint: "[focus]" },
+            { name: "review-pr", description: "Review a PR", source: "project" },
+          ];
+          return {
+            tok: [T.slashToken("/co", 3), T.slashToken("/co", 1), T.slashToken("a/co", 3),
+                  T.slashToken("/clear now", 6), T.slashToken("/clear n", 8), T.slashToken("", 0)],
+            starts: T.filterCommands(rows, "c").map((c) => c.name),
+            all: T.filterCommands(rows, "").length,
+            holds: T.filterCommands(rows, "ear").map((c) => c.name),
+            ins: T.insertCommand("/co", { start: 0, end: 3, query: "co" }, rows[1]),
+            reuse: T.insertCommand("/co now", { start: 0, end: 3, query: "co" }, rows[0]),
+            custom: T.insertCommand("/$", { start: 0, end: 2, query: "$" }, { name: "x", insert: "$x" }),
+            insert: T.commandInsert({ name: "model", insert: "$fast " }),
+            labels: [T.sourceLabel("builtin"), T.sourceLabel("plugin"), T.sourceLabel(""), T.sourceLabel("odd")],
+            keys: [T.menuKey({ key: "Escape" }, 2, false), T.menuKey({ key: "ArrowDown" }, 2, true),
+                   T.menuKey({ key: "ArrowUp" }, 2, true), T.menuKey({ key: "Enter" }, 2, false),
+                   T.menuKey({ key: "Tab" }, 2, true), T.menuKey({ key: "Enter" }, 0, true),
+                   T.menuKey({ key: "Enter" }, 0, false),
+                   T.menuKey({ key: "Tab" }, 0, false), T.menuKey({ key: "ArrowDown" }, 0, true),
+                   T.menuKey({ key: "Enter", shiftKey: true }, 2, true),
+                   T.menuKey({ key: "Enter", isComposing: true }, 2, false), T.menuKey({ key: "x" }, 2, false)],
+          };""")
+        # A /token lives only at the start, inside the first word; the
+        # caret on the word's end still counts, one space in ends it.
+        self.assertEqual(out["tok"], [
+            {"start": 0, "end": 3, "query": "co"},
+            {"start": 0, "end": 3, "query": ""},
+            None,
+            {"start": 0, "end": 6, "query": "clear"},
+            None,
+            None,
+        ])
+        self.assertEqual(out["starts"], ["clear", "compact"])
+        self.assertEqual(out["all"], 3)
+        self.assertEqual(out["holds"], ["clear"])
+        # A pick inserts "/name " with the caret past its space; a space
+        # already after the word is reused instead of doubled.
+        self.assertEqual(out["ins"], {"text": "/compact ", "caret": 9})
+        self.assertEqual(out["reuse"], {"text": "/clear now", "caret": 7})
+        # The hub's own insert text wins (a Codex skill is $name).
+        self.assertEqual(out["custom"], {"text": "$x ", "caret": 3})
+        self.assertEqual(out["insert"], "$fast ")
+        self.assertEqual(out["labels"], ["Built-in", "Plugin", "", "Odd"])
+        # Escape closes, arrows move only with rows, Enter picks, waits
+        # only while the first fetch is out, then sends on an answered
+        # empty list. Tab moves focus without rows, and Shift-Enter falls
+        # through to the box's newline, menu open or not.
+        self.assertEqual(out["keys"], ["dismiss", "next", "prev", "pick", "pick",
+                                       "wait", None, None, None, None, None, None])
+
 
 if __name__ == "__main__":
     unittest.main()
