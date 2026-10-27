@@ -339,12 +339,14 @@ const SessionChat = (() => {
         <div class="skel-lines"><div class="skel skel-line" style="--w:78%"></div><div class="skel skel-line" style="--w:90%"></div><div class="skel skel-line" style="--w:48%"></div></div>
       </div></div>
       <div class="chat-working hidden" id="chat-working" role="status" aria-label="Agent is working"><span></span><span></span><span></span></div>
+      <div class="chat-menu hidden" id="chat-menu" role="listbox" aria-label="Commands"></div>
       <form class="chat-composer" id="chat-composer" autocomplete="off">
         <select class="field chat-mode" id="chat-mode" aria-label="Send mode"
           title="Queue waits for the agent to finish its turn; Steer writes now">
           <option value="queue">Queue</option><option value="steer">Steer</option>
         </select>
-        <textarea class="field chat-text" id="chat-text" rows="1" placeholder="Loading…" disabled></textarea>
+        <textarea class="field chat-text" id="chat-text" rows="1" placeholder="Loading…" disabled
+          role="combobox" aria-controls="chat-menu" aria-expanded="false" aria-autocomplete="list"></textarea>
         <button type="button" class="icon-button chat-stop" id="chat-stop" aria-label="Stop" title="Stop the agent's turn" disabled>
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></svg></button>
         <button type="submit" class="chat-send" id="chat-send" disabled>Send</button>
@@ -431,6 +433,7 @@ const SessionChat = (() => {
     // The composer always renders: on observed sessions it's disabled so
     // it still shows where typing will happen once attached.
     input.disabled = !chat.rowKnown || observed;
+    if (input.disabled && menu.open) closeMenu();
     input.placeholder = !chat.rowKnown ? "Loading…"
       : observed ? "Read-only until this session is attached" : "Message the session";
     $("chat-send").disabled = !chat.rowKnown || observed;
@@ -1349,25 +1352,85 @@ const SessionChat = (() => {
     chat.key = null;
     chat.row = null;
     chat.toolCards.clear();
+    resetMenus();
   }
 
   /* ------------------------------------------------------------- composer */
 
+  function growComposer() {
+    const input = $("chat-text");
+    if (!input) return;
+    input.style.height = "auto";
+    input.style.height = `${Math.min(input.scrollHeight, 220)}px`;
+  }
+
   function bindComposer() {
     const form = $("chat-composer");
     const input = $("chat-text");
-    const grow = () => {
-      input.style.height = "auto";
-      input.style.height = `${Math.min(input.scrollHeight, 220)}px`;
-    };
-    input.oninput = grow;
+    input.oninput = growComposer;
     input.onkeydown = (e) => {
+      if (menu.open) {
+        const rows = menu.rows.length;
+        if (e.key === "Escape") {
+          e.preventDefault();
+          menu.dismissed = menu.token;
+          closeMenu();
+          return;
+        }
+        if (rows && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+          e.preventDefault();
+          menu.active = (menu.active + (e.key === "ArrowDown" ? 1 : rows - 1)) % rows;
+          renderMenu();
+          return;
+        }
+        if ((e.key === "Enter" || e.key === "Tab") && !e.isComposing) {
+          // While the menu is open Enter picks, or waits for rows; it
+          // sends once the menu is closed (Escape sends the text as
+          // typed). Tab with no rows moves focus as usual.
+          if (!rows && e.key === "Tab") return;
+          e.preventDefault();
+          if (rows) pickMenu(menu.active);
+          return;
+        }
+      }
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         form.requestSubmit();
       }
     };
-    form.onsubmit = (e) => { e.preventDefault(); send(grow); };
+    input.addEventListener("input", trackMenus);
+    input.addEventListener("focus", trackMenus);
+    // The caret moved without typing: an arrow key or a click in the text.
+    input.addEventListener("click", trackMenus);
+    input.addEventListener("keyup", (e) => {
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End") trackMenus();
+    });
+    // Closing on blur waits a beat, so a click on a row still lands.
+    input.addEventListener("blur", () => {
+      setTimeout(() => { if (document.activeElement !== input) closeMenu(); }, 150);
+    });
+    // A row picks on a completed click: pointerdown only keeps the box's
+    // focus, and a drag that scrolls the list picks nothing.
+    const box = $("chat-menu");
+    let menuTap = null;
+    box.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      const row = e.target.closest(".menu-row");
+      menuTap = row ? { i: Number(row.dataset.i), x: e.clientX, y: e.clientY, id: e.pointerId } : null;
+    });
+    box.addEventListener("pointermove", (e) => {
+      if (menuTap && e.pointerId === menuTap.id &&
+          Math.hypot(e.clientX - menuTap.x, e.clientY - menuTap.y) > 8) menuTap = null;
+    });
+    box.addEventListener("pointercancel", () => { menuTap = null; });
+    box.addEventListener("pointerup", (e) => {
+      const tap = menuTap;
+      menuTap = null;
+      if (!tap || e.pointerId !== tap.id) return;
+      const row = e.target.closest(".menu-row");
+      if (row && Number(row.dataset.i) === tap.i) pickMenu(tap.i);
+    });
+    form.onsubmit = (e) => { e.preventDefault(); send(); };
     $("chat-stop").onclick = interrupt;
   }
 
@@ -1394,12 +1457,14 @@ const SessionChat = (() => {
     bubble.appendChild(note);
   }
 
-  async function send(grow) {
+  async function send() {
     const input = $("chat-text");
     const text = input.value.trim();
     if (!text || !chat.key || input.disabled) return;
     input.value = "";
-    grow();
+    growComposer();
+    // An open / menu's token is gone with the text.
+    trackMenus();
     const mode = $("chat-mode").value;
     const clientId = newClientId();
     const bubble = appendOptimistic(text, clientId);
@@ -1472,6 +1537,233 @@ const SessionChat = (() => {
     scrollBottom();
   }
 
+  /* -------------------------------------------------------- command menu
+     Typing / as the box's first character lists the commands this
+     session's harness runs (the hub's GET .../commands), filtered here
+     as the name grows. The hub only lists them: a pick inserts
+     "/name " (or the command's own `insert`), and the harness expands
+     it when the message lands. A port of the hub PWA's "/" menu
+     (src/quiver/remote/web/app.js). Positions are offsets into the
+     box's value; the caret is the input's selectionEnd. */
+
+  /* A `/command` being typed: the box starts with / and the caret is
+   * still in that first word. */
+  function slashToken(text, caret) {
+    if (caret < 1 || text[0] !== "/" || /\s/.test(text.slice(0, caret))) return null;
+    let end = caret;
+    while (end < text.length && !/\s/.test(text[end])) end++;
+    return { start: 0, end, query: text.slice(1, caret) };
+  }
+
+  /* What the box gets on a pick, always ending in a space: /name, or
+   * the hub's own `insert` (Codex skills are $name). */
+  function commandInsert(c) {
+    const text = c.insert || `/${c.name}`;
+    return /\s$/.test(text) ? text : `${text} `;
+  }
+
+  const SOURCE_LABEL = { builtin: "Built-in", user: "User", project: "Project", skill: "Skill", plugin: "Plugin" };
+
+  function sourceLabel(src) {
+    if (!src) return "";
+    return SOURCE_LABEL[src] || src.charAt(0).toUpperCase() + src.slice(1);
+  }
+
+  /* Commands whose name starts with the query, then those that hold it
+   * anywhere, case-insensitively; the hub's order within each. */
+  function filterCommands(commands, query) {
+    const q = query.toLowerCase();
+    if (!q) return commands;
+    const name = (c) => c.name.toLowerCase();
+    return commands.filter((c) => name(c).startsWith(q))
+      .concat(commands.filter((c) => !name(c).startsWith(q) && name(c).includes(q)));
+  }
+
+  /* The box after picking a command, with the caret after its space,
+   * ready for an argument. An existing space after the word is reused. */
+  function insertCommand(text, token, c) {
+    const end = Math.min(Math.max(token.end, 0), text.length);
+    let inserted = commandInsert(c);
+    const reuse = end < text.length && /\s/.test(text[end]);
+    if (reuse) inserted = inserted.slice(0, -1);
+    return { text: inserted + text.slice(end), caret: inserted.length + (reuse ? 1 : 0) };
+  }
+
+  /* The / menu's list: fetched once per chat on the first /, filtered
+   * as you type. A failed load retries the next time the menu opens. */
+  const cmds = { key: null, response: null, loading: false, error: "", gen: 0 };
+
+  /* The menu's state: the token it opened on, the filtered rows and the
+   * highlighted one. `dismissed` is the token Escape closed it on: it
+   * stays closed until the token changes. */
+  const menu = { open: false, token: null, rows: [], active: 0, dismissed: null };
+
+  function resetMenus() {
+    cmds.gen++;
+    cmds.key = null;
+    cmds.response = null;
+    cmds.loading = false;
+    cmds.error = "";
+    menu.open = false;
+    menu.token = null;
+    menu.rows = [];
+    menu.active = 0;
+    menu.dismissed = null;
+  }
+
+  function sameToken(a, b) {
+    return !!a && !!b && a.start === b.start && a.end === b.end && a.query === b.query;
+  }
+
+  function closeMenu() {
+    menu.open = false;
+    menu.token = null;
+    menu.rows = [];
+    menu.active = 0;
+    renderMenu();
+  }
+
+  /* Called whenever the box's text, caret or focus changes. */
+  function trackMenus() {
+    const input = $("chat-text");
+    const caret = input.selectionEnd;
+    const live = document.activeElement === input && !input.disabled && input.selectionStart === caret;
+    const token = live ? slashToken(input.value, caret) : null;
+    if (!token || !sameToken(token, menu.dismissed)) menu.dismissed = null;
+    if (!token || menu.dismissed) {
+      if (menu.open) closeMenu();
+      return;
+    }
+    const opening = !menu.open;
+    if (!opening && token.query !== menu.token.query) menu.active = 0;
+    menu.open = true;
+    menu.token = token;
+    const loaded = !!cmds.response && cmds.key === chat.key;
+    // Fetch when there's no list and no failure to show; retry a failure
+    // only on opening, so typing doesn't hammer a hub that refused.
+    if (!cmds.loading && (cmds.error ? opening : !loaded)) loadCommands();
+    else renderMenu();
+  }
+
+  async function loadCommands() {
+    const key = chat.key;
+    const gen = ++cmds.gen;
+    cmds.key = key;
+    cmds.loading = true;
+    renderMenu();
+    const { status, data } = await api(sessionPath(key, "commands"));
+    if (gen !== cmds.gen || key !== chat.key) return;
+    cmds.loading = false;
+    if (status === 200 && data) {
+      cmds.response = data;
+      cmds.error = "";
+    } else {
+      cmds.error = commandsError(status, data);
+    }
+    // The list is kept either way; only an open menu redraws.
+    if (menu.open) {
+      menu.active = 0;
+      renderMenu();
+    }
+  }
+
+  /* The one muted line the menu shows instead of rows. */
+  function commandsError(status, data) {
+    const code = data && data.error && data.error.code;
+    if (code === "unknown_session") return "The hub doesn't know this session any more";
+    if (!status) return "Can't reach the hub";
+    // A hub from before the route answers any unknown path 404.
+    return status === 404 ? "Update the hub to list commands from here" : "Couldn't load commands";
+  }
+
+  /* What the menu says besides its rows: the line in place of an empty
+   * list, and muted footnotes under it. */
+  function commandNotes(r) {
+    const row = chat.row || {};
+    const harness = harnessLabel({ agent: row.agent, harness: r.harness || row.harness || "" }) || "this harness";
+    const supported = r.supported !== false;
+    const empty = !supported || !(r.commands || []).length ? `No commands for ${harness}` : "";
+    const footnotes = [];
+    const customMissing = supported && r.custom_available === false;
+    if (customMissing) {
+      footnotes.push(row.remote
+        ? `Custom commands from ${row.machine || "that machine"} aren't available yet`
+        : "Custom commands don't work in this session's mode");
+    }
+    const note = String(r.note || "").trim();
+    if (note && !(customMissing && note.toLowerCase().includes("custom commands"))) {
+      footnotes.push(note.charAt(0).toUpperCase() + note.slice(1));
+    }
+    return { empty, footnotes };
+  }
+
+  function renderMenu() {
+    const box = $("chat-menu");
+    const input = $("chat-text");
+    if (!box || !input) return;
+    box.classList.toggle("hidden", !menu.open);
+    input.setAttribute("aria-expanded", String(menu.open));
+    if (!menu.open) {
+      box.innerHTML = "";
+      input.removeAttribute("aria-activedescendant");
+      return;
+    }
+    const r = cmds.key === chat.key ? cmds.response : null;
+    menu.rows = r ? filterCommands(r.commands || [], menu.token.query) : [];
+    if (menu.active >= menu.rows.length) menu.active = 0;
+    let html = "";
+    // A failed load shows above whatever list is kept from before.
+    if (cmds.error) html += `<div class="menu-note error-note">${esc(cmds.error)}</div>`;
+    let footnotes = [];
+    if (cmds.loading && !r) {
+      if (!cmds.error) html += `<div class="menu-note">Loading commands</div>`;
+    } else if (r) {
+      const notes = commandNotes(r);
+      footnotes = notes.footnotes;
+      if (notes.empty) {
+        menu.rows = [];
+        html += `<div class="menu-note">${esc(notes.empty)}</div>`;
+      } else if (!menu.rows.length) {
+        html += `<div class="menu-note">No command matches /${esc(menu.token.query)}</div>`;
+      } else {
+        html += menu.rows.map((c, i) => {
+          const label = commandInsert(c).trim();
+          const tag = sourceLabel(c.source);
+          const aria = [label, c.argument_hint, c.description, tag].filter(Boolean).join(", ");
+          return `<div class="menu-row cmd${i === menu.active ? " active" : ""}" role="option" id="chat-menu-opt-${i}"` +
+            ` aria-selected="${i === menu.active}" data-i="${i}" aria-label="${esc(aria)}">` +
+            `<span class="cmd-body"><span class="cmd-top"><span class="menu-name">${esc(label)}</span>` +
+            (c.argument_hint ? `<span class="menu-sub">${esc(c.argument_hint)}</span>` : "") + `</span>` +
+            (c.description ? `<span class="cmd-desc">${esc(c.description)}</span>` : "") + `</span>` +
+            (tag ? `<span class="own">${esc(tag)}</span>` : "") + `</div>`;
+        }).join("");
+      }
+    }
+    if (footnotes.length) {
+      html += `<div class="menu-foot">${footnotes.map((f) => `<div>${esc(f)}</div>`).join("")}</div>`;
+    }
+    box.innerHTML = html;
+    if (menu.rows.length) {
+      input.setAttribute("aria-activedescendant", `chat-menu-opt-${menu.active}`);
+      const row = box.querySelector(".menu-row.active");
+      if (row) row.scrollIntoView({ block: "nearest" });
+    } else {
+      input.removeAttribute("aria-activedescendant");
+    }
+  }
+
+  function pickMenu(i) {
+    const entry = menu.rows[i];
+    if (!entry || !menu.open) return;
+    const input = $("chat-text");
+    const next = insertCommand(input.value, menu.token, entry);
+    input.value = next.text;
+    input.focus();
+    input.setSelectionRange(next.caret, next.caret);
+    growComposer();
+    trackMenus();
+  }
+
   /* Leaving the chat by any route closes its stream, so it never holds
    * one of the browser's few connections to the hub. */
   window.addEventListener("hashchange", () => {
@@ -1488,7 +1780,7 @@ const SessionChat = (() => {
     get key() { return chat.key; },
     // Pure helpers, for tests.
     _test: { md, diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay,
-      railDay, railGroups },
+      railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand },
   };
 })();
 

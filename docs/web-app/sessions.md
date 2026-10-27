@@ -38,7 +38,7 @@ the chat, like the Repositories rail's fold.
 | Transcript | The last 500 messages from `GET /v1/sessions/{key}/messages?limit=500`, then live events. User text right in a bubble, assistant text left, both with the PWA's markdown (fenced code, inline code, bold; everything else escaped). Thinking folds under "Thought". Tool calls are cards ("Edit src/x.py") that open to their arguments and output; Edit, MultiEdit, Write, NotebookEdit and apply_patch cards show a diff instead. Compaction is a "Context compacted" rule; system notes are centred captions; errors are red. |
 | Approval card | "Approval needed", the prompt, and the menu rows the pane shows as stacked option buttons (the event carries `options` with each row's digit and label, so "6 Edit command" or "Yes, switch to bypass mode" are answerable too). Older events and non-tmux approvals carry no menu; they show Allow, Always, Deny. Once answered the card folds to a "Approval · {what was picked}" row that re-opens to the full prompt and menu, the picked row at full shade and the rest greyed. |
 | Working dots | While the session is active, a send waits for its reply, or live messages are still being revealed. |
-| Composer | Queue or Steer, the message box (Enter sends, Shift+Enter is a new line), Stop and Send. Off, reading "Read-only until this session is attached", unless the session is attached. Pinned to the bottom of the panel: an open chat is a fixed-height layout where the transcript is the only scroller (chat.js toggles `body.chat-open`), like the apps'. |
+| Composer | Queue or Steer, the message box (Enter sends, Shift+Enter is a new line), Stop and Send. Off, reading "Read-only until this session is attached", unless the session is attached. Pinned to the bottom of the panel: an open chat is a fixed-height layout where the transcript is the only scroller (chat.js toggles `body.chat-open`), like the apps'. Typing `/` as the box's first character opens the PWA's command menu above it: `GET /v1/sessions/{key}/commands`, fetched on the first `/` and filtered as the name grows, each row with its argument hint, description and source tag (Built-in, User, Project, Skill, Plugin). Arrows highlight, Enter or Tab inserts `/name ` (or the row's own `insert`, like a Codex skill's `$name`), Escape dismisses until the token changes. The hub only lists commands; the harness expands the text when the message arrives. |
 | Observed banner | "Observed session: read-only until attached." with Attach when the hub says the session is `attachable` and it isn't mid-turn; otherwise why it can't be attached (mid-turn, or a harness that can't be resumed). A `kept` row reads "Still running in tmux…" and offers Reattach even mid-turn — the pane is adopted, nothing restarts. |
 | Detaching banner | While a `when_idle` detach is pending: "Detaches when this turn ends." with Stay attached, which posts `op: attach` to cancel it. |
 | Detach sheet | From the bar's Detach button, an attached session gets the phone's three-way choice as stacked options: Detach when it finishes (`when_idle`), Keep it running in tmux (`keep`, only when the mode has a pane), Detach now (`now`). |
@@ -153,9 +153,9 @@ list whenever it lands.
   stopped (`journal.truncated`) adds a notice that some events were
   missed and are gone from the journal, where the PWA carries on as if
   nothing were missing.
-- Not ported: the PWA has no attachments, waiting-sends tray, slash
-  commands or "load earlier" either, so neither does this (the hub's
-  `queue` and `attachments` routes are unused here).
+- Not ported: attachments, the waiting-sends tray, the `@` file-mention
+  menu and "load earlier" (the hub's `queue` and `attachments` routes are
+  unused here).
 - The list actions are the iPhone app's, which the PWA doesn't have:
   rows carry no swipe actions there (Attach/Detach live in its chat
   only), and it has no New session sheet. The page mirrors the iPhone
