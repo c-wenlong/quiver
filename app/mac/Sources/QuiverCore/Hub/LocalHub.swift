@@ -98,6 +98,10 @@ public final class LocalHub {
 
     public private(set) var keys: Keys = .unknown
 
+    /// The hub's base once a client exists — scopes kept command lists,
+    /// so a repointed hub never shows the last hub's answers.
+    public var connectedHub: String? { current?.baseURL.absoluteString }
+
     /// How the app names itself in the hub's device list.
     public static let deviceName = "Quiver for Mac"
 

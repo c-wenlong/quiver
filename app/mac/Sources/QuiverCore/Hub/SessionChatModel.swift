@@ -165,6 +165,10 @@ public final class SessionChatModel {
     public init(key: String, hub: LocalHub) {
         self.key = key
         self.hub = hub
+        commands.cacheKey = key
+        // Sessions with no id share a path digest, so the kept lists
+        // are scoped to the connected hub too.
+        commands.scope = { [hub] in hub.connectedHub ?? "" }
         commands.fetch = { [hub, key] in
             try await hub.withClient { try await $0.commands(key) }
         }
@@ -184,6 +188,10 @@ public final class SessionChatModel {
         let gen = generation
         streamTask?.cancel()
         streamTask = nil
+        // The / menu's list is fetched now, not on the first /, so the
+        // menu opens filled; a list kept from an earlier open shows at
+        // once and is still refreshed.
+        commands.warm()
         loading = items.isEmpty
         do {
             let rows = try await hub.withClient { try await $0.sessions() }
@@ -226,7 +234,8 @@ public final class SessionChatModel {
         streamTask?.cancel()
         streamTask = nil
         connection = .connecting
-        // The prompt box's menu may still be open from before stop().
+        // The prompt box's menu may still be open from before stop();
+        // the kept list fills it again at once on the next open.
         commands.reset()
     }
 

@@ -205,6 +205,94 @@ import Testing
         #expect(menu.error == nil)
     }
 
+    @Test func warmFetchesAheadOfTheFirstSlash() async {
+        let menu = SlashCommandMenu()
+        var calls = 0
+        menu.fetch = { calls += 1; return CommandsResponse(commands: [SlashCommand(name: "compact")]) }
+        await menu.warm()?.value
+        #expect(calls == 1)
+        // The first / opens filled: the fetch already answered.
+        #expect(menu.track(SlashToken(end: 1, query: "")) == nil)
+        #expect(menu.matches.map(\.name) == ["compact"])
+    }
+
+    @Test func aKeptListFillsAReopenedChatAtOnce() async {
+        let key = "claude:kept-\(#line)"
+        let first = SlashCommandMenu()
+        first.cacheKey = key
+        var calls = 0
+        first.fetch = { calls += 1; return CommandsResponse(commands: [SlashCommand(name: "compact")]) }
+        await first.warm()?.value
+        #expect(calls == 1)
+
+        // A fresh menu for the same session: the kept list shows at
+        // once, and warm() still refreshes it.
+        let second = SlashCommandMenu()
+        second.cacheKey = key
+        second.fetch = { calls += 1; return CommandsResponse(commands: [SlashCommand(name: "rename")]) }
+        let refreshing = second.warm()
+        #expect(second.matches.map(\.name) == ["compact"])
+        await refreshing?.value
+        #expect(calls == 2)
+        #expect(second.matches.map(\.name) == ["rename"])
+        // track() picks the kept list up too, for a menu warm() missed.
+        let third = SlashCommandMenu()
+        third.cacheKey = key
+        third.track(SlashToken(end: 1, query: ""))
+        #expect(third.matches.map(\.name) == ["rename"])
+    }
+
+    @Test func aStaleAnswerNeverOverwritesANewerList() async {
+        let key = "claude:stale-\(#line)"
+        let first = SlashCommandMenu()
+        first.cacheKey = key
+        var gate: CheckedContinuation<Void, Never>?
+        first.fetch = {
+            await withCheckedContinuation { gate = $0 }
+            return CommandsResponse(commands: [SlashCommand(name: "old")])
+        }
+        let slow = first.warm()
+        for _ in 0..<1000 where gate == nil { await Task.yield() }
+        // The chat reopened and asked again; its newer answer lands
+        // first, then the request left behind finishes — the kept list
+        // must stay the newer one.
+        let second = SlashCommandMenu()
+        second.cacheKey = key
+        second.fetch = { CommandsResponse(commands: [SlashCommand(name: "new")]) }
+        await second.warm()?.value
+        gate?.resume()
+        await slow?.value
+        let probe = SlashCommandMenu()
+        probe.cacheKey = key
+        probe.track(SlashToken(end: 1, query: ""))
+        #expect(probe.matches.map(\.name) == ["new"])
+    }
+
+    @Test func keptListsStayScopedToTheirHub() async {
+        let key = "claude:hub-\(#line)"
+        let a = SlashCommandMenu()
+        a.cacheKey = key
+        a.scope = { "hub-a" }
+        a.fetch = { CommandsResponse(commands: [SlashCommand(name: "clear")]) }
+        await a.warm()?.value
+
+        // A same-keyed session on another hub can't see that list.
+        let b = SlashCommandMenu()
+        b.cacheKey = key
+        b.scope = { "hub-b" }
+        b.fetch = { CommandsResponse(commands: [SlashCommand(name: "review")]) }
+        let fetching = b.track(SlashToken(end: 1, query: ""))
+        #expect(b.matches.isEmpty)
+        await fetching?.value
+        #expect(b.matches.map(\.name) == ["review"])
+        // And the first hub's list is untouched.
+        let probe = SlashCommandMenu()
+        probe.cacheKey = key
+        probe.scope = { "hub-a" }
+        probe.track(SlashToken(end: 1, query: ""))
+        #expect(probe.matches.map(\.name) == ["clear"])
+    }
+
     @Test func shouldLoadRules() {
         #expect(!SlashCommandMenu.shouldLoad(open: false, opening: false, loaded: false, loading: false, failed: false))
         #expect(SlashCommandMenu.shouldLoad(open: true, opening: false, loaded: false, loading: false, failed: false))

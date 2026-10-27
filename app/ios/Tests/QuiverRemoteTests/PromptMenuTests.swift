@@ -440,6 +440,94 @@ final class CommandMenuTests: XCTestCase {
         menu.track(SlashToken(end: 2, query: "c"))
         XCTAssertTrue(menu.isOpen)
     }
+
+    func testWarmFetchesAheadOfTheFirstSlash() async {
+        let menu = CommandMenu()
+        var calls = 0
+        menu.fetch = { calls += 1; return CommandsResponse(commands: [SlashCommand(name: "compact")]) }
+        await menu.warm()?.value
+        XCTAssertEqual(calls, 1)
+        // The first / opens filled: the fetch already answered.
+        XCTAssertNil(menu.track(SlashToken(end: 1, query: "")))
+        XCTAssertEqual(menu.matches.map(\.name), ["compact"])
+    }
+
+    func testAKeptListFillsAReopenedChatAtOnce() async {
+        let key = "claude:kept-\(#line)"
+        let first = CommandMenu()
+        first.cacheKey = key
+        var calls = 0
+        first.fetch = { calls += 1; return CommandsResponse(commands: [SlashCommand(name: "compact")]) }
+        await first.warm()?.value
+        XCTAssertEqual(calls, 1)
+
+        // A fresh menu for the same session: the kept list shows at
+        // once, and warm() still refreshes it.
+        let second = CommandMenu()
+        second.cacheKey = key
+        second.fetch = { calls += 1; return CommandsResponse(commands: [SlashCommand(name: "rename")]) }
+        let refreshing = second.warm()
+        XCTAssertEqual(second.matches.map(\.name), ["compact"])
+        await refreshing?.value
+        XCTAssertEqual(calls, 2)
+        XCTAssertEqual(second.matches.map(\.name), ["rename"])
+        // track() picks the kept list up too, for a menu warm() missed.
+        let third = CommandMenu()
+        third.cacheKey = key
+        third.track(SlashToken(end: 1, query: ""))
+        XCTAssertEqual(third.matches.map(\.name), ["rename"])
+    }
+
+    func testAStaleAnswerNeverOverwritesANewerList() async {
+        let key = "claude:stale-\(#line)"
+        let first = CommandMenu()
+        first.cacheKey = key
+        var gate: CheckedContinuation<Void, Never>?
+        first.fetch = {
+            await withCheckedContinuation { gate = $0 }
+            return CommandsResponse(commands: [SlashCommand(name: "old")])
+        }
+        let slow = first.warm()
+        for _ in 0..<1000 where gate == nil { await Task.yield() }
+        // The chat reopened and asked again; its newer answer lands
+        // first, then the request left behind finishes — the kept list
+        // must stay the newer one.
+        let second = CommandMenu()
+        second.cacheKey = key
+        second.fetch = { CommandsResponse(commands: [SlashCommand(name: "new")]) }
+        await second.warm()?.value
+        gate?.resume()
+        await slow?.value
+        let probe = CommandMenu()
+        probe.cacheKey = key
+        probe.track(SlashToken(end: 1, query: ""))
+        XCTAssertEqual(probe.matches.map(\.name), ["new"])
+    }
+
+    func testKeptListsStayScopedToTheirHub() async {
+        let key = "claude:hub-\(#line)"
+        let a = CommandMenu()
+        a.cacheKey = key
+        a.scope = { "hub-a" }
+        a.fetch = { CommandsResponse(commands: [SlashCommand(name: "clear")]) }
+        await a.warm()?.value
+
+        // A same-keyed session on another hub can't see that list.
+        let b = CommandMenu()
+        b.cacheKey = key
+        b.scope = { "hub-b" }
+        b.fetch = { CommandsResponse(commands: [SlashCommand(name: "review")]) }
+        let fetching = b.track(SlashToken(end: 1, query: ""))
+        XCTAssertTrue(b.matches.isEmpty)
+        await fetching?.value
+        XCTAssertEqual(b.matches.map(\.name), ["review"])
+        // And the first hub's list is untouched.
+        let probe = CommandMenu()
+        probe.cacheKey = key
+        probe.scope = { "hub-a" }
+        probe.track(SlashToken(end: 1, query: ""))
+        XCTAssertEqual(probe.matches.map(\.name), ["clear"])
+    }
 }
 
 @MainActor

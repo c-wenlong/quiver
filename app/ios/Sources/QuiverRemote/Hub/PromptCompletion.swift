@@ -315,8 +315,9 @@ enum Slash {
     }
 }
 
-/// The `/` menu's list: fetched once per chat open on the first `/`,
-/// filtered locally as you type, refetched on a pull.
+/// The `/` menu's list: warmed when the chat opens so the first `/`
+/// opens it already filled, filtered locally as you type, refetched on
+/// a pull.
 @MainActor @Observable
 final class CommandMenu {
     private(set) var token: SlashToken?
@@ -326,12 +327,41 @@ final class CommandMenu {
     private var dismissed: SlashToken?
 
     @ObservationIgnored var fetch: () async throws -> CommandsResponse = { CommandsResponse(commands: []) }
+    /// The session the list is for; set beside `fetch`. Answered lists
+    /// are kept per key, so a reopened chat's menu is filled at once.
+    @ObservationIgnored var cacheKey: String?
+    /// The hub the session lives on: sessions with no id share a path
+    /// digest, so a same-keyed session on another paired hub must not
+    /// inherit this one's commands.
+    @ObservationIgnored var scope: () -> String = { "" }
+    /// Answered lists by scope + session key, kept for the app's run.
+    private static var lists: [String: CommandsResponse] = [:]
+    /// The newest request's serial per list key: an older answer landing
+    /// late can still be kept for a chat that was left, but it never
+    /// replaces a newer request's answer.
+    private static var seqs: [String: Int] = [:]
+    private static var nextSeq = 0
     @ObservationIgnored private var generation = 0
+
+    /// `lists`' key for this menu: the hub scope plus the session key.
+    private var listKey: String? { cacheKey.map { "\(scope())|\($0)" } }
 
     var isOpen: Bool { token != nil && token != dismissed }
 
     /// The commands that match what's typed, best first.
     var matches: [SlashCommand] { Slash.filter(response?.commands ?? [], query: token?.query ?? "") }
+
+    /// Fetches the list ahead of the first `/` — called when the chat
+    /// opens. A kept list from an earlier open fills `response` at once
+    /// and is still refreshed here.
+    @discardableResult
+    func warm() -> Task<Void, Never>? {
+        if response == nil, let key = listKey, let kept = Self.lists[key] {
+            response = kept
+        }
+        guard !loading else { return nil }
+        return Task { await load() }
+    }
 
     /// Called whenever the draft, caret or focus changes. Returns the
     /// fetch it started, if any.
@@ -340,6 +370,7 @@ final class CommandMenu {
         let wasOpen = isOpen
         token = next
         if next == nil || dismissed != next { dismissed = nil }
+        if response == nil, let key = listKey { response = Self.lists[key] }
         guard Self.shouldLoad(open: isOpen, opening: !wasOpen, loaded: response != nil,
                               loading: loading, failed: error != nil) else { return nil }
         return Task { await load() }
@@ -382,9 +413,20 @@ final class CommandMenu {
     private func load() async {
         generation += 1
         let gen = generation
+        Self.nextSeq += 1
+        let seq = Self.nextSeq
+        if let key = listKey { Self.seqs[key] = seq }
         loading = true
         do {
             let body = try await fetch()
+            // Kept under the key as it resolves now, and only while this
+            // request is still the newest one the key saw: a request a
+            // reopened chat left behind can't overwrite a newer answer.
+            let key = listKey
+            if let key, seq >= (Self.seqs[key] ?? 0) {
+                Self.seqs[key] = seq
+                Self.lists[key] = body
+            }
             guard gen == generation else { return }
             response = body
             error = nil
