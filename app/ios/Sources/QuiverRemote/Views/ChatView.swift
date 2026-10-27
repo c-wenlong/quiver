@@ -360,7 +360,7 @@ struct WorkingIndicator: View {
     let since: Date
 
     var body: some View {
-        VStack(alignment: .center, spacing: 4) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 HarnessIcon(harness: harness, name: name, size: 16)
                 WorkingVerb()
