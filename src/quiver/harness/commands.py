@@ -2736,7 +2736,7 @@ def cmd_harness_usage(args):
         return 1
 
     from quiver.harness.rate_limits import get_account_usage
-    from quiver.harness.remedies import remedy_for
+    from quiver.harness.remedies import remedy_for, remedy_for_account
 
     try:
         # Fetch helpers may warn to stdout; under --json stdout is the
@@ -2748,12 +2748,16 @@ def cmd_harness_usage(args):
         print(c("red", f"  {exc}"), file=err)
         return 1
     limit = outcome.limit
-    remedy = remedy_for(name, outcome.status)
+    # The account's files are what failed, so its remedy points at that
+    # account's login, not the default one's.
+    remedy = (remedy_for_account(name, outcome.status, account_dir)
+              if account_dir else remedy_for(name, outcome.status))
     if json_view:
         # Every verdict is a typed document: ``status`` names the failure
         # and ``remedy`` the fix, so the app never collapses them into a
-        # bare "couldn't fetch". An outage still exits 1 — the document
-        # rides along for callers that read it anyway.
+        # bare "couldn't fetch". Failures still exit 1 — the document
+        # rides along, and readers from before the status field keep
+        # seeing a failed call rather than a signed-out account.
         emit({
             "name": name,
             "account_dir": account_dir,
@@ -2761,7 +2765,7 @@ def cmd_harness_usage(args):
             "remedy": remedy,
             "limit": limit.to_json() if limit is not None else None,
         })
-        return 1 if outcome.status == "unavailable" else 0
+        return 0 if outcome.status in ("ok", "signed-out", "no-sub") else 1
     if outcome.status == "signed-out":
         print(f"  {name}: not signed in")
         return 0

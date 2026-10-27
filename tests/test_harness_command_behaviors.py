@@ -647,10 +647,17 @@ class HarnessUsageCommandTest(unittest.TestCase):
             ):
                 code, out, err = self._run(
                     ["devin", f"--account-dir={tmp}", "--json"])
-        self.assertEqual(code, 0)
+        # Failures still exit 1 like the old error path: readers from
+        # before `status` keep seeing a failed call, not a signed-out
+        # account. The document is emitted first either way.
+        self.assertEqual(code, 1)
         data = json.loads(out)["data"]
         self.assertEqual(data["status"], "auth-required")
-        self.assertEqual(data["remedy"]["command"], "devin auth login")
+        # The account's own login is stale, so the remedy points at the
+        # account's data dir, not the default credentials file.
+        self.assertEqual(
+            data["remedy"]["command"],
+            f'XDG_DATA_HOME="{tmp}" devin auth login')
 
     def test_human_output_prints_the_remedy_steps(self):
         with tempfile.TemporaryDirectory() as tmp:

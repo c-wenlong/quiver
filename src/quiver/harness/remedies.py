@@ -198,3 +198,42 @@ def remedy_for(name: str, status: str, display_name: str | None = None) -> dict 
               value.format(name=label) if isinstance(value, str) else value)
         for key, value in row.items()
     }
+
+
+def remedy_for_account(name: str, status: str, account_dir: str) -> dict | None:
+    """The remedy for an extra account's failure.
+
+    The generic remedy's commands fix the default login, which the extra
+    account never reads: Devin's CLI writes ``XDG_DATA_HOME``'s
+    credentials.toml and Cursor's extra accounts sign in through a
+    desktop app pointed at their own ``--user-data-dir``. Retarget those
+    at the account's data dir so the offered fix reaches the account
+    that failed.
+    """
+    remedy = remedy_for(name, status)
+    if remedy is None:
+        return None
+    remedy = dict(remedy)
+    if name == "devin":
+        remedy.update({
+            "summary": "This account isn't signed in to Devin",
+            "command": f'XDG_DATA_HOME="{account_dir}" devin auth login',
+            "steps": [
+                "Run `devin auth login` with XDG_DATA_HOME pointed at "
+                "this account's data dir so its credentials file gets "
+                "the key."
+            ],
+        })
+    elif name == "cursor" and status in (SIGNED_OUT, AUTH_REQUIRED):
+        remedy.update({
+            "kind": "open-app",
+            "summary": "This account's Cursor login is stale",
+            "command": ('open -na "/Applications/Cursor.app" --args '
+                        f'--user-data-dir="{account_dir}"'),
+            "steps": [
+                "Open Cursor with this account's own data dir and sign "
+                "in again — the shared `cursor-agent` login never "
+                "reaches it."
+            ],
+        })
+    return remedy

@@ -2084,6 +2084,13 @@ def _diagnose_cursor_credentials(
             return remedies.OK
         saw_opaque = True
     if candidates is None:
+        # ``_read_cursor_cli_token`` swallows PermissionError like the
+        # other readers, so the denied file is probed before reading it —
+        # a file macOS will not open is permission-required, not
+        # signed-out.
+        cli_auth = os.path.expanduser(_CURSOR_CLI_AUTH_FILE)
+        if os.path.isfile(cli_auth) and not os.access(cli_auth, os.R_OK):
+            denied = True
         token = _read_cursor_cli_token()
         if token and _cursor_token_claims(token) is not None:
             return remedies.OK
@@ -3051,17 +3058,37 @@ def _load_cached_no_data_status() -> dict[str, str]:
         return {}
 
 
+def _load_cached_no_data_issues() -> dict[str, str]:
+    """The saved per-provider no-data statuses in the remedies vocabulary,
+    from the cache's ``no_data_issues`` map. Older swe files lack it; a
+    caller falls back to deriving one from ``no_data_status``."""
+    try:
+        with open(RATE_LIMITS_CACHE_FILE) as f:
+            data = json.load(f)
+        issues = data.get("no_data_issues") if isinstance(data, dict) else None
+        if not isinstance(issues, dict):
+            return {}
+        return {name: status for name, status in issues.items()
+                if isinstance(status, str)}
+    except Exception:
+        return {}
+
+
 def _save_cached(
     limits: dict[str, dict],
     updated_at: dict[str, float] | None = None,
     no_data: Iterable[str] | None = None,
     no_data_status: dict[str, str] | None = None,
+    no_data_issues: dict[str, str] | None = None,
 ) -> None:
     """Persist rate limits to disk cache.
 
     ``no_data_status`` gives the reason for some ``no_data`` names. It is
     a map of its own beside ``no_data`` so an older swe, which reads
     ``no_data`` values as timestamps, still parses the file.
+    ``no_data_issues`` carries the finer remedies-vocabulary status of the
+    same names so a stored ``auth-required`` does not degrade into an
+    outage on the next read.
     """
     try:
         RATE_LIMITS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -3083,6 +3110,12 @@ def _save_cached(
         }
         if reasons:
             payload["no_data_status"] = reasons
+        issues = {
+            name: status for name, status in (no_data_issues or {}).items()
+            if name in payload["no_data"]
+        }
+        if issues:
+            payload["no_data_issues"] = issues
         with open(RATE_LIMITS_CACHE_FILE, "w") as f:
             json.dump(payload, f)
     except Exception:
@@ -3341,13 +3374,16 @@ def get_all_rate_limits(
                 name: cached_reasons[name] for name in known_empty
                 if name in cached_reasons
             })
-            # The cache keeps the coarse reasons; on the issue boundary a
-            # stored failure maps to "unavailable", a stored sign-out to
-            # "signed-out". The finer statuses are re-derived on refetch.
+            # Saved issues keep the fine status across reads; caches from
+            # before the map fall back to the coarse-to-fine mapping —
+            # "error" to "unavailable", "signed_out" to "signed-out".
+            cached_issues = _load_cached_no_data_issues()
             statuses.update({
-                name: (remedies.SIGNED_OUT
-                       if cached_reasons[name] == SIGNED_OUT
-                       else remedies.UNAVAILABLE)
+                name: cached_issues.get(
+                    name,
+                    remedies.SIGNED_OUT
+                    if cached_reasons[name] == SIGNED_OUT
+                    else remedies.UNAVAILABLE)
                 for name in known_empty
                 if name in cached_reasons
             })
@@ -3510,12 +3546,9 @@ def get_all_rate_limits(
         if isinstance(saved_reasons, dict):
             for name, reason in saved_reasons.items():
                 if name not in fetcher_names:
+                    # Carried for the next save only; a filtered run must
+                    # not report another tool's stored failure as its own.
                     carried_reasons[name] = reason
-                    # Same coarse-to-fine mapping as the fresh path: a
-                    # carried "error" reads as "unavailable" downstream.
-                    statuses[name] = (remedies.SIGNED_OUT
-                                      if reason == SIGNED_OUT
-                                      else remedies.UNAVAILABLE)
         saved_no_data = disk.get("no_data")
         if isinstance(saved_no_data, dict):
             for name, ts in saved_no_data.items():
@@ -3537,8 +3570,13 @@ def get_all_rate_limits(
         name: reasons[name] for name in empty_fetchers | set(kept_empty)
         if name in reasons
     }}
+    no_data_issues = {**{
+        name: statuses[name] for name in empty_fetchers | set(kept_empty)
+        if name in statuses
+    }}
     _save_cached(raw_cache, cache_updated_at, no_data=no_data_marks,
-                 no_data_status=no_data_reasons)
+                 no_data_status=no_data_reasons,
+                 no_data_issues=no_data_issues)
 
     return report()
 
