@@ -52,6 +52,10 @@ svg.i { width: 16px; height: 16px; flex: none; }
 .btn.sm { height: 32px; padding: 0 12px; font-size: 13px; }
 
 .hero { text-align: center; padding: 88px 0 40px; }
+.hero { position: relative; }
+.hero > * { position: relative; z-index: 1; }
+#drift { position: absolute; left: 0; top: 0; width: 100%; pointer-events: none; z-index: 0;
+  -webkit-mask-image: linear-gradient(#000 60%, transparent); mask-image: linear-gradient(#000 60%, transparent); }
 .pill { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line-strong); border-radius: 999px; padding: 4px 12px; font-size: 13px; color: var(--text-2); margin-bottom: 28px; }
 .pill b { color: var(--text); font-weight: 500; }
 h1 { font-size: 64px; line-height: 1.02; letter-spacing: -0.03em; font-weight: 500; margin: 0 auto 22px; max-width: 14em; }
@@ -168,6 +172,7 @@ dialog .close { margin-left: auto; }
 </head>
 <body>
 <script>document.documentElement.className = "js";</script>
+<canvas id="drift" aria-hidden="true"></canvas>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <symbol id="gh" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></symbol>
   <symbol id="dl" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-5-5m5 5l5-5M4 21h16"/></symbol>
@@ -473,6 +478,89 @@ dialog .close { margin-left: auto; }
       }, function () {});
     });
   });
+})();
+</script>
+<script>
+// The services quiver works with drift up behind the hero as pixel art:
+// each logo is drawn once into a 14px grid, then scaled up unsmoothed.
+(function () {
+  var canvas = document.getElementById("drift");
+  var hero = document.querySelector(".hero");
+  var tabs = document.querySelector(".tabs");
+  if (!canvas || !canvas.getContext || !hero || !tabs) return;
+  var LOGOS = ("claude-color codex-color cursor gemini-color copilot devin droid opencode-color freebuff " +
+    "cline grok kimi qwen-code-color pi openai deepseek-color mistral-vibe-color groq cerebras " +
+    "fireworks-color perplexity-color meta-color nvidia-color cohere-color minimax-color zai " +
+    "vercel supabase linear notion sentry tailscale docker npm cloudflare-color mcp").split(" ");
+  var GRID = 14;
+  var still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var ctx = canvas.getContext("2d"), w = 0, h = 0, sprites = [], art = [], onScreen = true, last = 0;
+
+  LOGOS.forEach(function (name) {
+    var img = new Image();
+    img.onload = function () {
+      var c = document.createElement("canvas");
+      c.width = c.height = GRID;
+      var g = c.getContext("2d");
+      g.drawImage(img, 0, 0, GRID, GRID);
+      if (!/-color$/.test(name)) {  // one-colour marks are black; tint them light
+        g.globalCompositeOperation = "source-in";
+        g.fillStyle = "#e6e8eb";
+        g.fillRect(0, 0, GRID, GRID);
+      }
+      art.push(c);
+      if (still) draw(0);
+    };
+    img.src = "media/logos/" + name + ".svg";
+  });
+
+  function sprite(anywhere) {
+    return {
+      i: Math.random(), x: Math.random() * w,
+      y: anywhere ? Math.random() * h : h + 20,
+      size: GRID * (2 + Math.floor(Math.random() * 2)),
+      speed: 8 + Math.random() * 12, sway: Math.random() * Math.PI * 2,
+      alpha: 0.16 + Math.random() * 0.24
+    };
+  }
+  function size() {
+    var d = window.devicePixelRatio || 1;
+    w = document.documentElement.clientWidth;
+    h = tabs.getBoundingClientRect().top + window.scrollY + 40;
+    canvas.style.height = h + "px";
+    canvas.width = w * d; canvas.height = h * d;
+    ctx.setTransform(d, 0, 0, d, 0, 0);
+    var n = Math.max(8, Math.min(24, Math.round(w / 60)));
+    sprites = [];
+    for (var k = 0; k < n; k++) sprites.push(sprite(true));
+    if (still) draw(0);
+  }
+  function draw(dt) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.imageSmoothingEnabled = false;
+    if (!art.length) return;
+    sprites.forEach(function (s) {
+      s.y -= s.speed * dt;
+      s.sway += dt * 0.6;
+      if (s.y < -s.size) { var fresh = sprite(false); for (var key in fresh) s[key] = fresh[key]; }
+      ctx.globalAlpha = s.alpha;
+      ctx.drawImage(art[Math.floor(s.i * art.length)], Math.round(s.x + Math.sin(s.sway) * 10),
+                    Math.round(s.y), s.size, s.size);
+    });
+    ctx.globalAlpha = 1;
+  }
+  function frame(t) {
+    requestAnimationFrame(frame);
+    var dt = Math.min(0.05, (t - last) / 1000);
+    last = t;
+    if (onScreen && !document.hidden) draw(dt);
+  }
+  if ("IntersectionObserver" in window) {
+    new IntersectionObserver(function (e) { onScreen = e[0].isIntersecting; }).observe(hero);
+  }
+  window.addEventListener("resize", size);
+  size();
+  if (!still) requestAnimationFrame(frame);
 })();
 </script>
 </body>
