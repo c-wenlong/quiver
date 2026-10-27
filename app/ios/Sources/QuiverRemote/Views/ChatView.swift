@@ -349,17 +349,16 @@ private struct ChatItemView: View {
     }
 }
 
-/// The harness's logo with three pulsing dots beside it, under the last
+/// The harness's logo beside a cycling working verb, under the last
 /// message while the agent works; new messages land above it.
 struct WorkingIndicator: View {
     let harness: String?
     let name: String
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 8) {
             HarnessIcon(harness: harness, name: name, size: 16)
-            dots
+            WorkingVerb()
         }
         .font(Theme.caption)
         .padding(.leading, 9).padding(.trailing, 12).frame(height: 30)
@@ -368,21 +367,6 @@ struct WorkingIndicator: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement()
         .accessibilityLabel("\(name) is working")
-    }
-
-    private var dots: some View {
-        TimelineView(.animation(paused: reduceMotion)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            HStack(spacing: 4) {
-                ForEach(0..<3, id: \.self) { i in
-                    // A wave left to right, one pass every 1.2 s.
-                    let lit = reduceMotion ? 0.5 : max(0, sin((t / 1.2 - Double(i) * 0.15) * 2 * .pi))
-                    Circle().fill(Theme.textSecondary).frame(width: 6, height: 6)
-                        .opacity(0.3 + 0.7 * lit)
-                        .offset(y: -2 * lit)
-                }
-            }
-        }
     }
 }
 
