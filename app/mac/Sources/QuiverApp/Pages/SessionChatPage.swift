@@ -261,7 +261,8 @@ private struct ObservedBanner: View {
 
 private struct ChatEntry: View {
     var item: HubChatItem
-    /// Answers an approval: request id, then `allow`, `always` or `deny`.
+    /// Answers an approval: request id, then the decision — `allow`,
+    /// `always`, `deny`, or a menu row's digit.
     var decide: (String, String) -> Void
 
     var body: some View {
@@ -298,8 +299,8 @@ private struct ChatEntry: View {
             }
         case .tool(let call, let result):
             ToolCard(call: call, result: result)
-        case .approval(let rid, let prompt, let state):
-            ApprovalCard(prompt: prompt, state: state) { decide(rid, $0) }
+        case .approval(let rid, let prompt, let options, let picked, let state):
+            ApprovalCard(prompt: prompt, options: options, picked: picked, state: state) { decide(rid, $0) }
         case .compaction:
             Text("Context compacted")
                 .font(Theme.caption).foregroundStyle(Theme.textMuted)
@@ -573,36 +574,155 @@ private struct CodeBlock: View {
     }
 }
 
-/// An approval the agent asked for: Allow, Always or Deny while it
-/// waits, then how it was answered.
+/// An approval the agent asked for: the pane's numbered menu rows when
+/// the event carried them (the web app's `.approval-actions.menu`), else
+/// Allow, Always and Deny. An answer folds the card to a
+/// "Approval · {what was picked}" row that opens back to the full card,
+/// the picked row lit and the rest greyed.
 private struct ApprovalCard: View {
     var prompt: String
+    var options: [HubApprovalOption]
+    /// The decision the card lights as chosen: the row answered here,
+    /// or the resolved decision once it names a row. The model computes
+    /// it (the web app's `.chosen` / `[data-dec]` mark).
+    var picked: String?
     var state: HubApprovalState
     var decide: (String) -> Void
+    /// A resolved card re-opened to the full prompt and rows.
+    @State private var open = false
+
+    /// The menu rows worth a button: every row with a label, as the web
+    /// app keeps them; the row's digit is the decision its button posts.
+    private var menu: [(n: String, label: String)] {
+        options.compactMap { option in
+            guard let label = option.label, !label.isEmpty else { return nil }
+            return (option.n ?? "", label)
+        }
+    }
+
+    /// The generic fallback repeats the title, so only a real question
+    /// or context goes under it (the web app's textRow rule).
+    private var showsPrompt: Bool {
+        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !text.isEmpty && text != "Approval requested"
+    }
+
+    private var resolved: Bool {
+        if case .resolved = state { return true }
+        return false
+    }
+
+    /// Folded to the verdict row: answered and not re-opened.
+    private var folded: Bool { resolved && !open }
+
+    /// A row draws enabled while the card is answerable, or once settled
+    /// only when it is the picked one; `allowsHitTesting` on the rows
+    /// keeps a settled card's lit row unclickable.
+    private func lit(_ n: String) -> Bool {
+        state.answerable || picked == n
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Approval needed").font(Theme.caption).foregroundStyle(Theme.warningText)
-            MarkdownBlocks(blocks: GitHubMarkdown.blocks(prompt))
-                .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
-            if case .resolved = state {} else {
-                HStack(spacing: 8) {
-                    Button("Allow") { decide("allow") }.secondaryButton()
-                    Button("Always") { decide("always") }.secondaryButton()
-                        .hoverTip("Allow this and don't ask again for the same kind of action.")
-                    Button("Deny") { decide("deny") }.secondaryButton()
+            if case .resolved(let decision) = state {
+                Button {
+                    withAnimation(.easeInOut(duration: Theme.fadeDuration)) { open.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.right")
+                            .font(Theme.font(size: 9, weight: .semibold))
+                            .foregroundStyle(Theme.textMuted)
+                            .rotationEffect(open ? .degrees(90) : .zero)
+                        Text("Approval · \(verdict(decision))")
+                            .font(Theme.caption).foregroundStyle(Theme.textPrimary)
+                    }
+                    .contentShape(.rect)
                 }
-                .disabled(!state.answerable)
+                .plainButton()
             }
-            if let note {
-                Text(note).font(Theme.caption)
-                    .foregroundStyle(isFailure ? Theme.dangerText : Theme.textSecondary)
+            if !folded {
+                Text("Approval needed").font(Theme.caption).foregroundStyle(Theme.warningText)
+                if showsPrompt {
+                    MarkdownBlocks(blocks: GitHubMarkdown.blocks(prompt))
+                        .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                }
+                rows
+                if let note {
+                    Text(note).font(Theme.caption)
+                        .foregroundStyle(isFailure ? Theme.dangerText : Theme.textSecondary)
+                }
             }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius)
             .strokeBorder(state.answerable ? Theme.warning : Theme.border, lineWidth: 1))
+        // A rejection landing after the card folded re-opens it (the web
+        // app clears .open), so the settle that follows folds it afresh.
+        .onChange(of: state) { _, new in
+            if case .failed = new { open = false }
+        }
+    }
+
+    /// The answer rows: the pane's menu stacked like the TUI prints it,
+    /// or the three semantic buttons when the ask carried no menu.
+    @ViewBuilder private var rows: some View {
+        if menu.isEmpty {
+            HStack(spacing: 8) {
+                semantic("Allow", decision: "allow")
+                semantic("Always", decision: "always")
+                    .hoverTip("Allow this and don't ask again for the same kind of action.")
+                semantic("Deny", decision: "deny", destructive: true)
+            }
+            .allowsHitTesting(state.answerable)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(menu.indices, id: \.self) { i in
+                    Button { decide(menu[i].n) } label: {
+                        Text(menu[i].label)
+                    }
+                    .buttonStyle(MenuOptionStyle())
+                    .focusRing(cornerRadius: Theme.controlRadius)
+                    .disabled(!lit(menu[i].n))
+                }
+            }
+            .allowsHitTesting(state.answerable)
+        }
+    }
+
+    private func semantic(_ title: String, decision: String, destructive: Bool = false) -> some View {
+        Button(title, role: destructive ? .destructive : nil) { decide(decision) }
+            .secondaryButton()
+            .disabled(!lit(decision))
+    }
+
+    /// "Approval · {what was picked}": the semantic word for a semantic
+    /// decision, else the row the decision names (it survives a reload
+    /// where the lit pick was forgotten), else the lit row's label, else
+    /// "Answered" (the web app's `DECISIONS` lookup, then the chosen
+    /// button's text).
+    private func verdict(_ decision: String?) -> String {
+        switch decision {
+        case "allow": "Allowed"
+        case "always": "Always allowed"
+        case "deny": "Denied"
+        default: rowTitle(decision) ?? rowTitle(picked) ?? "Answered"
+        }
+    }
+
+    /// A row's caption as the card lists it: the pane label on a menu
+    /// card, the button's title on a semantic one.
+    private func rowTitle(_ n: String?) -> String? {
+        guard let n else { return nil }
+        if menu.isEmpty {
+            switch n {
+            case "allow": return "Allow"
+            case "always": return "Always"
+            case "deny": return "Deny"
+            default: return nil
+            }
+        }
+        return menu.first { $0.n == n }?.label
     }
 
     private var isFailure: Bool {
@@ -616,14 +736,41 @@ private struct ApprovalCard: View {
         case .submitting: "Sending your answer…"
         case .queued: "Queued: waiting for the satellite"
         case .failed(let why): why
-        case .resolved(let decision):
-            switch decision {
-            case "allow": "Allowed"
-            case "always": "Always allowed"
-            case "deny": "Denied"
-            default: "Answered"
-            }
+        // The verdict sits on the toggle row once answered.
+        case .resolved: nil
         }
+    }
+}
+
+/// A pane menu row in the secondary button's chrome, wrapping and
+/// left-aligned like the web app's `.approval-opt`: the labels run long
+/// ("Yes, always allow `sudo` commands in all projects").
+private struct MenuOptionStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        MenuOptionBody(configuration: configuration)
+    }
+}
+
+private struct MenuOptionBody: View {
+    let configuration: ButtonStyleConfiguration
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovering = false
+
+    var body: some View {
+        configuration.label
+            .font(Theme.bodySmall)
+            .multilineTextAlignment(.leading)
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .foregroundStyle(hovering ? Theme.textStrong : Theme.textPrimary)
+            .background(hovering ? Theme.hover : Theme.secondaryBackground,
+                        in: .rect(cornerRadius: Theme.controlRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
+                .strokeBorder(Theme.borderStrong, lineWidth: 1))
+            .opacity(isEnabled ? (configuration.isPressed ? 0.85 : 1) : 0.45)
+            .animation(.easeOut(duration: 0.2), value: hovering)
+            .contentShape(.rect(cornerRadius: Theme.controlRadius))
+            .onHover { hovering = $0 }
     }
 }
 

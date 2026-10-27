@@ -267,9 +267,11 @@ extension HubStubbed {
         chat.apply(message(7, #"{"kind": "assistant", "text": "hi"}"#))
         #expect(chat.items.count == 1)
         chat.apply(event("approval.requested", #"{"request_id": "r1", "prompt": "Run rm?"}"#))
-        #expect(chat.items.last?.kind == .approval(requestId: "r1", prompt: "Run rm?", state: .open))
+        #expect(chat.items.last?.kind == .approval(requestId: "r1", prompt: "Run rm?",
+                                                 options: [], picked: nil, state: .open))
         chat.apply(event("approval.resolved", #"{"request_id": "r1", "decision": "deny"}"#))
-        #expect(chat.items.last?.kind == .approval(requestId: "r1", prompt: "Run rm?", state: .resolved("deny")))
+        #expect(chat.items.last?.kind == .approval(requestId: "r1", prompt: "Run rm?",
+                                                 options: [], picked: "deny", state: .resolved("deny")))
     }
 
     @Test func anOlderPageBringsTheCallForAnOrphanResult() {
@@ -350,10 +352,23 @@ extension HubStubbed {
         chat.apply(event("approval.requested", seq: 2, #"{"request_id": "r1", "prompt": "Run make?"}"#))
         chat.apply(event("message.appended", seq: 3, #"{"kind": "assistant", "text": "done"}"#))
         #expect(chat.items.map(\.id) == ["m1", "approval-r1", "m3"])
-        #expect(chat.items[1].kind == .approval(requestId: "r1", prompt: "Run make?", state: .open))
+        #expect(chat.items[1].kind == .approval(requestId: "r1", prompt: "Run make?",
+                                              options: [], picked: nil, state: .open))
         // Live again past the history.
         chat.apply(event("message.appended", seq: 4, #"{"kind": "assistant", "text": "more"}"#))
         #expect(chat.items.map(\.id) == ["m1", "approval-r1", "m3", "m4"])
+    }
+
+    /// The placeholder a waiting approval opens with learns the pane's
+    /// menu when the ask replays: options ride `approval.requested`.
+    @Test func aWaitingApprovalLearnsItsMenu() async throws {
+        let chat = try await opened(sessions: #"{"sessions": [{"key": "claude:s1", "status": "approval"}]}"#,
+                                    inbox: #"{"items": [{"key": "claude:s1", "status": "approval", "request_id": "r1"}]}"#)
+        let options = [HubApprovalOption(n: "1", label: "Yes"), HubApprovalOption(n: "8", label: "No")]
+        chat.apply(event("approval.requested", seq: 2,
+                         #"{"request_id": "r1", "prompt": "Run?", "options": [{"n": "1", "label": "Yes"}, {"n": "8", "label": "No"}]}"#))
+        #expect(chat.items[1].kind == .approval(requestId: "r1", prompt: "Run?",
+                                              options: options, picked: nil, state: .open))
     }
 }
 }
@@ -548,7 +563,8 @@ extension HubStubbed {
         await chat.decide("r1", "always")
         let post = try #require(HubStub.requests.last { $0.httpMethod == "POST" })
         #expect(HubStub.body(post) == ["request_id": "r1", "decision": "always"])
-        #expect(chat.items.last?.kind == .approval(requestId: "r1", prompt: "Run make?", state: .resolved("always")))
+        #expect(chat.items.last?.kind == .approval(requestId: "r1", prompt: "Run make?",
+                                                 options: [], picked: "always", state: .resolved("always")))
         // A resolved approval takes no second answer.
         let posts = HubStub.requests.count
         await chat.decide("r1", "deny")
@@ -559,14 +575,16 @@ extension HubStubbed {
         let chat = try await opened(ownership: "attached", approval: (202, Data(#"{"queued": true}"#.utf8)))
         chat.apply(event("approval.requested", #"{"request_id": "r2", "prompt": "Edit?"}"#))
         await chat.decide("r2", "allow")
-        #expect(chat.items.last?.kind == .approval(requestId: "r2", prompt: "Edit?", state: .queued))
+        #expect(chat.items.last?.kind == .approval(requestId: "r2", prompt: "Edit?",
+                                                 options: [], picked: "allow", state: .queued))
         // A reload rebuilds the card with its answer still on its way.
         chat.load(HubMessagesPage(messages: [], nextBefore: nil, hasMore: false))
         chat.apply(event("approval.requested", #"{"request_id": "r2", "prompt": "Edit?"}"#))
-        #expect(chat.items.last?.kind == .approval(requestId: "r2", prompt: "Edit?", state: .queued))
-        chat.apply(event("command.result", #"{"op": "approval", "request_id": "r2", "ok": false, "note": "prompt closed"}"#))
         #expect(chat.items.last?.kind == .approval(requestId: "r2", prompt: "Edit?",
-                                                   state: .failed("Approval failed: prompt closed")))
+                                                 options: [], picked: "allow", state: .queued))
+        chat.apply(event("command.result", #"{"op": "approval", "request_id": "r2", "ok": false, "note": "prompt closed"}"#))
+        #expect(chat.items.last?.kind == .approval(requestId: "r2", prompt: "Edit?", options: [],
+                                                 picked: nil, state: .failed("Approval failed: prompt closed")))
         #expect(chat.items.count == 1)
     }
 
@@ -575,7 +593,7 @@ extension HubStubbed {
                                     approval: (409, Data(#"{"error": {"code": "gone", "message": "no such prompt"}}"#.utf8)))
         chat.apply(event("approval.requested", #"{"request_id": "r3", "prompt": "Push?"}"#))
         await chat.decide("r3", "deny")
-        guard case .approval(_, _, let state) = chat.items.last?.kind else {
+        guard case .approval(_, _, _, _, let state) = chat.items.last?.kind else {
             Issue.record("no card")
             return
         }
@@ -588,7 +606,94 @@ extension HubStubbed {
         chat.apply(event("approval.requested", #"{"request_id": "r4", "prompt": "Run?"}"#))
         await chat.decide("r4", "deny")
         chat.apply(event("command.result", #"{"op": "approval", "request_id": "r4", "ok": true}"#))
-        #expect(chat.items.last?.kind == .approval(requestId: "r4", prompt: "Run?", state: .resolved("deny")))
+        #expect(chat.items.last?.kind == .approval(requestId: "r4", prompt: "Run?",
+                                                 options: [], picked: "deny", state: .resolved("deny")))
+    }
+
+    /// The pane's numbered menu rides `options`: the card keeps the rows
+    /// and a tap posts the row's digit as the decision, verbatim.
+    @Test func aMenusRowsPostTheirDigit() async throws {
+        let chat = try await opened(ownership: "attached")
+        let options = [HubApprovalOption(n: "1", label: "Yes, allow `sudo ls` commands"),
+                       HubApprovalOption(n: "6", label: "Edit command"),
+                       HubApprovalOption(n: "8", label: "No")]
+        chat.apply(event("approval.requested", #"{"request_id": "r5", "prompt": "Allow it?", "options": [{"n": "1", "label": "Yes, allow `sudo ls` commands"}, {"n": "6", "label": "Edit command"}, {"n": "8", "label": "No"}]}"#))
+        #expect(chat.items.last?.kind == .approval(requestId: "r5", prompt: "Allow it?",
+                                                 options: options, picked: nil, state: .open))
+        await chat.decide("r5", "6")
+        let post = try #require(HubStub.requests.last { $0.httpMethod == "POST" })
+        #expect(HubStub.body(post) == ["request_id": "r5", "decision": "6"])
+        #expect(chat.items.last?.kind == .approval(requestId: "r5", prompt: "Allow it?",
+                                                 options: options, picked: "6", state: .resolved("6")))
+    }
+
+    /// An `approval.resolved` event's decision wins over the row picked
+    /// here: another client may have answered first.
+    @Test func anEventDecisionWinsOverTheLocalPick() async throws {
+        let chat = try await opened(ownership: "attached", approval: (202, Data(#"{"queued": true}"#.utf8)))
+        let options = [HubApprovalOption(n: "1", label: "Yes"), HubApprovalOption(n: "8", label: "No")]
+        chat.apply(event("approval.requested", #"{"request_id": "r6", "prompt": "Run?", "options": [{"n": "1", "label": "Yes"}, {"n": "8", "label": "No"}]}"#))
+        await chat.decide("r6", "8")
+        chat.apply(event("approval.resolved", #"{"request_id": "r6", "decision": "1"}"#))
+        #expect(chat.items.last?.kind == .approval(requestId: "r6", prompt: "Run?",
+                                                 options: options, picked: "1", state: .resolved("1")))
+    }
+
+    /// A resolve carrying no decision falls back to the row picked here.
+    @Test func aBareResolveFallsBackToTheLocalPick() async throws {
+        let chat = try await opened(ownership: "attached", approval: (202, Data(#"{"queued": true}"#.utf8)))
+        chat.apply(event("approval.requested", #"{"request_id": "r7", "prompt": "Run?"}"#))
+        await chat.decide("r7", "deny")
+        chat.apply(event("approval.resolved", #"{"request_id": "r7"}"#))
+        #expect(chat.items.last?.kind == .approval(requestId: "r7", prompt: "Run?",
+                                                 options: [], picked: "deny", state: .resolved("deny")))
+    }
+
+    /// A `command.result` settles only an answer sent from here: a
+    /// request another client answered resolves on approval.resolved.
+    @Test func aResultForAnApprovalWeDidNotAnswerIsIgnored() async throws {
+        let chat = try await opened(ownership: "attached")
+        chat.apply(event("approval.requested", #"{"request_id": "r8", "prompt": "Run?"}"#))
+        chat.apply(event("command.result", #"{"op": "approval", "request_id": "r8", "ok": true}"#))
+        #expect(chat.items.last?.kind == .approval(requestId: "r8", prompt: "Run?",
+                                                 options: [], picked: nil, state: .open))
+        chat.apply(event("approval.resolved", #"{"request_id": "r8", "decision": "allow"}"#))
+        #expect(chat.items.last?.kind == .approval(requestId: "r8", prompt: "Run?",
+                                                 options: [], picked: "allow", state: .resolved("allow")))
+    }
+
+    /// A queued answer the satellite rejects after the card resolved
+    /// comes back answerable with the failure note (the web app unfolds
+    /// the card), the stale pick gone.
+    @Test func aRejectionAfterResolvingReopensTheCard() async throws {
+        let chat = try await opened(ownership: "attached", approval: (202, Data(#"{"queued": true}"#.utf8)))
+        chat.apply(event("approval.requested", #"{"request_id": "r9", "prompt": "Run?"}"#))
+        await chat.decide("r9", "deny")
+        chat.apply(event("approval.resolved", #"{"request_id": "r9", "decision": "allow"}"#))
+        #expect(chat.items.last?.kind == .approval(requestId: "r9", prompt: "Run?",
+                                                 options: [], picked: "allow", state: .resolved("allow")))
+        chat.apply(event("command.result", #"{"op": "approval", "request_id": "r9", "ok": false, "note": "stale"}"#))
+        guard case .approval(_, _, _, let picked, let state) = chat.items.last?.kind else {
+            Issue.record("no card")
+            return
+        }
+        #expect(state == .failed("Approval failed: stale"))
+        #expect(state.answerable)
+        #expect(picked == nil)
+    }
+
+    /// A second settle for the same request refreshes the verdict
+    /// (command.result, then approval.resolved for the same answer).
+    @Test func aSecondSettleRefreshesTheVerdict() async throws {
+        let chat = try await opened(ownership: "attached", approval: (202, Data(#"{"queued": true}"#.utf8)))
+        chat.apply(event("approval.requested", #"{"request_id": "r10", "prompt": "Run?"}"#))
+        await chat.decide("r10", "deny")
+        chat.apply(event("command.result", #"{"op": "approval", "request_id": "r10", "ok": true}"#))
+        #expect(chat.items.last?.kind == .approval(requestId: "r10", prompt: "Run?",
+                                                 options: [], picked: "deny", state: .resolved("deny")))
+        chat.apply(event("approval.resolved", #"{"request_id": "r10", "decision": "deny"}"#))
+        #expect(chat.items.last?.kind == .approval(requestId: "r10", prompt: "Run?",
+                                                 options: [], picked: "deny", state: .resolved("deny")))
     }
 }
 }
