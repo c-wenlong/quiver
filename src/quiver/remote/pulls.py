@@ -38,6 +38,7 @@ from quiver.github import pulls as gh_pulls
 from quiver.remote import catalog as catalog_mod
 from quiver.remote import issues as issues_mod
 from quiver.remote import protocol, supervise
+from quiver.remote import tasks as tasks_mod
 from quiver.webapp.pages import _github as G
 
 # ``swe gh``'s list cap: open PRs per pinned repo in one answer.
@@ -104,6 +105,15 @@ def list(state, args) -> tuple[int, dict]:
     body["repos"] = [value for value, _at in replies]
     if replies:
         body["fetched_at"] = min(at for _value, at in replies)
+    # tasks.py's store says which PRs have an agent on them (a linked
+    # session still active, or its launch still pending).
+    running = tasks_mod.running_task_ids(state)
+    for repo_row in body["repos"]:
+        name = str(repo_row.get("name") or "")
+        for pr in repo_row.get("pulls") or []:
+            if isinstance(pr, dict):
+                pr["agent_running"] = tasks_mod.pull_task_id(
+                    name, pr.get("number")) in running
     return 200, body
 
 
@@ -306,7 +316,11 @@ def _prepare_and_launch(state, launch_id: str, repo: str, number: int,
     title = f"{repo}#{number}"
     if pr and pr.get("title"):
         title += f" {pr['title']}"
-    state.settle_launch(launch_id, title=title)
+    # As in issues.py: adoption links the session to this PR's task,
+    # and launch_linked marks the pending launch against it now.
+    origin = tasks_mod.pull_ref(repo, number, pr)
+    state.settle_launch(launch_id, title=title, origin=origin)
+    tasks_mod.launch_linked(state, launch_id, origin)
 
     if not manage.mirror_path(repo, state.home).is_dir():
         note("Cloning mirror…")

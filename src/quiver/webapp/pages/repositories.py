@@ -459,7 +459,7 @@ def _drop_repo(home, repo: str) -> None:
     hk = G.home_key(home)
     G.CACHE.drop(lambda k: isinstance(k, tuple) and len(k) > 2
                  and k[0] in ("board", "focus", "pr", "pulls",
-                              "issue", "issues")
+                              "issue", "issues", "task")
                  and k[1] == hk and k[2] == repo)
 
 

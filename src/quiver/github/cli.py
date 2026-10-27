@@ -26,8 +26,9 @@ from quiver.table import Table
 _VALUE_FLAGS = {"--repo", "--state", "--limit", "--method"}
 
 _PR_FIELDS = (
-    "number,title,state,isDraft,author,headRefName,baseRefName,labels,"
-    "mergeable,reviewDecision,statusCheckRollup,updatedAt,url"
+    "number,title,state,isDraft,author,headRefName,headRepositoryOwner,"
+    "baseRefName,labels,mergeable,reviewDecision,statusCheckRollup,"
+    "updatedAt,url"
 )
 _ISSUE_FIELDS = (
     "number,title,state,author,labels,assignees,comments,updatedAt,url"
@@ -150,6 +151,9 @@ def _pr_row(pr: dict) -> dict:
         "state": str(pr.get("state") or "").lower(),
         "draft": bool(pr.get("isDraft") or pr.get("is_draft")),
         "author": _login(pr.get("author")),
+        # Whose fork the head branch lives on; "" when gh can't say.
+        "head_owner":
+            (pr.get("headRepositoryOwner") or {}).get("login") or "",
         "branch": pr.get("headRefName") or "",
         "base": pr.get("baseRefName") or "",
         "labels": _label_names(pr.get("labels")),

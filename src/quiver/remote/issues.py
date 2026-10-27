@@ -44,6 +44,7 @@ from quiver.github import gh, manage, repos
 from quiver.github import issues as gh_issues
 from quiver.remote import catalog as catalog_mod
 from quiver.remote import protocol, sessionmeta, supervise
+from quiver.remote import tasks as tasks_mod
 from quiver.webapp.pages import _github as G
 
 # ``swe gh``'s list cap: open issues per pinned repo in one answer.
@@ -117,6 +118,15 @@ def list(state, args) -> tuple[int, dict]:
     body["repos"] = [value for value, _at in replies]
     if replies:
         body["fetched_at"] = min(at for _value, at in replies)
+    # tasks.py's store says which issues have an agent on them, as
+    # pulls.py's list does — only a running one earns the flag.
+    running = tasks_mod.running_task_ids(state)
+    for repo_row in body["repos"]:
+        name = str(repo_row.get("name") or "")
+        for issue in repo_row.get("issues") or []:
+            if isinstance(issue, dict) and tasks_mod.issue_task_id(
+                    name, issue.get("number")) in running:
+                issue["agent_running"] = True
     return 200, body
 
 
@@ -342,7 +352,13 @@ def _prepare_and_launch(state, launch_id: str, cmd: dict, binary: str,
     title = f"{repo}#{number}"
     if issue and issue.get("title"):
         title += f" {issue['title']}"
-    state.settle_launch(launch_id, title=title)
+    # ``origin`` rides the launch record into adoption: emit's
+    # origin_adopted links the session to this issue in tasks.json.
+    # launch_linked records the launch itself now, so the task row
+    # reads agent_running through the whole prepare window below.
+    origin = tasks_mod.issue_ref(repo, number, issue)
+    state.settle_launch(launch_id, title=title, origin=origin)
+    tasks_mod.launch_linked(state, launch_id, origin)
 
     made = manage.issue_worktree(repo, number, state.home, progress=note)
     if made.status != "ok":

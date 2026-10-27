@@ -49,6 +49,7 @@ from quiver.remote import (
     sshkeys,
     supervise,
     tail,
+    tasks as tasks_mod,
     tsid,
     usage as usage_mod,
 )
@@ -446,8 +447,10 @@ class HubState:
             self.bus.publish(GLOBAL_KEY, mirrored)
         if adopted:
             # An issue resolve or a PR open names its session after the
-            # issue or pull request.
+            # issue or pull request, and links it to the task its launch
+            # was for.
             issues_mod.title_adopted(self, *adopted)
+            tasks_mod.origin_adopted(self, *adopted)
         return written
 
     def expire_pending_approvals(self) -> None:
@@ -1658,6 +1661,12 @@ class _Handler(BaseHTTPRequestHandler):
                 parts[2], args))
             return
 
+        if path == "/v1/tasks":
+            # tasks.py: the work-item store over the sources' lists —
+            # which session or launch is on which issue or PR.
+            self._send_json(*tasks_mod.list_view(self._state, args))
+            return
+
         if path == "/v1/events":
             after = self._sse_after(args)
             self._sse_stream(None, after, device_id=device_id)
@@ -2052,6 +2061,10 @@ class _Handler(BaseHTTPRequestHandler):
             if action in sessionmeta.ACTIONS:
                 self._session_meta(key, action)
                 return
+            if action == "task":  # tasks.py: link a work item, hub-side
+                self._send_json(*tasks_mod.link_request(
+                    self._state, key, self._read_body()))
+                return
             remote_mid = row.get("machine_id")
             if remote_mid and remote_mid != self._state.machine_id:
                 self._forward(key, remote_mid, action, row)
@@ -2080,6 +2093,30 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(404, "not_found", "unknown route")
             return
 
+        self._send_error(404, "not_found", "unknown route")
+
+    def do_DELETE(self) -> None:
+        """Only ``/v1/sessions/{key}/task`` deletes anything: unlink a
+        work item (``tasks.py``). Everything else answers 404."""
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path.startswith("/v1/"):
+            device_id = self._caller(path)
+            if device_id is None:
+                self._send_error(401, "unauthorized", "pair this device first")
+                return
+        if path.startswith("/v1/sessions/"):
+            stem = path[len("/v1/sessions/"):]
+            key_part, _, action = stem.rpartition("/")
+            if action == "task":
+                key = unquote(key_part)
+                if self._state.catalog.row_for(key) is None:
+                    self._send_error(
+                        404, "unknown_session", "no such session")
+                    return
+                self._send_json(*tasks_mod.unlink_request(
+                    self._state, key, self._read_body()))
+                return
         self._send_error(404, "not_found", "unknown route")
 
     def _folders(self, args) -> None:
