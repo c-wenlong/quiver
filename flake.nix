@@ -31,6 +31,11 @@
               ./README.md   # pyproject declares readme = "README.md"
               ./src
               ./tests
+              # tests/test_issue_labels.py and tests/test_bug.py read the
+              # issue forms and the labeller out of the repo root; without
+              # these the sandbox checkPhase dies on FileNotFoundError.
+              ./scripts
+              ./.github/ISSUE_TEMPLATE
             ];
           };
 
