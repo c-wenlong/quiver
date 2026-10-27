@@ -353,8 +353,12 @@ import Testing
     /// `clear()` must wait out a call already inside `storeLock`, not
     /// delete the handle under it. A thread holds the lock — `lock()`
     /// cannot straddle an `await` — so the overlap is deterministic: the
-    /// clearer can only finish once the holder lets go.
-    @Test func clearWaitsForACallInsideTheLock() async throws {
+    /// clearer can only finish once the holder lets go. The clearer runs
+    /// on its own thread, not a task: parked on the lock it would pin a
+    /// cooperative-pool worker while the `release` it needs waits for the
+    /// same pool, which starved and hung the suite on a narrow runner.
+    @Test(.timeLimit(.minutes(1)))
+    func clearWaitsForACallInsideTheLock() async throws {
         let temp = try TempDir()
         let store = try store(temp)
         let holding = OSAllocatedUnfairLock(initialState: false)
@@ -373,7 +377,7 @@ import Testing
             try await Task.sleep(for: .milliseconds(5))
         }
 
-        let clearer = Task.detached {
+        Thread.detachNewThread {
             store.clear()
             cleared.withLock { $0 = true }
         }
@@ -382,7 +386,9 @@ import Testing
         #expect(!cleared.withLock { $0 }, "clear() ran while another call held the lock")
 
         release.withLock { $0 = true }
-        await clearer.value
+        for _ in 0..<1_000 where !cleared.withLock({ $0 }) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
         #expect(cleared.withLock { $0 })
         #expect(throws: (any Error).self) { try store.files() }
     }

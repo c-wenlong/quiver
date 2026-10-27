@@ -86,6 +86,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A unit test could freeze the whole Swift suite.** In
+  `clearWaitsForACallInsideTheLock` the clearer ran as `Task.detached`,
+  so `store.clear()` parked a cooperative-pool worker on `storeLock`
+  while the `release` flag it was waiting for could only be set by the
+  test's own continuation — which needed the same pool. On a narrow or
+  loaded runner the pool starved and every test still in flight hung
+  (the v1.1.0 release job sat for four hours). The clearer now runs on a
+  dedicated thread and the test carries a one-minute `timeLimit`.
 - **Devin approval menus reach the phone.** The tmux watcher only
   recognized claude-style permission menus; devin's (options numbered
   "1 Yes" with a bare space, footer "esc cancel") fired no
