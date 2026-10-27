@@ -487,6 +487,30 @@ class DevinStatusTest(StatusTestBase):
         s = _session("devin", "d13", age_s=9999)
         self.assertEqual(INTERRUPTED, session_status(s, now=NOW))
 
+    def test_single_desktop_lock_pid_is_interrupted(self):
+        # A Desktop with one lock left is still the shared host: the
+        # Devin.app command path, not the lock count, gives it away.
+        self._tool_head_db("d14")
+        self._write_lock("d14", str(os.getpid()))
+        s = _session("devin", "d14", age_s=9999)
+        with patch(
+            "quiver.sessions.status._pid_command",
+            return_value="/Applications/Devin.app/Contents/Resources/"
+            "app/extensions/windsurf/devin/bin/devin acp",
+        ):
+            self.assertEqual(INTERRUPTED, session_status(s, now=NOW))
+
+    def test_single_desktop_lock_pid_still_active_when_fresh(self):
+        self._tool_head_db("d15")
+        self._write_lock("d15", str(os.getpid()))
+        s = _session("devin", "d15", age_s=0)
+        with patch(
+            "quiver.sessions.status._pid_command",
+            return_value="/Applications/Devin.app/Contents/Resources/"
+            "app/extensions/windsurf/devin/bin/devin acp",
+        ):
+            self.assertEqual(ACTIVE, session_status(s, now=NOW))
+
     def test_missing_lock_file_is_interrupted(self):
         self._tool_head_db("d8")
         s = _session("devin", "d8", age_s=9999)

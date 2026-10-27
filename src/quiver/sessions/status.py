@@ -24,6 +24,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import time
 
 from quiver.paths import account_homes_for, session_status_cache_file_for
@@ -339,13 +340,29 @@ def _devin_locks_dir() -> str:
     return os.path.expanduser("~/.local/share/devin/cli/session_locks")
 
 
-def _devin_shared_lock_pids(locks_dir: str) -> set[int]:
-    """Pids claimed by more than one session's lock.
+def _pid_command(pid: int) -> str:
+    """The process's argv, "" when it is gone or ``ps`` can't run."""
+    if pid < 1:
+        return ""
+    try:
+        return subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True, text=True, timeout=5,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
 
-    A ``devin`` CLI session owns its process, so its lock's pid proves the
-    turn is alive. Devin Desktop hosts every session in one ``devin acp``
-    process: all locks name the same pid, which stays up for as long as
-    the app is open whether or not this session's turn is.
+
+def _devin_host_pids(locks_dir: str) -> set[int]:
+    """Pids that host Devin Desktop instead of owning one session's turn.
+
+    A ``devin`` CLI session owns its process, so its lock's pid proves
+    the turn is alive. Devin Desktop runs every session in one ``devin
+    acp`` process inside the app bundle: its pid stays up for as long as
+    the app is open whether or not this session's turn is. A pid counts
+    as the host when more than one lock names it, or when its command
+    path lives inside Devin.app — the path check still catches a
+    Desktop that has only one session lock left.
     """
     counts: dict[int, int] = {}
     try:
@@ -362,17 +379,21 @@ def _devin_shared_lock_pids(locks_dir: str) -> set[int]:
         except Exception:
             continue
         counts[pid] = counts.get(pid, 0) + 1
-    return {pid for pid, n in counts.items() if n > 1}
+    hosts = {pid for pid, n in counts.items() if n > 1}
+    for pid in counts.keys() - hosts:
+        if "Devin.app" in _pid_command(pid):
+            hosts.add(pid)
+    return hosts
 
 
-def _devin_lock_alive(session_id: str, shared_pids: set[int]) -> bool:
+def _devin_lock_alive(session_id: str, host_pids: set[int]) -> bool:
     """True when the session's ``session_locks`` pid is still running.
 
     ``devin acp`` writes ``~/.local/share/devin/cli/session_locks/<id>.lock``
-    holding its decimal pid for as long as the session process runs. A pid
-    other locks share is the Desktop host, so it cannot prove this one
-    session's turn is alive; those sessions fall back to the transcript
-    freshness check alone.
+    holding its decimal pid for as long as the session process runs. A
+    pid the Desktop host owns cannot prove this one session's turn is
+    alive; those sessions fall back to the transcript freshness check
+    alone.
     """
     path = os.path.join(_devin_locks_dir(), session_id + ".lock")
     try:
@@ -380,7 +401,7 @@ def _devin_lock_alive(session_id: str, shared_pids: set[int]) -> bool:
             pid = int(fh.read().strip())
     except Exception:
         return False
-    return pid not in shared_pids and _pid_alive(pid)
+    return pid not in host_pids and _pid_alive(pid)
 
 
 def _probe_devin(session: Session, ctx: dict):
@@ -897,7 +918,7 @@ def session_statuses(sessions: list[Session], now: float | None = None) -> list[
         "devin_conn": _open_devin_db()
         if any(s.tool_name == "devin" for s in sessions)
         else None,
-        "devin_shared_pids": _devin_shared_lock_pids(_devin_locks_dir())
+        "devin_host_pids": _devin_host_pids(_devin_locks_dir())
         if any(s.tool_name == "devin" for s in sessions)
         else set(),
         "opencode_conn": _open_opencode_db()
@@ -941,7 +962,7 @@ def _one_status(session: Session, now: float, ctx: dict) -> str:
             alive = alive or session.session_id in ctx["claude_live"]
         elif session.tool_name == "devin":
             alive = alive or _devin_lock_alive(
-                session.session_id, ctx["devin_shared_pids"]
+                session.session_id, ctx["devin_host_pids"]
             )
         elif session.tool_name == "cline":
             alive = alive or _cline_pid_alive(session.session_id)
