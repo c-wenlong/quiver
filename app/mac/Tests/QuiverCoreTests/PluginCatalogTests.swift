@@ -286,14 +286,6 @@ func decodedInventory() throws -> [Skill] {
         #expect(reply.results[1].detail == "not on PATH")
     }
 
-    @Test func exploreOpensWhenHealthIsEmpty() {
-        #expect(PluginsFirstTab.explore(
-            report: PluginDriftReport(sources: 0, drift: [])))
-        #expect(!PluginsFirstTab.explore(report: nil))
-        #expect(!PluginsFirstTab.explore(
-            report: PluginDriftReport(sources: 2, drift: [])))
-    }
-
     @Test func anActionAsksSweByRefThenReadsTheCatalogAgain() async throws {
         let runner = catalogRunner([(["plugins", "install"], json(#"""
             {"action": "install", "harness": "codex", "ref": "linter@official", "changed": true, "detail": null,

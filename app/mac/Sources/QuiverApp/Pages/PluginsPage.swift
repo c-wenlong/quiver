@@ -4,12 +4,12 @@ import SwiftUI
 
 /// The Plugins page's two views.
 enum PluginsTab: Hashable {
-    /// Where the copies Claude Code and Codex run no longer match
-    /// `~/.quiver/plugins`, each with the fix swe would run.
-    case health
     /// Every plugin in every marketplace, with install, uninstall, enable
     /// and disable per harness.
     case explore
+    /// Where the copies Claude Code and Codex run no longer match
+    /// `~/.quiver/plugins`, each with the fix swe would run.
+    case health
 }
 
 struct PluginsPage: View {
@@ -35,6 +35,14 @@ struct PluginsPage: View {
         Page(title: "Plugins",
              subtitle: "Every plugin in every marketplace, and where Claude Code and Codex no longer match ~/.quiver/plugins.") {
             switch app.pluginsTab {
+            case .explore:
+                Button("Add marketplace", systemImage: "plus") { addingMarketplace = true }
+                    .primaryButton()
+                Button("Refresh", systemImage: "arrow.clockwise") { Task { await refreshExplore() } }
+                    .iconButton()
+                    .disabled(catalog.running != nil)
+                    .keyboardShortcut("r", modifiers: .command)
+                    .help("Read the marketplaces again (⌘R)")
             case .health:
                 if model.fixAllCount > 0 || model.fixAllProgress != nil {
                     Button(fixAllTitle) { confirmingAll = model.fixAllIDs }
@@ -48,39 +56,25 @@ struct PluginsPage: View {
                     .disabled(model.fixing != nil)
                     .keyboardShortcut("r", modifiers: .command)
                     .help("Check again (⌘R)")
-            case .explore:
-                Button("Add marketplace", systemImage: "plus") { addingMarketplace = true }
-                    .primaryButton()
-                Button("Refresh", systemImage: "arrow.clockwise") { Task { await refreshExplore() } }
-                    .iconButton()
-                    .disabled(catalog.running != nil)
-                    .keyboardShortcut("r", modifiers: .command)
-                    .help("Read the marketplaces again (⌘R)")
             }
         } content: {
-            Tabs(options: [(PluginsTab.health, "Health"), (PluginsTab.explore, "Explore")],
+            Tabs(options: [(PluginsTab.explore, "Explore"), (PluginsTab.health, "Health")],
                  selection: $app.pluginsTab, style: .underline,
                  // Reselecting Explore while a plugin detail is open goes
                  // back to the list, through the detail's unsaved ask.
                  onSelect: { tab in
-                    app.pluginsTabChosen = true
                     if tab == .explore { app.navReselects += 1 }
                  })
             switch app.pluginsTab {
-            case .health: health
             case .explore:
                 PluginExplorer(model: catalog, openHealth: { app.pluginsTab = .health },
                                addMarketplace: { addingMarketplace = true }) { confirmingAction = $0 }
+            case .health: health
             }
         }
         .task(id: app.swePath) {
+            // Health's report stays warm behind Explore, the tab on show.
             await model.loadIfStale(swe: app.swe, for: app.swePath)
-            // An empty hub gives Health an empty page; open Explore once,
-            // never over a tab the user picked.
-            if !app.pluginsTabChosen, case .loaded(let report) = model.state,
-               PluginsFirstTab.explore(report: report) {
-                app.pluginsTab = .explore
-            }
         }
         .quiverSheet(isPresented: $addingMarketplace) {
             AddMarketplaceSheet()

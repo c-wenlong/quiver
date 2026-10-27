@@ -94,6 +94,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The Plugins page opens on Explore.** In the Mac app and the web app,
+  Explore is now the first tab and the view Plugins lands on: the
+  catalog of every marketplace's plugins is what the page is for, and
+  Health — where Claude Code and Codex drift from `~/.quiver/plugins` —
+  stays one click away. The nudge that moved a Health-first page to
+  Explore on an empty hub is gone with it.
+
 - **Slash-command lists load when the chat opens, not on the first
   `/`.** Every client — the web app, the remote PWA, iOS and the Mac
   app — now warms the command list as the chat opens and keeps the
