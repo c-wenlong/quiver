@@ -341,16 +341,6 @@ struct PartsCard: View {
     /// stale tree can land over a newer one.
     @State private var treeTask: Task<Void, Never>?
     @State private var selected: String?
-    /// Whether `selected` can preview, checked off the main actor before
-    /// any document is opened for it; nil while the check still runs.
-    @State private var previewable: Bool?
-    /// Whether `selected` stays inside `root` once symlinks resolve,
-    /// rechecked off the main actor with `previewable` each time a file
-    /// opens; nil while the check runs, and editing stays off until true.
-    @State private var selectedInside: Bool?
-    /// The running previewability check, kept so a new selection can
-    /// cancel it before a stale result lands on the shared flag.
-    @State private var previewTask: Task<Void, Never>?
     @State private var sheetOpen = false
     /// The main window's size when the file was picked; the sheet opens
     /// at about 90% of it.
@@ -380,41 +370,14 @@ struct PartsCard: View {
         // folder, and cancelling the old task drops a walk that still
         // lands for it.
         .task(id: root) { reload() }
-        .task(id: selected) {
-            previewTask?.cancel()
-            guard let selected else {
-                previewable = nil
-                selectedInside = nil
-                return
-            }
-            let root = root
-            previewTask = Task {
-                // Size, type and where the file really lives first, off
-                // the main actor on a GCD queue: a document is only ever
-                // opened for a file that can preview, and editing waits
-                // for the inside-the-folder check, since the file may have
-                // become an outward link since the tree was walked.
-                let check = await offMain { PrimitiveFileCheck(path: selected, root: root) }
-                // A check for an older selection can still finish after a
-                // newer one: publish only when this task was not cancelled
-                // and the path it checked is still the selected one.
-                guard !Task.isCancelled, self.selected == selected else { return }
-                selectedInside = check.isInside
-                previewable = check.canPreview
-                if check.canPreview { drafts.document(for: selected) }
-            }
-        }
         .quiverSheet(isPresented: $sheetOpen, onDismiss: {
             // Drop the pick so reopening the same file restarts the
             // size and type check; a draft still in the store reopens
             // with its edits.
             selected = nil
-            previewable = nil
-            selectedInside = nil
         }) {
             if let selected {
-                PrimitiveFileSheet(path: selected, editable: editable && selectedInside == true,
-                                   previewable: previewable, document: drafts.documents[selected],
+                PrimitiveFileSheet(path: selected, root: root, editable: editable,
                                    drafts: drafts, windowSize: sheetSize, onSaved: onChanged)
             }
         }
@@ -531,12 +494,10 @@ struct PartsCard: View {
         .padding(.vertical, 3)
     }
 
-    /// Open `entry` in the sheet: the size and type check is still
-    /// running, so `previewable` resets and the sheet spins until it lands.
+    /// Open `entry` in the sheet; it runs the size, type and ownership
+    /// check itself once it is up, and spins until that lands.
     private func present(_ entry: PrimitiveTree.Entry) {
         selected = entry.previewPath
-        previewable = nil
-        selectedInside = nil
         if let window = NSApp.keyWindow ?? NSApp.mainWindow {
             sheetSize = CGSize(width: max(900, window.frame.width * 0.9),
                                height: max(640, window.frame.height * 0.9))
@@ -547,7 +508,7 @@ struct PartsCard: View {
     private func reload() {
         // The walk is disk work, and a big marketplace tree would freeze
         // the page if it ran here: it goes off the main actor like the
-        // previewability check in `.task(id: selected)`. Which paths stay
+        // previewability check the file sheet runs. Which paths stay
         // inside the folder is worked out with it: `realpath` on a synced
         // or stale folder can block, so it runs on a GCD queue.
         treeTask?.cancel()
@@ -628,13 +589,13 @@ struct NewPartMenu: View {
 /// survive close and reopen; closing with unsaved changes asks first.
 struct PrimitiveFileSheet: View {
     var path: String
-    /// The file may be edited: its folder is the user's and the file stays
-    /// inside it once symlinks resolve, which the parts card rechecks off
-    /// the main actor each time the sheet opens.
+    /// The folder the file must stay inside, once symlinks resolve, to be
+    /// editable; the sheet rechecks it off the main actor each time it
+    /// opens, since a listed file may have become an outward link since.
+    var root: URL
+    /// The folder is the user's own; a file in it may be edited only while
+    /// the check says it stays inside.
     var editable: Bool
-    /// nil while the off-actor size and type check still runs.
-    var previewable: Bool?
-    var document: InstructionDocument?
     var drafts: PrimitiveDrafts
     /// The window's size when the file was picked.
     var windowSize: CGSize
@@ -645,19 +606,25 @@ struct PrimitiveFileSheet: View {
     /// A save in the close prompt that failed: the reason shows in the
     /// sheet, which stays open.
     @State private var saveError: String?
+    /// The size, type and inside-the-folder check for `path`, run off the
+    /// main actor when the sheet opens; nil while it still runs.
+    @State private var check: PrimitiveFileCheck?
 
     private var url: URL { URL(fileURLWithPath: path) }
-    private var fileEditable: Bool { editable }
+    private var fileEditable: Bool { editable && check?.isInside == true }
+    /// Read in the body so the sheet re-renders when the check's
+    /// `document(for:)` puts the file's document into the store.
+    private var document: InstructionDocument? { drafts.documents[path] }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let saveError {
                 ErrorCard(message: saveError)
             }
-            if !fileEditable, previewable == true {
+            if !fileEditable, check?.canPreview == true {
                 PrimitiveLockNote(text: "Only files inside the plugin or skill's own folder can be edited, so this one is read-only.")
             }
-            switch previewable {
+            switch check?.canPreview {
             case .none:
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             case .some(false):
@@ -688,6 +655,22 @@ struct PrimitiveFileSheet: View {
         .frame(minWidth: 900, idealWidth: max(900, windowSize.width * 0.9),
                minHeight: 640, idealHeight: max(640, windowSize.height * 0.9))
         .presentationSizing(.fitted)
+        // The sheet runs the check itself: the card that presents it hands
+        // down no per-file state, since a presented card's content is a
+        // snapshot the overlay's own entries keep. Size, type and where the
+        // file really lives go off the main actor on a GCD queue; a document
+        // opens only for a file that can preview, and editing waits for the
+        // inside-the-folder check. Dismissing cancels this, so a late result
+        // can never land on a sheet that is already gone.
+        .task(id: path) {
+            let root = root
+            let result = await offMain { PrimitiveFileCheck(path: path, root: root) }
+            guard !Task.isCancelled else { return }
+            check = result
+            // Never in the body: document(for:) writes the drafts store,
+            // which a body must not do mid-update.
+            if result.canPreview { drafts.document(for: path) }
+        }
         .onChange(of: document?.isDirty) {
             // A save or a revert from the editor's own buttons clears a
             // save error the sheet was showing.
