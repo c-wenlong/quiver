@@ -366,6 +366,15 @@ class TestAdoptPending(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
 
+    def test_pending_launch_tracks_markers(self):
+        self.assertFalse(supervise.pending_launch(self.home))  # no dir
+        folder = supervise._pending_dir(self.home)
+        folder.mkdir(parents=True)
+        (folder / "qv-a.json").write_text(json.dumps({"launched_at": 1}))
+        self.assertTrue(supervise.pending_launch(self.home))
+        (folder / "qv-a.json").unlink()
+        self.assertFalse(supervise.pending_launch(self.home))
+
     def test_adopts_matching_new_session(self):
         folder = supervise._pending_dir(self.home)
         folder.mkdir(parents=True)

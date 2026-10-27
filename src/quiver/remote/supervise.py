@@ -1049,6 +1049,18 @@ def _pending_dir(home: Path | None) -> Path:
     return remote_dir_for(home) / "pending"
 
 
+def pending_launch(home: Path | None) -> bool:
+    """Whether an unadopted launch marker exists. While one does, a
+    session scan must not come from the aggregator's 60 s disk cache —
+    the new transcript would stay invisible to ``adopt_pending`` for
+    the rest of the TTL. The marker is deleted on adoption, so the
+    window closes itself."""
+    try:
+        return any(_pending_dir(home).glob("*.json"))
+    except OSError:
+        return False
+
+
 def launch_new(
     home: Path | None,
     tool_name: str,

@@ -201,6 +201,9 @@ class HubState:
         self.webapp = webapp_api.WebApp(self.home)
         self.started_at = time.time()
         self._stop = threading.Event()
+        # Set to cut the catalog loop's wait short — a launch finishing
+        # its tmux prime means a transcript lands any second.
+        self._catalog_wake = threading.Event()
         self._threads: list[threading.Thread] = []
         # Satellite presence: command-stream subscribers are the online
         # signal — a sleeping MacBook just drops offline until it dials in.
@@ -527,6 +530,7 @@ class HubState:
 
     def stop(self) -> None:
         self._stop.set()
+        self._catalog_wake.set()
         self.tail_manager.interrupt()
         # Fail every accepted-but-not-yet-started send honestly; the
         # in-flight one sees _stop and reports the same note.
@@ -724,7 +728,8 @@ class HubState:
                 self.catalog.poll_github()
             except Exception:
                 pass
-            self._stop.wait(catalog_mod.REFRESH_INTERVAL_S)
+            self._catalog_wake.wait(catalog_mod.REFRESH_INTERVAL_S)
+            self._catalog_wake.clear()
 
     def _search_index_loop(self) -> None:
         """Keep this machine's transcript search index current while
@@ -2205,6 +2210,10 @@ class _Handler(BaseHTTPRequestHandler):
                     f"{harness} is running under tmux, but swe can't read "
                     f"its sessions, so there's no chat to open"
                 ))
+            else:
+                # The transcript lands any second: the catalog loop must
+                # not sleep out its 10 s tick before looking for it.
+                state._catalog_wake.set()
 
         threading.Thread(
             target=run, name=f"remote-launch-{launch_id}", daemon=True
