@@ -600,17 +600,7 @@ const SessionChat = (() => {
     } else if (ev.type === "approval.resolved") {
       const rid = d.request_id || "";
       for (const card of $("chat-log").querySelectorAll(".msg.approval")) {
-        if (!rid || card.dataset.req === rid) {
-          // A menu-row answer names its option; a semantic one its label.
-          const said = DECISIONS[d.decision] ||
-            (card.querySelector(`[data-dec="${CSS.escape(d.decision || "")}"]`)?.textContent.trim()) ||
-            "Answered";
-          card.querySelectorAll(".approval-actions button").forEach((b) => { b.disabled = true; });
-          card.classList.add("resolved");
-          if (!card.querySelector(".approval-done")) {
-            card.insertAdjacentHTML("beforeend", `<div class="approval-done caption">${esc(said)}</div>`);
-          }
-        }
+        if (!rid || card.dataset.req === rid) settleCard(card, d.decision);
       }
     }
     if (stick) scrollBottom();
@@ -663,10 +653,19 @@ const SessionChat = (() => {
         // undo what this result settled.
         card.dataset.settled = "1";
         if (d.ok) {
-          card.classList.add("resolved");
+          settleCard(card, "");
           const note = card.querySelector(".approval-note");
           if (note) note.remove();
         } else {
+          // A rejection after the card folded: unfold it so the failure
+          // note and the re-enabled rows are visible.
+          card.classList.remove("resolved", "open");
+          const t = card.querySelector(".approval-toggle");
+          if (t) { t.hidden = true; t.setAttribute("aria-expanded", "false"); }
+          const v = card.querySelector(".approval-verdict");
+          if (v) v.textContent = "";
+          card.querySelectorAll(".approval-actions .chosen")
+            .forEach((b) => b.classList.remove("chosen"));
           card.querySelectorAll(".approval-actions button").forEach((b) => { b.disabled = false; });
           approvalNote(card).textContent = `Approval failed: ${d.note || "the satellite rejected it"}`;
         }
@@ -791,6 +790,33 @@ const SessionChat = (() => {
     put(div);
   }
 
+  /* An answer folds the card like a folded tool callout: the chevron
+   * row carries the picked option and expands back to the full card. */
+  function settleCard(card, decision) {
+    // The event's decision beats a locally-picked row: another client may
+    // have answered first. The .chosen mark is only the fallback for a
+    // bare command.result that carries none.
+    const btn = (decision
+        ? card.querySelector(`[data-dec="${CSS.escape(decision)}"]`)
+        : null)
+      || card.querySelector(".approval-actions .chosen");
+    const said = DECISIONS[decision]
+      || (btn && btn.textContent.trim()) || "Answered";
+    card.querySelectorAll(".approval-actions button").forEach((b) => {
+      b.disabled = true;
+      b.classList.toggle("chosen", b === btn);
+    });
+    // A second settle (command.result, then approval.resolved, for the
+    // same answer) refreshes the verdict but must not re-fold a card the
+    // user opened in between.
+    if (!card.classList.contains("resolved")) card.classList.remove("open");
+    card.classList.add("resolved");
+    const t = card.querySelector(".approval-toggle");
+    if (t) t.hidden = false;
+    const v = card.querySelector(".approval-verdict");
+    if (v) v.textContent = `Approval · ${said}`;
+  }
+
   function approvalCard(div, msg) {
     div.dataset.req = msg.request_id || "";
     // The pane's menu rows ride the event: show them verbatim so an
@@ -803,13 +829,28 @@ const SessionChat = (() => {
       : `<button type="button" class="tab" data-dec="allow">Allow</button>
          <button type="button" class="tab" data-dec="always">Always</button>
          <button type="button" class="tab deny" data-dec="deny">Deny</button>`) : "";
-    div.innerHTML = `<div class="role">Approval needed</div><div class="text">${md(msg.text)}</div>${actions
+    // The generic "Approval requested" fallback repeats the role line —
+    // only a real question or context goes under it.
+    const prompt = (msg.text || "").trim();
+    const textRow = prompt && prompt !== "Approval requested"
+      ? `<div class="text">${md(msg.text)}</div>` : "";
+    div.innerHTML = `
+      <button type="button" class="approval-toggle" hidden aria-expanded="false">
+        <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+        <span class="approval-verdict"></span></button>
+      <div class="role">Approval needed</div>${textRow}${actions
       ? `<div class="approval-actions${opts.length ? " menu" : ""}">${actions}</div>` : ""}`;
+    const toggle = div.querySelector(".approval-toggle");
+    toggle.onclick = () => {
+      const on = div.classList.toggle("open");
+      toggle.setAttribute("aria-expanded", on ? "true" : "false");
+    };
     const buttons = () => div.querySelectorAll(".approval-actions button");
     for (const btn of buttons()) {
       btn.onclick = async () => {
         const gen = chat.gen;
         buttons().forEach((b) => { b.disabled = true; });
+        btn.classList.add("chosen");
         // Waiting from before the request: a satellite's command.result
         // can land before the hub's 202 does, and must find the card.
         div.dataset.queued = "1";
@@ -829,13 +870,14 @@ const SessionChat = (() => {
         }
         delete div.dataset.queued;
         if (status >= 400 || status === 0) {
+          btn.classList.remove("chosen");
           buttons().forEach((b) => { b.disabled = false; });
           note.textContent = status === 0 ? "Request failed: connection lost"
             : `Approval failed: ${errorText(data) || "the prompt may have closed"}`;
           noteRefusal(data);
         } else {
           note.remove();
-          div.classList.add("resolved");
+          settleCard(div, btn.dataset.dec);
         }
       };
     }
