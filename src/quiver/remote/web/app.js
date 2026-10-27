@@ -1320,6 +1320,9 @@ async function openChat(key) {
     ? `${row.agent || row.harness} · ${row.cwd || ""}`
     : key;
   updateOwnership(row);
+  // The / menu's list is warmed now, not on the first /, so the menu
+  // opens filled; a kept list shows at once and is still refreshed.
+  warmCommands();
   // Always backfill — the DOM was just cleared, and the stream must
   // start after the seq backfill actually reached, not a stale save.
   await backfill(key, gen);
@@ -3308,9 +3311,13 @@ function insertCommand(text, token, c) {
   return { text: inserted + text.slice(end), caret: inserted.length + (reuse ? 1 : 0) };
 }
 
-/* The / menu's list: fetched once per chat on the first /, filtered
- * here as you type. A failed load retries the next time it opens. */
+/* The / menu's list: warmed when the chat opens so the first / opens
+ * it already filled, filtered here as you type. A failed load retries
+ * the next time the menu opens. */
 const cmds = { key: null, response: null, loading: false, error: "", gen: 0 };
+/* Answered lists by session key, kept for the page's life: a chat the
+ * menu was fetched for once opens filled while the fetch refreshes. */
+const cmdLists = {};
 
 function resetCommands() {
   cmds.gen++;
@@ -3318,6 +3325,21 @@ function resetCommands() {
   cmds.response = null;
   cmds.loading = false;
   cmds.error = "";
+}
+
+/* Fetches the list ahead of the first / — called when the chat opens.
+ * A kept list from an earlier open fills `cmds` at once and is still
+ * refreshed here. */
+function warmCommands() {
+  const key = state.currentKey;
+  if (!key || cmds.loading) return;
+  const kept = cmdLists[key];
+  if (!cmds.response || cmds.key !== key) {
+    cmds.key = key;
+    cmds.response = (kept && kept.response) || null;
+    cmds.error = (kept && kept.error) || "";
+  }
+  loadCommands();
 }
 
 async function loadCommands() {
@@ -3330,14 +3352,13 @@ async function loadCommands() {
   try {
     ({ status, data } = await api(`/v1/sessions/${encodeURIComponent(key)}/commands`));
   } catch { status = 0; }
+  // Kept by key even when the answer lands after the chat was left.
+  cmdLists[key] = status === 200 && data ? { response: data, error: "" }
+    : { response: null, error: commandsError(hubError(status, data)) };
   if (gen !== cmds.gen || key !== state.currentKey) return;
   cmds.loading = false;
-  if (status === 200 && data) {
-    cmds.response = data;
-    cmds.error = "";
-  } else {
-    cmds.error = commandsError(hubError(status, data));
-  }
+  cmds.response = cmdLists[key].response;
+  cmds.error = cmdLists[key].error;
   // The list is kept either way; only an open / menu redraws, so a late
   // answer can't move the @ menu's highlight.
   if (menu.kind === "slash") {

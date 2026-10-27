@@ -110,9 +110,9 @@ public enum Slash {
     }
 }
 
-/// The `/` menu's list: fetched once per chat open on the first `/`,
-/// filtered locally as you type, refetched by `refresh()`. A port of
-/// the iPhone app's `CommandMenu`.
+/// The `/` menu's list: warmed when the chat opens so the first `/`
+/// opens it already filled, filtered locally as you type, refetched by
+/// `refresh()`. A port of the iPhone app's `CommandMenu`.
 @MainActor
 @Observable
 public final class SlashCommandMenu {
@@ -130,6 +130,11 @@ public final class SlashCommandMenu {
     @ObservationIgnored public var fetch: () async throws -> CommandsResponse = {
         CommandsResponse(commands: [])
     }
+    /// The session the list is for; set beside `fetch`. Answered lists
+    /// are kept per key, so a reopened chat's menu is filled at once.
+    @ObservationIgnored public var cacheKey: String?
+    /// Answered lists by session key, kept for the app's run.
+    private static var lists: [String: CommandsResponse] = [:]
     @ObservationIgnored private var generation = 0
 
     public init() {}
@@ -141,6 +146,18 @@ public final class SlashCommandMenu {
         Slash.filter(response?.commands ?? [], query: token?.query ?? "")
     }
 
+    /// Fetches the list ahead of the first `/` — called when the chat
+    /// opens. A kept list from an earlier open fills `response` at once
+    /// and is still refreshed here.
+    @discardableResult
+    public func warm() -> Task<Void, Never>? {
+        if response == nil, let key = cacheKey, let kept = Self.lists[key] {
+            response = kept
+        }
+        guard !loading else { return nil }
+        return Task { await load() }
+    }
+
     /// Called whenever the draft, caret or focus changes. Returns the
     /// fetch it started, if any, so tests can wait for it.
     @discardableResult
@@ -148,6 +165,7 @@ public final class SlashCommandMenu {
         let wasOpen = isOpen
         token = next
         if next == nil || dismissed != next { dismissed = nil }
+        if response == nil, let key = cacheKey { response = Self.lists[key] }
         guard Self.shouldLoad(open: isOpen, opening: !wasOpen, loaded: response != nil,
                               loading: loading, failed: error != nil) else { return nil }
         return Task { await load() }
@@ -197,6 +215,7 @@ public final class SlashCommandMenu {
             guard gen == generation else { return }
             response = body
             error = nil
+            if let key = cacheKey { Self.lists[key] = body }
         } catch {
             guard gen == generation else { return }
             self.error = Self.message(for: error)

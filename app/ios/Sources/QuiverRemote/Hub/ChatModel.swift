@@ -172,6 +172,7 @@ final class ChatModel {
             return try await client.files(self.key, query: query, limit: MentionSearch.limit)
         }
         mentions.machine = { [weak self] in self?.machineName ?? "that machine" }
+        commands.cacheKey = key
         commands.fetch = { [weak self] in
             guard let self, let client = self.hubClient else { throw HubError.network(CancellationError()) }
             return try await client.commands(self.key)
@@ -195,6 +196,10 @@ final class ChatModel {
         let gen = generation
         streamTask?.cancel()
         streamTask = nil
+        // The / menu's list is fetched now, not on the first /, so the
+        // menu opens filled; a list kept from an earlier open shows at
+        // once and is still refreshed.
+        commands.warm()
         if items.isEmpty || loadError != nil { await backfill(client) }
         guard gen == generation else { return }
         // The tray survives the app closing: the hub holds the sends. Read
@@ -205,7 +210,6 @@ final class ChatModel {
         if let sends { mergeQueue(sends.sends) }
         // The prompt box's menu may still be open from before stop().
         mentions.resume()
-        commands.resume()
         streamTask = Task { [weak self, cursor] in
             for await event in EventStream.events(client: client, key: self?.key ?? "", last: cursor) {
                 guard let self else { return }
@@ -227,7 +231,7 @@ final class ChatModel {
         streamTask?.cancel()
         streamTask = nil
         mentions.reset()
-        // Fetched again on the first "/" after the chat reopens.
+        // The kept list fills the menu at once after the chat reopens.
         commands.reset()
         flushPending()
         live = false

@@ -440,6 +440,43 @@ final class CommandMenuTests: XCTestCase {
         menu.track(SlashToken(end: 2, query: "c"))
         XCTAssertTrue(menu.isOpen)
     }
+
+    func testWarmFetchesAheadOfTheFirstSlash() async {
+        let menu = CommandMenu()
+        var calls = 0
+        menu.fetch = { calls += 1; return CommandsResponse(commands: [SlashCommand(name: "compact")]) }
+        await menu.warm()?.value
+        XCTAssertEqual(calls, 1)
+        // The first / opens filled: the fetch already answered.
+        XCTAssertNil(menu.track(SlashToken(end: 1, query: "")))
+        XCTAssertEqual(menu.matches.map(\.name), ["compact"])
+    }
+
+    func testAKeptListFillsAReopenedChatAtOnce() async {
+        let key = "claude:kept-\(#line)"
+        let first = CommandMenu()
+        first.cacheKey = key
+        var calls = 0
+        first.fetch = { calls += 1; return CommandsResponse(commands: [SlashCommand(name: "compact")]) }
+        await first.warm()?.value
+        XCTAssertEqual(calls, 1)
+
+        // A fresh menu for the same session: the kept list shows at
+        // once, and warm() still refreshes it.
+        let second = CommandMenu()
+        second.cacheKey = key
+        second.fetch = { calls += 1; return CommandsResponse(commands: [SlashCommand(name: "rename")]) }
+        let refreshing = second.warm()
+        XCTAssertEqual(second.matches.map(\.name), ["compact"])
+        await refreshing?.value
+        XCTAssertEqual(calls, 2)
+        XCTAssertEqual(second.matches.map(\.name), ["rename"])
+        // track() picks the kept list up too, for a menu warm() missed.
+        let third = CommandMenu()
+        third.cacheKey = key
+        third.track(SlashToken(end: 1, query: ""))
+        XCTAssertEqual(third.matches.map(\.name), ["rename"])
+    }
 }
 
 @MainActor

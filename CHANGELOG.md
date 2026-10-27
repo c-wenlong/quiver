@@ -94,6 +94,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Slash-command lists load when the chat opens, not on the first
+  `/`.** Every client — the web app, the remote PWA, iOS and the Mac
+  app — now warms the command list as the chat opens and keeps the
+  answer per session key, so the menu opens filled instead of showing
+  "Loading commands" for a beat, and a reopened chat shows the kept
+  list while it refreshes.
+
 - **OpenCode models are named `provider/model` in both usage ledgers.**
   The ledgers used the bare model id, so `glm-5.1` from the
   `zai-coding-plan` plan and from `zai` read as one model. They now read
