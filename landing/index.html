@@ -28,6 +28,7 @@
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
 a { color: inherit; }
@@ -62,7 +63,7 @@ h1 { font-size: 64px; line-height: 1.02; letter-spacing: -0.03em; font-weight: 5
 .lede { font-size: 18px; color: var(--text-2); max-width: 36em; margin: 0 auto 30px; line-height: 1.55; }
 .ctas { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
 .hint { font-size: 13px; color: var(--text-3); margin: 14px 0 0; }
-.hint code { color: var(--text-2); }
+.hint code, .hint a { color: var(--text-2); }
 
 .tabs { display: flex; gap: 4px; margin: 56px auto 16px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; width: max-content; max-width: 100%; overflow-x: auto; scrollbar-width: none; background: var(--surface); }
 .tabs::-webkit-scrollbar { display: none; }
@@ -175,6 +176,7 @@ dialog .close { margin-left: auto; }
 <canvas id="drift" aria-hidden="true"></canvas>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <symbol id="gh" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></symbol>
+  <symbol id="apple" viewBox="0 0 24 24"><path fill="currentColor" d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></symbol>
   <symbol id="dl" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-5-5m5 5l5-5M4 21h16"/></symbol>
 </svg>
 
@@ -189,7 +191,7 @@ dialog .close { margin-left: auto; }
       </div>
       <div class="right">
         <a class="plain star" href="https://github.com/c-wenlong/quiver"><svg class="i"><use href="#gh"/></svg>GitHub</a>
-        <a class="btn light sm" href="#install"><svg class="i"><use href="#dl"/></svg>Install</a>
+        <a class="btn light sm" href="#install" data-dmg="Download"><svg class="i"><use href="#dl"/></svg><span>Install</span></a>
       </div>
     </nav>
   </div>
@@ -202,10 +204,10 @@ dialog .close { margin-left: auto; }
   <h1>Home base for every coding agent you run.</h1>
   <p class="lede">Sessions, usage, limits, skills and MCP servers for Claude Code, Codex, Gemini CLI and the rest, in one place. From your terminal, your Mac or your phone.</p>
   <div class="ctas">
-    <a class="btn light" href="#install"><svg class="i"><use href="#dl"/></svg>Install quiver</a>
+    <a class="btn light" href="#install" data-dmg="Download for Mac"><svg class="i"><use href="#dl"/></svg><span>Install quiver</span></a>
     <a class="btn" href="https://github.com/c-wenlong/quiver"><svg class="i"><use href="#gh"/></svg>View on GitHub</a>
   </div>
-  <p class="hint">You install <code>quiver</code>. You type <code>swe</code>.</p>
+  <p class="hint" id="dmg-hint">You install <code>quiver</code>. You type <code>swe</code>.</p>
 
   <div class="tabs" role="tablist" aria-label="Product tour">
     <button role="tab" id="tab-sessions" aria-controls="stage" aria-selected="true" tabindex="0" data-clip="sessions">Every session</button>
@@ -360,6 +362,7 @@ dialog .close { margin-left: auto; }
   <h2>Get quiver.</h2>
   <div class="cmd"><code><span class="p">$ </span>pipx install git+https://github.com/c-wenlong/quiver.git</code><button class="copy" type="button" data-copy="pipx install git+https://github.com/c-wenlong/quiver.git">Copy</button></div>
   <div class="ctas">
+    <a class="btn light" href="#install" data-dmg="Download for Mac" hidden><svg class="i"><use href="#apple"/></svg><span>Download for Mac</span></a>
     <a class="btn" href="overview/">Read the docs</a>
     <a class="btn" href="https://github.com/c-wenlong/quiver"><svg class="i"><use href="#gh"/></svg>View on GitHub</a>
   </div>
@@ -468,6 +471,31 @@ dialog .close { margin-left: auto; }
   dialog.querySelector(".close").addEventListener("click", function () { dialog.close(); });
   dialog.addEventListener("click", function (e) { if (e.target === dialog) dialog.close(); });
   dialog.addEventListener("close", function () { dvideo.pause(); dvideo.removeAttribute("src"); dvideo.load(); });
+
+  // Once the latest release carries a DMG, the install buttons download it
+  // and wear the Apple mark; until then they keep pointing at the commands.
+  if (window.fetch) {
+    fetch("https://api.github.com/repos/c-wenlong/quiver/releases/latest")
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (rel) {
+        var dmg = rel && (rel.assets || []).filter(function (a) { return /\.dmg$/i.test(a.name); })[0];
+        if (!dmg) return;
+        document.querySelectorAll("[data-dmg]").forEach(function (a) {
+          a.href = dmg.browser_download_url;
+          a.querySelector("use").setAttribute("href", "#apple");
+          a.querySelector("span").textContent = a.getAttribute("data-dmg");
+          a.hidden = false;
+        });
+        var hint = document.getElementById("dmg-hint");
+        hint.textContent = "Quiver " + String(rel.tag_name || "").replace(/[^\w.\-]/g, "") +
+          " for macOS 26 or later. Prefer the terminal? ";
+        var cli = document.createElement("a");
+        cli.href = "#install";
+        cli.textContent = "Install the CLI";
+        hint.appendChild(cli);
+      })
+      .catch(function () {});
+  }
 
   document.querySelectorAll(".copy").forEach(function (btn) {
     btn.addEventListener("click", function () {
