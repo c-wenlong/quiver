@@ -11,6 +11,7 @@ Needs macOS 26 and Xcode 26 (Swift 6.2).
 ```bash
 cd app/mac
 swift test                      # QuiverCore unit tests
+./script/test.sh                # the same, stopped with thread stacks if it hangs (CI uses this)
 ./script/build-app.sh debug     # writes build/Quiver.app, widgets included
 open build/Quiver.app
 ```

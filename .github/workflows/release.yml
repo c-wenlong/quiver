@@ -187,9 +187,11 @@ jobs:
         # build runs the Swift suite here instead, before any signing
         # setup, so a test failure fails fast and blocks the release.
         # The suite takes about 5 minutes; v1.1.0 hung here for 4 hours
-        # with ~90 tests started and none finishing.
+        # with ~90 tests started and none finishing. test.sh stops a run
+        # that is still going after 10 minutes and prints its thread
+        # stacks first, so a hang names what blocked.
         timeout-minutes: 25
-        run: cd app/mac && swift test
+        run: app/mac/script/test.sh
 
       - name: Import the signing certificate
         id: cert

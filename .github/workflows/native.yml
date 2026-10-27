@@ -88,7 +88,11 @@ jobs:
         run: swift --version
 
       - name: Unit tests
-        run: swift test
+        # The suite has frozen on these runners for hours (the nightly of
+        # 2026-10-26 ran into the 6-hour limit). test.sh stops a run still
+        # going after 10 minutes and prints its thread stacks first.
+        timeout-minutes: 25
+        run: script/test.sh
 
   nix:
     # Same derivation check release.yml runs on a tag.  Here it keeps the
