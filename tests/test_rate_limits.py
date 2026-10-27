@@ -3879,12 +3879,18 @@ class CursorFetcherTest(unittest.TestCase):
         return self._jwt(claims)
 
     def _state_db(self, directory: str, token: str | None,
-                  email: str | None = None) -> str:
+                  email: str | None = None,
+                  auth_id: str | None = None) -> str:
         path = os.path.join(directory, "state.vscdb")
         connection = sqlite3.connect(path)
         connection.execute("CREATE TABLE ItemTable (key TEXT UNIQUE, value BLOB)")
+        profile = (
+            json.dumps({"authId": auth_id, "displayName": "Test User"})
+            if auth_id is not None else None
+        )
         for key, value in (("cursorAuth/accessToken", token),
-                           ("cursorAuth/cachedEmail", email)):
+                           ("cursorAuth/cachedEmail", email),
+                           ("cursorAuth/cachedScopedProfile", profile)):
             if value is not None:
                 connection.execute(
                     "INSERT INTO ItemTable VALUES (?, ?)",
@@ -4217,6 +4223,49 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertIsNotNone(info)
         self.assertEqual(info.email, "extra@work.com")
         keychain.assert_not_called()
+
+    def _fetch_with_cli_token(self, tmp: str, **db_rows):
+        """``_fetch_cursor`` where the editor's db token is unreadable
+        and the keychain's JWT wins, as on this Mac."""
+        from quiver.harness.rate_limits import _fetch_cursor
+
+        self._state_db(tmp, "cursor-safe-storage:v1:blob", **db_rows)
+        db = os.path.join(tmp, "state.vscdb")
+        with patch(
+            "quiver.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
+            (db,),
+        ), patch(
+            "quiver.harness.rate_limits._read_cursor_cli_token",
+            return_value=None,
+        ), patch(
+            "quiver.harness.rate_limits._read_cursor_keychain_token",
+            return_value=self._token(),
+        ), patch(
+            "quiver.harness.rate_limits._fetch_json",
+            return_value=self._SAMPLE_RESPONSE,
+        ):
+            return _fetch_cursor()
+
+    def test_cli_token_keeps_the_editor_email_when_the_profile_matches(self):
+        """The keychain token and the editor row share one account:
+        ``cachedScopedProfile.authId`` equals the token's ``sub``."""
+        with tempfile.TemporaryDirectory() as tmp:
+            info = self._fetch_with_cli_token(
+                tmp, email="me@work.com",
+                auth_id="google-oauth2|user_01TEST")
+
+        self.assertIsNotNone(info)
+        self.assertEqual(info.email, "me@work.com")
+
+    def test_cli_token_drops_another_account_editor_email(self):
+        """An editor signed in elsewhere must not lend its address to
+        the CLI account's usage."""
+        with tempfile.TemporaryDirectory() as tmp:
+            info = self._fetch_with_cli_token(
+                tmp, email="other@work.com", auth_id="github|user_999")
+
+        self.assertIsNotNone(info)
+        self.assertIsNone(info.email)
 
     def test_fetch_posts_with_cookie_and_first_party_origin(self):
         from quiver.harness.rate_limits import _CURSOR_USAGE_URL, _fetch_cursor

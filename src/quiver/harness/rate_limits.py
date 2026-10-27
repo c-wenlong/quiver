@@ -1841,6 +1841,37 @@ _CURSOR_BUCKETS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _read_cursor_state_row(path: str, keys: tuple[str, ...]) -> dict:
+    """The given ``ItemTable`` values from one ``state.vscdb`` file."""
+    uri = "file:" + urllib.parse.quote(path) + "?mode=ro"
+    try:
+        connection = sqlite3.connect(uri, uri=True, timeout=1.0)
+    except sqlite3.Error:
+        return {}
+    out = {}
+    try:
+        for key in keys:
+            row = connection.execute(
+                "SELECT value FROM ItemTable WHERE key = ?",
+                (key,),
+            ).fetchone()
+            if not row:
+                continue
+            value = row[0]
+            if isinstance(value, bytes):
+                try:
+                    value = value.decode("utf-8")
+                except UnicodeDecodeError:
+                    continue
+            if isinstance(value, str) and value.strip():
+                out[key] = value.strip()
+    except sqlite3.Error:
+        pass
+    finally:
+        connection.close()
+    return out
+
+
 def _read_cursor_state_value(
     key: str,
     candidates: tuple[str, ...] | None = None,
@@ -1857,30 +1888,9 @@ def _read_cursor_state_value(
         path = os.path.expanduser(candidate)
         if not os.path.isfile(path):
             continue
-        uri = "file:" + urllib.parse.quote(path) + "?mode=ro"
-        try:
-            connection = sqlite3.connect(uri, uri=True, timeout=1.0)
-        except sqlite3.Error:
-            continue
-        try:
-            row = connection.execute(
-                "SELECT value FROM ItemTable WHERE key = ?",
-                (key,),
-            ).fetchone()
-        except sqlite3.Error:
-            continue
-        finally:
-            connection.close()
-        if not row:
-            continue
-        value = row[0]
-        if isinstance(value, bytes):
-            try:
-                value = value.decode("utf-8")
-            except UnicodeDecodeError:
-                continue
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+        value = _read_cursor_state_row(path, (key,)).get(key)
+        if value is not None:
+            return value
     return None
 
 
@@ -2137,6 +2147,48 @@ def _warn_cursor_401() -> None:
     )
 
 
+# The identity rows the editor writes beside the session token: the
+# address itself and the profile it belongs to.
+_CURSOR_IDENTITY_KEYS = (
+    "cursorAuth/accessToken",
+    "cursorAuth/cachedEmail",
+    "cursorAuth/cachedScopedProfile",
+)
+
+
+def _cursor_email(state_db: str | None, token: str, claims: dict) -> str | None:
+    """The address of the account whose token fetched usage, or None.
+
+    ``cachedEmail`` is the only place the address exists — the JWT
+    itself has no email claim. A token read from the same db row set is
+    that account's by construction, but the CLI's auth-file or keychain
+    token can belong to a different sign-in than the editor's. Then the
+    email only counts once the ``cachedScopedProfile`` authId stored
+    beside it matches the token's own ``sub``: an editor signed in as
+    someone else must not lend its address to the CLI account's usage.
+    """
+    candidates = (
+        (state_db,) if state_db is not None else _CURSOR_STATE_DB_CANDIDATES
+    )
+    rows = []
+    for candidate in candidates:
+        path = os.path.expanduser(candidate)
+        if os.path.isfile(path):
+            rows.append(_read_cursor_state_row(path, _CURSOR_IDENTITY_KEYS))
+    for row in rows:
+        if row.get("cursorAuth/accessToken") == token:
+            return row.get("cursorAuth/cachedEmail")
+    for row in rows:
+        profile = row.get("cursorAuth/cachedScopedProfile")
+        try:
+            auth_id = json.loads(profile).get("authId") if profile else None
+        except (ValueError, RecursionError):
+            auth_id = None
+        if isinstance(auth_id, str) and auth_id and auth_id == claims.get("sub"):
+            return row.get("cursorAuth/cachedEmail")
+    return None
+
+
 def _fetch_cursor(state_db: str | None = None) -> RateLimitInfo | None:
     """Read the current billing period's included usage for Cursor.
 
@@ -2151,17 +2203,10 @@ def _fetch_cursor(state_db: str | None = None) -> RateLimitInfo | None:
     )
     if not token:
         return None
-    # The signed-in address sits beside the token in the editor's db and
-    # is the only place it exists — the JWT carries no email claim. Read
-    # it even when the token came from the CLI's auth file or the
-    # keychain: all three are the one machine's Cursor session.
-    email = _read_cursor_state_value(
-        "cursorAuth/cachedEmail",
-        (state_db,) if state_db is not None else None,
-    )
     claims = _cursor_token_claims(token)
     if claims is None:
         return None
+    email = _cursor_email(state_db, token, claims)
 
     expires_at = claims.get("exp")
     if (
