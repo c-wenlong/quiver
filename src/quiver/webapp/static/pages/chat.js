@@ -637,14 +637,16 @@ const SessionChat = (() => {
         }
       }
     }
-    // A detach the hub ran — a when_idle one firing as the turn ended, or
-    // another client's — closes this view's pending state the same way.
-    if (d.op === "detach" && d.ok === true) {
+    // Any reported detach outcome ends the pending banner: a fired one
+    // (the when_idle firing as the turn ended, or another client's) flips
+    // ownership; an expired or cancelled one leaves the session attached
+    // with nothing pending.
+    if (d.op === "detach") {
       chat.detaching = false;
-      if (chat.row && chat.row.ownership === "attached") {
+      if (d.ok === true && chat.row && chat.row.ownership === "attached") {
         chat.row.ownership = "observed";
-        updateOwnership();
       }
+      updateOwnership();
     }
     if (d.op === "approval" && d.request_id) {
       for (const card of log.querySelectorAll(".msg.approval")) {

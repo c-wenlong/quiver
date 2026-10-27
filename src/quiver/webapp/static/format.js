@@ -174,7 +174,9 @@ const Fmt = (() => {
     area.setAttribute("readonly", "");
     area.style.position = "fixed";
     area.style.opacity = "0";
-    document.body.appendChild(area);
+    // Inside a modal the rest of the page is inert, so the fallback
+    // lands in the open dialog when there is one.
+    (document.querySelector("dialog[open]") || document.body).appendChild(area);
     area.select();
     let ok = false;
     try { ok = document.execCommand("copy"); } catch { ok = false; }

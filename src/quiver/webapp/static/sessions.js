@@ -483,6 +483,14 @@ async function sessionDetails(key) {
   // The answer may land after the chat was left for another page.
   const chat = sessionChat();
   if (!r || (chat && chat.key !== key) || !document.getElementById("session-sheet")) return false;
+  // The open chat's row is freshest on supervised fields (attach/detach
+  // land there over SSE long before the list's data is refetched).
+  if (chat && chat.row) {
+    r = Object.assign({}, r, {
+      ownership: chat.row.ownership, mode: chat.row.mode,
+      tmux: chat.row.tmux, kept: chat.row.kept, status: chat.row.status,
+    });
+  }
   openSheet(r);
   return true;
 }

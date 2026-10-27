@@ -46,16 +46,22 @@ def post(ctx, action: str, body: dict) -> dict:
             409, "no_tmux", "this session has no tmux pane to open")
     # LaunchPlanner's .terminal path: type the attach line into a fresh
     # Terminal window, as the Mac app's terminal launches do.
-    proc = subprocess.run(
-        [
-            "/usr/bin/osascript",
-            "-e", 'tell application "Terminal"',
-            "-e", "activate",
-            "-e", f'do script "tmux attach -t {name}"',
-            "-e", "end tell",
-        ],
-        capture_output=True, text=True, timeout=10,
-    )
+    try:
+        proc = subprocess.run(
+            [
+                "/usr/bin/osascript",
+                "-e", 'tell application "Terminal"',
+                "-e", "activate",
+                "-e", f'do script "tmux attach -t {name}"',
+                "-e", "end tell",
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        raise PageError(
+            504, "open_timeout",
+            "Terminal took too long to answer — check for a "
+            "permission dialog, then try again") from None
     if proc.returncode != 0:
         raise PageError(
             502, "open_failed",

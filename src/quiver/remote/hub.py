@@ -2828,15 +2828,32 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _emit_ownership(self, key: str) -> None:
         row = self._state.catalog.row_for(key) or {}
+        # This emit follows the registry write, but the catalog row can
+        # still hold the old supervised fields until the next refresh, so
+        # they come from the registries themselves. A remote row has no
+        # local registry: its fields ride the satellite's rows.
+        meta = supervise.meta_for(self._state.home, key)
+        krow = meta is None and supervise.kept(self._state.home).get(key)
+        if meta is not None:
+            tmux, mode, kept = meta.get("tmux"), meta.get("mode"), False
+        elif krow:
+            tmux, mode, kept = krow.get("tmux"), krow.get("mode"), True
+        elif row.get("remote"):
+            tmux = row.get("tmux")
+            mode = row.get("mode")
+            kept = bool(row.get("kept"))
+        else:
+            tmux = mode = None
+            kept = False
         self._state.emit(
             key,
             protocol.event(
                 "session.ownership", key, self._state.machine_id,
                 {
                     "ownership": row.get("ownership"),
-                    "tmux": row.get("tmux"),
-                    "mode": row.get("mode"),
-                    "kept": bool(row.get("kept")),
+                    "tmux": tmux,
+                    "mode": mode,
+                    "kept": kept,
                 },
             ),
         )
