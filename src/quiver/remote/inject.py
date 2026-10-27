@@ -56,8 +56,10 @@ from quiver.sessions.models import Session
 HEADLESS_TIMEOUT_S = 300
 _QUEUE_WAIT_S = 150
 
-# claude TUI permission menus take a digit: 1 allow once, 2 always
-# allow, 3 deny. Other TUIs ignore stray digits harmlessly.
+# Fallback when the pane's option rows don't parse: claude's order —
+# 1 allow once, 2 always allow, 3 deny. Numbered menus are answered by
+# label via ``supervise.menu_key_for`` instead, because positions vary
+# (devin puts "No" at 8). Other TUIs ignore stray digits harmlessly.
 _APPROVAL_KEYS = {"allow": "1", "always": "2", "deny": "3"}
 
 _OPS_TEXT = {
@@ -112,8 +114,7 @@ class TmuxInjector:
         return InjectResult(False, "tmux session is not reachable")
 
     def approval(self, session: Session, request_id: str, decision: str) -> InjectResult:
-        key = _APPROVAL_KEYS.get(decision)
-        if key is None:
+        if decision not in _APPROVAL_KEYS:
             return InjectResult(False, f"unknown decision {decision}")
         # The TUI menu does not display request ids, so we cannot bind a
         # reply to *the* on-screen prompt. What we can bind: reject a
@@ -144,6 +145,7 @@ class TmuxInjector:
             return InjectResult(
                 False, "approval prompt changed since the request"
             )
+        key = supervise.menu_key_for(pane, decision) or _APPROVAL_KEYS[decision]
         if supervise.send_key(self.name, key):
             answered.append(request_id)
             return InjectResult(True, f"sent menu key {key}")

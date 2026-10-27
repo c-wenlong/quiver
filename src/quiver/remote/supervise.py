@@ -309,17 +309,83 @@ APPROVAL_MARKERS = (
     "do you want to",
     "don't ask again",
     "esc to cancel",
+    # Devin's menu footer is "↑↓ select · ↵ confirm · esc cancel".
+    "esc cancel",
     "permission to proceed",
 )
 
 # Short stacked option lines ("1. Yes", "❯ Allow once", "Deny") are the
 # other shape a permission menu takes — only 2+ in a row counts, so one
-# "allow" in normal output can't fake a prompt.
+# "allow" in normal output can't fake a prompt. Devin numbers rows with
+# a bare space ("1 Yes", "8 No"), so whitespace counts as a delimiter
+# alongside "." and ")".
 _APPROVAL_ITEM = re.compile(
-    r"^\s*(?:[❯>•*\-]\s*)?(?:\d+[.)]\s*)?"
+    r"^\s*(?:[❯>•*)\-]\s*)?(?:\d{1,2}[.)]\s*|\d{1,2}\s+)?"
     r"(?:yes|no|allow|deny|approve|reject)\b",
     re.IGNORECASE,
 )
+
+
+# A numbered row in a permission menu: "1. Yes", "2) No", devin's
+# cursor row ") 3 Yes", "4 Yes, allow `git` commands". Labels decide
+# answers — positions alone cannot, since devin puts "No" at 8 while
+# claude puts it at 3.
+_MENU_OPTION = re.compile(
+    r"^\s*(?:[❯>•*)\-]\s*)?(\d{1,2})[.)]?\s+(\S.*?)\s*$"
+)
+_YES_LABEL = re.compile(r"(?:yes|approve|allow|proceed)\b", re.IGNORECASE)
+_DENY_LABEL = re.compile(r"(?:no|deny|reject|cancel)\b", re.IGNORECASE)
+# A label that is just the yes-word ("Yes", "approve!") reads as a
+# one-shot grant; anything longer ("Yes, allow `git` commands") is a
+# standing grant.
+_BARE_YES = re.compile(
+    r"^(?:yes|approve|allow|proceed)\b[.,!]?\s*$", re.IGNORECASE
+)
+
+
+def menu_options(pane: str) -> list[tuple[str, str]]:
+    """The ``(digit, label)`` rows a numbered menu prints, in order."""
+    out = []
+    for ln in pane.splitlines():
+        m = _MENU_OPTION.match(ln)
+        if m:
+            out.append((m.group(1), m.group(2)))
+    return out
+
+
+def menu_key_for(pane: str, decision: str) -> str | None:
+    """The digit a ``decision`` maps to on this pane, or None.
+
+    ``allow`` wants the one-shot grant ("Approve once", a bare "Yes");
+    ``always`` wants the first standing grant that is not a session-wide
+    bypass. Rows that match neither leave the fixed fallback map in
+    charge.
+    """
+    opts = menu_options(pane)
+    if not opts:
+        return None
+    if decision == "deny":
+        for num, label in opts:
+            if _DENY_LABEL.match(label):
+                return num
+        return None
+    yes = [(n, l) for n, l in opts if _YES_LABEL.match(l)]
+    once = [
+        n for n, l in yes
+        if "bypass" not in l.lower()
+        and ("once" in l.lower() or _BARE_YES.match(l))
+    ]
+    standing = [
+        n for n, l in yes
+        if "bypass" not in l.lower()
+        and "once" not in l.lower()
+        and not _BARE_YES.match(l)
+    ]
+    if decision == "allow":
+        return once[0] if once else (standing[0] if standing else None)
+    if decision == "always":
+        return standing[0] if standing else None
+    return None
 
 
 def pane_shows_approval(pane: str) -> bool:

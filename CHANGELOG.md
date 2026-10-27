@@ -73,6 +73,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Devin approval menus reach the phone.** The tmux watcher only
+  recognized claude-style permission menus; devin's (options numbered
+  "1 Yes" with a bare space, footer "esc cancel") fired no
+  `approval.requested`, so a remote devin session sat silently blocked
+  until someone answered on the host. Detection now reads that shape,
+  the approval card shows the "Running command" line as its prompt,
+  and answers pick the menu digit by label instead of a fixed 1/2/3
+  map — devin puts "No" at 8, where the old map would have sent a
+  wider grant.
 - **Cursor's status page moved.** status.cursor.com now redirects to
   status.x.ai, which serves the Statuspage feed under
   /api/compat/summary.json; the app's transport follows no redirects, so

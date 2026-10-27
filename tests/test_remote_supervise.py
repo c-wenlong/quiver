@@ -87,6 +87,49 @@ class TestTmuxHelpers(unittest.TestCase):
         stacked = "Choose:\n❯ Allow once\nDeny"
         self.assertTrue(supervise.pane_shows_approval(stacked))
 
+    # Devin's permission menu, verbatim shape: options are numbered
+    # with a bare space and the footer reads "esc cancel".
+    DEVIN_PANE = (
+        "● Running command\n"
+        "$ git -C /repo pull origin main && git -C /repo log\n"
+        ") 1 Yes  (Approve once)\n"
+        "  2 Yes, allow `git` commands\n"
+        "  3 Yes, always allow `git` commands in `repo`\n"
+        "  4 Yes, always allow `git` commands in all projects\n"
+        "  5 Yes, switch to bypass mode\n"
+        "  6 Edit command\n"
+        "  7 Describe change to command\n"
+        "  8 No\n"
+        "  ↑↓ select · ↵ confirm · esc cancel"
+    )
+
+    def test_pane_shows_approval_devin_menu(self):
+        # The footer marker alone catches it even when option rows
+        # wrap, and the stacked space-numbered rows would too.
+        self.assertTrue(supervise.pane_shows_approval(self.DEVIN_PANE))
+        no_footer = self.DEVIN_PANE.rsplit("\n", 1)[0]
+        self.assertTrue(supervise.pane_shows_approval(no_footer))
+
+    def test_menu_key_for_devin_labels(self):
+        pane = self.DEVIN_PANE
+        self.assertEqual(supervise.menu_key_for(pane, "allow"), "1")
+        # The standing grant is row 2 — never the bypass row at 5.
+        self.assertEqual(supervise.menu_key_for(pane, "always"), "2")
+        self.assertEqual(supervise.menu_key_for(pane, "deny"), "8")
+
+    def test_menu_key_for_claude_labels(self):
+        pane = "Do you want to proceed?\n1. Yes\n2. Yes, don't ask again\n3. No"
+        self.assertEqual(supervise.menu_key_for(pane, "allow"), "1")
+        self.assertEqual(supervise.menu_key_for(pane, "always"), "2")
+        self.assertEqual(supervise.menu_key_for(pane, "deny"), "3")
+
+    def test_menu_key_for_unnumbered_or_unknown(self):
+        # Bullet menus without digits stay on the fixed fallback map.
+        self.assertIsNone(
+            supervise.menu_key_for("Choose:\n❯ Allow once\nDeny", "deny"))
+        self.assertIsNone(
+            supervise.menu_key_for(self.DEVIN_PANE, "bogus"))
+
     def test_approval_fingerprint_tracks_prompt_text(self):
         a = supervise.approval_fingerprint(
             "Do you want to run ls?\n1. Yes\n2. No")
