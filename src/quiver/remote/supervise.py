@@ -358,25 +358,52 @@ _BARE_DENY = re.compile(
 )
 
 
-def menu_options(pane: str) -> list[tuple[str, str]]:
-    """The ``(digit, label)`` rows a numbered menu prints, in order.
+def menu_block(pane: str) -> tuple[list[tuple[str, str]], int]:
+    """The menu's ``(digit, label)`` rows and its first line index.
 
-    Only the bottom-most consecutive block of numbered rows counts —
-    numbered lines that scrolled up from earlier output ("1. No errors
-    found") are transcript text, not the menu, and a stray match must
-    not answer it.
+    ``([], -1)`` when the pane shows none. Only the bottom-most numbered
+    block counts — numbered lines that scrolled up from earlier output
+    ("1. No errors found") are transcript text, not the menu, and a
+    stray match must not answer it. Unnumbered non-blank lines between
+    two rows are a wrapped label's continuation and fold back into the
+    row above; a blank line or a menu footer ends the block instead.
     """
+    lines = pane.splitlines()
     run: list[tuple[str, str]] = []
     last: list[tuple[str, str]] = []
-    for ln in pane.splitlines():
+    run_start = last_start = -1
+    gap: list[str] = []
+    for i, ln in enumerate(lines):
         m = _MENU_OPTION.match(ln)
         if m:
+            if run and any(
+                not g.strip()
+                or any(mk in g.lower() for mk in APPROVAL_MARKERS)
+                for g in gap
+            ):
+                # A blank or footer line ended the block — the gap was
+                # not a wrap, and this row starts a new menu.
+                last, last_start = run, run_start
+                run = []
+            elif gap and run:
+                n, label = run[-1]
+                run[-1] = (n, label + " " + " ".join(
+                    g.strip() for g in gap))
+            if not run:
+                run_start = i
+            gap = []
             run.append((m.group(1), m.group(2)))
         else:
-            if run:
-                last = run
-            run = []
-    return run or last
+            gap.append(ln)
+    if run:
+        return run, run_start
+    return last, last_start
+
+
+def menu_options(pane: str) -> list[tuple[str, str]]:
+    """The ``(digit, label)`` rows a numbered menu prints, in order."""
+    rows, _ = menu_block(pane)
+    return rows
 
 
 def menu_key_for(pane: str, decision: str) -> str | None:

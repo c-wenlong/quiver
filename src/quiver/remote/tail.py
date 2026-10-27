@@ -78,14 +78,25 @@ def _approval_prompt_line(pane: str) -> str:
     ctx = supervise.running_context(pane)
     if ctx:
         return _tr._redact_secrets(ctx)[:140]
-    for line in pane.splitlines():
+    _, menu_at = supervise.menu_block(pane)
+    lines = pane.splitlines()
+    # The question nearest the menu is its question — earlier lines can
+    # hold questions of their own ("Which branch?"). Without a menu the
+    # first question-looking line stands, as before.
+    zone = lines[:menu_at] if menu_at >= 0 else lines
+    pick = None
+    for line in zone:
         text = line.strip()
         if not text or supervise._MENU_OPTION.match(line):
             continue
         low = text.lower()
         if ("do you want" in low or "allow" in low
                 or "permission" in low or text.endswith("?")):
-            return _tr._redact_secrets(text)[:140]
+            pick = text
+            if menu_at < 0:
+                break
+    if pick is not None:
+        return _tr._redact_secrets(pick)[:140]
     return "Approval requested"
 
 # How many of the most recent sessions get a live tailer.

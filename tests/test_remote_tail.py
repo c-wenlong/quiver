@@ -1236,6 +1236,13 @@ class TestApprovalPromptLine(unittest.TestCase):
         self.assertEqual(
             tail._approval_prompt_line(pane), "Run sudo -n ls /var/root?")
 
+    def test_question_nearest_the_menu_wins(self):
+        # An earlier conversation line can end in "?" too — the card
+        # must name what its buttons answer, not the older question.
+        pane = "Which branch?\nDo you want to proceed?\n1. Yes\n2. No"
+        self.assertEqual(
+            tail._approval_prompt_line(pane), "Do you want to proceed?")
+
 
 class TestTailWake(unittest.TestCase):
     """A write to a session wakes its tailer and polls it fast a while."""
