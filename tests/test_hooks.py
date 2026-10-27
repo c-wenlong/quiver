@@ -256,7 +256,8 @@ class ListCommandTest(unittest.TestCase):
     def test_json_rows_carry_declarations(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            _hook(home, "claude", "guard.py")
+            _hook(home, "claude", "guard.py",
+                  '"""Stop hook: block replies that break the rules."""\n')
             _settings(home, ".claude/settings.json", {
                 "Stop": [{"hooks": [{"command": "guard.py"}]}],
             })
@@ -267,7 +268,8 @@ class ListCommandTest(unittest.TestCase):
             # The stable schema the app page consumes.
             for key in ("name", "harness", "tier", "source_path",
                         "dest_path", "link_status", "enabled",
-                        "declared", "events_supported"):
+                        "declared", "events_supported", "summary",
+                        "detail"):
                 self.assertIn(key, row, key)
             self.assertEqual(row["name"], "guard.py")
             self.assertEqual(row["tier"], "harness")
@@ -276,6 +278,8 @@ class ListCommandTest(unittest.TestCase):
             self.assertTrue(
                 row["declared"][0]["file"].endswith("settings.json"))
             self.assertIn("PreToolUse", row["events_supported"])
+            self.assertEqual(row["summary"],
+                             "Stop hook: block replies that break the rules.")
 
     def test_unknown_hub_dir_lists_as_one_row_and_check_stays_quiet(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -290,6 +294,8 @@ class ListCommandTest(unittest.TestCase):
             self.assertEqual(
                 [(r["name"], r["link_status"]) for r in rows],
                 [("command-guard", "skipped")])
+            # The app says why it never runs, from the row alone.
+            self.assertEqual(rows[0]["detail"], "not a known harness")
             self.assertEqual(
                 [f for f in hook_findings(home)
                  if f.harness == "command-guard"], [])
@@ -672,6 +678,46 @@ class SummaryTest(unittest.TestCase):
             self.assertEqual(script_summary(txt), "")
             self.assertEqual(script_summary(home / "gone.py"), "")
             self.assertEqual(script_summary(long_sh), "one two")
+
+    def test_reads_only_the_head(self):
+        # The list reads a summary per row on every refresh: a long script
+        # is read from its head, and a binary is skipped.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            filler = "x = 1\n" * 10_000  # past the 16 KiB head
+            long_py = _hook(home, "claude", "long.py",
+                            '#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n'
+                            '"""Stop hook: guard the gate.\n\nMore."""\n'
+                            + filler)
+            cut_py = _hook(home, "claude", "cut.py",
+                           '"""' + "a" * 20_000 + '"""\n')
+            long_sh = _hook(home, "claude", "long.sh",
+                            "#!/bin/sh\n# Guards things.\n" + "echo hi\n" * 5_000)
+            binary = home / "helper"
+            binary.write_bytes(b"\xcf\xfa\xed\xfe\0\0" + b"\0" * 64)
+            self.assertEqual(script_summary(long_py), "Stop hook: guard the gate.")
+            # A docstring that runs past the head has no closing quotes in
+            # it, so there is nothing safe to show.
+            self.assertEqual(script_summary(cut_py), "")
+            self.assertEqual(script_summary(long_sh), "Guards things.")
+            self.assertEqual(script_summary(binary), "")
+
+    def test_list_reads_a_shared_script_once(self):
+        # A shared script is a row per harness: one listing reads it once.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            source = _hook(home, "shared", "guard.py", '"""Guards."""\n')
+            rows = [HookRow(script="guard.py", harness=h, source=source,
+                            dest=home / f".{h}/hooks/_generated/guard.py",
+                            state="linked", detail="", declared=[],
+                            tier="shared")
+                    for h in ("claude", "codex")]
+            summaries: dict[Path, str] = {}
+            with mock.patch.object(hooks_commands, "script_summary",
+                                   wraps=script_summary) as read:
+                out = [hooks_commands._row_json(r, summaries) for r in rows]
+            self.assertEqual(read.call_count, 1)
+            self.assertEqual([o["summary"] for o in out], ["Guards."] * 2)
 
 
 class DispatchTest(unittest.TestCase):

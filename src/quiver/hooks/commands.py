@@ -171,8 +171,15 @@ def _rows(home: Path) -> tuple[list[HookRow], dict]:
     return all_rows(home, registry, statuses, declared), registry
 
 
-def _row_json(r: HookRow) -> dict:
-    """The stable ``swe hooks list --json`` row shape the app page reads."""
+def _row_json(r: HookRow, summaries: dict[Path, str]) -> dict:
+    """The stable ``swe hooks list --json`` row shape the app page reads.
+
+    ``summaries`` caches header lines by source for one listing: a shared
+    script is a row per harness it deploys to, and is read once.
+    """
+    if r.source not in summaries:
+        summaries[r.source] = (
+            script_summary(r.source) if r.source.is_file() else "")
     return {
         "name": r.script,
         "harness": r.harness,
@@ -180,6 +187,7 @@ def _row_json(r: HookRow) -> dict:
         "source_path": str(r.source),
         "dest_path": str(r.dest),
         "link_status": r.state,
+        "detail": r.detail,
         "enabled": r.enabled,
         "declared": [{
             "event": d.event,
@@ -187,6 +195,9 @@ def _row_json(r: HookRow) -> dict:
             "file": str(d.settings),
         } for d in r.declared],
         "events_supported": r.events_supported,
+        # The header line the app shows beside the name; a directory hook
+        # has no single file to read it from.
+        "summary": summaries[r.source],
     }
 
 
@@ -234,7 +245,8 @@ def _list(rest: list[str], json_view: bool, fail) -> int:
                                  f"~/.quiver/hooks/{harness}/"))
 
     if json_view:
-        return emit({"hooks": [_row_json(r) for r in rows]})
+        summaries: dict[Path, str] = {}
+        return emit({"hooks": [_row_json(r, summaries) for r in rows]})
 
     if not rows:
         print(c("dim", "\n  No hook scripts in ~/.quiver/hooks yet."))

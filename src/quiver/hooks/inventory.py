@@ -540,6 +540,14 @@ def find_script(name: str, rows: list[HookRow]) -> list[HookRow]:
     return [r for r in rows if Path(r.script).stem == name]
 
 
+# How much of a script ``script_summary`` reads looking for its header.
+_SUMMARY_HEAD = 16 * 1024
+
+# A module docstring at the top of a Python head too long to parse whole.
+_LEADING_DOCSTRING = re.compile(
+    r'(?:[ \t]*(?:#[^\n]*)?\n)*[ \t]*[rRuU]?("""|\'\'\')(.*?)\1', re.DOTALL)
+
+
 def script_summary(path: Path, limit: int = 2) -> str:
     """The script's own description: docstring or leading comment lines.
 
@@ -547,16 +555,31 @@ def script_summary(path: Path, limit: int = 2) -> str:
     prose-guard.py's docstring states the exit-0/2 contract and the
     fail-open rule. ``limit`` lines, stopping at the first blank.
     """
+    # The header sits at the top: read a bounded head, never the whole
+    # file. A foreign "script" can be a large binary (Agent Relay Helper),
+    # and the list reads one per row on every refresh.
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        with path.open("rb") as handle:
+            head = handle.read(_SUMMARY_HEAD + 1)
     except OSError:
         return ""
+    if b"\0" in head:
+        return ""
+    whole = len(head) <= _SUMMARY_HEAD
+    text = head[:_SUMMARY_HEAD].decode("utf-8", errors="replace")
     lines: list[str] = []
     if path.suffix == ".py":
-        try:
-            doc = ast.get_docstring(ast.parse(text))
-        except (SyntaxError, ValueError, RecursionError):
-            doc = None
+        doc = None
+        if whole:
+            try:
+                doc = ast.get_docstring(ast.parse(text))
+            except (SyntaxError, ValueError, RecursionError):
+                doc = None
+        else:
+            # A cut-off head won't parse; the docstring opens the module,
+            # after any shebang, coding line or comments.
+            match = _LEADING_DOCSTRING.match(text)
+            doc = match.group(2).strip() if match else None
         if doc:
             for line in doc.splitlines():
                 if not line.strip():
