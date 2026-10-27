@@ -36,6 +36,32 @@
 .chat-banner-text { min-width: 0; }
 .chat-banner-actions { display: flex; gap: 6px; flex: none; }
 
+/* The tmux pane name as a chip in the bar's badges; click copies
+ * `tmux attach -t qv-…` (Fmt.copyTick swaps the icon for a tick). */
+.tmux-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+  color: var(--text-label); background: var(--subtle);
+  border: 1px solid var(--border-strong); border-radius: 999px; padding: 1px 8px;
+  cursor: copy;
+}
+.tmux-chip:hover { background: var(--tab-hover); color: var(--text-primary); }
+.tmux-chip svg { width: 11px; height: 11px; }
+
+/* The detach sheet's options: stacked labelled choices, not a bare
+ * button row — the modes differ in what happens to the tmux pane. */
+.detach-options { display: flex; flex-direction: column; gap: 8px; }
+.detach-opt {
+  display: flex; flex-direction: column; gap: 3px; text-align: left;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--subtle); cursor: pointer;
+}
+.detach-opt:hover { background: var(--hover); border-color: var(--border-strong); }
+.detach-opt .opt-name { font-weight: 500; font-size: 13px; }
+.detach-opt .opt-desc { font-size: 12px; color: var(--text-secondary); }
+.detach-opt.danger .opt-name { color: var(--danger-text); }
+.detach-opt code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; }
+
 /* Transcript */
 .chat-log { display: flex; flex-direction: column; gap: 12px; padding-bottom: 8px; }
 .msg { min-width: 0; font-size: 14px; line-height: 1.5; }

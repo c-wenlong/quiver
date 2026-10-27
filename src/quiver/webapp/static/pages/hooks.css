@@ -112,6 +112,4 @@
 .hk-new-sheet { width: min(480px, 92vw); }
 .hk-new-field { display: flex; flex-direction: column; gap: 4px; }
 .hk-new-label { font-size: 12px; color: var(--text-secondary); }
-.hk-stanza { position: relative; }
-.hk-stanza .hk-text { padding-right: 64px; }
-.hk-copy { position: absolute; top: 8px; right: 8px; height: 24px; padding: 0 10px; font-size: 12px; }
+.hk-stanza .hk-text { padding-right: 38px; }

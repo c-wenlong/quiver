@@ -675,7 +675,12 @@ class HubState:
                             protocol.event(
                                 "session.ownership", row["key"],
                                 self.machine_id,
-                                {"ownership": new_own},
+                                {
+                                    "ownership": new_own,
+                                    "tmux": row.get("tmux"),
+                                    "mode": row.get("mode"),
+                                    "kept": bool(row.get("kept")),
+                                },
                             ),
                         )
                 rows, as_of = self.catalog.tail_snapshot()
@@ -1852,12 +1857,18 @@ class _Handler(BaseHTTPRequestHandler):
             self._state.catalog.refresh()
             for hub_key, ownership in before.items():
                 if ownership and ownership != old.get(hub_key):
+                    hub_row = self._state.catalog.row_for(hub_key) or {}
                     self._state.emit(
                         hub_key,
                         protocol.event(
                             "session.ownership", hub_key,
                             self._state.machine_id,
-                            {"ownership": ownership},
+                            {
+                                "ownership": ownership,
+                                "tmux": hub_row.get("tmux"),
+                                "mode": hub_row.get("mode"),
+                                "kept": bool(hub_row.get("kept")),
+                            },
                         ),
                     )
             self._send_json(200, {
@@ -2821,7 +2832,12 @@ class _Handler(BaseHTTPRequestHandler):
             key,
             protocol.event(
                 "session.ownership", key, self._state.machine_id,
-                {"ownership": row.get("ownership")},
+                {
+                    "ownership": row.get("ownership"),
+                    "tmux": row.get("tmux"),
+                    "mode": row.get("mode"),
+                    "kept": bool(row.get("kept")),
+                },
             ),
         )
 

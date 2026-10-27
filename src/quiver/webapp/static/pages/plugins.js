@@ -301,7 +301,8 @@ function bindHealth() {
     };
   }
   for (const btn of document.querySelectorAll("[data-pl-copy]")) {
-    btn.onclick = () => copy(btn.dataset.plCopy, btn);
+    Fmt.copyTick(btn, () => btn.dataset.plCopy,
+      () => { btn.title = "Couldn't copy — select it by hand"; });
   }
   for (const btn of document.querySelectorAll("[data-pl-fix]")) {
     btn.onclick = () => {
@@ -397,34 +398,6 @@ async function runFix(action, ids) {
   // A refusal most likely means Health moved on (a finding gone, or
   // another fix running): read it again.
   if (status) load("health", true);
-}
-
-/* navigator.clipboard needs https or localhost; plain http falls back
- * to the older copy command. */
-function copy(text, btn) {
-  const done = (ok) => {
-    btn.classList.add(ok ? "copied" : "failed");
-    btn.title = ok ? "Copied" : "Select and copy it by hand";
-    setTimeout(() => { btn.classList.remove("copied", "failed"); btn.title = "Copy"; }, 1500);
-  };
-  const fallback = () => {
-    const area = document.createElement("textarea");
-    area.value = text;
-    area.setAttribute("readonly", "");
-    area.style.position = "absolute";
-    area.style.left = "-9999px";
-    document.body.appendChild(area);
-    area.select();
-    let ok = false;
-    try { ok = document.execCommand("copy"); } catch { ok = false; }
-    area.remove();
-    done(ok);
-  };
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(text).then(() => done(true), fallback);
-  } else {
-    fallback();
-  }
 }
 
 /* ------------------------------------------------------------ Explore */

@@ -157,6 +157,63 @@ const Fmt = (() => {
     return [used > 0 ? money(used) : "Unavailable", "On-demand limit unavailable"];
   }
 
+  /* Copy icon → green tick for a moment, the Mac app's doc.on.doc →
+   * checkmark port. `copy` writes and answers whether it landed (plain
+   * http has no clipboard API, so it falls back to the old command);
+   * `copyTick` wires a button so a copy swaps its icon for a tick. */
+  const COPY_PATHS = '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h9"/>';
+  const TICK_PATHS = '<path d="m5 12 5 5 9-10"/>';
+  const strokeIcon = (paths) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+  const copyIcon = () => strokeIcon(COPY_PATHS);
+
+  async function copy(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch { /* fall through */ }
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch { ok = false; }
+    area.remove();
+    return ok;
+  }
+
+  /* ``text`` may be a string or a function answering it (the value is
+   * read at click time). ``onFail`` runs when neither clipboard path
+   * worked, so the caller can show its own hint. */
+  function copyTick(btn, text, onFail) {
+    if (!btn || btn.dataset.copyWired) return;
+    btn.dataset.copyWired = "1";
+    const svg = btn.querySelector("svg");
+    const restore = svg ? svg.outerHTML : btn.innerHTML;
+    btn.addEventListener("click", async () => {
+      // ``text`` may answer a promise (a value fetched at click time).
+      const value = await (typeof text === "function" ? text() : text);
+      if (value == null || value === "") return;
+      if (!(await copy(String(value)))) {
+        if (onFail) onFail(btn);
+        return;
+      }
+      clearTimeout(Number(btn.dataset.copyTimer || 0));
+      btn.classList.add("copied");
+      const cur = btn.querySelector("svg");
+      if (cur) cur.outerHTML = strokeIcon(TICK_PATHS);
+      else btn.innerHTML = strokeIcon(TICK_PATHS);
+      btn.dataset.copyTimer = String(setTimeout(() => {
+        btn.classList.remove("copied");
+        const done = btn.querySelector("svg");
+        if (done) done.outerHTML = restore;
+        else btn.innerHTML = restore;
+        delete btn.dataset.copyTimer;
+      }, 2000));
+    });
+  }
+
   return { tokens, dollars, ago, harnessName, harnessColor, logo, marbleScale,
-    resetIn, windowLabel, planTitle, money, balance, onDemand };
+    resetIn, windowLabel, planTitle, money, balance, onDemand,
+    copyIcon, copy, copyTick };
 })();

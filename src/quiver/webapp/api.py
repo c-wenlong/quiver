@@ -9,6 +9,7 @@ waits for it rather than reading the same files again.
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from contextlib import contextmanager
@@ -77,6 +78,9 @@ class WebApp:
                                                scanned=(self._last_scan is not None
                                                         and not self._last_scan.errors)),
                 "ledger_harnesses": sorted(sessions_mod.LEDGER_HARNESSES),
+                # Whether "Run in terminal" is wired on this hub (the
+                # sessions page plugin opens Terminal.app via osascript).
+                "open_terminal": sys.platform == "darwin",
                 "scanned_at": self._scanned_at,
                 "notes": self._notes(),
             }

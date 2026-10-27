@@ -168,6 +168,14 @@ function bindDoctor() {
   for (const btn of document.querySelectorAll("[data-doctor]")) {
     const row = btn.closest(".doctor-row");
     const finding = row && p.data ? doctorVisible()[Number(row.dataset.index)] : null;
+    /* The copy button's tick feedback comes from Fmt.copyTick; on a copy
+     * that can't land, select the command for a manual copy. */
+    if (btn.dataset.doctor === "copy" && finding) {
+      Fmt.copyTick(btn, () => finding.fix, () => {
+        const code = btn.parentElement.querySelector(".doctor-command");
+        if (code) window.getSelection().selectAllChildren(code);
+      });
+    }
     btn.onclick = () => {
       const act = btn.dataset.doctor;
       if (act === "reload") { p.lostError = null; p.blocked = []; p.replaceError = null; renderDoctor(); }
@@ -178,7 +186,6 @@ function bindDoctor() {
         if (next) next.focus();
       } else if (act === "replace-go") doctorReplace();
       else if (act === "fold") { p.showsAll = !p.showsAll; paintDoctor(); }
-      else if (act === "copy" && finding) doctorCopy(finding.fix, btn);
       else if (act === "run" && finding) {
         p.confirming = p.confirming === doctorId(finding) ? null : doctorId(finding);
         paintDoctor();
@@ -298,33 +305,6 @@ async function doctorReplace() {
 
 function onDoctorPage() {
   return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "doctor";
-}
-
-/* navigator.clipboard needs https or localhost; plain http falls back to
- * the older copy command, then to selecting the command for a manual copy. */
-function doctorCopy(text, btn) {
-  const done = () => {
-    btn.innerHTML = doctorIcon("check");
-    btn.setAttribute("aria-label", "Copied");
-    setTimeout(() => { btn.innerHTML = doctorIcon("copy"); btn.setAttribute("aria-label", "Copy the command"); }, 1500);
-  };
-  const fallback = () => {
-    const area = document.createElement("textarea");
-    area.value = text;
-    area.setAttribute("readonly", "");
-    area.style.position = "absolute";
-    area.style.left = "-9999px";
-    document.body.appendChild(area);
-    area.select();
-    let ok = false;
-    try { ok = document.execCommand("copy"); } catch { ok = false; }
-    area.remove();
-    if (ok) return done();
-    const code = btn.parentElement.querySelector(".doctor-command");
-    if (code) window.getSelection().selectAllChildren(code);
-  };
-  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, fallback);
-  else fallback();
 }
 
 registerPage("doctor", renderDoctor);

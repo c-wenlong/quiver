@@ -116,10 +116,10 @@ class TestForkCommandLines(unittest.TestCase):
 
     def test_rows_carry_can_fork(self):
         _key, row = catalog_mod.session_to_row(
-            _session("abc"), "done", "m", set())
+            _session("abc"), "done", "m", {})
         self.assertTrue(row["can_fork"])
         _key, row = catalog_mod.session_to_row(
-            _session("o1", "opencode"), "done", "m", set())
+            _session("o1", "opencode"), "done", "m", {})
         self.assertFalse(row["can_fork"])
 
     def test_body_validation(self):

@@ -25,7 +25,7 @@ const page = {
   data: null, loadError: null, loading: false,
   wizard: false, step: 0, selected: new Set(), start: "seed",
   applying: false, outcome: null, applyError: null, appliedSelection: null, adopted: false,
-  showingMore: false, installing: null, copied: null, finished: false,
+  showingMore: false, installing: null, finished: false,
   // The install in flight ("<id>:<via>") and each agent's last failure.
   installRun: null, installErrors: {},
 };
@@ -404,8 +404,8 @@ function missingBanner(p) {
           <span class="setup-via">${esc(m.via)}</span>
           <code title="${esc(m.command)}">${esc(m.command)}</code>
           ${installButton(p, m)}
-          <button class="setup-button small" data-copy="${i}" data-agent="${esc(p.id)}">${
-            page.copied === `${p.id}:${i}` ? "Copied" : "Copy"}</button></div>`).join("")}</div>
+          <button type="button" class="icon-button copy-inline" data-copy="${i}" data-agent="${esc(p.id)}"
+            aria-label="Copy command" title="Copy command">${Fmt.copyIcon()}</button></div>`).join("")}</div>
         ${error ? `<p class="error setup-pre setup-install-error" role="alert">${esc(error)}</p>` : ""}
         <p class="caption">A cask or install script that asks for a password can't finish here. Copy it into a terminal instead.</p>
         ${websiteLink}`
@@ -620,14 +620,17 @@ function bindWizard() {
     btn.onclick = () => runInstall(btn.dataset.agent, btn.dataset.runInstall);
   }
   for (const btn of document.querySelectorAll("[data-copy]")) {
-    btn.onclick = async () => {
+    Fmt.copyTick(btn, () => {
       const p = page.data.agents.providers.find((x) => x.id === btn.dataset.agent);
       const m = p && (p.install || [])[Number(btn.dataset.copy)];
-      if (!m) return;
-      try { await navigator.clipboard.writeText(m.command); } catch { return; }
-      page.copied = `${p.id}:${btn.dataset.copy}`;
-      paint();
-    };
+      return m ? m.command : "";
+    }, () => {
+      // A failed copy (plain http has no clipboard API) selects the
+      // command to grab by hand, as the session sheet's byHand does.
+      btn.title = "Couldn't copy — select it by hand";
+      const el = btn.parentElement && btn.parentElement.querySelector("code");
+      if (el) window.getSelection().selectAllChildren(el);
+    });
   }
 }
 
