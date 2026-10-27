@@ -124,6 +124,24 @@ struct MainWindow: View {
         }
         .animation(animation, value: model.sidebarCollapsed)
         .animation(animation, value: model.sidebarWidth)
+        // A usage failure that needs the user: one banner at a time,
+        // auto-dismissing, its Fix landing on Doctor where the same
+        // issue is a row.
+        .overlay(alignment: .top) {
+            if let issue = model.issues.toast {
+                IssueToast(issue: issue, onOpen: {
+                    model.openDoctor()
+                    model.issues.dismissToast()
+                }, onDismiss: {
+                    model.issues.dismissToast()
+                })
+                .padding(.top, 12)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .zIndex(1)
+            }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: Theme.fadeDuration),
+                   value: model.issues.toast)
         // ⌃⌘S mid-drag removes the handle without onEnded: discard.
         .onChange(of: model.sidebarCollapsed) { _, _ in
             dragStart = nil
@@ -221,7 +239,8 @@ private struct Sidebar: View {
                             NavItem(section: section, isSelected: model.selection == section,
                                     isFocused: focused == section,
                                     collapsed: !isExpanded,
-                                    badge: section == .inbox ? model.github.unreadCount : 0,
+                                    badge: section == .inbox ? model.github.unreadCount
+                                        : section == .settings ? model.issues.actionableCount : 0,
                                     shortcut: CommandKeyHold.shared.isHeld
                                         ? model.sidebar.shortcutNumber(of: section) : nil) {
                                 // Reselecting the open page asks a detail
@@ -325,6 +344,44 @@ private struct Sidebar: View {
         model.selection = next
         if focused != nil { focused = next }
         return .handled
+    }
+}
+
+/// The banner a new actionable usage issue raises over the window:
+/// summary, Fix and dismiss, gone on its own after a few seconds.
+private struct IssueToast: View {
+    var issue: Issue
+    var onOpen: () -> Void
+    var onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(Theme.font(size: 13))
+                .foregroundStyle(Theme.warning)
+            Text(issue.message)
+                .font(Theme.bodySmall)
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(2)
+            Button("Fix", action: onOpen)
+                .primaryButton()
+            Button("Dismiss", systemImage: "xmark", action: onDismiss)
+                .labelStyle(.iconOnly)
+                .iconButton()
+                .help("Dismiss")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Theme.panel, in: .rect(cornerRadius: Theme.controlRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
+            .strokeBorder(Theme.border, lineWidth: 1))
+        .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Issue: \(issue.message)")
+        .task(id: issue.id) {
+            try? await Task.sleep(for: .seconds(7))
+            if !Task.isCancelled { onDismiss() }
+        }
     }
 }
 

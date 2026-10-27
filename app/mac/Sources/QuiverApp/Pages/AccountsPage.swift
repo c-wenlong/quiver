@@ -506,6 +506,7 @@ private struct HarnessAccountCard: View {
     @State private var newName = ""
     @State private var confirmingRemove = false
     @State private var installing: Provider?
+    @State private var fixing = false
     /// Sign in, or Install first when its CLI isn't on PATH.
     @ViewBuilder func signInItem(name: String, harness: String,
                                  cli: String?, installed: Bool?,
@@ -543,6 +544,16 @@ private struct HarnessAccountCard: View {
                 Text(name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                     .accessibilityLabel(name == ownName ? name : "\(name), \(ownName)")
                 if let plan = limit?.planType { Badge(planTitle(plan)) }
+                if row.issue?.status.actionable == true {
+                    Text("Action needed")
+                        .font(Theme.font(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.warningText)
+                        .lineLimit(1)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 1)
+                        .background(Theme.warning.opacity(0.15), in: .capsule)
+                        .overlay(Capsule().strokeBorder(Theme.warning.opacity(0.4), lineWidth: 1))
+                }
                 Spacer()
                 if let profile = row.profile {
                     // An extra account: its name and folder are the profile's,
@@ -587,7 +598,11 @@ private struct HarnessAccountCard: View {
             if let limit, limit.status == .ok { usageSection(limit) }
             HStack {
                 Group {
-                    if let limit {
+                    if let issue = row.issue, issue.status.actionable {
+                        // The remedy's summary is the explanation; the Fix
+                        // button beside it opens the full steps.
+                        Text(issue.remedy?.summary ?? issueText(issue))
+                    } else if let limit {
                         switch limit.status {
                         case .ok:
                             if let fetched = limit.fetchedAt {
@@ -601,6 +616,8 @@ private struct HarnessAccountCard: View {
                         case .noSubscription: Text("No subscription")
                         case .timeout: Text("Didn't answer in time")
                         }
+                    } else if row.issue?.status == .timeout {
+                        Text("Didn't answer in time. Refresh to try again.")
                     } else {
                         switch row.usageNote {
                         case .signIn?:
@@ -615,6 +632,11 @@ private struct HarnessAccountCard: View {
                 }
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 Spacer()
+                if let issue = row.issue, issue.status.actionable {
+                    Button("Fix…") { fixing = true }
+                        .secondaryButton()
+                        .help("Show how to fix this")
+                }
                 if let profile = row.profile {
                     LaunchButtons(
                         target: LaunchTarget(kind: .account(profile), model: model,
@@ -647,6 +669,14 @@ private struct HarnessAccountCard: View {
             }
         }
         .background { installSheet }
+        .background {
+            if row.issue != nil {
+                // Drawn like installSheet: over the window, no row space.
+                Color.clear.quiverSheet(isPresented: $fixing) {
+                    IssueFixSheet(title: name, issue: row.issue!, perform: perform)
+                }
+            }
+        }
         .alert("Rename \(row.profile?.name ?? ownName)", isPresented: $renaming) {
             TextField("Name", text: $newName)
             if let profile = row.profile {
@@ -701,6 +731,16 @@ private struct HarnessAccountCard: View {
         }
     }
 
+    /// The status line for an actionable issue whose swe named no remedy.
+    private func issueText(_ issue: HarnessIssue) -> String {
+        switch issue.status {
+        case .signedOut: "Not signed in"
+        case .authRequired: "Its stored login is stale"
+        case .permissionRequired: "macOS won't let Quiver read its credentials"
+        default: "Something needs attention"
+        }
+    }
+
     /// Why a card has no usage bars: swe reads limits only for some
     /// harnesses; a starred one it can read just has no reading yet.
     private var noLimitReason: String {
@@ -723,5 +763,69 @@ private struct HarnessAccountCard: View {
     private func renameProfile(_ profile: Profile, to name: String) async throws {
         try await app.accounts.rename(profile, to: name)
         await app.others.load()
+    }
+}
+
+/// The Fix sheet an actionable issue opens: the remedy swe named, its
+/// steps numbered, and its command with copy and Run in Terminal like
+/// the Doctor rows offer.
+private struct IssueFixSheet: View {
+    @Environment(AppModel.self) private var app
+    var title: String
+    var issue: HarnessIssue
+    var perform: (@escaping () async throws -> Void) -> Void
+
+    private static var mono: Font { Theme.font(size: 12, design: .monospaced) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(issue.remedy?.title ?? "Fix \(title)")
+                .font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+            Text(issue.remedy?.summary ?? "This account needs attention.")
+                .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+            if let steps = issue.remedy?.steps, !steps.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                        HStack(alignment: .top, spacing: 8) {
+                            Text("\(index + 1).")
+                                .font(Theme.bodySmall)
+                                .foregroundStyle(Theme.textMuted)
+                                .frame(width: 14, alignment: .trailing)
+                            Text(step)
+                                .font(Theme.bodySmall)
+                                .foregroundStyle(Theme.textPrimary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+            }
+            if let command = issue.remedy?.command {
+                HStack(spacing: 8) {
+                    Text(command)
+                        .font(Self.mono)
+                        .lineSpacing(2)
+                        .foregroundStyle(Theme.textPrimary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("Run in Terminal", systemImage: "terminal") {
+                        perform {
+                            try await app.accounts.runInTerminal(line: command)
+                        }
+                    }
+                    .secondaryButton()
+                    .hoverTip("Runs \(command) in a new terminal")
+                    CopyButton(help: "Copy the command") { copyToPasteboard(command) }
+                        .iconButton()
+                }
+                .padding(.leading, 12)
+                .padding(.trailing, 6)
+                .padding(.vertical, 6)
+                .background(Theme.code, in: .rect(cornerRadius: Theme.controlRadius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
+                    .strokeBorder(Theme.border, lineWidth: 1))
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
     }
 }

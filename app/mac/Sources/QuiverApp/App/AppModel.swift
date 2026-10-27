@@ -62,6 +62,13 @@ final class AppModel {
         }
     }
 
+    /// A toast's Fix button: land on Settings › General, where the
+    /// Doctor section lists the issue's row live from the same store.
+    func openDoctor() {
+        UserDefaults.standard.set(SettingsSection.general.rawValue, forKey: "settingsSection")
+        select(.settings)
+    }
+
     /// The sidebar pinned to an icon rail; hovering it floats it open.
     var sidebarCollapsed = UserDefaults.standard.bool(forKey: "sidebarCollapsed") {
         didSet { UserDefaults.standard.set(sidebarCollapsed, forKey: "sidebarCollapsed") }
@@ -148,7 +155,8 @@ final class AppModel {
             swe = Self.client(for: swePath)
             skills.use(swe, for: swePath)
             hub = Self.localHub(swe: swe)
-            others = OtherLimitsModel(swe: swe, extraAccounts: extraAccountsProvider)
+            others = OtherLimitsModel(swe: swe, extraAccounts: extraAccountsProvider,
+                                      issues: issues)
             Task { await others.load() }
             doctor = DoctorModel(swe: swe)
             // The "swe too old" verdicts were about the old build.
@@ -316,6 +324,11 @@ final class AppModel {
     }
 
     let accounts: AccountsModel
+    /// Usage failures the user can act on, persisted under ~/.quiver so
+    /// toasts deduplicate across polls and restarts; Doctor's rows and
+    /// the Settings badge read it. Rebuilt never — the store is file-backed,
+    /// so a new swe keeps the same issues.
+    let issues: IssuesModel
     /// Limits of the harnesses with no Quiver account, from swe.
     private(set) var others: OtherLimitsModel
     /// Settings › Doctor's report and its runs. Held here, not by the
@@ -528,7 +541,9 @@ final class AppModel {
                 .filter { !$0.isDefault && !$0.vendor.hasDefaultProfile }
                 .map { ($0, store.paths(for: $0)) }
         }
-        others = OtherLimitsModel(swe: client, extraAccounts: extraAccountsProvider)
+        issues = IssuesModel(store: IssueStore(url: IssueStore.file(home: home)))
+        others = OtherLimitsModel(swe: client, extraAccounts: extraAccountsProvider,
+                                  issues: issues)
         doctor = DoctorModel(swe: client)
         codexHomes = {
             var homes = [home.appending(path: ".codex").path]

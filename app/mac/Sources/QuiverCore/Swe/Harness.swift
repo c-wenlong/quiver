@@ -28,6 +28,10 @@ public struct Harness: Decodable, Sendable, Identifiable, Equatable {
     /// Why `rateLimit` is nil, when swe could tell. Nil with a reading,
     /// with no known reason, or from a swe that predates the field.
     public let noReading: NoReading?
+    /// The actionable version of a failure: its status in the remedies
+    /// vocabulary plus the fix swe names for it. Nil on a healthy row,
+    /// or from a swe that predates the field.
+    public let issue: HarnessIssue?
 
     public enum NoReading: String, Decodable, Sendable {
         /// No credential the fetcher could read with.
@@ -41,7 +45,7 @@ public struct Harness: Decodable, Sendable, Identifiable, Equatable {
         // convertFromSnakeCase capitalises "100d" to "100D", so the
         // wire key `sessions_100d` arrives as `sessions100D`.
         case sessions100d = "sessions100D"
-        case rateLimit, installed, archived, notes, primaryColor, noReading
+        case rateLimit, installed, archived, notes, primaryColor, noReading, issue
     }
 
     /// What the app calls it: the display name when set, else the brand
@@ -73,6 +77,7 @@ public struct Harness: Decodable, Sendable, Identifiable, Equatable {
         primaryColor = (try? c.decodeIfPresent(String.self, forKey: .primaryColor)) ?? nil
         noReading = rateLimit == nil
             ? (try? c.decodeIfPresent(NoReading.self, forKey: .noReading)) ?? nil : nil
+        issue = (try? c.decodeIfPresent(HarnessIssue.self, forKey: .issue)) ?? nil
     }
 
     public struct Archive: Decodable, Sendable, Equatable {
@@ -82,6 +87,27 @@ public struct Harness: Decodable, Sendable, Identifiable, Equatable {
         /// unknown, none, trial, used or heavy.
         public let usage: String
     }
+}
+
+/// The `issue` object swe puts on a `swe list` row: the failure's status
+/// in the remedies vocabulary and the fix it names. An unknown status
+/// decodes as nil rather than costing the row.
+public struct HarnessIssue: Codable, Sendable, Equatable {
+    public let status: IssueStatus
+    public let remedy: UsageRemedy?
+
+    public init(status: IssueStatus, remedy: UsageRemedy? = nil) {
+        self.status = status
+        self.remedy = remedy
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        status = try box.decode(IssueStatus.self, forKey: .status)
+        remedy = try box.decodeIfPresent(UsageRemedy.self, forKey: .remedy)
+    }
+
+    enum CodingKeys: String, CodingKey { case status, remedy }
 }
 
 /// A harness's quota reading. `fetchedAt` is when it was actually taken,
