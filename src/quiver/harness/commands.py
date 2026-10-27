@@ -521,7 +521,8 @@ _SPINNER_FRAME_SECONDS = 0.08
 def _fetch_rate_limits(refresh: bool, tool_names: set[str], wait: bool = False,
                        refresh_failed: bool = False,
                        cache_ttl: float | None = None,
-                       no_reading: dict | None = None) -> dict:
+                       no_reading: dict | None = None,
+                       issues: dict | None = None) -> dict:
     """Rate limits for the REMAINING column.
 
     On a terminal the fetch runs behind a spinner and workers get a longer
@@ -534,9 +535,14 @@ def _fetch_rate_limits(refresh: bool, tool_names: set[str], wait: bool = False,
     time, where a provider's first fetch often takes longer than the short
     cap, so it would only ever see the last cached reading, hours old.
 
-    ``no_reading`` is passed through to ``get_all_rate_limits``.
+    ``no_reading`` and ``issues`` are passed through to
+    ``get_all_rate_limits``.
     """
-    extra = {} if no_reading is None else {"no_reading": no_reading}
+    extra = {}
+    if no_reading is not None:
+        extra["no_reading"] = no_reading
+    if issues is not None:
+        extra["issues"] = issues
     from quiver.harness.rate_limits import (
         _RATE_LIMIT_FETCH_DEADLINE_TTY,
         get_all_rate_limits,
@@ -745,6 +751,7 @@ def cmd_list(args):
 
     if json_view:
         no_reading: dict[str, str] = {}
+        issues: dict[str, str] = {}
         rate_limits = (
             _fetch_rate_limits(
                 refresh=refresh,
@@ -753,6 +760,7 @@ def cmd_list(args):
                 wait=True,
                 refresh_failed=refresh_failed, cache_ttl=cache_ttl,
                 no_reading=no_reading,
+                issues=issues,
             )
             if usage_view
             else {}
@@ -762,7 +770,8 @@ def cmd_list(args):
         counts_100d = _session_counts(100)
         return emit({"harnesses": [
             HarnessRow.of(name, info, starred_set, archived, counts_100d,
-                          rate_limits.get(name), no_reading.get(name)).to_json()
+                          rate_limits.get(name), no_reading.get(name),
+                          issue_status=issues.get(name)).to_json()
             for name, info in tools.items()
             if not tag_filter or tag_filter in info.get("tags", [])
         ]})
@@ -1694,7 +1703,7 @@ def doctor_report(home: Path | None = None) -> DoctorReport:
 
 def _doctor_probe(home: Path) -> SimpleNamespace:
     """Every probe ``swe doctor`` runs, and the report made from them."""
-    from quiver.harness.doctor import collect_findings, setup_findings
+    from quiver.harness.doctor import collect_findings, issue_findings, setup_findings
     from quiver.harness.drift import run_drift_checks
     from quiver.harness.path_health import (
         find_off_path_tools,
@@ -1710,10 +1719,11 @@ def _doctor_probe(home: Path) -> SimpleNamespace:
     probe.orphans = find_off_path_tools(probe.tools)
     probe.drift = run_drift_checks()
     probe.setup = setup_findings(home)
+    probe.issues = issue_findings(home)
     probe.report = DoctorReport(
         collect_findings(probe.env, probe.preferred, probe.which_npm,
                          probe.nvm_dirs, probe.orphans, probe.drift)
-        + probe.setup)
+        + probe.setup + probe.issues)
     return probe
 
 
@@ -1816,6 +1826,15 @@ def cmd_doctor(args):
         print(c("bold", "  Setup"))
         for finding in setup:
             print(f"    {c('yellow', '!')} {finding.message}")
+            if finding.fix:
+                print(c("dim", f"        fix: {finding.fix}"))
+        print()
+
+    if probe.issues:
+        print(c("bold", "  Issues"))
+        for finding in probe.issues:
+            icon, color = ("!", "yellow") if finding.severity == "warning" else ("•", "dim")
+            print(f"    {c(color, icon)} {finding.message}")
             if finding.fix:
                 print(c("dim", f"        fix: {finding.fix}"))
         print()
@@ -2716,31 +2735,48 @@ def cmd_harness_usage(args):
         print(c("red", f"  No such directory: {account_dir}"), file=err)
         return 1
 
-    from quiver.harness.rate_limits import AccountUsageError, get_account_rate_limit
+    from quiver.harness.rate_limits import get_account_usage
+    from quiver.harness.remedies import remedy_for
 
     try:
         # Fetch helpers may warn to stdout; under --json stdout is the
         # document, so their noise goes to stderr there.
         with (contextlib.redirect_stdout(sys.stderr) if json_view
               else contextlib.nullcontext()):
-            limit = get_account_rate_limit(name, account_dir)
+            outcome = get_account_usage(name, account_dir)
     except ValueError as exc:
         print(c("red", f"  {exc}"), file=err)
         return 1
-    except AccountUsageError as exc:
-        # Credentials exist but the read failed: an outage, not a
-        # signed-out account, and never a successful-looking null.
-        print(c("red", f"  {exc}"), file=err)
-        return 1
+    limit = outcome.limit
+    remedy = remedy_for(name, outcome.status)
     if json_view:
-        return emit({
+        # Every verdict is a typed document: ``status`` names the failure
+        # and ``remedy`` the fix, so the app never collapses them into a
+        # bare "couldn't fetch". An outage still exits 1 — the document
+        # rides along for callers that read it anyway.
+        emit({
             "name": name,
             "account_dir": account_dir,
+            "status": outcome.status,
+            "remedy": remedy,
             "limit": limit.to_json() if limit is not None else None,
         })
-    if limit is None:
+        return 1 if outcome.status == "unavailable" else 0
+    if outcome.status == "signed-out":
         print(f"  {name}: not signed in")
         return 0
+    if limit is None or outcome.status not in ("ok", "no-sub"):
+        # A failure the remedy names: say what to do, not just that it
+        # failed.
+        if remedy is not None:
+            print(c("yellow", f"  {remedy['summary']}."))
+            for i, step in enumerate(remedy["steps"], 1):
+                print(f"    {i}. {step}")
+            if remedy.get("command"):
+                print(c("dim", f"      {remedy['command']}"))
+        else:
+            print(c("red", f"  {outcome.detail or outcome.status}"))
+        return 1
     print(f"  {c('bold', name)}  {limit.format_column()}")
     from quiver.harness.models import RateLimitInfo
     for w in limit.windows:

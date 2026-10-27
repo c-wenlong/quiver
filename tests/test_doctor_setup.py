@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from quiver.harness.doctor import setup_findings
+from quiver.harness.doctor import issue_findings, setup_findings
 
 
 class SetupFindingsTest(unittest.TestCase):
@@ -118,6 +118,83 @@ class SetupFindingsTest(unittest.TestCase):
         self.assertIn("Setup", text)
         self.assertIn("No shared AGENTS.md", text)
         self.assertIn("swe setup --apply", text)
+
+
+class IssueFindingsTest(unittest.TestCase):
+    """``swe doctor``'s Issues section: the app's IssueStore as findings."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = pathlib.Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _write(self, issues):
+        store = self.home / ".quiver" / "data"
+        store.mkdir(parents=True)
+        (store / "issues.json").write_text(json.dumps(
+            {"version": 1, "issues": issues}))
+
+    def test_no_file_is_no_findings(self):
+        self.assertEqual(issue_findings(self.home), [])
+
+    def test_a_stale_login_is_a_warning_with_its_fix(self):
+        self._write({
+            "cursor/auth-required": {
+                "harness": "cursor", "status": "auth-required",
+                "first_seen": 1.0, "last_notified": 1.0, "occurrences": 2,
+            },
+        })
+        got = issue_findings(self.home)
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0].check, "usage.cursor/auth-required")
+        self.assertEqual(got[0].severity, "warning")
+        self.assertEqual(got[0].harness, "cursor")
+        # The fix text comes from the REMEDIES table.
+        self.assertEqual(got[0].fix, "cursor-agent status")
+
+    def test_an_outage_is_info(self):
+        self._write({
+            "devin/unavailable": {
+                "harness": "devin", "status": "unavailable",
+                "occurrences": 4,
+            },
+        })
+        got = issue_findings(self.home)
+        self.assertEqual(got[0].severity, "info")
+
+    def test_resolved_and_malformed_rows_are_skipped(self):
+        self._write({
+            "cursor/auth-required": {"resolved": True, "harness": "cursor",
+                                     "status": "auth-required"},
+            "junk": "not a dict",
+            "broken": {"harness": 7},
+        })
+        self.assertEqual(issue_findings(self.home), [])
+
+    def test_a_stored_remedy_fills_in_when_the_table_has_none(self):
+        self._write({
+            "oddball/custom": {
+                "harness": "oddball", "status": "custom",
+                "remedy": {"summary": "Oddball needs a nudge",
+                           "steps": ["Nudge it."]},
+            },
+        })
+        got = issue_findings(self.home)
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0].message, "Oddball needs a nudge")
+        self.assertEqual(got[0].fix, "Nudge it.")
+
+    def test_an_account_names_which_login_is_stale(self):
+        self._write({
+            "cursor/work/auth-required": {
+                "harness": "cursor", "status": "auth-required",
+                "account": "work",
+            },
+        })
+        got = issue_findings(self.home)
+        self.assertIn("work", got[0].message)
 
 
 if __name__ == "__main__":

@@ -107,6 +107,16 @@ def search_index_for(home: Path | None = None) -> Path:
     return data_dir_for(home) / SEARCH_SUBDIR / SEARCH_INDEX_BASENAME
 
 
+def issues_file_for(home: Path | None = None) -> Path:
+    """The app's IssueStore, ``~/.quiver/data/issues.json``.
+
+    The app writes the actionable problems it sees (a stale sign-in, a
+    denied read) here; ``swe doctor`` reads the same file so the CLI and
+    the app report one set of issues.
+    """
+    return data_dir_for(home) / "issues.json"
+
+
 def github_catalog_for(home: Path | None = None) -> Path:
     """The synced repo catalog `swe gh sync` fills and `repo search` reads."""
     return data_dir_for(home) / GITHUB_SUBDIR / GITHUB_CATALOG_BASENAME

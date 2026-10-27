@@ -5433,6 +5433,212 @@ class AccountRateLimitTest(unittest.TestCase):
 
 
 
+class UsageOutcomeTest(unittest.TestCase):
+    """``get_account_usage``: every failure kind is a named status."""
+
+    _DEVIN_RESPONSE = DevinFetcherTest._SAMPLE_RESPONSE
+
+    def _devin_dir(self, root: str) -> str:
+        path = Path(root) / "devin"
+        path.mkdir(parents=True)
+        (path / "credentials.toml").write_text(
+            'windsurf_api_key = "sk-extra"\n'
+            'api_server_url = "https://server.example.com"\n'
+        )
+        return root
+
+    def _cursor_dir(self, root: str, token: str | None) -> str:
+        path = Path(root) / "User" / "globalStorage"
+        path.mkdir(parents=True)
+        CursorFetcherTest()._state_db(str(path), token)
+        return root
+
+    def test_no_credentials_is_signed_out(self):
+        from quiver.harness.rate_limits import get_account_usage
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("devin", "cursor"):
+                with patch(
+                    "quiver.harness.rate_limits._fetch_json",
+                ) as fetch:
+                    outcome = get_account_usage(name, tmp)
+                self.assertEqual(outcome.status, "signed-out")
+                self.assertIsNone(outcome.limit)
+                fetch.assert_not_called()
+
+    def test_denied_credentials_are_permission_required(self):
+        from quiver.harness import rate_limits
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._devin_dir(tmp)
+            with patch("quiver.harness.rate_limits.open",
+                       side_effect=PermissionError(13, "denied"),
+                       create=True):
+                outcome = rate_limits.get_account_usage("devin", tmp)
+        self.assertEqual(outcome.status, "permission-required")
+        self.assertIsNone(outcome.limit)
+
+    def test_a_cursor_blob_is_auth_required(self):
+        from quiver.harness.rate_limits import get_account_usage
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._cursor_dir(tmp, "cursor-safe-storage:v1:AAAA")
+            with patch(
+                "quiver.harness.rate_limits._fetch_json",
+            ) as fetch:
+                outcome = get_account_usage("cursor", tmp)
+        self.assertEqual(outcome.status, "auth-required")
+        self.assertIsNone(outcome.limit)
+        fetch.assert_not_called()
+
+    def test_a_failed_fetch_is_unavailable(self):
+        from quiver.harness.rate_limits import get_account_usage
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._devin_dir(tmp)
+            with patch(
+                "quiver.harness.rate_limits._fetch_json",
+                return_value=None,
+            ):
+                outcome = get_account_usage("devin", tmp)
+        self.assertEqual(outcome.status, "unavailable")
+        self.assertIsNone(outcome.limit)
+
+    def test_a_401_is_auth_required(self):
+        from quiver.harness import rate_limits
+
+        def dead(_path=None):
+            # A 401 inside _fetch_json lands on the worker thread's sink.
+            rate_limits._note_json_failure("auth")
+            return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._devin_dir(tmp)
+            with patch.object(rate_limits, "_fetch_devin", side_effect=dead):
+                outcome = rate_limits.get_account_usage("devin", tmp)
+        self.assertEqual(outcome.status, "auth-required")
+
+    def test_an_ok_reading(self):
+        from quiver.harness.rate_limits import get_account_usage
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._devin_dir(tmp)
+            with patch(
+                "quiver.harness.rate_limits._fetch_json",
+                return_value=self._DEVIN_RESPONSE,
+            ):
+                outcome = get_account_usage("devin", tmp)
+        self.assertEqual(outcome.status, "ok")
+        self.assertIsNotNone(outcome.limit)
+
+    def test_the_old_contract_still_holds(self):
+        from quiver.harness.rate_limits import (
+            AccountUsageError,
+            get_account_rate_limit,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # signed-out → None, an outage → AccountUsageError, a reading
+            # → the RateLimitInfo, exactly as before.
+            self.assertIsNone(get_account_rate_limit("devin", tmp))
+            self._devin_dir(tmp)
+            with patch(
+                "quiver.harness.rate_limits._fetch_json", return_value=None
+            ), self.assertRaises(AccountUsageError):
+                get_account_rate_limit("devin", tmp)
+
+
+class IssueStatusTest(unittest.TestCase):
+    """``get_all_rate_limits(issues=...)``: the fine-grained statuses."""
+
+    def setUp(self):
+        from quiver.harness import rate_limits
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.cache = Path(tmp.name) / "rate_limits_cache.json"
+        saved_fetchers = dict(rate_limits._FETCHERS)
+        saved_probes = dict(rate_limits._SIGNED_IN)
+        saved_diagnose = dict(rate_limits._DIAGNOSE)
+
+        def restore():
+            rate_limits._FETCHERS.clear()
+            rate_limits._FETCHERS.update(saved_fetchers)
+            rate_limits._SIGNED_IN.clear()
+            rate_limits._SIGNED_IN.update(saved_probes)
+            rate_limits._DIAGNOSE.clear()
+            rate_limits._DIAGNOSE.update(saved_diagnose)
+        self.addCleanup(restore)
+        rate_limits._FETCHERS.clear()
+        rate_limits._SIGNED_IN.clear()
+        rate_limits._DIAGNOSE.clear()
+        for p in (patch.object(rate_limits, "RATE_LIMITS_CACHE_FILE", self.cache),
+                  patch.object(rate_limits, "_CACHE_TTL", 300.0)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_each_failure_kind_gets_its_status(self):
+        from quiver.harness import rate_limits
+        from quiver.harness.rate_limits import register
+
+        def dead_auth():
+            # A 401 inside _fetch_json lands on the worker thread's sink.
+            rate_limits._note_json_failure("auth")
+            return None
+
+        register("out", MagicMock(return_value=None),
+                 diagnose=lambda: "signed-out")
+        register("denied", MagicMock(return_value=None),
+                 diagnose=lambda: "permission-required")
+        register("stale", MagicMock(return_value=None),
+                 diagnose=lambda: "auth-required")
+        register("dead", MagicMock(return_value=None),
+                 signed_in=lambda: True)
+        register("rejected", dead_auth,
+                 signed_in=lambda: True)
+        issues: dict = {}
+        reasons: dict = {}
+        result = get_all_rate_limits(
+            use_cache=False, issues=issues, no_reading=reasons)
+        self.assertEqual(result, {})
+        self.assertEqual(issues, {
+            "out": "signed-out",
+            "denied": "permission-required",
+            "stale": "auth-required",
+            "dead": "unavailable",
+            "rejected": "auth-required",
+        })
+        # The coarse no_reading channel keeps its two values.
+        self.assertEqual(reasons["out"], "signed_out")
+        for name in ("denied", "stale", "dead", "rejected"):
+            self.assertEqual(reasons[name], "error")
+
+    def test_a_timeout_is_an_issue_on_the_marker(self):
+        register("slow", lambda: time.sleep(0.5))
+        issues: dict = {}
+        result = get_all_rate_limits(
+            use_cache=False, deadline=0.05, issues=issues)
+        self.assertEqual(issues, {"slow": "timeout"})
+        self.assertEqual(result["slow"].plan_type, "timeout")
+
+    def test_an_auth_required_reading_reports_its_status(self):
+        register("stale", MagicMock(return_value=RateLimitInfo(
+            tool_name="stale", used_percent=0, limit_reached=False,
+            reset_at=0.0, plan_type="auth-required", window_seconds=0)))
+        issues: dict = {}
+        result = get_all_rate_limits(use_cache=False, issues=issues)
+        self.assertEqual(issues, {"stale": "auth-required"})
+        self.assertIn("stale", result)
+
+    def test_an_empty_fetch_without_probes_stays_unknown(self):
+        register("mystery", MagicMock(return_value=None))
+        issues: dict = {}
+        reasons: dict = {}
+        get_all_rate_limits(
+            use_cache=False, issues=issues, no_reading=reasons)
+        self.assertEqual(issues, {})
+        self.assertEqual(reasons, {})
+
+
 class CursorCliTokenTest(unittest.TestCase):
     """cursor-agent's own auth file, its only token store off macOS."""
 
