@@ -150,12 +150,13 @@ are server changes in `src/quiver/remote/`.
 - [x] Issue row: state icon, number, title, author, comments count, labels (≤3), assignees (≤2), age; an "agent running" chip when the hub sends `agent_running` (absent field draws none)
 - [x] Repo section keeps its `status`/`error` when its fetch fails while the others still list
 - [x] Pull to refresh (`?refresh=1` bypasses the hub's `gh` cache); `env_blocked` shows the `gh` fix on an empty list
-- [x] Detail page: the row plus rendered body (the chat's Markdown); comments are a count for now
-- [x] Swipe Resolve and a context menu (Resolve with agent / Open on GitHub / Copy link) on the row — both open the same sheet, never a blind launch
+- [x] Detail page: the row plus rendered body (the chat's Markdown) and its comments — author, relative age, rendered markdown
+- [x] Swipe Resolve and a context menu (Resolve with agent / Copy link / Open on GitHub / Share) on the row — Resolve opens the same sheet, never a blind launch; Copy link writes the `quiver://issue/<o>/<r>/<n>` deep link
 - [x] "Resolve with agent" sheet: "Starts in" card naming `repo · quiver/issue-<n>`, the harness icon grid, prompt field prefilled with `suggested_prompt` — a row's Resolve has no detail yet, so the sheet fetches it for the prefill and a blank field still lets the hub build the brief
-- [x] Hub: `GET /v1/issues` (list + `mine`), `GET /v1/issues/<o>/<r>/<n>` (detail), `POST /v1/issues/resolve {repo, number, harness, prompt?}` → `launch_id`, followed on `GET /v1/launches/<id>`; the adopted session pushes its chat onto the issues stack
-- [ ] Comments on the detail page
-- [ ] Closed-issue filter chip
+- [x] Hub: `GET /v1/issues` (list + `mine`, `?state=` picks the `gh` list state for the Closed chip), `GET /v1/issues/<o>/<r>/<n>` (detail), `POST /v1/issues/resolve {repo, number, harness, prompt?}` → `launch_id`, followed on `GET /v1/launches/<id>`; the adopted session pushes its chat onto the issues stack
+- [x] Comments on the detail page
+- [x] Closed-issue filter chip (fetches `?state=closed` on first pick)
+- [x] PWA Issues tab: list → detail (comments) → resolve sheet on the hub-served web app, the same loop browsers and Android get
 - [ ] "Assigned to you" push notifications once APNs lands
 
 ## Components
@@ -189,7 +190,7 @@ are server changes in `src/quiver/remote/`.
 - [ ] Face ID gate on launch
 - [ ] Share sheet target: send text, a link or a file to a session as a prompt
 - [ ] Siri and Shortcuts: "Approve the pending request", "What needs me"
-- [ ] Deep links: `quiver://pair` (exists), `quiver://session/<key>`
+- [ ] Deep links: `quiver://pair` and `quiver://issue/<o>/<r>/<n>` (exist), `quiver://session/<key>` to go
 - [ ] Dictation in the composer
 - [x] Search sessions from Sessions: transcripts through the hub's FTS index when present, titles and folders as text always (`GET /v1/search`)
 - [ ] Search satellite transcripts (the index covers the hub machine only)

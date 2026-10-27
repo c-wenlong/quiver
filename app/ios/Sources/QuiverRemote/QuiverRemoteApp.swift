@@ -85,7 +85,20 @@ struct MainTabs: View {
             .tabItem { Label("Usage", systemImage: "gauge.with.dots.needle.33percent") }
             .tag(Tab.usage)
         }
-        .onAppear { app.startRefreshing() }
+        .onAppear {
+            openIssue(app.pendingIssue)
+            app.startRefreshing()
+        }
+        // A `quiver://issue/<o>/<r>/<n>` link opens the detail on the
+        // issues stack, over whatever was there.
+        .onChange(of: app.pendingIssue) { _, link in openIssue(link) }
+    }
+
+    private func openIssue(_ link: IssueLink?) {
+        guard let link else { return }
+        app.pendingIssue = nil
+        tab = .issues
+        issuesPath = [.issue(repo: link.repo, number: link.number)]
     }
 
     @ViewBuilder private func destination(_ route: Route) -> some View {

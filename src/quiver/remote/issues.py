@@ -7,7 +7,9 @@ so the phone and the page agree and a slow ``gh`` shows up once. A
 repo's issue rows add ``mine`` (the hub's ``gh`` login authored it) so
 the client filters All/Mine without a second round trip; ``agent_running``
 may join a row when the hub can tell an agent is already on the issue —
-clients treat its absence as no chip.
+clients treat its absence as no chip. ``?state=open|closed|all`` picks
+the ``gh issue list --state`` the rows come from (``open`` by default,
+so the Closed chip's rows cost a second read only when asked for).
 
 The resolve: body ``{repo: "owner/repo", number, harness, prompt?,
 context?}``. The
@@ -88,12 +90,19 @@ def _number_arg(raw) -> int | None:
 # ------------------------------------------------------------------ reads
 
 def list(state, args) -> tuple[int, dict]:
-    """``GET /v1/issues``: every pinned repo's open issues.
+    """``GET /v1/issues``: every pinned repo's issues.
 
     ``{repos: [{name, status, issues, error?}], machine, machine_id,
     github, env_blocked?, fetched_at}``; each issue is ``cli._issue_row``
     plus ``mine``. A missing or signed-out ``gh`` answers ``env_blocked``
-    before any fetch, as ``swe gh`` stops on the same words."""
+    before any fetch, as ``swe gh`` stops on the same words.
+    ``?state=`` is ``gh``'s own vocabulary — ``open``, ``closed`` or
+    ``all`` — and anything else is a ``422 bad_state``."""
+    wanted = str((args.get("state") or [""])[0]) or "open"
+    if wanted not in ("open", "closed", "all"):
+        return 422, protocol.error(
+            "bad_state", f"state must be open, closed or all, not "
+                         f"{wanted!r}")
     env = G.probe(state.home, refresh=_refresh(args))
     pins = G.pinned(state.home)
     body = {"github": G.env_payload(env),
@@ -108,8 +117,8 @@ def list(state, args) -> tuple[int, dict]:
 
     def entry(name: str):
         return G.CACHE.get(
-            ("issues", G.home_key(state.home), name),
-            lambda: _repo_issues(name, env.login),
+            _list_key(state.home, name, wanted),
+            lambda: _repo_issues(name, env.login, wanted),
             refresh=_refresh(args),
             ok=lambda e: e.get("status") == "ok")
 
@@ -130,14 +139,28 @@ def list(state, args) -> tuple[int, dict]:
     return 200, body
 
 
-def _repo_issues(name: str, login: str) -> dict:
+def _list_key(home, name: str, wanted: str) -> tuple:
+    """The open list shares its cache slot with ``tasks``'s own read of
+    it (the ``("issues", hk, repo)`` entry ``_repo_tasks`` builds rows
+    from); any other state gets a fourth key part so a closed page
+    never lands in the open slot, or the other way around. Both shapes
+    still fall under ``repositories._drop_repo``'s ``k[2] == repo``
+    match."""
+    if wanted == "open":
+        return ("issues", G.home_key(home), name)
+    return ("issues", G.home_key(home), name, wanted)
+
+
+def _repo_issues(name: str, login: str, state: str = "open") -> dict:
     """One repo's list entry: ``_issue_row``s plus the viewer flag.
 
     ``mine`` is the row's author matching the hub's ``gh`` login — the
     authored reading ``gh pr status`` gives a pull, asked straight from
     the row since issues carry no review flag to fetch alongside.
+    ``state`` is ``gh issue list --state``'s own word; ``tasks`` calls
+    this with the ``open`` default only.
     """
-    listed = ghcli._fetch_issues(name, "open", LIST_LIMIT)
+    listed = ghcli._fetch_issues(name, state, LIST_LIMIT)
     if listed["status"] != "ok":
         return {"name": name, "status": listed["status"], "issues": [],
                 "error": listed.get("error") or listed["status"]}

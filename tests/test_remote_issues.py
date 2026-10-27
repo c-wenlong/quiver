@@ -124,6 +124,58 @@ class TestList(_Base):
         status, _ = self.srv.request("GET", "/v1/issues")
         self.assertEqual(status, 401)
 
+    def test_state_param_picks_the_gh_list(self):
+        calls = []
+
+        def issues(name, state, limit):
+            calls.append((name, state))
+            return _stub_issues(name, state, limit)
+
+        with self._stubs(issues=issues):
+            status, body = self._get("/v1/issues?state=closed")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(set(calls), {("o/r", "closed"), ("o/s", "closed")})
+        # ``all`` is the other word ``gh issue list --state`` takes.
+        G.CACHE.clear()
+        calls.clear()
+        with self._stubs(issues=issues):
+            status, _body = self._get("/v1/issues?state=all")
+        self.assertEqual(status, 200)
+        self.assertEqual(set(calls), {("o/r", "all"), ("o/s", "all")})
+
+    def test_bad_state_is_a_422_before_any_fetch(self):
+        with self._stubs() as lp:
+            status, body = self._get("/v1/issues?state=bogus")
+        self.assertEqual((status, body["error"]["code"]),
+                         (422, "bad_state"))
+        lp.assert_not_called()
+
+    def test_a_closed_list_never_lands_in_the_open_slot(self):
+        """tasks.py shares the ``("issues", hk, repo)`` slot with this
+        route's default read, so a closed page must cache apart: the
+        open read still answers open rows and is not fetched again."""
+        calls = []
+
+        def issues(name, state, limit):
+            calls.append((name, state))
+            return {"repo": name, "status": "ok",
+                    "issues": [_issue_row(5, state=state)]}
+
+        with self._stubs(issues=issues):
+            s1, open_body = self._get("/v1/issues")
+            s2, closed_body = self._get("/v1/issues?state=closed")
+            s3, open_again = self._get("/v1/issues")
+        self.assertEqual((s1, s2, s3), (200, 200, 200))
+        by_name = {r["name"]: r for r in closed_body["repos"]}
+        self.assertEqual(by_name["o/r"]["issues"][0]["state"], "closed")
+        open_by_name = {r["name"]: r for r in open_again["repos"]}
+        self.assertEqual(open_by_name["o/r"]["issues"][0]["state"], "open")
+        # The third read answered from the cache: one fetch per repo
+        # and state, nothing more.
+        self.assertEqual(sorted(calls),
+                         [("o/r", "closed"), ("o/r", "open"),
+                          ("o/s", "closed"), ("o/s", "open")])
+
 
 class TestDetail(_Base):
     @contextlib.contextmanager
@@ -218,13 +270,14 @@ class TestDropRepo(_Base):
         unpin; the phone's issue list and detail entries for the repo
         must go with it."""
         hk = G.home_key(self.srv.home)
-        list_key = ("issues", hk, "o/r")
-        detail_key = ("issue", hk, "o/r", "5")
-        for key in (list_key, detail_key):
+        keys = [("issues", hk, "o/r"), ("issue", hk, "o/r", "5"),
+                # The Closed chip's own slot goes with the repo too.
+                ("issues", hk, "o/r", "closed")]
+        for key in keys:
             G.CACHE.get(key, lambda: {"stale": True})
         repositories._drop_repo(self.srv.home, "o/r")
         fresh = {"fresh": True}
-        for key in (list_key, detail_key):
+        for key in keys:
             value, _at = G.CACHE.get(key, lambda: fresh)
             self.assertIs(value, fresh, key)
 

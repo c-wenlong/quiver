@@ -321,7 +321,7 @@ POST /v1/sessions/{id}/title         {title: string} → display name, "" clears
 POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill|detach {mode: now|when_idle|keep}
 POST /v1/sessions                    new session {machine, harness, cwd, prompt} → launch_id
 POST /v1/sessions/{id}/fork          {prompt?} new session from this one's history → launch_id
-GET  /v1/issues                      every pinned repo's open issues, each row plus `mine`
+GET  /v1/issues                      every pinned repo's issues, each row plus `mine` (`?state=open|closed|all`, open default)
 GET  /v1/issues/<o>/<r>/<n>          one issue in full: row + body, comments, branch, worktree, suggested_prompt
 POST /v1/issues/resolve              {repo, number, harness, prompt?, context?} worktree + agent for a GitHub issue → launch_id
 GET  /v1/pulls                       every pinned repo's open PRs, each row plus `mine` and `review_requested`
@@ -611,10 +611,13 @@ issue is the `swe gh issue --json` row — `number`, `title`, `state`,
 so the phone filters All/Mine without a second round trip. A row may
 also carry `agent_running` when the hub knows a resolve is already on
 the issue; clients show a chip only on `true` and treat its absence as
-none. One repo's failure stays in its `status`/`error` while the others
-answer; a missing or signed-out `gh` answers `env_blocked` before any
-fetch. The reads share the web app's 60-second `gh` cache
-(`webapp/pages/_github.py`), and a `refresh=1` bypasses it.
+none. `?state=closed` or `?state=all` answers the `gh issue list
+--state` of the same name — the Closed chip reads it, and it caches
+apart from the open slot (`tasks.py` shares that one); any other word is
+a `422 bad_state`. One repo's failure stays in its `status`/`error`
+while the others answer; a missing or signed-out `gh` answers
+`env_blocked` before any fetch. The reads share the web app's 60-second
+`gh` cache (`webapp/pages/_github.py`), and a `refresh=1` bypasses it.
 
 `GET /v1/issues/<owner>/<repo>/<n>` answers one issue in full: the row
 plus `body`, `comments`, `branch` (`quiver/issue-<n>`), `worktree`
@@ -624,7 +627,9 @@ prefills). `400 bad_repo` for a malformed owner/repo, `422 bad_issue`
 for a non-number, `404 not_pinned` for a repo the hub doesn't pin; a
 `gh` failure answers `200 {status, issue: null, error}` — the row's
 `status` carries `gh`'s word (`not-found`, `upstream-error`), so the
-client renders it rather than a blank page.
+client renders it rather than a blank page. The phone's
+`quiver://issue/<owner>/<repo>/<n>` deep link (a row's Copy link writes
+it) opens this detail on the Issues stack.
 
 `POST /v1/issues/resolve {repo, number, harness, prompt?, context?}`
 (`issues.py`) starts an agent on a GitHub issue, on the hub machine

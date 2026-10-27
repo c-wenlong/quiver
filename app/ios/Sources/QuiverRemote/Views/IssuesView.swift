@@ -18,33 +18,43 @@ struct IssuesView: View {
     @State private var startedKey: String?
 
     var body: some View {
-        let sections = IssueGrouping.sections(of: model.repos, filter: filter)
+        let closed = filter == .closed
+        let listed = closed ? model.closedRepos : model.repos
+        let sections = IssueGrouping.sections(of: listed, filter: filter)
         PageScroll {
-            if model.loaded, model.envBlocked == nil, !model.repos.isEmpty {
+            if model.loaded, model.envBlocked == nil,
+               !model.repos.isEmpty || !model.closedRepos.isEmpty {
                 filterBar
             }
             // A failed refresh keeps the rows it already had — the
             // notice says why they're stale rather than replacing them.
-            if let error = model.error, !model.repos.isEmpty {
+            if let error = model.error, !listed.isEmpty {
                 Label("Couldn't refresh: \(error)", systemImage: "exclamationmark.triangle")
                     .font(Theme.caption).foregroundStyle(Theme.warningText)
                     .lineLimit(2)
             }
             if !model.loaded {
                 LoadingRow(text: "Loading issues")
-            } else if let error = model.error, model.repos.isEmpty {
+            } else if closed, model.closedLoaded, model.closedRepos.isEmpty,
+                      let error = model.error {
+                // A Closed fetch that failed with an empty closed list
+                // must say so — otherwise it reads as "No closed issues".
+                StateCard(icon: "wifi.exclamationmark", title: "Can't load closed issues",
+                          message: error, tone: .error,
+                          actionTitle: "Try again") { Task { await model.loadClosed(client: app.client, refresh: true) } }
+            } else if let error = model.error, model.repos.isEmpty, model.closedRepos.isEmpty {
                 StateCard(icon: "wifi.exclamationmark", title: "Can't reach the hub", message: error, tone: .error,
                           actionTitle: "Try again") { Task { await model.load(client: app.client, refresh: true) } }
             } else if let blocked = model.envBlocked {
                 StateCard(icon: "exclamationmark.lock", title: "Can't reach GitHub",
                           message: "On \(model.machine ?? app.hubName): \(blocked)")
-            } else if model.repos.isEmpty {
+            } else if model.repos.isEmpty && model.closedRepos.isEmpty {
                 StateCard(icon: "exclamationmark.circle", title: "No pinned repos",
-                          message: "Pin repositories on the hub with `swe gh repo add` and their open issues show up here.")
+                          message: "Pin repositories on the hub with `swe gh repo add` and their issues show up here.")
+            } else if closed && !model.closedLoaded {
+                LoadingRow(text: "Loading closed issues")
             } else if sections.isEmpty {
-                StateCard(icon: "exclamationmark.circle", title: filter == .all ? "No open issues" : "Nothing here",
-                          message: filter == .all ? "Open an issue on GitHub and it shows up here."
-                                                : "No open issue matches this filter right now.")
+                StateCard(icon: "exclamationmark.circle", title: emptyTitle, message: emptyMessage)
             } else {
                 ForEach(sections) { section in
                     if let rows = section.rows {
@@ -59,7 +69,7 @@ struct IssuesView: View {
                                 .buttonStyle(RowButtonStyle())
                                 .contentShape(.contextMenuPreview, .rect(cornerRadius: Theme.blockRadius))
                                 .contextMenu {
-                                    IssueRowMenu(issue: issue) {
+                                    IssueRowMenu(issue: issue, repo: section.name) {
                                         resolving = IssueRef(repo: section.name, number: issue.number)
                                     }
                                 }
@@ -76,9 +86,21 @@ struct IssuesView: View {
             }
         }
         .modifier(CloseSwipesOnScroll(swipes: swipes))
-        .refreshable { await model.load(client: app.client, refresh: true) }
+        .refreshable {
+            if filter == .closed {
+                await model.loadClosed(client: app.client, refresh: true)
+            } else {
+                await model.load(client: app.client, refresh: true)
+            }
+        }
         .navigationTitle("Issues")
         .task(id: app.hub?.id) { await model.load(client: app.client) }
+        // The closed list arrives on the chip's first pick.
+        .onChange(of: filter) { _, new in
+            if new == .closed, !model.closedLoaded {
+                Task { await model.loadClosed(client: app.client) }
+            }
+        }
         // The chat opens after the sheet is gone, so the push isn't
         // lost under the dismiss animation.
         .sheet(item: $resolving, onDismiss: {
@@ -93,13 +115,39 @@ struct IssuesView: View {
     private var filterBar: some View {
         HStack(spacing: 6) {
             ForEach(IssueFilter.allCases) { f in
-                FilterChip(title: f.title, count: IssueGrouping.count(model.repos, filter: f), selected: filter == f) {
+                FilterChip(title: f.title, count: count(f), selected: filter == f) {
                     filter = f
                 }
             }
             Spacer(minLength: 0)
         }
         .padding(.top, 4)
+    }
+
+    /// The chip's count: the closed list isn't fetched until its chip
+    /// is picked, so until then there's no number to draw.
+    private func count(_ f: IssueFilter) -> Int? {
+        if f == .closed {
+            return model.closedLoaded
+                ? IssueGrouping.count(model.closedRepos, filter: f) : nil
+        }
+        return IssueGrouping.count(model.repos, filter: f)
+    }
+
+    private var emptyTitle: String {
+        switch filter {
+        case .all: "No open issues"
+        case .mine: "Nothing here"
+        case .closed: "No closed issues"
+        }
+    }
+
+    private var emptyMessage: String {
+        switch filter {
+        case .all: "Open an issue on GitHub and it shows up here."
+        case .mine: "No open issue matches this filter right now."
+        case .closed: "Issues closed in your pinned repos show up here."
+        }
     }
 }
 
@@ -111,23 +159,32 @@ private struct IssueRef: Identifiable {
 }
 
 /// An issue row's context menu: the same resolve sheet the detail's
-/// button opens, then the link actions — never a blind launch.
+/// button opens, then the link actions — never a blind launch. Copy
+/// link writes the app's own `quiver://issue` deep link; the share
+/// sheet wants the GitHub one.
 struct IssueRowMenu: View {
     @Environment(\.openURL) private var openURL
     let issue: IssueRow
+    /// `owner/repo`, the section the row sits in — the deep link's path.
+    let repo: String
     let resolve: () -> Void
 
     var body: some View {
         Button(action: resolve) {
             Label("Resolve with agent", systemImage: "sparkles")
         }
+        Divider()
+        Button {
+            UIPasteboard.general.url = IssueLink(repo: repo, number: issue.number).url
+        } label: {
+            Label("Copy link", systemImage: "doc.on.doc")
+        }
         if let url = issue.url.flatMap(URL.init) {
-            Divider()
             Button { openURL(url) } label: {
                 Label("Open on GitHub", systemImage: "safari")
             }
-            Button { UIPasteboard.general.string = issue.url ?? "" } label: {
-                Label("Copy link", systemImage: "doc.on.doc")
+            ShareLink(item: url) {
+                Label("Share on GitHub", systemImage: "square.and.arrow.up")
             }
         }
     }

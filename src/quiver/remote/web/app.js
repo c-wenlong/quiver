@@ -17,6 +17,9 @@ const state = {
   machines: [],
   view: "sessions",
   currentKey: null,
+  // The view a chat was opened from, so Back can return to it — a
+  // resolve's chat came from an issue, so Back shows that issue again.
+  chatFrom: null,
   stream: null,
   inboxTimer: null,
   sessionTimer: null,
@@ -25,6 +28,9 @@ const state = {
   approveTimer: null,
   usageGen: 0,
   deviceGen: 0,
+  issuesGen: 0,
+  issuesClosedGen: 0,
+  issueGen: 0,
   usageData: null,
   usageMachine: null,
   inboxCount: 0,
@@ -105,13 +111,13 @@ function setConn(on) {
 
 function show(view) {
   state.view = view;
-  for (const v of ["pair-view", "approve-view", "sessions-view", "chat-view", "inbox-view", "usage-view", "device-view"]) {
+  for (const v of ["pair-view", "approve-view", "sessions-view", "chat-view", "inbox-view", "usage-view", "device-view", "issues-view", "issue-view"]) {
     el(v).classList.add("hidden");
   }
   el(view + "-view").classList.remove("hidden");
-  el("back").classList.toggle("hidden", view !== "chat");
+  el("back").classList.toggle("hidden", view !== "chat" && view !== "issue");
   el("tabs").classList.toggle("hidden", view === "chat" || view === "pair");
-  el("title").textContent = view === "chat" ? chatTitle() : "Quiver";
+  el("title").textContent = view === "chat" ? chatTitle() : view === "issue" ? issueTitle() : "Quiver";
 }
 
 function chatTitle() {
@@ -1299,6 +1305,7 @@ const toolCards = new Map(); // call_id → card element
 
 async function openChat(key) {
   state.currentKey = key;
+  state.chatFrom = state.view === "issue" && state.issue.repo ? "issue" : null;
   const gen = ++state.openGen; // a second openChat supersedes this one
   dropPending();
   state.awaitingReply = false;
@@ -1934,6 +1941,352 @@ function renderInbox() {
   el("inbox-list").querySelectorAll(".srow").forEach((row) => {
     row.addEventListener("click", () => openChat(row.dataset.key));
   });
+}
+
+/* ── issues ──────────────────────────────────────────────── */
+
+/* The issues page mirrors the iPhone tab: every open issue across the
+ * hub's pinned repos under All/Mine, and the closed ones once that chip
+ * has fetched them (`?state=closed` — kept beside the open list, as on
+ * the phone, so switching back costs nothing). */
+state.issues = {
+  repos: null,        // GET /v1/issues (state=open)
+  closed: null,       // GET /v1/issues?state=closed, fetched on first pick
+  closedTried: false, // a failed closed read shows an error, not a spinner
+  filter: "all",
+  loaded: false,
+  error: null,        // the open list's error; the closed list's is beside it
+  closedError: null,  // so a refresh's success can't hide the other's failure
+  envBlocked: null,
+  machine: null,
+  machineId: null,
+};
+state.issue = { repo: null, number: 0, reply: null, error: null };
+
+function issueRowsOf(repos) {
+  return (repos || []).flatMap((r) => r.issues || []);
+}
+
+function issueTitle() {
+  const it = state.issue;
+  return it.repo ? `${it.repo}#${it.number}` : "Issue";
+}
+
+async function loadIssues(refresh = false, closed = false) {
+  const iss = state.issues;
+  // The open list and the closed one order on their own counters, as
+  // the iOS model's two generations do: an open refresh must not eat a
+  // closed reply still in flight.
+  const gen = closed ? ++state.issuesClosedGen : ++state.issuesGen;
+  let status = 0, data = null;
+  try {
+    ({ status, data } = await api(
+      `/v1/issues?state=${closed ? "closed" : "open"}${refresh ? "&refresh=1" : ""}`));
+  } catch { status = 0; }
+  if (gen !== (closed ? state.issuesClosedGen : state.issuesGen)) return;
+  if (status === 401) { store.cred = null; boot(); return; }
+  if (status !== 200 || !data) {
+    // A failed refresh keeps the rows it already had, as on iOS.
+    if (closed) {
+      if (iss.closed === null) iss.closedTried = true;
+      iss.closedError = "Couldn't reach the hub.";
+    } else {
+      iss.error = "Couldn't reach the hub.";
+    }
+    iss.loaded = true;
+    renderIssues();
+    return;
+  }
+  if (closed) { iss.closed = data.repos || []; iss.closedError = null; }
+  else { iss.repos = data.repos || []; iss.error = null; }
+  iss.envBlocked = data.env_blocked || null;
+  iss.machine = data.machine;
+  iss.machineId = data.machine_id;
+  iss.loaded = true;
+  renderIssues();
+}
+
+function issueRowHtml(repo, i) {
+  const when = i.updated_at ? relTime(Date.parse(i.updated_at) / 1000 || 0) : "";
+  const meta = [`#${i.number}`];
+  if (i.author && i.author !== "-") meta.push(i.author);
+  if (i.comments) meta.push(`${i.comments} comment${i.comments === 1 ? "" : "s"}`);
+  if (when) meta.push(when);
+  const badges = [];
+  if (i.agent_running === true) badges.push("agent running");
+  if (i.mine === true) badges.push("mine");
+  for (const l of (i.labels || []).slice(0, 3)) badges.push(l);
+  const open = i.state === "open";
+  return `<div class="srow irow" data-repo="${escAttr(repo)}" data-n="${i.number}" role="button" tabindex="0">
+    <span class="ist ${open ? "open" : "closed"}" aria-label="${open ? "Open" : "Closed"}">${open ? "!" : "✓"}</span>
+    <div class="body">
+      <div class="t">${esc(i.title || "Untitled")}</div>
+      <div class="sub">${esc(meta.join(" · "))}</div>
+      ${badges.length ? `<div class="ibadges">${badges.map((b) => `<span>${esc(b)}</span>`).join("")}</div>` : ""}
+    </div>
+  </div>`;
+}
+
+function renderIssues() {
+  if (state.view !== "issues") return;
+  const iss = state.issues;
+  const closed = iss.filter === "closed";
+  const root = el("issues-list");
+  const chips = el("issues-chips");
+  if (!iss.loaded) {
+    chips.innerHTML = "";
+    root.innerHTML = `<p class="dim">Loading issues…</p>`;
+    return;
+  }
+  // The Closed chip draws no count until its list has arrived — same
+  // reading as the phone's chip.
+  const openRows = issueRowsOf(iss.repos);
+  const counts = {
+    all: openRows.length,
+    mine: openRows.filter((i) => i.mine === true).length,
+    closed: iss.closed === null ? null : issueRowsOf(iss.closed).length,
+  };
+  chips.innerHTML = [["all", "All"], ["mine", "Mine"], ["closed", "Closed"]]
+    .map(([id, label]) =>
+      `<button type="button" class="chip${iss.filter === id ? " on" : ""}" data-f="${id}">${esc(label)}` +
+      `${counts[id] == null ? "" : ` <span class="dim">${counts[id]}</span>`}</button>`)
+    .join("");
+  chips.querySelectorAll("[data-f]").forEach((b) => b.addEventListener("click", () => {
+    iss.filter = b.dataset.f;
+    if (iss.filter === "closed" && iss.closed === null && !iss.closedTried) loadIssues(false, true);
+    renderIssues();
+  }));
+
+  const listed = closed ? iss.closed : iss.repos;
+  const viewErr = closed ? iss.closedError : iss.error;
+  const noRepos = !(iss.repos || []).length && !(iss.closed || []).length;
+  if (viewErr && noRepos) {
+    root.innerHTML = `<div class="card"><p class="error">${esc(viewErr)}</p>
+      <button type="button" id="issues-retry">Try again</button></div>`;
+    el("issues-retry").addEventListener("click", () => {
+      iss.closedTried = false;
+      loadIssues(true, closed);
+    });
+    return;
+  }
+  if (iss.envBlocked) {
+    root.innerHTML = `<div class="card"><p class="dim">Can't reach GitHub on ${esc(iss.machine || "the hub")}: ${esc(iss.envBlocked)}</p></div>`;
+    return;
+  }
+  if (noRepos) {
+    root.innerHTML = `<p class="dim">No pinned repos. Pin repositories on the hub with <code>swe gh repo add</code> and their issues show up here.</p>`;
+    return;
+  }
+  if (closed && iss.closed === null) {
+    root.innerHTML = iss.closedTried
+      ? `<div class="card"><p class="error">${esc(iss.closedError || "Couldn't load closed issues.")}</p>
+        <button type="button" id="issues-retry">Try again</button></div>`
+      : `<p class="dim">Loading closed issues…</p>`;
+    if (iss.closedTried) el("issues-retry").addEventListener("click", () => {
+      iss.closedTried = false;
+      loadIssues(false, true);
+    });
+    return;
+  }
+  let html = viewErr ? `<p class="sub note">Couldn't refresh: ${esc(viewErr)}</p>` : "";
+  for (const repo of listed || []) {
+    const include = (i) => closed ? i.state === "closed" : iss.filter === "mine" ? i.mine === true : true;
+    const rows = (repo.issues || []).filter(include);
+    if (!rows.length && repo.status === "ok") continue;
+    html += `<div class="group"><h2>${esc(repo.name)}${rows.length ? ` · ${rows.length}` : ""}</h2>`;
+    if (repo.status !== "ok") {
+      html += `<div class="card"><p class="dim">${esc(repo.error || repo.status)}</p></div>`;
+    } else {
+      for (const i of rows) html += issueRowHtml(repo.name, i);
+    }
+    html += "</div>";
+  }
+  const empty = {
+    all: "No open issues. Open an issue on GitHub and it shows up here.",
+    mine: "No open issue matches this filter right now.",
+    closed: "No closed issues. Issues closed in your pinned repos show up here.",
+  };
+  root.innerHTML = html || `<p class="dim">${esc(empty[iss.filter] || empty.all)}</p>`;
+  root.querySelectorAll(".irow").forEach((row) => {
+    const open = () => openIssue(row.dataset.repo, Number(row.dataset.n));
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
+  });
+}
+
+async function openIssue(repo, number) {
+  state.issue = { repo, number, reply: null, error: null };
+  const gen = ++state.issueGen;
+  show("issue");
+  renderIssue();
+  let status = 0, data = null;
+  const repoPath = repo.split("/").map(encodeURIComponent).join("/");
+  try { ({ status, data } = await api(`/v1/issues/${repoPath}/${number}`)); } catch { status = 0; }
+  if (gen !== state.issueGen) return;
+  if (status === 401) { store.cred = null; boot(); return; }
+  if (status !== 200 || !data) {
+    state.issue.error = "Couldn't reach the hub.";
+  } else {
+    state.issue.reply = data;
+    if (!data.issue) {
+      state.issue.error = data.error ||
+        (data.status && data.status !== "ok" ? `GitHub answered ${data.status}.` : "Couldn't load this issue.");
+    }
+  }
+  renderIssue();
+}
+
+function renderIssue() {
+  const it = state.issue;
+  const root = el("issue-body");
+  const issue = it.reply && it.reply.issue;
+  if (!issue) {
+    root.innerHTML = it.error
+      ? `<div class="card"><p class="error">${esc(it.error)}</p>
+        <button type="button" id="issue-retry">Try again</button></div>`
+      : `<p class="dim">Loading issue…</p>`;
+    if (it.error) el("issue-retry").addEventListener("click", () => openIssue(it.repo, it.number));
+    return;
+  }
+  const bits = [issue.state === "open" ? "Open" : "Closed"];
+  if (issue.author && issue.author !== "-") bits.push(`by ${issue.author}`);
+  if (issue.updated_at) bits.push(relTime(Date.parse(issue.updated_at) / 1000 || 0));
+  const comments = issue.comments || [];
+  const badges = [];
+  if (comments.length) badges.push(`${comments.length} comment${comments.length === 1 ? "" : "s"}`);
+  badges.push(...(issue.labels || []), ...(issue.assignees || []).map((a) => `@${a}`));
+  root.innerHTML = `
+    <div class="issue-title">${esc(issue.title || "Untitled")}</div>
+    <div class="sub">${esc(bits.join(" · "))}</div>
+    ${badges.length ? `<div class="ibadges">${badges.map((b) => `<span>${esc(b)}</span>`).join("")}</div>` : ""}
+    <div class="issue-actions">
+      <button type="button" class="primary" id="issue-resolve">Resolve with agent</button>
+      ${issue.url ? `<button type="button" id="issue-gh">Open on GitHub</button>` : ""}
+    </div>
+    ${issue.body ? `<div class="group"><h2>Description</h2><div class="card"><div class="issue-text">${md(issue.body)}</div></div></div>` : ""}
+    ${comments.length ? `<div class="group"><h2>Comments · ${comments.length}</h2>` +
+      comments.map((c) => {
+        const when = c.created_at ? relTime(Date.parse(c.created_at) / 1000 || 0) : "";
+        return `<div class="card"><div class="sub">${esc(c.author || "-")}${when ? ` · ${esc(when)}` : ""}</div>
+          <div class="issue-text">${md(c.body)}</div></div>`;
+      }).join("") + "</div>" : ""}`;
+  el("issue-resolve").addEventListener("click", () => openIssueResolveSheet(it.repo, it.number, issue));
+  const gh = el("issue-gh");
+  if (gh) gh.addEventListener("click", () => window.open(issue.url, "_blank", "noopener"));
+}
+
+/* The resolve sheet asks for a harness and a first prompt — the hub
+ * picks the worktree (`quiver/issue-<n>` under ~/.quiver/worktrees) —
+ * then polls the launch exactly the way a fork does. */
+function openIssueResolveSheet(repo, number, issue) {
+  const machine = state.machines.find((m) => m.id === (state.issue.reply || {}).machine_id)
+    || state.machines[0];
+  if (!machine) { toast("No machine can start a session on this hub."); return; }
+  const offered = machine.launchable || [];
+  if (!offered.length) {
+    toast(`No harness can start on ${machineLabel(machine.id)}.`);
+    return;
+  }
+  const names = machine.harness_names || {};
+  const untracked = new Set(machine.untracked_harnesses || []);
+  let harness = offered[0];
+  openSheet(`Resolve ${repo}#${number}`, (body, gen) => {
+    const branch = (issue && issue.branch) || `quiver/issue-${number}`;
+    body.innerHTML = `
+      <p class="dim sheet-note">Starts in ${esc(repo)} · ${esc(branch)} on ${esc(machineLabel(machine.id))}.</p>
+      <label class="sheet-label">Harness</label>
+      <div class="chips sheet-harnesses">${offered.map((h) =>
+        `<button type="button" class="chip${h === harness ? " on" : ""}" data-h="${escAttr(h)}">${esc(names[h] || h)}</button>`).join("")}</div>
+      <p class="dim sheet-note untracked-note"></p>
+      <label class="sheet-label">First prompt</label>
+      <textarea class="issue-prompt" rows="5" aria-label="First prompt"></textarea>
+      <p class="sheet-error"></p>
+      <div class="sheet-row">
+        <button type="button" class="sheet-cancel">Cancel</button>
+        <button type="button" class="primary issue-start">Start</button>
+      </div>
+      <p class="dim sheet-note">Runs under tmux on ${esc(machineLabel(machine.id))}. The chat opens once the session shows up.</p>`;
+    const prompt = body.querySelector(".issue-prompt");
+    const start = body.querySelector(".issue-start");
+    const cancel = body.querySelector(".sheet-cancel");
+    const note = body.querySelector(".sheet-error");
+    const untrackedNote = body.querySelector(".untracked-note");
+    prompt.value = (issue && issue.suggested_prompt) || "";
+    const alive = () => gen === acts.sheetGen;
+    let started = false;
+    const syncUntracked = () => {
+      untrackedNote.textContent = untracked.has(harness)
+        ? `Quiver can't read ${names[harness] || harness} sessions yet: it starts, but no chat opens.`
+        : "";
+    };
+    syncUntracked();
+    body.querySelectorAll("[data-h]").forEach((b) => b.addEventListener("click", () => {
+      if (acts.sheet && acts.sheet.busy) return;
+      harness = b.dataset.h;
+      body.querySelectorAll("[data-h]").forEach((x) => x.classList.toggle("on", x === b));
+      syncUntracked();
+    }));
+    const phase = (label) => {
+      sheetBusy(!!label);
+      prompt.disabled = !!label || started;
+      body.querySelectorAll("[data-h]").forEach((x) => { x.disabled = !!label || started; });
+      start.disabled = !!label || started;
+      start.textContent = label || "Start";
+    };
+    const stop = (text, failed) => {
+      note.className = failed ? "sheet-error error" : "sheet-error dim";
+      note.textContent = text;
+      if (!failed) { started = true; cancel.textContent = "Close"; }
+      phase(null);
+    };
+    cancel.addEventListener("click", closeSheet);
+    start.addEventListener("click", async () => {
+      note.textContent = "";
+      phase("Starting");
+      let status = 0, data = null;
+      try {
+        ({ status, data } = await api("/v1/issues/resolve", {
+          method: "POST",
+          body: JSON.stringify({ repo, number, harness, prompt: prompt.value.trim() }),
+        }));
+      } catch { status = 0; }
+      if (!alive()) return;
+      if (status !== 202 || !data || !data.launch_id) {
+        stop(rowErrorText(status, data, "Couldn't start the resolve."), true);
+        return;
+      }
+      phase("Waiting for the session");
+      let launch = data;
+      for (let polls = 0; ; polls++) {
+        if (launch.state === "started" && launch.key) {
+          phase("Opening the chat");
+          await refreshList();
+          if (alive() && !findRow(launch.key)) await refreshList();
+          if (!alive()) return;
+          closeSheet();
+          openChat(launch.key);
+          return;
+        }
+        if (launch.state === "untracked") {
+          stop("Started. Quiver can't read this harness's sessions yet, so there's no chat to open. It keeps running under tmux on the machine.", false);
+          return;
+        }
+        if (launch.state === "failed") {
+          stop(launch.note ? `The session didn't start: ${launch.note}` : "The session didn't start.", true);
+          return;
+        }
+        if (polls === FORK_POLLS) break;
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (!alive()) return;
+        let s = 0, d = null;
+        try { ({ status: s, data: d } = await api(`/v1/launches/${encodeURIComponent(data.launch_id)}`)); } catch { s = 0; }
+        if (!alive()) return;
+        if (s === 404) { stop(rowErrorText(s, d), true); return; }
+        if (s === 200 && d) launch = d;
+      }
+      stop("It started but hasn't shown up yet. It'll appear in Sessions when it does.", false);
+    });
+  }, true);
 }
 
 /* ── usage ───────────────────────────────────────────────── */
@@ -3289,8 +3642,21 @@ el("prompt-menu").addEventListener("pointerup", (e) => {
 /* ── wiring ──────────────────────────────────────────────── */
 
 el("back").addEventListener("click", () => {
+  if (state.view === "issue") {
+    // The detail lives on the Issues stack; back returns to its list.
+    show("issues");
+    renderIssues();
+    return;
+  }
   closeStream();
+  const from = state.chatFrom;
+  state.chatFrom = null;
   state.currentKey = null;
+  if (from === "issue" && state.issue.repo) {
+    show("issue");
+    renderIssue();
+    return;
+  }
   show("sessions");
   loadSessions();
 });
@@ -3304,6 +3670,15 @@ el("pair-token").addEventListener("keydown", (e) => {
 });
 el("pair-ts").addEventListener("click", () => {
   startTailscalePair(el("pair-name").value.trim());
+});
+
+el("issues-refresh").addEventListener("click", () => {
+  const iss = state.issues;
+  iss.closedTried = false;
+  loadIssues(true, iss.filter === "closed");
+  // A closed list the page already fetched refreshes with the open one,
+  // so its chip count stays truthful.
+  if (iss.filter !== "closed" && iss.closed !== null) loadIssues(true, true);
 });
 el("pair-retry").addEventListener("click", () => {
   ++state.pairGen;
@@ -3324,6 +3699,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
     show(tab.dataset.tab);
     if (tab.dataset.tab === "inbox") loadInbox();
     if (tab.dataset.tab === "sessions") loadSessions();
+    if (tab.dataset.tab === "issues") { renderIssues(); loadIssues(); }
     if (tab.dataset.tab === "usage") loadUsage();
     if (tab.dataset.tab === "device") loadDevice();
   });
