@@ -297,7 +297,7 @@ def hub_program(host: str, port: int | None, public_url: str,
         if folder:
             return [], (f"{swe} is in ~/{folder}, which macOS blocks a LaunchAgent "
                         "from reading, so the hub would fail at every start. Install "
-                        "Quiver.app (app/script/install-app.sh) and run --install "
+                        "Quiver.app (app/mac/script/install-app.sh) and run --install "
                         "again: the agent then runs the app's bundled swe.")
     program = [swe, "remote", "serve"]
     program += [f"--host={host}"] if host else ["--tailnet"]

@@ -6,6 +6,10 @@ session history and rate limits.
 
 The CLI is stdlib-only, with no runtime dependencies at all.
 
+Three clients sit on top of it: the macOS app in `app/mac/`, the iPhone
+app in `app/ios/`, and the web app in `src/quiver/webapp/`, which ships in
+the Python package so the hub can serve it.
+
 This file is the overview; each topic below has a deeper document in `docs/`:
 
 | Document | What it covers |
@@ -393,7 +397,7 @@ actually go fix.
 
 ## Machine-readable output
 
-The macOS app under `app/` reads `swe` through `--json`, never by parsing
+The macOS app under `app/mac/` reads `swe` through `--json`, never by parsing
 tables. The app's own structure is [docs/app-architecture.md](docs/app-architecture.md),
 and each command below maps to its Swift decoder in
 [docs/json-contracts.md](docs/json-contracts.md). Every `--json` command prints exactly one document on stdout,

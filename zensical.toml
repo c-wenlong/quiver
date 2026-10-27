@@ -45,8 +45,8 @@ markdown_extensions = [
 ]
 
 [project.theme]
-logo = "app/Icons/AppIcon-light.png"
-favicon = "app/Icons/AppIcon-light.png"
+logo = "app/mac/Icons/AppIcon-light.png"
+favicon = "app/mac/Icons/AppIcon-light.png"
 features = [
   "navigation.tabs",
   "navigation.instant",

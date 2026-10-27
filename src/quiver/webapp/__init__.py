@@ -4,5 +4,5 @@
 ``api.py`` builds the JSON they read from ``/v1/app/*``. The hub mounts
 both, so the web app shares the hub's port, Tailscale Serve address and
 paired device credentials. Nothing here touches the native app in
-``app/``; see docs/web-app.md.
+``app/mac/``; see docs/web-app.md.
 """

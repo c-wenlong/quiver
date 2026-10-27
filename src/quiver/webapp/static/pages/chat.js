@@ -199,7 +199,7 @@ const SessionChat = (() => {
     return null;
   }
 
-  /* The phone's icon per message kind (remote/ios's ToolCard.icon), as
+  /* The phone's icon per message kind (app/ios's ToolCard.icon), as
    * 24px stroke svg in the bar chevron's style. */
   const KIND_ICONS = {
     terminal: '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
