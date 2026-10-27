@@ -62,6 +62,17 @@ struct QuiverApp: App {
                     .disabled(SheetOverlayRegistry.shared.anyCovered)
                 }
             }
+            // macOS keeps its own search field at the top of Help; this
+            // replaces only the "Quiver Help" item, which had no help book.
+            CommandGroup(replacing: .help) {
+                Button("Report a Bug…") { Feedback.openIssueForm(.bug, app: model) }
+                Button("Request a Feature…") { Feedback.openIssueForm(.feature, app: model) }
+                Divider()
+                Button("Copy Diagnostics") { Feedback.copyDiagnostics(app: model) }
+                    .disabled(model.doctor.isBusy)
+                Divider()
+                Button("Quiver Documentation") { NSWorkspace.shared.open(IssueReport.documentation) }
+            }
         }
     }
 }

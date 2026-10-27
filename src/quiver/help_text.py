@@ -764,6 +764,19 @@ to use their own login state and environment."""
   when ~/.quiver is broken. {c('cyan', '--json')} emits the standard envelope:
   name, version and the Python version under `data`."""
     ),
+    "bug": (
+        "Report a bug on GitHub, versions filled in",
+        f"""\
+  {c('cyan', 'swe bug')}              Open the bug form in your browser with the
+                       swe, Python and OS versions filled in
+  {c('cyan', 'swe bug --feature')}    Open the feature-request form instead
+  {c('cyan', 'swe bug --print')}      Print the link instead of opening it
+
+  Nothing is sent until you submit the form on GitHub. Paste
+  {c('cyan', 'swe doctor')} output into it when doctor reports a problem.
+  {c('cyan', '--json')} prints kind, url, version and os under `data` and opens
+  nothing. The Mac app's Help › Report a Bug opens the same form."""
+    ),
 }
 
 COMMAND_CATEGORIES = [
@@ -813,6 +826,7 @@ COMMAND_CATEGORIES = [
     ("Shell", [
         ("autocomplete", None),
         ("version",      None),
+        ("bug",          None),
     ]),
 ]
 

@@ -36,6 +36,7 @@ _PRIMARY_COMMANDS: list[tuple[str, str]] = [
     ("init", "Create ~/.quiver and link every harness"),
     ("autocomplete", "Generate shell completion"),
     ("version", "Print the swe version"),
+    ("bug", "Report a bug on GitHub, versions filled in"),
 ]
 
 # Commands that take a tool name/alias as their first positional argument.
@@ -49,6 +50,11 @@ _TOOL_TARGET_COMMANDS = frozenset({
 _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     "version": [
         ("--json", "Print the version as JSON"),
+    ],
+    "bug": [
+        ("--feature", "Open a feature request instead"),
+        ("--print", "Print the link instead of opening it"),
+        ("--json", "Print the link and versions as JSON"),
     ],
     "list": [
         ("--scope=active", "Hide archived harnesses (default)"),

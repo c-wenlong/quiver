@@ -111,6 +111,15 @@ public final class UpdatesModel {
         return (build.version, swe)
     }
 
+    /// "Quiver 1.1.1 (v1.1.1-3-gabc1234) · swe 1.1.1": the Version row, and
+    /// the version a bug report is filed against.
+    public var versionLine: String {
+        var line = "Quiver \(build.version)"
+        if let describe = build.describe { line += " (\(describe))" }
+        line += " · swe " + (sweVersionKnown ? (sweVersion ?? "?") : "unknown")
+        return line
+    }
+
     /// Read the local checkout and, when due, GitHub's release page.
     /// `force` is the Check now button: it fetches first so upstreamBehind
     /// is real, and skips the release cache.
@@ -139,12 +148,7 @@ public final class UpdatesModel {
             return await check.check(path: path, builtCommit: commit, builtDirty: dirty)
         }()
         async let releaseResult = releaseCheck.check(current: build.version, force: force)
-        async let sweAnswer: String? = {
-            struct Version: Decodable { let version: String }
-            guard let reply: Version = try? await swe.call(["version", "--json"])
-            else { return nil }
-            return reply.version
-        }()
+        async let sweAnswer = Self.version(of: swe)
 
         let (localAnswer, releaseAnswer, version) = await (localResult, releaseResult, sweAnswer)
         guard mine == generation else { return }
@@ -152,6 +156,21 @@ public final class UpdatesModel {
         release = releaseAnswer
         sweVersion = version
         sweVersionKnown = version != nil
+    }
+
+    /// Only swe's version, for a bug report: refresh would also wait on
+    /// the local checkout and GitHub's release page.
+    public func refreshSweVersion() async {
+        let version = await Self.version(of: swe())
+        sweVersion = version
+        sweVersionKnown = version != nil
+    }
+
+    private static func version(of swe: SweClient) async -> String? {
+        struct Version: Decodable { let version: String }
+        guard let reply: Version = try? await swe.call(["version", "--json"])
+        else { return nil }
+        return reply.version
     }
 
     /// Rebuild the app from the checkout's build script into a fresh

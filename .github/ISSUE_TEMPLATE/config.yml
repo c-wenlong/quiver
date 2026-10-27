@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Usage question
-    url: https://github.com/c-wenlong/quiver#readme
-    about: Check the README and `swe help <command>` first — most questions are answered there. Otherwise open a bug or feature issue above.
+    url: https://c-wenlong.github.io/quiver/
+    about: The docs and `swe help <command>` answer most questions. If they don't, open a bug or feature issue above.
   - name: Report a security vulnerability
     url: https://github.com/c-wenlong/quiver/blob/main/SECURITY.md
     about: Never put vulnerability details in a public issue. The security policy explains how to reach a maintainer privately.

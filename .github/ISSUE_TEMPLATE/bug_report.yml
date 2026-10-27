@@ -1,21 +1,29 @@
+# Field ids and the Area options are part of a contract: the Mac app's
+# Help › Report a Bug (app/mac/Sources/QuiverCore/Support/IssueReport.swift)
+# and `swe bug` (src/quiver/bug.py) prefill them by name, and
+# .github/workflows/issue-labels.yml maps each Area option to a label.
+# Rename one and update all three.
 name: Bug report
-description: Report something that isn't working as expected
+description: Report something in Quiver that isn't working
 title: "[Bug]: "
-labels: ["bug"]
+labels: ["bug", "needs-triage"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to report a bug. Please fill in as much detail as you can.
+        Thanks for reporting this. The quickest way here is **Help › Report a Bug** in the Mac app or `swe bug` in a terminal, which fill in your versions for you.
 
-        Quiver has no `--version` flag; `pip show quiver` is the way to read the installed version.
-
-  - type: input
-    id: command
+  - type: dropdown
+    id: area
     attributes:
-      label: Failing command
-      description: The exact command you ran, verbatim.
-      placeholder: swe session --agent claude -d 7
+      label: Area
+      description: Which part of Quiver is it?
+      options:
+        - Mac app
+        - CLI (swe)
+        - iPhone app
+        - Web app
+        - Website or docs
     validations:
       required: true
 
@@ -23,8 +31,7 @@ body:
     id: description
     attributes:
       label: What happened?
-      description: A clear description of the bug.
-      placeholder: I ran `swe session` and …
+      placeholder: Opening Sessions shows a blank list, though swe session lists 40 sessions.
     validations:
       required: true
 
@@ -32,18 +39,24 @@ body:
     id: reproduce
     attributes:
       label: Steps to reproduce
-      description: Commands and inputs that trigger the issue.
       placeholder: |
-        1. Run `swe list`
-        2. Run `swe use codex`
-        3. See error …
+        1. Open Settings › Accounts
+        2. Add a second Claude account
+        3. The Limits page shows only the first one
     validations:
       required: true
 
   - type: textarea
     id: expected
     attributes:
-      label: Expected behavior
+      label: What did you expect instead?
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "Mac app: Settings › General › Version. CLI: `swe version`."
+      placeholder: Quiver 1.1.1 · swe 1.1.1
     validations:
       required: true
 
@@ -51,38 +64,19 @@ body:
     id: os
     attributes:
       label: Operating system
-      placeholder: macOS 15.6 / Ubuntu 24.04
+      placeholder: macOS 26.1
     validations:
       required: true
 
-  - type: input
-    id: python
+  - type: textarea
+    id: diagnostics
     attributes:
-      label: Python version
-      description: Output of `python3 --version`.
-      placeholder: Python 3.12.8
-    validations:
-      required: true
-
-  - type: input
-    id: quiver
-    attributes:
-      label: quiver version
-      description: The `Version:` line from `pip show quiver`.
-      placeholder: 0.2.10
-    validations:
-      required: true
+      label: Diagnostics
+      description: "Mac app: Help › Copy Diagnostics. CLI: `swe doctor` output. It catches most PATH and drift problems outright."
+      render: shell
 
   - type: textarea
     id: logs
     attributes:
-      label: Relevant output / logs
-      description: Paste terminal output. Redact any tokens or paths you don't want to share.
-      render: shell
-
-  - type: textarea
-    id: doctor
-    attributes:
-      label: swe doctor output
-      description: Optional, but it catches most PATH and drift problems outright.
-      render: shell
+      label: Other output or screenshots
+      description: Terminal output, crash logs or screenshots. Remove any tokens or paths you don't want public.

@@ -144,6 +144,13 @@ public final class DoctorModel {
         self.swe = swe
     }
 
+    /// Checks or a fix are in flight, so the report is about to change:
+    /// copying it now would copy a stale or missing one.
+    public var isBusy: Bool {
+        if case .loading = state { return true }
+        return !running.isEmpty
+    }
+
     public func load() async {
         generation += 1
         let mine = generation

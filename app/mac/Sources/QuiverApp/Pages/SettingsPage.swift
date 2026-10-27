@@ -155,6 +155,9 @@ private struct SettingsSectionView: View {
                                       detail: "Checks on PATH, Node and drift between quiver and your harnesses.") {
                         DoctorSection()
                     }
+                    // Below Doctor, so a finding it shows is one click from
+                    // the report, and the copied diagnostics carry it.
+                    SettingsCardGroup(title: "Feedback") { feedbackCard }
                 }
             case .sidebar: SidebarSection()
             case .notifications: notificationsCard
@@ -358,7 +361,7 @@ private struct SettingsSectionView: View {
     private var updatesCard: some View {
         SettingsCard {
             SettingRow(title: "Version",
-                       detail: versionLine,
+                       detail: app.updates.versionLine,
                        warning: app.updates.versionMismatch.map {
                            "swe is \($0.swe), the app is \($0.app)."
                        }) {
@@ -379,12 +382,29 @@ private struct SettingsSectionView: View {
         .task { await app.updates.refresh(force: false) }
     }
 
-    private var versionLine: String {
-        let updates = app.updates
-        var line = "Quiver \(updates.build.version)"
-        if let describe = updates.build.describe { line += " (\(describe))" }
-        line += " · swe " + (updates.sweVersionKnown ? (updates.sweVersion ?? "?") : "unknown")
-        return line
+    /// The same actions as the Help menu, for when the Dock icon (and with
+    /// it the menu bar) is hidden.
+    private var feedbackCard: some View {
+        SettingsCard {
+            SettingRow(title: "Report a bug",
+                       detail: "Opens a GitHub issue with your Quiver and macOS versions filled in. You read it before you send it.") {
+                HStack(spacing: 12) {
+                    Button("Request a feature") { Feedback.openIssueForm(.feature, app: app) }
+                        .secondaryButton()
+                    Button("Report a bug") { Feedback.openIssueForm(.bug, app: app) }
+                        .secondaryButton()
+                }
+            }
+            SettingsDivider()
+            SettingRow(title: "Diagnostics",
+                       detail: "Versions and the Doctor findings above, for the report's diagnostics field. Your user name, account names and email addresses are masked.") {
+                // Waits out a check or fix in flight, which would leave
+                // the copy without the report it is about to show.
+                CopyButton(help: "Copy diagnostics") { copyToPasteboard(Feedback.diagnostics(app: app)) }
+                    .iconButton()
+                    .disabled(app.doctor.isBusy)
+            }
+        }
     }
 
     private var releaseRow: some View {

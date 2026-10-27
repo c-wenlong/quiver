@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Report a bug from the app or the terminal.** The Mac app's Help menu
+  now has Report a Bug, Request a Feature, Copy Diagnostics and Quiver
+  Documentation, and Settings › General has a Feedback card under Doctor
+  with the same actions. `swe bug` (`--feature`, `--print`, `--json`)
+  opens the same forms. Each link fills in the Area, version and OS
+  fields; the diagnostics carry the versions and Doctor's findings with
+  the home folder written as `~` and email addresses masked. The issue
+  forms now cover every client with one Area question, add
+  `needs-triage`, and a workflow labels each issue `mac`, `cli`, `ios`,
+  `web` or `documentation` from its answer.
+
 - **Account emails on every rate-limit card.** `swe list --usage --json`
   and `swe harness usage` now carry an `email` field where the sign-in
   names one: Claude's `~/.claude.json`, Codex's `id_token` claims,
