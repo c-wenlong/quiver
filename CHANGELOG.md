@@ -64,6 +64,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The landing page lives under `app/`.** It moved from `landing/` to
+  `app/landing-page/`, next to the Swift apps. `scripts/docs_site.py`
+  still copies it to the docs site root as is.
 - **Both Swift apps live under `app/`.** The macOS app moved from `app/`
   to `app/mac/` and the iPhone app from `remote/ios/` to `app/ios/` (its
   roadmap is now `app/ios/ROADMAP.md`). Build with
