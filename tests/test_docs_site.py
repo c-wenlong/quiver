@@ -112,9 +112,9 @@ class StageTests(unittest.TestCase):
             "ARCHITECTURE.md": "# arch\nlink to [cli](src/x.py)",
             "src/x.py": "x",
             "assets/b.png": "png",
-            "landing/index.html": "<h1>landing</h1>",
-            "landing/mascot.jpg": "jpg",
-            "landing/media/sessions.mp4": "mp4",
+            "app/landing-page/index.html": "<h1>landing</h1>",
+            "app/landing-page/mascot.jpg": "jpg",
+            "app/landing-page/media/sessions.mp4": "mp4",
         })
         pages = [("README.md", "index.md"), ("ARCHITECTURE.md", "architecture/index.md")]
         stage_dir = root / "build" / "docs-site"

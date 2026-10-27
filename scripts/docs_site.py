@@ -49,8 +49,9 @@ PAGES: list[tuple[str, str]] = [
 ASSETS = ["app/mac/Icons/AppIcon-light.png", "app/mac/Icons/AppIcon-dark.png"]
 
 # The hand-written landing page. The folder is copied to the site root as
-# it is (media/ included), so landing/index.html becomes the front page.
-LANDING = "landing"
+# it is (media/ included), so app/landing-page/index.html becomes the
+# front page.
+LANDING = "app/landing-page"
 
 # Extensions copied into the site and served, rather than linked to GitHub.
 ASSET_SUFFIXES = {

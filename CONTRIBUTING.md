@@ -75,7 +75,7 @@ A tag is a movable pointer, so a tag reference is not reproducible. Resolve a ne
 
 ## Docs site
 
-The docs site at <https://c-wenlong.github.io/quiver/> is built with [Zensical](https://zensical.org) from the Markdown already in this repo. `scripts/docs_site.py` stages it into `build/docs-site/` (rewriting links so repo-relative references resolve inside the site), then `zensical` builds `site/`. The front page is the hand-written [landing/index.html](landing/index.html), copied to the site root as is; the README renders at `/overview/`. To preview locally:
+The docs site at <https://c-wenlong.github.io/quiver/> is built with [Zensical](https://zensical.org) from the Markdown already in this repo. `scripts/docs_site.py` stages it into `build/docs-site/` (rewriting links so repo-relative references resolve inside the site), then `zensical` builds `site/`. The front page is the hand-written [app/landing-page/index.html](app/landing-page/index.html), copied to the site root as is; the README renders at `/overview/`. To preview locally:
 
 ```bash
 python3 -m venv .venv-docs && source .venv-docs/bin/activate
