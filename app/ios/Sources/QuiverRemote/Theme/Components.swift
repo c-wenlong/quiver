@@ -103,9 +103,11 @@ struct Badge: View {
 }
 
 /// A filter chip with a count; selected chips take the raised fill.
+/// A nil count draws the title alone — a chip whose list arrives on
+/// demand (Closed) shows no number until it has one.
 struct FilterChip: View {
     var title: String
-    var count: Int
+    var count: Int?
     var selected: Bool
     var action: () -> Void
 
@@ -113,7 +115,9 @@ struct FilterChip: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Text(title)
-                Text("\(count)").foregroundStyle(selected ? Theme.textSecondary : Theme.textMuted).monospacedDigit()
+                if let count {
+                    Text("\(count)").foregroundStyle(selected ? Theme.textSecondary : Theme.textMuted).monospacedDigit()
+                }
             }
             .font(Theme.control)
             .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)

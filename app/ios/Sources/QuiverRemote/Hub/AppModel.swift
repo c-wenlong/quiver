@@ -351,10 +351,22 @@ final class AppModel {
         chats = []
     }
 
-    /// `quiver://pair` deep link or a scanned QR.
+    /// A `quiver://issue/<o>/<r>/<n>` link the tabs haven't pushed yet;
+    /// MainTabs consumes it (back to nil once on the Issues stack). It
+    /// survives being set before a hub is paired: the tabs take it
+    /// when they appear.
+    var pendingIssue: IssueLink?
+
+    /// `quiver://pair` deep link or a scanned QR; `quiver://issue/…`
+    /// deep link onto the Issues stack.
     func handle(_ url: URL) async {
-        guard let link = PairLink(url) else { return }
-        await pair(with: link)
+        if let link = PairLink(url) {
+            await pair(with: link)
+            return
+        }
+        if let issue = IssueLink(url) {
+            pendingIssue = issue
+        }
     }
 
     func pair(with link: PairLink) async {

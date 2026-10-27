@@ -98,8 +98,8 @@ final class IssueGroupingTests: XCTestCase {
     }
 
     private func row(_ number: Int, mine: Bool? = false,
-                     running: Bool? = nil) -> IssueRow {
-        IssueRow(number: number, title: "Issue \(number)", state: "open",
+                     running: Bool? = nil, state: String? = "open") -> IssueRow {
+        IssueRow(number: number, title: "Issue \(number)", state: state,
                  author: "a", labels: [], assignees: [], comments: 0,
                  updatedAt: nil, url: "", mine: mine, agentRunning: running)
     }
@@ -111,6 +111,16 @@ final class IssueGroupingTests: XCTestCase {
         // A row whose flag never arrived doesn't pretend it was written
         // by the hub's login.
         XCTAssertFalse(IssueFilter.mine.includes(row(1, mine: nil)))
+    }
+
+    func testTheClosedChipPicksByState() {
+        XCTAssertTrue(IssueFilter.closed.includes(row(1, state: "closed")))
+        XCTAssertFalse(IssueFilter.closed.includes(row(1)))
+        XCTAssertFalse(IssueFilter.closed.includes(row(1, state: nil)))
+        let repos = [repo("o/r", issues: [row(5, state: "closed"), row(7)])]
+        let closed = IssueGrouping.sections(of: repos, filter: .closed)
+        XCTAssertEqual(closed.first?.rows?.map(\.number), [5])
+        XCTAssertEqual(IssueGrouping.count(repos, filter: .closed), 1)
     }
 
     func testSectionsKeepErrorsAndDropQuietRepos() {
@@ -140,5 +150,36 @@ final class IssueGroupingTests: XCTestCase {
                      repo("o/s", issues: [row(3)])]
         XCTAssertEqual(IssueGrouping.count(repos, filter: .all), 3)
         XCTAssertEqual(IssueGrouping.count(repos, filter: .mine), 1)
+    }
+}
+
+final class IssueLinkTests: XCTestCase {
+    func testParsesTheDeepLink() {
+        let link = IssueLink(URL(string: "quiver://issue/octo/hello-world/42")!)
+        XCTAssertEqual(link, IssueLink(repo: "octo/hello-world", number: 42))
+        XCTAssertEqual(link?.url?.absoluteString,
+                       "quiver://issue/octo/hello-world/42")
+        // A trailing slash or a query changes nothing.
+        XCTAssertEqual(IssueLink(URL(string: "quiver://issue/o/r/5/?from=x")!),
+                       IssueLink(repo: "o/r", number: 5))
+    }
+
+    func testRejectsWhatIsNotAnIssueLink() {
+        XCTAssertNil(IssueLink(URL(string: "quiver://pair?host=mac&token=t")!))
+        XCTAssertNil(IssueLink(URL(string: "https://github.com/o/r/issues/5")!))
+        XCTAssertNil(IssueLink(URL(string: "quiver://issue/o/r")!))
+        XCTAssertNil(IssueLink(URL(string: "quiver://issue/o/r/5/x")!))
+        XCTAssertNil(IssueLink(URL(string: "quiver://issue/o/r/abc")!))
+        XCTAssertNil(IssueLink(URL(string: "quiver://issue/o/r/0")!))
+    }
+
+    @MainActor
+    func testHandleKeepsAnIssueLinkForTheTabs() async {
+        let app = AppModel(hub: nil)
+        await app.handle(URL(string: "quiver://issue/o/r/5")!)
+        XCTAssertEqual(app.pendingIssue, IssueLink(repo: "o/r", number: 5))
+        // A URL the app doesn't read leaves a pending link alone.
+        await app.handle(URL(string: "https://example.com/")!)
+        XCTAssertEqual(app.pendingIssue, IssueLink(repo: "o/r", number: 5))
     }
 }

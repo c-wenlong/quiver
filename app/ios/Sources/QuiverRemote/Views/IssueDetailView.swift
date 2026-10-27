@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// One issue in full: title and meta, the rendered body, then Open on
-/// GitHub and the primary Resolve with agent. Reads
-/// `GET /v1/issues/<o>/<r>/<n>`; comments are a count for now.
+/// One issue in full: title and meta, the rendered body, its comments
+/// (markdown, as the chat renders agent text), then Open on GitHub and
+/// the primary Resolve with agent. Reads `GET /v1/issues/<o>/<r>/<n>`.
 struct IssueDetailView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openURL) private var openURL
@@ -34,6 +34,7 @@ struct IssueDetailView: View {
                     GroupLabel(text: "Description")
                     Card { RichText(text: body) }
                 }
+                commentsSection(issue)
             } else if let error {
                 StateCard(icon: "exclamationmark.triangle", title: "Can't load this issue",
                           message: error, tone: .error,
@@ -49,6 +50,27 @@ struct IssueDetailView: View {
         .refreshable { await load(refresh: true) }
         .navigationTitle("\(repo)#\(number)")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    // The app's own deep link opens straight back here
+                    // from wherever it's pasted; the share sheet wants
+                    // the GitHub one.
+                    Button {
+                        UIPasteboard.general.url = IssueLink(repo: repo, number: number).url
+                    } label: {
+                        Label("Copy link", systemImage: "doc.on.doc")
+                    }
+                    if let url = reply?.issue?.url.flatMap(URL.init) {
+                        ShareLink(item: url) {
+                            Label("Share on GitHub", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+            }
+        }
         .task { if reply == nil { await load() } }
         // The chat opens after the sheet is gone, so the push isn't
         // lost under the dismiss animation.
@@ -151,6 +173,51 @@ struct IssueDetailView: View {
             }
         }
         .padding(.top, 4)
+    }
+
+    /// The issue's comments, oldest first as `gh` returns them, each a
+    /// card with the author and age over the rendered body.
+    @ViewBuilder private func commentsSection(_ issue: IssueDetail) -> some View {
+        let comments = issue.comments ?? []
+        if !comments.isEmpty {
+            GroupLabel(text: "Comments", trailing: "\(comments.count)")
+            ForEach(comments, id: \.self) { comment in
+                CommentCard(comment: comment)
+            }
+        }
+    }
+}
+
+/// One comment's card: the author and how long ago, then the body the
+/// chat's markdown renderer draws.
+private struct CommentCard: View {
+    @Environment(\.openURL) private var openURL
+    let comment: IssueComment
+
+    var body: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Text(comment.author ?? "-")
+                        .font(Theme.control).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    let when = RelativeTime.short(GitHubTime.date(comment.createdAt)?.timeIntervalSince1970)
+                    if !when.isEmpty {
+                        Text("· \(when)").font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    }
+                    Spacer(minLength: 8)
+                    if let url = comment.url.flatMap(URL.init) {
+                        Button { openURL(url) } label: {
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                if let body = comment.body, !body.isEmpty {
+                    RichText(text: body)
+                }
+            }
+        }
     }
 }
 

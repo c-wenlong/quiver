@@ -190,11 +190,14 @@ struct HubClient: Sendable {
 
     // MARK: Issues
 
-    /// `GET /v1/issues`: the hub's pinned repos, each with its open
-    /// issues. `refresh` skips the hub's one-minute `gh` cache.
-    func issues(refresh: Bool = false) async throws -> IssuesResponse {
-        try await send(request("GET", "/v1/issues",
-                               query: refresh ? ["refresh": "1"] : [:]))
+    /// `GET /v1/issues`: the hub's pinned repos, each with its issues
+    /// in `state` (`open`, `closed` or `all`). `refresh` skips the
+    /// hub's one-minute `gh` cache.
+    func issues(refresh: Bool = false, state: String = "open") async throws -> IssuesResponse {
+        var query: [String: String] = [:]
+        if refresh { query["refresh"] = "1" }
+        if state != "open" { query["state"] = state }
+        return try await send(request("GET", "/v1/issues", query: query))
     }
 
     /// `GET /v1/issues/<o>/<r>/<n>`: one issue in full — body, comments

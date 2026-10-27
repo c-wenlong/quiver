@@ -297,6 +297,28 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .92em;
 .diff-meta { color: var(--dim); font-style: italic; padding: 3px 10px; }
 details.tool.has-diff > summary { color: var(--text); }
 
+/* issues */
+.issues-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.issues-head button { padding: 6px 12px; font-size: .85rem; flex: 0 0 auto; }
+.issues-head .chips { margin-top: 0; }
+.ist {
+  flex: 0 0 18px; width: 18px; height: 18px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 11px; font-weight: 700;
+}
+.ist.open { color: var(--green); border: 1.5px solid var(--green); }
+.ist.closed { color: var(--dim); border: 1.5px solid var(--dim); }
+.ibadges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.ibadges span {
+  font-size: .7rem; color: var(--dim);
+  border: 1px solid var(--border); border-radius: 99px; padding: 1px 7px;
+}
+.issue-title { font-weight: 600; font-size: 1.05rem; margin: 4px 0; }
+.issue-actions { display: grid; gap: 8px; margin: 12px 0 6px; }
+.issue-actions button { width: 100%; margin: 0; }
+.issue-actions .primary { margin-top: 0; }
+.issue-text { white-space: pre-wrap; word-wrap: break-word; font-size: .9rem; margin-top: 6px; }
+.issue-text:first-child { margin-top: 0; }
+
 /* usage */
 .usage-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .usage-head button { padding: 6px 12px; font-size: .85rem; }

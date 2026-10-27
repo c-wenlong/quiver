@@ -502,8 +502,8 @@ struct IssueRepo: Decodable, Identifiable {
 struct IssueRow: Decodable, Identifiable {
     let number: Int
     let title: String?
-    /// "open" — the v1 list serves open issues only; closed may join
-    /// behind a filter later.
+    /// "open" on the default list; the Closed chip's `?state=closed`
+    /// read brings "closed" rows.
     let state: String?
     let author: String?
     let labels: [String]?
@@ -557,7 +557,7 @@ struct IssueDetail: Decodable {
     let suggestedPrompt: String?
 }
 
-/// One issue comment; the v1 detail page counts them only.
+/// One issue comment; the detail page renders them under the body.
 struct IssueComment: Decodable, Hashable {
     let author: String?
     let body: String?
