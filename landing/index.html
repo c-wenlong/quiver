@@ -127,9 +127,9 @@ footer .right { margin-left: auto; display: flex; gap: 22px; }
 footer a { color: var(--text-2); text-decoration: none; }
 footer a:hover { color: var(--text); }
 
-dialog { border: 1px solid var(--line-strong); border-radius: 16px; background: var(--surface); color: var(--text); padding: 0; width: min(1100px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: hidden; }
+dialog { border: 1px solid var(--line-strong); border-radius: 16px; background: var(--surface); color: var(--text); padding: 0; width: min(1100px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; }
 dialog::backdrop { background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(4px); }
-dialog .dmedia { position: relative; aspect-ratio: 16 / 10; background: #000; max-height: calc(100vh - 160px); }
+dialog .dmedia { position: relative; aspect-ratio: 16 / 10; background: #000; max-height: max(200px, calc(100vh - 260px)); }
 dialog video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 dialog .dbody { display: flex; gap: 24px; align-items: flex-start; padding: 18px 22px 22px; }
 dialog h3 { margin: 0 0 4px; font-size: 17px; font-weight: 500; }
@@ -203,12 +203,12 @@ dialog .close { margin-left: auto; }
   <p class="hint">You install <code>quiver</code>. You type <code>swe</code>.</p>
 
   <div class="tabs" role="tablist" aria-label="Product tour">
-    <button role="tab" aria-selected="true" data-clip="sessions">Every session</button>
-    <button role="tab" aria-selected="false" data-clip="usage">Usage and cost</button>
-    <button role="tab" aria-selected="false" data-clip="limits">Limits and accounts</button>
-    <button role="tab" aria-selected="false" data-clip="swe">From the terminal</button>
+    <button role="tab" id="tab-sessions" aria-controls="stage" aria-selected="true" tabindex="0" data-clip="sessions">Every session</button>
+    <button role="tab" id="tab-usage" aria-controls="stage" aria-selected="false" tabindex="-1" data-clip="usage">Usage and cost</button>
+    <button role="tab" id="tab-limits" aria-controls="stage" aria-selected="false" tabindex="-1" data-clip="limits">Limits and accounts</button>
+    <button role="tab" id="tab-swe" aria-controls="stage" aria-selected="false" tabindex="-1" data-clip="swe">From the terminal</button>
   </div>
-  <div class="stage">
+  <div class="stage" id="stage" role="tabpanel" aria-labelledby="tab-sessions">
     <video id="hero" src="media/sessions.mp4" poster="media/sessions.jpg" autoplay muted loop playsinline preload="metadata" aria-label="quiver product tour"></video>
   </div>
 </div>
@@ -225,7 +225,7 @@ dialog .close { margin-left: auto; }
     </button>
     <button class="card" type="button" data-clip="search">
       <div class="media"><video data-src="media/search.mp4" poster="media/search.jpg" muted loop playsinline preload="none" aria-hidden="true"></video><span class="inspect">Click to inspect</span></div>
-      <div class="body"><h3>Transcript search</h3><p>Every transcript is indexed on your machine, so the thing you asked an agent last month comes back as you type.</p></div>
+      <div class="body"><h3>Transcript search</h3><p>Transcripts from Claude Code, Codex, Gemini CLI, Copilot, Cursor, Devin, Droid and more are indexed on your machine, so what you asked an agent last month comes back as you type.</p></div>
     </button>
     <button class="card" type="button" data-clip="usage">
       <div class="media"><video data-src="media/usage.mp4" poster="media/usage.jpg" muted loop playsinline preload="none" aria-hidden="true"></video><span class="inspect">Click to inspect</span></div>
@@ -382,14 +382,40 @@ dialog .close { margin-left: auto; }
 
 <script>
 (function () {
+  // With reduced motion, nothing plays on its own: posters show, and the
+  // hero and the inspect dialog get controls to play on request.
+  var still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function start(v) { if (!still) v.play().catch(function () {}); }
+
   var hero = document.getElementById("hero");
-  document.querySelectorAll(".tabs button").forEach(function (tab, _, tabs) {
-    tab.addEventListener("click", function () {
-      tabs.forEach(function (t) { t.setAttribute("aria-selected", String(t === tab)); });
-      var clip = tab.getAttribute("data-clip");
-      hero.poster = "media/" + clip + ".jpg";
-      hero.src = "media/" + clip + ".mp4";
-      hero.play().catch(function () {});
+  var stage = document.getElementById("stage");
+  if (still) {
+    hero.removeAttribute("autoplay"); hero.pause(); hero.controls = true;
+    var phone = document.querySelector(".device video");
+    phone.src = phone.getAttribute("data-src"); phone.controls = true;
+  }
+  var tabs = Array.prototype.slice.call(document.querySelectorAll(".tabs button"));
+  function select(tab) {
+    tabs.forEach(function (t) {
+      var on = t === tab;
+      t.setAttribute("aria-selected", String(on));
+      t.tabIndex = on ? 0 : -1;
+    });
+    stage.setAttribute("aria-labelledby", tab.id);
+    var clip = tab.getAttribute("data-clip");
+    hero.poster = "media/" + clip + ".jpg";
+    hero.src = "media/" + clip + ".mp4";
+    start(hero);
+  }
+  tabs.forEach(function (tab, i) {
+    tab.addEventListener("click", function () { select(tab); });
+    tab.addEventListener("keydown", function (e) {
+      var next = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[e.key];
+      if (next === undefined) return;
+      e.preventDefault();
+      var t = tabs[(next + tabs.length) % tabs.length];
+      t.focus();
+      select(t);
     });
   });
 
@@ -401,8 +427,9 @@ dialog .close { margin-left: auto; }
       entries.forEach(function (e) {
         var v = e.target;
         if (e.isIntersecting) {
+          if (still) return;
           if (!v.src) v.src = v.getAttribute("data-src");
-          v.play().catch(function () {});
+          start(v);
         } else if (v.src) {
           v.pause();
         }
@@ -417,7 +444,7 @@ dialog .close { margin-left: auto; }
     }, { rootMargin: "0px 0px -40px 0px" });
     cards.forEach(function (c) { c.classList.add("pre"); reveal.observe(c); });
   } else {
-    lazy.forEach(function (v) { v.src = v.getAttribute("data-src"); v.autoplay = true; });
+    lazy.forEach(function (v) { v.src = v.getAttribute("data-src"); v.autoplay = !still; });
   }
 
   var dialog = document.getElementById("inspect");
@@ -430,7 +457,7 @@ dialog .close { margin-left: auto; }
       dvideo.poster = "media/" + clip + ".jpg";
       dvideo.src = "media/" + clip + ".mp4";
       dialog.showModal();
-      dvideo.play().catch(function () {});
+      start(dvideo);
     });
   });
   dialog.querySelector(".close").addEventListener("click", function () { dialog.close(); });
