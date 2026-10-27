@@ -160,15 +160,15 @@ remote/
   hub.py         # http.server ThreadingHTTPServer: REST + SSE, device auth
   files.py       # @-mention paths under a session's folder (/v1/sessions/{id}/files)
   agent.py       # satellite daemon: dial hub, run local tail/inject
-  notify.py      # needs-you/finished/error fan-out via self-hosted ntfy
+  notify.py      # needs-you/finished/error/GitHub-unread fan-out via ntfy
   launchd.py     # serve --install: the hub as a per-user LaunchAgent
   systemd.py     # serve --install on Linux: the hub as a systemd user unit
   setup.py       # swe remote setup: every step to a paired phone, --apply
   commands.py    # swe remote serve|agent|pair|attach|status — argv + print
 ```
 
-Layering: `remote` may import `sessions`, `reports`, `paths`, `console`,
-`flags`; nothing imports `remote` back. State under
+Layering: `remote` may import `sessions`, `reports`, `github`, `paths`,
+`console`, `flags`; nothing imports `remote` back. State under
 `~/.quiver/data/remote/` (`devices.json` 0600, `inbox_dismissals.json`
 0600, `session_meta.json` 0600, `cursors/`, `journal/`) —
 gitignored like the rest of `data/`. New commands run the usual
@@ -342,7 +342,9 @@ POST /v1/ssh/key                     {public_key} ("" clears) → stored on the 
 Events: `message.appended`, `message.delta` (tier A only),
 `session.status`, `session.meta` (title, harness_title, pinned,
 pinned_at after a pin or rename), `approval.requested|resolved`, `compaction`,
-`machine.online|offline`, `notify` (needs_you|finished|error|limit).
+`machine.online|offline`, `notify` (needs_you|finished|error|limit;
+`github` for a notification thread that just turned unread — hub-local,
+not a satellite kind).
 
 `queue|steer` is the OpenAI Remote distinction: queue waits for idle;
 steer injects mid-turn where the channel allows (codex turn input, tmux
@@ -823,6 +825,24 @@ Screens:
   activity brings it back. Dismissals prune 30 days after they were
   made and never hide an approval. `?done=1` adds sessions that
   finished since the hub's local midnight as `done` items.
+
+  GitHub's "needs you" joins the same feed: `serve` wires the hub's
+  own `gh` login into the catalog's refresh loop through the web app's
+  shared notifications cache (`webapp/pages/inbox.unread_rows`), so the
+  poll costs nothing beyond the cache's cadence and a hub without a
+  working `gh` silently has no GitHub group. Unread notifications land
+  as `kind: "github"` items (`repo`, `subject_type`, `reason`, `url`,
+  `gh_thread_id`, `updated_at`) keyed `gh:<thread id>` after the
+  session rows, newest first — being unread, they never age out.
+  Dismiss is the same route and the same bring-back rule, with the
+  thread's `updated_at` as `last_active_at`; marking read goes through
+  `POST /v1/app/inbox/read` with the thread id, which PATCHes
+  `notifications/threads/<id>` like `swe gh inbox read` does. A thread
+  that newly turns unread emits a hub-local `notify` event
+  (`kind: "github"`, deduped on `gh_thread_id` + `updated_at` so a
+  repoll can't re-push) and ntfy posts only for
+  `review_requested`/`assignee`/`mention`/`ci_fail` — comments on
+  subscribed threads stay inbox-only. No phone replies to threads.
 - **Machine** — per-device strip; the MacBook satellite can ride
   QuiverCore's Compute samplers (CPU/GPU/temps) along this view.
 

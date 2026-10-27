@@ -367,6 +367,7 @@ class Catalog:
         machine_id: str | None = None,
         fetch_sessions: Callable[[], list[Session]] | None = None,
         status_of: Callable[[list[Session]], list[str]] | None = None,
+        fetch_github: Callable[[], list[dict] | None] | None = None,
         max_rows: int = MAX_ROWS,
     ) -> None:
         self.home = Path(home) if home is not None else None
@@ -381,6 +382,18 @@ class Catalog:
             status_of = session_statuses
         self._fetch = fetch_sessions
         self._status_of = status_of
+        # The GitHub notification feed is hub-only: serve() wires it, so
+        # a bare catalog — tests, the satellite agent — never reaches for
+        # ``gh``. ``fetch_github`` returns the unread ``github`` inbox
+        # rows or None on a failed read; ``on_github_alert`` runs once
+        # per thread that newly turned unread.
+        self.fetch_github = fetch_github
+        self.on_github_alert: Callable[[dict], None] | None = None
+        self._github_rows: list[dict] = []
+        # gh_thread_id → updated_at of the last-seen unread state; None
+        # until the first successful poll, which is a silent baseline —
+        # a hub start must not re-push the whole unread backlog.
+        self._github_seen: dict[str, str] | None = None
         self.max_rows = max_rows
         self._rows: list[tuple[str, Session | None, dict, str]] = []
         self._refreshed_at = 0.0
@@ -450,6 +463,17 @@ class Catalog:
             self._rows = rows
             self._status_as_of = started
             self._refreshed_at = time.time()
+        github_rows, alerts = self._poll_github()
+        if github_rows is not None:
+            for row in github_rows:
+                row.setdefault("machine_id", self.machine_id)
+            self._github_rows = github_rows
+        if self.on_github_alert is not None:
+            for row in alerts:
+                try:
+                    self.on_github_alert(row)
+                except Exception:
+                    pass  # a broken notifier must not stall a refresh
         return [row for _key, _s, row, _st in rows]
 
     def note_status(self, key: str, status: str, at: float) -> None:
@@ -509,6 +533,42 @@ class Catalog:
         now = time.time() if now is None else now
         return now - self._refreshed_at >= REFRESH_INTERVAL_S
 
+    def _poll_github(self) -> tuple[list[dict] | None, list[dict]]:
+        """``(rows, alerts)``: the unread GitHub listing this read, and
+        the rows in it whose thread just turned unread.
+
+        ``None`` rows mean the read failed — the last good listing and
+        the dedupe map both stay. The map keys ``gh_thread_id`` on the
+        thread's ``updated_at``, so a thread already seen unread at this
+        stamp can't alert again until GitHub moves it; the first
+        successful poll only baselines it.
+        """
+        if self.fetch_github is None:
+            return None, []
+        try:
+            rows = self.fetch_github()
+        except Exception:
+            return None, []
+        if not isinstance(rows, list):
+            return None, []
+        rows = [
+            r for r in rows
+            if isinstance(r, dict) and str(r.get("key") or "")
+        ]
+        prev = self._github_seen
+        seen: dict[str, str] = {}
+        alerts = []
+        for row in rows:
+            tid = str(row.get("gh_thread_id") or "")
+            if not tid:
+                continue
+            stamp = str(row.get("updated_at") or "")
+            seen[tid] = stamp
+            if prev is not None and prev.get(tid) != stamp:
+                alerts.append(row)
+        self._github_seen = seen
+        return rows, alerts
+
     def inbox(
         self,
         pending: dict[str, str] | None = None,
@@ -529,6 +589,13 @@ class Catalog:
         device cleared; the item stays hidden until it moves past that.
         ``include_done`` adds sessions that finished since local
         midnight as ``done`` items.
+
+        Unread GitHub notifications follow as one group after the
+        session rows, newest first; they are all unread by construction,
+        so the age cutoff never applies to them. Their ``key`` is
+        ``gh:<thread id>``, which can't collide with a session key, so
+        the same per-device dismissal store hides them — until GitHub
+        bumps the thread's ``updated_at``.
         """
         pending = pending or {}
         dismissed = dismissed or {}
@@ -563,6 +630,15 @@ class Catalog:
             if rid is not None:
                 item["request_id"] = rid
             items.append(item)
+        github = []
+        for row in self._github_rows:
+            last = _num(row.get("last_active_at"))
+            if row["key"] in dismissed and last <= dismissed[row["key"]]:
+                continue
+            github.append(dict(row))
+        github.sort(key=lambda r: _num(r.get("last_active_at")),
+                    reverse=True)
+        items.extend(github)
         return items
 
 

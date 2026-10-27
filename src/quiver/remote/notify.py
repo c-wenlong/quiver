@@ -38,6 +38,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from quiver.github import cli as ghcli
 from quiver.paths import atomic_write_text, remote_dir_for
 from quiver.remote import pairing, sshkeys
 from quiver.reports import transcripts as _tr
@@ -48,6 +49,16 @@ _NOTIFY_KIND_TITLES = {
     "finished": "Finished",
     "error": "Errored",
     "limit": "Limit hit",
+}
+# github notify events carry ``reason`` — what GitHub thinks needs you —
+# mapped to the notification's wording and tag. Reasons outside the map
+# can still arrive (the hub gates on cli.PUSH_REASONS, this table is the
+# display twin); they read generically rather than drop mid-flight.
+_GITHUB_REASONS = {
+    "review_requested": ("review requested", "bell"),
+    "assignee": ("assigned to you", "bell"),
+    "mention": ("mentioned you", "bell"),
+    "ci_fail": ("CI failed", "rotating_light"),
 }
 _POST_TIMEOUT_S = 5.0
 # The approval prompt is a convenience, not a record — enough to decide,
@@ -332,6 +343,9 @@ class Notifier:
         if etype != "notify":
             return
         kind = str(data.get("kind") or "")
+        if kind == "github":
+            self._github(cfg, data)
+            return
         label = _NOTIFY_KIND_TITLES.get(kind)
         if label is None:
             return
@@ -343,6 +357,35 @@ class Notifier:
             "priority": priority,
             "tags": ["rotating_light" if kind == "error" else "bell"],
         })
+
+    def _github(self, cfg: dict, data: dict) -> None:
+        """A GitHub thread just turned unread: ``repo: why`` in the
+        title, the subject in the body, the URL as the tap target. The
+        title is notification text, not a prompt — it runs the same
+        secret-redactor as everything else that leaves the process.
+        """
+        # The hub only emits the push reasons; a stray event for
+        # anything else (a comment on a subscribed thread) drops here
+        # too rather than ringing the phone.
+        if str(data.get("reason") or "") not in ghcli.PUSH_REASONS:
+            return
+        repo = str(data.get("repo") or "")
+        label, tag = _GITHUB_REASONS.get(
+            str(data.get("reason") or ""), ("needs you", "bell"))
+        url = str(data.get("url") or "")
+        payload = {
+            "topic": cfg["topic"],
+            "title": f"{repo}: {label}" if repo else f"GitHub: {label}",
+            "message": _tr._redact_secrets(
+                str(data.get("title") or ""))[:_PROMPT_CAP],
+            "priority": 4,
+            "tags": [tag],
+        }
+        if url.startswith("https://") or url.startswith("http://"):
+            payload["click"] = url
+            payload["actions"] = [
+                {"action": "view", "label": "Open", "url": url}]
+        self._post(cfg, payload)
 
     def _session_title(self, key: str) -> str:
         row = self._state.catalog.row_for(key) if key else None

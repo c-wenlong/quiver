@@ -312,6 +312,69 @@ def _notification_row(item: dict) -> dict:
     }
 
 
+# ``subject.type`` folded to the inbox row's vocabulary; anything else
+# (discussions, commits, advisories, invitations) lands on ``other``.
+_INBOX_SUBJECTS = {
+    "PullRequest": "pr",
+    "Issue": "issue",
+    "CheckRun": "ci",
+    "CheckSuite": "ci",
+    "WorkflowRun": "ci",
+    "Release": "release",
+}
+
+# gh's ``reason`` names folded to the inbox row's vocabulary. Reasons
+# outside the map pass through verbatim — a new GitHub reason reads
+# truthfully instead of pretending to be a comment.
+_INBOX_REASONS = {
+    "review_requested": "review_requested",
+    "assign": "assignee",
+    "mention": "mention",
+    "team_mention": "mention",
+    "ci_activity": "ci_fail",
+    "comment": "comment",
+    "author": "comment",
+    "state_change": "comment",
+    "subscribed": "comment",
+    "manual": "comment",
+}
+
+# The reasons worth a push: review requests, assignments, mentions and
+# red CI need the owner; plain comments on subscribed threads stay
+# inbox-only.
+PUSH_REASONS = frozenset(
+    {"review_requested", "assignee", "mention", "ci_fail"})
+
+
+def inbox_row(note: dict) -> dict | None:
+    """One ``_notification_row`` as the ``/v1/inbox`` ``github`` item.
+
+    ``key`` is what ``POST /v1/inbox/dismiss`` takes; ``last_active_at``
+    the epoch seconds its age comparisons run on. A notification with
+    no id has no thread to mark read or dismiss, so it yields no row.
+    """
+    tid = str(note.get("id") or "")
+    if not tid:
+        return None
+    reason = str(note.get("reason") or "")
+    return {
+        "kind": "github",
+        "key": f"gh:{tid}",
+        "harness": "github",
+        "agent": "GitHub",
+        "status": "github",
+        "repo": str(note.get("repo") or ""),
+        "subject_type": _INBOX_SUBJECTS.get(note.get("type"), "other"),
+        "title": str(note.get("title") or ""),
+        "reason": _INBOX_REASONS.get(reason, reason or "comment"),
+        "url": str(note.get("url") or ""),
+        "gh_thread_id": tid,
+        "updated_at": note.get("updated_at"),
+        "last_active_at": _parse_iso(note.get("updated_at")) or 0.0,
+        "unread": bool(note.get("unread", True)),
+    }
+
+
 def _pages_payload(repo: str, site, latest) -> dict:
     return {
         "repo": repo,
