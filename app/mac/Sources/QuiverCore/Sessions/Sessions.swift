@@ -667,7 +667,13 @@ public final class SessionsModel {
             } else {
                 use = candidates.max { $0.lastTimestamp < $1.lastTimestamp }
             }
+            // The row id matches the ledger fallback's `account|session`
+            // so a conversation that was ledger-only (a capped listing, an
+            // older swe) keeps its identity once it is listed — the rail
+            // would otherwise treat the refresh as a different row and
+            // show the open conversation twice.
             return Row(session: session, usage: use,
+                       id: session.accountHome.map { "\($0)|\(session.id)" },
                        account: accountTag(listed: session.accountHome, usage: use?.accountHome))
         }
         // A listed account-home session claims its own account's usage

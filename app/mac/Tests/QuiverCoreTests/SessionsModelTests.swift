@@ -315,6 +315,35 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         #expect(row.usage?.totals.costUSD == 3)
     }
 
+    @Test func anAccountSessionKeepsItsRowIdFromLedgerOnlyToListed() async throws {
+        // Before swe lists a profile session the ledger-only row carries
+        // `account|session`; once listed it must keep that id or a rail
+        // holding the open row sees a new session and shows it twice.
+        let home = "/Users/k/.quiver/accounts/claude/w/home"
+        var work = usage("w1", "claude", models: ["opus"], cost: 3, home: home)
+        work.cwd = "/c/quiver"
+        let ledgerOnlyStore = FakeSessionLedger()
+        await ledgerOnlyStore.set([work])
+        let ledgerOnly = SessionsModel(
+            source: FakeSessionSource(list: SessionList(sessions: [], failures: [])),
+            ledger: ledgerOnlyStore, defaultHomes: ["/Users/k/.claude"],
+            now: { [now] in now }, calendar: calendar)
+        var listed = session("w1", "claude", cwd: "/c/quiver", at: 1_791_699_000, title: "Account work")
+        listed.accountHome = home
+        let listedStore = FakeSessionLedger()
+        await listedStore.set([work])
+        let listedModel = SessionsModel(
+            source: FakeSessionSource(list: SessionList(sessions: [listed], failures: [])),
+            ledger: listedStore, defaultHomes: ["/Users/k/.claude"],
+            now: { [now] in now }, calendar: calendar)
+
+        await ledgerOnly.load()
+        await listedModel.load()
+
+        #expect(ledgerOnly.rows.map(\.id) == ["\(home)|w1"])
+        #expect(listedModel.rows.map(\.id) == ["\(home)|w1"])
+    }
+
     @Test func feedSessionsWithoutATranscriptComeFromTheLedger() async throws {
         let cursorHome = "/Users/k/Library/Application Support/Cursor"
         var cloud = usage("bc-1111", "cursor", models: ["claude-opus-5-5"], cost: 5, home: cursorHome)

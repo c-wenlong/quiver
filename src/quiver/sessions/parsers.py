@@ -8,6 +8,7 @@ import os
 import re
 from urllib.parse import unquote
 
+from quiver.paths import account_homes_for
 from quiver.sessions.engines import (
     JsonParserConfig,
     JsonlParserConfig,
@@ -471,21 +472,8 @@ def _claude_handed_off(path: str) -> str:
 
 
 def _account_homes(vendor: str) -> list[str]:
-    """Each Quiver account home for ``vendor``, sorted for stable order.
-
-    Quiver's extra accounts keep a harness-shaped config dir at
-    ``~/.quiver/accounts/<vendor>/<id>/home`` — the same layout the default
-    home has, so a harness's sessions there parse exactly like its own.
-    Sessions found under one are tagged with it as their ``account_home``,
-    which the listing's consumers use to name the account and resume
-    under it.
-    """
-    root = os.path.expanduser(f"~/.quiver/accounts/{vendor}")
-    return sorted(
-        home
-        for home in glob.glob(os.path.join(root, "*", "home"))
-        if os.path.isdir(home)
-    )
+    """Each Quiver account home for ``vendor``, sorted for stable order."""
+    return [str(home) for home in account_homes_for(vendor)]
 
 
 def parse_claude():
@@ -544,29 +532,36 @@ def parse_claude():
 
     # The same session id resumed under a second project dir would list
     # twice: one conversation, one row — the newest timestamp is the
-    # current copy.
-    best_by_id: dict[str, int] = {}
+    # current copy. The dedup key carries the account home so a transcript
+    # copied into another profile keeps one row per account.
+    best_by_id: dict[tuple[str, str], int] = {}
     for i, sess in enumerate(sessions):
         sid = sess.session_id
         if not sid:
             continue
-        if sid not in best_by_id or sess.timestamp > sessions[best_by_id[sid]].timestamp:
-            best_by_id[sid] = i
+        key = (sid, sess.account_home)
+        if key not in best_by_id or sess.timestamp > sessions[best_by_id[key]].timestamp:
+            best_by_id[key] = i
     if len(best_by_id) != sum(1 for s in sessions if s.session_id):
         sessions = [
             s for i, s in enumerate(sessions)
-            if not s.session_id or best_by_id[s.session_id] == i
+            if not s.session_id or best_by_id[(s.session_id, s.account_home)] == i
         ]
 
     # One conversation continued across two transcripts is one session, and
     # both files carry the same title, so listing both reads as a duplicate.
     # The predecessor is dropped only when its successor is really on disk;
     # otherwise the whole conversation would vanish from the listing.
-    by_id = {sess.session_id: sess for sess in sessions if sess.session_id}
-    superseded: set[str] = set()
-    for base, _account_home in roots:
+    # A handoff only chains transcripts inside one home, so the lookup is
+    # scoped to the root the file came from.
+    by_id = {
+        (sess.session_id, sess.account_home): sess
+        for sess in sessions if sess.session_id
+    }
+    superseded: set[tuple[str, str]] = set()
+    for base, account_home in roots:
         for session_id, file_path in _claude_transcript_paths(base).items():
-            if session_id not in by_id:
+            if (session_id, account_home) not in by_id:
                 continue
             # The tail read depends on the file alone; whether the successor is
             # listed is decided fresh every run.
@@ -576,11 +571,14 @@ def parse_claude():
                 lambda fp=file_path: _claude_handed_off(fp),
                 valid=lambda v: isinstance(v, str),
             )
-            if successor and successor in by_id:
-                superseded.add(session_id)
+            if successor and (successor, account_home) in by_id:
+                superseded.add((session_id, account_home))
     if not superseded:
         return sessions
-    return [s for s in sessions if s.session_id not in superseded]
+    return [
+        s for s in sessions
+        if (s.session_id, s.account_home) not in superseded
+    ]
 
 
 def parse_droid():
@@ -659,14 +657,18 @@ def codex_thread_id(session_id: str) -> str:
 _CODEX_AUTO_TITLE_WINDOW_MS = 60_000
 
 
-def _codex_state_db() -> str:
-    """Newest ``~/.codex/state_<n>.sqlite``, or "" when codex has none.
+def _codex_state_db(home: str = "") -> str:
+    """Newest ``<home>/state_<n>.sqlite``, or "" when codex has none.
 
-    The number in the filename is a schema version codex bumps on migration
-    and the old file is left behind, so the highest one is the live store.
+    ``home`` is the codex config dir — ``~/.codex`` by default, a Quiver
+    account home for an extra profile. The number in the filename is a
+    schema version codex bumps on migration and the old file is left
+    behind, so the highest one is the live store.
     """
     best, best_n = "", -1
-    for path in glob.glob(os.path.expanduser("~/.codex/state_*.sqlite")):
+    for path in glob.glob(
+        os.path.expanduser(os.path.join(home or "~/.codex", "state_*.sqlite"))
+    ):
         match = re.search(r"state_(\d+)\.sqlite$", path)
         if not match:
             continue
@@ -676,7 +678,7 @@ def _codex_state_db() -> str:
     return best
 
 
-def _codex_thread_store() -> dict[str, tuple[str, str]]:
+def _codex_thread_store(home: str = "") -> dict[str, tuple[str, str]]:
     """Thread id -> ``(name, preview)`` from codex's own thread store.
 
     ``name`` is the thread's display name, whatever wrote it. ``preview`` is
@@ -695,7 +697,7 @@ def _codex_thread_store() -> dict[str, tuple[str, str]]:
     """
     from quiver.sessions.engines.common import open_sqlite_ro
 
-    db_path = _codex_state_db()
+    db_path = _codex_state_db(home)
     if not db_path:
         return {}
     conn = open_sqlite_ro(db_path)
@@ -728,7 +730,7 @@ def _codex_thread_store() -> dict[str, tuple[str, str]]:
     return out
 
 
-def _codex_index_history() -> dict[str, list[tuple[float, str]]]:
+def _codex_index_history(home: str = "") -> dict[str, list[tuple[float, str]]]:
     """Thread id -> chronological ``(ts_ms, name)`` records from the index.
 
     Codex keeps thread names outside the rollout transcript and appends
@@ -740,7 +742,9 @@ def _codex_index_history() -> dict[str, list[tuple[float, str]]]:
     rollout filename matches whatever case either side wrote; a record with
     an unreadable ``updated_at`` keeps its name with a 0 timestamp.
     """
-    path = os.path.expanduser("~/.codex/session_index.jsonl")
+    path = os.path.expanduser(
+        os.path.join(home or "~/.codex", "session_index.jsonl")
+    )
     records: dict[str, list[tuple[float, str]]] = {}
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
@@ -884,17 +888,18 @@ def parse_codex():
     # to one session per thread. The newest rollout wins: it holds the
     # resumed conversation and is where the thread last moved. Files with no
     # uuid have nothing to collapse on and stay one row each.
-    freshest: dict[str, int] = {}
+    freshest: dict[tuple[str, str], int] = {}
     tids = [codex_thread_id(sess.session_id) for sess in sessions]
     for i, tid in enumerate(tids):
         if not tid:
             continue
-        if tid not in freshest or sessions[i].timestamp > sessions[freshest[tid]].timestamp:
-            freshest[tid] = i
+        key = (tid, sessions[i].account_home)
+        if key not in freshest or sessions[i].timestamp > sessions[freshest[key]].timestamp:
+            freshest[key] = i
     paired = [
         (tid, sess)
         for i, (tid, sess) in enumerate(zip(tids, sessions))
-        if not tid or freshest[tid] == i
+        if not tid or freshest[(tid, sess.account_home)] == i
     ]
 
     # A codex thread's name lives outside its rollout, in two places that say
@@ -902,14 +907,21 @@ def parse_codex():
     # whether the thread was ever used, the index holds the history that says
     # whether a name was typed or generated. Either being unreadable degrades
     # to what the other knows, and a thread neither has heard of keeps the
-    # first-prompt title the transcript scan produced.
-    store = _codex_thread_store()
-    history = _codex_index_history()
-    if not store and not history:
+    # first-prompt title the transcript scan produced. Each profile home
+    # keeps its own store and index, so both are read per account home.
+    by_home = {
+        home: (
+            _codex_thread_store(home),
+            _codex_index_history(home),
+        )
+        for home in {sess.account_home for _, sess in paired}
+    }
+    if not any(store or history for store, history in by_home.values()):
         return [sess for _, sess in paired]
 
     kept: list[Session] = []
     for tid, sess in paired:
+        store, history = by_home.get(sess.account_home, ({}, {}))
         stored_name, preview = store.get(tid, ("", ""))
         # Only the store can say a thread was never used, so a thread it has
         # never heard of is kept rather than guessed at.

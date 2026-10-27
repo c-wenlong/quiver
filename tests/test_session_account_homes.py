@@ -110,6 +110,41 @@ class ClaudeAccountHomesTest(unittest.TestCase):
         self.assertEqual(["s1"], [s.session_id for s in sessions])
 
 
+    def test_the_same_id_in_two_homes_keeps_both_rows(self):
+        """A transcript copied into another profile is each account's own
+        conversation, so dedup is scoped by (id, account_home)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            record = [_claude_user("Fix login")]
+            _write_jsonl(home / ".claude" / "projects" / PROJECT / "s1.jsonl", record)
+            account = home / ".quiver" / "accounts" / "claude" / "claude-work" / "home"
+            _write_jsonl(account / "projects" / PROJECT / "s1.jsonl", record)
+
+            with patch(
+                "quiver.sessions.parsers.os.path.expanduser",
+                side_effect=_FakeHome(home),
+            ):
+                sessions = {s.account_home: s for s in parse_claude()}
+
+        self.assertEqual({"", str(account)}, set(sessions))
+        self.assertEqual("s1", sessions[str(account)].session_id)
+
+    def test_account_home_survives_the_session_cache(self):
+        from quiver.sessions import aggregator
+
+        session = Session(
+            timestamp=1_000, agent="Claude Code", path="/c/quiver",
+            title="Account work", session_id="s2", tool_name="claude",
+            account_home="/x/.quiver/accounts/claude/claude-work/home",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_file = Path(tmp) / "sessions.json"
+            with patch.object(aggregator, "SESSION_CACHE_FILE", cache_file):
+                aggregator._save_cached_sessions([session])
+                loaded = aggregator._load_cached_sessions()
+        self.assertEqual(session.account_home, loaded[0].account_home)
+
+
 class CodexAccountHomesTest(unittest.TestCase):
     def test_sessions_in_an_account_home_are_listed_with_it(self):
         rollout = f"rollout-2026-09-09T14-52-42-{THREAD_ID}.jsonl"
@@ -128,6 +163,50 @@ class CodexAccountHomesTest(unittest.TestCase):
         self.assertEqual(1, len(sessions))
         self.assertEqual(str(account), sessions[0].account_home)
         self.assertEqual("Fix the login bug", sessions[0].title)
+
+    def test_a_profile_thread_renamed_in_its_own_home_wins(self):
+        """The thread store and session index live per home; a rename in the
+        profile's own ``session_index.jsonl`` reaches its session."""
+        rollout = f"rollout-2026-09-09T14-52-42-{THREAD_ID}.jsonl"
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            account = home / ".quiver" / "accounts" / "codex" / "codex-nus" / "home"
+            day_dir = account / "sessions" / "2026" / "09" / "09"
+            _write_jsonl(
+                day_dir / rollout,
+                [_codex_meta(), _codex_user("injected plugin roster")],
+            )
+            _write_jsonl(
+                account / "session_index.jsonl",
+                [{"id": THREAD_ID, "thread_name": "vendor-table",
+                  "updated_at": "2026-09-09T14:52:50Z"}],
+            )
+
+            with patch(
+                "quiver.sessions.parsers.os.path.expanduser",
+                side_effect=_FakeHome(home),
+            ):
+                sessions = parse_codex()
+
+        self.assertEqual(1, len(sessions))
+        self.assertEqual("vendor-table", sessions[0].title)
+
+    def test_the_same_thread_in_two_homes_keeps_both_rows(self):
+        rollout = f"rollout-2026-09-09T14-52-42-{THREAD_ID}.jsonl"
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            records = [_codex_meta(), _codex_user("Fix the login bug")]
+            _write_jsonl(home / ".codex" / "sessions" / "2026" / "09" / "09" / rollout, records)
+            account = home / ".quiver" / "accounts" / "codex" / "codex-nus" / "home"
+            _write_jsonl(account / "sessions" / "2026" / "09" / "09" / rollout, records)
+
+            with patch(
+                "quiver.sessions.parsers.os.path.expanduser",
+                side_effect=_FakeHome(home),
+            ):
+                sessions = parse_codex()
+
+        self.assertEqual({"", str(account)}, {s.account_home for s in sessions})
 
 
 class AccountHomeInJsonTest(unittest.TestCase):

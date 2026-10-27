@@ -59,6 +59,14 @@ ACCOUNT_HOME_ENV = {
 }
 
 
+def account_env(session) -> dict | None:
+    """``{VAR: account_home}`` for a session in a Quiver account home, else None."""
+    variable = ACCOUNT_HOME_ENV.get(session.tool_name)
+    if variable and session.account_home:
+        return {variable: session.account_home}
+    return None
+
+
 def launch_tool_name(tool_name: str) -> str:
     return launch_tool(tool_name)
 
@@ -79,12 +87,8 @@ def resume_json(session) -> dict | None:
     flags = resume_flags(session)
     if not flags:
         return None
-    env = None
-    variable = ACCOUNT_HOME_ENV.get(session.tool_name)
-    if variable and session.account_home:
-        env = {variable: session.account_home}
     return ResumeCmd(
         argv=[launch_tool_name(session.tool_name), *flags],
         cwd=session.path or None,
-        env=env,
+        env=account_env(session),
     ).to_json()

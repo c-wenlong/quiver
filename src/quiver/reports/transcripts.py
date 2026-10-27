@@ -434,9 +434,18 @@ def _find_session_file(root: Path, session_id: str, patterns: tuple[str, ...] = 
     return _session_file_index(root, patterns, rebuild=True).get(sid)
 
 
+# The transcript subdir each account-aware harness keeps inside its home,
+# so a session in a Quiver account home resolves there, not the default.
+_ACCOUNT_SUBDIRS = {"claude": "projects", "codex": "sessions"}
+
+
 def _jsonl_reader(root: str, patterns: tuple[str, ...] = ("*.jsonl",)) -> Reader:
     def read(session: Session) -> NormalizedTranscript:
-        path = _find_session_file(Path(os.path.expanduser(root)), session.session_id, patterns)
+        base = root
+        subdir = _ACCOUNT_SUBDIRS.get(session.tool_name)
+        if subdir and session.account_home:
+            base = os.path.join(session.account_home, subdir)
+        path = _find_session_file(Path(os.path.expanduser(base)), session.session_id, patterns)
         if path is None:
             return _unreadable(session, "transcript file not found")
         transcript = _new(session, [path])
