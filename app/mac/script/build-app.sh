@@ -87,15 +87,10 @@ xml_escape() {
   printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
 }
 
-# Swift 6.4 (Xcode 27.1) defaults to the swiftbuild build system, which nests
-# a resource bundle's files under Contents/Resources. The copy below and
-# CoreResources expect them at the bundle's top level, as the native build
-# system lays them out, so pin it until both learn the new layout.
-build_system=(--build-system native)
-swift build "${build_system[@]}" -c "$config" --product Quiver
-swift build "${build_system[@]}" -c "$config" --product QuiverWidgets
-swift build "${build_system[@]}" -c "$config" --product QuiverFanHelper
-bindir="$(swift build "${build_system[@]}" -c "$config" --show-bin-path)"
+swift build -c "$config" --product Quiver
+swift build -c "$config" --product QuiverWidgets
+swift build -c "$config" --product QuiverFanHelper
+bindir="$(swift build -c "$config" --show-bin-path)"
 bin="$bindir/Quiver"
 
 bundle="$build_dir/Quiver.app"
@@ -112,9 +107,16 @@ cp -R "$bindir/Quiver_QuiverCore.bundle" "$bundle/Contents/Resources/"
 
 # Stops the build when a copy of QuiverCore's bundle lacks a resource or a
 # harness logo: a packaged app or extension never falls back to the build
-# folder, so whatever is missing here is missing for the user.
+# folder, so whatever is missing here is missing for the user. The native
+# build system (Swift 6.3 and older) puts the files at the bundle's top
+# level; swiftbuild (the default from Swift 6.4) makes a macOS bundle with
+# them under Contents/Resources. Foundation's Bundle reads either, so
+# CoreResources needs no change, and the check looks where they are.
 check_core_resources() {
   local core="$1/Contents/Resources/Quiver_QuiverCore.bundle" resource
+  if [ -d "$core/Contents/Resources" ]; then
+    core="$core/Contents/Resources"
+  fi
   for resource in pricing.json pricing-supplement.json harness-icons.tsv \
                   Geist.ttf Geist-Italic.ttf GeistMono.ttf GeistMono-Italic.ttf \
                   Geist-OFL.txt \

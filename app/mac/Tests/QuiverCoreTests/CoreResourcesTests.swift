@@ -7,8 +7,10 @@ import Testing
 /// it is never reached.
 @Suite struct CoreResourcesTests {
     /// A bundle folder `name` laid out as macOS bundles are, optionally with
-    /// a QuiverCore bundle holding one logo in its Contents/Resources.
-    func makeBundle(_ name: String, withCore: Bool) throws -> (Bundle, URL) {
+    /// a QuiverCore bundle holding one logo in its Contents/Resources. The
+    /// native build system makes that bundle flat; `nestedCore` lays it out
+    /// as swiftbuild does, with its own Contents/Info.plist and Resources.
+    func makeBundle(_ name: String, withCore: Bool, nestedCore: Bool = false) throws -> (Bundle, URL) {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("core-resources-\(UUID().uuidString)", isDirectory: true)
         let bundleURL = root.appendingPathComponent(name, isDirectory: true)
@@ -21,8 +23,18 @@ import Testing
             .write(to: contents.appendingPathComponent("Info.plist"))
         if withCore {
             let core = resources.appendingPathComponent(CoreResources.bundleName, isDirectory: true)
-            try FileManager.default.createDirectory(at: core, withIntermediateDirectories: true)
-            try Data("<svg/>".utf8).write(to: core.appendingPathComponent("harness-test-color.svg"))
+            var files = core
+            if nestedCore {
+                let coreContents = core.appendingPathComponent("Contents", isDirectory: true)
+                files = coreContents.appendingPathComponent("Resources", isDirectory: true)
+                try FileManager.default.createDirectory(at: files, withIntermediateDirectories: true)
+                let corePlist: [String: Any] = ["CFBundleIdentifier": "test.core.\(UUID().uuidString)",
+                                                "CFBundlePackageType": "BNDL"]
+                try PropertyListSerialization.data(fromPropertyList: corePlist, format: .xml, options: 0)
+                    .write(to: coreContents.appendingPathComponent("Info.plist"))
+            }
+            try FileManager.default.createDirectory(at: files, withIntermediateDirectories: true)
+            try Data("<svg/>".utf8).write(to: files.appendingPathComponent("harness-test-color.svg"))
         }
         return (try #require(Bundle(url: bundleURL)), root)
     }
@@ -38,6 +50,19 @@ import Testing
         #expect(found.bundleURL.deletingLastPathComponent().standardizedFileURL
                 == appex.resourceURL?.standardizedFileURL)
         #expect(found.url(forResource: "harness-test-color", withExtension: "svg") != nil)
+    }
+
+    @Test func theCopyResolvesInEitherBuildSystemsLayout() throws {
+        for nested in [false, true] {
+            let (app, root) = try makeBundle("Quiver.app", withCore: true, nestedCore: nested)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let found = CoreResources.resolve(main: app) {
+                Issue.record("fell back to Bundle.module")
+                return .main
+            }
+            #expect(found.bundleURL.lastPathComponent == CoreResources.bundleName, "nested: \(nested)")
+            #expect(found.url(forResource: "harness-test-color", withExtension: "svg") != nil, "nested: \(nested)")
+        }
     }
 
     @Test func aPackagedBundleWithoutTheCopyFindsNothingRatherThanCrashing() throws {
