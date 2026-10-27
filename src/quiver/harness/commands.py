@@ -1491,7 +1491,7 @@ def cmd_remove(args):
     print(f"  {c('green', '✓')} Removed '{name}' from registry.")
 
 
-def cmd_use(args):
+def cmd_use(args, env: dict | None = None):
     if not args:
         print(c("red", "Usage: swe use <name|alias> [extra args...]"))
         cmd_list([])
@@ -1508,7 +1508,10 @@ def cmd_use(args):
         return 1
     label = f"{command} {' '.join(extra)}".strip()
     print(c("dim", f"  → {label}\n"))
-    os.execvp(command, [command] + extra)
+    if env:
+        os.execvpe(command, [command] + extra, {**os.environ, **env})
+    else:
+        os.execvp(command, [command] + extra)
 
 
 def cmd_check(args):

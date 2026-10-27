@@ -268,6 +268,53 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         #expect(row.usage?.accountHome == "/Users/k/.quiver/accounts/claude/w/home")
     }
 
+    @Test func extraAccountRowsCarryTheirAccountLabel() async throws {
+        var work = usage("w1", "claude", models: ["opus"], cost: 3, home: "/Users/k/.quiver/accounts/claude/w/home")
+        work.cwd = "/c/quiver"
+        let ledger = FakeSessionLedger()
+        await ledger.set([work, usage("a", "claude", models: [], cost: 0)])
+        let model = SessionsModel(
+            source: FakeSessionSource(list: SessionList(
+                sessions: [session("a", "claude", cwd: nil, at: 1_791_699_000)], failures: [])),
+            ledger: ledger, defaultHomes: ["/Users/k/.claude", "/Users/k/.codex"],
+            now: { [now] in now }, calendar: calendar,
+            accountLabel: { $0.hasSuffix("/w/home") ? "Claude: Work" : nil })
+        await model.load()
+
+        let row = try #require(model.rows.first { $0.session.id == "w1" })
+        #expect(row.account == "Claude: Work")
+        #expect(row.session.accountHome == "/Users/k/.quiver/accounts/claude/w/home")
+        // The default-home row keeps the bare harness name.
+        #expect(model.rows.first { $0.session.id == "a" }?.account == nil)
+        // The search matches the label, so "work" finds the account's rows.
+        model.filter.search = "work"
+        #expect(model.visible.map(\.session.id) == ["w1"])
+    }
+
+    @Test func aListedAccountSessionJoinsItsOwnUsageAndKeepsOneRow() async throws {
+        // swe lists account-home sessions with `account_home` set: the row
+        // takes that account's usage, its own title, and the ledger adds
+        // no second row for it.
+        var listed = session("w1", "claude", cwd: "/c/quiver", at: 1_791_699_000, title: "Account work")
+        listed.accountHome = "/Users/k/.quiver/accounts/claude/w/home"
+        var work = usage("w1", "claude", models: ["opus"], cost: 3, home: "/Users/k/.quiver/accounts/claude/w/home")
+        work.cwd = "/c/quiver"
+        let ledger = FakeSessionLedger()
+        await ledger.set([work])
+        let model = SessionsModel(
+            source: FakeSessionSource(list: SessionList(sessions: [listed], failures: [])),
+            ledger: ledger, defaultHomes: ["/Users/k/.claude", "/Users/k/.codex"],
+            now: { [now] in now }, calendar: calendar,
+            accountLabel: { _ in "Claude: Work" })
+        await model.load()
+
+        #expect(model.rows.count == 1)
+        let row = model.rows[0]
+        #expect(row.session.title == "Account work")
+        #expect(row.account == "Claude: Work")
+        #expect(row.usage?.totals.costUSD == 3)
+    }
+
     @Test func feedSessionsWithoutATranscriptComeFromTheLedger() async throws {
         let cursorHome = "/Users/k/Library/Application Support/Cursor"
         var cloud = usage("bc-1111", "cursor", models: ["claude-opus-5-5"], cost: 5, home: cursorHome)

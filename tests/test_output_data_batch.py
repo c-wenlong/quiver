@@ -375,6 +375,8 @@ class ClaudeCwdDedupeTest(unittest.TestCase):
             parsers, "parse_jsonl_projects", return_value=[older, newer]
         ), patch.object(
             parsers, "_claude_transcript_paths", return_value={}
+        ), patch.object(
+            parsers, "_account_homes", return_value=[]
         ):
             sessions = parsers.parse_claude()
         self.assertEqual(len(sessions), 1)
@@ -910,6 +912,8 @@ class ClaudeTranscriptStatFailureTest(unittest.TestCase):
             return_value=[anon, older, newer],
         ), patch.object(
             parsers, "_claude_transcript_paths", return_value={}
+        ), patch.object(
+            parsers, "_account_homes", return_value=[]
         ):
             sessions = parsers.parse_claude()
         self.assertEqual(len(sessions), 2)

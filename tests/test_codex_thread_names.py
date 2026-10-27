@@ -110,6 +110,9 @@ class ParseCodexTitleTest(unittest.TestCase):
                 # patched name: the mock would recurse into itself.
                 if path.startswith("~/.codex"):
                     return str(codex_home) + path[len("~/.codex"):]
+                # Account-home scans must not read the real ~/.quiver.
+                if path.startswith("~/.quiver"):
+                    return str(Path(tmp) / ".quiver") + path[len("~/.quiver"):]
                 return REAL_EXPANDUSER(path)
 
             with patch(
@@ -351,6 +354,9 @@ class CodexResumedThreadsTest(unittest.TestCase):
             def fake_expanduser(path):
                 if path.startswith("~/.codex"):
                     return str(codex_home) + path[len("~/.codex"):]
+                # Account-home scans must not read the real ~/.quiver.
+                if path.startswith("~/.quiver"):
+                    return str(Path(tmp) / ".quiver") + path[len("~/.quiver"):]
                 return REAL_EXPANDUSER(path)
 
             with patch(

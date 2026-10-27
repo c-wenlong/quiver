@@ -25,9 +25,13 @@ public struct SessionInfo: Codable, Sendable, Equatable, Identifiable {
     public var resume: Resume?
     /// Where a cloud session opens in the browser; nil for local ones.
     public var webURL: String?
+    /// The Quiver account home the session's transcripts sit under
+    /// (`~/.quiver/accounts/<vendor>/<id>/home`); nil for the harness's
+    /// default home.
+    public var accountHome: String?
 
     public init(id: String, harness: String, agent: String, cwd: String?, title: String?, titleSource: String?,
-                lastActiveAt: Date, status: String?, resume: Resume?) {
+                lastActiveAt: Date, status: String?, resume: Resume?, accountHome: String? = nil) {
         self.id = id
         self.harness = harness
         self.agent = agent
@@ -37,6 +41,7 @@ public struct SessionInfo: Codable, Sendable, Equatable, Identifiable {
         self.lastActiveAt = lastActiveAt
         self.status = status
         self.resume = resume
+        self.accountHome = accountHome
     }
 
     /// A session with no resume command that has a web page, which the
@@ -45,7 +50,7 @@ public struct SessionInfo: Codable, Sendable, Equatable, Identifiable {
 
     /// swe's client decodes with `convertFromSnakeCase`.
     enum CodingKeys: String, CodingKey {
-        case id, harness, agent, cwd, title, status, resume, titleSource, lastActiveAt, webURL
+        case id, harness, agent, cwd, title, status, resume, titleSource, lastActiveAt, webURL, accountHome
     }
 
     public init(from decoder: Decoder) throws {
@@ -59,6 +64,7 @@ public struct SessionInfo: Codable, Sendable, Equatable, Identifiable {
         status = try c.decodeIfPresent(String.self, forKey: .status)
         resume = try c.decodeIfPresent(Resume.self, forKey: .resume)
         webURL = try c.decodeIfPresent(String.self, forKey: .webURL)
+        accountHome = try c.decodeIfPresent(String.self, forKey: .accountHome)
         // A harness can list a session it has no id for; one such row must
         // not sink the whole list, so it gets a stable id of its own.
         id = try c.decodeIfPresent(String.self, forKey: .id)
@@ -78,6 +84,7 @@ public struct SessionInfo: Codable, Sendable, Equatable, Identifiable {
         try c.encodeIfPresent(status, forKey: .status)
         try c.encodeIfPresent(resume, forKey: .resume)
         try c.encodeIfPresent(webURL, forKey: .webURL)
+        try c.encodeIfPresent(accountHome, forKey: .accountHome)
     }
 
     public var project: String? { Self.project(of: cwd) }
@@ -211,6 +218,10 @@ public final class SessionsModel {
         public var id: String
         public var session: SessionInfo
         public var usage: SessionUsage?
+        /// The account's name when the session belongs to a Quiver extra
+        /// account ("Claude: Cortex"); nil for the default home, where the
+        /// harness's own name already says it.
+        public var account: String?
         /// When the session ran, for a source with no ledger usage to say
         /// it (Devin cloud sessions, from their message times).
         public var span: DateInterval?
@@ -218,11 +229,12 @@ public final class SessionsModel {
         /// desktop app recorded it.
         public var parent: SessionParent?
 
-        public init(session: SessionInfo, usage: SessionUsage?, id: String? = nil, span: DateInterval? = nil,
-                    parent: SessionParent? = nil) {
+        public init(session: SessionInfo, usage: SessionUsage?, id: String? = nil, account: String? = nil,
+                    span: DateInterval? = nil, parent: SessionParent? = nil) {
             self.id = id ?? session.id
             self.session = session
             self.usage = usage
+            self.account = account
             self.span = span
             self.parent = parent
         }
@@ -308,6 +320,9 @@ public final class SessionsModel {
     private let source: SessionListing
     private let ledger: SessionUsageQuerying
     private let defaultHomes: Set<String>
+    /// Names an account home for a row's details line ("Claude: Cortex");
+    /// nil answers leave the harness's own name on the row.
+    private let accountLabel: (String) -> String?
     private let limit: Int
     private let now: () -> Date
     private let calendar: Calendar
@@ -393,11 +408,13 @@ public final class SessionsModel {
                 listTimeout: Duration = .seconds(60),
                 parents: (@Sendable () async -> [String: SessionParent])? = nil,
                 now: @escaping () -> Date = Date.init, calendar: Calendar = .current,
-                searchIndex: URL? = nil, searchIndexingEnabled: Bool? = nil) {
+                searchIndex: URL? = nil, searchIndexingEnabled: Bool? = nil,
+                accountLabel: ((String) -> String?)? = nil) {
         self.readParents = parents
         self.source = source
         self.ledger = ledger
         self.defaultHomes = defaultHomes
+        self.accountLabel = accountLabel ?? { _ in nil }
         self.limit = limit
         self.snapshots = snapshots
         self.maxAge = maxAge
@@ -630,28 +647,48 @@ public final class SessionsModel {
             feed[id] = feed[id].map { Self.merged($0, use) } ?? use
         }
 
-        // swe's rows: Claude and Codex from their default home only; other
+        // swe's rows: Claude and Codex come from their default home and
+        // every Quiver account home (tagged `accountHome`); the other
         // harnesses have one store each, whatever its folder.
         var rows = sessions.map { session -> Row in
             let id = "\(session.harness)|\(session.id)"
-            if let use = feed[id] { return Row(session: session, usage: use) }
+            if let use = feed[id] {
+                return Row(session: session, usage: use,
+                           account: accountTag(listed: session.accountHome, usage: use.accountHome))
+            }
             let candidates = byHarnessAndId[id] ?? []
-            let use = Self.accountHarnesses.contains(session.harness)
-                ? candidates.first { defaultHomes.contains($0.accountHome) }
-                : candidates.max { $0.lastTimestamp < $1.lastTimestamp }
-            return Row(session: session, usage: use)
+            let use: SessionUsage?
+            // An account-home session joins its own account's usage; a
+            // default-home one the default's.
+            if Self.accountHarnesses.contains(session.harness) {
+                use = session.accountHome != nil
+                    ? candidates.first { $0.accountHome == session.accountHome }
+                    : candidates.first { defaultHomes.contains($0.accountHome) }
+            } else {
+                use = candidates.max { $0.lastTimestamp < $1.lastTimestamp }
+            }
+            return Row(session: session, usage: use,
+                       account: accountTag(listed: session.accountHome, usage: use?.accountHome))
         }
-        // Sessions in extra accounts, which swe never lists. The listing
-        // is unbounded, so these join at any age too and the window
-        // filter bounds what shows.
+        // A listed account-home session claims its own account's usage
+        // row; a session copied into a second account keeps both rows.
+        let listedAccountIds = Set(sessions.compactMap { s in
+            s.accountHome.map { "\(s.harness)|\($0)|\(s.id)" }
+        })
+        // Sessions in extra accounts no listing row claims: an older swe
+        // never scanned account homes, and a capped listing can still
+        // miss one. These join at any age and the window filter bounds
+        // what shows.
         for (key, use) in usage where Self.accountHarnesses.contains(key.harness)
-            && !defaultHomes.contains(key.account) {
+            && !defaultHomes.contains(key.account)
+            && !listedAccountIds.contains("\(key.harness)|\(key.account)|\(key.session)") {
             let argv = Self.resumeArgv(harness: key.harness, id: key.session)
             let session = SessionInfo(
                 id: key.session, harness: key.harness, agent: UsageFormat.harness(key.harness), cwd: use.cwd,
                 title: nil, titleSource: nil, lastActiveAt: use.lastTimestamp, status: nil,
-                resume: argv.map { .init(argv: $0, cwd: use.cwd) })
-            rows.append(Row(session: session, usage: use, id: "\(key.account)|\(key.session)"))
+                resume: argv.map { .init(argv: $0, cwd: use.cwd) }, accountHome: key.account)
+            rows.append(Row(session: session, usage: use, id: "\(key.account)|\(key.session)",
+                            account: accountTag(listed: nil, usage: key.account)))
         }
         // Feed sessions swe has no transcript for: cloud runs, Grok Bot and
         // editor chats. Usage is all there is, so they have no title,
@@ -661,7 +698,8 @@ public final class SessionsModel {
             let session = SessionInfo(
                 id: use.sessionId, harness: use.harness, agent: UsageFormat.harness(use.harness), cwd: use.cwd,
                 title: nil, titleSource: nil, lastActiveAt: use.lastTimestamp, status: nil, resume: nil)
-            rows.append(Row(session: session, usage: use, id: id))
+            rows.append(Row(session: session, usage: use, id: id,
+                            account: accountTag(listed: nil, usage: use.accountHome)))
         }
         // Devin cloud sessions: API-listed, no usage, opened in the browser.
         for session in cloud {
@@ -672,6 +710,14 @@ public final class SessionsModel {
             rows[index].parent = parents[rows[index].session.id]
         }
         return rows.sorted { ($0.session.lastActiveAt, $1.id) > ($1.session.lastActiveAt, $0.id) }
+    }
+
+    /// The account name that stands in for the harness's name on a row
+    /// ("Claude: Cortex"): set for sessions in Quiver's extra account
+    /// homes, nil for a default home or a home no extra profile owns.
+    private func accountTag(listed sessionHome: String?, usage usageHome: String?) -> String? {
+        guard let home = sessionHome ?? usageHome, !defaultHomes.contains(home) else { return nil }
+        return accountLabel(home)
     }
 
     static func codexThreadId(_ id: String) -> String? {
@@ -971,7 +1017,7 @@ public final class SessionsModel {
         if let key = filter.project, keys.key(project(for: s)) != key { return false }
         if let model = filter.model, !(row.usage?.models.contains(model) ?? false) { return false }
         if !needle.isEmpty {
-            let haystack = ([s.title, s.cwd, project(for: s), s.id, s.agent, row.location.title]
+            let haystack = ([s.title, s.cwd, project(for: s), s.id, s.agent, row.account, row.location.title]
                 + (row.usage?.models ?? []).map(Optional.some))
                 .compactMap { $0 }.joined(separator: " ").lowercased()
             // swe's union: a transcript hit keeps a session the metadata

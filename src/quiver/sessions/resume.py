@@ -50,6 +50,14 @@ LIMITED_RESUME = frozenset(
     }
 )
 
+# The env var each account-aware harness reads for its config home, so a
+# session in a Quiver account home resumes under that account, not the
+# default home.
+ACCOUNT_HOME_ENV = {
+    "claude": "CLAUDE_CONFIG_DIR",
+    "codex": "CODEX_HOME",
+}
+
 
 def launch_tool_name(tool_name: str) -> str:
     return launch_tool(tool_name)
@@ -71,7 +79,12 @@ def resume_json(session) -> dict | None:
     flags = resume_flags(session)
     if not flags:
         return None
+    env = None
+    variable = ACCOUNT_HOME_ENV.get(session.tool_name)
+    if variable and session.account_home:
+        env = {variable: session.account_home}
     return ResumeCmd(
         argv=[launch_tool_name(session.tool_name), *flags],
         cwd=session.path or None,
+        env=env,
     ).to_json()

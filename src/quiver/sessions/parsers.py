@@ -470,6 +470,24 @@ def _claude_handed_off(path: str) -> str:
     return ""
 
 
+def _account_homes(vendor: str) -> list[str]:
+    """Each Quiver account home for ``vendor``, sorted for stable order.
+
+    Quiver's extra accounts keep a harness-shaped config dir at
+    ``~/.quiver/accounts/<vendor>/<id>/home`` — the same layout the default
+    home has, so a harness's sessions there parse exactly like its own.
+    Sessions found under one are tagged with it as their ``account_home``,
+    which the listing's consumers use to name the account and resume
+    under it.
+    """
+    root = os.path.expanduser(f"~/.quiver/accounts/{vendor}")
+    return sorted(
+        home
+        for home in glob.glob(os.path.join(root, "*", "home"))
+        if os.path.isdir(home)
+    )
+
+
 def parse_claude():
     def path_from_event(data: dict) -> str:
         # cwd often only appears as raw field in early lines
@@ -493,24 +511,36 @@ def parse_claude():
             return (1, str(data.get("aiTitle") or ""), "auto")
         return None
 
-    base = os.path.expanduser("~/.claude/projects/")
-    sessions = parse_jsonl_projects(
-        JsonlParserConfig(
-            tool_name="claude",
-            agent="Claude Code",
-            base_dir=base,
-            mode="nested_jsonl",
-            project_filter=lambda name, _p: name.startswith("-"),
-            path_from_event=path_from_event,
-            path_from_project_dir=lambda name: path_from_encoded_dir(name, "-"),
-            title_from_event=title_from_event,
-            tail_title_from_event=tail_title_from_event,
-            title_max_len=50,
-            # One row per jsonl so multi-chat projects all appear in swe session
-            one_session_per_file=True,
-            require_path=True,
+    # The default home first, then every Quiver account home: each holds
+    # its own projects tree in the same layout, and sessions from one are
+    # tagged with their home so their account can be named and resumed.
+    roots = [(os.path.expanduser("~/.claude/projects/"), "")]
+    roots += [
+        (os.path.join(home, "projects"), home) for home in _account_homes("claude")
+    ]
+    sessions: list[Session] = []
+    for base, account_home in roots:
+        batch = parse_jsonl_projects(
+            JsonlParserConfig(
+                tool_name="claude",
+                agent="Claude Code",
+                base_dir=base,
+                mode="nested_jsonl",
+                project_filter=lambda name, _p: name.startswith("-"),
+                path_from_event=path_from_event,
+                path_from_project_dir=lambda name: path_from_encoded_dir(name, "-"),
+                title_from_event=title_from_event,
+                tail_title_from_event=tail_title_from_event,
+                title_max_len=50,
+                # One row per jsonl so multi-chat projects all appear in swe session
+                one_session_per_file=True,
+                require_path=True,
+            )
         )
-    )
+        if account_home:
+            for sess in batch:
+                sess.account_home = account_home
+        sessions += batch
 
     # The same session id resumed under a second project dir would list
     # twice: one conversation, one row — the newest timestamp is the
@@ -534,19 +564,20 @@ def parse_claude():
     # otherwise the whole conversation would vanish from the listing.
     by_id = {sess.session_id: sess for sess in sessions if sess.session_id}
     superseded: set[str] = set()
-    for session_id, file_path in _claude_transcript_paths(base).items():
-        if session_id not in by_id:
-            continue
-        # The tail read depends on the file alone; whether the successor is
-        # listed is decided fresh every run.
-        successor = parse_cache.lookup(
-            "claude:handoff",
-            file_path,
-            lambda fp=file_path: _claude_handed_off(fp),
-            valid=lambda v: isinstance(v, str),
-        )
-        if successor and successor in by_id:
-            superseded.add(session_id)
+    for base, _account_home in roots:
+        for session_id, file_path in _claude_transcript_paths(base).items():
+            if session_id not in by_id:
+                continue
+            # The tail read depends on the file alone; whether the successor is
+            # listed is decided fresh every run.
+            successor = parse_cache.lookup(
+                "claude:handoff",
+                file_path,
+                lambda fp=file_path: _claude_handed_off(fp),
+                valid=lambda v: isinstance(v, str),
+            )
+            if successor and successor in by_id:
+                superseded.add(session_id)
     if not superseded:
         return sessions
     return [s for s in sessions if s.session_id not in superseded]
@@ -822,19 +853,31 @@ def parse_codex():
             return ""
         return extract_user_text(payload.get("content"))
 
-    sessions = parse_jsonl_projects(
-        JsonlParserConfig(
-            tool_name="codex",
-            agent="Codex CLI",
-            base_dir=os.path.expanduser("~/.codex/sessions/"),
-            mode="glob",
-            session_glob="*/*/*/*.jsonl",
-            path_from_event=path_from_event,
-            title_from_event=title_from_event,
-            title_max_len=80,
-            require_path=True,
+    # Like claude, every Quiver account home holds its own dated rollout
+    # tree; sessions from one are tagged with it as their account home.
+    roots = [(os.path.expanduser("~/.codex/sessions/"), "")]
+    roots += [
+        (os.path.join(home, "sessions"), home) for home in _account_homes("codex")
+    ]
+    sessions: list[Session] = []
+    for base, account_home in roots:
+        batch = parse_jsonl_projects(
+            JsonlParserConfig(
+                tool_name="codex",
+                agent="Codex CLI",
+                base_dir=base,
+                mode="glob",
+                session_glob="*/*/*/*.jsonl",
+                path_from_event=path_from_event,
+                title_from_event=title_from_event,
+                title_max_len=80,
+                require_path=True,
+            )
         )
-    )
+        if account_home:
+            for sess in batch:
+                sess.account_home = account_home
+        sessions += batch
 
     # Resuming a thread writes another rollout file, and every file of one
     # thread carries the same thread uuid in its stem — so the files collapse

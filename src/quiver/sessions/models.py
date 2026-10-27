@@ -15,6 +15,11 @@ class Session:
     # source, "rename" for a name the user set, "auto" for one the harness
     # generated. Lets the listing mark renamed sessions apart.
     title_source: str = ""
+    # The Quiver account home the transcript sits under when it is not the
+    # harness's default home (``~/.quiver/accounts/<vendor>/<id>/home``);
+    # "" for a session in the default home. The consumer labels the row
+    # with the account's name and resumes under this home, not the default.
+    account_home: str = ""
 
     def __post_init__(self) -> None:
         # Coerce at the boundary so one malformed record cannot poison the
@@ -39,6 +44,7 @@ class Session:
             "session_id",
             "tool_name",
             "title_source",
+            "account_home",
         ):
             value = getattr(self, field)
             if not isinstance(value, str):
@@ -51,9 +57,15 @@ class ResumeCmd:
 
     argv: list
     cwd: str | None
+    # Env vars the harness needs to find this session, such as
+    # CLAUDE_CONFIG_DIR for a session that lives in an account home.
+    env: dict | None = None
 
     def to_json(self) -> dict:
-        return {"argv": self.argv, "cwd": self.cwd}
+        out = {"argv": self.argv, "cwd": self.cwd}
+        if self.env:
+            out["env"] = self.env
+        return out
 
 
 @dataclass(frozen=True)
@@ -69,6 +81,9 @@ class SessionRow:
     last_active_at: float
     status: str | None
     resume: dict | None
+    # The Quiver account home holding the session's transcripts, or None
+    # for the harness's default home.
+    account_home: str | None = None
 
     @classmethod
     def of(cls, session, status: str, resume: dict | None) -> "SessionRow":
@@ -84,6 +99,7 @@ class SessionRow:
             last_active_at=session.timestamp / 1000,
             status=status or None,
             resume=resume,
+            account_home=session.account_home or None,
         )
 
     def to_json(self) -> dict:
@@ -97,4 +113,5 @@ class SessionRow:
             "last_active_at": self.last_active_at,
             "status": self.status,
             "resume": self.resume,
+            "account_home": self.account_home,
         }
