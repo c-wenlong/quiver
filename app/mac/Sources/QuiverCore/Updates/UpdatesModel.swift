@@ -174,7 +174,12 @@ public final class UpdatesModel {
         try? "\(ProcessInfo.processInfo.processIdentifier)".write(
             to: buildDir.appending(path: "owner.pid"),
             atomically: true, encoding: .utf8)
-        let script = checkout + "/app/mac/script/build-app.sh"
+        // A checkout on a commit from before the app moved to app/mac has
+        // its build script at app/script.
+        var script = checkout + "/app/mac/script/build-app.sh"
+        if !FileManager.default.fileExists(atPath: script) {
+            script = checkout + "/app/script/build-app.sh"
+        }
         // A build is minutes, not seconds, but a wedged one must not pin
         // rebuildState at .building forever: the runner bounds the run and
         // every way out of here resets the state.
