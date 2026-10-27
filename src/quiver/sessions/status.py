@@ -335,22 +335,52 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
-def _devin_lock_alive(session_id: str) -> bool:
+def _devin_locks_dir() -> str:
+    return os.path.expanduser("~/.local/share/devin/cli/session_locks")
+
+
+def _devin_shared_lock_pids(locks_dir: str) -> set[int]:
+    """Pids claimed by more than one session's lock.
+
+    A ``devin`` CLI session owns its process, so its lock's pid proves the
+    turn is alive. Devin Desktop hosts every session in one ``devin acp``
+    process: all locks name the same pid, which stays up for as long as
+    the app is open whether or not this session's turn is.
+    """
+    counts: dict[int, int] = {}
+    try:
+        names = os.listdir(locks_dir)
+    except OSError:
+        return set()
+    for name in names:
+        if not name.endswith(".lock"):
+            continue
+        try:
+            with open(os.path.join(locks_dir, name),
+                      encoding="utf-8") as fh:
+                pid = int(fh.read().strip())
+        except Exception:
+            continue
+        counts[pid] = counts.get(pid, 0) + 1
+    return {pid for pid, n in counts.items() if n > 1}
+
+
+def _devin_lock_alive(session_id: str, shared_pids: set[int]) -> bool:
     """True when the session's ``session_locks`` pid is still running.
 
     ``devin acp`` writes ``~/.local/share/devin/cli/session_locks/<id>.lock``
-    holding its decimal pid for as long as the session process runs.
+    holding its decimal pid for as long as the session process runs. A pid
+    other locks share is the Desktop host, so it cannot prove this one
+    session's turn is alive; those sessions fall back to the transcript
+    freshness check alone.
     """
-    path = os.path.join(
-        os.path.expanduser("~/.local/share/devin/cli/session_locks"),
-        session_id + ".lock",
-    )
+    path = os.path.join(_devin_locks_dir(), session_id + ".lock")
     try:
         with open(path, encoding="utf-8") as fh:
             pid = int(fh.read().strip())
     except Exception:
         return False
-    return _pid_alive(pid)
+    return pid not in shared_pids and _pid_alive(pid)
 
 
 def _probe_devin(session: Session, ctx: dict):
@@ -867,6 +897,9 @@ def session_statuses(sessions: list[Session], now: float | None = None) -> list[
         "devin_conn": _open_devin_db()
         if any(s.tool_name == "devin" for s in sessions)
         else None,
+        "devin_shared_pids": _devin_shared_lock_pids(_devin_locks_dir())
+        if any(s.tool_name == "devin" for s in sessions)
+        else set(),
         "opencode_conn": _open_opencode_db()
         if any(s.tool_name == "opencode" for s in sessions)
         else None,
@@ -907,7 +940,9 @@ def _one_status(session: Session, now: float, ctx: dict) -> str:
         if session.tool_name == "claude":
             alive = alive or session.session_id in ctx["claude_live"]
         elif session.tool_name == "devin":
-            alive = alive or _devin_lock_alive(session.session_id)
+            alive = alive or _devin_lock_alive(
+                session.session_id, ctx["devin_shared_pids"]
+            )
         elif session.tool_name == "cline":
             alive = alive or _cline_pid_alive(session.session_id)
         return ACTIVE if alive else INTERRUPTED

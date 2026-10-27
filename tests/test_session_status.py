@@ -464,6 +464,29 @@ class DevinStatusTest(StatusTestBase):
         s = _session("devin", "d7", age_s=9999)
         self.assertEqual(INTERRUPTED, session_status(s, now=NOW))
 
+    def test_shared_lock_pid_is_interrupted(self):
+        # Devin Desktop hosts every session in one ``devin acp`` process:
+        # a pid other locks name proves the app is up, not this turn.
+        self._tool_head_db("d11")
+        self._write_lock("d11", str(os.getpid()))
+        self._write_lock("another-session", str(os.getpid()))
+        s = _session("devin", "d11", age_s=9999)
+        self.assertEqual(INTERRUPTED, session_status(s, now=NOW))
+
+    def test_shared_lock_pid_still_active_when_fresh(self):
+        self._tool_head_db("d12")
+        self._write_lock("d12", str(os.getpid()))
+        self._write_lock("another-session", str(os.getpid()))
+        s = _session("devin", "d12", age_s=0)
+        self.assertEqual(ACTIVE, session_status(s, now=NOW))
+
+    def test_dead_shared_lock_pid_is_interrupted(self):
+        self._tool_head_db("d13")
+        self._write_lock("d13", str(2 ** 22))
+        self._write_lock("another-session", str(2 ** 22))
+        s = _session("devin", "d13", age_s=9999)
+        self.assertEqual(INTERRUPTED, session_status(s, now=NOW))
+
     def test_missing_lock_file_is_interrupted(self):
         self._tool_head_db("d8")
         s = _session("devin", "d8", age_s=9999)
