@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Slash-command menu in the Mac app's session chat.** Typing `/` at
+  the start of the prompt box opens the commands this session's harness
+  will run — built-ins, user and project commands, skills and plugin
+  commands as the hub lists them for the session — filtered as you type.
+  Arrows move the highlight, Return or Tab inserts the command (an
+  existing space is reused and `$`-style insert text is honoured),
+  Escape closes the menu, and the command goes out as a normal message
+  the harness expands on arrival, like the iPhone app's menu and the
+  remote PWA's.
+
 - **Report a bug from the app or the terminal.** The Mac app's Help menu
   now has Report a Bug, Request a Feature, Copy Diagnostics and Quiver
   Documentation, and Settings › General has a Feedback card under Doctor

@@ -110,6 +110,9 @@ public final class SessionChatModel {
     /// A Stop is on its way to the hub.
     public private(set) var stopping = false
     public private(set) var attaching = false
+    /// The prompt box's `/` menu: the commands this session's harness
+    /// will run, fetched once while the menu is open.
+    public let commands = SlashCommandMenu()
 
     /// Messages per `/messages` page.
     public static let pageSize = 100
@@ -162,6 +165,9 @@ public final class SessionChatModel {
     public init(key: String, hub: LocalHub) {
         self.key = key
         self.hub = hub
+        commands.fetch = { [hub, key] in
+            try await hub.withClient { try await $0.commands(key) }
+        }
     }
 
     /// The agent is mid-turn, or a send waits for its first reply.
@@ -220,6 +226,8 @@ public final class SessionChatModel {
         streamTask?.cancel()
         streamTask = nil
         connection = .connecting
+        // The prompt box's menu may still be open from before stop().
+        commands.reset()
     }
 
     private func follow(_ gen: Int, from last: Int) {

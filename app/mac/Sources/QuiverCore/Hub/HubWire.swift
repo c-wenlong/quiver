@@ -165,6 +165,79 @@ struct HubCommandResult: Decodable {
 /// holds the send until the agent's turn ends.
 struct HubSendAccepted: Decodable { let waiting: Bool? }
 
+/// One row of `GET /v1/sessions/<key>/commands`: a slash command the
+/// session's harness will run. The hub only lists them — a pick puts
+/// its text in the prompt box and it goes out as a normal message, so
+/// the harness expands it on arrival.
+public struct SlashCommand: Codable, Sendable, Equatable, Hashable {
+    public var name: String
+    public var description: String?
+    /// `builtin`, `user`, `project`, `skill` or `plugin`.
+    public var source: String?
+    public var argumentHint: String?
+    public var argumentRequired: Bool?
+    /// What to put in the prompt box when it isn't `/name ` (Codex
+    /// skills are `$name `).
+    public var insert: String?
+
+    public init(name: String, description: String? = nil, source: String? = nil,
+                argumentHint: String? = nil, argumentRequired: Bool? = nil, insert: String? = nil) {
+        self.name = name
+        self.description = description
+        self.source = source
+        self.argumentHint = argumentHint
+        self.argumentRequired = argumentRequired
+        self.insert = insert
+    }
+
+    /// What the box gets on a pick, always ending in a space.
+    public var insertText: String {
+        let text = (insert?.isEmpty == false ? insert! : "/\(name)")
+        return text.last?.isWhitespace == true ? text : text + " "
+    }
+
+    /// How the menu names it: the inserted text without its space.
+    public var label: String { insertText.trimmingCharacters(in: .whitespaces) }
+
+    /// The source tag, in sentence case.
+    public var sourceLabel: String? {
+        switch source {
+        case nil, "": nil
+        case "builtin": "Built-in"
+        case "user": "User"
+        case "project": "Project"
+        case "skill": "Skill"
+        case "plugin": "Plugin"
+        case let s?: s.prefix(1).uppercased() + s.dropFirst()
+        }
+    }
+}
+
+/// `GET /v1/sessions/<key>/commands`: the prompt box's `/` menu.
+public struct CommandsResponse: Decodable, Sendable {
+    public var key: String?
+    public var harness: String?
+    public var channel: String?
+    public var attached: Bool?
+    public var supported: Bool?
+    public var customAvailable: Bool?
+    public var commands: [SlashCommand]
+    public var note: String?
+
+    public init(key: String? = nil, harness: String? = nil, channel: String? = nil,
+                attached: Bool? = nil, supported: Bool? = nil, customAvailable: Bool? = nil,
+                commands: [SlashCommand], note: String? = nil) {
+        self.key = key
+        self.harness = harness
+        self.channel = channel
+        self.attached = attached
+        self.supported = supported
+        self.customAvailable = customAvailable
+        self.commands = commands
+        self.note = note
+    }
+}
+
 /// A launch the hub accepted (`202` from `POST /v1/issues/resolve`) and
 /// what `GET /v1/launches/<id>` says of it since: `pending` while the
 /// hub works (`note` names the step), then `started` once its catalog

@@ -121,6 +121,12 @@ public struct HubClient: Sendable {
                        as: HubSendAccepted.self).waiting == true
     }
 
+    /// The slash commands this session's harness will run, for the
+    /// prompt box's `/` menu.
+    public func commands(_ key: String) async throws -> CommandsResponse {
+        try await send(request("GET", Self.sessionPath(key, "commands")))
+    }
+
     /// `interrupt` stops the agent's turn. Returns true when the hub
     /// queued it for a satellite (202), whose `command.result` follows.
     @discardableResult
