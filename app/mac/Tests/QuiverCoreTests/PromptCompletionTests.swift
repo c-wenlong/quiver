@@ -214,6 +214,15 @@ import Testing
         #expect(!SlashCommandMenu.shouldLoad(open: true, opening: false, loaded: false, loading: false, failed: true))
     }
 
+    @Test func returnPicksSendsOrWaits() {
+        #expect(Slash.ReturnAction.action(row: true, loading: false) == .pick)
+        #expect(Slash.ReturnAction.action(row: true, loading: true) == .pick)
+        #expect(Slash.ReturnAction.action(row: false, loading: true) == .wait)
+        // An answered list with nothing pickable — no match, a failed
+        // fetch, an unsupported harness — falls through to send.
+        #expect(Slash.ReturnAction.action(row: false, loading: false) == .send)
+    }
+
     @Test func failuresBecomeOneLine() {
         #expect(SlashCommandMenu.message(for: HubError(status: 422, code: "unknown_session", message: "x"))
             == "The hub doesn't know this session any more")

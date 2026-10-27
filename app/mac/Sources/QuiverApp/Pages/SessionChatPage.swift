@@ -391,8 +391,17 @@ private struct Composer: View {
                         if press.modifiers.contains(.shift) {
                             newline()
                         } else if model.commands.isOpen {
-                            // With no rows yet, Return waits for the list.
-                            if let command = activeCommand { pick(command) }
+                            switch Slash.ReturnAction.action(
+                                row: activeCommand != nil,
+                                loading: model.commands.loading
+                            ) {
+                            case .pick:
+                                if let command = activeCommand { pick(command) }
+                            case .send:
+                                submit()
+                            case .wait:
+                                break
+                            }
                         } else {
                             submit()
                         }
@@ -479,7 +488,11 @@ private struct SlashCommandMenuCard: View {
     @Binding var active: Int
     var onPick: (SlashCommand) -> Void
 
-    static let rowHeight: CGFloat = 40
+    /// The row's height at the current text zoom: its two text lines
+    /// grow with it, so the scroll window's cap must match.
+    private var rowHeight: CGFloat {
+        TextZoom.pointSize(40, at: TextZoomModel.shared.zoom)
+    }
     static let visibleRows = 6
 
     var body: some View {
@@ -520,7 +533,7 @@ private struct SlashCommandMenuCard: View {
             ScrollViewReader { proxy in
                 ScrollView(.vertical) { stack(rows: rows, notes: notes) }
                     .defaultScrollAnchor(.top)
-                    .frame(height: CGFloat(Self.visibleRows) * Self.rowHeight)
+                    .frame(height: CGFloat(Self.visibleRows) * rowHeight)
                     .onChange(of: active) { _, i in proxy.scrollTo(min(i, rows.count - 1)) }
             }
         } else {
@@ -565,7 +578,7 @@ private struct SlashCommandMenuCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 12)
-        .frame(minHeight: Self.rowHeight)
+        .frame(minHeight: rowHeight)
     }
 
     /// The lit row clamped into the list.
@@ -600,7 +613,7 @@ private struct SlashCommandMenuCard: View {
             }
         }
         .padding(.horizontal, 12)
-        .frame(height: Self.rowHeight)
+        .frame(height: rowHeight)
         .contentShape(.rect)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel([command.label, command.argumentHint, command.description, command.sourceLabel]

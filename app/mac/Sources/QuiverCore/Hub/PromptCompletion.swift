@@ -76,6 +76,20 @@ public enum Slash {
         return (String(chars), inserted.count + (reuseSpace ? 1 : 0))
     }
 
+    /// What a plain Return does while the `/` menu is open: a lit row
+    /// picks it; once the list has answered with nothing pickable — no
+    /// match, a failed fetch, an unsupported harness — the draft sends
+    /// as typed; while the fetch is still out Return waits.
+    public enum ReturnAction: Sendable, Equatable {
+        case pick, send, wait
+
+        /// `row` is whether a row is lit right now.
+        public static func action(row: Bool, loading: Bool) -> ReturnAction {
+            if row { return .pick }
+            return loading ? .wait : .send
+        }
+    }
+
     /// What the menu says besides its rows: the line in place of an empty
     /// list, and muted footnotes under it.
     public static func notes(_ r: CommandsResponse, harness: String, machine: String, remote: Bool)
