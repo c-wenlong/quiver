@@ -459,26 +459,35 @@ function controlErrorText(status, data, fallback) {
   return status ? `The hub answered ${status}.` : fallback;
 }
 
+/* The action can start from a chat's details sheet, and a reply can
+ * land after the list was left: only the visible list is repainted —
+ * anything else would overwrite the open view (a chat draft included).
+ * #session-search exists only in the list's own markup. */
+const sessionsListVisible = () => !!document.getElementById("session-search");
+
 /* A finished write leaves the row's ownership stale until the next list:
  * refetch rather than patch it, so badges and actions always agree. */
 async function runControl(r, op, mode, doneNote) {
   const s = sessionsPage;
   if (s.acting.has(r.key)) return;
   s.acting.add(r.key);
-  paintSessions();
+  if (sessionsListVisible()) paintSessions();
   const { status, data } = await sessionControl(r.key, op, mode);
   s.acting.delete(r.key);
   if (status === 401) {
-    return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (sessionsListVisible()) {
+      return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    }
+    return;
   }
   if (status === 200 || status === 202) {
     s.actionNote = doneNote || "";
-    renderSessions("sessions");
+    if (sessionsListVisible()) renderSessions("sessions");
     return;
   }
   s.actionNote = controlErrorText(status, data,
     `Couldn't ${op === "attach" ? "attach it" : "detach it"}. Check the connection, then try again.`);
-  paintSessions();
+  if (sessionsListVisible()) paintSessions();
 }
 
 function attachRow(r) {
@@ -637,7 +646,8 @@ async function sessionDetails(key) {
 const ns = {
   machines: null,            // /v1/machines answer, cached per sheet open
   machineId: null, harness: null, folder: "", prompt: "", query: "",
-  browse: null,              // {path, parent, folders, error, loading}
+  harnessTouched: false,     // a picked harness keeps its choice across folder changes
+  browse: null, browseSeq: 0,  // {path, parent, folders, error, loading}
   phase: "idle", message: "", seq: 0,  // idle|starting|waiting|started|failed|unconfirmed
 };
 
@@ -716,9 +726,7 @@ function nsPaint() {
     machines.map((m) => `<button type="button" class="tab ns-chip${m.id === ns.machineId ? " selected" : ""}"
       data-machine="${esc(m.id)}"${busy ? " disabled" : ""}>${esc(m.name || m.id)}${m.online === false ? " · offline" : ""}</button>`).join("")
   }</div>` : "";
-  const harnessChips = nsHarnesses().map((h) => `<button type="button"
-      class="tab ns-chip${h === ns.harness ? " selected" : ""}" data-harness="${esc(h)}"${busy ? " disabled" : ""}>
-      ${Fmt.logo(h)}<span>${esc(nsHarnessName(machine, h))}</span></button>`).join("");
+  const harnessChips = `<div class="ns-chips" id="ns-harness-chips">${nsHarnessChips(machine, busy)}</div>`;
   const folders = nsFolders(machine).slice(0, 6);
   const browseUi = browse ? `<div class="ns-browse">
       <div class="ns-path">${esc(browse.path || "…")}</div>
@@ -726,7 +734,7 @@ function nsPaint() {
       ${browse.error ? `<p class="error">${esc(browse.error)}</p>` : ""}
       ${browse.parent ? `<button type="button" class="ns-folder" data-path="${esc(browse.parent)}">..</button>` : ""}
       ${(browse.folders || []).map((f) => `<button type="button" class="ns-folder" data-path="${esc(f.path)}">${esc(f.name)}/</button>`).join("")}
-      ${!browse.loading && !browse.error ? `<div class="sheet-actions"><button type="button" class="tab selected" id="ns-browse-use">Use this folder</button></div>` : ""}
+      ${!browse.loading && !browse.error ? `<div class="sheet-actions"><button type="button" class="tab selected" id="ns-browse-use" data-path="${esc(browse.path)}">Use this folder</button></div>` : ""}
     </div>` : "";
   const note = ns.message ? `<p class="${ns.phase === "failed" ? "error" : "note"}">${esc(ns.message)}</p>` : "";
   const startLabel = { starting: "Starting…", waiting: "Waiting for the session…", started: "Opening the chat…" }[ns.phase] || "Start";
@@ -737,7 +745,7 @@ function nsPaint() {
     ${!machines.length ? `<p class="note">No machine can start a session. Update swe on the hub: a machine
       offers the harnesses swe lists there, minus the ones switched off in Provider visibility.</p>` : ""}
     <div class="caption">Harness</div>
-    <div class="ns-chips">${harnessChips}</div>
+    ${harnessChips}
     ${untracked ? `<p class="note">Quiver can't read ${esc(nsHarnessName(machine, ns.harness))} sessions yet: it starts, but no chat opens.</p>` : ""}
     <div class="caption">Folder</div>
     <input class="field ns-path-input" id="ns-folder" type="text" autocomplete="off" spellcheck="false"
@@ -762,22 +770,29 @@ function nsPaint() {
       if (b.dataset.machine === ns.machineId) return;
       ns.machineId = b.dataset.machine;
       ns.harness = null;
+      ns.harnessTouched = false;
       ns.browse = null;
       nsPickHarness();
       nsPaint();
     };
   }
   for (const b of sheet.querySelectorAll("[data-harness]")) {
-    b.onclick = () => { ns.harness = b.dataset.harness; nsPaint(); };
+    b.onclick = () => { ns.harness = b.dataset.harness; ns.harnessTouched = true; nsPaint(); };
   }
   for (const b of sheet.querySelectorAll(".ns-folder")) {
     b.onclick = () => {
       if (ns.browse) nsBrowse(b.dataset.path);   // inside the browser: descend
-      else { ns.folder = b.dataset.path; nsPaint(); }
+      else { nsPickFolder(b.dataset.path); }
     };
   }
   const folderIn = sheet.querySelector("#ns-folder");
-  if (folderIn) folderIn.oninput = () => { ns.folder = folderIn.value; nsPaintStart(); };
+  if (folderIn) folderIn.oninput = () => {
+    ns.folder = folderIn.value;
+    // A typed folder re-defaults the harness too, repainted in place so
+    // the field keeps its caret.
+    if (!ns.harnessTouched) { nsPickHarness(); nsPaintHarness(); }
+    nsPaintStart();
+  };
   const queryIn = sheet.querySelector("#ns-query");
   if (queryIn) queryIn.oninput = () => { ns.query = queryIn.value; nsPaintLists(); };
   const promptIn = sheet.querySelector("#ns-prompt");
@@ -785,7 +800,7 @@ function nsPaint() {
   const browseBtn = sheet.querySelector("#ns-browse");
   if (browseBtn) browseBtn.onclick = () => nsBrowse(ns.folder.trim());
   const use = sheet.querySelector("#ns-browse-use");
-  if (use) use.onclick = () => { ns.folder = ns.browse.path; ns.browse = null; nsPaint(); };
+  if (use) use.onclick = () => { ns.browse = null; nsPickFolder(use.dataset.path || ""); };
   sheet.querySelector("#ns-cancel").onclick = () => {
     ns.seq++;              // in-flight polls drop their replies
     ns.phase = "idle"; ns.message = "";
@@ -809,8 +824,32 @@ function nsPaintLists() {
       data-path="${esc(p)}"${busy ? " disabled" : ""}>${esc(p)}</button>`).join("")
     || '<p class="caption" style="padding:8px 10px">No recent folders match.</p>';
   for (const b of box.querySelectorAll(".ns-folder")) {
-    b.onclick = () => { ns.folder = b.dataset.path; nsPaint(); };
+    b.onclick = () => nsPickFolder(b.dataset.path);
   }
+}
+
+function nsHarnessChips(machine, busy) {
+  return nsHarnesses().map((h) => `<button type="button"
+    class="tab ns-chip${h === ns.harness ? " selected" : ""}" data-harness="${esc(h)}"${busy ? " disabled" : ""}>
+    ${Fmt.logo(h)}<span>${esc(nsHarnessName(machine, h))}</span></button>`).join("");
+}
+
+/* The chips repaint alone when a typed folder re-defaults the harness. */
+function nsPaintHarness() {
+  const box = document.getElementById("ns-harness-chips");
+  if (!box) return;
+  box.innerHTML = nsHarnessChips(nsMachine(), nsBusy());
+  for (const b of box.querySelectorAll("[data-harness]")) {
+    b.onclick = () => { ns.harness = b.dataset.harness; ns.harnessTouched = true; nsPaint(); };
+  }
+}
+
+/* A folder pick repaints the whole sheet — and re-defaults the harness
+ * to the folder's usual one unless the user picked a harness by hand. */
+function nsPickFolder(path) {
+  ns.folder = path;
+  if (!ns.harnessTouched) nsPickHarness();
+  nsPaint();
 }
 
 /* The iPhone's defaultHarness: the harness last used in that folder on
@@ -827,12 +866,13 @@ async function nsBrowse(path) {
   ns.browse = ns.browse || {};
   ns.browse.loading = true;
   ns.browse.error = "";
+  const mine = ++ns.browseSeq;   // a slower earlier listing must not win
   nsPaint();
   const m = ns.machineId || "";
   // An empty path is the hub machine's home; only absolute ones go over.
   const qp = path && path.startsWith("/") ? `path=${encodeURIComponent(path)}&` : "";
   const { status, data } = await api(`/v1/folders?${qp}machine=${encodeURIComponent(m)}`);
-  if (!ns.browse) return;
+  if (!ns.browse || mine !== ns.browseSeq) return;
   ns.browse.loading = false;
   if (status === 200 && data) {
     ns.browse.path = data.path;
@@ -856,10 +896,12 @@ async function openNewSession() {
   ns.machines = null;
   ns.machineId = null;
   ns.harness = null;
+  ns.harnessTouched = false;
   ns.folder = ns.folder || "";   // the last folder is a good next guess
   ns.prompt = "";
   ns.query = "";
   ns.browse = null;
+  ns.browseSeq++;
   ns.phase = "idle";
   ns.message = "";
   ns.seq++;
@@ -907,29 +949,36 @@ async function nsStart() {
   const queued = data.queued === true;   // a satellite carries the launch
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   let launch = data;
-  for (let i = 0; i < 90; i++) {
-    if (launch.state === "started" && launch.key) {
+  // Every reply gets this check — the 90th one included.
+  const settled = (l) => {
+    if (l.state === "started" && l.key) {
       ns.phase = "started";
       nsPaint();
-      const key = launch.key;
+      const key = l.key;
       const sheet = nsSheetEl();
       ns.phase = "idle";
       sheet.close();
       // The list refetches behind the chat that is about to open.
       renderSessions("sessions");
       location.hash = `#/sessions?chat=${encodeURIComponent(key)}`;
-      return;
+      return true;
     }
-    if (launch.state === "untracked") {
+    if (l.state === "untracked") {
       ns.phase = "unconfirmed";
       ns.message = "Started. Quiver can't read this harness's sessions yet, so there's no chat to open. It keeps running under tmux on the machine.";
-      return nsPaint();
+      nsPaint();
+      return true;
     }
-    if (launch.state === "failed") {
+    if (l.state === "failed") {
       ns.phase = "failed";
-      ns.message = launch.note ? `The session didn't start: ${launch.note}` : "The session didn't start.";
-      return nsPaint();
+      ns.message = l.note ? `The session didn't start: ${l.note}` : "The session didn't start.";
+      nsPaint();
+      return true;
     }
+    return false;
+  };
+  for (let i = 0; i < 90; i++) {
+    if (settled(launch)) return;
     await sleep(1000);
     if (mine !== ns.seq) return;
     const { status: s, data: d } = await api(`/v1/launches/${encodeURIComponent(data.launch_id)}`);
@@ -942,6 +991,7 @@ async function nsStart() {
     }
     // A dropped poll is retried until the attempts run out.
   }
+  if (settled(launch)) return;
   ns.phase = "unconfirmed";
   ns.message = queued
     ? "Queued. It starts when that machine is online, then shows up in Sessions."
