@@ -157,6 +157,18 @@ class TestTmuxHelpers(unittest.TestCase):
             supervise.approval_fingerprint(self.DEVIN_PANE),
             supervise.approval_fingerprint(other))
 
+    def test_approval_fingerprint_binds_wrapped_command_tail(self):
+        # Same first row, different wrapped tail — still two prompts.
+        wrapped_a = self.DEVIN_PANE.replace(
+            "$ git -C /repo pull origin main && git -C /repo log\n",
+            "$ git -C /repo pull\n  origin main\n")
+        wrapped_b = self.DEVIN_PANE.replace(
+            "$ git -C /repo pull origin main && git -C /repo log\n",
+            "$ git -C /repo pull\n  origin dev\n")
+        self.assertNotEqual(
+            supervise.approval_fingerprint(wrapped_a),
+            supervise.approval_fingerprint(wrapped_b))
+
     def test_approval_fingerprint_tracks_prompt_text(self):
         a = supervise.approval_fingerprint(
             "Do you want to run ls?\n1. Yes\n2. No")

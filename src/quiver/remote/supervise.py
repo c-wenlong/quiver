@@ -409,8 +409,11 @@ def menu_key_for(pane: str, decision: str) -> str | None:
 
 def running_context(pane: str) -> str:
     """Devin asks under a "Running command" banner; that plus the
-    command line is the prompt's identity — same text the card shows
-    and the fingerprint binds a request id to."""
+    command block is the prompt's identity — same text the card shows
+    and the fingerprint binds a request id to. A wrapped command keeps
+    going past its first row, so collection stops only at a menu row,
+    a menu marker or a gap — never just at the newline.
+    """
     lines = pane.splitlines()
     for i, ln in enumerate(lines):
         text = ln.strip()
@@ -418,11 +421,19 @@ def running_context(pane: str) -> str:
             continue
         if text.lower().lstrip("●>•*- ").startswith("running "):
             head = text.lstrip("●>•*- ")
+            parts = []
             for nxt in lines[i + 1:]:
-                if nxt.strip():
-                    cmd = nxt.strip().lstrip("$ ").strip()
-                    return f"{head}: {cmd}"
-            return head
+                t = nxt.strip()
+                low = t.lower()
+                if (
+                    not t
+                    or _MENU_OPTION.match(nxt)
+                    or any(m in low for m in APPROVAL_MARKERS)
+                    or len(parts) >= 6
+                ):
+                    break
+                parts.append(t.lstrip("$ "))
+            return f"{head}: {' '.join(parts)}" if parts else head
     return ""
 
 
