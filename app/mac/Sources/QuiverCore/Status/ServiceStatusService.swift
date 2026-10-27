@@ -7,9 +7,10 @@ import Foundation
 /// again, and a reading older than an hour is never shown as current.
 public actor ServiceStatusService {
     /// The answer to "can Quiver read this page": the page URL it finally
-    /// answers at and its current reading, or why not.
+    /// answers at, the feed URL a check reads, and its current reading —
+    /// or why not.
     public enum ProbeResult: Sendable, Equatable {
-        case ok(pageURL: URL, report: StatusReport)
+        case ok(pageURL: URL, feedURL: URL, report: StatusReport)
         case failure(String)
     }
 
@@ -95,8 +96,14 @@ public actor ServiceStatusService {
 
         var updated: [String: Entry] = [:]
         for (id, task) in tasks {
-            updated[id] = await task.value
-            if inFlight[id] == task { inFlight[id] = nil }
+            let entry = await task.value
+            // A forget while the request was out (a remove, or an edit
+            // that moved the feed) discards its answer, or the old page's
+            // reading comes back and holds the new feed off for minutes.
+            if inFlight[id] == task {
+                inFlight[id] = nil
+                updated[id] = entry
+            }
         }
         if !updated.isEmpty { save(updated) }
         let merged = current()
@@ -124,21 +131,29 @@ public actor ServiceStatusService {
         }
         let host = base.host() ?? base.absoluteString
 
-        var request = URLRequest(url: base.appending(path: "api/v2/summary.json"))
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("Quiver (macOS)", forHTTPHeaderField: "User-Agent")
-        let data: Data
-        let response: HTTPURLResponse
-        do {
-            (data, response) = try await transport.send(request)
-        } catch {
-            return .failure("Couldn't reach \(host).")
+        // Atlassian Statuspage and incident.io serve summary.json under
+        // /api/v2; some compatible pages (status.x.ai) file it under
+        // /api/compat instead. Try each in turn.
+        for feedURL in Self.feedPaths.map({ base.appending(path: $0) }) {
+            var request = URLRequest(url: feedURL)
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.setValue("Quiver (macOS)", forHTTPHeaderField: "User-Agent")
+            let data: Data
+            let response: HTTPURLResponse
+            do {
+                (data, response) = try await transport.send(request)
+            } catch {
+                return .failure("Couldn't reach \(host).")
+            }
+            if response.statusCode == 200, let report = StatusParser.statuspage(data, now: now()) {
+                return .ok(pageURL: base, feedURL: feedURL, report: report)
+            }
         }
-        guard response.statusCode == 200, let report = StatusParser.statuspage(data, now: now()) else {
-            return .failure("Quiver can read Atlassian Statuspage and incident.io pages, which serve /api/v2/summary.json. \(host) doesn't.")
-        }
-        return .ok(pageURL: base, report: report)
+        return .failure("Quiver can read Atlassian Statuspage and incident.io pages, which serve a JSON feed under /api. \(host) doesn't.")
     }
+
+    /// The feed paths `probe` tries at a page's root, in order.
+    private static let feedPaths = ["api/v2/summary.json", "api/compat/summary.json"]
 
     /// `scheme://host/` for a URL, the port kept and the path and query
     /// dropped: Statuspage and incident.io serve `summary.json` at the root.
