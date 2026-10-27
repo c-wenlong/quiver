@@ -80,9 +80,12 @@ def scan(store: LedgerStore, home: Path | None = None) -> ScanResult:
                             lambda p=path, a=str(codex_home): parsers.codex_file_records(p, a))
 
     # The opencode cursor's key names its reader: one saved by a build that
-    # read only the legacy tables must not skip the 2.x rows it missed.
+    # read only the legacy tables (no suffix) must not skip the 2.x rows it
+    # missed, and one saved before models carried their provider (``#v2``)
+    # must not skip rows now named ``provider/model``. Every row is keyed
+    # by message id, so the re-read renames events in place.
     for db, reader, key in (
-        (home / ".local/share/opencode/opencode.db", parsers.opencode_records, "#v2"),
+        (home / ".local/share/opencode/opencode.db", parsers.opencode_records, "#v3"),
         (home / ".local/share/devin/cli/sessions.db", parsers.devin_records, ""),
     ):
         if db.is_file():

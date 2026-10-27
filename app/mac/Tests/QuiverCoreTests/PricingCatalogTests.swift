@@ -111,6 +111,32 @@ struct Offline: Error {}
         #expect(catalog.rates(for: "sample_spec") == nil)
     }
 
+    /// OpenCode rows are logged `provider/model`, with any slash of the
+    /// model's own after the first one. Everything keyed by a model name
+    /// (price lookup, the free check, a saved price's base name, the lab
+    /// on the Pricing and Models pages, the Artificial Analysis match)
+    /// reads only what follows the last slash.
+    @Test func providerQualifiedNamesResolveLikeTheBareOnes() throws {
+        let catalog = try catalog()
+        for (qualified, bare) in [("openai/gpt-6.1-sol", "gpt-6.1-sol"),
+                                  ("github-copilot/gpt-6.1-sol", "gpt-6.1-sol"),
+                                  ("anthropic/claude-opus-5-5", "claude-opus-5-5")] {
+            #expect(catalog.rates(for: qualified) == catalog.rates(for: bare), "\(qualified)")
+            #expect(PricingCatalog.baseName(for: qualified) == PricingCatalog.baseName(for: bare))
+            #expect(ModelBrands.forModel(qualified) == ModelBrands.forModel(bare))
+            #expect(ModelMatcher.parse(qualified).base == ModelMatcher.parse(bare).base)
+        }
+        #expect(catalog.resolve(model: "xyz-co/unlisted-model") == nil)
+        #expect(PricingCatalog.isFree("openrouter/nvidia/nemotron-3-ultra:free"))
+        #expect(PricingCatalog.isFree("opencode/nemotron-3-ultra-free"))
+        #expect(PricingCatalog.isFree("openrouter/openrouter/free"))
+        #expect(!PricingCatalog.isFree("openai/gpt-6.1-sol"))
+        #expect(ModelBrands.forModel("zai-coding-plan/glm-5.1").id == "zai")
+        #expect(ModelBrands.forModel("featherless/zai-org/GLM-5.2").id == "zai")
+        #expect(ModelBrands.forModel("xiaomi-token-plan-sgp/mimo-v2.5-pro").id == "xiaomi")
+        #expect(PricingCatalog.baseName(for: "groq/openai/gpt-oss-120b") == "gpt-oss-120b")
+    }
+
     @Test func longContextAndPriorityRatesApplyPerRequest() throws {
         let rates = try #require(try catalog().rates(for: "gpt-6.1-sol"))
         #expect(rates.longContext?.threshold == 272_000)

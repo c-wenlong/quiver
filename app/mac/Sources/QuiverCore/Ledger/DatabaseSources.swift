@@ -63,7 +63,8 @@ enum DatabaseSources {
     /// its JSON `data` carrying role, model, cost and token counts, plus the
     /// `session_message` rows OpenCode 2.x writes instead. Messages
     /// are rewritten while they stream, so the watermark is `time_updated`
-    /// and the key is the message id (the larger total wins).
+    /// and the key is the message id (the larger total wins). The model
+    /// is recorded as `provider/model` (see `openCodeModel`).
     ///
     /// Current OpenCode stores the five token kinds disjointly
     /// (`total = input + output + reasoning + cache`); older rows folded
@@ -88,7 +89,8 @@ enum DatabaseSources {
                 json_extract(m.data, '$.modelID'), json_extract(m.data, '$.cost'),
                 json_extract(m.data, '$.tokens.input'), json_extract(m.data, '$.tokens.output'),
                 json_extract(m.data, '$.tokens.reasoning'), json_extract(m.data, '$.tokens.cache.read'),
-                json_extract(m.data, '$.tokens.cache.write'), json_extract(m.data, '$.tokens.total')
+                json_extract(m.data, '$.tokens.cache.write'), json_extract(m.data, '$.tokens.total'),
+                json_extract(m.data, '$.providerID')
             FROM message m LEFT JOIN session s ON s.id = m.session_id
             WHERE m.time_updated >= ?1 AND json_extract(m.data, '$.role') = 'assistant'
             \(tables.contains("session_message") ? openCodeV2Replies(hasSessionV2: tables.contains("session_v2")) : "")
@@ -109,7 +111,7 @@ enum DatabaseSources {
                 let event = UsageEvent(
                     harness: "opencode", accountHome: accountHome,
                     sessionId: statement.text(1) ?? "unknown", cwd: statement.text(4),
-                    model: statement.text(5) ?? "unknown",
+                    model: openCodeModel(provider: statement.text(13), id: statement.text(5)),
                     timestamp: Date(timeIntervalSince1970: Double(statement.int(2)) / 1_000),
                     inputTokens: max(0, input),
                     outputTokens: max(0, reasoningInsideOutput ? output - reasoning : output),
@@ -117,8 +119,12 @@ enum DatabaseSources {
                     reasoningTokens: max(0, reasoning),
                     costUSD: statement.isNull(6) || statement.double(6) <= 0 ? nil : statement.double(6))
                 guard event.totalTokens > 0 else { continue }
-                try store.upsert(LedgerRecord(key: "opencode:\(statement.text(0) ?? "")", event: event))
+                try store.upsert(LedgerRecord(
+                    key: "opencode:\(statement.text(0) ?? "")", relabelsModel: true, event: event))
             }
+            // Rows a re-read moved to their `provider/model` name leave
+            // their old dimension rows behind with no events.
+            try store.dropVacatedDims()
             try store.setMeta(metaKey + ":watermark", String(highest))
             try store.setMeta(metaKey + ":inode", String(fingerprint.inode))
             try store.setMeta(metaKey + ":fingerprint", fingerprint.text)
@@ -132,10 +138,25 @@ enum DatabaseSources {
 
     /// The meta rows one OpenCode database's fingerprint, watermark and
     /// census live under, shared by the token scan and the search pass.
-    /// The `v2` names the reader: a build that read only the legacy tables
-    /// saved a fingerprint and watermark that would skip the 2.x rows, so
-    /// the first scan after the upgrade starts over (every row is keyed).
-    static func openCodeMetaKey(_ url: URL) -> String { "opencode-v2:\(url.path)" }
+    /// The `v3` names the reader: a build that read only the legacy tables
+    /// (`v1`, no suffix) or named models without their provider (`v2`)
+    /// saved a fingerprint and watermark that would skip rows this reader
+    /// reads differently, so the first scan after the upgrade starts over.
+    /// Every row is keyed by its message id, so re-reading replaces events
+    /// in place (`LedgerRecord.relabelsModel`) and never adds a second.
+    static func openCodeMetaKey(_ url: URL) -> String { "opencode-v3:\(url.path)" }
+
+    /// The ledger's model name for an OpenCode reply: `provider/model`
+    /// (OpenCode's own `-m` form, so the first slash always splits them;
+    /// an id that has a slash itself, like OpenRouter's
+    /// `nvidia/nemotron-...`, keeps it), the bare id when no provider is
+    /// recorded. Pricing strips the prefix again (`PricingCatalog.forms`).
+    /// Keep in step with `opencode_model` in `quiver/ledger/parsers.py`.
+    static func openCodeModel(provider: String?, id: String?) -> String {
+        guard let id else { return "unknown" }
+        guard let provider, !provider.isEmpty, !id.isEmpty else { return id }
+        return provider + "/" + id
+    }
 
     /// OpenCode 2.x writes new replies only to `session_message` (and new
     /// sessions only to `session_v2`), naming the model `model.id` and
@@ -150,7 +171,8 @@ enum DatabaseSources {
             json_extract(sm.data, '$.model.id'), json_extract(sm.data, '$.cost'),
             json_extract(sm.data, '$.tokens.input'), json_extract(sm.data, '$.tokens.output'),
             json_extract(sm.data, '$.tokens.reasoning'), json_extract(sm.data, '$.tokens.cache.read'),
-            json_extract(sm.data, '$.tokens.cache.write'), NULL
+            json_extract(sm.data, '$.tokens.cache.write'), NULL,
+            json_extract(sm.data, '$.model.providerID')
         FROM session_message sm LEFT JOIN session s ON s.id = sm.session_id
             \(hasSessionV2 ? "LEFT JOIN session_v2 v ON v.id = sm.session_id" : "")
         WHERE sm.time_updated >= ?1 AND sm.type = 'assistant'

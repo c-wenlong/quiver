@@ -73,6 +73,25 @@ class TestResolve(unittest.TestCase):
         _, gpt, _ = self.cat.resolve("gpt-5.5", "priority")
         self.assertAlmostEqual(gpt.cost(1, 0, 0, 0, 0, 0, tier="priority"), 2e-06)
 
+    def test_provider_qualified_names_resolve_like_the_bare_ones(self):
+        """OpenCode rows are logged ``provider/model``, with any slash of
+        the model's own after the first one."""
+        from quiver.ledger.pricing import base_name, is_free
+        from quiver.webapp.pages import _brands
+
+        for qualified, bare in (("github-copilot/gpt-5.5", "gpt-5.5"), ("anthropic/claude-opus-5", "claude-opus-5"),
+                                ("zai-coding-plan/claude-opus-5", "claude-opus-5")):
+            self.assertEqual(self.cat.resolve(qualified, None)[1], self.cat.resolve(bare, None)[1], qualified)
+            self.assertEqual(base_name(qualified), base_name(bare))
+        self.assertEqual(self.cat.resolve("xyz-co/unlisted", None)[0], "unpriced")
+        for name in ("openrouter/nvidia/nemotron-3-ultra:free", "opencode/nemotron-3-ultra-free",
+                     "openrouter/openrouter/free"):
+            self.assertTrue(is_free(name), name)
+        self.assertFalse(is_free("openai/gpt-5.5"))
+        self.assertEqual(_brands.brand_for("zai-coding-plan/glm-5.1")["id"], "zai")
+        self.assertEqual(_brands.brand_for("featherless/zai-org/GLM-5.2")["id"], "zai")
+        self.assertEqual(base_name("groq/openai/gpt-oss-120b"), "gpt-oss-120b")
+
     def test_free_and_unpriced(self):
         self.assertEqual(self.cat.resolve("openrouter/some-model:free", None)[0], "free")
         self.assertEqual(self.cat.resolve("swe-2-max", None)[0], "unpriced")

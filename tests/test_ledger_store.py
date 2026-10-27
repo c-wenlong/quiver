@@ -40,6 +40,25 @@ class TestUpsert(unittest.TestCase):
         row = self.store.db.execute("SELECT session FROM events WHERE key='k2'").fetchone()
         self.assertEqual(row[0], "first")
 
+    def test_a_relabelling_record_renames_the_row_without_touching_its_figures(self):
+        self.store.upsert(_rec("k", 5))
+        models = lambda: dict(self.store.db.execute("SELECT key, model FROM events"))
+        # A plain re-read never renames a row.
+        renamed = _rec("k", 5)
+        renamed.event.model = "p/m"
+        self.store.upsert(renamed)
+        self.assertEqual(models(), {"k": "m"})
+        # Tie, smaller and larger totals: the model moves; only a larger total replaces the figures.
+        for total, expected in ((5, 5), (3, 5), (9, 9)):
+            rec = _rec("k", total)
+            rec.event.model = "p/m"
+            rec.relabels_model = True
+            self.store.upsert(rec)
+            self.store.db.execute("UPDATE events SET model = 'm' WHERE key = 'k' AND ? < 9", (total,))
+            self.assertEqual(_inputs(self.store), {"k": expected})
+        self.assertEqual(models(), {"k": "p/m"})
+        self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM events").fetchone()[0], 1)
+
     def test_main_copy_beats_sidechain_on_key_and_message_id(self):
         self.store.upsert(_rec("a", 100, msg="m1", sidechain=True))
         self.store.upsert(_rec("b", 10, msg="m1", sidechain=False))

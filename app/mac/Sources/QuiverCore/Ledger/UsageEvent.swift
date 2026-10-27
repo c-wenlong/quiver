@@ -113,6 +113,12 @@ struct LedgerRecord: Sendable, Equatable {
     /// same event under any profile's `accountHome`. Without it the account
     /// is the profile itself, so only this profile's stale rows match.
     var accountSpansProfiles: Bool = false
+    /// OpenCode: a re-read under an existing key that does not replace its
+    /// row (the totals tied) still moves the row to this record's model.
+    /// The key is the message id, so a reader that learns to name the model
+    /// differently (`provider/model`) renames old rows in place instead of
+    /// adding a second copy of each.
+    var relabelsModel: Bool = false
     var event: UsageEvent
 }
 

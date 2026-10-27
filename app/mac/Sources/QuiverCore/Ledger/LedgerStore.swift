@@ -55,6 +55,12 @@ final class LedgerStore {
     private var insertDim: Statement!
     private var deleteSameEvent: Statement!
     private var selectSameEventAnyProfile: Statement!
+    private var selectDimByID: Statement!
+    private var updateEventDim: Statement!
+    private var deleteDimIfUnused: Statement!
+    /// Dimension rows a relabel moved their last event out of, until
+    /// `dropVacatedDims` removes the ones left with no events.
+    private var vacatedDims: Set<Int64> = []
 
     struct DimKey: Hashable {
         var harness, account, session, cwd, model, tier: String
@@ -132,6 +138,11 @@ final class LedgerStore {
             "INSERT INTO dims (harness, account, session, cwd, model, tier) VALUES (?, ?, ?, ?, ?, ?)")
         deleteSameEvent = try db.prepare(
             "DELETE FROM events WHERE dim = ? AND ts = ? AND key != ? AND msg IS NULL")
+        selectDimByID = try db.prepare(
+            "SELECT harness, account, session, cwd, model, tier FROM dims WHERE id = ?")
+        updateEventDim = try db.prepare("UPDATE events SET dim = ? WHERE key = ?")
+        deleteDimIfUnused = try db.prepare(
+            "DELETE FROM dims WHERE id = ? AND NOT EXISTS (SELECT 1 FROM events WHERE dim = ?)")
         // For accounts several profiles can read (the Cursor feed when
         // swe names an account_id), the same event's stale rows sit under
         // whichever profile imported them — dims.account names the reader,
@@ -182,6 +193,7 @@ final class LedgerStore {
         selectByKey.bind([.int(key)])
         if try selectByKey.step() {
             let existingSidechain = selectByKey.int(0) != 0
+            let existingDim = selectByKey.int(10)
             if record.authoritative {
                 // The source's own figure always wins, but only a changed
                 // figure is a write.
@@ -192,8 +204,12 @@ final class LedgerStore {
             let existingTotal = selectByKey.int(1) + selectByKey.int(2)
                 + selectByKey.int(3) + selectByKey.int(4) + selectByKey.int(6)
             if Self.shouldReplace(record.isSidechain, total, existingSidechain, existingTotal) {
-                try write(record, key: key)
+                let dim = try write(record, key: key)
+                if record.relabelsModel, dim != existingDim { vacatedDims.insert(existingDim) }
                 return true
+            }
+            if record.relabelsModel {
+                return try relabelModel(key: key, existingDim: existingDim, to: record.event.model)
             }
             return false
         }
@@ -249,6 +265,36 @@ final class LedgerStore {
             }
         }
         return true
+    }
+
+    /// Moves the event under `key` to the dimension row that differs from
+    /// its own only in `model`. Totals, cost and time stay as they are.
+    /// - Returns: true when the model changed.
+    private func relabelModel(key: Int64, existingDim: Int64, to model: String) throws -> Bool {
+        selectDimByID.bind([.int(existingDim)])
+        defer { selectDimByID.bind([]) }
+        guard try selectDimByID.step(), selectDimByID.text(4) != model else { return false }
+        let moved = DimKey(
+            harness: selectDimByID.text(0) ?? "", account: selectDimByID.text(1) ?? "",
+            session: selectDimByID.text(2) ?? "", cwd: selectDimByID.text(3) ?? "",
+            model: model, tier: selectDimByID.text(5) ?? "")
+        let dim = try dimID(moved)
+        try updateEventDim.bind([.int(dim), .int(key)]).run()
+        vacatedDims.insert(existingDim)
+        return true
+    }
+
+    /// Removes the dimension rows `relabelModel` emptied. Without it the
+    /// old model names stay in `dims`, which `modelsAndTiers` lists. Call
+    /// it inside the transaction that relabelled.
+    func dropVacatedDims() throws {
+        guard !vacatedDims.isEmpty else { return }
+        for id in vacatedDims {
+            try deleteDimIfUnused.bind([.int(id), .int(id)]).run()
+        }
+        vacatedDims.removeAll()
+        // A cached id may name a row just removed.
+        dimIDs.removeAll()
     }
 
     /// True when the row `selectByKey` just stepped to stores the same
@@ -312,6 +358,7 @@ final class LedgerStore {
     func rollback() {
         try? db.execute("ROLLBACK")
         dimIDs.removeAll()
+        vacatedDims.removeAll()
     }
 
     private func dimID(_ key: DimKey) throws -> Int64 {

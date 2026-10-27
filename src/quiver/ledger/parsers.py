@@ -373,7 +373,8 @@ def _open_ro(path: Path) -> sqlite3.Connection:
 
 def opencode_records(db: Path) -> list[LedgerRecord]:
     """``opencode.db`` assistant messages, legacy ``message`` rows and
-    2.x ``session_message`` ones. Older rows folded reasoning
+    2.x ``session_message`` ones, the model recorded as ``provider/model``
+    (see ``opencode_model``). Older rows folded reasoning
     into output; a recorded cost of 0 means OpenCode did not know the
     price, so it is no recorded cost."""
     conn = _open_ro(db)
@@ -383,7 +384,8 @@ def opencode_records(db: Path) -> list[LedgerRecord]:
                 json_extract(m.data, '$.modelID'), json_extract(m.data, '$.cost'),
                 json_extract(m.data, '$.tokens.input'), json_extract(m.data, '$.tokens.output'),
                 json_extract(m.data, '$.tokens.reasoning'), json_extract(m.data, '$.tokens.cache.read'),
-                json_extract(m.data, '$.tokens.cache.write'), json_extract(m.data, '$.tokens.total')
+                json_extract(m.data, '$.tokens.cache.write'), json_extract(m.data, '$.tokens.total'),
+                json_extract(m.data, '$.providerID')
             FROM message m LEFT JOIN session s ON s.id = m.session_id
             WHERE json_extract(m.data, '$.role') = 'assistant'
             ORDER BY m.time_updated
@@ -394,20 +396,34 @@ def opencode_records(db: Path) -> list[LedgerRecord]:
     account = str(db.parent)
     out: list[LedgerRecord] = []
     for (mid, session, created, directory, model, cost,
-         inp, outp, reas, cread, cwrite, total) in rows:
+         inp, outp, reas, cread, cwrite, total, provider) in rows:
         inp, outp, reas = int(inp or 0), int(outp or 0), int(reas or 0)
         cread, cwrite = int(cread or 0), int(cwrite or 0)
         inside = reas > 0 and total is not None and int(total) == inp + outp + cread + cwrite
         ev = UsageEvent(
             harness="opencode", account=account, session=session or "unknown",
-            cwd=directory, model=model or "unknown", ts=(created or 0) / 1000,
+            cwd=directory, model=opencode_model(provider, model), ts=(created or 0) / 1000,
             input=max(0, inp), output=max(0, outp - reas if inside else outp),
             cache_read=max(0, cread), cache_write=max(0, cwrite), reasoning=max(0, reas),
             cost=float(cost) if isinstance(cost, (int, float)) and cost > 0 else None,
         )
         if ev.total > 0:
-            out.append(LedgerRecord(key=f"opencode:{mid or ''}", event=ev))
+            out.append(LedgerRecord(key=f"opencode:{mid or ''}", event=ev, relabels_model=True))
     return out
+
+
+def opencode_model(provider: str | None, model_id: str | None) -> str:
+    """The ledger's model name for an OpenCode reply: ``provider/model``
+    (OpenCode's own ``-m`` form, so the first slash always splits them; an
+    id with a slash of its own, like OpenRouter's ``nvidia/nemotron-...``,
+    keeps it), the bare id when no provider is recorded. Pricing strips
+    the prefix again. Keep in step with ``openCodeModel`` in
+    ``DatabaseSources.swift``."""
+    if not model_id:
+        return "unknown"
+    if not isinstance(provider, str) or not provider:
+        return model_id
+    return f"{provider}/{model_id}"
 
 
 def _opencode_v2_rows(conn: sqlite3.Connection) -> list[tuple]:
@@ -432,7 +448,8 @@ def _opencode_v2_rows(conn: sqlite3.Connection) -> list[tuple]:
             json_extract(sm.data, '$.model.id'), json_extract(sm.data, '$.cost'),
             json_extract(sm.data, '$.tokens.input'), json_extract(sm.data, '$.tokens.output'),
             json_extract(sm.data, '$.tokens.reasoning'), json_extract(sm.data, '$.tokens.cache.read'),
-            json_extract(sm.data, '$.tokens.cache.write'), NULL
+            json_extract(sm.data, '$.tokens.cache.write'), NULL,
+            json_extract(sm.data, '$.model.providerID')
         FROM session_message sm {join}
         WHERE sm.type = 'assistant'
           AND NOT EXISTS (SELECT 1 FROM message m WHERE m.id = sm.id)
