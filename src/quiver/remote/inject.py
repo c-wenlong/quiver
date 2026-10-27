@@ -783,9 +783,11 @@ class CodexAppServerInjector:
                 thread_id = self._thread_id(session)
                 if not thread_id:
                     return None
+                env = account_env(session)
                 try:
-                    proc = self._spawn(
-                        session.path or ".", env=account_env(session)
+                    proc = (
+                        self._spawn(session.path or ".", env=env)
+                        if env else self._spawn(session.path or ".")
                     )
                 except OSError:
                     return None
