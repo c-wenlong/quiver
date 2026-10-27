@@ -13,6 +13,18 @@ Deeper references, read before touching the relevant area:
 - [ARCHITECTURE.md](ARCHITECTURE.md): layering rules, `~/.quiver` layout, registry states, link-state vocabulary, session engines, caches, drift checks.
 - [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
 
+## The clients
+
+Quiver has three clients on top of `swe`:
+
+| Client | Where | Builds with |
+|---|---|---|
+| macOS app | `app/mac/` | SwiftPM; see [app/mac/README.md](app/mac/README.md) |
+| iPhone app | `app/ios/` | XcodeGen and Xcode; see [app/ios/README.md](app/ios/README.md) |
+| Web app | `src/quiver/webapp/` | nothing: it ships in the Python package and `swe remote serve` serves it; see [docs/web-app.md](docs/web-app.md) |
+
+The web app stays inside the Python package because pipx installs and the `swe` bundled in Quiver.app serve it from there.
+
 ## The macOS app (`app/mac/`)
 
 `app/mac/` is a native SwiftUI app on top of `swe`; [app/mac/ROADMAP.md](app/mac/ROADMAP.md) has the plan and [app/mac/README.md](app/mac/README.md) the build steps. It replaces Switchboard, TokenTracker, AIUsage and OpenUsage, which get deleted once it covers them. So:

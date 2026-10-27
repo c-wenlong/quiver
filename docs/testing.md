@@ -77,6 +77,10 @@ lists the current risk areas.
 
 ## Swift
 
+The iPhone app in `app/ios/` has its own XCTest suite, run on a
+simulator; [app/ios/README.md](../app/ios/README.md) has the command.
+The rest of this section is the macOS app.
+
 From `app/mac/`:
 
 ```bash
