@@ -265,10 +265,13 @@ def parse_approval_command(body: dict) -> dict:
     decision = body.get("decision")
     if not request_id or not isinstance(request_id, str):
         raise ValueError("approval.request_id is required")
-    if not isinstance(decision, str) or decision not in {
-        "allow", "deny", "always"
-    }:
-        raise ValueError("approval.decision must be allow|deny|always")
+    if not isinstance(decision, str) or not (
+        decision in {"allow", "deny", "always"}
+        or (decision.isdigit() and len(decision) <= 2)
+    ):
+        raise ValueError(
+            "approval.decision must be allow|deny|always or a menu row number"
+        )
     return {"request_id": request_id, "decision": decision}
 
 

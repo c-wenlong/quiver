@@ -181,6 +181,36 @@ class TestTmuxInjector(unittest.TestCase):
         self.assertTrue(out.ok)
         self.assertEqual(sk.call_args[0][1], "8")
 
+    def test_approval_menu_row_digit(self):
+        # The card lists the menu verbatim; a click answers with the
+        # row's own digit ("5" = bypass here — the semantic names could
+        # never reach it).
+        pane = (
+            "● Running command\n"
+            "$ git pull origin main\n"
+            ") 1 Yes  (Approve once)\n"
+            "  2 Yes, allow `git` commands\n"
+            "  5 Yes, switch to bypass mode\n"
+            "  8 No\n"
+            "  ↑↓ select · ↵ confirm · esc cancel"
+        )
+        with patch.object(supervise, "capture_pane", return_value=pane), \
+             patch.object(supervise, "send_key", return_value=True) as sk:
+            out = self.inj.approval(self.session, "r1", "5")
+        self.assertTrue(out.ok)
+        self.assertEqual(sk.call_args[0][1], "5")
+
+    def test_approval_digit_not_on_the_menu(self):
+        # A digit the visible menu doesn't offer must not reach the
+        # pane — it could land in an unrelated prompt.
+        pane = "Do you want to proceed?\n1. Yes\n2. No"
+        with patch.object(supervise, "capture_pane", return_value=pane), \
+             patch.object(supervise, "send_key", return_value=True) as sk:
+            out = self.inj.approval(self.session, "r1", "7")
+        self.assertFalse(out.ok)
+        self.assertIn("not on screen", out.note)
+        sk.assert_not_called()
+
     def test_approval_refused_without_prompt(self):
         with patch.object(supervise, "capture_pane", return_value="❯ idle"), \
              patch.object(supervise, "send_key", return_value=True) as sk:

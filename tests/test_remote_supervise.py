@@ -144,6 +144,29 @@ class TestTmuxHelpers(unittest.TestCase):
         )
         self.assertEqual(supervise.menu_key_for(flush, "deny"), "8")
 
+    def test_menu_options_folds_wrapped_labels(self):
+        # A label the pane wraps keeps its row: the unnumbered
+        # continuation folds back instead of splitting the menu in two
+        # (losing "Approve once" from the options the card lists).
+        wrapped = self.DEVIN_PANE.replace(
+            "  2 Yes, allow `git` commands\n",
+            "  2 Yes, allow `git` commands in the\n     current folder\n")
+        opts = supervise.menu_options(wrapped)
+        self.assertEqual([n for n, _ in opts],
+                         ["1", "2", "3", "4", "5", "6", "7", "8"])
+        self.assertEqual(opts[1], ("2", "Yes, allow `git` commands in the current folder"))
+        # The full menu drives both semantic and digit answers.
+        self.assertEqual(supervise.menu_key_for(wrapped, "allow"), "1")
+        self.assertEqual(supervise.menu_key_for(wrapped, "deny"), "8")
+
+    def test_menu_options_blank_line_still_splits_blocks(self):
+        # Only unnumbered non-blank gaps fold: a blank line still ends
+        # the block, so scrolled-up numbering stays transcript text.
+        pane = "1. No errors found\n\n" + self.DEVIN_PANE
+        self.assertEqual(
+            [n for n, _ in supervise.menu_options(pane)],
+            ["1", "2", "3", "4", "5", "6", "7", "8"])
+
     def test_menu_key_allow_never_picks_a_standing_grant(self):
         # A clipped pane missing row 1 gives allow nothing it may send —
         # the injector's fallback digit stays the weakest grant.

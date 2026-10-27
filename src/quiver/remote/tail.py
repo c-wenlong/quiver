@@ -71,18 +71,32 @@ def _approval_prompt_line(pane: str) -> str:
 
     Pane text is user-originated like tool args are: it can carry a
     ``Bearer sk-...`` the agent asked about, so it is redacted before it
-    can reach the journal, a phone, or an ntfy body.
+    can reach the journal, a phone, or an ntfy body. Menu rows are never
+    the question: when the banner scrolled off, "2 Yes, allow `sudo`
+    commands" must not stand in for it.
     """
     ctx = supervise.running_context(pane)
     if ctx:
         return _tr._redact_secrets(ctx)[:140]
-    for line in pane.splitlines():
+    _, menu_at = supervise.menu_block(pane)
+    lines = pane.splitlines()
+    # The question nearest the menu is its question — earlier lines can
+    # hold questions of their own ("Which branch?"). Without a menu the
+    # first question-looking line stands, as before.
+    zone = lines[:menu_at] if menu_at >= 0 else lines
+    pick = None
+    for line in zone:
         text = line.strip()
-        if not text:
+        if not text or supervise._MENU_OPTION.match(line):
             continue
         low = text.lower()
-        if "do you want" in low or "allow" in low or "permission" in low:
-            return _tr._redact_secrets(text)[:140]
+        if ("do you want" in low or "allow" in low
+                or "permission" in low or text.endswith("?")):
+            pick = text
+            if menu_at < 0:
+                break
+    if pick is not None:
+        return _tr._redact_secrets(pick)[:140]
     return "Approval requested"
 
 # How many of the most recent sessions get a live tailer.
@@ -1627,9 +1641,17 @@ class TailManager:
                     self._approval_outstanding[key] = (rid, fp)
                     supervise.set_pending_approval(key, rid, fp)
                     prompt = _approval_prompt_line(pane)
+                    # The menu rows the pane offers, so a client can show
+                    # and answer the real prompt instead of guessing at
+                    # allow/always/deny. Labels are pane text: redact.
+                    options = [
+                        {"n": n, "label": _tr._redact_secrets(label)[:140]}
+                        for n, label in supervise.menu_options(pane)
+                    ]
                     self._emit_approval(
                         "approval.requested", key,
-                        {"request_id": rid, "prompt": prompt},
+                        {"request_id": rid, "prompt": prompt,
+                         "options": options},
                     )
             else:
                 cur = self._approval_outstanding.pop(key, None)
