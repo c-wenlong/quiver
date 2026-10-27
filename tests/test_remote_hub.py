@@ -797,7 +797,8 @@ class TestHubWriteRoutes(unittest.TestCase):
         home = Path(tempfile.mkdtemp())
         folder = supervise._pending_dir(home)
         folder.mkdir(parents=True)
-        (folder / "qv-x.json").write_text("{}")
+        (folder / "qv-x.json").write_text(
+            json.dumps({"launched_at": time.time()}))
         cat = catalog_mod.Catalog(home)
         with patch("quiver.sessions.aggregator.invalidate_cache") as inv, \
              patch("quiver.sessions.aggregator.get_all_sessions",
