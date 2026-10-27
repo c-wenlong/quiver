@@ -750,7 +750,7 @@ function nsPaint() {
     <div class="caption">Folder</div>
     <input class="field ns-path-input" id="ns-folder" type="text" autocomplete="off" spellcheck="false"
       placeholder="/absolute/path" value="${esc(ns.folder)}"${busy ? " disabled" : ""}>
-    <input class="field search" id="ns-query" type="search" placeholder="Recent folders on this machine — type to filter"
+    <input class="field ns-query" id="ns-query" type="search" placeholder="Recent folders on this machine — type to filter"
       value="${esc(ns.query)}"${busy ? " disabled" : ""}>
     <div class="ns-folders" id="ns-folders">
       ${folders.map((p) => `<button type="button" class="ns-folder" data-path="${esc(p)}"${busy ? " disabled" : ""}>${esc(p)}</button>`).join("")

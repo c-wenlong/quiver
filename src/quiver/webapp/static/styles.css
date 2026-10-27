@@ -321,7 +321,9 @@ pre.command { margin: 0; background: var(--subtle); border-radius: 8px; padding:
   color: var(--text-primary); padding: 2px 10px 6px; word-break: break-all; }
 .ns-browse .sheet-actions { padding-top: 6px; }
 textarea.ns-prompt { height: auto; min-height: 72px; padding: 8px 10px; resize: vertical; line-height: 1.4; }
-input.field.ns-path-input { width: 100%; }
+input.field.ns-path-input, input.field.ns-query { width: 100%; }
+/* In the sheet's column flex, .search's flex-basis would read as height. */
+input.field.ns-query { flex: none; height: 36px; }
 
 /* Harnesses */
 .filters .count { align-self: center; }
