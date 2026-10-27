@@ -73,24 +73,14 @@ def _approval_prompt_line(pane: str) -> str:
     ``Bearer sk-...`` the agent asked about, so it is redacted before it
     can reach the journal, a phone, or an ntfy body.
     """
-    lines = pane.splitlines()
-    for i, line in enumerate(lines):
+    ctx = supervise.running_context(pane)
+    if ctx:
+        return _tr._redact_secrets(ctx)[:140]
+    for line in pane.splitlines():
         text = line.strip()
         if not text:
             continue
         low = text.lower()
-        # Devin's menu says what it wants under "● Running command" —
-        # the line itself plus the next line (the command) is the
-        # question worth showing on the phone.
-        if low.lstrip("●>•*- ").startswith("running "):
-            cmd = ""
-            for nxt in lines[i + 1:]:
-                if nxt.strip():
-                    cmd = nxt.strip().lstrip("$ ").strip()
-                    break
-            head = text.lstrip("●>•*- ")
-            summary = f"{head}: {cmd}" if cmd else head
-            return _tr._redact_secrets(summary)[:140]
         if "do you want" in low or "allow" in low or "permission" in low:
             return _tr._redact_secrets(text)[:140]
     return "Approval requested"
