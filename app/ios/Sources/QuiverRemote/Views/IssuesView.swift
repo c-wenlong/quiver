@@ -22,7 +22,8 @@ struct IssuesView: View {
         let listed = closed ? model.closedRepos : model.repos
         let sections = IssueGrouping.sections(of: listed, filter: filter)
         PageScroll {
-            if model.loaded, model.envBlocked == nil, !model.repos.isEmpty {
+            if model.loaded, model.envBlocked == nil,
+               !model.repos.isEmpty || !model.closedRepos.isEmpty {
                 filterBar
             }
             // A failed refresh keeps the rows it already had — the
@@ -34,6 +35,13 @@ struct IssuesView: View {
             }
             if !model.loaded {
                 LoadingRow(text: "Loading issues")
+            } else if closed, model.closedLoaded, model.closedRepos.isEmpty,
+                      let error = model.error {
+                // A Closed fetch that failed with an empty closed list
+                // must say so — otherwise it reads as "No closed issues".
+                StateCard(icon: "wifi.exclamationmark", title: "Can't load closed issues",
+                          message: error, tone: .error,
+                          actionTitle: "Try again") { Task { await model.loadClosed(client: app.client, refresh: true) } }
             } else if let error = model.error, model.repos.isEmpty, model.closedRepos.isEmpty {
                 StateCard(icon: "wifi.exclamationmark", title: "Can't reach the hub", message: error, tone: .error,
                           actionTitle: "Try again") { Task { await model.load(client: app.client, refresh: true) } }

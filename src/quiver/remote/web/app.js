@@ -17,6 +17,9 @@ const state = {
   machines: [],
   view: "sessions",
   currentKey: null,
+  // The view a chat was opened from, so Back can return to it — a
+  // resolve's chat came from an issue, so Back shows that issue again.
+  chatFrom: null,
   stream: null,
   inboxTimer: null,
   sessionTimer: null,
@@ -1302,6 +1305,7 @@ const toolCards = new Map(); // call_id → card element
 
 async function openChat(key) {
   state.currentKey = key;
+  state.chatFrom = state.view === "issue" && state.issue.repo ? "issue" : null;
   const gen = ++state.openGen; // a second openChat supersedes this one
   dropPending();
   state.awaitingReply = false;
@@ -1951,7 +1955,8 @@ state.issues = {
   closedTried: false, // a failed closed read shows an error, not a spinner
   filter: "all",
   loaded: false,
-  error: null,
+  error: null,        // the open list's error; the closed list's is beside it
+  closedError: null,  // so a refresh's success can't hide the other's failure
   envBlocked: null,
   machine: null,
   machineId: null,
@@ -1982,18 +1987,21 @@ async function loadIssues(refresh = false, closed = false) {
   if (status === 401) { store.cred = null; boot(); return; }
   if (status !== 200 || !data) {
     // A failed refresh keeps the rows it already had, as on iOS.
-    if (closed && iss.closed === null) iss.closedTried = true;
-    iss.error = "Couldn't reach the hub.";
+    if (closed) {
+      if (iss.closed === null) iss.closedTried = true;
+      iss.closedError = "Couldn't reach the hub.";
+    } else {
+      iss.error = "Couldn't reach the hub.";
+    }
     iss.loaded = true;
     renderIssues();
     return;
   }
-  if (closed) iss.closed = data.repos || [];
-  else iss.repos = data.repos || [];
+  if (closed) { iss.closed = data.repos || []; iss.closedError = null; }
+  else { iss.repos = data.repos || []; iss.error = null; }
   iss.envBlocked = data.env_blocked || null;
   iss.machine = data.machine;
   iss.machineId = data.machine_id;
-  iss.error = null;
   iss.loaded = true;
   renderIssues();
 }
@@ -2050,9 +2058,10 @@ function renderIssues() {
   }));
 
   const listed = closed ? iss.closed : iss.repos;
+  const viewErr = closed ? iss.closedError : iss.error;
   const noRepos = !(iss.repos || []).length && !(iss.closed || []).length;
-  if (iss.error && noRepos) {
-    root.innerHTML = `<div class="card"><p class="error">${esc(iss.error)}</p>
+  if (viewErr && noRepos) {
+    root.innerHTML = `<div class="card"><p class="error">${esc(viewErr)}</p>
       <button type="button" id="issues-retry">Try again</button></div>`;
     el("issues-retry").addEventListener("click", () => {
       iss.closedTried = false;
@@ -2070,7 +2079,7 @@ function renderIssues() {
   }
   if (closed && iss.closed === null) {
     root.innerHTML = iss.closedTried
-      ? `<div class="card"><p class="error">Couldn't load closed issues.</p>
+      ? `<div class="card"><p class="error">${esc(iss.closedError || "Couldn't load closed issues.")}</p>
         <button type="button" id="issues-retry">Try again</button></div>`
       : `<p class="dim">Loading closed issues…</p>`;
     if (iss.closedTried) el("issues-retry").addEventListener("click", () => {
@@ -2079,7 +2088,7 @@ function renderIssues() {
     });
     return;
   }
-  let html = iss.error ? `<p class="sub note">Couldn't refresh: ${esc(iss.error)}</p>` : "";
+  let html = viewErr ? `<p class="sub note">Couldn't refresh: ${esc(viewErr)}</p>` : "";
   for (const repo of listed || []) {
     const include = (i) => closed ? i.state === "closed" : iss.filter === "mine" ? i.mine === true : true;
     const rows = (repo.issues || []).filter(include);
@@ -3640,7 +3649,14 @@ el("back").addEventListener("click", () => {
     return;
   }
   closeStream();
+  const from = state.chatFrom;
+  state.chatFrom = null;
   state.currentKey = null;
+  if (from === "issue" && state.issue.repo) {
+    show("issue");
+    renderIssue();
+    return;
+  }
   show("sessions");
   loadSessions();
 });
@@ -3683,7 +3699,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
     show(tab.dataset.tab);
     if (tab.dataset.tab === "inbox") loadInbox();
     if (tab.dataset.tab === "sessions") loadSessions();
-    if (tab.dataset.tab === "issues") loadIssues();
+    if (tab.dataset.tab === "issues") { renderIssues(); loadIssues(); }
     if (tab.dataset.tab === "usage") loadUsage();
     if (tab.dataset.tab === "device") loadDevice();
   });
