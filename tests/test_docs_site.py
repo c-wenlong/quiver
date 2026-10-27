@@ -114,6 +114,7 @@ class StageTests(unittest.TestCase):
             "assets/b.png": "png",
             "landing/index.html": "<h1>landing</h1>",
             "landing/mascot.jpg": "jpg",
+            "landing/media/sessions.mp4": "mp4",
         })
         pages = [("README.md", "index.md"), ("ARCHITECTURE.md", "architecture/index.md")]
         stage_dir = root / "build" / "docs-site"
@@ -133,6 +134,7 @@ class StageTests(unittest.TestCase):
         self.assertIn("(https://github.com/c-wenlong/quiver/blob/main/src/x.py)", arch)
         self.assertEqual((stage_dir / "index.html").read_text(), "<h1>landing</h1>")
         self.assertTrue((stage_dir / "mascot.jpg").is_file())
+        self.assertTrue((stage_dir / "media/sessions.mp4").is_file())
 
     def test_stage_fails_without_landing_page(self):
         root = _repo(self, {"README.md": "hi"})

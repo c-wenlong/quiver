@@ -48,8 +48,8 @@ PAGES: list[tuple[str, str]] = [
 # Extra repo files the site itself needs (logo, favicon).
 ASSETS = ["app/Icons/AppIcon-light.png", "app/Icons/AppIcon-dark.png"]
 
-# The hand-written landing page. Its files are copied to the site root as
-# they are, so landing/index.html becomes the site's front page.
+# The hand-written landing page. The folder is copied to the site root as
+# it is (media/ included), so landing/index.html becomes the front page.
 LANDING = "landing"
 
 # Extensions copied into the site and served, rather than linked to GitHub.
@@ -196,9 +196,7 @@ def stage(root: Path = ROOT, stage_dir: Path = STAGE) -> int:
 
     landing = root / LANDING
     if (landing / "index.html").is_file():
-        for src in landing.iterdir():
-            if src.is_file():
-                shutil.copyfile(src, stage_dir / src.name)
+        shutil.copytree(landing, stage_dir, dirs_exist_ok=True)
     else:
         missing.append(f"{LANDING}/index.html: landing page is missing")
 
