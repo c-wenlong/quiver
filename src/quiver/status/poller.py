@@ -174,6 +174,10 @@ class Entry:
     # For "asked us to wait until": the time, which the browser formats in
     # its own zone (the Mac app writes it into the text).
     problem_until: float | None = None
+    # Set instead of a reading when the page was untracked: a tombstone
+    # that outlives this process, so another hub sharing the cache cannot
+    # land or serve a reading taken before the removal.
+    removed_at: float | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -182,6 +186,7 @@ class Entry:
             "etag": self.etag, "last_modified": self.last_modified,
             "cooldown_until": self.cooldown_until,
             "problem": self.problem, "problem_until": self.problem_until,
+            "removed_at": self.removed_at,
         }
 
     @classmethod
@@ -203,17 +208,26 @@ class Entry:
             etag=text("etag"), last_modified=text("last_modified"),
             cooldown_until=number("cooldown_until"),
             problem=text("problem"), problem_until=number("problem_until"),
+            removed_at=number("removed_at"),
         )
 
 
 def newer(mine: Entry | None, theirs: Entry | None) -> Entry | None:
-    """Of two entries for one page, the one from the later attempt:
-    another hub on this home may have saved a newer reading or cooldown."""
+    """Of two entries for one page, the one from the later attempt or
+    removal: another hub on this home may have saved a newer reading or
+    cooldown, or removed the page since an older attempt started."""
     if mine is None:
         return theirs
     if theirs is None:
         return mine
-    return theirs if (theirs.attempted_at or 0) > (mine.attempted_at or 0) else mine
+    key = lambda e: max(e.attempted_at or 0, e.removed_at or 0)
+    # A removal beats a reading of the same stamp: the reading can always
+    # be fetched again, the untrack was a deliberate act.
+    if key(theirs) > key(mine) or (key(theirs) == key(mine)
+                                  and theirs.removed_at is not None
+                                  and mine.removed_at is None):
+        return theirs
+    return mine
 
 
 @dataclass
@@ -293,7 +307,9 @@ class StatusPoller:
                     continue
                 if entry is not None and entry.attempted_at is not None and start - entry.attempted_at < floor:
                     continue
-                attempt = replace(entry) if entry is not None else Entry()
+                # A tombstone is not a base for a new attempt: clearing
+                # removed_at lets the fresh reading land over it.
+                attempt = replace(entry, removed_at=None) if entry is not None else Entry()
                 attempt.attempted_at = start
                 # Recorded before the request goes out, so the next call sees it.
                 self._memory[service.id] = attempt
@@ -313,7 +329,7 @@ class StatusPoller:
         return [self._status(s, merged.get(s.id), now) for s in services]
 
     def _status(self, service: StatusService, entry: Entry | None, now: float) -> ServiceStatus:
-        if entry is None:
+        if entry is None or entry.removed_at is not None:
             return ServiceStatus(service)
         fresh = entry.checked_at is not None and now - entry.checked_at <= self._stale_after
         report = entry.report if fresh else None
@@ -329,7 +345,11 @@ class StatusPoller:
             except Exception:  # a parser or transport bug must not wedge the flight
                 entry = replace(attempt, problem=f"Couldn't read {service.host}", problem_until=None)
             with self._lock:
-                self._save({service.id: entry})
+                # A flight forget() unregistered must not land its answer:
+                # the page was removed (or re-added under a newer flight),
+                # and a saved entry would bring the old reading back.
+                if self._in_flight.get(service.id) is flight:
+                    self._save({service.id: entry})
         finally:
             # Whatever happened, the page is no longer in flight, or no
             # later load would ever ask it again.
@@ -337,6 +357,33 @@ class StatusPoller:
                 if self._in_flight.get(service.id) is flight:
                     del self._in_flight[service.id]
             flight.done.set()
+
+    def forget(self, service_id: str) -> None:
+        """Drop everything kept for a page: this process's memory, a
+        request in flight and the cache file. Mirrors the Mac's
+        ``ServiceStatusService.forget``: a removed page's reading must not
+        reach a same-named page added later.
+
+        The cache keeps a tombstone (``removed_at``) rather than a gap:
+        another hub on this home may hold the page in its own memory or
+        finish a request started before the removal, and only a mark it
+        merges against can keep that reading from landing or being served."""
+        with self._lock:
+            self._memory.pop(service_id, None)
+            # The flight cannot be cancelled; unregistered, its landing is
+            # not saved (or the page would reappear).
+            self._in_flight.pop(service_id, None)
+            tombstone = Entry(removed_at=self._now())
+            try:
+                self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(str(self.cache_path) + ".lock", "a+") as lock:
+                    if fcntl is not None:
+                        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                    entries = self._load()
+                    entries[service_id] = newer(tombstone, entries.get(service_id))
+                    self._write(entries)
+            except OSError:
+                pass
 
     def _check(self, service: StatusService, entry: Entry) -> Entry:
         """One request, folded into the page's entry."""
@@ -428,21 +475,25 @@ class StatusPoller:
                 entries = self._load()
                 for id, entry in updated.items():
                     entries[id] = newer(entry, entries.get(id))  # type: ignore[assignment]
-                body = json.dumps({"version": 1, "services": {k: v.to_dict() for k, v in sorted(entries.items())}},
-                                  indent=2, sort_keys=True)
-                fd, tmp = tempfile.mkstemp(dir=self.cache_path.parent, prefix=".web-service-status-")
-                try:
-                    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                        fh.write(body)
-                    os.replace(tmp, self.cache_path)
-                except BaseException:
-                    try:
-                        os.unlink(tmp)
-                    except OSError:
-                        pass
-                    raise
+                self._write(entries)
         except OSError:
             pass
+
+    def _write(self, entries: dict[str, Entry]) -> None:
+        """The whole cache, atomically (callers hold the lock file)."""
+        body = json.dumps({"version": 1, "services": {k: v.to_dict() for k, v in sorted(entries.items())}},
+                          indent=2, sort_keys=True)
+        fd, tmp = tempfile.mkstemp(dir=self.cache_path.parent, prefix=".web-service-status-")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(body)
+            os.replace(tmp, self.cache_path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
 
 # One poller per cache file, shared by every request the hub serves, so

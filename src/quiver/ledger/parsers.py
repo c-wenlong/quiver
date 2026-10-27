@@ -221,10 +221,14 @@ class CodexFileParser:
                 self.cwd = cwd
             return []
         if kind == "token_usage_record":
-            self.uses_records = True
+            # Flip the flag only once a record actually counts: a line
+            # missing `usage` or a timestamp must not silence the older
+            # `token_count` lines after it — the flag persists in the
+            # cursor, so a malformed record would undercount for good.
             usage = payload.get("usage")
             if not isinstance(usage, dict) or line_time is None:
                 return []
+            self.uses_records = True
             response_id = json_str(payload.get("response_id"))
             key = (f"codex:resp:{response_id}" if response_id
                    else f"codex:{self.session}:{ts_text or ''}:record")

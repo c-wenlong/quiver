@@ -1,12 +1,15 @@
 /* Service status: a port of the Mac app's ServiceStatusPage. One card per
- * status page in two columns, grouped as the app groups them, each folded
- * to its health line with a "Show details" row that opens the summary,
- * affected components and open incidents. Read only: pages added with the
- * Mac app's "Add service" stay in the Mac app.
+ * tracked status page in two columns, grouped as the app groups them, each
+ * folded to its health line with a "Show details" row that opens the
+ * summary, affected components and open incidents. "Add service" opens
+ * the catalogue sheet (the app's StatusCatalogueSheet): search, group
+ * chips and one-click adds tracked in the hub's own store, so every
+ * browser sees the same pages. A custom card's Remove untracks it.
  */
 "use strict";
 
-const statusPage = { data: null, loading: false, gen: 0, expanded: new Set(), loadedAt: 0, timer: null };
+const statusPage = { data: null, loading: false, gen: 0, expanded: new Set(), loadedAt: 0, timer: null,
+  catalogue: null, removing: null, removeError: "" };
 
 const STATUS_ICONS = {
   open: '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
@@ -14,6 +17,9 @@ const STATUS_ICONS = {
   down: '<path d="m6 9 6 6 6-6"/>',
   up: '<path d="m6 15 6-6 6 6"/>',
   warn: '<path d="M12 4 2.5 20h19zM12 10v4M12 17.5v.01"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  check: '<path d="m5 12 4.5 4.5L19 7"/>',
+  more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
 };
 const statusIcon = (name) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${STATUS_ICONS[name]}</svg>`;
@@ -24,10 +30,28 @@ const STATUS_LOGOS = {
   claude: "harness-claude-color.svg", openai: "harness-openai.svg", copilot: "harness-copilot.svg",
   cursor: "harness-cursor.svg", gemini: "harness-gemini-color.svg", devin: "harness-devin.svg",
   npm: "harness-npm.svg", vercel: "harness-vercel.svg", cloudflare: "harness-cloudflare-color.svg",
+  // The catalogue's entries, each the mark its logoID resolves to.
+  groq: "harness-groq.svg", perplexity: "harness-perplexity-color.svg",
+  fireworks: "harness-fireworks-color.svg", cerebras: "harness-cerebras.svg",
+  cohere: "harness-cohere-color.svg", baseten: "harness-baseten.svg",
+  minimax: "harness-minimax-color.svg", elevenlabs: "harness-elevenlabs.svg",
+  lambda: "harness-lambda.svg", assemblyai: "harness-assemblyai.svg",
+  docker: "harness-docker.svg", tailscale: "harness-tailscale.svg",
+  sentry: "harness-sentry.svg", datadog: "harness-datadog.svg",
+  supabase: "harness-supabase.svg", digitalocean: "harness-digitalocean.svg",
+  render: "harness-render.svg", upstash: "harness-upstash.svg",
+  convex: "harness-convex.svg", linear: "harness-linear.svg",
+  notion: "harness-notion.svg", twilio: "harness-twilio.svg", clerk: "harness-clerk.svg",
 };
-function statusLogo(id) {
+/* The logo cell: the shipped mark for a known id, else the service's
+ * initial on a tile, so rows with no mark still line up (CatalogueRow
+ * keeps the square empty; a letter says a little more). */
+function statusLogo(id, name = "") {
   const file = STATUS_LOGOS[id];
-  if (!file) return "";
+  if (!file) {
+    const letter = (name || "?").trim()[0] || "?";
+    return `<span class="logo status-glyph" aria-hidden="true">${esc(letter.toUpperCase())}</span>`;
+  }
   const mono = file.endsWith("-color.svg") ? "" : " mono";
   return `<img class="logo${mono}" src="/app/${file}" alt="">`;
 }
@@ -125,7 +149,8 @@ function statusHeader() {
   const p = statusPage, d = p.data;
   const checked = d && d.checked_at ? `<span class="caption muted">Checked ${esc(statusRelative(d.checked_at))}</span>` : "";
   return pageHeader("Service status", "Live status from the official status pages of the services your harnesses use.",
-    `${checked}<button class="icon-button${p.loading ? " spinning" : ""}" id="page-refresh" aria-label="Refresh"
+    `${checked}<button class="status-add" id="status-add">${statusIcon("plus")}<span>Add service</span></button>
+    <button class="icon-button${p.loading ? " spinning" : ""}" id="page-refresh" aria-label="Refresh"
       title="Check every status page now"${p.loading ? " disabled" : ""}>${icon("rescan")}</button>`);
 }
 
@@ -139,10 +164,12 @@ function paintStatus(error = "") {
     <div class="stack status-page">
       ${error ? `<div class="card"><p class="error">${esc(error)}</p></div>` : ""}
       ${groups}
-      <p class="caption muted">Read from each provider's public status page, at most every five minutes. Gemini comes from Google Cloud's status feed, which covers the Gemini API.</p>
+      <p class="caption muted">Read from each provider's public status page, at most every five minutes. Gemini comes from Google Cloud's status feed, which covers the Gemini API. Pages you add are checked the same way.</p>
     </div></div>`;
   const refresh = document.getElementById("page-refresh");
   if (refresh) refresh.onclick = () => { if (!p.loading) renderStatus("status", true); };
+  const add = document.getElementById("status-add");
+  if (add) add.onclick = () => statusOpenCatalogue();
   for (const row of document.querySelectorAll("[data-status-expand]")) {
     row.onclick = () => {
       const id = row.dataset.statusExpand;
@@ -151,6 +178,21 @@ function paintStatus(error = "") {
       const again = document.querySelector(`[data-status-expand="${CSS.escape(id)}"]`);
       if (again) again.focus();
     };
+  }
+  for (const btn of document.querySelectorAll("[data-status-remove]")) {
+    btn.onclick = () => {
+      p.removing = btn.dataset.statusRemove;
+      p.removeError = "";
+      paintStatus(error);
+      const go = document.querySelector("[data-status-remove-go]");
+      if (go) go.focus();
+    };
+  }
+  for (const btn of document.querySelectorAll("[data-status-remove-cancel]")) {
+    btn.onclick = () => { p.removing = null; p.removeError = ""; paintStatus(error); };
+  }
+  for (const btn of document.querySelectorAll("[data-status-remove-go]")) {
+    btn.onclick = () => statusUntrack(btn.dataset.statusRemoveGo);
   }
 }
 
@@ -177,16 +219,29 @@ function statusCard(raw) {
   const expanded = p.expanded.has(s.id);
   const note = statusDetailNote(s);
   const label = s.health_title || (p.loading && s.checked_at == null ? "Checking…" : "Unknown");
+  // A page the user added carries Remove, as the Mac's ellipsis menu does;
+  // built-ins cannot be removed. The confirm unfolds in the card.
+  const remove = s.custom
+    ? `<button class="status-open" data-status-remove="${esc(s.id)}" title="Stop tracking ${esc(s.name)}"
+        aria-label="Stop tracking ${esc(s.name)}">${statusIcon("more")}</button>` : "";
+  const confirming = p.removing === s.id ? `<div class="status-confirm" role="group" aria-label="Stop tracking ${esc(s.name)}?">
+      <span>Stop tracking ${esc(s.name)}?</span>
+      <span class="status-confirm-buttons">
+        <button class="status-confirm-button" data-status-remove-cancel>Cancel</button>
+        <button class="status-confirm-button danger" data-status-remove-go="${esc(s.id)}">Stop tracking</button>
+      </span></div>` : "";
   return `<article class="card status-card">
     <div class="status-body">
-      <div class="status-head">${statusLogo(s.logo)}<span class="status-name">${esc(s.name)}</span>
+      <div class="status-head">${statusLogo(s.logo, s.name)}<span class="status-name">${esc(s.name)}</span>
         <a class="status-open" href="${esc(s.page_url)}" target="_blank" rel="noopener noreferrer"
-          title="${esc(s.page_url)}" aria-label="Open the ${esc(s.name)} status page">${statusIcon("open")}</a></div>
+          title="${esc(s.page_url)}" aria-label="Open the ${esc(s.name)} status page">${statusIcon("open")}</a>${remove}</div>
       <div class="status-health-block">
         <div class="status-health"><span class="health-dot health-${esc(s.health || "unknown")}" aria-hidden="true"></span>
           <span class="${s.health ? "" : "muted"}">${esc(label)}</span></div>
         ${s.note ? `<div class="caption muted">${esc(s.note)}</div>` : ""}
       </div>
+      ${confirming}
+      ${p.removeError && confirming ? `<div class="status-problem caption">${statusIcon("warn")}<span>${esc(p.removeError)}</span></div>` : ""}
       ${expanded ? statusDetails(s) : ""}
       ${statusProblem(s)}
     </div>
@@ -195,6 +250,36 @@ function statusCard(raw) {
         ${statusIcon(expanded ? "up" : "down")}<span>${expanded ? "Show less" : "Show details"}</span>
         <span class="muted">· ${esc(note)}</span></button>` : ""}
   </article>`;
+}
+
+/* True while the status page is the visible one, so a slow POST landing
+ * after the browser moved on cannot paint cards over another page. */
+function statusOnPage() {
+  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "status";
+}
+
+/* The card's Remove, confirmed inline. The hub's answer is a fresh
+ * payload, so the card list repaints without it. */
+async function statusUntrack(id) {
+  const p = statusPage;
+  // Bump the generation like renderStatus does: a list read still in
+  // flight began before this write and must not put the card back. The
+  // same stamp orders two writes, so only the latest reply is applied.
+  const mine = ++p.gen;
+  const { status, data } = await apiPost("/v1/app/status/untrack", { id });
+  if (status === 401) return statusGate();
+  if (status === 200 && data) {
+    if (mine !== p.gen) return;
+    p.removing = null;
+    p.removeError = "";
+    p.expanded.delete(id);
+    statusKeep(data);
+    if (statusOnPage()) paintStatus();
+    return;
+  }
+  if (!statusOnPage()) return;
+  p.removeError = statusError(status, data);
+  paintStatus();
 }
 
 function statusDetails(s) {
@@ -248,6 +333,169 @@ function statusProblem(s) {
   }
   if (s.stale && s.checked_at != null) text += `. Showing the reading from ${statusRelative(s.checked_at)}.`;
   return `<div class="status-problem caption">${statusIcon("warn")}<span>${esc(text)}</span></div>`;
+}
+
+/* ------------------------------------------------------- the catalogue */
+
+const CAT_GROUPS = [[null, "All"], ["providers", "AI providers"], ["infrastructure", "Infrastructure"]];
+const CAT_TITLES = { providers: "AI providers", infrastructure: "Infrastructure" };
+
+/* The sheet lives on document.body, so a page repaint behind it does not
+ * close it (the app's sheet stays up while adds land). */
+function statusCatalogueDialog() {
+  let dlg = document.getElementById("status-catalogue");
+  if (dlg) return dlg;
+  dlg = document.createElement("dialog");
+  dlg.id = "status-catalogue";
+  dlg.className = "sheet status-catalogue";
+  dlg.setAttribute("aria-labelledby", "status-catalogue-title");
+  dlg.addEventListener("close", () => { statusPage.catalogue = null; dlg.replaceChildren(); });
+  document.body.appendChild(dlg);
+  // A sheet belongs to the status page: leaving it closes the sheet.
+  window.addEventListener("hashchange", () => {
+    if ((location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] !== "status" && dlg.open) dlg.close();
+  });
+  return dlg;
+}
+
+async function statusOpenCatalogue() {
+  const dlg = statusCatalogueDialog();
+  const fresh = !statusPage.catalogue;
+  if (fresh) statusPage.catalogue = { data: null, query: "", group: null, adding: new Set(), error: "" };
+  statusPaintCatalogue();
+  if (!dlg.open) dlg.showModal();
+  const search = dlg.querySelector("#status-cat-search");
+  if (search) search.focus();
+  if (fresh || !statusPage.catalogue.data) {
+    const { status, data } = await api("/v1/app/status?view=catalogue");
+    const c = statusPage.catalogue;
+    if (!c || !dlg.open) return;
+    if (status === 401) { dlg.close(); return statusGate(); }
+    if (status === 200 && data) { c.data = data; c.error = ""; }
+    else c.error = statusError(status, data);
+    statusPaintCatalogue(true);
+  }
+}
+
+/* StatusCatalogue.filter, in the browser: the chip pick plus a search on
+ * the name and the feed's host. */
+function statusCatShown(c) {
+  const entries = (c.data && c.data.entries) || [];
+  const needle = c.query.trim().toLowerCase();
+  return entries.filter((e) => (c.group == null || e.group === c.group)
+    && (!needle || e.name.toLowerCase().includes(needle) || e.host.toLowerCase().includes(needle)));
+}
+
+function statusPaintCatalogue(keepFocus = false) {
+  const dlg = document.getElementById("status-catalogue");
+  const c = statusPage.catalogue;
+  if (!dlg || !c) return;
+  const search = dlg.querySelector("#status-cat-search");
+  const caret = keepFocus && document.activeElement === search ? search.selectionStart : null;
+  const chips = `<div class="tabs table status-cat-tabs" role="tablist">${CAT_GROUPS.map(([id, label]) =>
+    `<button type="button" class="tab${c.group === id ? " selected" : ""}" role="tab" aria-selected="${c.group === id}"
+      data-status-cat-group="${id == null ? "" : id}">${label}</button>`).join("")}</div>`;
+  let body;
+  if (!c.data && !c.error) {
+    body = `<p class="empty status-cat-empty">Reading the catalogue…</p>`;
+  } else {
+    const shown = statusCatShown(c);
+    const total = c.data ? c.data.entries.length : 0;
+    const rows = shown.length ? CAT_GROUPS.slice(1).map(([gid]) => {
+      const members = shown.filter((e) => e.group === gid);
+      if (!members.length) return "";
+      return `${c.group == null ? `<div class="status-cat-heading caption muted">${esc(CAT_TITLES[gid])}</div>` : ""}
+        <div class="status-cat-grid">${members.map(statusCatRow).join("")}</div>`;
+    }).join("") : `<p class="empty status-cat-empty">Nothing matches.</p>`;
+    body = `<div class="status-cat-list">${rows}</div>
+      <div class="sheet-actions status-cat-foot">
+        <span class="caption muted num">${shown.length} of ${total}</span><span class="status-cat-spacer"></span>
+        <button class="status-confirm-button" value="close">Done</button>
+      </div>`;
+  }
+  dlg.innerHTML = `<div class="sheet-body status-cat-body">
+    <div class="sheet-title" id="status-catalogue-title">Service catalogue</div>
+    <input class="field search" id="status-cat-search" type="search" placeholder="Search status pages"
+      value="${esc(c.query)}" autocomplete="off" spellcheck="false" aria-label="Search status pages">
+    ${chips}${c.error ? `<p class="error" role="alert">${esc(c.error)}</p>` : ""}${body}
+  </div>`;
+  statusBindCatalogue(dlg, c);
+  if (caret != null) {
+    const again = dlg.querySelector("#status-cat-search");
+    if (again) {
+      again.focus();
+      try { again.setSelectionRange(caret, caret); } catch { /* not text */ }
+    }
+  }
+}
+
+function statusCatRow(e) {
+  const c = statusPage.catalogue;
+  const adding = c.adding.has(e.id);
+  const side = e.added
+    ? `<span class="status-cat-added">${statusIcon("check")}<span>Added</span></span>`
+    : `<button type="button" class="status-cat-add" data-status-cat-add="${esc(e.id)}"${adding ? " disabled" : ""}>${
+        adding ? "Adding…" : "Add"}</button>`;
+  return `<div class="status-cat-row">${statusLogo(e.logo, e.name)}
+    <div class="status-cat-main"><div class="status-cat-name">${esc(e.name)}</div>
+      <div class="caption muted status-cat-host">${esc(e.host)}</div></div>${side}</div>`;
+}
+
+function statusBindCatalogue(dlg, c) {
+  const done = dlg.querySelector('[value="close"]');
+  if (done) done.onclick = () => dlg.close();
+  const search = dlg.querySelector("#status-cat-search");
+  if (search) search.oninput = () => { c.query = search.value; statusPaintCatalogue(true); };
+  for (const tab of dlg.querySelectorAll("[data-status-cat-group]")) {
+    tab.onclick = () => {
+      const next = tab.dataset.statusCatGroup || null;
+      if (next === c.group) return;
+      c.group = next;
+      statusPaintCatalogue();
+      const again = dlg.querySelector("#status-cat-search");
+      if (again) again.focus();
+    };
+  }
+  for (const btn of dlg.querySelectorAll("[data-status-cat-add]")) {
+    btn.onclick = () => statusTrack(btn.dataset.statusCatAdd);
+  }
+}
+
+/* A row's Add: POST /v1/app/status/track carries the fresh payload, so
+ * the page behind repaints and the row reads Added. */
+async function statusTrack(id) {
+  const c = statusPage.catalogue;
+  const dlg = document.getElementById("status-catalogue");
+  if (!c || c.adding.has(id)) return;
+  c.adding.add(id);
+  c.error = "";
+  statusPaintCatalogue();
+  // Bump the generation as in statusUntrack, before the request goes
+  // out: stale list reads and earlier write replies must not win.
+  const mine = ++statusPage.gen;
+  const { status, data } = await apiPost("/v1/app/status/track", { id });
+  // The page's truth lands whether the sheet stayed open or not: the
+  // service exists once the hub took the write.
+  if (status === 401) {
+    if (dlg && dlg.open) dlg.close();
+    return statusGate();
+  }
+  if (status === 200 && data && mine === statusPage.gen) {
+    statusKeep(data);
+    if (statusOnPage()) paintStatus();
+  }
+  if (statusPage.catalogue !== c) return;
+  c.adding.delete(id);
+  if (status === 200 && data) {
+    if (c.data) {
+      const entry = c.data.entries.find((e) => e.id === id);
+      if (entry) entry.added = true;
+    }
+    statusPaintCatalogue();
+    return;
+  }
+  c.error = statusError(status, data);
+  statusPaintCatalogue();
 }
 
 /* The app checks on a five-minute timer while it runs; the open page does

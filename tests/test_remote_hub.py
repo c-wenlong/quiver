@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 from quiver.remote import protocol
 from quiver.remote import tail
-from quiver.remote.hub import HubState, make_server
+from quiver.remote.hub import APPROVAL_TTL_S, HubState, make_server
 from quiver.remote import pairing
 from quiver.sessions.models import Session
 
@@ -61,13 +61,25 @@ class _Server:
         finally:
             conn.close()
 
-    def pair(self):
+    def pair(self, role=""):
         token = pairing.mint_pair_token(self.home)
-        status, data = self.request(
-            "POST", "/v1/pair", {"token": token, "name": "test"}
-        )
+        body = {"token": token, "name": "test"}
+        if role:
+            body["role"] = role
+        status, data = self.request("POST", "/v1/pair", body)
         assert status == 200, data
         return json.loads(data)
+
+    def satellite(self, mid):
+        """Pair a satellite credential and bind it to ``mid`` via
+        /v1/agent/register; returns its Authorization headers."""
+        cred = self.pair(role="satellite")
+        auth = {"Authorization": f"Bearer {cred['credential']}"}
+        status, data = self.request(
+            "POST", "/v1/agent/register", {"machine": {"id": mid}},
+            headers=auth)
+        assert status == 200, data
+        return auth
 
 
 class TestHub(_Server, unittest.TestCase):
@@ -610,6 +622,38 @@ class TestHubWriteRoutes(unittest.TestCase):
         items = json.loads(data)["items"]
         self.assertEqual([i["status"] for i in items], ["approval"])
 
+    def test_inbox_drops_expired_phantom_approval(self):
+        # A satellite that died mid-prompt can never emit
+        # approval.resolved — the entry expires on its TTL instead of
+        # pinning the inbox row forever.
+        srv = _Server(sessions=[_session(sid="a3")],
+                      statuses=lambda ss: ["active"])
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        hdr = {"Authorization": f"Bearer {cred['credential']}"}
+        srv.state.emit("claude:a3", protocol.event(
+            "approval.requested", "claude:a3", "mbp",
+            {"request_id": "req-3", "prompt": "run it?"}))
+        srv.state._approval_at["claude:a3"] = (
+            time.time() - APPROVAL_TTL_S - 1)
+        status, data = srv.request("GET", "/v1/inbox", headers=hdr)
+        self.assertEqual(json.loads(data)["items"], [])
+        self.assertNotIn("claude:a3", srv.state.pending_approvals)
+        self.assertNotIn("claude:a3", srv.state._approval_at)
+
+    def test_inbox_keeps_fresh_approval(self):
+        srv = _Server(sessions=[_session(sid="a4")],
+                      statuses=lambda ss: ["active"])
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        hdr = {"Authorization": f"Bearer {cred['credential']}"}
+        srv.state.emit("claude:a4", protocol.event(
+            "approval.requested", "claude:a4", "mbp",
+            {"request_id": "req-4"}))
+        status, data = srv.request("GET", "/v1/inbox", headers=hdr)
+        items = json.loads(data)["items"]
+        self.assertEqual([i["request_id"] for i in items], ["req-4"])
+
     def test_advertise_url_never_wildcard(self):
         from quiver.remote import catalog, hub
         with patch.object(
@@ -888,6 +932,46 @@ class TestHubWriteRoutes(unittest.TestCase):
         status, _ = self.srv.request("GET", "/nope.js")
         self.assertEqual(status, 404)
 
+    def test_static_harness_logos(self):
+        """``/harness-<id>.svg`` serves the web app's bundled logos:
+        aliases resolve (``claude-code`` to ``claude``), colour wins,
+        ``-color`` asks for that variant alone."""
+        from quiver.webapp import static as webapp_static
+
+        def file_bytes(name):
+            return (webapp_static.STATIC_DIR / name).read_bytes()
+
+        cases = {
+            "/harness-claude.svg": "harness-claude-color.svg",
+            "/harness-claude-color.svg": "harness-claude-color.svg",
+            "/harness-devin.svg": "harness-devin.svg",
+            "/harness-copilot.svg": "harness-copilot.svg",
+        }
+        for path, name in cases.items():
+            status, data = self.srv.request("GET", path)
+            self.assertEqual(status, 200, path)
+            self.assertEqual(data, file_bytes(name), path)
+        # Every alias in the table answers like its harness's id:
+        # the colour file when there is one, mono otherwise, and 404
+        # when the alias's harness has no bundled logo at all.
+        for alias, hid in webapp_static._LOGO_ALIASES.items():
+            status, data = self.srv.request("GET", f"/harness-{alias}.svg")
+            color = webapp_static.STATIC_DIR / f"harness-{hid}-color.svg"
+            mono = webapp_static.STATIC_DIR / f"harness-{hid}.svg"
+            if color.is_file():
+                self.assertEqual(data, color.read_bytes(), alias)
+            elif mono.is_file():
+                self.assertEqual(data, mono.read_bytes(), alias)
+            else:
+                self.assertEqual(status, 404, alias)
+        # ``-color`` means the colour variant only: devin's is mono.
+        status, _ = self.srv.request("GET", "/harness-devin-color.svg")
+        self.assertEqual(status, 404)
+        for path in ("/harness-nosuch.svg", "/harness-../x.svg",
+                     "/harness-icons.tsv"):
+            status, _ = self.srv.request("GET", path)
+            self.assertEqual(status, 404, path)
+
     def test_bad_body_400(self):
         conn = http.client.HTTPConnection(
             "127.0.0.1", self.srv.port, timeout=5
@@ -900,6 +984,108 @@ class TestHubWriteRoutes(unittest.TestCase):
             self.assertEqual(conn.getresponse().status, 400)
         finally:
             conn.close()
+
+
+class TestScopedApprovalToken(unittest.TestCase):
+    """The ntfy action-button bearer: scoped, single-use, approval-only.
+
+    A leaked token answers exactly the prompt it was minted for; the
+    paired device credential keeps working beside it for app clients.
+    """
+
+    def setUp(self):
+        self.srv = _AttachedServer()
+        self.addCleanup(self.srv.stop)
+        self.tokens = self.srv.state.approval_tokens
+
+    def _post_approval(self, body, token):
+        return self.srv.request(
+            "POST", "/v1/sessions/claude:s1/approval",
+            body=body, headers={"Authorization": f"Bearer {token}"},
+        )
+
+    def test_scoped_token_answers_approval(self):
+        tok = self.tokens.mint("claude:s1", "r1")
+        status, data = self._post_approval(
+            {"request_id": "r1", "decision": "allow"}, tok)
+        # Auth passed; headless claude just can't take the decision.
+        self.assertEqual(status, 409, data)
+        self.assertEqual(
+            json.loads(data)["error"]["code"], "approval_not_supported"
+        )
+
+    def test_scoped_token_is_single_use(self):
+        tok = self.tokens.mint("claude:s1", "r1")
+        body = {"request_id": "r1", "decision": "allow"}
+        first, _ = self._post_approval(body, tok)
+        self.assertNotEqual(first, 401)
+        second, _ = self._post_approval(body, tok)
+        self.assertEqual(second, 401)
+
+    def test_scoped_token_bound_to_request(self):
+        tok = self.tokens.mint("claude:s1", "r1")
+        status, _ = self._post_approval(
+            {"request_id": "r2", "decision": "allow"}, tok)
+        self.assertEqual(status, 401)
+
+    def test_scoped_token_bound_to_session(self):
+        tok = self.tokens.mint("claude:other", "r1")
+        status, _ = self._post_approval(
+            {"request_id": "r1", "decision": "allow"}, tok)
+        self.assertEqual(status, 401)
+
+    def test_scoped_token_expires(self):
+        past = time.time() - self.tokens.TTL_S - 1
+        tok = self.tokens.mint("claude:s1", "r1", now=past)
+        status, _ = self._post_approval(
+            {"request_id": "r1", "decision": "allow"}, tok)
+        self.assertEqual(status, 401)
+
+    def test_scoped_token_opens_no_other_route(self):
+        tok = self.tokens.mint("claude:s1", "r1")
+        for method, path, body in (
+            ("POST", "/v1/sessions/claude:s1/message", {"text": "hi"}),
+            ("POST", "/v1/sessions/claude:s1/control",
+             {"op": "interrupt"}),
+            ("GET", "/v1/sessions", None),
+        ):
+            status, _ = self.srv.request(
+                method, path, body=body,
+                headers={"Authorization": f"Bearer {tok}"},
+            )
+            self.assertEqual(status, 401, (method, path))
+
+    def test_resolved_approval_retires_token(self):
+        tok = self.tokens.mint("claude:s1", "r1")
+        self.srv.state.emit(
+            "claude:s1",
+            protocol.event(
+                "approval.resolved", "claude:s1", "m1",
+                {"request_id": "r1", "decision": "allow"},
+            ),
+        )
+        status, _ = self._post_approval(
+            {"request_id": "r1", "decision": "allow"}, tok)
+        self.assertEqual(status, 401)
+
+    def test_resolved_approval_keeps_other_requests_tokens(self):
+        # Overlapping approvals on one session: resolving r1 retires
+        # r1's token only — r2's buttons must keep working.
+        dead = self.tokens.mint("claude:s1", "r1")
+        live = self.tokens.mint("claude:s1", "r2")
+        self.srv.state.emit(
+            "claude:s1",
+            protocol.event(
+                "approval.resolved", "claude:s1", "m1",
+                {"request_id": "r1", "decision": "allow"},
+            ),
+        )
+        status, _ = self._post_approval(
+            {"request_id": "r1", "decision": "allow"}, dead)
+        self.assertEqual(status, 401)
+        status, data = self._post_approval(
+            {"request_id": "r2", "decision": "allow"}, live)
+        self.assertNotEqual(status, 401, data)
 
 
 class TestInboxCutoff(unittest.TestCase):
@@ -2650,6 +2836,50 @@ class TestSSE(HubBase):
         finally:
             conn.close()
 
+    def test_last_event_id_header_resumes_the_stream(self):
+        # An EventSource client reconnects with Last-Event-ID instead
+        # of ?last= — the header must win over the query arg and be
+        # honored at all (otherwise every reconnect is a full replay).
+        auth = self.auth()
+        key = "claude:s1"
+        self.srv.state.emit(
+            key, protocol.event(
+                "message.appended", key, "mbp",
+                protocol.message("assistant", "before"),
+            )
+        )
+        seen = self.srv.state.journal.last_seq(key)
+        self.srv.state.emit(
+            key, protocol.event(
+                "message.appended", key, "mbp",
+                protocol.message("assistant", "after"),
+            )
+        )
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.srv.port, timeout=5
+        )
+        try:
+            # Even with ?last=0 asking for everything, the header rules.
+            headers = {**auth, "Last-Event-ID": str(seen)}
+            conn.request(
+                "GET", f"/v1/sessions/{key}/events?last=0",
+                headers=headers,
+            )
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 200)
+            buf = b""
+            for _ in range(60):
+                line = resp.readline()
+                if not line:
+                    break
+                buf += line
+                if b"journal.caught-up" in buf:
+                    break
+            self.assertIn(b'"after"', buf)
+            self.assertNotIn(b'"before"', buf)
+        finally:
+            conn.close()
+
     def test_revoked_device_drops_stream(self):
         from quiver.remote import hub as hub_mod
         cred = self.srv.pair()
@@ -2906,6 +3136,266 @@ class TestKeepAliveAfterRefusal(HubBase):
                 self._assert_closed_cleanly(reply, 409)
 
 
+class TestAgentSecurity(HubBase):
+    """Issue #509: agent routes need a satellite credential bound to
+    the machine it names — not any paired device."""
+
+    def _sat(self, mid="sat-m1"):
+        return self.srv.satellite(mid)
+
+    def _post(self, path, body, auth):
+        return self.srv.request("POST", path, body, headers=auth)[0]
+
+    # -- role at pair time --------------------------------------------------
+
+    def test_pairing_assigns_role_and_register_binds(self):
+        cred = self.srv.pair(role="satellite")
+        row = pairing.load_devices(self.srv.home)[cred["device_id"]]
+        self.assertEqual(row["role"], "satellite")
+        self.assertNotIn("machine_id", row)
+        auth = {"Authorization": f"Bearer {cred['credential']}"}
+        status = self._post(
+            "/v1/agent/register", {"machine": {"id": "sat-m1"}}, auth)
+        self.assertEqual(status, 200)
+        row = pairing.load_devices(self.srv.home)[cred["device_id"]]
+        self.assertEqual(row["machine_id"], "sat-m1")
+
+    def test_pair_defaults_to_phone_and_rejects_unknown_role(self):
+        cred = self.srv.pair()
+        row = pairing.load_devices(self.srv.home)[cred["device_id"]]
+        self.assertEqual(row["role"], "phone")
+        cred = self.srv.pair(role="actions")
+        row = pairing.load_devices(self.srv.home)[cred["device_id"]]
+        self.assertEqual(row["role"], "phone")
+
+    # -- non-satellite credentials ------------------------------------------
+
+    def test_phone_denied_on_every_agent_route(self):
+        auth = self.auth()
+        self.assertEqual(
+            self._post("/v1/agent/register",
+                       {"machine": {"id": "m1"}}, auth), 403)
+        self.assertEqual(
+            self._post("/v1/agent/catalog",
+                       {"machine_id": "m1", "rows": []}, auth), 403)
+        self.assertEqual(
+            self._post("/v1/agent/usage",
+                       {"machine_id": "m1", "harnesses": []}, auth), 403)
+        self.assertEqual(
+            self._post("/v1/agent/events",
+                       {"machine_id": "m1", "events": []}, auth), 403)
+        status, _ = self.srv.request(
+            "GET", "/v1/agent/commands?machine=m1", headers=auth)
+        self.assertEqual(status, 403)
+        status, _ = self.srv.request(
+            "GET", "/v1/agent/attachments/claude%3Ax%40m1/r.png",
+            headers=auth)
+        self.assertEqual(status, 403)
+
+    def test_legacy_row_without_role_is_a_phone(self):
+        # Devices paired before roles exist have no ``role`` field —
+        # they must not reach the agent routes.
+        cred = self.srv.pair()
+        did = cred["device_id"]
+        devices = pairing.load_devices(self.srv.home)
+        del devices[did]["role"]
+        pairing._save_devices(self.srv.home, devices)
+        auth = {"Authorization": f"Bearer {cred['credential']}"}
+        self.assertEqual(
+            self._post("/v1/agent/register",
+                       {"machine": {"id": "m1"}}, auth), 403)
+
+    def test_actions_credential_denied_on_agent_routes(self):
+        # The ntfy action-button row: approval POSTs, never agent calls.
+        cred = self.srv.pair()
+        pairing.update_device(
+            self.srv.home, cred["device_id"], role="actions")
+        auth = {"Authorization": f"Bearer {cred['credential']}"}
+        self.assertEqual(
+            self._post("/v1/agent/register",
+                       {"machine": {"id": "m1"}}, auth), 403)
+        status, _ = self.srv.request(
+            "GET", "/v1/agent/commands?machine=m1", headers=auth)
+        self.assertEqual(status, 403)
+
+    # -- machine binding ----------------------------------------------------
+
+    def test_binding_denies_other_machines(self):
+        sat = self._sat("sat-m1")
+        other = "sat-m2"
+        self.assertEqual(
+            self._post("/v1/agent/register",
+                       {"machine": {"id": other}}, sat), 403)
+        self.assertEqual(
+            self._post("/v1/agent/catalog",
+                       {"machine_id": other, "rows": []}, sat), 403)
+        self.assertEqual(
+            self._post("/v1/agent/usage",
+                       {"machine_id": other, "harnesses": []}, sat), 403)
+        self.assertEqual(
+            self._post("/v1/agent/events",
+                       {"machine_id": other, "events": []}, sat), 403)
+        status, _ = self.srv.request(
+            "GET", f"/v1/agent/commands?machine={other}", headers=sat)
+        self.assertEqual(status, 403)
+
+    def test_binding_denies_other_machines_attachment(self):
+        sat = self._sat("sat-m1")
+        status, _ = self.srv.request(
+            "GET", "/v1/agent/attachments/claude%3Ax%40sat-m2/r.png",
+            headers=sat)
+        self.assertEqual(status, 403)
+        # A local key with no @mid is not for a satellite at all.
+        status, _ = self.srv.request(
+            "GET", "/v1/agent/attachments/claude%3Ax/r.png",
+            headers=sat)
+        self.assertEqual(status, 403)
+
+    def test_unbound_satellite_must_register_first(self):
+        cred = self.srv.pair(role="satellite")
+        sat = {"Authorization": f"Bearer {cred['credential']}"}
+        # No register yet: no binding, so the other routes refuse.
+        self.assertEqual(
+            self._post("/v1/agent/catalog",
+                       {"machine_id": "m1", "rows": []}, sat), 403)
+        self.assertEqual(
+            self._post("/v1/agent/events",
+                       {"machine_id": "m1", "events": []}, sat), 403)
+        status, _ = self.srv.request(
+            "GET", "/v1/agent/commands?machine=m1", headers=sat)
+        self.assertEqual(status, 403)
+
+    def test_register_is_idempotent_for_the_bound_machine(self):
+        sat = self._sat("sat-m1")
+        status = self._post(
+            "/v1/agent/register", {"machine": {"id": "sat-m1"}}, sat)
+        self.assertEqual(status, 200)
+
+    def test_register_cannot_claim_the_hub_machine(self):
+        cred = self.srv.pair(role="satellite")
+        sat = {"Authorization": f"Bearer {cred['credential']}"}
+        status = self._post(
+            "/v1/agent/register",
+            {"machine": {"id": self.srv.state.machine_id}}, sat)
+        self.assertEqual(status, 403)
+
+    def test_second_satellite_cannot_take_the_machine(self):
+        # A credential stays bound to ITS machine even when another
+        # machine is already registered by a different satellite.
+        self._sat("sat-m1")
+        sat2 = self._sat("sat-m2")
+        self.assertEqual(
+            self._post("/v1/agent/catalog",
+                       {"machine_id": "sat-m1", "rows": []}, sat2), 403)
+
+    def test_fresh_satellite_cannot_claim_a_bound_machine(self):
+        # Registering is how a credential pins its machine; a second
+        # live credential must not grab one that is already spoken for.
+        self._sat("sat-m1")
+        cred = self.srv.pair(role="satellite")
+        sat2 = {"Authorization": f"Bearer {cred['credential']}"}
+        status = self._post(
+            "/v1/agent/register",
+            {"machine": {"id": "sat-m1"}}, sat2)
+        self.assertEqual(status, 403)
+
+    def test_revoked_binding_frees_the_machine(self):
+        # Credential replacement: revoke the old satellite, then a
+        # re-paired one can register the same machine.
+        cred = self.srv.pair(role="satellite")
+        sat1 = {"Authorization": f"Bearer {cred['credential']}"}
+        self.assertEqual(
+            self._post("/v1/agent/register",
+                       {"machine": {"id": "sat-m1"}}, sat1), 200)
+        pairing.revoke_device(self.srv.home, cred["device_id"])
+        cred2 = self.srv.pair(role="satellite")
+        sat2 = {"Authorization": f"Bearer {cred2['credential']}"}
+        self.assertEqual(
+            self._post("/v1/agent/register",
+                       {"machine": {"id": "sat-m1"}}, sat2), 200)
+
+    # -- event ingest -------------------------------------------------------
+
+    def _events(self, sat, events, mid="sat-m1"):
+        status, data = self.srv.request(
+            "POST", "/v1/agent/events",
+            {"machine_id": mid, "events": events}, headers=sat)
+        return status, json.loads(data)
+
+    def test_unknown_event_types_are_dropped(self):
+        sat = self._sat()
+        status, body = self._events(sat, [
+            protocol.event("message.appended", "claude:r1", "sat-m1",
+                           protocol.message("assistant", "real")),
+            {"type": "command", "session": "claude:r1",
+             "data": {"op": "message"}},
+            {"type": "session.ownership", "session": "claude:r1",
+             "data": {"ownership": "observed"}},
+            {"type": "made.up", "session": "claude:r1", "data": {}},
+        ])
+        self.assertEqual(status, 200)
+        self.assertEqual(body["accepted"], 1)
+        events, _ = self.srv.state.journal.read_since(
+            "claude:r1@sat-m1", 0)
+        self.assertEqual([e["type"] for e in events],
+                         ["message.appended"])
+
+    def test_unknown_message_kinds_are_dropped(self):
+        sat = self._sat()
+        status, body = self._events(sat, [
+            protocol.event("message.appended", "claude:r1", "sat-m1",
+                           {"kind": "<img src=x onerror=alert(1)>",
+                            "text": "xss"}),
+            protocol.event("message.appended", "claude:r1", "sat-m1",
+                           {"text": "kindless"}),
+            protocol.event("message.appended", "claude:r1", "sat-m1",
+                           protocol.message("assistant", "real")),
+        ])
+        self.assertEqual(status, 200)
+        self.assertEqual(body["accepted"], 1)
+        events, _ = self.srv.state.journal.read_since(
+            "claude:r1@sat-m1", 0)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["data"]["kind"], "assistant")
+
+    def test_agent_bookkeeping_event_types_survive(self):
+        sat = self._sat()
+        status, body = self._events(sat, [
+            protocol.event("session.launched", "claude:r1", "sat-m1",
+                           {"launch_id": "l1"}),
+            protocol.event("command.result", "claude:r1", "sat-m1",
+                           {"op": "message", "ok": True}),
+        ])
+        self.assertEqual(status, 200)
+        self.assertEqual(body["accepted"], 2)
+
+    def test_notify_kind_checked_against_its_own_set(self):
+        sat = self._sat()
+        status, body = self._events(sat, [
+            protocol.event("notify", "claude:r1", "sat-m1",
+                           {"kind": "finished", "status": "done"}),
+            protocol.event("notify", "claude:r1", "sat-m1",
+                           {"kind": "assistant", "status": "done"}),
+        ])
+        self.assertEqual(status, 200)
+        self.assertEqual(body["accepted"], 1)
+
+    def test_nonstring_kind_values_drop_not_crash(self):
+        # A list or dict in data.kind used to reach frozenset
+        # membership and raise TypeError, killing the whole batch.
+        sat = self._sat()
+        status, body = self._events(sat, [
+            protocol.event("message.appended", "claude:r1", "sat-m1",
+                           {"kind": ["assistant"], "text": "x"}),
+            protocol.event("message.appended", "claude:r1", "sat-m1",
+                           {"kind": {"v": "assistant"}, "text": "x"}),
+            protocol.event("message.appended", "claude:r1", "sat-m1",
+                           protocol.message("assistant", "real")),
+        ])
+        self.assertEqual(status, 200)
+        self.assertEqual(body["accepted"], 1)
+
+
 class TestStartNotify(unittest.TestCase):
     def test_start_spawns_notifier_when_enabled(self):
         from quiver.remote import hub as hub_mod, notify
@@ -2936,6 +3426,62 @@ class TestStartNotify(unittest.TestCase):
                 self.assertNotIn("remote-notify", names)
             finally:
                 state.stop()
+
+    def test_start_skips_notifier_on_partial_config(self):
+        # enabled but no url/topic: no thread, and no undrained queue
+        # left on the bus either.
+        from quiver.remote import notify
+
+        home = Path(tempfile.mkdtemp())
+        state = HubState(home)
+        state.catalog._fetch = lambda: []
+        with patch.object(
+            notify, "load_config", return_value={"enabled": True}
+        ):
+            state.start()
+            try:
+                names = [t.name for t in state._threads]
+                self.assertNotIn("remote-notify", names)
+                self.assertEqual(state.bus._subs, [])
+            finally:
+                state.stop()
+
+    def test_start_retires_legacy_credential_when_disabled(self):
+        # Notifications off must not strand the legacy ntfy-actions
+        # device row: copies already sent to a topic still authenticate
+        # as a paired device until the row is revoked.
+        from quiver.remote import notify, pairing
+
+        home = Path(tempfile.mkdtemp())
+        device_id = "deadbeef02"
+        with pairing._state_lock(home):
+            devices = pairing.load_devices(home)
+            devices[device_id] = {
+                "name": "ntfy-actions",
+                "credential_hash": pairing._hash_credential("legacy"),
+                "created_at": time.time(),
+                "last_seen_at": None,
+                "revoked_at": None,
+            }
+            pairing._save_devices(home, devices)
+        notify.save_config(home, {
+            "enabled": False,
+            "action_device_id": device_id,
+            "action_credential": "legacy",
+        })
+        state = HubState(home)
+        state.catalog._fetch = lambda: []
+        state.start()
+        try:
+            row = pairing.load_devices(home)[device_id]
+            self.assertTrue(row["revoked_at"])
+            self.assertIsNone(
+                pairing.device_for_credential(home, "legacy"))
+            saved = notify.load_config(home)
+            self.assertNotIn("action_device_id", saved)
+            self.assertNotIn("action_credential", saved)
+        finally:
+            state.stop()
 
 
 if __name__ == "__main__":

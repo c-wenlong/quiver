@@ -1,0 +1,117 @@
+/* Hooks page: the link-state strip (the AgentsMdPage one, under hk-
+ * names so this page keeps it if that page's CSS changes), the grouped
+ * hook rows, the detail view and the New hook sheet. Reuses the shared
+ * .card/.badge/.caption/.sheet/.field classes from styles.css. */
+
+.hk-button {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--card); color: var(--text-primary); font: inherit; font-size: 13px; cursor: pointer;
+}
+.hk-button svg { width: 14px; height: 14px; }
+.hk-button:hover { background: var(--tab-hover); }
+.hk-button:disabled { opacity: .55; cursor: default; }
+.hk-button:disabled:hover { background: var(--card); }
+.hk-button.primary { background: var(--text-primary); border-color: var(--text-primary); color: var(--card); }
+.hk-button.primary:hover:not(:disabled) { background: var(--text-primary); opacity: .9; }
+.hk-button.primary:disabled:hover { background: var(--text-primary); }
+.hk-button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.hk-button.danger:hover:not(:disabled) { background: var(--danger); opacity: .9; }
+.hk-new-button svg { width: 12px; height: 12px; }
+
+.hk-spinner {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid currentColor; border-top-color: transparent;
+  animation: spin 1s linear infinite; display: inline-block; flex: none;
+}
+
+/* The init strip: pending links and the blocked-files note, like
+ * agents.css's .ag-strip. */
+.hk-strip {
+  border: 1px solid var(--border); border-radius: 12px; background: var(--card);
+  padding: 12px 16px; display: flex; flex-direction: column; gap: 10px;
+}
+.hk-strip-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.hk-strip-row .card-title { flex: 0 0 auto; }
+.hk-strip-row .caption { flex: 1 1 auto; min-width: 180px; }
+.hk-run { flex: 0 0 auto; margin-left: auto; }
+.hk-blocked { border-top: 1px solid var(--border); padding-top: 10px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.hk-blocked .caption { flex: 1 1 auto; min-width: 180px; margin: 0; }
+
+.hk-confirm {
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 8px; background: var(--subtle);
+}
+.hk-confirm .caption { margin: 0; }
+.hk-confirm-paths { margin: 0; padding-left: 18px; font-size: 12px; color: var(--text-secondary); }
+.hk-confirm-paths code { word-break: break-all; }
+.hk-confirm-buttons { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* Check findings. */
+.hk-findings { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.hk-finding { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.hk-fmsg { flex: 1 1 220px; }
+.badge.hk-dim { opacity: .6; }
+
+/* Grouped hook rows. */
+.hk-group { display: flex; flex-direction: column; gap: 0; }
+.hk-group > .card-title, .hk-group-head { padding-bottom: 6px; }
+.hk-group-head { display: flex; align-items: center; gap: 8px; }
+.hk-mark { display: inline-flex; align-items: center; gap: 5px; color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
+.hk-mark img.logo { width: 18px; height: 18px; }
+.hk-rows { display: flex; flex-direction: column; }
+.hk-row {
+  display: flex; align-items: center; gap: 10px; padding: 8px 6px; margin: 0 -6px;
+  border-top: 1px solid var(--row-divider); border-radius: 6px;
+  color: var(--text-primary); text-decoration: none;
+}
+.hk-row:hover { background: var(--row-hover); }
+.hk-main { display: flex; flex-direction: column; gap: 3px; flex: 1 1 auto; min-width: 0; }
+.hk-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hk-title .name { font-weight: 600; }
+.hk-path { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+  color: var(--text-secondary); word-break: break-all; }
+.hk-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.hk-chevron { color: var(--text-muted); font-size: 18px; flex: 0 0 auto; }
+
+.hk-empty { text-align: center; }
+.hk-empty .empty { margin-bottom: 10px; }
+.hk-action-error .error { margin: 0; }
+
+/* Detail view. */
+.hk-back { display: inline-block; margin: -8px 0 12px; font-size: 13px;
+  color: var(--text-secondary); text-decoration: none; }
+.hk-back:hover { color: var(--text-primary); }
+.hk-lock {
+  display: flex; align-items: flex-start; gap: 8px; padding: 12px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--subtle);
+  color: var(--text-secondary); font-size: 12px;
+}
+.hk-lock svg { width: 13px; height: 13px; flex: none; margin-top: 1px; }
+.hk-head { display: flex; flex-direction: column; gap: 8px; }
+.hk-head .name { font-size: 16px; }
+.hk-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hk-body { margin: 0; font-size: 13px; line-height: 1.45; }
+.hk-kv { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.hk-mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; word-break: break-all; }
+.hk-file { color: var(--text-secondary); }
+.hk-decls { display: flex; flex-direction: column; gap: 6px; }
+.hk-decl { display: flex; flex-direction: column; gap: 2px; }
+.hk-decl-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hk-events { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.hk-doc { gap: 8px; }
+.hk-text {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; line-height: 1.5;
+  background: var(--subtle); border-radius: 8px;
+  padding: 10px 12px; margin: 0; white-space: pre-wrap; word-break: break-word;
+  max-height: 480px; overflow: auto;
+}
+
+/* New hook sheet. */
+.hk-new-sheet { width: min(480px, 92vw); }
+.hk-new-field { display: flex; flex-direction: column; gap: 4px; }
+.hk-new-label { font-size: 12px; color: var(--text-secondary); }
+.hk-stanza { position: relative; }
+.hk-stanza .hk-text { padding-right: 64px; }
+.hk-copy { position: absolute; top: 8px; right: 8px; height: 24px; padding: 0 10px; font-size: 12px; }

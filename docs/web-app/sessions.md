@@ -16,11 +16,25 @@ publishes one global, `SessionChat`, which `renderSessions` calls when the
 hash names a chat. Should the script fail to load, a row opens the details
 sheet as before.
 
+Beside the chat, a rail (the Mac app's `SessionRail`) lists every session
+the page does, grouped by day the same way, so switching sessions doesn't
+go back through the list. Its rows are the page's
+`sessionsPage.data.sessions` with none of the page's filters applied; a
+chat opened from a link, the list never loaded, fetches
+`/v1/app/sessions` once and leaves the answer in the page's state for
+when the chat is left. A rail row navigates to `#/sessions?chat=<key>`
+exactly like a list row, the open session is marked, and it stays listed
+even when the data predates it or the filters would leave it out. The
+header's button refetches (`/v1/app/sessions?rescan=1`, the page's own
+Refresh). Under 960 px the rail folds to a strip of session chips above
+the chat, like the Repositories rail's fold.
+
 ## What it shows
 
 | Part | What |
 |---|---|
 | Top bar | Back, harness logo, title, harness · folder (· machine for a satellite), the status badge, Attached or Observed, a Live / Reconnecting dot, and Details: the sheet the row used to open (harness, machine, folder, last active, id, models, tokens and spend, copy id, copy resume command). |
+| Rail | Every session the page lists, grouped by day like the list: harness logo, title and a status dot (the badge colours; nothing for a finished one). A row swaps the chat to that session; the open one is marked and stays listed even when the list's data or filters would leave it out. The header button relists; under 960 px the rail is a strip of chips above the chat. |
 | Transcript | The last 500 messages from `GET /v1/sessions/{key}/messages?limit=500`, then live events. User text right in a bubble, assistant text left, both with the PWA's markdown (fenced code, inline code, bold; everything else escaped). Thinking folds under "Thought". Tool calls are cards ("Edit src/x.py") that open to their arguments and output; Edit, MultiEdit, Write, NotebookEdit and apply_patch cards show a diff instead. Compaction is a "Context compacted" rule; system notes are centred captions; errors are red. |
 | Approval card | "Approval needed", the prompt, and Allow, Always, Deny. Once answered it dims and says Allowed, Always allowed or Denied. |
 | Working dots | While the session is active, a send waits for its reply, or live messages are still being revealed. |

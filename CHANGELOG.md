@@ -72,6 +72,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NSAllowsLocalNetworking` covers the unqualified or `.local` names
   and IP literals — including Tailscale CGNAT addresses — a hub
   address can take; arbitrary domains are back under full ATS.
+- **An enabled-but-incomplete ntfy config no longer parks a dead
+  subscriber on the hub bus.** `enabled` without `url`/`topic`
+  subscribed a queue nothing drained; it filled to the 2000-event cap
+  and silently dropped events. The notifier now starts only when the
+  config can actually post, and unsubscribes rather than leaving the
+  queue behind.
+- **ntfy approval actions carry a scoped token, not a device
+  credential, and prompts are redacted.** The Allow/Deny/Always
+  buttons used to send `Authorization: Bearer <cred>` for the
+  `ntfy-actions` device row — a full-power credential good for every
+  attached session — through the ntfy topic, where the host (and
+  ntfy.sh's relay for iOS delivery) could read it. Each notification
+  now mints a token bound to (session, request_id): single-use, ten
+  minutes, accepted only by the approval route, and retired the moment
+  that request resolves — overlapping requests on the session keep
+  their buttons. The prompt text also runs the transcript
+  secret-redactor plus a length cap, so a `Bearer sk-...` inside a
+  permission menu can't reach the topic either. Every hub start
+  revokes the legacy `ntfy-actions` device row and scrubs it from
+  `notify.json` — notifications disabled or half-configured can't
+  strand it live — and a failed revoke keeps the fields to retry
+  rather than losing the only handle on a leaked credential. Paired
+  devices keep working on the approval route unchanged.
 
 ## [1.1.1] - 2026-10-26
 
@@ -105,6 +128,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   state does so under `~/.quiver/data/remote`, and creating it surfaced
   as a bare `OSError`. The command boundary now catches it and prints
   `can't write <dir>: <reason>`, exit 1.
+- **Cursor usage reads past the editor's encrypted token.** Cursor's
+  `state.vscdb` now stores `cursorAuth/accessToken` as an opaque
+  `cursor-safe-storage:` blob (Electron safeStorage) rather than a raw
+  JWT, and the blob shadowed the CLI auth file and the macOS keychain
+  behind it: it was taken as the session token, so the account card read
+  "Couldn't fetch usage" and doctor reported an error. The token ladder
+  now skips any value that doesn't decode as a JWT and tries the next
+  source, and the signed-in probe counts a stored file token only when
+  it decodes. An extra account's `state.vscdb` still reads alone — a
+  blob there reports signed-out rather than borrowing the default
+  account's keychain.
+
+- **Remote tail, journal and SSE read-path bugs** (issue #514). Four
+  bugs that could show duplicated, missing or stale messages on the
+  phone:
+
+  - A transcript that shrank was always re-read from byte zero, so a
+    copytruncate-style rotation (logrotate, an in-place rewrite that
+    kept the head) replayed the whole transcript as new
+    `message.appended` events. `JsonlTailSource` now keeps a sample of
+    the file head: an unchanged head means the stream was only cut
+    shorter in place — its remaining bytes were already sent, so
+    nothing is re-emitted — while a changed head is a new stream and
+    still restarts. The sample rides in the cursor file and is
+    verified on restore, even for a file cut shorter than the sample.
+  - opencode `part` rows sharing a millisecond were skipped forever:
+    the cursor was a bare `time_created` and the query asked for
+    `time_created > cursor`. It is now a `(time_created, id)` position,
+    and it only advances after a row is consumed, so an error
+    mid-iteration re-reads the row instead of losing it. Cursor files
+    holding the old scalar resume at that millisecond's start.
+  - `Journal.read_since` read the file without `_LOCK` while appends
+    and ring trims mutate under it; a read racing a trim could answer
+    from the pre-trim file without `truncated=True`. The read now runs
+    under the same lock.
+  - The three SSE routes read only `?last=`, so a standard EventSource
+    client reconnecting with `Last-Event-ID` got a full replay. The
+    header is now honored as the resume cursor, with `?last=` as the
+    fallback.
+- **Remote: docs and CLI drift.** `swe remote status --json` now exits 1
+  when the hub is unreachable while still emitting the envelope, matching
+  docs/json-contracts.md and the Mac app's caller. `swe remote devices`
+  and `swe remote attach` reject stray positional args like every other
+  subcommand, and the `attach` usage line lists the real `--mode` set
+  (`auto|tmux|headless|serve|appserver`). `import quiver.cli` no longer
+  pulls `quiver.remote` in, so `swe version` and friends skip sessions,
+  reports and the hub. docs/remote-control.md's status line reflects that
+  R1–R5 shipped, and the README gains a remote-control section with the
+  threat model.
+- **Satellite command queue bugs (#513).** The hub's per-satellite
+  backlog floor (`_sat_acked`) only moved when the command stream
+  reconnected, so a healthy satellite eventually hit 429s after
+  `MAX_SAT_PENDING` commands; `command.result` events now act as the
+  in-band ack — the hub maps `command_id` back to the queued seq and
+  advances the floor mid-stream, contiguously, so a result for a later
+  seq cannot leap past a command still running. An agent restart could
+  re-run a command that had finished out of order (e.g. a `control`
+  completed while a long `message` send still ran): the done set above
+  the contiguous cursor floor now persists in `agent-cursor.json`, and
+  the replayed seq is skipped instead of re-dispatched. Inbox approvals
+  no longer linger forever when a satellite dies or a pane is killed
+  mid-prompt: pending entries expire after `APPROVAL_TTL_S` (24 h) on
+  inbox read. `queue_command` is now typed `dict | None`, matching its
+  backlog-full `None` return.
+- **Paired devices can no longer impersonate satellites.** Any device
+  credential used to reach every `/v1/agent/*` route with a
+  caller-supplied machine id, so one paired phone could open another
+  machine's command stream, fake its presence, overwrite its catalog,
+  and journal events into its sessions. Device rows now carry a `role`
+  (`phone`, `satellite`, `actions`): satellites claim theirs when they
+  pair (`swe remote agent --token`), and the first
+  `/v1/agent/register` pins the credential to that `machine_id` for
+  good. Every agent route — register, catalog, usage, events, the
+  command stream and attachment pulls — now requires a satellite
+  credential bound to the machine it names and answers 403 otherwise,
+  including for the `ntfy-actions` row and for devices paired before
+  roles existed (they read as phones). A satellite also cannot
+  register the hub's own machine id.
+- **Agent event ingest is allowlisted.** `POST /v1/agent/events`
+  journaled any event `type` and message `kind` a credential sent;
+  events outside the protocol's vocabulary — and `message.*`/`notify`
+  events whose `data.kind` is not in that type's known set — are now
+  dropped instead of journaled.
+- **The PWA escapes a message's kind.** `appendMessage` interpolated
+  `kind` into `innerHTML` unescaped, so a journaled message with a
+  markup-bearing kind could run script in the phone UI. The role label
+  is now escaped, and an off-list kind no longer adds CSS classes to
+  the bubble (a crafted kind could have faked the `user` style).
+- **Remote web: the working pill names its harness.** The PWA's working
+  indicator under the last chat message now shows the session's harness
+  logo beside the pulsing dots, as the iPhone app does, with the
+  harness's name as the fallback when it has no logo. The hub serves
+  the bundled logos the Mac and iPhone apps draw at
+  `/harness-<id>.svg`, resolved through their alias table
+  (`claude-code` to `claude`, and so on), and a session row in the
+  PWA's list shows the logo in place of the harness's name.
 
 ## [1.1.0] - 2026-10-26
 

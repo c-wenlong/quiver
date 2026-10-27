@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from quiver.paths import remote_dir_for
+from quiver.paths import atomic_write_text, remote_dir_for
 from quiver.remote import attachments, catalog as catalog_mod, slash
 from quiver.remote import inject, journal, protocol, supervise, tail
 from quiver.remote import fork as fork_mod, usage as usage_mod
@@ -49,7 +49,9 @@ def load_agent(home: Path | None = None) -> dict | None:
 def save_agent(home: Path | None, conf: dict) -> Path:
     path = agent_file_for(home)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(conf, indent=1))
+    atomic_write_text(path, json.dumps(conf, indent=1), private=True)
+    # private=True floors a new file at 0600 but keeps an existing mode,
+    # so a restored or hand-written file must be tightened on every save.
     os.chmod(path, 0o600)
     return path
 
@@ -124,10 +126,16 @@ def _get_bytes(hub: str, path: str, credential: str,
 
 def pair_agent(hub: str, token: str, name: str,
                home: Path | None = None) -> dict | None:
-    """Exchange a one-time pair token for this satellite's credential."""
+    """Exchange a one-time pair token for this satellite's credential.
+
+    The claimed ``role`` lands on the device row; the hub binds it to
+    this machine at first ``/v1/agent/register`` and refuses the agent
+    routes to anything else.
+    """
     status, payload = _post(
         hub, "/v1/pair", "",  # no auth needed for /v1/pair
-        {"token": token, "name": name or "satellite"},
+        {"token": token, "name": name or "satellite",
+         "role": "satellite"},
     )
     if status != 200 or not payload.get("credential"):
         return None
@@ -158,6 +166,9 @@ class RemoteAgent:
         # Last "/" menu payload the hub accepted; see _push_catalog.
         self._slash_digest: str | None = None
         self._slash_skipped: str | None = None
+        # Set after a printed 403 register refusal, so the loop retries
+        # without re-printing; cleared on the next accepted register.
+        self._register_denied: str | None = None
         self.outbox: "list[dict]" = []
         self._outbox_lock = threading.Lock()
         self._stop = threading.Event()
@@ -173,10 +184,12 @@ class RemoteAgent:
         # Two cursors: ``_last_cmd_seq`` dedups frames seen on the wire;
         # ``_done_cmd_seq`` is the persisted *completed* floor the
         # ``?last=`` replay starts from — a crash mid-dispatch replays
-        # the command instead of skipping it.
-        self._last_cmd_seq = self._load_cmd_cursor()
+        # the command instead of skipping it. ``_done_set`` is the
+        # persisted out-of-order completions above that floor, so a
+        # replayed command that already finished is skipped, not run
+        # twice.
+        self._last_cmd_seq, self._done_set = self._load_cmd_cursor()
         self._done_cmd_seq = self._last_cmd_seq
-        self._done_set: set[int] = set()
         # The stream thread, the work loop and fork threads all finish
         # commands; the cursor advance must not interleave.
         self._done_lock = threading.Lock()
@@ -208,30 +221,46 @@ class RemoteAgent:
     def _cmd_cursor_file(self) -> Path:
         return agent_file_for(self.home).parent / "agent-cursor.json"
 
-    def _load_cmd_cursor(self) -> int:
-        """Last *completed* command seq for this hub; 0 for a new one."""
+    def _load_cmd_cursor(self) -> tuple[int, set[int]]:
+        """(Last *completed* seq, out-of-order done seqs); zeroed for a
+        new or re-paired hub."""
         path = self._cmd_cursor_file()
         try:
             data = json.loads(path.read_text())
             if isinstance(data, dict) and data.get("hub") == self.hub:
-                return int(data.get("seq") or 0)
-            return 0  # paired to a different hub — replay its queue
+                done = {
+                    s for s in (data.get("done") or [])
+                    if isinstance(s, int) and not isinstance(s, bool)
+                }
+                return int(data.get("seq") or 0), done
+            return 0, set()  # paired to a different hub — replay its queue
         except (OSError, ValueError):
             pass
         # Pre-migration cursor was a bare int for whatever hub was
         # paired then; honor it once rather than replay the backlog.
         legacy = path.with_name("agent-cursor")
         try:
-            return int(legacy.read_text().strip())
+            return int(legacy.read_text().strip()), set()
         except (OSError, ValueError):
-            return 0
+            return 0, set()
 
     def _save_cmd_cursor(self) -> None:
         path = self._cmd_cursor_file()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(
-                {"hub": self.hub, "seq": self._done_cmd_seq}))
+            path.write_text(json.dumps({
+                "hub": self.hub,
+                "seq": self._done_cmd_seq,
+                # Done seqs above the contiguous floor — without them a
+                # restart replays and re-runs a command that already
+                # finished. Every entry sits above the floor by
+                # construction (_mark_done drops them as it climbs),
+                # and the hub's backlog cap bounds how many can pile
+                # up while one seq below them still runs — evicting
+                # any would re-run that command, so the whole set
+                # persists.
+                "done": sorted(self._done_set),
+            }))
         except OSError:
             pass
 
@@ -371,10 +400,26 @@ class RemoteAgent:
         return True
 
     def _register(self) -> bool:
-        status, _ = _post(
+        status, reply = _post(
             self.hub, "/v1/agent/register", self.cred,
             {"machine": self.machine},
         )
+        if status == 403 and self._register_denied is None:
+            # A permanent refusal — pre-roles satellites pair as phones
+            # and the binding gate rejects them forever, so explain
+            # once instead of letting the retry loop look flaky.
+            detail = ""
+            if isinstance(reply, dict):
+                detail = str(reply.get("message") or "")
+            self._register_denied = detail or "forbidden"
+            print(
+                "swe remote agent: the hub refused this credential "
+                f"(403 {self._register_denied}); re-pair this machine "
+                "with `swe remote pair --hub <url> --token <token>`",
+                file=sys.stderr,
+            )
+        if status == 200:
+            self._register_denied = None
         return status == 200
 
     # -- downlink ----------------------------------------------------------
@@ -419,6 +464,12 @@ class RemoteAgent:
             return
         seq = ev.get("seq")
         if isinstance(seq, int):
+            if seq in self._done_set:
+                # Finished before a restart, above the contiguous
+                # floor the replay started from: seen it, don't run
+                # it again. The wire cursor still moves.
+                self._last_cmd_seq = max(self._last_cmd_seq, seq)
+                return
             if seq <= self._last_cmd_seq:
                 return
             self._last_cmd_seq = seq

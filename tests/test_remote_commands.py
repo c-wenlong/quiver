@@ -45,6 +45,11 @@ class TestDispatch(unittest.TestCase):
         rc, _, err = _run(["serve", "extra"])
         self.assertEqual(rc, 1)
 
+    def test_devices_rejects_positionals(self):
+        rc, _, err = _run(["devices", "extra"])
+        self.assertEqual(rc, 1)
+        self.assertIn("unexpected args", err)
+
 
 class TestPair(unittest.TestCase):
     def test_pair_mints_and_prints_url(self):
@@ -89,6 +94,17 @@ class TestStatus(unittest.TestCase):
         data = json.loads(out)
         self.assertEqual(data["data"]["devices"][0]["name"], "phone")
         self.assertEqual(data["data"]["machines"][0]["name"], "srv")
+
+    def test_status_json_exits_1_when_hub_unreachable(self):
+        # The envelope still goes out; the exit code reports reachability,
+        # as docs/json-contracts.md and the Mac app's caller expect.
+        with patch("quiver.remote.commands._probe", return_value=None), \
+             patch.object(commands.pairing, "load_devices", lambda *a: {}), \
+             patch.object(commands.catalog_mod, "load_machines", lambda *a: {}):
+            rc, out, _ = _run(["status", "--json", "--host=127.0.0.1"])
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertEqual(data["data"]["hub"], {"ok": False})
 
     def test_status_pretty_online(self):
         info = {"ok": True, "version": "1.0.0", "uptime_s": 9,
@@ -181,6 +197,11 @@ class TestAttachCmd(unittest.TestCase):
         rc, _, err = _run(["attach"])
         self.assertEqual(rc, 1)
         self.assertIn("needs a session", err)
+
+    def test_attach_rejects_extra_positionals(self):
+        rc, _, err = _run(["attach", "abc", "extra", "args"])
+        self.assertEqual(rc, 1)
+        self.assertIn("unexpected args: extra args", err)
 
 
 class TestServe(unittest.TestCase):

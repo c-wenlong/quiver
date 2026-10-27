@@ -9,6 +9,9 @@ listener.
 
 Auth: every ``/v1/*`` route except ``/v1/status`` and ``/v1/pair`` wants
 ``Authorization: Bearer <device credential>`` from ``devices.json``.
+The approval POST alone also accepts a scoped, single-use ntfy action
+token (``notify.ApprovalTokens``) so a notification never carries a
+full-power credential.
 """
 
 from __future__ import annotations
@@ -121,6 +124,27 @@ _PAIR_ATTEMPT_S = 600
 # long; past it the tmux pane has long since been adopted or abandoned.
 LAUNCH_TTL_S = 86400
 
+# An unanswered approval expires from the inbox after this long: a dead
+# satellite or a killed pane can never emit ``approval.resolved``, so
+# without an expiry the item outlives the prompt itself.
+APPROVAL_TTL_S = 86400
+
+# Event types a satellite may journal via /v1/agent/events:
+# protocol.EVENT_TYPES plus the two agent→hub bookkeeping types the
+# phone never sends. Anything else is dropped, not journaled.
+_SAT_EVENT_TYPES = protocol.EVENT_TYPES | {
+    "session.launched", "command.result",
+}
+
+# Per-type ``data.kind`` vocabularies for the events that carry one.
+# The journal feeds the PWA verbatim, so an unknown kind would render
+# unvetted markup there; these events must name a known kind.
+_SAT_KIND_SETS = {
+    "message.appended": protocol.MESSAGE_KINDS,
+    "message.delta": protocol.MESSAGE_KINDS,
+    "notify": protocol.NOTIFY_KINDS,
+}
+
 
 class EventBus:
     """Fan-out to SSE subscriber queues, keyed by session or global."""
@@ -180,11 +204,26 @@ class HubState:
         # signal — a sleeping MacBook just drops offline until it dials in.
         self._sat_subs: dict[str, int] = {}
         self._cmd_seq = 0
+        # Guards ``_cmd_seq`` and every piece of satellite ack
+        # bookkeeping below — command streams, result uploads and
+        # queue_command all run on different request threads.
         self._cmd_lock = threading.Lock()
-        # Last command-stream seq each satellite connected with — the
-        # floor of what it has executed. queue_command refuses to grow a
-        # backlog it would silently trim.
+        # The contiguous floor of what each satellite has *completed*:
+        # ``?last=`` sets it on connect, ``command.result`` moves it
+        # over consecutive seqs through ``_sat_done`` — a control that
+        # finishes while an earlier message still runs must not raise
+        # it, or the journal could trim commands a restart still owes.
         self._sat_acked: dict[str, int] = {}
+        # machine_id -> {command_id: journal seq} for queued commands
+        # awaiting their result — how a ``command.result`` finds the
+        # queue position it acks. Entries at or under the floor are
+        # pruned; a hub restart starts the map over (the agent's own
+        # floor survives in its cursor file).
+        self._sat_cmd_seqs: dict[str, dict[str, int]] = {}
+        # machine_id -> completed seqs above the contiguous floor —
+        # the same out-of-order set the agent's cursor keeps, so the
+        # floor only climbs a run with no gaps in it.
+        self._sat_done: dict[str, set[int]] = {}
         # Message sends run here — a headless turn or a queue-until-idle
         # wait must not hold the phone's POST open.
         self.sendq = sendq.SendQueue()
@@ -233,6 +272,16 @@ class HubState:
         # not yet been answered — local panes and satellites both flow
         # through emit(), so the inbox sees them uniformly.
         self.pending_approvals: dict[str, str] = {}
+        # One-shot, minutes-lived bearer tokens the ntfy action buttons
+        # send instead of a device credential (notify.ApprovalTokens).
+        self.approval_tokens = notify.ApprovalTokens()
+        # When each pending approval was requested: entries expire on
+        # APPROVAL_TTL_S, since a dead satellite or killed pane can
+        # never emit the approval.resolved that would clear them.
+        # ``_approval_lock`` covers both dicts — the expiry sweep and
+        # emit's updates run on different request threads.
+        self._approval_at: dict[str, float] = {}
+        self._approval_lock = threading.Lock()
         # launch_id -> {machine, harness, cwd, state, key, note,
         # created_at} for every POST /v1/sessions. ``state`` goes pending
         # -> started (a ``session.launched`` event names the key) or
@@ -349,11 +398,26 @@ class HubState:
         if etype == "approval.requested":
             rid = str((event.get("data") or {}).get("request_id") or "")
             if rid:
-                self.pending_approvals[key] = rid
+                with self._approval_lock:
+                    self.pending_approvals[key] = rid
+                    self._approval_at[key] = time.time()
         elif etype == "approval.resolved":
-            self.pending_approvals.pop(key, None)
+            with self._approval_lock:
+                self.pending_approvals.pop(key, None)
+                self._approval_at.pop(key, None)
+            # Retire only the resolved request's token — a different
+            # still-pending request on the session (a Codex app-server
+            # holds approvals independently) keeps its buttons live.
+            rid = str((event.get("data") or {}).get("request_id") or "")
+            self.approval_tokens.drop(key, rid)
         elif etype in {"session.launched", "command.result"}:
             data = event.get("data") or {}
+            if etype == "command.result":
+                # A result is the satellite's in-band ack: between
+                # reconnects this is what moves the backlog floor.
+                self._sat_result_acked(
+                    str(event.get("machine") or ""),
+                    str(data.get("command_id") or ""))
             lid = str(data.get("launch_id") or "")
             if lid and etype == "session.launched":
                 started = str(event.get("session") or key)
@@ -380,17 +444,41 @@ class HubState:
             issues_mod.title_adopted(self, *adopted)
         return written
 
+    def expire_pending_approvals(self) -> None:
+        """Sweep ``pending_approvals`` entries past ``APPROVAL_TTL_S``.
+
+        ``approval.resolved`` clears a live one; a dead satellite or a
+        pane killed mid-prompt never sends it, so without this the
+        inbox shows the prompt forever. Runs lazily where the inbox is
+        read — it is the only consumer. The whole sweep sits under
+        ``_approval_lock`` so a fresh request landing mid-pass is
+        either expired by this check or survives it, never deleted by
+        a stale timestamp.
+        """
+        with self._approval_lock:
+            cutoff = time.time() - APPROVAL_TTL_S
+            for key, at in list(self._approval_at.items()):
+                if at <= cutoff:
+                    self._approval_at.pop(key, None)
+                    self.pending_approvals.pop(key, None)
+
     def start(self) -> None:
         self._register_machine()
         # A keep or adopt cut short by a crash leaves a key in both
         # the supervised and kept registries; settle it before serving.
         supervise.reconcile_kept(self.home)
+        notify_cfg = notify.load_config(self.home)
+        # Copies of the legacy ntfy action credential already sent to a
+        # topic still authenticate as a paired device, so retire it at
+        # boot whether or not notifications still post — a disabled or
+        # incomplete config must not strand the row live.
+        notify.retire_action_credential(self.home, notify_cfg)
         targets: list = [
             (self._catalog_loop, "remote-catalog"),
             (self._tail_loop, "remote-tail"),
             (self._search_index_loop, "remote-search-index"),
         ]
-        if notify.load_config(self.home).get("enabled"):
+        if notify.ready(notify_cfg):
             notifier = notify.Notifier(
                 self, self.base_url, subscribe_key=GLOBAL_KEY
             )
@@ -470,9 +558,52 @@ class HubState:
             ),
         )
 
+    def _prune_sat_cmd_seqs(self, mid: str) -> None:
+        """Drop result-map entries at or under the ack floor — a result
+        naming one could never move the floor again.
+
+        Caller holds ``_cmd_lock``."""
+        seqs = self._sat_cmd_seqs.get(mid)
+        if not seqs:
+            return
+        floor = self._sat_acked.get(mid, 0)
+        for cid in [c for c, s in seqs.items() if s <= floor]:
+            del seqs[cid]
+
+    def _sat_result_acked(self, mid: str, command_id: str) -> None:
+        """Move a satellite's backlog floor on a ``command.result``.
+
+        A result acks only its own seq: the floor mirrors the agent's
+        contiguous done floor, so it climbs ``_sat_done`` one
+        consecutive seq at a time — a control finishing while an
+        earlier message still runs in ``_work_q`` leaves it put, and
+        the pending count keeps covering the commands a restart still
+        owes the satellite. ``?last=`` resets it on connect; an id the
+        map doesn't know (a hub-local result, or a command queued
+        before a hub restart) changes nothing.
+        """
+        if not command_id:
+            return
+        with self._cmd_lock:
+            seqs = self._sat_cmd_seqs.get(mid)
+            seq = seqs.pop(command_id, None) if seqs else None
+            if seq is None:
+                return
+            floor = self._sat_acked.get(mid, 0)
+            if seq > floor:
+                done = self._sat_done.setdefault(mid, set())
+                done.add(seq)
+                while floor + 1 in done:
+                    floor += 1
+                    done.discard(floor)
+                self._sat_acked[mid] = floor
+            # A map entry at or under the floor can never move it.
+            for cid in [c for c, s in seqs.items() if s <= floor]:
+                del seqs[cid]
+
     def queue_command(
         self, mid: str, op: str, session_key: str, data: dict
-    ) -> dict:
+    ) -> dict | None:
         """Append a command to the satellite's journal; returns the envelope.
 
         The satellite replays ``_sat_<mid>`` on reconnect, so this IS the
@@ -482,9 +613,10 @@ class HubState:
         ``MAX_SAT_PENDING``: the journal trims and silently dropped
         commands are worse than an honest "machine too far behind".
         """
-        pending = self.journal.last_seq(
-            self.sat_journal_key(mid)
-        ) - self._sat_acked.get(mid, 0)
+        with self._cmd_lock:
+            pending = self.journal.last_seq(
+                self.sat_journal_key(mid)
+            ) - self._sat_acked.get(mid, 0)
         if pending >= MAX_SAT_PENDING:
             if session_key:
                 self.emit(
@@ -502,6 +634,10 @@ class HubState:
         local_key, _mid = protocol.split_remote_key(session_key)
         cmd = protocol.command(op, local_key, mid, command_id, data)
         written = self.journal.append(self.sat_journal_key(mid), cmd)
+        seq = written.get("seq")
+        if isinstance(seq, int):
+            with self._cmd_lock:
+                self._sat_cmd_seqs.setdefault(mid, {})[command_id] = seq
         self.bus.publish(self.sat_journal_key(mid), written)
         if session_key:
             self.emit(
@@ -678,11 +814,13 @@ class _Handler(BaseHTTPRequestHandler):
     _unread: int | None = 0
     _must_close = False
     _body_cache: object = _UNSET
+    _device_row: dict | None = None
 
     def handle_one_request(self) -> None:
         self._unread = 0
         self._must_close = False
         self._body_cache = _UNSET
+        self._device_row = None
         super().handle_one_request()
 
     def parse_request(self) -> bool:
@@ -791,6 +929,8 @@ class _Handler(BaseHTTPRequestHandler):
         if hit is None:
             return None
         device_id, row = hit
+        # The agent routes read role/machine_id off this row.
+        self._device_row = row
         # Throttled last_seen update: a write per request would churn
         # devices.json; five-minute freshness is plenty for the list.
         seen = row.get("last_seen_at") or 0
@@ -845,6 +985,69 @@ class _Handler(BaseHTTPRequestHandler):
         if device_id is None and not path.startswith("/v1/agent/"):
             device_id = self._owner_device()
         return device_id
+
+    def _scoped_approval_device(self, path: str) -> str | None:
+        """A minted ntfy action token as caller identity.
+
+        Action buttons carry a scoped token, not a device credential:
+        bound to ``(session key, request_id)``, single-use, minutes
+        lived, and accepted only here. The token is burned on any
+        presentation — a mismatched ``request_id`` is a failed spend,
+        not a free probe — so a topic reader holding it can answer
+        exactly the one prompt it was minted for and nothing else.
+        """
+        prefix = "/v1/sessions/"
+        suffix = "/approval"
+        if not path.startswith(prefix) or not path.endswith(suffix):
+            return None
+        key = unquote(path[len(prefix):-len(suffix)])
+        auth = self.headers.get("Authorization") or ""
+        token = auth[7:].strip() if auth.startswith("Bearer ") else ""
+        if not token:
+            return None
+        body = self._read_body() or {}
+        rid = str(body.get("request_id") or "")
+        if not self._state.approval_tokens.consume(token, key, rid):
+            return None
+        # The approval route never reads the device id back; non-None
+        # is the whole grant.
+        return "ntfy-action"
+    def _agent_row(self) -> dict | None:
+        """The caller's device row when it is a satellite, else None.
+
+        Rows minted before roles exist have no ``role`` and read as
+        phones here — an old credential can authenticate but never
+        speaks for a machine.
+        """
+        row = self._device_row
+        if not row or row.get("role") != "satellite":
+            return None
+        return row
+
+    def _agent_machine_ok(
+        self, device_id: str, mid: str, *, bind: bool = False
+    ) -> bool:
+        """True when ``mid`` is the machine this satellite speaks for.
+
+        ``bind`` is set by ``/v1/agent/register``: the first register
+        pins the credential's ``machine_id``, and every agent call —
+        register included — must present that same id afterwards.
+        """
+        row = self._device_row or {}
+        bound = row.get("machine_id")
+        if bound:
+            return bound == mid
+        if not bind:
+            return False
+        bound = pairing.bind_machine(self._state.home, device_id, mid)
+        if bound is not None:
+            # The stashed row predates the write; re-read so later
+            # checks in this request see the pin.
+            self._device_row = (
+                pairing.load_devices(self._state.home).get(device_id)
+                or self._device_row
+            )
+        return bound == mid
 
     def _proxied(self) -> bool:
         """True when ``tailscale serve`` relayed this request: the hub
@@ -1117,8 +1320,18 @@ class _Handler(BaseHTTPRequestHandler):
         """Command SSE for one satellite; presence = this stream's lifetime."""
         state = self._state
         # The seq the satellite acknowledges: new queues past
-        # MAX_SAT_PENDING over this floor are refused.
-        state._sat_acked[mid] = after_seq
+        # MAX_SAT_PENDING over this floor are refused. A restarted
+        # agent reports its contiguous done floor, which can sit below
+        # the seqs already acked here — follow it down; the replay
+        # dedups what it finished. Map and done-set entries at or under
+        # it are for commands that will never report a result again.
+        with state._cmd_lock:
+            state._sat_acked[mid] = after_seq
+            state._prune_sat_cmd_seqs(mid)
+            done = state._sat_done.get(mid)
+            if done:
+                done.difference_update(
+                    s for s in done if s <= after_seq)
         state.sat_connected(mid)
         try:
             self._sse_stream(
@@ -1159,6 +1372,22 @@ class _Handler(BaseHTTPRequestHandler):
         )
         self.wfile.write(frame.encode("utf-8"))
         self.wfile.flush()
+
+    def _sse_after(self, args) -> int:
+        """The SSE resume cursor.
+
+        The ``Last-Event-ID`` header wins — it is what an EventSource
+        client sends automatically on reconnect, matching the ``id:``
+        lines ``_sse_write`` emits. The ``?last=`` query arg is the
+        fallback for clients that drive the cursor by hand.
+        """
+        header = self.headers.get("Last-Event-ID")
+        if header is not None:
+            try:
+                return int(header.strip())
+            except ValueError:
+                pass  # unreadable header: fall through to the query arg
+        return _int_arg(args.get("last"), 0)
 
     # -- routing ----------------------------------------------------------
 
@@ -1339,6 +1568,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/v1/inbox":
             done =str((args.get("done") or [""])[0])
+            self._state.expire_pending_approvals()
             self._send_json(200, {
                 "items": self._state.catalog.inbox(
                     pending=self._state.pending_approvals,
@@ -1351,25 +1581,56 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/events":
-            after = _int_arg(args.get("last"), 0)
+            after = self._sse_after(args)
             self._sse_stream(None, after, device_id=device_id)
             return
 
         if path == "/v1/agent/commands":
+            if self._agent_row() is None:
+                self._send_error(
+                    403, "forbidden",
+                    "agent routes need a satellite credential",
+                )
+                return
             mid = str((args.get("machine") or [""])[0])
             if not mid:
                 self._send_error(
                     422, "bad_command", "machine is required"
                 )
                 return
-            after = _int_arg(args.get("last"), 0)
+            if not self._agent_machine_ok(device_id, mid):
+                self._send_error(
+                    403, "forbidden",
+                    "credential is bound to another machine",
+                )
+                return
+            after = self._sse_after(args)
             self._agent_stream(mid, after, device_id=device_id)
             return
 
         if path.startswith("/v1/agent/attachments/"):
+            if self._agent_row() is None:
+                self._send_error(
+                    403, "forbidden",
+                    "agent routes need a satellite credential",
+                )
+                return
             stem = path[len("/v1/agent/attachments/"):]
             key_part, _sep, ref = stem.rpartition("/")
-            self._pull_attachment(unquote(key_part), unquote(ref))
+            key = unquote(key_part)
+            # The staged key is hub-scoped ``local@mid``; the pull must
+            # stay inside the machine this credential speaks for.
+            _local, key_mid = protocol.split_remote_key(key)
+            if (
+                key_mid is None
+                or not self._agent_machine_ok(device_id, key_mid)
+            ):
+                self._send_error(
+                    403, "forbidden",
+                    "credential is bound to another machine",
+                )
+                return
+            self._pull_attachment(key, unquote(ref))
             return
 
         if path.startswith("/v1/sessions/"):
@@ -1401,7 +1662,7 @@ class _Handler(BaseHTTPRequestHandler):
                         {"status": str(row.get("status") or "")},
                     )
             if sep and action == "events":
-                after = _int_arg(args.get("last"), 0)
+                after = self._sse_after(args)
                 self._sse_stream(key, after, device_id=device_id)
                 return
             if sep and action == "messages":
@@ -1455,6 +1716,7 @@ class _Handler(BaseHTTPRequestHandler):
                 meta=self._pair_meta(
                     body, node_name=self._peer_node_name()
                 ),
+                role=str(body.get("role") or ""),
             )
             if result is None:
                 self._send_error(
@@ -1473,6 +1735,8 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         device_id = self._caller(path)
+        if device_id is None:
+            device_id = self._scoped_approval_device(path)
         if device_id is None:
             self._send_error(401, "unauthorized", "pair this device first")
             return
@@ -1512,12 +1776,31 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/agent/register":
+            if self._agent_row() is None:
+                self._send_error(
+                    403, "forbidden",
+                    "agent routes need a satellite credential",
+                )
+                return
             body = self._read_body()
             machine = (body or {}).get("machine") or {}
             mid = str(machine.get("id") or "")
             if not mid:
                 self._send_error(
                     422, "bad_command", "machine.id is required"
+                )
+                return
+            if mid == self._state.machine_id:
+                # A satellite claiming the hub's own id would shadow the
+                # local machine row and its queues.
+                self._send_error(
+                    403, "forbidden", "cannot register the hub machine"
+                )
+                return
+            if not self._agent_machine_ok(device_id, mid, bind=True):
+                self._send_error(
+                    403, "forbidden",
+                    "credential is bound to another machine",
                 )
                 return
             catalog_mod.upsert_machine(
@@ -1528,6 +1811,12 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/agent/catalog":
+            if self._agent_row() is None:
+                self._send_error(
+                    403, "forbidden",
+                    "agent routes need a satellite credential",
+                )
+                return
             body = self._read_body()
             if body is None:
                 self._send_error(400, "bad_body", "unreadable JSON body")
@@ -1538,6 +1827,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_error(
                     422, "bad_command",
                     "machine_id and rows are required",
+                )
+                return
+            if not self._agent_machine_ok(device_id, mid):
+                self._send_error(
+                    403, "forbidden",
+                    "credential is bound to another machine",
                 )
                 return
             # Snapshot ownership before the merge so attach/detach done
@@ -1571,6 +1866,12 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/agent/usage":
+            if self._agent_row() is None:
+                self._send_error(
+                    403, "forbidden",
+                    "agent routes need a satellite credential",
+                )
+                return
             body = self._read_body()
             if body is None:
                 self._send_error(400, "bad_body", "unreadable JSON body")
@@ -1579,6 +1880,12 @@ class _Handler(BaseHTTPRequestHandler):
             if not mid:
                 self._send_error(
                     422, "bad_command", "machine_id is required"
+                )
+                return
+            if not self._agent_machine_ok(device_id, mid):
+                self._send_error(
+                    403, "forbidden",
+                    "credential is bound to another machine",
                 )
                 return
             try:
@@ -1593,15 +1900,32 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/agent/events":
+            if self._agent_row() is None:
+                self._send_error(
+                    403, "forbidden",
+                    "agent routes need a satellite credential",
+                )
+                return
             body = self._read_body()
             if body is None:
                 self._send_error(400, "bad_body", "unreadable JSON body")
                 return
             events = body.get("events") or []
             mid = str(body.get("machine_id") or "")
+            if not mid:
+                self._send_error(
+                    422, "bad_command", "machine_id is required"
+                )
+                return
             if not isinstance(events, list):
                 self._send_error(
                     422, "bad_command", "events must be a list"
+                )
+                return
+            if not self._agent_machine_ok(device_id, mid):
+                self._send_error(
+                    403, "forbidden",
+                    "credential is bound to another machine",
                 )
                 return
             accepted = self._accept_agent_events(mid, events)
@@ -1954,11 +2278,26 @@ class _Handler(BaseHTTPRequestHandler):
     def _accept_agent_events(
         self, mid: str, events: list
     ) -> int:
-        """Journal upstream events under the hub-scoped ``key@mid``."""
+        """Journal upstream events under the hub-scoped ``key@mid``.
+
+        Anything outside ``_SAT_EVENT_TYPES`` is dropped, and an event
+        whose ``data.kind`` is not in that type's vocabulary is dropped:
+        the journal feeds the PWA verbatim, so an unknown kind would
+        render unvetted markup there.
+        """
         accepted = 0
         for ev in events:
-            if not isinstance(ev, dict) or "type" not in ev:
+            if not isinstance(ev, dict):
                 continue
+            etype = ev.get("type")
+            if not isinstance(etype, str) or etype not in _SAT_EVENT_TYPES:
+                continue
+            kinds = _SAT_KIND_SETS.get(etype)
+            if kinds is not None:
+                data = ev.get("data")
+                kind = data.get("kind") if isinstance(data, dict) else None
+                if not isinstance(kind, str) or kind not in kinds:
+                    continue
             local_key = str(ev.get("session") or "")
             if local_key:
                 hub_key = protocol.remote_key(mid, local_key)
@@ -2606,10 +2945,17 @@ class _Handler(BaseHTTPRequestHandler):
             "/icon-192.png": "icon-192.png",
             "/icon-512.png": "icon-512.png",
         }.get(path)
-        if name is None:
-            self._send_error(404, "not_found", "unknown route")
+        if name is not None:
+            self._send_asset(web / name)
             return
-        self._send_asset(web / name)
+        # ``/harness-<id>.svg`` is a session's logo from the web app's
+        # files: the same svgs the Mac and iPhone apps draw, resolved
+        # through their alias table so an id like ``claude-code`` works.
+        logo = webapp_static.harness_logo(path)
+        if logo is not None:
+            self._send_asset(logo)
+            return
+        self._send_error(404, "not_found", "unknown route")
 
     def _serve_webapp(self, path: str) -> None:
         """The web app (``quiver/webapp/static``) under ``/app/``.

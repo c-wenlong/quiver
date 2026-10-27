@@ -1,6 +1,10 @@
 # Remote control
 
-Status: design proposal. Nothing here exists yet.
+Status: shipped. R1–R5 all landed — `swe remote serve|setup|agent|pair|
+status|devices|attach|notify|ssh`, the hub-served PWA, the iOS app and
+the macOS app's Settings › Remote checklist all exist. This doc stays as
+the design record: what follows describes the build as it is, and the
+milestones table at the end is history, not a plan.
 
 Watch and steer CLI coding sessions (Claude Code, Codex, opencode and the
 rest of the registry) from a phone. Read the chat, send prompts, see new
@@ -326,6 +330,7 @@ GET  /v1/app/overview                the web app's Overview (docs/web-app.md)
 GET  /v1/app/sessions                the web app's Sessions: catalog rows + usage
 GET  /v1/app/harnesses               the web app's Harnesses: swe list --scope=all rows
 GET  /app/                           the web app's pages, static
+GET  /harness-<id>.svg               a harness's bundled logo, static (aliases resolve, colour wins)
 POST /v1/inbox/dismiss               {key, last_active_at} → cleared for this device
 POST /v1/pair                        QR payload → device credential; optional {device:{kind,model,client,os}} metadata
 GET  /v1/devices/me                  this device's row: kind, model, client, os, node_name, display_name, timestamps
@@ -876,6 +881,16 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   channel instead of trusting sshd's first answer. Tailscale SSH is not
   used: its server side needs the open-source `tailscaled` on macOS,
   not Tailscale.app.
+- Notifications leave the tailnet: whatever an ntfy body carries is
+  readable by the ntfy host (and ntfy.sh's relay for iOS delivery), so
+  no full-power credential and no raw pane text goes in one. Approval
+  action buttons POST with a token minted per notification — bound to
+  (session, request_id), single-use, ten minutes, the resolved
+  request's token dropped while overlapping requests keep theirs —
+  which only the approval route accepts (`notify.ApprovalTokens`);
+  prompts run the transcript secret-redactor and a length cap first.
+  The legacy `ntfy-actions` device row those buttons used to carry is
+  revoked at every hub start, whether or not notifications still post.
 - Threat model for the README: the hub executes on your machines by
   design; the credential gates the app layer on top of the tailnet —
   per-device revocation is what "revoke my lost phone" means without

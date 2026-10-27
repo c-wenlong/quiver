@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from quiver.remote import supervise
+from quiver.reports import transcripts as _tr
 from quiver.sessions.models import Session
 
 # A headless claude run gets this long before we kill it; a queued send
@@ -458,7 +459,7 @@ def _serve_event(serve: _ServeProc, blob: bytes) -> None:
         prompt += "\n\n" + "\n".join(f"`{p}`" for p in patterns[:8])
     emit(key, protocol.event(
         "approval.requested", key, machine,
-        {"request_id": perm_id, "prompt": prompt},
+        {"request_id": perm_id, "prompt": _tr._redact_secrets(prompt)},
     ))
 
 
@@ -715,7 +716,7 @@ def _appserver_read_loop(server: _AppServer, key: str, emit, machine: str) -> No
                             emit(key, protocol.event(
                                 "approval.requested", key, machine,
                                 {"request_id": request_id,
-                                 "prompt": prompt},
+                                 "prompt": _tr._redact_secrets(prompt)},
                             ))
                 elif method in ("turn/started", "codex/turnStarted"):
                     params = msg.get("params") or {}
