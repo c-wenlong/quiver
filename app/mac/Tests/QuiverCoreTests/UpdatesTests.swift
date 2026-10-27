@@ -501,8 +501,18 @@ struct UpdatesModelTests {
         #expect(model.rebuildState == .idle)
     }
 
+    /// Puts an empty build script at `relative` inside `checkout`, so the
+    /// rebuild sees the layout of a real checkout.
+    private func placeScript(_ relative: String, in checkout: URL) throws {
+        let script = checkout.appending(path: relative)
+        try FileManager.default.createDirectory(at: script.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try Data().write(to: script)
+    }
+
     @Test func rebuildRunsTheScriptIntoTheRebuildCache() async throws {
         let dir = tempDir()
+        try placeScript("app/mac/script/build-app.sh", in: dir)
         let rebuildDir = tempDir()
         let runner = RecordingRunner(gitOk(""))
         let model = makeModel(checkout: dir.path, rebuildRunner: runner,
@@ -530,6 +540,17 @@ struct UpdatesModelTests {
             .dropFirst("QUIVER_BUILD_DIR=".count)
         #expect(String(second) != buildDir)
         #expect(!FileManager.default.fileExists(atPath: buildDir))
+    }
+
+    @Test func aCheckoutFromBeforeTheMoveBuildsWithTheOldScript() async throws {
+        let dir = tempDir()
+        try placeScript("app/script/build-app.sh", in: dir)
+        let runner = RecordingRunner(gitOk(""))
+        let model = makeModel(checkout: dir.path, rebuildRunner: runner,
+                              rebuildDir: tempDir())
+        await model.rebuild()
+        let argv = try #require(runner.calls.first)
+        #expect(argv[2] == dir.path + "/app/script/build-app.sh")
     }
 
     @Test func pruneRemovesOnlyOldFoldersInsideTheCache() async throws {
