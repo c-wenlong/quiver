@@ -396,8 +396,8 @@ def _register_codex() -> None:
              signed_in=lambda: _read_codex_access_token() is not None)
 
 
-def _read_codex_access_token() -> str | None:
-    """The ChatGPT OAuth ``access_token`` from ``~/.codex/auth.json``."""
+def _read_codex_auth() -> dict | None:
+    """The parsed ``~/.codex/auth.json``, or None when absent or unreadable."""
     auth_path = os.path.expanduser("~/.codex/auth.json")
     if not os.path.exists(auth_path):
         return None
@@ -406,9 +406,13 @@ def _read_codex_access_token() -> str | None:
             auth = json.load(f)
     except (json.JSONDecodeError, OSError, RecursionError):
         return None
-    if not isinstance(auth, dict):
-        return None
-    tokens = auth.get("tokens") or {}
+    return auth if isinstance(auth, dict) else None
+
+
+def _read_codex_access_token() -> str | None:
+    """The ChatGPT OAuth ``access_token`` from ``~/.codex/auth.json``."""
+    auth = _read_codex_auth()
+    tokens = auth.get("tokens") if auth else None
     access_token = tokens.get("access_token") if isinstance(tokens, dict) else None
     return access_token or None
 
@@ -417,11 +421,18 @@ def _fetch_codex() -> RateLimitInfo | None:
     """Fetch Codex rate limits from the ChatGPT backend-api.
 
     Uses the OAuth ``access_token`` from ``~/.codex/auth.json`` to query
-    ``https://chatgpt.com/backend-api/wham/usage``.
+    ``https://chatgpt.com/backend-api/wham/usage``. The sign-in's address
+    rides the ``id_token`` claims, as the app's Codex reader takes it.
     """
-    access_token = _read_codex_access_token()
+    auth = _read_codex_auth()
+    tokens = auth.get("tokens") if auth else None
+    tokens = tokens if isinstance(tokens, dict) else {}
+    access_token = tokens.get("access_token")
     if not access_token:
         return None
+    claims = _jwt_payload(tokens.get("id_token"))
+    email = claims.get("email") if claims else None
+    email = email.strip() if isinstance(email, str) and email.strip() else None
 
     url = "https://chatgpt.com/backend-api/wham/usage"
     req = urllib.request.Request(
@@ -472,6 +483,7 @@ def _fetch_codex() -> RateLimitInfo | None:
         reset_at=reset_at,
         plan_type=plan_type,
         window_seconds=window_seconds,
+        email=email,
     )
 
 
@@ -805,6 +817,18 @@ def _read_claude_keychain_credentials() -> dict | None:
     return oauth if isinstance(oauth.get("accessToken"), str) else None
 
 
+def _read_claude_email() -> str | None:
+    """The signed-in address from ``~/.claude.json``'s ``oauthAccount``."""
+    try:
+        with open(os.path.expanduser("~/.claude.json")) as f:
+            config = json.load(f)
+    except (OSError, json.JSONDecodeError, RecursionError):
+        return None
+    account = config.get("oauthAccount") if isinstance(config, dict) else None
+    email = account.get("emailAddress") if isinstance(account, dict) else None
+    return email.strip() if isinstance(email, str) and email.strip() else None
+
+
 def _claude_expires_at_seconds(oauth: dict) -> float:
     """``expiresAt`` as epoch seconds; accepts ms or s, 0.0 when
     missing/unparseable."""
@@ -965,6 +989,9 @@ def _fetch_claude() -> RateLimitInfo | None:
     token = oauth.get("accessToken") if oauth else None
     if not token:
         return None
+    # The OAuth credential itself names no account; the global config
+    # does, same file the app's Claude reader asks.
+    email = _read_claude_email()
 
     # quiver never refreshes tokens, so an expired token always 401s.
     # Whether the login is actually dead is the refreshToken's call:
@@ -980,6 +1007,7 @@ def _fetch_claude() -> RateLimitInfo | None:
             info, _retry_at, _fp, fetched_at = _load_claude_state()
             if info is not None:
                 info.fetched_at = fetched_at
+                info.email = info.email or email
             return info
         return RateLimitInfo(
             tool_name="claude",
@@ -988,6 +1016,7 @@ def _fetch_claude() -> RateLimitInfo | None:
             reset_at=0.0,
             plan_type="auth-required",
             window_seconds=0,
+            email=email,
         )
 
     credential_fingerprint = _claude_credential_fingerprint(token)
@@ -1000,6 +1029,7 @@ def _fetch_claude() -> RateLimitInfo | None:
     ):
         if stale_info is not None:
             stale_info.fetched_at = fetched_at
+            stale_info.email = stale_info.email or email
         return stale_info
 
     req = urllib.request.Request(
@@ -1028,6 +1058,7 @@ def _fetch_claude() -> RateLimitInfo | None:
             )
             if stale_info is not None:
                 stale_info.fetched_at = fetched_at
+                stale_info.email = stale_info.email or email
             return stale_info
         # Any other failure (TLS, 401, timeout, network) is reported as no
         # reading. The aggregator's own 24h fallback then shows the last
@@ -1065,6 +1096,7 @@ def _fetch_claude() -> RateLimitInfo | None:
         plan_type="—",
         window_seconds=0,
         window=_CLAUDE_WINDOWS[best_window_key],
+        email=email,
     )
     _save_claude_state(info, credential_fingerprint=credential_fingerprint)
     return info
@@ -1809,14 +1841,15 @@ _CURSOR_BUCKETS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _read_cursor_state_token(
+def _read_cursor_state_value(
+    key: str,
     candidates: tuple[str, ...] | None = None,
 ) -> str | None:
-    """Return the editor's session token from its ``state.vscdb`` store.
+    """Return one ``ItemTable`` value from the editor's ``state.vscdb``.
 
     ``candidates`` overrides the default search list — an extra account's
     ``--user-data-dir`` db is passed as the sole candidate so an empty
-    account can never fall through to the default account's token.
+    account can never fall through to the default account's data.
     """
     for candidate in (
         candidates if candidates is not None else _CURSOR_STATE_DB_CANDIDATES
@@ -1832,7 +1865,7 @@ def _read_cursor_state_token(
         try:
             row = connection.execute(
                 "SELECT value FROM ItemTable WHERE key = ?",
-                ("cursorAuth/accessToken",),
+                (key,),
             ).fetchone()
         except sqlite3.Error:
             continue
@@ -1849,6 +1882,18 @@ def _read_cursor_state_token(
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _read_cursor_state_token(
+    candidates: tuple[str, ...] | None = None,
+) -> str | None:
+    """Return the editor's session token from its ``state.vscdb`` store.
+
+    ``candidates`` overrides the default search list — an extra account's
+    ``--user-data-dir`` db is passed as the sole candidate so an empty
+    account can never fall through to the default account's token.
+    """
+    return _read_cursor_state_value("cursorAuth/accessToken", candidates)
 
 
 def _read_cursor_keychain_token() -> str | None:
@@ -1901,9 +1946,11 @@ def _get_cursor_access_token() -> str | None:
     return None
 
 
-def _cursor_token_claims(token: str) -> dict | None:
-    """Decode the JWT payload without verifying it; only ``sub`` and
-    ``exp`` are read, and the server still checks the signature."""
+def _jwt_payload(token) -> dict | None:
+    """Decode a JWT payload without verifying the signature; display
+    fields only (``sub``, ``exp``, ``email``), the server still checks."""
+    if not isinstance(token, str):
+        return None
     try:
         payload = token.split(".")[1]
         payload += "=" * (-len(payload) % 4)
@@ -1911,6 +1958,12 @@ def _cursor_token_claims(token: str) -> dict | None:
     except (IndexError, ValueError, RecursionError):
         return None
     return claims if isinstance(claims, dict) else None
+
+
+def _cursor_token_claims(token: str) -> dict | None:
+    """Decode the JWT payload without verifying it; only ``sub`` and
+    ``exp`` are read, and the server still checks the signature."""
+    return _jwt_payload(token)
 
 
 def _cursor_session_cookie(token: str, claims: dict) -> str | None:
@@ -2098,6 +2151,14 @@ def _fetch_cursor(state_db: str | None = None) -> RateLimitInfo | None:
     )
     if not token:
         return None
+    # The signed-in address sits beside the token in the editor's db and
+    # is the only place it exists — the JWT carries no email claim. Read
+    # it even when the token came from the CLI's auth file or the
+    # keychain: all three are the one machine's Cursor session.
+    email = _read_cursor_state_value(
+        "cursorAuth/cachedEmail",
+        (state_db,) if state_db is not None else None,
+    )
     claims = _cursor_token_claims(token)
     if claims is None:
         return None
@@ -2117,6 +2178,7 @@ def _fetch_cursor(state_db: str | None = None) -> RateLimitInfo | None:
             reset_at=0.0,
             plan_type="auth-required",
             window_seconds=0,
+            email=email,
         )
 
     cookie = _cursor_session_cookie(token, claims)
@@ -2195,6 +2257,7 @@ def _fetch_cursor(state_db: str | None = None) -> RateLimitInfo | None:
     info = _parse_cursor_usage(data) if isinstance(data, dict) else None
     if info is None:
         return None
+    info.email = email
     plan = plan_info.get("planInfo") if plan_info else None
     plan_name = plan.get("planName") if isinstance(plan, dict) else None
     if isinstance(plan_name, str) and plan_name.strip():
@@ -2502,6 +2565,10 @@ def _parse_devin_status(data: dict) -> RateLimitInfo | None:
     plan = status.get("planStatus") if isinstance(status, dict) else None
     if not isinstance(plan, dict):
         return None
+    # ``name`` sits beside it, but the card shows one line and the address
+    # is what a sign-in is identified by.
+    email = status.get("email") if isinstance(status, dict) else None
+    email = email.strip() if isinstance(email, str) and email.strip() else None
     info = plan.get("planInfo") if isinstance(plan.get("planInfo"), dict) else {}
     plan_name = info.get("planName")
     plan_type = (
@@ -2558,6 +2625,7 @@ def _parse_devin_status(data: dict) -> RateLimitInfo | None:
             window=best_label,
             windows=windows,
             extra_usage_usd=extra_usage_usd,
+            email=email,
         )
 
     try:
@@ -2581,6 +2649,7 @@ def _parse_devin_status(data: dict) -> RateLimitInfo | None:
         remaining_units=remaining,
         total_units=total,
         extra_usage_usd=extra_usage_usd,
+        email=email,
     )
 
 

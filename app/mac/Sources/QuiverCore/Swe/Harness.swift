@@ -115,6 +115,10 @@ public struct RateLimit: Codable, Sendable, Equatable {
     public let extraUsageUSD: Double?
     /// Usage billed beyond the plan (Cursor's on-demand), nil when not reported.
     public let onDemand: OnDemand?
+    /// The sign-in's own address where swe could read one (Cursor's state
+    /// db, Devin's userStatus); nil from an older swe or a credential
+    /// that names no account.
+    public let email: String?
 
     /// On-demand usage as swe reports it, worded the way `cursor-agent
     /// usage` words it: a value and a one-line detail.
@@ -224,7 +228,7 @@ public struct RateLimit: Codable, Sendable, Equatable {
         case status, usedPercent, remainingPercent, limitReached, resetAt, window
         case windowSeconds, planType, remainingUnits, totalUnits, fetchedAt, windows
         case extraUsageUSD = "extraUsageUsd"
-        case onDemand
+        case onDemand, email
     }
 
     /// For tests and previews; the app only ever decodes these from swe.
@@ -244,6 +248,7 @@ public struct RateLimit: Codable, Sendable, Equatable {
         self.windows = windows
         extraUsageUSD = nil
         onDemand = nil
+        email = nil
     }
 
     /// Every field tolerates a malformed value: one bad field degrades to
@@ -272,5 +277,8 @@ public struct RateLimit: Codable, Sendable, Equatable {
         windows = (try? c.decodeIfPresent([Window].self, forKey: .windows)) ?? nil
         extraUsageUSD = (try? c.decodeIfPresent(Double.self, forKey: .extraUsageUSD)) ?? nil
         onDemand = (try? c.decodeIfPresent(OnDemand.self, forKey: .onDemand)) ?? nil
+        let address = ((try? c.decodeIfPresent(String.self, forKey: .email)) ?? nil)?
+            .trimmingCharacters(in: .whitespaces)
+        email = address?.isEmpty == false ? address : nil
     }
 }

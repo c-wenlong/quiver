@@ -165,6 +165,15 @@ class RateLimitInfoTest(unittest.TestCase):
         )
         self.assertIn("…", info.format_column())
 
+    def test_to_json_carries_the_email_even_on_a_failed_reading(self):
+        """A re-login card still names its account, so email is not
+        blanked with the usage figures."""
+        info = self._make_info(0, False, 0, plan_type="auth-required",
+                               window_seconds=0)
+        info.email = "kai@example.com"
+        self.assertEqual(info.to_json()["email"], "kai@example.com")
+        self.assertIsNone(self._make_info(0, False, 0).to_json()["email"])
+
 
 class RateLimitCacheTest(unittest.TestCase):
     def test_cache_roundtrip(self):
@@ -1380,6 +1389,51 @@ class CodexFetcherTest(unittest.TestCase):
                 self.assertEqual(info.plan_type, "plus")
                 self.assertEqual(info.window_seconds, 604800)
 
+    def test_fetch_codex_reads_the_email_off_the_id_token(self):
+        """The sign-in's address is an ``id_token`` claim, as the app
+        reads it; a missing or un-JWT id_token just means no email."""
+        from quiver.harness.rate_limits import _fetch_codex
+
+        def jwt(claims: dict) -> str:
+            part = lambda b: base64.urlsafe_b64encode(b).decode().rstrip("=")
+            return ".".join((
+                part(b'{"alg":"none"}'), part(json.dumps(claims).encode()), "sig",
+            ))
+
+        resp_json = json.dumps(self._SAMPLE_RESPONSE).encode()
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = resp_json
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        cases = [
+            (jwt({"email": "kai@example.com"}), "kai@example.com"),
+            (jwt({"email": "  "}), None),
+            (jwt({}), None),
+            ("not-a-jwt", None),
+        ]
+        for id_token, expected in cases:
+            with self.subTest(id_token=id_token):
+                auth_data = {
+                    "auth_mode": "chatgpt",
+                    "tokens": {"access_token": "fake-token",
+                               "id_token": id_token},
+                }
+                with tempfile.TemporaryDirectory() as tmp:
+                    auth_path = Path(tmp) / "auth.json"
+                    auth_path.write_text(json.dumps(auth_data))
+                    with patch(
+                        "quiver.harness.rate_limits.os.path.expanduser",
+                        side_effect=lambda p: str(auth_path) if p == "~/.codex/auth.json" else p,
+                    ), patch(
+                        "quiver.harness.rate_limits.urllib.request.urlopen",
+                        return_value=mock_resp,
+                    ):
+                        info = _fetch_codex()
+                        self.assertIsNotNone(info)
+                        self.assertEqual(info.email, expected)
+                        self.assertEqual(info.to_json()["email"], expected)
+
     def test_fetch_codex_no_auth_file(self):
         from quiver.harness.rate_limits import _fetch_codex
 
@@ -2077,6 +2131,54 @@ class ClaudeFetcherTest(unittest.TestCase):
             self.assertFalse(info.limit_reached)
             self.assertEqual(info.window, "7d")
             self.assertEqual(mock_open.call_count, 1)
+        finally:
+            tmp.cleanup()
+
+    def test_email_comes_from_the_global_config(self):
+        """``~/.claude.json``'s ``oauthAccount.emailAddress`` rides the
+        reading; an absent file or field just means no email."""
+        from quiver.harness.rate_limits import _fetch_claude, _read_claude_email
+
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            creds_path = Path(tmp.name) / "creds.json"
+            creds_path.write_text(json.dumps({"claudeAiOauth": {
+                "accessToken": "fake-claude-token",
+                "refreshToken": "x",
+                "expiresAt": 9_999_999_999_999,
+            }}))
+            config_path = Path(tmp.name) / ".claude.json"
+            config_path.write_text(json.dumps({
+                "oauthAccount": {"emailAddress": "work@example.com"},
+            }))
+            redirect = lambda p: {
+                "~/.claude/.credentials.json": str(creds_path),
+                "~/.claude.json": str(config_path),
+            }.get(p, p)
+            with patch(
+                "quiver.harness.rate_limits.os.path.expanduser",
+                side_effect=redirect,
+            ), patch(
+                "quiver.harness.rate_limits._read_claude_keychain_credentials",
+                return_value=None,
+            ), patch(
+                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                Path(tmp.name) / "rate_limits_cache.json",
+            ), patch(
+                "quiver.harness.rate_limits.urllib.request.urlopen",
+                return_value=self._mock_response(self._SAMPLE_RESPONSE),
+            ):
+                self.assertEqual(_read_claude_email(), "work@example.com")
+                info = _fetch_claude()
+            self.assertIsNotNone(info)
+            self.assertEqual(info.email, "work@example.com")
+
+            config_path.write_text(json.dumps({"oauthAccount": {}}))
+            with patch(
+                "quiver.harness.rate_limits.os.path.expanduser",
+                side_effect=redirect,
+            ):
+                self.assertIsNone(_read_claude_email())
         finally:
             tmp.cleanup()
 
@@ -3776,15 +3878,18 @@ class CursorFetcherTest(unittest.TestCase):
         claims.update(overrides)
         return self._jwt(claims)
 
-    def _state_db(self, directory: str, token: str | None) -> str:
+    def _state_db(self, directory: str, token: str | None,
+                  email: str | None = None) -> str:
         path = os.path.join(directory, "state.vscdb")
         connection = sqlite3.connect(path)
         connection.execute("CREATE TABLE ItemTable (key TEXT UNIQUE, value BLOB)")
-        if token is not None:
-            connection.execute(
-                "INSERT INTO ItemTable VALUES (?, ?)",
-                ("cursorAuth/accessToken", token),
-            )
+        for key, value in (("cursorAuth/accessToken", token),
+                           ("cursorAuth/cachedEmail", email)):
+            if value is not None:
+                connection.execute(
+                    "INSERT INTO ItemTable VALUES (?, ?)",
+                    (key, value),
+                )
         connection.commit()
         connection.close()
         return path
@@ -4055,6 +4160,63 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertEqual(info.plan_type, "auth-required")
         self.assertIn("re-login", info.format_column())
         fetch.assert_not_called()
+
+    def test_email_comes_from_the_state_db_cached_email(self):
+        """The editor records the sign-in next to the token; the JWT
+        itself has no email claim."""
+        from quiver.harness.rate_limits import _fetch_cursor
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._state_db(tmp, self._token(), email="me@work.com")
+            with patch(
+                "quiver.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
+                (path,),
+            ), patch(
+                "quiver.harness.rate_limits._fetch_json",
+                return_value=self._SAMPLE_RESPONSE,
+            ):
+                info = _fetch_cursor()
+
+        self.assertIsNotNone(info)
+        self.assertEqual(info.email, "me@work.com")
+        self.assertEqual(info.to_json()["email"], "me@work.com")
+
+    def test_email_survives_an_expired_token(self):
+        """A re-login card still names the account it is about."""
+        from quiver.harness.rate_limits import _fetch_cursor
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._state_db(
+                tmp, self._token(exp=1_000_000_000), email="me@work.com")
+            with patch(
+                "quiver.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
+                (path,),
+            ), patch(
+                "quiver.harness.rate_limits._fetch_json",
+            ) as fetch:
+                info = _fetch_cursor()
+
+        self.assertEqual(info.plan_type, "auth-required")
+        self.assertEqual(info.email, "me@work.com")
+        fetch.assert_not_called()
+
+    def test_account_dir_email_is_read_from_its_own_db(self):
+        """An extra account's email never falls through to the default db."""
+        from quiver.harness.rate_limits import _fetch_cursor
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._state_db(tmp, self._token(), email="extra@work.com")
+            with patch(
+                "quiver.harness.rate_limits._fetch_json",
+                return_value=self._SAMPLE_RESPONSE,
+            ), patch(
+                "quiver.harness.rate_limits._read_cursor_keychain_token",
+            ) as keychain:
+                info = _fetch_cursor(path)
+
+        self.assertIsNotNone(info)
+        self.assertEqual(info.email, "extra@work.com")
+        keychain.assert_not_called()
 
     def test_fetch_posts_with_cookie_and_first_party_origin(self):
         from quiver.harness.rate_limits import _CURSOR_USAGE_URL, _fetch_cursor
@@ -4619,6 +4781,8 @@ class DevinFetcherTest(unittest.TestCase):
     _SAMPLE_RESPONSE = {
         "userStatus": {
             "pro": True,
+            "name": "Kai",
+            "email": "kai@cortexrobot.ai",
             "planStatus": {
                 "planInfo": {
                     "planName": "Teams",
@@ -4649,6 +4813,18 @@ class DevinFetcherTest(unittest.TestCase):
         self.assertEqual(info.window_seconds, 604800)
         self.assertEqual(info.plan_type, "teams")
         self.assertFalse(info.limit_reached)
+        self.assertEqual(info.email, "kai@cortexrobot.ai")
+        self.assertEqual(info.to_json()["email"], "kai@cortexrobot.ai")
+
+    def test_parser_survives_a_reply_with_no_email(self):
+        """proto3 drops empty strings: older responses name no account."""
+        from quiver.harness.rate_limits import _parse_devin_status
+
+        data = copy.deepcopy(self._SAMPLE_RESPONSE)
+        del data["userStatus"]["email"]
+        self.assertIsNone(_parse_devin_status(data).email)
+        data["userStatus"]["email"] = "  "
+        self.assertIsNone(_parse_devin_status(data).email)
 
     def test_parser_reports_both_windows_like_the_cli(self):
         """Daily and weekly, as `devin /usage` lists them."""
