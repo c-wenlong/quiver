@@ -632,7 +632,7 @@ private struct SessionRow: View {
         let s = row.session
         var parts: [String] = []
         if let project { parts.append(project) }
-        parts.append(HarnessMark(s.harness).name)
+        parts.append(row.account ?? HarnessMark(s.harness).name)
         parts.append(row.location.title)
         if let models = row.usage?.models, !models.isEmpty { parts.append(models.joined(separator: ", ")) }
         parts.append(s.lastActiveAt.formatted(date: .omitted, time: .shortened))
@@ -798,8 +798,10 @@ struct SessionDetail: View {
                 if !s.opensInBrowser { field("Folder", s.cwd ?? "Unknown") }
                 field("Last active", s.lastActiveAt.formatted(date: .abbreviated, time: .shortened))
                 field("Session id", s.id)
+                if let account = row.account ?? row.session.accountHome ?? row.usage?.accountHome {
+                    field("Account", account)
+                }
                 if let usage = row.usage {
-                    field("Account", usage.accountHome)
                     GridRow(alignment: .top) {
                         Text("Models").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                         FlowLayout(spacing: 10, lineSpacing: 4) {

@@ -97,6 +97,29 @@ def session_status_cache_file_for(home: Path | None = None) -> Path:
     return cache_dir_for(home) / "session_status_cache.json"
 
 
+def account_homes_for(vendor: str, home: Path | None = None) -> list[Path]:
+    """Each Quiver account home for ``vendor``, sorted for stable order.
+
+    Quiver's extra accounts keep a harness-shaped config dir at
+    ``~/.quiver/accounts/<vendor>/<id>/home`` — the same layout the
+    default home has, so a harness's sessions there parse exactly like
+    its own. Sessions found under one belong to that account, which the
+    session listing and its readers use to name the account, find its
+    transcripts and resume under it.
+    """
+    # expanduser rather than Path.home(): tests fake harness homes by
+    # patching os.path.expanduser's handling of the ``~/<dir>`` prefix,
+    # which a bare ``~`` lookup would slip past and read the real dirs.
+    quiver = quiver_dir_for(home) if home is not None else Path(
+        os.path.expanduser("~/.quiver")
+    )
+    root = quiver / "accounts" / vendor
+    try:
+        return sorted(p for p in root.glob("*/home") if p.is_dir())
+    except OSError:
+        return []
+
+
 def data_dir_for(home: Path | None = None) -> Path:
     """``~/.quiver/data`` — app-owned stores (ledger, catalog, search index)."""
     return quiver_dir_for(home) / DATA_SUBDIR

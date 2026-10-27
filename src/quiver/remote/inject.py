@@ -50,6 +50,7 @@ from typing import NamedTuple
 from quiver.remote import supervise
 from quiver.reports import transcripts as _tr
 from quiver.sessions.models import Session
+from quiver.sessions.resume import account_env
 
 # A headless claude run gets this long before we kill it; a queued send
 # waits on the in-flight run with half that patience.
@@ -188,9 +189,11 @@ class ClaudeHeadlessInjector:
         ]
 
     def _run(self, session: Session, argv: list[str]) -> tuple[bool, str]:
+        env = account_env(session)
         try:
             proc = subprocess.Popen(
                 argv, cwd=session.path or None,
+                env={**os.environ, **env} if env else None,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True,
             )
@@ -759,10 +762,11 @@ class CodexAppServerInjector:
     # -- proc + rpc plumbing --------------------------------------------
 
     @staticmethod
-    def _spawn(cwd: str) -> subprocess.Popen:
+    def _spawn(cwd: str, env: dict | None = None) -> subprocess.Popen:
         return subprocess.Popen(
             ["codex", "app-server"],
             cwd=cwd or None,
+            env={**os.environ, **env} if env else None,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
         )
@@ -779,8 +783,12 @@ class CodexAppServerInjector:
                 thread_id = self._thread_id(session)
                 if not thread_id:
                     return None
+                env = account_env(session)
                 try:
-                    proc = self._spawn(session.path or ".")
+                    proc = (
+                        self._spawn(session.path or ".", env=env)
+                        if env else self._spawn(session.path or ".")
+                    )
                 except OSError:
                     return None
                 server = _AppServer(proc, thread_id)

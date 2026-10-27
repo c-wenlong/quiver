@@ -170,7 +170,7 @@ class StatusProbeIndexTest(unittest.TestCase):
         _claude_finished(self.projects / "-b" / "s1.jsonl")
         _claude_finished(self.projects / ".hidden" / "s2.jsonl")  # glob skips it
         _touch(self.projects / "not-a-dir.jsonl")
-        index = status._claude_transcript_index()
+        index = status._claude_transcript_index(str(self.projects))
         for sid in ("s1", "s2", "s3"):
             with self.subTest(sid=sid):
                 self.assertEqual(

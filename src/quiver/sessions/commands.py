@@ -19,6 +19,7 @@ from quiver.sessions.models import SessionRow
 from quiver.sessions.models_analytics import classify_provider, collect_model_usage
 from quiver.sessions.picker import pick_session
 from quiver.sessions.resume import (
+    ACCOUNT_HOME_ENV,
     LIMITED_RESUME,
     RESUME_FLAGS,
     codex_resume_args,
@@ -603,7 +604,13 @@ def _resume_session(session) -> int:
     cmd_args = _resume_cmd_args(session)
     from quiver.harness.commands import cmd_use
 
-    return cmd_use(cmd_args)
+    # A session in a Quiver account home only resumes when its harness
+    # looks there, not in the default home.
+    env = None
+    variable = ACCOUNT_HOME_ENV.get(session.tool_name)
+    if variable and session.account_home:
+        env = {variable: session.account_home}
+    return cmd_use(cmd_args, env=env)
 
 
 _INDEX_FLAGS = {"--on", "--off", "--status", "--json"}

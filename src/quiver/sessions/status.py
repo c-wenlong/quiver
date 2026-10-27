@@ -26,7 +26,7 @@ import re
 import sqlite3
 import time
 
-from quiver.paths import session_status_cache_file_for
+from quiver.paths import account_homes_for, session_status_cache_file_for
 from quiver.sessions import opencode_store, parse_cache
 from quiver.sessions.models import Session
 
@@ -143,15 +143,16 @@ def _blocks_text(blocks) -> str:
     )
 
 
-def _claude_transcript_index() -> dict:
-    """``<id>.jsonl`` -> every ``~/.claude/projects/*/<id>.jsonl``.
+def _claude_transcript_index(root: str) -> dict:
+    """``<id>.jsonl`` -> every ``<root>/*/<id>.jsonl``.
 
+    ``root`` is the projects dir of one claude home — ``~/.claude/projects``
+    by default, ``<account home>/projects`` for a Quiver extra account.
     Built once per ``session_statuses`` call: a glob per row re-listed every
     project dir for every session (726 rows x 241 dirs was 175k ``lstat``
     calls, most of a listing's wall time). Same matches and order as that
     glob: hidden project dirs are skipped, symlinked ones followed.
     """
-    root = os.path.expanduser("~/.claude/projects")
     out: dict = {}
     try:
         with os.scandir(root) as projects:
@@ -204,7 +205,11 @@ def _indexed(ctx: dict, key: str, build):
 
 def _claude_transcript(session: Session, ctx: dict) -> str:
     """The session's live transcript path, or "" when there is none."""
-    index = _indexed(ctx, "claude_transcripts", _claude_transcript_index)
+    root = os.path.expanduser(
+        os.path.join(session.account_home or "~/.claude", "projects")
+    )
+    key = "claude_transcripts:" + root
+    index = _indexed(ctx, key, lambda: _claude_transcript_index(root))
     hits = list(index.get(session.session_id + ".jsonl", ()))
     if not hits:
         return ""
@@ -398,8 +403,8 @@ def _probe_devin(session: Session, ctx: dict):
 _CODEX_ROLLOUT_DATE_RE = re.compile(r"rollout-(\d{4})-(\d{2})-(\d{2})T")
 
 
-def _codex_rollout_path(session_id: str) -> str:
-    root = os.path.expanduser("~/.codex/sessions")
+def _codex_rollout_path(session_id: str, home: str = "") -> str:
+    root = os.path.join(home or os.path.expanduser("~/.codex"), "sessions")
     match = _CODEX_ROLLOUT_DATE_RE.match(session_id or "")
     if match:
         path = os.path.join(
@@ -422,7 +427,7 @@ def _codex_message_text(payload: dict) -> str:
 
 
 def _codex_rollout(session: Session, ctx: dict) -> str:
-    return _codex_rollout_path(session.session_id)
+    return _codex_rollout_path(session.session_id, session.account_home)
 
 
 def _codex_walk(records):
@@ -759,11 +764,22 @@ def _verdict(session: Session, probe, ctx: dict) -> tuple:
     return phase, followup
 
 
+def _claude_homes() -> list[str]:
+    """``~/.claude`` plus every Quiver claude account home."""
+    return [os.path.expanduser("~/.claude")] + [
+        str(home) for home in account_homes_for("claude")
+    ]
+
+
 def _claude_live_session_ids() -> set:
     """Session ids whose owning process is still alive."""
     out = set()
-    root = os.path.expanduser("~/.claude/sessions")
-    for path in glob.glob(os.path.join(root, "*.json")):
+    paths = [
+        path
+        for home in _claude_homes()
+        for path in glob.glob(os.path.join(home, "sessions", "*.json"))
+    ]
+    for path in paths:
         try:
             with open(path, encoding="utf-8") as fh:
                 data = json.load(fh)
@@ -786,10 +802,14 @@ _JOB_WORKING_STALE_S = 24 * 3600
 
 
 def _claude_job_states() -> dict:
-    """sessionId -> bg-job state from ``~/.claude/jobs/*/state.json``."""
+    """sessionId -> bg-job state from every claude home's ``jobs/*/state.json``."""
     out = {}
-    root = os.path.expanduser("~/.claude/jobs")
-    for path in glob.glob(os.path.join(root, "*", "state.json")):
+    paths = [
+        path
+        for home in _claude_homes()
+        for path in glob.glob(os.path.join(home, "jobs", "*", "state.json"))
+    ]
+    for path in paths:
         try:
             with open(path, encoding="utf-8") as fh:
                 data = json.load(fh)

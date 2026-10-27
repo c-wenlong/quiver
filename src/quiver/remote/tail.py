@@ -391,6 +391,10 @@ _JSONL_ROOTS: dict[str, tuple[str, tuple[str, ...]]] = {
     "freebuff": ("~/.config/manicode/projects", ("log.jsonl",)),
 }
 
+# The transcript subdir each account-aware harness keeps inside its home,
+# so a session in a Quiver account home resolves there, not the default.
+_ACCOUNT_SUBDIRS = {"claude": "projects", "codex": "sessions"}
+
 _OPENCODE_DBS = {
     "opencode": "~/.local/share/opencode/opencode.db",
     "kilo": "~/.local/share/kilo/kilo.db",
@@ -407,6 +411,9 @@ def resolve_jsonl_path(session: Session) -> Path | None:
             return direct
     root, patterns = entry
     root = expand_user(root)
+    subdir = _ACCOUNT_SUBDIRS.get(session.tool_name)
+    if subdir and session.account_home:
+        root = Path(session.account_home) / subdir
     if session.tool_name == "claude" and session.session_id:
         # Resume-from-another-cwd leaves one copy per project dir; the
         # newest write is live (same rule as sessions/status.py).

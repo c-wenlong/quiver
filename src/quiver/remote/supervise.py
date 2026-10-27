@@ -50,7 +50,7 @@ from pathlib import Path
 from quiver.paths import atomic_write_text, remote_dir_for
 from quiver.remote.protocol import key_slug
 from quiver.sessions.models import Session
-from quiver.sessions.resume import resume_flags, launch_tool_name
+from quiver.sessions.resume import account_env, resume_flags, launch_tool_name
 
 # Attach is offered only for idle sessions; the hub re-checks at command
 # time. "Idle" = no transcript append in this window.
@@ -243,13 +243,17 @@ def meta_for(home: Path | None, session_key: str) -> dict | None:
     return _load_registry(home).get(session_key)
 
 
-def launch_tmux(session_key: str, argv: list[str], cwd: str | None) -> str | None:
+def launch_tmux(
+    session_key: str, argv: list[str], cwd: str | None,
+    env: dict | None = None,
+) -> str | None:
     """Start ``argv`` in a detached tmux session; returns the tmux name.
 
     The harness is exec'd directly, with this process's PATH, rather
     than through tmux's default shell: under launchd that shell re-reads
     zsh startup files, and nix-darwin's /etc/zshenv rebuilds PATH
     without Homebrew, so ``claude`` exited 127 and took the pane with it.
+    ``env`` carries per-session overrides like an account's config home.
     """
     if not tmux_bin():
         return None
@@ -263,6 +267,8 @@ def launch_tmux(session_key: str, argv: list[str], cwd: str | None) -> str | Non
     binary = shutil.which(argv[0]) or argv[0]
     args = ["new-session", "-d", "-s", name,
             "-e", f"PATH={os.environ.get('PATH', '')}"]
+    for key, value in (env or {}).items():
+        args += ["-e", f"{key}={value}"]
     if cwd:
         args += ["-c", cwd]
     args += [binary, *argv[1:]]
@@ -627,7 +633,8 @@ def attach(
         writers = _local_writer_pids(session)
         binary = launch_tool_name(session.tool_name)
         name = launch_tmux(
-            session_key, [binary, *flags], session.path or None
+            session_key, [binary, *flags], session.path or None,
+            env=account_env(session),
         )
         if name is None:
             taken = tmux_name(session_key)

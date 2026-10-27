@@ -4,6 +4,10 @@ import Foundation
 public struct AccountDirectory: Sendable {
     public let roots: LedgerRoots
     private let names: [String: String]
+    /// Homes only an extra (non-default) profile owns, keyed the way the
+    /// ledger and feeds name the account: profile `home`s, and for Cursor
+    /// the user-data dirs activity is recorded under.
+    private let extraHomes: Set<String>
     /// The account homes each harness can carry, for the calendar
     /// legend's always-on account split: default homes plus every extra
     /// profile's, keyed the way activity names the account.
@@ -24,11 +28,13 @@ public struct AccountDirectory: Sendable {
             "devin": [home.appendingPathComponent(".local/share/devin/cli").path],
             "cursor": [home.appendingPathComponent("Library/Application Support/Cursor").path],
         ]
+        var extraHomes: Set<String> = []
         for profile in profiles {
             let profileHome = paths(profile).home
             names[profileHome.standardizedFileURL.path] = "\(profile.vendor.title): \(profile.name)"
             if !profile.isDefault {
                 extra[profile.vendor, default: []].append(profileHome)
+                extraHomes.insert(profileHome.standardizedFileURL.path)
                 // Cursor blocks name the user-data dir, added below;
                 // the CLI home never appears as a Cursor account.
                 if profile.vendor != .cursor {
@@ -45,6 +51,7 @@ public struct AccountDirectory: Sendable {
                 if let dir {
                     names[dir.standardizedFileURL.path] = "Cursor: \(profile.name)"
                     if !profile.isDefault {
+                        extraHomes.insert(dir.standardizedFileURL.path)
                         harnessHomes["cursor", default: []]
                             .append(dir.standardizedFileURL.path)
                     }
@@ -52,6 +59,7 @@ public struct AccountDirectory: Sendable {
             }
         }
         self.names = names
+        self.extraHomes = extraHomes
         self.harnessHomes = harnessHomes
         homeHarness = Dictionary(
             harnessHomes.flatMap { harness, homes in
@@ -66,6 +74,14 @@ public struct AccountDirectory: Sendable {
     /// legend can list accounts that were idle in the range.
     public func homes(for harness: String) -> [String] {
         harnessHomes[harness] ?? []
+    }
+
+    /// The profile's label for an extra account's home ("Claude: Cortex"),
+    /// nil for a default home or one no extra profile owns. The Sessions
+    /// page shows the account only where it differs from the stock home.
+    public func extraLabel(for accountHome: String) -> String? {
+        let path = URL(fileURLWithPath: accountHome).standardizedFileURL.path
+        return extraHomes.contains(path) ? names[path] : nil
     }
 
     /// The profile's name, else the owning harness's name, else a short

@@ -594,13 +594,31 @@ final class AppModel {
             sessions = SessionsModel(source: CurrentSwe(), ledger: ledger,
                                      defaultHomes: [home.appending(path: ".claude").path, home.appending(path: ".codex").path],
                                      snapshots: SessionSnapshotFile(url: quiver.appending(path: "cache/sessions.json")),
-                                     // Which desktop session started each Claude session.
+                                     // Which desktop session started each Claude session, from the
+                                     // default desktop root and every Claude profile's own one.
                                      parents: {
-                                         ClaudeDesktopSessions(
-                                             root: ClaudeDesktopSessions.defaultRoot(home: home),
-                                             cacheFile: quiver.appending(path: "cache/claude-desktop-sessions.json"))
-                                             .parents()
-                                     })
+                                         var roots = [("claude-desktop-sessions",
+                                                       ClaudeDesktopSessions.defaultRoot(home: home))]
+                                         roots += ((try? store.load()) ?? [])
+                                             .filter { $0.vendor == .claude && !$0.isDefault }
+                                             .compactMap { profile in
+                                                 store.paths(for: profile).desktopData.map {
+                                                     ("claude-desktop-sessions-\(profile.id)",
+                                                      $0.appending(path: "claude-code-sessions"))
+                                                 }
+                                             }
+                                         var parents: [String: SessionParent] = [:]
+                                         for (name, root) in roots {
+                                             for (id, parent) in ClaudeDesktopSessions(
+                                                 root: root,
+                                                 cacheFile: quiver.appending(path: "cache/\(name).json"))
+                                                 .parents() {
+                                                 parents[id] = parent
+                                             }
+                                         }
+                                         return parents
+                                     },
+                                     accountLabel: { directory().extraLabel(for: $0) })
             let calendarCache = quiver.appending(path: "cache/calendar")
             let devinCloudDirectory = DevinCloud.resolvedDirectory(home: home)
             let calendarSnapshots = SnapshotFile<CalendarSnapshot>(
@@ -1046,7 +1064,7 @@ final class AppModel {
             return
         }
         guard let resume = row.session.resume else { return }
-        let home = row.usage?.accountHome
+        let home = row.session.accountHome ?? row.usage?.accountHome
         let defaults = [".claude", ".codex"].map { userHome.appending(path: $0).path }
         let line = SessionResume.shellLine(resume, harness: row.session.harness, accountHome: home,
                                            isDefaultHome: home.map(defaults.contains) ?? true)
