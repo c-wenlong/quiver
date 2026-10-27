@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Assemble the Zensical docs site into ``build/docs-site/``.
 
-The docs live where they always have (README, ARCHITECTURE, docs/, app/).
+The docs live where they always have (README, ARCHITECTURE, docs/, app/mac/).
 This script stages them under one ``docs_dir`` for ``zensical build``,
 rewrites every link so a page that resolves inside the repo resolves
 inside the site, copies referenced assets, and points anything else at
@@ -27,8 +27,8 @@ GITHUB_TREE = "https://github.com/c-wenlong/quiver/tree/main/"
 PAGES: list[tuple[str, str]] = [
     ("README.md", "overview.md"),
     ("docs/harness-support.md", "harness-support.md"),
-    ("app/README.md", "app/index.md"),
-    ("app/ROADMAP.md", "app/roadmap.md"),
+    ("app/mac/README.md", "app/index.md"),
+    ("app/mac/ROADMAP.md", "app/roadmap.md"),
     ("docs/app-architecture.md", "app/architecture.md"),
     ("docs/coding-plans.md", "app/coding-plans.md"),
     ("ARCHITECTURE.md", "architecture/index.md"),
@@ -46,7 +46,7 @@ PAGES: list[tuple[str, str]] = [
 ]
 
 # Extra repo files the site itself needs (logo, favicon).
-ASSETS = ["app/Icons/AppIcon-light.png", "app/Icons/AppIcon-dark.png"]
+ASSETS = ["app/mac/Icons/AppIcon-light.png", "app/mac/Icons/AppIcon-dark.png"]
 
 # The hand-written landing page. The folder is copied to the site root as
 # it is (media/ included), so landing/index.html becomes the front page.

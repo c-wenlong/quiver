@@ -1,6 +1,6 @@
 """Machine-readable output shared by every ``--json`` flag.
 
-The macOS app under ``app/`` decodes stdout whole, so a ``--json`` command
+The macOS app under ``app/mac/`` decodes stdout whole, so a ``--json`` command
 prints exactly one document, ``{"schema": SCHEMA, "data": ...}``, and
 nothing else. Bump SCHEMA only for a breaking change to an existing shape;
 adding a field is not one.

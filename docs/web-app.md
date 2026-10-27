@@ -3,7 +3,7 @@
 The Mac app's pages as a web app, served by the remote hub, so they open in
 any browser on the tailnet. Decided 2026-10-23: one UI, web first. Pages are
 built once, in HTML, and the logic they need lives in Python on the hub. The
-native app in `app/` is left exactly as it is while this is tried, so going
+native app in `app/mac/` is left exactly as it is while this is tried, so going
 back means deleting this, not repairing anything.
 
 ## Why web first
@@ -132,7 +132,7 @@ own stores.
 
 ## Going back
 
-Nothing in `app/` changes. To drop the web app, delete `src/quiver/webapp/`,
+Nothing in `app/mac/` changes. To drop the web app, delete `src/quiver/webapp/`,
 `docs/web-app/`,
 `src/quiver/ledger/`, the `/app/` and `/v1/app/` branches in `hub.py`, and
 `~/.quiver/data/web-ledger/`.

@@ -57,7 +57,7 @@ jobs:
           HOME="$test_home" swe session --help
 
   app:
-    # The SwiftPM package under app/ targets macOS 26, so it needs the
+    # The SwiftPM package under app/mac/ targets macOS 26, so it needs the
     # macOS 26 image and its Xcode; macos-latest may still be older.
     # Unit tests only: bundling, the launch smoke test and the DMG run in
     # release.yml's macos-app job on a tag.
@@ -65,7 +65,7 @@ jobs:
     runs-on: macos-26
     defaults:
       run:
-        working-directory: app
+        working-directory: app/mac
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -79,8 +79,8 @@ jobs:
         with:
           path: |
             ~/Library/Caches/org.swift.swiftpm
-            app/.build
-          key: ${{ runner.os }}-swiftpm-${{ hashFiles('app/Package.swift', 'app/Package.resolved') }}
+            app/mac/.build
+          key: ${{ runner.os }}-swiftpm-${{ hashFiles('app/mac/Package.swift', 'app/mac/Package.resolved') }}
           restore-keys: |
             ${{ runner.os }}-swiftpm-
 

@@ -779,12 +779,12 @@ writes-go-through-tested-Python rule.
 
 ## Phone client
 
-[remote/ROADMAP.md](../remote/ROADMAP.md) tracks the client redesign:
+[app/ios/ROADMAP.md](../app/ios/ROADMAP.md) tracks the client redesign:
 every page, component and feature, and the hub work each needs.
 
 Two clients. The hub serves a static SPA (`src/quiver/remote/web/`),
 so the whole feature works in any browser over Tailscale with "add to
-home screen". On iPhone the client is native SwiftUI (`remote/ios/`):
+home screen". On iPhone the client is native SwiftUI (`app/ios/`):
 it reads the same REST routes and SSE streams, keeps one credential per
 paired hub in the Keychain (it can be paired with several hubs and
 switches between them from the hub menu), and leaves room for widgets, Live Activities, Face ID and
@@ -922,4 +922,4 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   notification metadata transits ntfy.sh unless bodies are encrypted.
 - **Reverses the "cloud sync: out of scope" roadmap line** — scoped to
   session access, not app-state sync; already recorded as M9 in
-  `app/ROADMAP.md`.
+  `app/mac/ROADMAP.md`.

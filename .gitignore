@@ -49,6 +49,11 @@ site/
 .env
 .env.*
 
+# Build output a checkout made before the apps moved to app/mac and
+# app/ios; nothing is tracked at these paths any more.
+/app/.build/
+/remote/ios/
+
 # Swift/Xcode build leftovers
 *.dSYM
 *.dSYM.zip

@@ -1,7 +1,7 @@
 # Settings
 
 Sidebar id `settings`. A port of the Mac app's `SettingsPage`
-(`app/Sources/QuiverApp/Pages/SettingsPage.swift`, the sections in
+(`app/mac/Sources/QuiverApp/Pages/SettingsPage.swift`, the sections in
 `QuiverCore/App/SettingsSection.swift`, and `RemoteSection.swift`,
 `ProvidersSection.swift`, `SidebarSection.swift`,
 `ExperimentalSection.swift`). Files: `webapp/pages/settings.py`,

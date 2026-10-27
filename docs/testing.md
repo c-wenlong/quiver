@@ -77,7 +77,11 @@ lists the current risk areas.
 
 ## Swift
 
-From `app/`:
+The iPhone app in `app/ios/` has its own XCTest suite, run on a
+simulator; [app/ios/README.md](../app/ios/README.md) has the command.
+The rest of this section is the macOS app.
+
+From `app/mac/`:
 
 ```bash
 swift test                      # everything
@@ -97,7 +101,7 @@ Tests use Swift Testing (`@Suite` / `@Test` / `#expect`). Conventions:
 
 ### Capturing swe contract fixtures
 
-The fixtures in `app/Tests/QuiverCoreTests/Fixtures/` are real `swe`
+The fixtures in `app/mac/Tests/QuiverCoreTests/Fixtures/` are real `swe`
 output, captured once against a throwaway `HOME` seeded with made-up
 registry entries (`fixturetool`, `oldtool`), a fixture marketplace and a
 fixture session. To refresh or add one:
@@ -106,7 +110,7 @@ fixture session. To refresh or add one:
 2. Build a throwaway `HOME` the way the Python tests do (registry entries
    under `$HOME/.quiver/config/harness.json`, plus any transcripts or
    plugin folders the command reads).
-3. Run `HOME=$test_home swe <command> --json > app/Tests/QuiverCoreTests/Fixtures/<name>.json`.
+3. Run `HOME=$test_home swe <command> --json > app/mac/Tests/QuiverCoreTests/Fixtures/<name>.json`.
 4. Where a command needs a live harness CLI or a provider (`--fix`,
    plugin actions, `swe list --usage` rate readings), build the fixture to
    the shape `src/quiver` emits instead, and say so in the test file's
@@ -118,7 +122,7 @@ fixture session. To refresh or add one:
 ### Swift coverage
 
 ```bash
-cd app
+cd app/mac
 swift test --enable-code-coverage
 xcrun llvm-cov report \
   .build/arm64-apple-macosx/debug/QuiverPackageTests.xctest/Contents/MacOS/QuiverPackageTests \
