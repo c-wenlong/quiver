@@ -1177,6 +1177,29 @@ class TestApprovalWatcher(unittest.TestCase):
             self.mgr._poll_approvals(self._t + 1)
         mf.assert_not_called()
 
+    def test_request_carries_the_menu_options(self):
+        # The card shows the pane's real rows, so the event lists them —
+        # a client can answer "6 Edit command" with its own digit.
+        pane = (
+            "● Running command\n"
+            "$ sudo -n ls /var/root\n"
+            ") 1 Yes  (Approve once)\n"
+            "  2 Yes, allow `sudo` commands\n"
+            "  6 Edit command\n"
+            "  8 No\n"
+            "  ↑↓ select · ↵ confirm · esc cancel"
+        )
+        self._poll(pane, meta={"mode": "tmux", "tmux": "qv-k1"})
+        ev = self._approval_events()[0]
+        opts = ev["data"]["options"]
+        self.assertEqual(
+            [(o["n"], o["label"]) for o in opts],
+            [("1", "Yes  (Approve once)"),
+             ("2", "Yes, allow `sudo` commands"),
+             ("6", "Edit command"),
+             ("8", "No")])
+        self.assertIn("sudo -n ls /var/root", ev["data"]["prompt"])
+
     def test_prompt_line_fallback(self):
         pane = "x\ny"  # no keyword line → generic prompt text
         self._poll("esc to cancel\n" + pane, meta={"mode": "tmux"})
@@ -1195,6 +1218,23 @@ class TestApprovalPromptLine(unittest.TestCase):
             tail._approval_prompt_line("plain\noutput\n"),
             "Approval requested")
         self.assertEqual(tail._approval_prompt_line(""), "Approval requested")
+
+    def test_menu_row_is_never_the_prompt(self):
+        # The banner scrolled off: "2 Yes, allow `sudo` commands" is a
+        # menu answer, not the question — the fallback must skip it.
+        pane = (
+            ") 1 Yes  (Approve once)\n"
+            "  2 Yes, allow `sudo` commands\n"
+            "  8 No\n"
+            "  ↑↓ select · ↵ confirm · esc cancel"
+        )
+        self.assertEqual(
+            tail._approval_prompt_line(pane), "Approval requested")
+
+    def test_question_mark_line_is_the_prompt(self):
+        pane = "output\nRun sudo -n ls /var/root?\n1. Yes\n2. No"
+        self.assertEqual(
+            tail._approval_prompt_line(pane), "Run sudo -n ls /var/root?")
 
 
 class TestTailWake(unittest.TestCase):

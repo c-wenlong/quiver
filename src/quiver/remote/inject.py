@@ -115,7 +115,11 @@ class TmuxInjector:
         return InjectResult(False, "tmux session is not reachable")
 
     def approval(self, session: Session, request_id: str, decision: str) -> InjectResult:
-        if decision not in _APPROVAL_KEYS:
+        # A semantic name maps to a menu row; a bare digit is the client
+        # answering the exact numbered option the event listed.
+        if decision not in _APPROVAL_KEYS and not (
+            decision.isdigit() and len(decision) <= 2
+        ):
             return InjectResult(False, f"unknown decision {decision}")
         # The TUI menu does not display request ids, so we cannot bind a
         # reply to *the* on-screen prompt. What we can bind: reject a
@@ -146,7 +150,18 @@ class TmuxInjector:
             return InjectResult(
                 False, "approval prompt changed since the request"
             )
-        key = supervise.menu_key_for(pane, decision) or _APPROVAL_KEYS[decision]
+        if decision.isdigit():
+            # Only a row the menu actually shows may be sent — a digit
+            # that isn't listed can't reach into an unrelated prompt.
+            offered = {n for n, _ in supervise.menu_options(pane)}
+            if decision not in offered:
+                return InjectResult(
+                    False, "that menu option is not on screen"
+                )
+            key = decision
+        else:
+            key = supervise.menu_key_for(pane, decision) \
+                or _APPROVAL_KEYS[decision]
         if supervise.send_key(self.name, key):
             answered.append(request_id)
             return InjectResult(True, f"sent menu key {key}")

@@ -109,13 +109,17 @@ const SessionChat = (() => {
     return [...crypto.getRandomValues(new Uint8Array(24))].map((b) => alphabet[b % 64]).join("");
   }
 
+  /* The log is its own scroller (the composer is pinned below it), so
+   * "near the bottom" is measured on it, not the window. */
   function nearBottom() {
-    const doc = document.documentElement;
-    return window.innerHeight + window.scrollY >= doc.scrollHeight - 160;
+    const log = $("chat-log");
+    if (!log) return true;
+    return log.scrollTop + log.clientHeight >= log.scrollHeight - 160;
   }
 
   function scrollBottom() {
-    window.scrollTo(0, document.documentElement.scrollHeight);
+    const log = $("chat-log");
+    if (log) log.scrollTop = log.scrollHeight;
   }
 
   /* ---------------------------------------------------------------- diffs
@@ -590,18 +594,21 @@ const SessionChat = (() => {
         updateOwnership();
       }
     } else if (ev.type === "approval.requested") {
-      appendMessage({ kind: "approval", text: d.prompt || "Approval requested", request_id: d.request_id || "" }, live, ev.seq);
+      appendMessage({ kind: "approval", text: d.prompt || "Approval requested", request_id: d.request_id || "", options: d.options || [] }, live, ev.seq);
     } else if (ev.type === "command.result") {
       commandResult(d);
     } else if (ev.type === "approval.resolved") {
       const rid = d.request_id || "";
-      const said = DECISIONS[d.decision];
       for (const card of $("chat-log").querySelectorAll(".msg.approval")) {
         if (!rid || card.dataset.req === rid) {
+          // A menu-row answer names its option; a semantic one its label.
+          const said = DECISIONS[d.decision] ||
+            (card.querySelector(`[data-dec="${CSS.escape(d.decision || "")}"]`)?.textContent.trim()) ||
+            "Answered";
           card.querySelectorAll(".approval-actions button").forEach((b) => { b.disabled = true; });
           card.classList.add("resolved");
-          if (said && !card.querySelector(".approval-done")) {
-            card.insertAdjacentHTML("beforeend", `<div class="approval-done caption">${said}</div>`);
+          if (!card.querySelector(".approval-done")) {
+            card.insertAdjacentHTML("beforeend", `<div class="approval-done caption">${esc(said)}</div>`);
           }
         }
       }
@@ -786,12 +793,18 @@ const SessionChat = (() => {
 
   function approvalCard(div, msg) {
     div.dataset.req = msg.request_id || "";
-    div.innerHTML = `<div class="role">Approval needed</div><div class="text">${md(msg.text)}</div>${msg.request_id
-      ? `<div class="approval-actions">
-           <button type="button" class="tab" data-dec="allow">Allow</button>
-           <button type="button" class="tab" data-dec="always">Always</button>
-           <button type="button" class="tab deny" data-dec="deny">Deny</button>
-         </div>` : ""}`;
+    // The pane's menu rows ride the event: show them verbatim so an
+    // option the 3 semantic buttons can't name is still answerable.
+    // Older events (and non-tmux approvals) carry none — the Allow /
+    // Always / Deny fallback covers those.
+    const opts = (msg.options || []).filter((o) => o && o.label);
+    const actions = msg.request_id ? (opts.length
+      ? opts.map((o) => `<button type="button" class="tab approval-opt" data-dec="${esc(o.n)}">${esc(o.label)}</button>`).join("")
+      : `<button type="button" class="tab" data-dec="allow">Allow</button>
+         <button type="button" class="tab" data-dec="always">Always</button>
+         <button type="button" class="tab deny" data-dec="deny">Deny</button>`) : "";
+    div.innerHTML = `<div class="role">Approval needed</div><div class="text">${md(msg.text)}</div>${actions
+      ? `<div class="approval-actions${opts.length ? " menu" : ""}">${actions}</div>` : ""}`;
     const buttons = () => div.querySelectorAll(".approval-actions button");
     for (const btn of buttons()) {
       btn.onclick = async () => {
@@ -977,7 +990,7 @@ const SessionChat = (() => {
         restoreApproval();
       } else {
         const d = ev.data || {};
-        if (ev.type === "approval.requested" && d.request_id === h.rid) Object.assign(h, { prompt: d.prompt, seq: ev.seq, resolved: false });
+        if (ev.type === "approval.requested" && d.request_id === h.rid) Object.assign(h, { prompt: d.prompt, options: d.options || [], seq: ev.seq, resolved: false });
         if (ev.type === "approval.resolved" && (!d.request_id || d.request_id === h.rid)) h.resolved = true;
         return;
       }
@@ -1018,7 +1031,7 @@ const SessionChat = (() => {
     // stream's live part brings it like any other.
     if (!h || !h.seq || h.resolved || !log || log.querySelector(`.msg.approval[data-req="${CSS.escape(h.rid)}"]`)) return;
     const stick = nearBottom();
-    appendMessage({ kind: "approval", text: h.prompt || "Approval requested", request_id: h.rid }, false, h.seq, h.seq);
+    appendMessage({ kind: "approval", text: h.prompt || "Approval requested", request_id: h.rid, options: h.options || [] }, false, h.seq, h.seq);
     if (stick) scrollBottom();
   }
 
@@ -1251,6 +1264,8 @@ const SessionChat = (() => {
     chat.detaching = false;
     chat.connState = "connecting";
     chat.rail = { loading: false, error: "" };
+    // Fixed-height shell: the window stops scrolling, the log takes it.
+    document.body.classList.add("chat-open");
     paintShell();
     updateOwnership();
     // The rail lists what the page already knows at once, and fills in
@@ -1288,6 +1303,7 @@ const SessionChat = (() => {
   function close() {
     chat.gen++;
     closeStream();
+    document.body.classList.remove("chat-open");
     chat.key = null;
     chat.row = null;
     chat.toolCards.clear();

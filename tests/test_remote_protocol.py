@@ -85,9 +85,19 @@ class TestCommandValidation(unittest.TestCase):
             {"request_id": "r1", "decision": "allow"}
         )
         self.assertEqual(out["request_id"], "r1")
+        # A menu row's own digit answers it — the 8-row devin menu has
+        # rows the semantic names can't reach.
+        self.assertEqual(
+            protocol.parse_approval_command(
+                {"request_id": "r1", "decision": "5"}
+            )["decision"], "5")
         with self.assertRaises(ValueError):
             protocol.parse_approval_command(
                 {"request_id": "r1", "decision": "maybe"}
+            )
+        with self.assertRaises(ValueError):
+            protocol.parse_approval_command(
+                {"request_id": "r1", "decision": "123"}
             )
 
     def test_control(self):
