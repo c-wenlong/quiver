@@ -724,8 +724,8 @@ browse_unavailable`, since a satellite's disk isn't readable from the
 hub.
 
 `GET /v1/sessions/{id}/commands` (`slash.py`) lists the slash commands
-the phone's "/" menu offers for one session. The hub only lists them: the
-phone inserts `/name ` into the message and the harness expands it when
+a client's "/" menu offers for one session. The hub only lists them:
+the client inserts `/name ` into the message and the harness expands it when
 the message arrives. The answer is `{key, harness, channel, attached,
 supported, custom_available, commands: [{name, description, source,
 argument_hint?, argument_required?, insert?}], note?}`. `source` is

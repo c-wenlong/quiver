@@ -329,48 +329,131 @@ extension ChatEntry {
 
 /// The prompt box under the transcript: Queue or Steer, the message,
 /// Stop and Send. Disabled with the reason as its placeholder while the
-/// session is observed, as in the web app.
+/// session is observed, as in the web app. Typing `/` first opens the
+/// command menu: the hub lists what this session's harness will run,
+/// a pick puts the command's text in the box, and Send delivers it as
+/// a plain message the harness expands on arrival.
 private struct Composer: View {
     var model: SessionChatModel
     @State private var draft = ""
     /// The caret or selection, so Shift-Return breaks the line there.
     @State private var selection: TextSelection?
+    /// The `/` menu opens only while the box is being typed in.
+    @FocusState private var focused: Bool
+    /// The row the arrows lit in the open `/` menu.
+    @State private var active = 0
     /// Queue waits for the agent's turn to end; Steer writes now.
     @AppStorage("sessionChatSendMode") private var mode = "queue"
 
+    /// The caret's Character offset into `draft`; nil is the end.
+    private var caret: Int? {
+        guard let selection, case .selection(let range) = selection.indices else { return nil }
+        return Caret.offset(range.upperBound, in: draft)
+    }
+
+    /// The `/command` being typed at the start of the box: a `/` first,
+    /// the caret still inside that first word, while it has focus.
+    private var slash: SlashToken? {
+        focused && model.canSend ? Slash.token(in: draft, cursor: caret) : nil
+    }
+
+    /// The menu's highlighted command, while it's open with rows.
+    private var activeCommand: SlashCommand? {
+        let rows = model.commands.matches
+        guard model.commands.isOpen, !rows.isEmpty else { return nil }
+        return rows[min(active, rows.count - 1)]
+    }
+
     var body: some View {
         let observed = !model.canSend
-        HStack(alignment: .bottom, spacing: 8) {
-            if !observed {
-                SelectMenu(options: [(value: "queue", title: "Queue"), (value: "steer", title: "Steer")],
-                           selection: $mode, width: 96)
-                    .hoverTip("Queue waits for the agent to finish its turn; Steer writes now.", title: "Send mode")
+        VStack(alignment: .leading, spacing: 8) {
+            if model.commands.isOpen {
+                SlashCommandMenuCard(menu: model.commands, row: model.row, active: $active) { pick($0) }
+                    .transition(.opacity)
             }
-            TextField(observed ? "Read-only until this session is attached" : "Message the session",
-                      text: $draft, selection: $selection, axis: .vertical)
-                .lineLimit(1...8)
-                .quiverField(multiline: true)
-                .disabled(observed)
-                // Return sends; Shift-Return starts a new line.
-                .onKeyPress(.return, phases: .down) { press in
-                    if press.modifiers.contains(.shift) {
-                        newline()
-                    } else {
-                        submit()
-                    }
-                    return .handled
+            HStack(alignment: .bottom, spacing: 8) {
+                if !observed {
+                    SelectMenu(options: [(value: "queue", title: "Queue"), (value: "steer", title: "Steer")],
+                               selection: $mode, width: 96)
+                        .hoverTip("Queue waits for the agent to finish its turn; Steer writes now.", title: "Send mode")
                 }
-            Button { Task { await model.interrupt() } } label: {
-                Image(systemName: "stop.fill")
+                TextField(observed ? "Read-only until this session is attached" : "Message the session",
+                          text: $draft, selection: $selection, axis: .vertical)
+                    .lineLimit(1...8)
+                    .quiverField(multiline: true)
+                    .disabled(observed)
+                    .focused($focused)
+                    // Shift-Return always starts a line. With the `/`
+                    // menu open Return or Tab picks, the arrows move
+                    // the highlight and Escape closes it; otherwise
+                    // Return sends.
+                    .onKeyPress(.return, phases: .down) { press in
+                        if press.modifiers.contains(.shift) {
+                            newline()
+                        } else if model.commands.isOpen {
+                            switch Slash.ReturnAction.action(
+                                row: activeCommand != nil,
+                                loading: model.commands.loading
+                            ) {
+                            case .pick:
+                                if let command = activeCommand { pick(command) }
+                            case .send:
+                                submit()
+                            case .wait:
+                                break
+                            }
+                        } else {
+                            submit()
+                        }
+                        return .handled
+                    }
+                    .onKeyPress(.tab, phases: .down) { _ in
+                        guard let command = activeCommand else { return .ignored }
+                        pick(command)
+                        return .handled
+                    }
+                    .onKeyPress(.upArrow, phases: .down) { _ in move(-1) }
+                    .onKeyPress(.downArrow, phases: .down) { _ in move(1) }
+                    .onKeyPress(.escape, phases: .down) { _ in
+                        guard model.commands.isOpen else { return .ignored }
+                        model.commands.dismiss()
+                        return .handled
+                    }
+                Button { Task { await model.interrupt() } } label: {
+                    Image(systemName: "stop.fill")
+                }
+                .iconButton()
+                .disabled(observed || model.stopping)
+                .hoverTip("Stop the agent's turn")
+                .accessibilityLabel("Stop")
+                Button("Send", action: submit)
+                    .primaryButton()
+                    .disabled(observed || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            .iconButton()
-            .disabled(observed || model.stopping)
-            .hoverTip("Stop the agent's turn")
-            .accessibilityLabel("Stop")
-            Button("Send", action: submit)
-                .primaryButton()
-                .disabled(observed || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
+        .animation(.easeOut(duration: 0.15), value: model.commands.isOpen)
+        .onChange(of: slash, initial: true) { _, token in
+            model.commands.track(token)
+            active = 0
+        }
+    }
+
+    /// An arrow key with the `/` menu open relights its rows; with it
+    /// closed the caret moves as usual.
+    private func move(_ delta: Int) -> KeyPress.Result {
+        let count = model.commands.matches.count
+        guard model.commands.isOpen, count > 0 else { return .ignored }
+        active = (active + delta + count) % count
+        return .handled
+    }
+
+    /// The picked command's text replaces the `/word`; the caret lands
+    /// just after it, ready for an argument.
+    private func pick(_ command: SlashCommand) {
+        guard let token = Slash.token(in: draft, cursor: caret) else { return }
+        let next = Slash.insert(command, replacing: token, in: draft)
+        draft = next.text
+        selection = TextSelection(insertionPoint: Caret.index(next.cursor, in: draft))
     }
 
     /// A line break in place of the selection, or at the end when the
@@ -390,6 +473,152 @@ private struct Composer: View {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, model.canSend else { return }
         draft = ""
         Task { await model.send(text, mode: mode) }
+    }
+}
+
+/// The `/` menu above the prompt box: the commands this session's
+/// harness will run, filtered by what follows the `/`. A port of the
+/// iPhone app's `CommandMenuView` (app/ios) at desktop density, with
+/// the arrows' lit row standing in for touch.
+private struct SlashCommandMenuCard: View {
+    var menu: SlashCommandMenu
+    /// The session's hub row: the notes' harness and machine names.
+    var row: HubSessionRow?
+    /// The highlighted row, which hovering also sets.
+    @Binding var active: Int
+    var onPick: (SlashCommand) -> Void
+
+    /// The row's height at the current text zoom: its two text lines
+    /// grow with it, so the scroll window's cap must match.
+    private var rowHeight: CGFloat {
+        TextZoom.pointSize(40, at: TextZoomModel.shared.zoom)
+    }
+    static let visibleRows = 6
+
+    var body: some View {
+        let notes = menu.response.map {
+            Slash.notes($0, harness: row?.harness.map { HarnessMark($0).name } ?? "this harness",
+                        machine: row?.machineId ?? "that machine", remote: row?.remote == true)
+        }
+        VStack(alignment: .leading, spacing: 0) {
+            list(notes: notes)
+            if let notes, !notes.footnotes.isEmpty {
+                Rectangle().fill(Theme.border).frame(height: 1).padding(.top, 4)
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(notes.footnotes, id: \.self) {
+                        Text($0).font(Theme.caption).foregroundStyle(Theme.textMuted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 4)
+            }
+        }
+        .padding(.vertical, 4)
+        .background(Theme.card, in: .rect(cornerRadius: Theme.blockRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
+        .clipShape(.rect(cornerRadius: Theme.blockRadius))
+        .accessibilityLabel("Commands")
+    }
+
+    /// The rows, capped at `visibleRows` then scrolling; the lit row
+    /// stays in view while the arrows move.
+    @ViewBuilder
+    private func list(notes: (empty: String?, footnotes: [String])?) -> some View {
+        // A failed load shows above whatever list is kept from before.
+        let rows = menu.matches
+        let shown = menu.loading ? 0 : max(1, rows.count)
+        let count = max(1, shown + (menu.error == nil ? 0 : 1))
+        if count > Self.visibleRows {
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) { stack(rows: rows, notes: notes) }
+                    .defaultScrollAnchor(.top)
+                    .frame(height: CGFloat(Self.visibleRows) * rowHeight)
+                    .onChange(of: active) { _, i in proxy.scrollTo(min(i, rows.count - 1)) }
+            }
+        } else {
+            stack(rows: rows, notes: notes)
+        }
+    }
+
+    private func stack(rows: [SlashCommand], notes: (empty: String?, footnotes: [String])?) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let error = menu.error {
+                Button { Task { await menu.refresh() } } label: { note(error, icon: "exclamationmark.circle") }
+                    .buttonStyle(.plain)
+                    .hoverTip("Fetch the command list again")
+            }
+            if menu.loading {
+                if menu.error == nil { note("Loading commands") }
+            } else if let empty = notes?.empty {
+                note(empty)
+            } else if rows.isEmpty {
+                note("No command matches /\(menu.token?.query ?? "")")
+            } else {
+                ForEach(Array(rows.enumerated()), id: \.offset) { i, command in
+                    Button { onPick(command) } label: { row(command) }
+                        .buttonStyle(.plain)
+                        .background(i == lit(in: rows) ? Theme.hover : .clear)
+                        .onHover { if $0 { active = i } }
+                        .id(i)
+                }
+            }
+        }
+    }
+
+    /// A muted line in the menu: still loading, nothing matched, or why
+    /// the menu can't help here.
+    private func note(_ text: String, icon: String? = nil) -> some View {
+        HStack(spacing: 10) {
+            if let icon {
+                Image(systemName: icon).font(Theme.font(size: 13)).foregroundStyle(Theme.textMuted).frame(width: 18)
+            }
+            Text(text).font(Theme.caption).foregroundStyle(Theme.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: rowHeight)
+    }
+
+    /// The lit row clamped into the list.
+    private func lit(in rows: [SlashCommand]) -> Int {
+        min(active, max(rows.count - 1, 0))
+    }
+
+    private func row(_ command: SlashCommand) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(command.label).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1).truncationMode(.middle)
+                        .layoutPriority(1)
+                    if let hint = command.argumentHint, !hint.isEmpty {
+                        Text(hint).font(Theme.caption).foregroundStyle(Theme.textMuted)
+                            .lineLimit(1).truncationMode(.tail)
+                    }
+                }
+                if let description = command.description, !description.isEmpty {
+                    Text(description).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1).truncationMode(.tail)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if let tag = command.sourceLabel {
+                Text(tag).font(Theme.font(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 7).frame(height: 20)
+                    .background(Theme.subtle, in: .capsule)
+                    .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
+                    .fixedSize()
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(height: rowHeight)
+        .contentShape(.rect)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel([command.label, command.argumentHint, command.description, command.sourceLabel]
+            .compactMap { $0?.isEmpty == false ? $0 : nil }.joined(separator: ", "))
+        .accessibilityHint("Inserts the command")
     }
 }
 

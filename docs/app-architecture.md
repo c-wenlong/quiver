@@ -25,7 +25,7 @@ Sources/QuiverApp/
   Components/  reusable views and controls
   Theme/       design tokens: colors, type, metrics, Card and Page
 Sources/QuiverCore/
-  one folder per domain: Swe, Primitives, Mcp, Sessions, Ledger,
+  one folder per domain: Swe, Primitives, Mcp, Sessions, Hub, Ledger,
   Accounts, Limits, Status, APIKeys, Agents, Compute, Usage,
   Providers, MenuBar, Markdown, Lists, Snapshots, Support, App,
   Updates
