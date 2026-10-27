@@ -327,25 +327,19 @@ struct WorkingVerb: View {
     /// Half the band's width as a fraction of the word's width.
     static let bandHalf: Double = 0.26
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     var body: some View {
-        if reduceMotion {
-            Text("Working…").foregroundStyle(Theme.textSecondary)
-        } else {
-            TimelineView(.animation) { context in
-                let t = context.date.timeIntervalSinceReferenceDate
-                let index = Int(t / Self.verbSeconds) % WorkingVerbs.all.count
-                let f = t.truncatingRemainder(dividingBy: Self.verbSeconds)
-                    / Self.verbSeconds
-                ZStack(alignment: .leading) {
-                    Text("\(Self.widest)…").opacity(0)
-                    shimmering(WorkingVerbs.all[index], sweep: min(1, f / Self.sweepShare))
-                        .id(index)
-                        .transition(.opacity)
-                }
-                .animation(.easeInOut(duration: 0.3), value: index)
+        TimelineView(.animation) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let index = Int(t / Self.verbSeconds) % WorkingVerbs.all.count
+            let f = t.truncatingRemainder(dividingBy: Self.verbSeconds)
+                / Self.verbSeconds
+            ZStack(alignment: .leading) {
+                Text("\(Self.widest)…").opacity(0)
+                shimmering(WorkingVerbs.all[index], sweep: min(1, f / Self.sweepShare))
+                    .id(index)
+                    .transition(.opacity)
             }
+            .animation(.easeInOut(duration: 0.3), value: index)
         }
     }
 
