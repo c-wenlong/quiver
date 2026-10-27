@@ -59,10 +59,6 @@ private struct ChatBody: View {
     /// for the next page, so it's usually in before you reach the top.
     static let earlierThreshold = 15
 
-    /// When the current turn started — set when `model.working` turns on
-    /// so the working pill's clock survives its own view churn.
-    @State private var workingSince: Date?
-
     var body: some View {
         let entries = ChatEntry.fold(model.items)
         ScrollView(.vertical) {
@@ -89,7 +85,7 @@ private struct ChatBody: View {
                 if model.working, !model.loading {
                     WorkingIndicator(harness: model.row?.harness,
                                      name: model.row?.harnessName ?? "agent",
-                                     since: workingSince ?? Date())
+                                     since: model.workingSince ?? Date())
                         .transition(arrival(8))
                 }
             }
@@ -100,9 +96,6 @@ private struct ChatBody: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .defaultScrollAnchor(.bottom)
-        .onChange(of: model.working, initial: true) { _, working in
-            workingSince = working ? (workingSince ?? Date()) : nil
-        }
         .modifier(LoadsEarlierAtRest(model: model, oldest: entries.first?.id))
         .scrollDismissesKeyboard(.interactively)
         // A tap in the transcript closes the prompt box's menu.

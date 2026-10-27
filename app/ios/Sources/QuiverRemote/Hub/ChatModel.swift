@@ -142,14 +142,31 @@ final class ChatModel {
     /// Live events not yet shown. The hub polls a busy transcript about
     /// once a second, so several messages arrive together; they're shown
     /// one at a time instead of as a block.
-    private var pending: [Envelope] = []
+    private var pending: [Envelope] = [] {
+        didSet { updateWorkingSince() }
+    }
     private var revealTask: Task<Void, Never>?
     /// When the last live entry was shown.
     private var lastReveal: ContinuousClock.Instant?
     /// How the reveal waits between entries; tests swap in a gate.
     var pause: (Duration) async -> Void = { try? await Task.sleep(for: $0) }
     /// A send went through and nothing from the agent has come back yet.
-    private(set) var awaitingReply = false
+    private(set) var awaitingReply = false {
+        didSet { updateWorkingSince() }
+    }
+    /// When `working` last turned on — the clock under the working pill.
+    /// Living on the (cached) model, it keeps counting across a reopen
+    /// of the chat instead of resetting with the view.
+    private(set) var workingSince: Date?
+
+    /// Recompute the working clock after any input to `working` moves.
+    private func updateWorkingSince() {
+        if working {
+            if workingSince == nil { workingSince = Date() }
+        } else {
+            workingSince = nil
+        }
+    }
     /// Bumped by every start() and stop(), so a start() still fetching
     /// history doesn't open a stream after the chat was left.
     private var generation = 0
@@ -211,6 +228,9 @@ final class ChatModel {
         let sends = try? await client.queue(key)
         guard gen == generation else { return }
         if let sends { mergeQueue(sends.sends) }
+        // The turn may already be running when the chat opens; the row
+        // is current by now, so the clock can start from this open.
+        updateWorkingSince()
         // The prompt box's menu may still be open from before stop().
         mentions.resume()
         streamTask = Task { [weak self, cursor] in
@@ -437,6 +457,7 @@ final class ChatModel {
         case "session.status":
             let status = env.decode(StatusData.self)?.status ?? ""
             app?.patch(key, status: status)
+            updateWorkingSince()
             // The turn ended (or stopped to ask) without a message to show.
             if !["", "active"].contains(status) { awaitingReply = false }
         case "session.ownership":
