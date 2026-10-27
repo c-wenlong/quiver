@@ -695,5 +695,33 @@ extension HubStubbed {
         #expect(chat.items.last?.kind == .approval(requestId: "r10", prompt: "Run?",
                                                  options: [], picked: "deny", state: .resolved("deny")))
     }
+
+    /// Another client wins while our answer is in flight: approval.resolved
+    /// settles the card, then our POST is refused. The kept verdict keeps
+    /// its pick too — the losing row must not light under it.
+    @Test func aRacedResolveKeepsItsPickWhenThePostIsRefused() async throws {
+        let chat = try await opened(ownership: "attached")
+        chat.apply(event("approval.requested", #"{"request_id": "r11", "prompt": "Run?"}"#))
+        // Hold the approval POST so the resolve can land first; the
+        // semaphores make the order exact on any scheduler.
+        let posted = DispatchSemaphore(value: 0)
+        let released = DispatchSemaphore(value: 0)
+        let base = HubStub.handler
+        HubStub.handler = { req in
+            if req.url?.path == "/v1/sessions/claude:s1/approval" {
+                posted.signal()
+                released.wait()
+                return (409, Data(#"{"error": {"code": "gone", "message": "no such prompt"}}"#.utf8))
+            }
+            return base?(req) ?? (404, Data())
+        }
+        let answer = Task { await chat.decide("r11", "deny") }
+        for _ in 0..<10_000 where posted.wait(timeout: .now()) == .timedOut { await Task.yield() }
+        chat.apply(event("approval.resolved", #"{"request_id": "r11", "decision": "allow"}"#))
+        released.signal()
+        await answer.value
+        #expect(chat.items.last?.kind == .approval(requestId: "r11", prompt: "Run?",
+                                                 options: [], picked: "allow", state: .resolved("allow")))
+    }
 }
 }

@@ -386,14 +386,15 @@ public final class SessionChatModel {
         case "approval.resolved":
             let res = env.decode(HubApprovalResolved.self)
             for i in items.indices {
-                guard case .approval(let rid, let prompt, let options, _, _) = items[i].kind else { continue }
+                guard case .approval(let rid, let prompt, let options, let picked, _) = items[i].kind else { continue }
                 if (res?.requestId ?? "").isEmpty || res?.requestId == rid {
                     // The event's decision wins over a row picked here;
                     // a bare resolve falls back to it (the web app's
                     // [data-dec] match, then the .chosen mark).
                     let state: HubApprovalState = .resolved(res?.decision ?? decisions[rid])
                     items[i].kind = .approval(requestId: rid, prompt: prompt, options: options,
-                                              picked: lit(res?.decision, on: options, rid: rid),
+                                              picked: lit(res?.decision, on: options, picked: picked,
+                                                          rid: rid),
                                               state: state)
                     answers[rid] = state
                 }
@@ -421,10 +422,11 @@ public final class SessionChatModel {
         case "approval.resolved":
             let res = env.decode(HubApprovalResolved.self)
             guard let rid = res?.requestId, let i = items.firstIndex(where: { $0.id == "approval-\(rid)" }),
-                  case .approval(_, let prompt, let options, _, _) = items[i].kind else { return }
+                  case .approval(_, let prompt, let options, let picked, _) = items[i].kind else { return }
             let state: HubApprovalState = .resolved(res?.decision ?? decisions[rid])
             items[i].kind = .approval(requestId: rid, prompt: prompt, options: options,
-                                      picked: lit(res?.decision, on: options, rid: rid), state: state)
+                                      picked: lit(res?.decision, on: options, picked: picked, rid: rid),
+                                      state: state)
             answers[rid] = state
         default:
             break
@@ -620,21 +622,26 @@ public final class SessionChatModel {
 
     /// The decision a settled card lights as picked: the event's own
     /// when it names a row the card shows (a menu digit on a menu card,
-    /// a semantic word without one), else the row answered here — the
-    /// web app's `[data-dec]` match falling back to `.chosen`.
-    private func lit(_ decision: String?, on options: [HubApprovalOption], rid: String) -> String? {
+    /// a semantic word without one), else the row already lit (the web
+    /// app's `[data-dec]` match falling back to `.chosen`), else the row
+    /// answered here.
+    private func lit(_ decision: String?, on options: [HubApprovalOption],
+                     picked: String?, rid: String) -> String? {
         let menu = options.filter { $0.label?.isEmpty == false }
         let rows = menu.isEmpty ? ["allow", "always", "deny"] : menu.map { $0.n ?? "" }
         if let decision, rows.contains(decision) { return decision }
-        return decisions[rid]
+        return picked ?? decisions[rid]
     }
 
     private func setApproval(_ rid: String, _ next: (HubApprovalState) -> HubApprovalState) {
         guard let i = items.firstIndex(where: { $0.id == "approval-\(rid)" }),
-              case .approval(_, let prompt, let options, _, let state) = items[i].kind else { return }
+              case .approval(_, let prompt, let options, let picked, let state) = items[i].kind else { return }
         let new = next(state)
+        // A transition that keeps the state (a raced event already
+        // settled the card) leaves the lit pick alone — a stale local
+        // choice must not light the losing row under another verdict.
         items[i].kind = .approval(requestId: rid, prompt: prompt, options: options,
-                                  picked: decisions[rid], state: new)
+                                  picked: new == state ? picked : decisions[rid], state: new)
         answers[rid] = new
     }
 
