@@ -111,6 +111,15 @@ public final class UpdatesModel {
         return (build.version, swe)
     }
 
+    /// "Quiver 1.1.1 (v1.1.1-3-gabc1234) · swe 1.1.1": the Version row, and
+    /// the version a bug report is filed against.
+    public var versionLine: String {
+        var line = "Quiver \(build.version)"
+        if let describe = build.describe { line += " (\(describe))" }
+        line += " · swe " + (sweVersionKnown ? (sweVersion ?? "?") : "unknown")
+        return line
+    }
+
     /// Read the local checkout and, when due, GitHub's release page.
     /// `force` is the Check now button: it fetches first so upstreamBehind
     /// is real, and skips the release cache.

@@ -1,0 +1,30 @@
+name: Issue labels
+
+# Adds the area label (mac, cli, ios, web, documentation) that matches an
+# issue form's Area answer. The forms add bug or enhancement and
+# needs-triage themselves.
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  area:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          sparse-checkout: scripts
+      # The body goes in through the environment, never into the script
+      # text, so nothing a reporter types can run.
+      - name: Label by Area
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          BODY: ${{ github.event.issue.body }}
+          LABELS: ${{ toJSON(github.event.issue.labels.*.name) }}
+        run: python3 scripts/issue_labels.py

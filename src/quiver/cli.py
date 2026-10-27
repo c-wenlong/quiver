@@ -5,6 +5,7 @@ import platform
 import sys
 
 from quiver import __version__
+from quiver.bug import cmd_bug
 from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.config_commands import cmd_config
 from quiver.configuration import ConfigurationError
@@ -190,6 +191,7 @@ COMMANDS = {
     "report": cmd_report,
     "discover": lambda args: cmd_harness(["discover", *args]),
     "autocomplete": cmd_autocomplete,
+    "bug": cmd_bug,
     "version": cmd_version,
     "-v": cmd_version,
     "-V": cmd_version,
