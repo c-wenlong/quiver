@@ -15,6 +15,8 @@ struct IssueDetailView: View {
     @State private var error: String?
     @State private var resolving = false
     @State private var startedKey: String?
+    /// Bumped per load so a late reply can't overwrite a newer one.
+    @State private var generation = 0
 
     var body: some View {
         PageScroll {
@@ -61,11 +63,22 @@ struct IssueDetailView: View {
 
     private func load(refresh: Bool = false) async {
         guard let client = app.client else { return }
+        generation += 1
+        let gen = generation
         do {
             let body = try await client.issue(repo: repo, number: number, refresh: refresh)
-            reply = body
-            error = nil
+            guard gen == generation else { return }
+            if body.issue == nil, reply?.issue != nil {
+                // A `gh` failure answers 200 with `issue: null`: keep the
+                // issue already shown and let the notice say why it's
+                // stale, rather than blanking the page for an outage.
+                error = body.error ?? "GitHub couldn't read the issue."
+            } else {
+                reply = body
+                error = nil
+            }
         } catch {
+            guard gen == generation else { return }
             self.error = (error as? HubError)?.message ?? error.localizedDescription
         }
     }
