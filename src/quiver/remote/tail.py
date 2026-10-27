@@ -73,6 +73,9 @@ def _approval_prompt_line(pane: str) -> str:
     ``Bearer sk-...`` the agent asked about, so it is redacted before it
     can reach the journal, a phone, or an ntfy body.
     """
+    ctx = supervise.running_context(pane)
+    if ctx:
+        return _tr._redact_secrets(ctx)[:140]
     for line in pane.splitlines():
         text = line.strip()
         if not text:

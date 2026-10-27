@@ -1085,6 +1085,24 @@ class TestApprovalWatcher(unittest.TestCase):
         self.assertEqual(supervise.pending_approval("k1"), rid)
         self.assertIn("Do you want", evs[0]["data"]["prompt"])
 
+    def test_devin_menu_requests_with_command_as_prompt(self):
+        # Devin's footer says "esc cancel" and numbers rows with a bare
+        # space — detection and the card's prompt line both rely on it.
+        pane = (
+            "● Running command\n"
+            "$ git -C /repo pull origin main\n"
+            ") 1 Yes  (Approve once)\n"
+            "  2 Yes, allow `git` commands\n"
+            "  8 No\n"
+            "  ↑↓ select · ↵ confirm · esc cancel"
+        )
+        self._poll(pane, meta={"mode": "tmux", "tmux": "qv-k1"})
+        evs = self._approval_events()
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(evs[0]["type"], "approval.requested")
+        self.assertIn("git -C /repo pull origin main",
+                      evs[0]["data"]["prompt"])
+
     def test_prompt_same_pane_no_duplicate(self):
         pane = "Do you want to proceed?\n1. Yes\n2. No"
         self._poll(pane, meta={"mode": "tmux"})

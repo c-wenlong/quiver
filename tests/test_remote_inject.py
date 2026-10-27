@@ -163,6 +163,24 @@ class TestTmuxInjector(unittest.TestCase):
         self.assertTrue(out.ok)
         self.assertEqual(sk.call_args[0][1], "2")
 
+    def test_approval_devin_menu_labels_win_over_fixed_map(self):
+        # "No" sits at row 8 in devin's menu — a fixed deny=3 mapping
+        # would approve a wider grant instead.
+        pane = (
+            "● Running command\n"
+            "$ git pull origin main\n"
+            ") 1 Yes  (Approve once)\n"
+            "  2 Yes, allow `git` commands\n"
+            "  5 Yes, switch to bypass mode\n"
+            "  8 No\n"
+            "  ↑↓ select · ↵ confirm · esc cancel"
+        )
+        with patch.object(supervise, "capture_pane", return_value=pane), \
+             patch.object(supervise, "send_key", return_value=True) as sk:
+            out = self.inj.approval(self.session, "r1", "deny")
+        self.assertTrue(out.ok)
+        self.assertEqual(sk.call_args[0][1], "8")
+
     def test_approval_refused_without_prompt(self):
         with patch.object(supervise, "capture_pane", return_value="❯ idle"), \
              patch.object(supervise, "send_key", return_value=True) as sk:

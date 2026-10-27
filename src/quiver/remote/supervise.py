@@ -309,17 +309,132 @@ APPROVAL_MARKERS = (
     "do you want to",
     "don't ask again",
     "esc to cancel",
+    # Devin's menu footer is "↑↓ select · ↵ confirm · esc cancel".
+    "esc cancel",
     "permission to proceed",
 )
 
 # Short stacked option lines ("1. Yes", "❯ Allow once", "Deny") are the
 # other shape a permission menu takes — only 2+ in a row counts, so one
-# "allow" in normal output can't fake a prompt.
+# "allow" in normal output can't fake a prompt. Devin numbers rows with
+# a bare space ("1 Yes", "8 No"), so whitespace counts as a delimiter
+# alongside "." and ")".
 _APPROVAL_ITEM = re.compile(
-    r"^\s*(?:[❯>•*\-]\s*)?(?:\d+[.)]\s*)?"
+    r"^\s*(?:[❯>•*)\-]\s*)?(?:\d{1,2}[.)]\s*|\d{1,2}\s+)?"
     r"(?:yes|no|allow|deny|approve|reject)\b",
     re.IGNORECASE,
 )
+
+
+# A numbered row in a permission menu: "1. Yes", "2) No", devin's
+# cursor row ") 3 Yes", "4 Yes, allow `git` commands". Labels decide
+# answers — positions alone cannot, since devin puts "No" at 8 while
+# claude puts it at 3.
+_MENU_OPTION = re.compile(
+    r"^\s*(?:[❯>•*)\-]\s*)?(\d{1,2})[.)]?\s+(\S.*?)\s*$"
+)
+_YES_LABEL = re.compile(r"(?:yes|approve|allow|proceed)\b", re.IGNORECASE)
+_DENY_LABEL = re.compile(r"(?:no|deny|reject|cancel)\b", re.IGNORECASE)
+# A label that is just the yes-word ("Yes", "approve!") reads as a
+# one-shot grant; anything longer ("Yes, allow `git` commands") is a
+# standing grant. Same test for the deny word — "No" is a menu row,
+# "No errors found" is transcript noise.
+_BARE_YES = re.compile(
+    r"^(?:yes|approve|allow|proceed)\b[.,!]?\s*$", re.IGNORECASE
+)
+_BARE_DENY = re.compile(
+    r"^(?:no|deny|reject|cancel)\b[.,!]?\s*$", re.IGNORECASE
+)
+
+
+def menu_options(pane: str) -> list[tuple[str, str]]:
+    """The ``(digit, label)`` rows a numbered menu prints, in order.
+
+    Only the bottom-most consecutive block of numbered rows counts —
+    numbered lines that scrolled up from earlier output ("1. No errors
+    found") are transcript text, not the menu, and a stray match must
+    not answer it.
+    """
+    run: list[tuple[str, str]] = []
+    last: list[tuple[str, str]] = []
+    for ln in pane.splitlines():
+        m = _MENU_OPTION.match(ln)
+        if m:
+            run.append((m.group(1), m.group(2)))
+        else:
+            if run:
+                last = run
+            run = []
+    return run or last
+
+
+def menu_key_for(pane: str, decision: str) -> str | None:
+    """The digit a ``decision`` maps to on this pane, or None.
+
+    ``allow`` wants the one-shot grant ("Approve once", a bare "Yes") —
+    never a standing grant, so a clipped pane whose first row is gone
+    can't escalate the answer. ``always`` wants the first standing
+    grant that is not a session-wide bypass. ``deny`` prefers a bare
+    "No"; menus order deny last, so a deny-word row that reads like
+    output text only wins when nothing plainer is there. Rows that
+    match nothing leave the fixed fallback map in charge.
+    """
+    opts = menu_options(pane)
+    if not opts:
+        return None
+    if decision == "deny":
+        den = [(n, l) for n, l in opts if _DENY_LABEL.match(l)]
+        for n, l in den:
+            if _BARE_DENY.match(l):
+                return n
+        return den[-1][0] if den else None
+    yes = [(n, l) for n, l in opts if _YES_LABEL.match(l)]
+    once = [
+        n for n, l in yes
+        if "bypass" not in l.lower()
+        and ("once" in l.lower() or _BARE_YES.match(l))
+    ]
+    standing = [
+        n for n, l in yes
+        if "bypass" not in l.lower()
+        and "once" not in l.lower()
+        and not _BARE_YES.match(l)
+    ]
+    if decision == "allow":
+        return once[0] if once else None
+    if decision == "always":
+        return standing[0] if standing else None
+    return None
+
+
+def running_context(pane: str) -> str:
+    """Devin asks under a "Running command" banner; that plus the
+    command block is the prompt's identity — same text the card shows
+    and the fingerprint binds a request id to. A wrapped command keeps
+    going past its first row, so collection stops only at a menu row,
+    a menu marker or a gap — never just at the newline.
+    """
+    lines = pane.splitlines()
+    for i, ln in enumerate(lines):
+        text = ln.strip()
+        if not text:
+            continue
+        if text.lower().lstrip("●>•*- ").startswith("running "):
+            head = text.lstrip("●>•*- ")
+            parts = []
+            for nxt in lines[i + 1:]:
+                t = nxt.strip()
+                low = t.lower()
+                if (
+                    not t
+                    or _MENU_OPTION.match(nxt)
+                    or any(m in low for m in APPROVAL_MARKERS)
+                    or len(parts) >= 6
+                ):
+                    break
+                parts.append(t.lstrip("$ "))
+            return f"{head}: {' '.join(parts)}" if parts else head
+    return ""
 
 
 def pane_shows_approval(pane: str) -> bool:
@@ -369,9 +484,14 @@ def approval_fingerprint(pane: str) -> str:
     """Hash the prompt-looking lines so a swapped menu gets a fresh id.
 
     Only marker/question/option lines count — a spinner or clock ticking
-    elsewhere on screen must not rotate the outstanding request id.
+    elsewhere on screen must not rotate the outstanding request id. The
+    running-command banner does count: two devin prompts can share the
+    menu rows while asking about different commands.
     """
     lines = []
+    ctx = running_context(pane)
+    if ctx:
+        lines.append(ctx)
     for ln in pane.splitlines():
         text = ln.strip()
         if not text:
