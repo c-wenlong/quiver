@@ -30,6 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 
+from quiver.github import cli as ghcli
 from quiver.paths import atomic_write_text, remote_dir_for
 from quiver.remote import (
     attachments,
@@ -462,6 +463,36 @@ class HubState:
                     self._approval_at.pop(key, None)
                     self.pending_approvals.pop(key, None)
 
+    # -- GitHub notifications ---------------------------------------------
+    # The catalog polls ``fetch_github`` on its refresh cadence and feeds
+    # ``/v1/inbox``; serve() wires it so a bare HubState — tests, the
+    # satellite agent — never reaches for ``gh``.
+
+    def _fetch_github_rows(self) -> list[dict] | None:
+        """Unread GitHub notifications as inbox rows through the web
+        app's shared ``gh`` cache; ``None`` when the read failed."""
+        from quiver.webapp.pages import inbox as gh_inbox
+        return gh_inbox.unread_rows(self.home)
+
+    def _github_alert(self, row: dict) -> None:
+        """A notification thread just turned unread. Only the reasons a
+        phone should ring for become ``notify`` events; comments on
+        subscribed threads stay inbox-only. The event lands on the
+        global journal like every session's mirrored notify."""
+        if str(row.get("reason") or "") not in ghcli.PUSH_REASONS:
+            return
+        self.emit(GLOBAL_KEY, protocol.event(
+            "notify", "", self.machine_id,
+            {
+                "kind": "github",
+                "reason": str(row.get("reason") or ""),
+                "repo": str(row.get("repo") or ""),
+                "title": str(row.get("title") or ""),
+                "url": str(row.get("url") or ""),
+                "thread": str(row.get("gh_thread_id") or ""),
+            },
+        ))
+
     def start(self) -> None:
         self._register_machine()
         # A keep or adopt cut short by a crash leaves a key in both
@@ -686,6 +717,9 @@ class HubState:
                 rows, as_of = self.catalog.tail_snapshot()
                 self.tail_manager.sync(rows, as_of=as_of)
                 supervise.reap_kept(self.home, self.catalog.session_for)
+                # GitHub last: a slow ``gh`` must never hold up adoption
+                # or tail sync, which don't need it.
+                self.catalog.poll_github()
             except Exception:
                 pass
             self._stop.wait(catalog_mod.REFRESH_INTERVAL_S)
@@ -3429,6 +3463,12 @@ def serve(state: HubState, host: str, port: int,
           public_url: str = "") -> int:
     """Blocking entry point for ``swe remote serve``."""
     configure(state, host, port, public_url)
+    # GitHub notifications ride the catalog's refresh cadence into
+    # /v1/inbox and the ntfy fan-out. Wired here, not in HubState, so a
+    # state built for tests or the satellite agent never reaches for
+    # ``gh``.
+    state.catalog.fetch_github = state._fetch_github_rows
+    state.catalog.on_github_alert = state._github_alert
     state.start()
     server = make_server(state, host, port)
     # Only a hub that owns the port may say where it is: a second copy

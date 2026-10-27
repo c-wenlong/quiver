@@ -18,10 +18,19 @@ from quiver.webapp.pages import PageError
 from quiver.webapp.pages import _github as G
 
 LIMIT = 50  # GitHubModel.loadInbox -> swe gh inbox --limit=50 --all
+# The hub's feed can't cap at the page's LIMIT: an old unread thread
+# crowded out of the listing would vanish from /v1/inbox while still
+# unread — and unread rows must never age out. Ten pages of 100 covers
+# essentially every inbox while bounding the fetch.
+UNREAD_LIMIT = 1000
 
 
 def _key(home) -> tuple:
     return ("inbox", G.home_key(home))
+
+
+def _unread_key(home) -> tuple:
+    return ("inbox-unread", G.home_key(home))
 
 
 def _listing(home, refresh: bool = False) -> tuple[dict, float]:
@@ -29,6 +38,47 @@ def _listing(home, refresh: bool = False) -> tuple[dict, float]:
         _key(home),
         lambda: ghcli._fetch_inbox(LIMIT, fetch_all=True),
         refresh=refresh, ok=lambda p: p.get("status") == "ok")
+
+
+def _unread_listing(home) -> tuple[dict, float]:
+    """The unread-only listing: the all-rows page can crowd an old
+    unread thread out of ``LIMIT``, but unread rows must never age out
+    of the hub's inbox, so the hub reads the unread endpoint."""
+    return G.CACHE.get(
+        _unread_key(home),
+        lambda: ghcli._fetch_inbox(UNREAD_LIMIT, fetch_all=False),
+        ok=lambda p: p.get("status") == "ok")
+
+
+def _drop(home) -> None:
+    """Forget both listings: a write changes either's rows."""
+    keys = {_key(home), _unread_key(home)}
+    G.CACHE.drop(keys.__contains__)
+
+
+def unread_rows(home) -> list[dict] | None:
+    """The unread notifications listing as ``github`` inbox rows.
+
+    The hub's catalog polls these for ``/v1/inbox`` and the ntfy fan-out;
+    the shared ``TtlCache`` folds each poll into one ``gh api
+    notifications`` run per TTL alongside the page's own fetch. ``None``
+    means the read failed — the caller keeps its last good rows. A
+    broken ``gh`` answers before any subprocess: the env probe needs no
+    ``gh`` at all when the binary is absent.
+    """
+    if G.probe(home).status != "ok":
+        return None
+    payload, _at = _unread_listing(home)
+    if payload.get("status") != "ok":
+        return None
+    rows = []
+    for note in payload.get("notifications") or []:
+        if not note.get("unread", True):
+            continue
+        row = ghcli.inbox_row(note)
+        if row is not None:
+            rows.append(row)
+    return rows
 
 
 def get(ctx, args: dict) -> dict:
@@ -72,14 +122,21 @@ def post(ctx, action: str, body: dict) -> dict:
                             payload.get("error") or "GitHub returned "
                             + str(payload.get("status")))
         notes = payload.get("notifications") or []
+        # A thread the hub's unread-only feed shows must be markable
+        # even when newer read rows crowded it off this page's listing.
+        unread, _at2 = _unread_listing(home)
         listed = {str(n.get("id")) for n in notes}
+        listed |= {
+            str(n.get("id"))
+            for n in (unread.get("notifications") or [])
+        }
         unknown = [i for i in ids if i not in listed]
         if unknown:
             raise PageError(404, "unknown_notification",
                             "Not in the inbox: " + ", ".join(unknown))
         if every:
             result = ghcli.mark_all_read()
-            G.CACHE.drop(lambda k: k == _key(home))
+            _drop(home)
             if result.status != "ok":
                 raise PageError(502, "mark_failed",
                                 f"Marking read failed: {result.error or result.status}")
@@ -87,7 +144,7 @@ def post(ctx, action: str, body: dict) -> dict:
             done = listed
         else:
             entries = ghcli.mark_threads_read(ids)
-            G.CACHE.drop(lambda k: k == _key(home))
+            _drop(home)
             marked = [e["id"] for e in entries if e["status"] == "ok"]
             failed = [{"id": e["id"], "error": e["error"]}
                       for e in entries if e["status"] != "ok"]
