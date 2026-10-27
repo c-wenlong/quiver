@@ -343,6 +343,156 @@ struct SearchResponse: Decodable {
     let indexed: Bool?
 }
 
+// MARK: Pull requests (GET /v1/pulls…)
+
+/// What the hub's `gh` probe says: the `github` field every pulls
+/// reply carries.
+struct GhEnv: Decodable {
+    let status: String?
+    let login: String?
+    let error: String?
+}
+
+/// `GET /v1/pulls`: each pinned repo's open pull requests.
+struct PullsResponse: Decodable {
+    let repos: [PullRepo]
+    let machine: String?
+    /// The hub's machine id, so Open in session offers its harnesses.
+    let machineId: String?
+    let github: GhEnv?
+    /// Set when `gh` is missing or signed out on the hub: the page
+    /// shows this instead of the list.
+    let envBlocked: String?
+    let fetchedAt: Double?
+}
+
+/// One pinned repo's entry in the pulls reply. A repo `gh` failed on
+/// lists with `status` and `error` and an empty `pulls`.
+struct PullRepo: Decodable, Identifiable {
+    let name: String
+    let status: String?
+    let pulls: [PullRow]?
+    let error: String?
+    var id: String { name }
+}
+
+/// One open pull request's list row (`gh pr list`, shaped on the hub).
+struct PullRow: Decodable, Identifiable {
+    let number: Int
+    let title: String?
+    let state: String?
+    let draft: Bool?
+    let author: String?
+    /// The head branch (`headRefName` upstream).
+    let branch: String?
+    let base: String?
+    let labels: [String]?
+    let mergeable: String?
+    /// approved | changes_requested | review_required | none
+    let reviewDecision: String?
+    /// passing | failing | running | unknown | none — the rollup the
+    /// checks glyph colours by.
+    let checks: String?
+    /// ISO-8601 as `gh` prints it; `GitHubTime.date` parses it.
+    let updatedAt: String?
+    let url: String?
+    /// The hub's `gh` login authored it (the Mine filter).
+    let mine: Bool?
+    /// The hub's `gh` login was asked to review. Null when the hub
+    /// couldn't ask `gh pr status` — the row still lists.
+    let reviewRequested: Bool?
+
+    var id: Int { number }
+}
+
+/// `GET /v1/pulls/<o>/<r>/<n>`: the list row plus the body, per-check
+/// rows and reviews the detail page draws.
+struct PullResponse: Decodable {
+    let github: GhEnv?
+    let repo: String?
+    let machine: String?
+    let machineId: String?
+    /// "ok", or `gh`'s outcome word ("not-found", "auth-required", …).
+    let status: String?
+    let pr: PullDetail?
+    let error: String?
+    let fetchedAt: Double?
+}
+
+struct PullDetail: Decodable {
+    let number: Int
+    let title: String?
+    let state: String?
+    let draft: Bool?
+    let author: String?
+    let branch: String?
+    let base: String?
+    let labels: [String]?
+    let mergeable: String?
+    let reviewDecision: String?
+    let checks: String?
+    let updatedAt: String?
+    let url: String?
+    let repo: String?
+    let body: String?
+    let mergeState: String?
+    let additions: Int?
+    let deletions: Int?
+    let changedFiles: Int?
+    let checkRuns: [CheckRun]?
+    let reviews: [PullReview]?
+    let reviewRequests: [String]?
+    let createdAt: String?
+    let mergedAt: String?
+    /// Where the hub's `pr_worktree` puts the checkout — the open
+    /// sheet's "Starts in" line before the worktree exists.
+    let worktree: String?
+    /// The review/fix brief the Open-in-session sheet prefills.
+    let suggestedPrompt: String?
+}
+
+/// One `statusCheckRollup` entry, folded to `checks`' state words.
+/// Not `Identifiable`: several providers can report the same
+/// `workflow/name`, so the fields can't key a `ForEach` — the detail
+/// page keys rows by their slot in the reply.
+struct CheckRun: Decodable, Hashable {
+    let name: String?
+    let workflow: String?
+    let status: String?
+    let conclusion: String?
+    /// passing | failing | running | none
+    let state: String?
+    let url: String?
+}
+
+/// One `latestReviews` entry; `review_requests` decodes as names.
+struct PullReview: Decodable, Hashable {
+    let author: String?
+    /// approved | changes_requested | commented | dismissed | …
+    let state: String?
+    let submittedAt: String?
+}
+
+/// GitHub's ISO-8601 stamps (`updated_at` and friends), with or
+/// without fractional seconds.
+enum GitHubTime {
+    private static let plain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+    private static let fractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    static func date(_ text: String?) -> Date? {
+        guard let text, !text.isEmpty else { return nil }
+        return plain.date(from: text) ?? fractional.date(from: text)
+    }
+}
+
 /// One path from `GET /v1/sessions/{id}/files`, relative to the
 /// session's working folder.
 struct FileEntry: Codable, Hashable {

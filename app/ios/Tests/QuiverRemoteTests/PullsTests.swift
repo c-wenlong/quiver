@@ -1,0 +1,172 @@
+import XCTest
+@testable import QuiverRemote
+
+final class PullsDecodingTests: XCTestCase {
+    /// `GET /v1/pulls` as the hub answers it.
+    private static let listJSON = """
+    {
+      "repos": [
+        {"name": "o/r", "status": "ok", "pulls": [
+          {"number": 5, "title": "Fix the thing", "state": "open",
+           "draft": false, "author": "octocat", "branch": "fix-thing",
+           "base": "main", "labels": ["bug"], "mergeable": "mergeable",
+           "review_decision": "approved", "checks": "passing",
+           "updated_at": "2026-01-02T03:04:05Z",
+           "url": "https://github.com/o/r/pull/5",
+           "mine": true, "review_requested": false},
+          {"number": 7, "title": "Widen the net", "state": "open",
+           "draft": true, "author": "other", "branch": "widen",
+           "base": "main", "labels": [], "mergeable": "conflicting",
+           "review_decision": "review_required", "checks": "failing",
+           "updated_at": "2026-01-02T03:04:05.123Z",
+           "url": "https://github.com/o/r/pull/7",
+           "mine": false, "review_requested": true}
+        ]},
+        {"name": "o/s", "status": "upstream-error", "pulls": [],
+         "error": "GitHub is down"}
+      ],
+      "machine": "kai-macbook",
+      "machine_id": "m-1",
+      "github": {"status": "ok", "login": "octocat", "error": null},
+      "fetched_at": 1767323045.0
+    }
+    """
+
+    func testDecodesTheListReply() throws {
+        let body = try Hub.decoder.decode(PullsResponse.self, from: Data(Self.listJSON.utf8))
+        XCTAssertEqual(body.repos.count, 2)
+        XCTAssertEqual(body.machineId, "m-1")
+        XCTAssertEqual(body.github?.login, "octocat")
+        XCTAssertNil(body.envBlocked)
+
+        let repo = body.repos[0]
+        XCTAssertEqual(repo.status, "ok")
+        let five = repo.pulls![0]
+        XCTAssertEqual(five.number, 5)
+        XCTAssertEqual(five.mine, true)
+        XCTAssertEqual(five.reviewRequested, false)
+        XCTAssertEqual(five.checks, "passing")
+        XCTAssertEqual(five.reviewDecision, "approved")
+        XCTAssertEqual(five.labels, ["bug"])
+        // ISO-8601, plain and fractional-second forms.
+        XCTAssertEqual(five.updatedDate, GitHubTime.date("2026-01-02T03:04:05Z"))
+        XCTAssertEqual(repo.pulls![1].updatedDate,
+                       GitHubTime.date("2026-01-02T03:04:05.123Z"))
+        XCTAssertNotNil(repo.pulls![1].updatedDate)
+
+        let failed = body.repos[1]
+        XCTAssertEqual(failed.status, "upstream-error")
+        XCTAssertEqual(failed.error, "GitHub is down")
+        XCTAssertEqual(failed.pulls?.count, 0)
+    }
+
+    func testDecodesTheDetailReply() throws {
+        let json = """
+        {
+          "github": {"status": "ok", "login": "octocat", "error": null},
+          "repo": "o/r", "machine": "kai-macbook", "machine_id": "m-1",
+          "status": "ok",
+          "pr": {
+            "number": 5, "title": "Fix the thing", "state": "open",
+            "draft": false, "author": "octocat", "branch": "fix-thing",
+            "base": "main", "labels": ["bug"], "mergeable": "mergeable",
+            "review_decision": "approved", "checks": "failing",
+            "updated_at": "2026-01-02T03:04:05Z",
+            "url": "https://github.com/o/r/pull/5",
+            "repo": "o/r", "body": "What broke.", "merge_state": "clean",
+            "additions": 10, "deletions": 2, "changed_files": 3,
+            "check_runs": [
+              {"name": "tests", "workflow": "CI", "status": "completed",
+               "conclusion": "failure", "state": "failing",
+               "url": "https://github.com/o/r/actions/runs/9"},
+              {"name": "lint", "workflow": "CI", "status": "completed",
+               "conclusion": "success", "state": "passing", "url": ""}
+            ],
+            "reviews": [{"author": "rev", "state": "changes_requested",
+                         "submitted_at": "2026-01-02T00:00:00Z"}],
+            "review_requests": ["octocat"],
+            "worktree": "/home/u/.quiver/worktrees/o__r-pr5",
+            "suggested_prompt": "Review https://github.com/o/r/pull/5\\n…"
+          },
+          "fetched_at": 1767323045.0
+        }
+        """
+        let body = try Hub.decoder.decode(PullResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(body.status, "ok")
+        let pr = try XCTUnwrap(body.pr)
+        XCTAssertEqual(pr.number, 5)
+        XCTAssertEqual(pr.body, "What broke.")
+        XCTAssertEqual(pr.checkRuns?.count, 2)
+        XCTAssertEqual(pr.checkRuns?[0].state, "failing")
+        XCTAssertEqual(pr.reviews?.first?.state, "changes_requested")
+        XCTAssertEqual(pr.reviewRequests, ["octocat"])
+        XCTAssertEqual(pr.worktree, "/home/u/.quiver/worktrees/o__r-pr5")
+        XCTAssertTrue(pr.suggestedPrompt?.hasPrefix("Review https://") == true)
+    }
+
+    func testGitHubTimeParsesBothStampShapes() {
+        XCTAssertNotNil(GitHubTime.date("2026-01-02T03:04:05Z"))
+        XCTAssertNotNil(GitHubTime.date("2026-01-02T03:04:05.123Z"))
+        XCTAssertNil(GitHubTime.date(nil))
+        XCTAssertNil(GitHubTime.date(""))
+        XCTAssertNil(GitHubTime.date("not a date"))
+    }
+}
+
+final class PullGroupingTests: XCTestCase {
+    private func repo(_ name: String, status: String = "ok",
+                      pulls: [PullRow]? = nil, error: String? = nil) -> PullRepo {
+        PullRepo(name: name, status: status, pulls: pulls ?? [], error: error)
+    }
+
+    private func row(_ number: Int, mine: Bool? = false,
+                     requested: Bool? = false) -> PullRow {
+        PullRow(number: number, title: "PR \(number)", state: "open",
+                draft: false, author: "a", branch: "b", base: "main",
+                labels: [], mergeable: "mergeable",
+                reviewDecision: "none", checks: "passing",
+                updatedAt: nil, url: "", mine: mine,
+                reviewRequested: requested)
+    }
+
+    func testFiltersPickByViewerFlags() {
+        XCTAssertTrue(PullFilter.all.includes(row(1)))
+        XCTAssertFalse(PullFilter.mine.includes(row(1, mine: false)))
+        XCTAssertTrue(PullFilter.mine.includes(row(1, mine: true)))
+        XCTAssertTrue(PullFilter.reviewRequested.includes(row(1, requested: true)))
+        // A PR whose review flag never arrived (status fetch failed)
+        // doesn't pretend it was requested.
+        XCTAssertFalse(PullFilter.reviewRequested.includes(row(1, requested: nil)))
+        XCTAssertFalse(PullFilter.mine.includes(row(1, mine: nil)))
+    }
+
+    func testSectionsKeepErrorsAndDropQuietRepos() {
+        let repos = [
+            repo("o/r", pulls: [row(5, mine: true), row(7, requested: true)]),
+            repo("o/quiet", pulls: []),
+            repo("o/down", status: "upstream-error", error: "down"),
+        ]
+        let all = PullGrouping.sections(of: repos, filter: .all)
+        XCTAssertEqual(all.map(\.name), ["o/r", "o/down"])
+        XCTAssertEqual(all[0].rows?.map(\.number), [5, 7])
+        XCTAssertEqual(all[1].error, "down")
+
+        let mine = PullGrouping.sections(of: repos, filter: .mine)
+        XCTAssertEqual(mine.first?.rows?.map(\.number), [5])
+        // Under a filter the errored repo still reports itself.
+        XCTAssertEqual(mine.map(\.name), ["o/r", "o/down"])
+
+        // A repo whose pulls all filter out drops its section too.
+        let other = PullGrouping.sections(
+            of: [repo("o/r", pulls: [row(5)])], filter: .reviewRequested)
+        XCTAssertTrue(other.isEmpty)
+    }
+
+    func testCountsDriveTheFilterChips() {
+        let repos = [repo("o/r", pulls: [row(5, mine: true), row(7, requested: true)]),
+                     repo("o/s", pulls: [row(3)])]
+        XCTAssertEqual(PullGrouping.count(repos, filter: .all), 3)
+        XCTAssertEqual(PullGrouping.count(repos, filter: .mine), 1)
+        XCTAssertEqual(PullGrouping.count(repos, filter: .reviewRequested), 1)
+    }
+}

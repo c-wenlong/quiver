@@ -136,6 +136,9 @@ struct HubClient: Sendable {
         case "fork_unsupported": "This session can't be forked: its harness has no fork command, or the session has no id yet."
         case "not_installed": "That harness isn't installed on the machine any more."
         case "unknown_session": "The hub doesn't know this session any more. Pull to refresh."
+        case "not_pinned": "That repo isn't pinned on this hub. Pin it with `swe gh repo add`."
+        case "gh_unavailable": "GitHub's gh isn't signed in on the hub."
+        case "open_pending": "An agent for this pull request is still starting in its worktree."
         case "needs_pairing": "Pair this phone with the hub to use the console."
         case "bad_key": "The hub didn't accept this phone's SSH key. Update the hub."
         default: fallback ?? "The hub answered with an error (\(status))."
@@ -149,6 +152,40 @@ struct HubClient: Sendable {
     func sessions() async throws -> SessionsResponse { try await send(request("GET", "/v1/sessions")) }
 
     func inbox() async throws -> InboxResponse { try await send(request("GET", "/v1/inbox")) }
+
+    // MARK: Pull requests
+
+    /// `GET /v1/pulls`: the hub's pinned repos, each with its open
+    /// pull requests. `refresh` skips the hub's one-minute `gh` cache.
+    func pulls(refresh: Bool = false) async throws -> PullsResponse {
+        try await send(request("GET", "/v1/pulls",
+                               query: refresh ? ["refresh": "1"] : [:]))
+    }
+
+    /// `GET /v1/pulls/<o>/<r>/<n>`: one pull request in full — body,
+    /// per-check rows and reviews.
+    func pull(repo: String, number: Int, refresh: Bool = false) async throws -> PullResponse {
+        try await send(request("GET", "/v1/pulls/\(Self.repoPath(repo))/\(number)",
+                               query: refresh ? ["refresh": "1"] : [:]))
+    }
+
+    /// `POST /v1/pulls/<o>/<r>/<n>/open {harness, prompt?}` → a launch
+    /// in the PR's detached worktree; poll `launch(_:)` for the session
+    /// key, as for `startSession`. An empty `prompt` lets the hub build
+    /// its review brief.
+    func openPull(repo: String, number: Int, harness: String, prompt: String) async throws -> LaunchStatus {
+        var body: [String: Any] = ["harness": harness]
+        if !prompt.isEmpty { body["prompt"] = prompt }
+        return try await send(request("POST", "/v1/pulls/\(Self.repoPath(repo))/\(number)/open",
+                                      body: body))
+    }
+
+    /// "o/r" as the `/v1/pulls/<owner>/<repo>` path pair, each part
+    /// percent-encoded on its own.
+    static func repoPath(_ repo: String) -> String {
+        repo.split(separator: "/", omittingEmptySubsequences: false)
+            .map { encodeKey(String($0)) }.joined(separator: "/")
+    }
 
     func search(_ query: String, limit: Int = 50) async throws -> SearchResponse {
         try await send(request("GET", "/v1/search", query: ["q": query, "limit": "\(limit)"]))

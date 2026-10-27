@@ -54,6 +54,7 @@ from quiver.remote import (
 )
 from quiver.remote import fork as fork_mod
 from quiver.remote import issues as issues_mod
+from quiver.remote import pulls as pulls_mod
 from quiver.remote.detach import PendingDetaches
 from quiver.remote.journal import Journal
 from quiver.webapp import (
@@ -441,7 +442,8 @@ class HubState:
             mirrored = self.journal.append(GLOBAL_KEY, written)
             self.bus.publish(GLOBAL_KEY, mirrored)
         if adopted:
-            # An issue resolve names its session after the issue.
+            # An issue resolve or a PR open names its session after the
+            # issue or pull request.
             issues_mod.title_adopted(self, *adopted)
         return written
 
@@ -1619,6 +1621,22 @@ class _Handler(BaseHTTPRequestHandler):
             })
             return
 
+        if path == "/v1/pulls":
+            # pulls.py: every pinned repo's open PRs, behind the gh cache.
+            self._send_json(*pulls_mod.list(self._state, args))
+            return
+
+        if path.startswith("/v1/pulls/"):
+            parts = path[len("/v1/pulls/"):].split("/")
+            if len(parts) != 3:
+                self._send_error(404, "not_found", "unknown route")
+                return
+            # pulls.py: one PR in full (body, checks, reviews).
+            self._send_json(*pulls_mod.detail(
+                self._state, unquote(parts[0]), unquote(parts[1]),
+                parts[2], args))
+            return
+
         if path == "/v1/events":
             after = self._sse_after(args)
             self._sse_stream(None, after, device_id=device_id)
@@ -1984,6 +2002,17 @@ class _Handler(BaseHTTPRequestHandler):
         if path == "/v1/issues/resolve":  # issues.py: worktree + launch
             self._send_json(*issues_mod.request(
                 self._state, self._read_body()))
+            return
+
+        if path.startswith("/v1/pulls/"):
+            parts = path[len("/v1/pulls/"):].split("/")
+            if len(parts) != 4 or parts[3] != "open":
+                self._send_error(404, "not_found", "unknown route")
+                return
+            # pulls.py: detached PR worktree + launch, the resolve shape.
+            self._send_json(*pulls_mod.request(
+                self._state, unquote(parts[0]), unquote(parts[1]),
+                parts[2], self._read_body()))
             return
 
         if path.startswith("/v1/sessions/"):

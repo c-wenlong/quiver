@@ -38,8 +38,6 @@ Writes, ``POST /v1/app/repositories/<action>``, in process:
 
 from __future__ import annotations
 
-import threading
-
 from quiver.github import cli as ghcli
 from quiver.github import gh, manage, repos
 
@@ -341,21 +339,6 @@ def harnesses() -> list[dict]:
             for h in catalog_mod.launchable_harnesses()]
 
 
-# One checkout at a time per repo mirror, ``(home, repo)``: two PRs of
-# one repo share its mirror and its FETCH_HEAD, so a second fetch landing
-# between the first one's fetch and checkout would hand the first
-# session the second PR's code. A clone can take minutes, so these are
-# not the write lock the other writes wait on; a second caller waits for
-# the first, then reuses its mirror (and its checkout, for the same PR).
-_MIRROR_LOCKS: dict = {}
-_MIRROR_LOCKS_GUARD = threading.Lock()
-
-
-def _mirror_lock(home, repo: str) -> threading.Lock:
-    with _MIRROR_LOCKS_GUARD:
-        return _MIRROR_LOCKS.setdefault((G.home_key(home), repo.lower()), threading.Lock())
-
-
 def _worktree_args(home, body: dict) -> tuple[str, str]:
     return _pinned_arg(home, body.get("repo")), _pr_number_arg(body.get("number"))
 
@@ -369,7 +352,9 @@ def worktree(ctx, repo: str, number: str) -> dict:
     repo run one after another. 409 for a missing or signed-out ``gh``,
     502 when git or GitHub fails (the message names the step)."""
     _require_gh(ctx.home)
-    with _mirror_lock(ctx.home, repo):
+    # G.mirror_lock: the phone's open shares this table — one repo's
+    # FETCH_HEAD can't move under either caller's checkout.
+    with G.mirror_lock(ctx.home, repo):
         made = manage.pr_worktree(repo, number, ctx.home)
     if made.status != "ok":
         _require_gh(ctx.home, fresh=True)
@@ -468,11 +453,12 @@ def blocked(pr: dict, auto: bool) -> tuple[str, str] | None:
 
 
 def _drop_repo(home, repo: str) -> None:
-    """Forget the repo's board, focus surfaces and PR details, so every
-    view of it reads GitHub again after a merge."""
+    """Forget the repo's board, focus surfaces and PR details — and the
+    phone's ``/v1/pulls`` reads — so every view of it reads GitHub
+    again after a merge."""
     hk = G.home_key(home)
     G.CACHE.drop(lambda k: isinstance(k, tuple) and len(k) > 2
-                 and k[0] in ("board", "focus", "pr")
+                 and k[0] in ("board", "focus", "pr", "pulls")
                  and k[1] == hk and k[2] == repo)
 
 

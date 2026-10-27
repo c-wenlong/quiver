@@ -860,7 +860,7 @@ class TestPrWorktree(_Base):
     def test_checkouts_of_one_repo_wait_for_each_other(self):
         # Two PRs of one repo share its mirror's FETCH_HEAD: the second
         # checkout must not start until the first has finished.
-        lock = R._mirror_lock(self.home, "O/A")
+        lock = G.mirror_lock(self.home, "O/A")
         lock.acquire()
         done = []
         worker = threading.Thread(target=lambda: done.append(
