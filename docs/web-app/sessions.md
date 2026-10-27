@@ -92,7 +92,47 @@ observed: the composer locks and the banner returns.
 
 `/v1/app/sessions` rows also carry `ownership` (`attached` or `observed`)
 and `attachable`, so the list marks attached sessions with an Attached
-badge.
+badge and a kept one with Kept.
+
+## From the list
+
+The list carries the iPhone app's session actions itself, so a session
+can be attached or detached without opening its chat:
+
+- A row offers one action, the phone's leading-swipe rule: **Detach** on
+  an attached row, **Attach** on an `attachable` one that isn't mid-turn
+  (a `kept` row attaches even mid-turn — the pane is adopted). A write in
+  flight reads "Attaching…"/"Detaching…".
+- Detach on an idle row just posts `detach` with `when_idle`. On an
+  active or approval-waiting row it opens a sheet first — the chat's
+  same three-way choice: Detach when it finishes, Keep it running in
+  tmux (only when the row has a pane), Detach now. Detaching now stops
+  the turn.
+- The details sheet has the same button, next to Run in terminal.
+- A finished write refetches the list rather than patching the row, so
+  badges and actions always match the hub; a refusal lands as a note
+  above the filters.
+
+**New session** in the header is the iPhone's `NewSessionView`: machine
+chips (from `GET /v1/machines`, the ones with anything in `launchable`,
+online first), harness chips (the machine's `launchable`, its
+`harness_names` for display), a folder, and a first prompt. The folder
+box takes an absolute path, offers the machine's recent session folders
+filtered as you type, and on the hub machine can browse subfolders via
+`GET /v1/folders` (a satellite's disk can't be listed from here, so its
+box stays typed-or-recent and the browser shows the hub's reason). The
+harness defaults to the one last used in that folder on that machine,
+else the first offered.
+
+Start posts `POST /v1/sessions` once (the button locks) and then polls
+`GET /v1/launches/<id>` once a second like the phone's `LaunchFlow`:
+`started` opens the chat on the named key; `failed` shows the hub's
+note; `untracked` (the harness runs under tmux but swe can't read its
+sessions) and the 90-attempt bound land on an "unconfirmed" note saying
+it'll appear in the list when it does; a satellite's `queued` launch
+says it starts when the machine is online. Closing the sheet cancels the
+wait, not the launch — the hub keeps it and the session appears in the
+list whenever it lands.
 
 ## Differences from the PWA
 
@@ -115,5 +155,12 @@ badge.
   nothing were missing.
 - Not ported: the PWA has no attachments, waiting-sends tray, slash
   commands or "load earlier" either, so neither does this (the hub's
-  `queue` and `attachments` routes are unused here). Starting a new
-  session (`POST /v1/sessions`) is not on the page.
+  `queue` and `attachments` routes are unused here).
+- The list actions are the iPhone app's, which the PWA doesn't have:
+  rows carry no swipe actions there (Attach/Detach live in its chat
+  only), and it has no New session sheet. The page mirrors the iPhone
+  rules instead: the same leading-swipe attach/detach rules, the same
+  three-way detach choice, the same `NewSessionView` pickers and
+  `LaunchFlow` polling. What it doesn't do is the iPhone's extra row
+  actions (pin, rename, fork) — a chat keeps its name and session files
+  stay as the harness wrote them.
