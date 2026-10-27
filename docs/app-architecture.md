@@ -1,6 +1,6 @@
 # macOS app architecture
 
-The app under `app/` is a SwiftPM package with three targets: `QuiverCore`
+The app under `app/mac/` is a SwiftPM package with three targets: `QuiverCore`
 (models, decoders, stores, samplers), `QuiverApp` (the window, menu bar and
 pages) and `QuiverWidgetsUI` (views shared by the app preview and the widget
 extension). Views live in `QuiverApp`; logic that deserves a test lives in
@@ -126,7 +126,7 @@ scaffolds; `PageHeader` is the non-scrolling variant used by sheets.
 - User-facing strings use Theme text roles and contain no em dashes.
 - Page actions sit in `Page`'s actions with ⌘R on refresh.
 - Decoding `swe` output happens only in `QuiverCore` decoders, matched to
-  fixtures under `app/Tests/QuiverCoreTests/Fixtures` (see
+  fixtures under `app/mac/Tests/QuiverCoreTests/Fixtures` (see
   [json-contracts.md](json-contracts.md)).
 - Persistent stores, caches and UserDefaults keys are inventoried in
   `docs/data-model.md`.

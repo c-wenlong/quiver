@@ -1,13 +1,13 @@
-"""app/script/import-harness-icons.py: path rewriting and safe refusal."""
+"""app/mac/script/import-harness-icons.py: path rewriting and safe refusal."""
 
 import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parent.parent / "app" / "script" / "import-harness-icons.py"
+SCRIPT = Path(__file__).resolve().parent.parent / "app" / "mac" / "script" / "import-harness-icons.py"
 # The Nix package build copies only the Python sources, not app/.
-NEEDS_APP = unittest.skipUnless(SCRIPT.exists(), "app/ is not in this source tree")
+NEEDS_APP = unittest.skipUnless(SCRIPT.exists(), "app/mac/ is not in this source tree")
 
 
 def load():

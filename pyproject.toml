@@ -54,5 +54,5 @@ Changelog = "https://github.com/c-wenlong/quiver/blob/main/CHANGELOG.md"
 packages = ["src/quiver"]
 
 [tool.hatch.build.targets.sdist]
-# The macOS app is built with SwiftPM from the repo, not shipped on PyPI.
+# The native apps (app/mac, app/ios) are built from the repo, not shipped on PyPI.
 exclude = ["app/"]

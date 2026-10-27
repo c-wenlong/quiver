@@ -68,7 +68,7 @@ jobs:
           ref: refs/tags/${{ env.RELEASE_TAG }}
           # Full history: the Python job only builds dists, but the macOS
           # app job joins this workflow and `git describe --tags` in
-          # app/script/build-app.sh needs every tag; depth 1 stamps 0.0.0.
+          # app/mac/script/build-app.sh needs every tag; depth 1 stamps 0.0.0.
           fetch-depth: 0
 
       - name: Set up Python 3.13
@@ -170,8 +170,8 @@ jobs:
         with:
           path: |
             ~/Library/Caches/org.swift.swiftpm
-            app/.build
-          key: ${{ runner.os }}-swiftpm-${{ hashFiles('app/Package.swift', 'app/Package.resolved') }}
+            app/mac/.build
+          key: ${{ runner.os }}-swiftpm-${{ hashFiles('app/mac/Package.swift', 'app/mac/Package.resolved') }}
           restore-keys: |
             ${{ runner.os }}-swiftpm-
 
@@ -182,7 +182,7 @@ jobs:
         # The `app` job moved off ci.yml's PR path (issue #749); the tag
         # build runs the Swift suite here instead, before any signing
         # setup, so a test failure fails fast and blocks the release.
-        run: cd app && swift test
+        run: cd app/mac && swift test
 
       - name: Import the signing certificate
         id: cert
@@ -232,12 +232,12 @@ jobs:
           # the secrets exist.  With no identity at all a prod build fails
           # loudly inside build-app.sh, so `-` keeps the scaffold green.
           QUIVER_SIGN_IDENTITY: ${{ vars.SIGNING_IDENTITY || steps.cert.outputs.sign_identity || '-' }}
-        run: app/script/build-app.sh release
+        run: app/mac/script/build-app.sh release
 
       - name: Report the signature
         # Shows in the log what the bundle was actually signed with; the
         # unsigned scaffold run prints "Signature=adhoc" here.
-        run: codesign -dvvv app/build/Quiver.app || true
+        run: codesign -dvvv app/mac/build/Quiver.app || true
 
       - name: Smoke-test the bundled app
         # Exercises the bundle end to end, post-signing, against a
@@ -245,13 +245,13 @@ jobs:
         # before codesign touched it), then the GUI binary itself.
         run: |
           test_home="$(mktemp -d)"
-          swe="app/build/Quiver.app/Contents/Resources/swe/bin/swe"
+          swe="app/mac/build/Quiver.app/Contents/Resources/swe/bin/swe"
           HOME="$test_home" "$swe" --help >/dev/null
           HOME="$test_home" "$swe" version --json
           # A GUI app that is still alive after 20 s has loaded its
           # frameworks, Python and signature fine. A zombie child still
           # answers kill -0, so check the process state before reaping.
-          HOME="$test_home" app/build/Quiver.app/Contents/MacOS/Quiver &
+          HOME="$test_home" app/mac/build/Quiver.app/Contents/MacOS/Quiver &
           pid=$!
           sleep 20
           case "$(ps -o stat= -p "$pid" 2>/dev/null)" in
@@ -282,10 +282,10 @@ jobs:
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
         run: |
-          mkdir -p app/build/macos-app
-          app/script/make-dmg.sh app/build/Quiver.app \
-            "app/build/macos-app/Quiver-${RELEASE_TAG#v}.dmg"
-          ls -lh app/build/macos-app/
+          mkdir -p app/mac/build/macos-app
+          app/mac/script/make-dmg.sh app/mac/build/Quiver.app \
+            "app/mac/build/macos-app/Quiver-${RELEASE_TAG#v}.dmg"
+          ls -lh app/mac/build/macos-app/
 
       - name: Exercise the DMG path on the unsigned build
         # No certificate: the release DMG stays off, but make-dmg.sh still
@@ -295,10 +295,10 @@ jobs:
         # not reach a release by accident.
         if: steps.cert.outputs.have_cert != 'true'
         run: |
-          app/script/make-dmg.sh app/build/Quiver.app "$RUNNER_TEMP/Quiver.dmg"
-          mkdir -p app/build/macos-app
+          app/mac/script/make-dmg.sh app/mac/build/Quiver.app "$RUNNER_TEMP/Quiver.dmg"
+          mkdir -p app/mac/build/macos-app
           printf 'Unsigned prod build: MACOS_CERTIFICATE is not configured.\n' \
-            > app/build/macos-app/UNSIGNED.txt
+            > app/mac/build/macos-app/UNSIGNED.txt
 
       - name: Build the Sparkle appcast
         if: steps.cert.outputs.have_cert == 'true'
@@ -328,14 +328,14 @@ jobs:
           printf '%s' "$SPARKLE_PRIVATE_KEY" | "$tools/bin/generate_appcast" \
             --ed-key-file - \
             --download-url-prefix "https://github.com/$GH_REPO/releases/download/$RELEASE_TAG/" \
-            app/build/macos-app
-          xmllint --noout app/build/macos-app/appcast.xml
+            app/mac/build/macos-app
+          xmllint --noout app/mac/build/macos-app/appcast.xml
 
       - name: Upload the app artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: macos-app
-          path: app/build/macos-app/
+          path: app/mac/build/macos-app/
           if-no-files-found: error
 
       - name: Drop the signing keychain

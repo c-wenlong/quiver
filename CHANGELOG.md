@@ -37,6 +37,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Both Swift apps live under `app/`.** The macOS app moved from `app/`
+  to `app/mac/` and the iPhone app from `remote/ios/` to `app/ios/` (its
+  roadmap is now `app/ios/ROADMAP.md`). Build with
+  `app/mac/script/build-app.sh` and install with
+  `app/mac/script/install-app.sh`. The web app stays in
+  `src/quiver/webapp/`, inside the Python package. An app installed
+  before this change can't rebuild itself from Settings › Updates once
+  the checkout has the new layout; run `app/mac/script/install-app.sh`
+  once.
 - **The Hooks page reads by event.** Pick a harness and its hooks sit on
   the events that fire them, in session order: PreToolUse with each
   script's tool (Bash, Task, any tool) and one-line description, Stop

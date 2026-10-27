@@ -393,7 +393,7 @@ actually go fix.
 
 ## Machine-readable output
 
-The macOS app under `app/` reads `swe` through `--json`, never by parsing
+The macOS app under `app/mac/` reads `swe` through `--json`, never by parsing
 tables. The app's own structure is [docs/app-architecture.md](docs/app-architecture.md),
 and each command below maps to its Swift decoder in
 [docs/json-contracts.md](docs/json-contracts.md). Every `--json` command prints exactly one document on stdout,

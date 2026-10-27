@@ -43,7 +43,7 @@ its release.
 - [ ] **CI is green on `main`.** All shards, Coverage, and the Greptile
   review must have finished clean on the commit the tag will point at.
 - [ ] **The installed app contains the release's merges.** Install with
-  `app/script/install-app.sh`, then read the bundle's embedded commit:
+  `app/mac/script/install-app.sh`, then read the bundle's embedded commit:
 
   ```bash
   defaults read ~/Applications/Quiver.app/Contents/Info QuiverCommit
@@ -52,7 +52,7 @@ its release.
   Every merge commit that must ship must be an ancestor of that hash:
   `git merge-base --is-ancestor <merge> <QuiverCommit>`.
 - [ ] **Third-party notices are current.** If dependencies or bundled
-  assets changed since the last release, `app/THIRD_PARTY_NOTICES.md` must
+  assets changed since the last release, `app/mac/THIRD_PARTY_NOTICES.md` must
   reflect them.
 - [ ] **Release notes state the support floor.** The app requires
   **macOS 26 or later, Apple Silicon only**. This goes in the release
@@ -111,11 +111,11 @@ package build, and the attachment job waits for all four:
 - **`Build, sign and notarize the macOS app`** (macOS 26) — runs the full
   `swift test` suite first so a test failure fails fast, then imports
   `MACOS_CERTIFICATE` into a throwaway keychain, builds the prod bundle
-  via `app/script/build-app.sh release`, reports the signature in the
+  via `app/mac/script/build-app.sh release`, reports the signature in the
   log, smoke-tests the signed app end-to-end (the embedded `swe` binary,
   then the GUI process, which must stay alive 20 seconds or exit
   cleanly), then
-  hands `app/script/make-dmg.sh` the notarization credentials: it staples
+  hands `app/mac/script/make-dmg.sh` the notarization credentials: it staples
   the `.app`, stages, signs, submits to Apple, and staples the DMG.
   Finally it downloads the Sparkle 2.10.0 tools archive, verifies its
   pinned SHA-256 before executing anything, signs `appcast.xml` with
@@ -174,7 +174,7 @@ themselves.
 
 ## Scene 5 — After the release
 
-- [ ] Reinstall the app as usual. `app/script/install-app.sh` builds
+- [ ] Reinstall the app as usual. `app/mac/script/install-app.sh` builds
   `origin/main`, not the tag, so it tracks the branch. Verify
   `QuiverCommit` again.
 - [ ] Close or re-milestone the issues this release shipped.

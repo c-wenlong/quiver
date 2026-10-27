@@ -4,7 +4,7 @@
 #
 # Parallel agent sessions accumulate git worktrees under .claude/worktrees/,
 # local branches whose remote PRs merged long ago, and multi-hundred-MB
-# build dirs (app/.build alone was ~1 GB at the audit). This script removes
+# build dirs (app/mac/.build alone was ~1 GB at the audit). This script removes
 # the stale ones and logs every decision. Safe by default: nothing is
 # deleted unless --apply (or --yes) is passed, so the same invocation can be
 # dry-run by hand and applied from cron/launchd.
@@ -31,7 +31,7 @@
 #      or whose tip is exactly a merged PR's head, which is the squash-merge
 #      case: the commits were pushed to the PR and stay fetchable through
 #      GitHub's pull refs.
-#   c. app/.build, build/ and .build/ dirs with no file modified in the last
+#   c. app/mac/.build, build/ and .build/ dirs with no file modified in the last
 #      N days — in the main checkout and in surviving worktrees (build dirs
 #      inside removed worktrees go away with them). Only git-ignored dirs
 #      are pruned; a fresh checkout needs no pruning, hence the age check.
@@ -388,7 +388,7 @@ while IFS=$'\t' read -r wt _ _ _ _; do
 done < <(git worktree list --porcelain | awk '/^worktree /{print substr($0,10)}')
 
 for root in "${roots[@]}"; do
-	for rel in "app/.build" "build" ".build"; do
+	for rel in "app/mac/.build" "build" ".build"; do
 		d="$root/$rel"
 		[[ -d "$d" ]] || continue
 		label="${root#"$MAIN_ROOT"}"; label="${label#/}"; label="${label:+$label/}$rel"
