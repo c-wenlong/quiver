@@ -520,15 +520,18 @@ dialog .close { margin-left: auto; }
   var LOGOS = ("aider antigravity-color ark-color atlascloud augment baiducloud-color blackbox cerebras " +
     "charm cheapestinference-color claude-color cline codex-color cohere-color commandcode-color " +
     "continue copilot crush-color ctyun-color cursor deepseek-color devin droid featherless-color " +
-    "forge freebuff gemini-color github goose grok groq huaweicloud-color huggingface-color " +
-    "iflytek-color jdcloud-color kilo kimi kiro kwaikat llmgateway minimax-color " +
-    "mistral-vibe-color mthreads-color nebius ollama openai opencode-color openrouter-color " +
-    "perplexity-color pi poe qoder qoder-cn-color qwen-code-color scnet sensenova-color " +
-    "standardcompute-color stepfun-color synthetic taotoken tencentcloud-color ucloud-color " +
-    "unicom-color upstage-color vercel xiaomimimo zai zenmux").split(" ");
+    "fireworks-color forge freebuff gemini-color github goose grok groq huaweicloud-color " +
+    "huggingface-color iflytek-color jdcloud-color kilo kimi kiro kwaikat llmgateway " +
+    "minimax-color mistral-vibe-color mthreads-color nebius ollama openai opencode-color " +
+    "openrouter-color perplexity-color pi poe qoder qoder-cn-color qwen-code-color routing-run " +
+    "scnet sensenova-color standardcompute-color stepfun-color synthetic taotoken " +
+    "tencentcloud-color together-color ucloud-color unicom-color upstage-color vercel xiaomimimo " +
+    "zai zcode zenmux").split(" ");
   var GRID = 14;
-  var still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  var ctx = canvas.getContext("2d"), w = 0, h = 0, sprites = [], art = [], onScreen = true, last = 0;
+  var motion = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+  var still = !!(motion && motion.matches);
+  var ctx = canvas.getContext("2d"), w = 0, h = 0, sprites = [], art = [];
+  var onScreen = true, running = false, raf = 0, last = 0;
 
   LOGOS.forEach(function (name) {
     var img = new Image();
@@ -583,18 +586,39 @@ dialog .close { margin-left: auto; }
     });
     ctx.globalAlpha = 1;
   }
+  // Frames are scheduled only while the hero is visible, the tab is in
+  // front and motion is allowed; anything else stops the loop outright.
   function frame(t) {
-    requestAnimationFrame(frame);
+    raf = 0;
+    if (!running) return;
     var dt = Math.min(0.05, (t - last) / 1000);
     last = t;
-    if (onScreen && !document.hidden) draw(dt);
+    draw(dt);
+    raf = requestAnimationFrame(frame);
+  }
+  function update() {
+    var go = onScreen && !document.hidden && !still;
+    if (go && !running) {
+      running = true;
+      last = performance.now();
+      raf = requestAnimationFrame(frame);
+    } else if (!go) {
+      running = false;
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+    }
   }
   if ("IntersectionObserver" in window) {
-    new IntersectionObserver(function (e) { onScreen = e[0].isIntersecting; }).observe(hero);
+    new IntersectionObserver(function (e) { onScreen = e[0].isIntersecting; update(); }).observe(hero);
+  }
+  document.addEventListener("visibilitychange", update);
+  if (motion) {
+    var changed = function (e) { still = e.matches; if (still) draw(0); update(); };
+    if (motion.addEventListener) motion.addEventListener("change", changed);
+    else if (motion.addListener) motion.addListener(changed);
   }
   window.addEventListener("resize", size);
   size();
-  if (!still) requestAnimationFrame(frame);
+  update();
 })();
 </script>
 </body>
