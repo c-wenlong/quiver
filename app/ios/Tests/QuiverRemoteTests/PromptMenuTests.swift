@@ -477,6 +477,57 @@ final class CommandMenuTests: XCTestCase {
         third.track(SlashToken(end: 1, query: ""))
         XCTAssertEqual(third.matches.map(\.name), ["rename"])
     }
+
+    func testAStaleAnswerNeverOverwritesANewerList() async {
+        let key = "claude:stale-\(#line)"
+        let first = CommandMenu()
+        first.cacheKey = key
+        var gate: CheckedContinuation<Void, Never>?
+        first.fetch = {
+            await withCheckedContinuation { gate = $0 }
+            return CommandsResponse(commands: [SlashCommand(name: "old")])
+        }
+        let slow = first.warm()
+        for _ in 0..<1000 where gate == nil { await Task.yield() }
+        // The chat reopened and asked again; its newer answer lands
+        // first, then the request left behind finishes — the kept list
+        // must stay the newer one.
+        let second = CommandMenu()
+        second.cacheKey = key
+        second.fetch = { CommandsResponse(commands: [SlashCommand(name: "new")]) }
+        await second.warm()?.value
+        gate?.resume()
+        await slow?.value
+        let probe = CommandMenu()
+        probe.cacheKey = key
+        probe.track(SlashToken(end: 1, query: ""))
+        XCTAssertEqual(probe.matches.map(\.name), ["new"])
+    }
+
+    func testKeptListsStayScopedToTheirHub() async {
+        let key = "claude:hub-\(#line)"
+        let a = CommandMenu()
+        a.cacheKey = key
+        a.scope = { "hub-a" }
+        a.fetch = { CommandsResponse(commands: [SlashCommand(name: "clear")]) }
+        await a.warm()?.value
+
+        // A same-keyed session on another hub can't see that list.
+        let b = CommandMenu()
+        b.cacheKey = key
+        b.scope = { "hub-b" }
+        b.fetch = { CommandsResponse(commands: [SlashCommand(name: "review")]) }
+        let fetching = b.track(SlashToken(end: 1, query: ""))
+        XCTAssertTrue(b.matches.isEmpty)
+        await fetching?.value
+        XCTAssertEqual(b.matches.map(\.name), ["review"])
+        // And the first hub's list is untouched.
+        let probe = CommandMenu()
+        probe.cacheKey = key
+        probe.scope = { "hub-a" }
+        probe.track(SlashToken(end: 1, query: ""))
+        XCTAssertEqual(probe.matches.map(\.name), ["clear"])
+    }
 }
 
 @MainActor

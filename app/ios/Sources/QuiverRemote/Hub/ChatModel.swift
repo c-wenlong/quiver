@@ -173,6 +173,9 @@ final class ChatModel {
         }
         mentions.machine = { [weak self] in self?.machineName ?? "that machine" }
         commands.cacheKey = key
+        // Sessions with no id share a path digest, so the kept lists
+        // are scoped to the hub this chat was opened on too.
+        commands.scope = { [weak self] in self?.openedOn?.id ?? "" }
         commands.fetch = { [weak self] in
             guard let self, let client = self.hubClient else { throw HubError.network(CancellationError()) }
             return try await client.commands(self.key)

@@ -3318,6 +3318,10 @@ const cmds = { key: null, response: null, loading: false, error: "", gen: 0 };
 /* Answered lists by session key, kept for the page's life: a chat the
  * menu was fetched for once opens filled while the fetch refreshes. */
 const cmdLists = {};
+/* The newest request's serial per key: an older answer landing late
+ * can still be kept for a chat that was left, but it never replaces a
+ * newer request's answer. */
+const cmdSeqs = {};
 
 function resetCommands() {
   cmds.gen++;
@@ -3345,6 +3349,7 @@ function warmCommands() {
 async function loadCommands() {
   const key = state.currentKey;
   const gen = ++cmds.gen;
+  const seq = (cmdSeqs[key] = (cmdSeqs[key] || 0) + 1);
   cmds.key = key;
   cmds.loading = true;
   renderMenu();
@@ -3352,13 +3357,18 @@ async function loadCommands() {
   try {
     ({ status, data } = await api(`/v1/sessions/${encodeURIComponent(key)}/commands`));
   } catch { status = 0; }
-  // Kept by key even when the answer lands after the chat was left.
-  cmdLists[key] = status === 200 && data ? { response: data, error: "" }
-    : { response: null, error: commandsError(hubError(status, data)) };
+  // Kept by key even when the answer lands after the chat was left —
+  // unless a newer request for this key already answered. A failed
+  // refresh keeps the last good list beside its error.
+  if (seq === cmdSeqs[key]) {
+    const prev = cmdLists[key];
+    cmdLists[key] = status === 200 && data ? { response: data, error: "" }
+      : { response: (prev && prev.response) || null, error: commandsError(hubError(status, data)) };
+  }
   if (gen !== cmds.gen || key !== state.currentKey) return;
   cmds.loading = false;
-  cmds.response = cmdLists[key].response;
-  cmds.error = cmdLists[key].error;
+  cmds.response = (cmdLists[key] || {}).response || null;
+  cmds.error = (cmdLists[key] || {}).error || "";
   // The list is kept either way; only an open / menu redraws, so a late
   // answer can't move the @ menu's highlight.
   if (menu.kind === "slash") {

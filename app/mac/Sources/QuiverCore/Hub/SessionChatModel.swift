@@ -166,6 +166,9 @@ public final class SessionChatModel {
         self.key = key
         self.hub = hub
         commands.cacheKey = key
+        // Sessions with no id share a path digest, so the kept lists
+        // are scoped to the connected hub too.
+        commands.scope = { [hub] in hub.connectedHub ?? "" }
         commands.fetch = { [hub, key] in
             try await hub.withClient { try await $0.commands(key) }
         }

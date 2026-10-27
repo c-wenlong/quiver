@@ -396,7 +396,8 @@ class TestChatScript(unittest.TestCase):
         source = (STATIC / "pages" / "chat.js").read_text(encoding="utf-8")
         with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
             f.write(prelude + source + "\nconst T = SessionChat._test;\n"
-                    + "process.stdout.write(JSON.stringify((() => {" + body + "})()));\n")
+                    + "(async () => {" + body + "})()"
+                    + ".then(r => process.stdout.write(JSON.stringify(r)));\n")
         self.addCleanup(Path(f.name).unlink)
         done = subprocess.run(["node", f.name], capture_output=True, text=True, timeout=30)
         self.assertEqual(done.returncode, 0, done.stderr)
@@ -519,6 +520,52 @@ class TestChatScript(unittest.TestCase):
         # through to the box's newline, menu open or not.
         self.assertEqual(out["keys"], ["dismiss", "next", "prev", "pick", "pick",
                                        "wait", None, None, None, None, None, None])
+
+    def test_commands_warm_and_kept_lists(self):
+        """The / menu warms on chat open and keeps lists per session: a
+        reopen seeds at once, a failed refresh keeps the last good list,
+        and an older in-flight answer can't overwrite a newer one."""
+        out = self.run_js("""
+          document.getElementById = () => null;
+          const out = {};
+          // First open warms the list and keeps it for the session.
+          T.chat.key = "s1";
+          globalThis.api = async () => ({ status: 200, data: { commands: [{ name: "compact" }] } });
+          await T.warmCommands();
+          out.first = T.cmdLists.s1.response.commands.map(c => c.name);
+          T.resetMenus(); T.chat.key = "s2";
+          globalThis.api = async () => ({ status: 200, data: { commands: [{ name: "review" }] } });
+          await T.warmCommands();
+          // Reopen s1: the kept list shows at once; the refresh fails
+          // and the kept list survives beside its error.
+          T.resetMenus(); T.chat.key = "s1";
+          globalThis.api = async () => ({ status: 500, data: null });
+          const warming = T.warmCommands();
+          out.seeded = T.cmds.response.commands.map(c => c.name);
+          await warming;
+          out.kept = T.cmdLists.s1.response.commands.map(c => c.name);
+          out.error = T.cmdLists.s1.error;
+          out.liveRows = T.cmds.response.commands.map(c => c.name);
+          // A request a reopen left behind can't replace the newer one.
+          T.resetMenus(); T.chat.key = "s9";
+          let release;
+          globalThis.api = () => new Promise(r => {
+            release = () => r({ status: 200, data: { commands: [{ name: "old" }] } });
+          });
+          const slow = T.loadCommands();
+          T.resetMenus(); T.chat.key = "s9";
+          globalThis.api = async () => ({ status: 200, data: { commands: [{ name: "new" }] } });
+          await T.loadCommands();
+          release(); await slow;
+          out.newest = T.cmdLists.s9.response.commands.map(c => c.name);
+          return out;
+        """)
+        self.assertEqual(out["first"], ["compact"])
+        self.assertEqual(out["seeded"], ["compact"])
+        self.assertEqual(out["kept"], ["compact"])
+        self.assertNotEqual(out["error"], "")
+        self.assertEqual(out["liveRows"], ["compact"])
+        self.assertEqual(out["newest"], ["new"])
 
 
 if __name__ == "__main__":

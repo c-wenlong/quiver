@@ -133,9 +133,21 @@ public final class SlashCommandMenu {
     /// The session the list is for; set beside `fetch`. Answered lists
     /// are kept per key, so a reopened chat's menu is filled at once.
     @ObservationIgnored public var cacheKey: String?
-    /// Answered lists by session key, kept for the app's run.
+    /// The hub the session lives on, read when a list is seeded or
+    /// kept: sessions with no id share a path digest, so a same-keyed
+    /// session on another hub must not inherit this one's commands.
+    @ObservationIgnored public var scope: () -> String = { "" }
+    /// Answered lists by scope + session key, kept for the app's run.
     private static var lists: [String: CommandsResponse] = [:]
+    /// The newest request's serial per list key: an older answer landing
+    /// late can still be kept for a chat that was left, but it never
+    /// replaces a newer request's answer.
+    private static var seqs: [String: Int] = [:]
+    private static var nextSeq = 0
     @ObservationIgnored private var generation = 0
+
+    /// `lists`' key for this menu: the hub scope plus the session key.
+    private var listKey: String? { cacheKey.map { "\(scope())|\($0)" } }
 
     public init() {}
 
@@ -151,7 +163,7 @@ public final class SlashCommandMenu {
     /// and is still refreshed here.
     @discardableResult
     public func warm() -> Task<Void, Never>? {
-        if response == nil, let key = cacheKey, let kept = Self.lists[key] {
+        if response == nil, let key = listKey, let kept = Self.lists[key] {
             response = kept
         }
         guard !loading else { return nil }
@@ -165,7 +177,7 @@ public final class SlashCommandMenu {
         let wasOpen = isOpen
         token = next
         if next == nil || dismissed != next { dismissed = nil }
-        if response == nil, let key = cacheKey { response = Self.lists[key] }
+        if response == nil, let key = listKey { response = Self.lists[key] }
         guard Self.shouldLoad(open: isOpen, opening: !wasOpen, loaded: response != nil,
                               loading: loading, failed: error != nil) else { return nil }
         return Task { await load() }
@@ -209,13 +221,24 @@ public final class SlashCommandMenu {
     private func load() async {
         generation += 1
         let gen = generation
+        Self.nextSeq += 1
+        let seq = Self.nextSeq
+        if let key = listKey { Self.seqs[key] = seq }
         loading = true
         do {
             let body = try await fetch()
+            // The scope can settle mid-fetch: a nil `current` client
+            // then becomes the hub that answered. The kept list is
+            // written under the key as it resolves now, and only while
+            // this request is still the newest one the key saw.
+            let key = listKey
+            if let key, seq >= (Self.seqs[key] ?? 0) {
+                Self.seqs[key] = seq
+                Self.lists[key] = body
+            }
             guard gen == generation else { return }
             response = body
             error = nil
-            if let key = cacheKey { Self.lists[key] = body }
         } catch {
             guard gen == generation else { return }
             self.error = Self.message(for: error)
