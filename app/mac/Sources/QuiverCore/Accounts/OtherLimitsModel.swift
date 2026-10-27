@@ -90,6 +90,9 @@ public final class OtherLimitsModel {
         /// Why the account shows no usage, when it should (`nil` when the
         /// generic "no reading" answers).
         public var usageNote: UsageNote? = nil
+        /// swe's typed verdict and remedy, when it named one: the card's
+        /// "Action needed" state and Fix sheet come from this.
+        public var issue: HarnessIssue? = nil
         public var displayName: String?
         /// Its account name from the app's own names file, if set.
         public var accountName: String? = nil
@@ -154,22 +157,29 @@ public final class OtherLimitsModel {
     private let extraAccounts: @MainActor () -> [(Profile, ProfilePaths)]
     /// Each extra account's last reading by profile id, good or failed.
     private var extraReadings: [String: ExtraReading] = [:]
+    /// Where poll outcomes become persisted issues: nil keeps the model
+    /// usable standalone (tests, previews).
+    private let issues: IssuesModel?
 
     /// One extra account's reading: the limit swe returned (nil = signed
     /// out), when, and whether the last attempt failed so a plain load
-    /// refetches it.
+    /// refetches it. `issue` carries swe's typed verdict and its remedy
+    /// when it answered with one.
     struct ExtraReading: Codable, Equatable, Sendable {
         var limit: RateLimit?
         var fetchedAt: Date
         var failed: Bool = false
+        var issue: HarnessIssue? = nil
     }
 
     public init(swe: SweClient,
                 snapshotFile: URL? = nil,
                 names: HarnessAccountNameStore =
                     HarnessAccountNameStore(file: HarnessAccountNameStore.defaultFile),
-                extraAccounts: @escaping @MainActor () -> [(Profile, ProfilePaths)] = { [] }) {
+                extraAccounts: @escaping @MainActor () -> [(Profile, ProfilePaths)] = { [] },
+                issues: IssuesModel? = nil) {
         self.swe = swe
+        self.issues = issues
         self.snapshotFile = snapshotFile ?? FileManager.default
             .homeDirectoryForCurrentUser
             .appending(path: ".quiver/cache/app-other-limits.json")
@@ -338,10 +348,18 @@ public final class OtherLimitsModel {
                            cliInstalled: harness.installed)
             }
             starred = Set(harnesses.lazy.filter { $0.state == .starred }.map(\.name))
+            // Every outcome becomes a persisted issue (or resolves one):
+            // swe names the failure itself now; an older swe's coarse
+            // reason or sentinel reading maps onto the same statuses.
+            for harness in harnesses
+            where !Self.ownAccounts.contains(harness.name) && harness.state == .starred {
+                noteOutcome(harness)
+            }
             var cardList = harnesses
                 .filter { !Self.ownAccounts.contains($0.name) && $0.state == .starred }
                 .map { harness in
                     Card(name: harness.name, usageNote: UsageNote(harness.noReading),
+                         issue: harness.issue,
                          displayName: harness.displayName,
                          accountName: accountNames[harness.name], command: harness.command,
                          cliInstalled: harness.installed, limit: harness.rateLimit)
@@ -364,8 +382,10 @@ public final class OtherLimitsModel {
                     : reading == nil || reading?.limit != nil ? nil
                     : reading?.failed == true ? .fetchFailed : .signIn
                 let card = Card(name: vendor, profile: profile, usageNote: note,
+                                issue: reading?.issue,
                                 displayName: nil, command: profile.vendor.cliCommand,
                                 cliInstalled: installed[vendor], limit: reading?.limit)
+                noteOutcome(profile, reading)
                 if let own = cardList.firstIndex(where: { $0.profile == nil && $0.name == vendor }) {
                     cardList.insert(card, at: own + 1)
                 } else {
@@ -408,6 +428,69 @@ public final class OtherLimitsModel {
         }
     }
 
+    /// The profile's stable issue slot: `cursor-work` stays its key when
+    /// the account is renamed, so a rename never re-toasts the failure.
+    static func accountKey(for profile: Profile) -> String {
+        let prefix = "\(profile.vendor.rawValue)-"
+        return profile.id.hasPrefix(prefix) ? String(profile.id.dropFirst(prefix.count)) : profile.id
+    }
+
+    /// A harness's poll verdict into the issue store: swe's `issue` when
+    /// it sent one, else the same verdict derived from what it sent —
+    /// sentinel plan statuses are statuses, not plans, and no_reading's
+    /// coarse pair maps onto the same vocabulary.
+    private func noteOutcome(_ harness: Harness) {
+        guard let issues else { return }
+        if let issue = harness.issue {
+            issues.record(harness: harness.name, status: issue.status,
+                          remedy: issue.remedy)
+            return
+        }
+        switch harness.rateLimit?.status {
+        case .authRequired?:
+            issues.record(harness: harness.name, status: .authRequired, remedy: nil)
+        case .timeout?:
+            issues.record(harness: harness.name, status: .timeout, remedy: nil)
+        case .ok?, .noSubscription?:
+            issues.record(harness: harness.name, status: .ok, remedy: nil)
+        case nil:
+            switch harness.noReading {
+            case .signedOut?:
+                issues.record(harness: harness.name, status: .signedOut, remedy: nil)
+            case .error?:
+                issues.record(harness: harness.name, status: .unavailable, remedy: nil)
+            case nil:
+                break  // Can't tell; the stored issue stands.
+            }
+        }
+    }
+
+    /// An extra account's poll verdict into the issue store, under its
+    /// own slot so a failure on one login never reads as another's.
+    private func noteOutcome(_ profile: Profile, _ reading: ExtraReading?) {
+        guard let issues, let reading else { return }
+        let vendor = profile.vendor.rawValue
+        let key = Self.accountKey(for: profile)
+        if let issue = reading.issue {
+            issues.record(harness: vendor, status: issue.status,
+                          remedy: issue.remedy, account: profile.name,
+                          accountKey: key)
+        } else if let limit = reading.limit {
+            let status: IssueStatus = switch limit.status {
+            case .authRequired: .authRequired
+            case .timeout: .timeout
+            case .ok, .noSubscription: .ok
+            }
+            issues.record(harness: vendor,
+                          status: reading.failed && status == .ok ? .unavailable : status,
+                          remedy: nil, account: profile.name, accountKey: key)
+        } else {
+            issues.record(harness: vendor,
+                          status: reading.failed ? .unavailable : .signedOut,
+                          remedy: nil, account: profile.name, accountKey: key)
+        }
+    }
+
     /// Whether a fetch is owed: nothing read yet, the reading is older
     /// than swe's freshness window, the last attempt failed, or this load
     /// is forced. A Refresh-press load refetches only the failures.
@@ -439,19 +522,28 @@ public final class OtherLimitsModel {
                 let vendor = profile.vendor.rawValue
                 group.addTask { [swe] in
                     do {
-                        var limit = try await swe.accountUsage(name: vendor, accountDir: dir)
+                        let outcome = try await swe.accountOutcome(name: vendor, accountDir: dir)
+                        var limit = outcome.limit
                         // An older swe may not stamp the read; the row's
                         // age is the fetch time, or it reads as stale.
                         if limit?.fetchedAt == nil { limit?.fetchedAt = .now }
                         // A reply that reports a failure — a timed-out or
                         // re-login reading, or a window the provider left
                         // unread — counts as failed so Refresh retries it.
+                        // A named status that isn't ok says the same.
                         let failed = limit.map {
                             $0.status == .timeout || $0.status == .authRequired
                                 || $0.allWindows.contains { $0.unavailable }
-                        } ?? false
+                        } ?? (outcome.status != nil
+                              && outcome.status != .ok && outcome.status != .signedOut)
+                        // The issue is nil from a swe that predates the
+                        // status field: its nil-limit reply already reads
+                        // as signed out downstream.
+                        let issue = outcome.status.map {
+                            HarnessIssue(status: $0, remedy: outcome.remedy)
+                        }
                         return (profile.id, ExtraReading(limit: limit, fetchedAt: .now,
-                                                         failed: failed))
+                                                         failed: failed, issue: issue))
                     } catch SweError.commandFailed(_, let message)
                         // "Unknown harness subcommand"/"Unknown argument"
                         // specifically: an AccountUsageError's own message
@@ -484,16 +576,38 @@ public final class OtherLimitsModel {
 }
 
 extension SweClient {
+    /// The verdict `swe harness usage --account-dir --json` reports: a
+    /// status in the remedies vocabulary, the fix it names and the limit
+    /// when there is one. Failures exit 1 with the same document, so the
+    /// call reads it on any exit status.
+    public struct AccountOutcome: Sendable, Equatable {
+        /// The status swe named; nil from a swe that predates the field
+        /// (derived from the limit by the caller).
+        public let status: IssueStatus?
+        public let remedy: UsageRemedy?
+        public let limit: RateLimit?
+    }
+
     /// `swe harness usage <name> --account-dir=<dir> --json`: the account's
     /// own rate limit, nil when it is not signed in.
     public func accountUsage(name: String, accountDir: String) async throws -> RateLimit? {
+        try await accountOutcome(name: name, accountDir: accountDir).limit
+    }
+
+    /// Same call returning the typed outcome. `allowFailure` because a
+    /// failed read still carries the document it describes.
+    public func accountOutcome(name: String, accountDir: String) async throws -> AccountOutcome {
         struct Reply: Decodable {
             var name: String
             var accountDir: String
+            var status: IssueStatus?
+            var remedy: UsageRemedy?
             var limit: RateLimit?
         }
         let reply: Reply = try await call(
-            ["harness", "usage", name, "--account-dir=\(accountDir)", "--json"])
-        return reply.limit
+            ["harness", "usage", name, "--account-dir=\(accountDir)", "--json"],
+            allowFailure: true)
+        return AccountOutcome(status: reply.status, remedy: reply.remedy,
+                              limit: reply.limit)
     }
 }

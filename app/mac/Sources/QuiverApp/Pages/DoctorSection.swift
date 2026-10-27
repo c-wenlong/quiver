@@ -76,17 +76,23 @@ struct DoctorSection: View {
     }
 
     private func findingsCard(_ report: DoctorReport) -> some View {
-        let shown = RowFold.visible(report.findings, limit: Self.foldLimit, expanded: showsAll)
-        return Card(title: report.findings.count == 1 ? "1 finding" : "\(report.findings.count) findings",
+        // Live issue rows come first: a poll that just recorded a failure
+        // shows here at once, before the next `swe doctor` run — which
+        // reads the same store, so its copy of the row dedupes by check.
+        var seen = Set<String>()
+        let findings = (app.issues.findings + report.findings)
+            .filter { seen.insert($0.check).inserted }
+        let shown = RowFold.visible(findings, limit: Self.foldLimit, expanded: showsAll)
+        return Card(title: findings.count == 1 ? "1 finding" : "\(findings.count) findings",
                     accessory: { refreshButton }) {
             ForEach(shown) { finding in
                 FindingRow(finding: finding, model: model)
                 if finding != shown.last { Divider().overlay(Theme.border) }
             }
-            if RowFold.hiddenCount(total: report.findings.count, limit: Self.foldLimit) > 0 {
+            if RowFold.hiddenCount(total: findings.count, limit: Self.foldLimit) > 0 {
                 Divider().overlay(Theme.border)
                 ExpandRow(isExpanded: showsAll,
-                          hidden: RowFold.hiddenCount(total: report.findings.count, limit: Self.foldLimit),
+                          hidden: RowFold.hiddenCount(total: findings.count, limit: Self.foldLimit),
                           help: (expand: "Show every finding", collapse: "Show only the first \(Self.foldLimit)"),
                           edge: .inset) {
                     withAnimation(.easeOut(duration: Theme.fadeDuration)) { showsAll.toggle() }
