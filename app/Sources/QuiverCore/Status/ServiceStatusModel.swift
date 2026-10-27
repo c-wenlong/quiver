@@ -126,8 +126,13 @@ public final class ServiceStatusModel {
             if edited.name != base.name { override.name = name }
             if edited.pageURL != base.pageURL { override.pageURL = pageURL }
             if edited.group != base.group { override.group = group }
-            if edited.feed != base.feed,
-               case .statuspage(let url) = edited.feed { override.feedURL = url }
+            // A page override without a feed would make `applying` derive
+            // api/v2/summary.json — wrong for feeds filed elsewhere, like
+            // Cursor's /api/compat — so the checked feed is kept with it.
+            if case .statuspage(let url) = edited.feed,
+               edited.feed != base.feed || override.pageURL != nil {
+                override.feedURL = url
+            }
             prefs.overrides[id] = override.isEmpty ? nil : override
         }
         persist()

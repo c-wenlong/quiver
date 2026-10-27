@@ -273,8 +273,12 @@ private struct StatusCatalogueSheet: View {
     }
 
     private func row(_ entry: StatusService) -> some View {
-        CatalogueRow(logo: entry.logoID, name: entry.name, detail: entry.host,
-                     done: tracked.contains(entry.host.lowercased()) ? "Added" : nil) {
+        // A built-in the user edited stays clickable so the row can reset
+        // it; anything else already tracked reads a plain "Added".
+        let edited = model.isEdited(entry.id)
+        return CatalogueRow(logo: entry.logoID, name: entry.name, detail: entry.host,
+                     done: edited ? "Edited" : (tracked.contains(entry.host.lowercased()) ? "Added" : nil),
+                     reusable: edited, actionTitle: edited ? "Reset" : "Add") {
             Task {
                 await model.track(entry)
             }

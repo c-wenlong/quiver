@@ -96,8 +96,14 @@ public actor ServiceStatusService {
 
         var updated: [String: Entry] = [:]
         for (id, task) in tasks {
-            updated[id] = await task.value
-            if inFlight[id] == task { inFlight[id] = nil }
+            let entry = await task.value
+            // A forget while the request was out (a remove, or an edit
+            // that moved the feed) discards its answer, or the old page's
+            // reading comes back and holds the new feed off for minutes.
+            if inFlight[id] == task {
+                inFlight[id] = nil
+                updated[id] = entry
+            }
         }
         if !updated.isEmpty { save(updated) }
         let merged = current()

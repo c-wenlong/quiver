@@ -701,6 +701,32 @@ private func openGeminiIncident() throws -> Data {
         #expect(model.services.first { $0.id == "claude" } == claude)
     }
 
+    /// A page-URL edit keeps the checked feed the probe returned; without
+    /// it `applying` would derive /api/v2/summary.json, which is wrong for
+    /// feeds filed elsewhere, like Cursor's /api/compat.
+    @MainActor @Test func anEditKeepsTheCheckedFeed() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let memory = MemoryStatusStore()
+        let make = {
+            ServiceStatusModel(
+                service: ServiceStatusService(transport: StubStatusTransport(body: try! statusFixture("statuspage-github")),
+                                            cacheURL: dir.appending(path: "service-status.json")),
+                store: memory)
+        }
+        let model = make()
+        // The probe normalizes the page to scheme://host/ — the trailing
+        // slash makes this an override even though the host is unchanged.
+        await model.update(id: "cursor", name: "Cursor",
+                           pageURL: URL(string: "https://status.x.ai/")!,
+                           feedURL: URL(string: "https://status.x.ai/api/compat/summary.json")!,
+                           group: .providers)
+        #expect(memory.saved.overrides["cursor"]?.feedURL
+            == URL(string: "https://status.x.ai/api/compat/summary.json"))
+        // A reload through `applying` keeps the compat feed.
+        #expect(make().services.first { $0.id == "cursor" }?.feedURL
+            == URL(string: "https://status.x.ai/api/compat/summary.json"))
+    }
+
     /// The editor's Save on a custom page rewrites its record.
     @MainActor @Test func updateRewritesACustomService() async throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
@@ -769,6 +795,29 @@ private func openGeminiIncident() throws -> Data {
                                      feedURL: URL(string: "https://status.acme.test/api/v2/summary.json")!,
                                      group: .providers)
         #expect(second.id != first.id)
+    }
+
+    /// An id forgotten while its request is in flight — a remove, or an
+    /// edit that moved the feed — does not get its old answer saved back:
+    /// it would hold the new feed off for the next five minutes.
+    @MainActor @Test func aForgottenPollsAnswerIsDropped() async throws {
+        let transport = GatedTransport(body: try statusFixture("statuspage-github"))
+        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let status = ServiceStatusService(transport: transport,
+                                          cacheURL: dir.appending(path: "service-status.json"))
+        let github = [try service("github")]
+        async let first: [ServiceStatus] = status.statuses(for: github, force: false)
+        while transport.inFlight < 1 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        await status.forget(id: "github")
+        transport.release()
+        let statuses = await first
+        #expect(statuses.first?.report == nil)
+        #expect(await status.cached(for: github).first?.report == nil)
+        let file = try? JSONSerialization.jsonObject(
+            with: (try? Data(contentsOf: dir.appending(path: "service-status.json"))) ?? Data()) as? [String: Any]
+        #expect((file?["services"] as? [String: Any])?["github"] == nil)
     }
 
     @Test func probeReadsAStatuspageFeed() async throws {
