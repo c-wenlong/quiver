@@ -63,7 +63,8 @@ class TestOpenTerminal(unittest.TestCase):
         self.ctx = PageContext(home=self.home, state=None)
 
     def test_rejects_non_tmux(self):
-        with self.assertRaises(PageError) as cm:
+        with patch.object(sys, "platform", "darwin"), \
+                self.assertRaises(PageError) as cm:
             sessions_page.post(self.ctx, "open_terminal", {"key": "claude:s1"})
         self.assertEqual(cm.exception.status, 409)
 
