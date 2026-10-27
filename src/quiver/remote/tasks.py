@@ -66,6 +66,10 @@ LIST_LIMIT = 50
 # gets linked to (or a launch recorded against) everything it touches.
 MAX_TASKS = 2000
 MAX_LINKS = 100
+# Per-list bound on stored-task refreshes: each one is a gh call or
+# two, and the store's history can run to MAX_TASKS. The most recently
+# active win; the rest keep their last-known state this round.
+MAX_REFRESH = 24
 
 # The hub is the only writer; this covers its concurrent handlers.
 _lock = threading.Lock()
@@ -121,7 +125,9 @@ def parse_ref(body) -> dict:
     if source == "github":
         if kind not in _GITHUB_KINDS:
             raise ValueError("a github task_ref.kind is issue or pull")
-        repo = repos.normalize_repo_input(body.get("repo") or "")
+        raw_repo = body.get("repo")
+        repo = (repos.normalize_repo_input(raw_repo)
+                if isinstance(raw_repo, str) else None)
         if repo is None:
             raise ValueError("task_ref.repo must be owner/name")
         if not ref.isdigit() or int(ref) < 1:
@@ -189,10 +195,12 @@ def _load(home: Path | str | None) -> dict[str, dict]:
         if not isinstance(entry, dict) \
                 or not isinstance(entry.get("task"), dict):
             continue
-        sessions = [str(s) for s in (entry.get("sessions") or [])
-                    if isinstance(s, str)]
-        launches = [str(s) for s in (entry.get("launches") or [])
-                    if isinstance(s, str)]
+        session_values = entry.get("sessions")
+        launch_values = entry.get("launches")
+        sessions = [s for s in session_values if isinstance(s, str)] \
+            if isinstance(session_values, list) else []
+        launches = [s for s in launch_values if isinstance(s, str)] \
+            if isinstance(launch_values, list) else []
         out[str(tid)] = {
             "task": dict(entry["task"]),
             "sessions": sessions,
@@ -277,6 +285,24 @@ def unlink(home: Path | str | None, session_key: str,
 
 
 # ------------------------------------------------------------------ routes
+
+def launch_linked(state, launch_id: str, origin) -> None:
+    """Record a pending launch against its ``origin`` task.
+
+    Called the moment the origin is stamped — before the worktree clone
+    and harness start — so the task row reads ``agent_running`` through
+    the whole prepare window, not just after adoption. Best-effort, as
+    ``origin_adopted``.
+    """
+    try:
+        task = parse_ref(origin)
+    except ValueError:
+        return
+    try:
+        link(state.home, task, launch_id=launch_id)
+    except OSError:
+        pass
+
 
 def origin_adopted(state, launch_id: str, key: str) -> None:
     """Link the task a launch's ``origin`` names to its session.
@@ -395,21 +421,38 @@ def list_view(state, args) -> tuple[int, dict]:
             # The fresh row keeps its fields; the stored ref fills gaps.
             for k, v in task.items():
                 row.setdefault(k, v)
-        # A stored task's own read sees what the open list can't: the
-        # merged PR behind a ``quiver/issue-<n>`` branch, a closed issue.
-        if env.status == "ok" and task.get("source") == "github":
-            fresh = source.get(task)
-            if fresh:
-                for k in ("title", "url"):
-                    if fresh.get(k):
-                        row[k] = fresh[k]
-                if fresh.get("state"):
-                    source_state[tid] = str(fresh["state"])
-                if fresh.get("pr"):
-                    row["pr"] = fresh["pr"]
         row["sessions"] = list(entry["sessions"])
         row["launches"] = list(entry["launches"])
         row["created_at"] = entry["created_at"]
+
+    if env.status == "ok":
+        # A stored task's own read sees what the open list can't: the
+        # merged PR behind a ``quiver/issue-<n>`` branch, a closed
+        # issue. Bounded and fanned — the store keeps every link ever
+        # made, so old history keeps its last-known state rather than
+        # stall the whole answer behind serial gh reads.
+        recent = {
+            task_id(e["task"]): e["task"]
+            for e in sorted(
+                (e for e in stored.values()
+                 if e["task"].get("source") == "github"),
+                key=lambda e: e.get("last_active_at") or 0,
+                reverse=True,
+            )[:MAX_REFRESH]
+        }
+        ids = list(recent)
+        for tid, fresh in zip(
+                ids, G.fan(ids, lambda t: source.get(recent[t]))):
+            if not fresh:
+                continue
+            row = rows[tid]
+            for k in ("title", "url"):
+                if fresh.get(k):
+                    row[k] = fresh[k]
+            if fresh.get("state"):
+                source_state[tid] = str(fresh["state"])
+            if fresh.get("pr"):
+                row["pr"] = fresh["pr"]
 
     sessions_row = {str(r.get("key")): r for r in state.catalog.rows()}
     active = {k for k, r in sessions_row.items()
@@ -620,8 +663,18 @@ class GitHubTasks:
             return None
         for raw in result.data:
             if isinstance(raw, dict):
-                return _pr_brief(ghcli._pr_row(raw))
+                pr = ghcli._pr_row(raw)
+                if _same_repo_head(repo, pr):
+                    return _pr_brief(pr)
         return None
+
+
+def _same_repo_head(name: str, pr: dict) -> bool:
+    """A fork's ``quiver/issue-<n>`` branch is not this repo's: only a
+    head the repo itself owns counts. ``head_owner`` empty means gh
+    couldn't say — match on the branch alone, as before."""
+    head = str(pr.get("head_owner") or "").lower()
+    return not head or head == name.split("/", 1)[0].lower()
 
 
 def _repo_tasks(name: str, issues: dict, pulls: dict) -> dict:
@@ -637,7 +690,8 @@ def _repo_tasks(name: str, issues: dict, pulls: dict) -> dict:
     tasks = []
     open_by_branch = {}
     for pr in pulls.get("pulls") or []:
-        if isinstance(pr, dict) and pr.get("branch"):
+        if isinstance(pr, dict) and pr.get("branch") \
+                and _same_repo_head(name, pr):
             open_by_branch.setdefault(str(pr["branch"]), pr)
     for issue in issues.get("issues") or []:
         if not isinstance(issue, dict):
@@ -663,7 +717,8 @@ def _repo_tasks(name: str, issues: dict, pulls: dict) -> dict:
                      "url": pr.get("url") or ""},
             "state": str(pr.get("state") or "open").lower() or "open",
             "updated_at": pr.get("updated_at"),
-            "pr": None,
+            # The pull's task carries the PR itself, as the docs say.
+            "pr": _pr_brief(pr),
         })
     out = {"name": name, "status": status, "tasks": tasks}
     if error:

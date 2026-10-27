@@ -83,6 +83,8 @@ class TestTaskRef(unittest.TestCase):
             {"source": "github", "kind": "issue", "ref": "5"},  # no repo
             {"source": "github", "kind": "issue", "repo": "r",
              "ref": "5"},                                      # bad repo
+            {"source": "github", "kind": "issue", "repo": 7,
+             "ref": "5"},                               # non-string repo
             {"source": "github", "kind": "issue", "repo": "o/r"},  # no ref
             {"source": "github", "kind": "issue", "repo": "o/r",
              "ref": "x"},                                      # bad ref
@@ -170,6 +172,20 @@ class TestStore(unittest.TestCase):
         self.assertEqual(self._entries()[tasks_mod.task_id(ISSUE_REF)]
                          ["sessions"], ["claude:s1"])
 
+    def test_malformed_link_fields_read_empty(self):
+        """Valid JSON with ``"sessions": 7`` or a bare string must not
+        raise — both read as no links, not a crash or character soup."""
+        path = tasks_mod.tasks_file(self.home)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tid = tasks_mod.task_id(ISSUE_REF)
+        path.write_text(json.dumps({"tasks": {tid: {
+            "task": ISSUE_REF, "sessions": 7,
+            "launches": "abc", "created_at": 1,
+            "last_active_at": 1}}}), encoding="utf-8")
+        entry = self._entries()[tid]
+        self.assertEqual(entry["sessions"], [])
+        self.assertEqual(entry["launches"], [])
+
 
 class _Base(unittest.TestCase):
     def setUp(self):
@@ -252,6 +268,19 @@ class TestTasksRoute(_Base):
         self.assertEqual(row["state"], "pr_open")
         self.assertEqual(row["pr"]["number"], 9)
         self.assertEqual(row["pr"]["state"], "open")
+
+    def test_a_fork_branch_does_not_mark_the_issue(self):
+        """Someone else's fork with a quiver/issue-<n> branch is not
+        the PR the hub's worktree produced."""
+        fork = {**_row(9), "branch": "quiver/issue-5",
+                "head_owner": "someone-else"}
+        pulls = lambda name, login: {"name": name, "status": "ok",
+                                     "pulls": [fork]}
+        with self._stubs(pulls=pulls):
+            _s, body = self._get("/v1/tasks")
+        row = {t["id"]: t for t in body["tasks"]}["github:issue:o/r:5"]
+        self.assertEqual(row["state"], "open")
+        self.assertIsNone(row["pr"])
 
     def test_linked_session_runs_and_finishes(self):
         tasks_mod.link(self.srv.home, ISSUE_REF, session_key="claude:s1")
@@ -461,9 +490,15 @@ class TestOrigin(_Base):
         view = self.srv.state.launch_view(lid)
         self.assertEqual(view["origin"]["ref"], "5")
         self.assertEqual(view["origin"]["kind"], "issue")
-        self.assertEqual(tasks_mod._load(self.srv.home), {})
-        self._adopt(lid)
+        # launch_linked marked the pending launch at settle time —
+        # the task reads agent_running through the whole prepare
+        # window — and adoption adds the session key on top.
         tid = tasks_mod.task_id(ISSUE_REF)
+        entry = tasks_mod._load(self.srv.home)[tid]
+        self.assertEqual(entry["sessions"], [])
+        self.assertEqual(entry["launches"], [lid])
+        self.assertIn(tid, tasks_mod.running_task_ids(self.srv.state))
+        self._adopt(lid)
         entry = tasks_mod._load(self.srv.home)[tid]
         self.assertEqual(entry["sessions"], ["claude:s1"])
         self.assertEqual(entry["launches"], [lid])

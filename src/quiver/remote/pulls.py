@@ -316,9 +316,11 @@ def _prepare_and_launch(state, launch_id: str, repo: str, number: int,
     title = f"{repo}#{number}"
     if pr and pr.get("title"):
         title += f" {pr['title']}"
-    # As in issues.py: adoption links the session to this PR's task.
-    state.settle_launch(launch_id, title=title,
-                        origin=tasks_mod.pull_ref(repo, number, pr))
+    # As in issues.py: adoption links the session to this PR's task,
+    # and launch_linked marks the pending launch against it now.
+    origin = tasks_mod.pull_ref(repo, number, pr)
+    state.settle_launch(launch_id, title=title, origin=origin)
+    tasks_mod.launch_linked(state, launch_id, origin)
 
     if not manage.mirror_path(repo, state.home).is_dir():
         note("Cloning mirror…")

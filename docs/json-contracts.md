@@ -225,8 +225,11 @@ part in order; one bad part fails the command before any fetch.
   the synced repo store `swe gh repo search` reads; `synced_at` is when
   the last `swe gh sync` wrote it. Null until the first sync.
 - `RepoHit`: `{name, description, stars, updated_at, url}`.
-- `GhPr`: `{number, title, state, draft, author, branch, base, labels,
-  mergeable, review_decision, checks, updated_at, url}`. `state` is
+- `GhPr`: `{number, title, state, draft, author, head_owner, branch,
+  base, labels, mergeable, review_decision, checks, updated_at, url}`;
+  `head_owner` is the login whose repo holds the head branch ("" when
+  `gh` doesn't say — a fork PR names its owner, a same-repo one the
+  repo's). `state` is
   `open`|`closed`|`merged`; `checks` is a rollup `none`|`passing`|
   `running`|`failing`|`unknown`; `review_decision` is `approved`|
   `changes_requested`|`review_required`|`none`; `mergeable` is GitHub's

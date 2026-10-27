@@ -354,8 +354,11 @@ def _prepare_and_launch(state, launch_id: str, cmd: dict, binary: str,
         title += f" {issue['title']}"
     # ``origin`` rides the launch record into adoption: emit's
     # origin_adopted links the session to this issue in tasks.json.
-    state.settle_launch(launch_id, title=title,
-                        origin=tasks_mod.issue_ref(repo, number, issue))
+    # launch_linked records the launch itself now, so the task row
+    # reads agent_running through the whole prepare window below.
+    origin = tasks_mod.issue_ref(repo, number, issue)
+    state.settle_launch(launch_id, title=title, origin=origin)
+    tasks_mod.launch_linked(state, launch_id, origin)
 
     made = manage.issue_worktree(repo, number, state.home, progress=note)
     if made.status != "ok":
