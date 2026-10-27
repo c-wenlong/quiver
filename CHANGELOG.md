@@ -64,8 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **OpenCode and Kilo models are named `provider/model` in both usage
-  ledgers.** The ledgers used the bare model id, so `glm-5.1` from the
+- **OpenCode models are named `provider/model` in both usage ledgers.**
+  The ledgers used the bare model id, so `glm-5.1` from the
   `zai-coding-plan` plan and from `zai` read as one model. They now read
   `zai-coding-plan/glm-5.1`, from OpenCode's `providerID` (2.x:
   `model.providerID`), and keep the bare id when OpenCode stored no
