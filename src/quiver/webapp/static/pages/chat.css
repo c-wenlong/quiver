@@ -166,10 +166,26 @@ details.tool-run > summary {
 .approval-actions.menu .approval-opt { height: auto; padding: 7px 12px; text-align: left; line-height: 1.35; }
 .approval-actions .tab.deny { color: var(--danger-text); }
 .approval-actions .tab:disabled { opacity: .45; cursor: default; }
+/* The picked row keeps its natural shade next to the greyed-out rest. */
+.approval-actions .tab.chosen { opacity: 1; }
 .approval-note { font-size: 12px; color: var(--danger-text); margin-top: 6px; }
 .approval-note.queued { color: var(--warning-text); }
-.msg.approval.resolved .text, .msg.approval.resolved .approval-actions { opacity: .55; }
-.approval-done { margin-top: 6px; }
+
+/* Answered: the card folds to its toggle row like a tool callout;
+ * .open re-expands to the full prompt + options. */
+.approval-toggle {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: 0; padding: 0; margin: 0;
+  font: inherit; font-size: 13px; font-weight: 600; color: var(--text);
+  text-align: left; cursor: pointer;
+}
+.approval-toggle[hidden] { display: none; }
+.approval-toggle .chev { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; color: var(--text-subtle); transition: transform .12s; }
+.msg.approval.open .approval-toggle .chev { transform: rotate(90deg); }
+.msg.approval.resolved:not(.open) .role,
+.msg.approval.resolved:not(.open) .text,
+.msg.approval.resolved:not(.open) .approval-actions,
+.msg.approval.resolved:not(.open) .approval-note { display: none; }
 
 /* Skeleton while the transcript loads: grey blocks in the log's shape,
  * a light band sweeping them. */
