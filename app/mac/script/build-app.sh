@@ -87,10 +87,15 @@ xml_escape() {
   printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
 }
 
-swift build -c "$config" --product Quiver
-swift build -c "$config" --product QuiverWidgets
-swift build -c "$config" --product QuiverFanHelper
-bindir="$(swift build -c "$config" --show-bin-path)"
+# Swift 6.4 (Xcode 27.1) defaults to the swiftbuild build system, which nests
+# a resource bundle's files under Contents/Resources. The copy below and
+# CoreResources expect them at the bundle's top level, as the native build
+# system lays them out, so pin it until both learn the new layout.
+build_system=(--build-system native)
+swift build "${build_system[@]}" -c "$config" --product Quiver
+swift build "${build_system[@]}" -c "$config" --product QuiverWidgets
+swift build "${build_system[@]}" -c "$config" --product QuiverFanHelper
+bindir="$(swift build "${build_system[@]}" -c "$config" --show-bin-path)"
 bin="$bindir/Quiver"
 
 bundle="$build_dir/Quiver.app"
