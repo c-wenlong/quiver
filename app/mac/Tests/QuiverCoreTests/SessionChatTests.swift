@@ -716,7 +716,10 @@ extension HubStubbed {
             return base?(req) ?? (404, Data())
         }
         let answer = Task { await chat.decide("r11", "deny") }
-        for _ in 0..<10_000 where posted.wait(timeout: .now()) == .timedOut { await Task.yield() }
+        // Semaphore waits are off the cooperative pool (and the wait is
+        // banned in async contexts outright on newer SDKs): park a GCD
+        // thread on `posted` until the POST lands.
+        _ = await runOffPool { posted.wait(timeout: .now() + 10) }
         chat.apply(event("approval.resolved", #"{"request_id": "r11", "decision": "allow"}"#))
         released.signal()
         await answer.value
