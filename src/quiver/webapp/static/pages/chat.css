@@ -280,6 +280,44 @@ details.tool-run > summary {
   background: var(--text-primary); color: var(--card); font-size: 13px; font-weight: 500;
 }
 
+/* The composer's / menu (the hub PWA's #prompt-menu): the commands the
+ * session's harness runs, straight above the box; past six rows it
+ * scrolls. */
+.chat-menu {
+  flex: none; background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; margin-bottom: 8px; padding: 4px 0;
+  max-height: calc(6 * 52px + 8px); overflow-y: auto;
+}
+.menu-row {
+  display: flex; align-items: center; gap: 10px; height: 52px;
+  padding: 0 12px; cursor: pointer;
+}
+.menu-row.active, .menu-row:hover { background: var(--hover); }
+.menu-name {
+  flex: 0 1 auto; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.menu-sub {
+  flex: 1 1 0; min-width: 0; font-size: 12px; color: var(--text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.menu-note { padding: 10px 12px; font-size: 12px; color: var(--text-secondary); }
+.menu-note.error-note { color: var(--danger-text); }
+.cmd-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.cmd-top { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.cmd-desc {
+  font-size: 12px; color: var(--text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.own {
+  flex: none; font-size: 11px; color: var(--text-secondary);
+  border: 1px solid var(--border); border-radius: 99px; padding: 2px 8px;
+}
+.menu-foot {
+  border-top: 1px solid var(--border); margin-top: 4px; padding: 8px 12px 4px;
+  font-size: 12px; color: var(--text-secondary); display: grid; gap: 4px;
+}
+
 /* Narrow: the rail folds to a strip of session chips above the chat,
  * with Refresh at its end (the GitHub rail's fold). */
 @media (max-width: 960px) {
