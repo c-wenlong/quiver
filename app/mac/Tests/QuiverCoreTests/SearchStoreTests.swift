@@ -389,7 +389,7 @@ import Testing
         for _ in 0..<1_000 where !cleared.withLock({ $0 }) {
             try await Task.sleep(for: .milliseconds(5))
         }
-        #expect(cleared.withLock { $0 })
+        try #require(cleared.withLock { $0 })
         #expect(throws: (any Error).self) { try store.files() }
     }
 }
