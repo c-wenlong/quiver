@@ -370,10 +370,24 @@ class TestAdoptPending(unittest.TestCase):
         self.assertFalse(supervise.pending_launch(self.home))  # no dir
         folder = supervise._pending_dir(self.home)
         folder.mkdir(parents=True)
-        (folder / "qv-a.json").write_text(json.dumps({"launched_at": 1}))
+        (folder / "qv-a.json").write_text(
+            json.dumps({"launched_at": time.time()}))
         self.assertTrue(supervise.pending_launch(self.home))
         (folder / "qv-a.json").unlink()
         self.assertFalse(supervise.pending_launch(self.home))
+
+    def test_pending_launch_ignores_abandoned_markers(self):
+        # A launch that never wrote a transcript expires like
+        # adopt_pending's day cutoff — otherwise it would keep the
+        # session scan uncached for a day.
+        folder = supervise._pending_dir(self.home)
+        folder.mkdir(parents=True)
+        (folder / "qv-old.json").write_text(json.dumps(
+            {"launched_at": time.time() - supervise.PENDING_MAX_AGE_S - 1}))
+        self.assertFalse(supervise.pending_launch(self.home))
+        (folder / "qv-new.json").write_text(
+            json.dumps({"launched_at": time.time()}))
+        self.assertTrue(supervise.pending_launch(self.home))
 
     def test_adopts_matching_new_session(self):
         folder = supervise._pending_dir(self.home)
