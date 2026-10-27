@@ -1,4 +1,4 @@
-/* Plugins: a port of the Mac app's PluginsPage (Health and Explore tabs).
+/* Plugins: a port of the Mac app's PluginsPage (Explore and Health tabs).
  * Data from /v1/app/plugins?view=health|explore (quiver/webapp/pages/
  * plugins.py). Health's Fix and Fix all POST /v1/app/plugins/fix|fix_all,
  * each after an inline confirm naming the commands. The plugin sheet's
@@ -13,7 +13,7 @@ const FOLD_LIMIT = 8;      // PluginsPage.foldLimit
 const SHOWN_SKILLS = 8;    // PluginRow.shownSkills
 
 const page = {
-  tab: "health", chosen: false,
+  tab: "explore",
   data: { health: null, explore: null },
   error: { health: null, explore: null },
   busy: { health: false, explore: false },
@@ -64,8 +64,8 @@ const onPage = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?
 
 async function render() {
   paint();
-  // Health decides the first tab (and reads Explore if it opens it);
-  // once a tab is on show, only that tab is read.
+  // Explore is the first tab. Once a tab is on show, only that tab is
+  // read; the other reads when it opens.
   await load(page.tab);
 }
 
@@ -87,15 +87,6 @@ async function load(view, refresh = false) {
     page.error[view] = null;
     page.data[view] = data;
     if (view === "explore") page.exploreStale = false;
-    // An empty hub gives Health an empty page: open Explore once, never
-    // over a tab the user picked (PluginsFirstTab). Whichever call read
-    // Health (the first visit or a Refresh), Explore is read from here.
-    if (view === "health" && !page.chosen && data.sources === 0 && !data.drift.length) {
-      page.tab = "explore";
-      page.chosen = true;
-      paint();
-      return load("explore");
-    }
   }
   // A reply for the tab not on show only updates what that tab will show.
   if (view === page.tab) paint();
@@ -152,7 +143,7 @@ function bindHeader() {
 }
 
 function paint() {
-  const tabs = `<div class="pl-tabs" role="tablist">${[["health", "Health"], ["explore", "Explore"]].map(([id, label]) =>
+  const tabs = `<div class="pl-tabs" role="tablist">${[["explore", "Explore"], ["health", "Health"]].map(([id, label]) =>
     `<button class="pl-tab${page.tab === id ? " selected" : ""}" role="tab" aria-selected="${page.tab === id}" data-pl-tab="${id}">${label}</button>`).join("")}</div>`;
   const body = page.tab === "health" ? healthBody() : exploreBody();
   const active = document.activeElement && document.activeElement.id === "pl-search"
@@ -164,7 +155,6 @@ function paint() {
   for (const tab of document.querySelectorAll("[data-pl-tab]")) {
     tab.onclick = () => {
       const next = tab.dataset.plTab;
-      page.chosen = true;
       if (next === page.tab) return;
       page.tab = next;
       paint();
@@ -573,7 +563,7 @@ function bindExplore() {
     btn.onclick = () => openPlugin(btn.dataset.plOpen);
   }
   for (const btn of document.querySelectorAll("[data-pl-health]")) {
-    btn.onclick = () => { page.tab = "health"; page.chosen = true; paint(); load("health"); };
+    btn.onclick = () => { page.tab = "health"; paint(); load("health"); };
   }
 }
 

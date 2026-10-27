@@ -470,10 +470,7 @@ final class AppModel {
     /// and what the Skills page moves plugin skills out by.
     let pluginCatalog: PluginCatalogModel
     /// The Plugins page's tab, so another page can open Explore.
-    var pluginsTab: PluginsTab = .health
-    /// The user picked a Plugins tab this session, so an empty hub no
-    /// longer moves them to Explore.
-    var pluginsTabChosen = false
+    var pluginsTab: PluginsTab = .explore
     /// Quiver's display names for marketplaces and plugins, from
     /// ~/.quiver/config/plugin-display-names.json.
     var primitiveNames: PluginDisplayNames

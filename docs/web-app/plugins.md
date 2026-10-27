@@ -51,8 +51,7 @@ Same title and subtitle as the app, and its two tabs.
   sheet repaints from the answer with the app's summary ("Disabled
   tool@mk in Codex") or the error.
 
-Like the app, the page opens on Health, and on Explore when Health has
-nothing to show (no hub plugins and no drift) until a tab is picked.
+Like the app, Explore is the first tab and the one the page opens on.
 
 ## Payload
 

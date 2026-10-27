@@ -529,15 +529,6 @@ extension SweClient {
     }
 }
 
-/// Plugins opens on Explore instead of Health when the health report has
-/// nothing to act on — an empty hub gives the drift tab an empty page.
-public enum PluginsFirstTab {
-    public static func explore(report: PluginDriftReport?) -> Bool {
-        guard let report else { return false }
-        return report.sources == 0 && report.drift.isEmpty
-    }
-}
-
 /// `swe plugins marketplace add --json`: one result per harness asked.
 public struct MarketplaceAddReply: Codable, Sendable, Equatable {
     public let source: String
