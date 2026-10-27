@@ -400,9 +400,20 @@ class Catalog:
         self.home = Path(home) if home is not None else None
         self.machine_id = machine_id or load_machine_id(self.home)
         if fetch_sessions is None:
-            from quiver.sessions.aggregator import get_all_sessions
+            from quiver.sessions import aggregator
 
-            fetch_sessions = lambda: get_all_sessions(limit=None, use_cache=True)
+            def fetch_sessions() -> list[Session]:
+                # While a launch's marker waits for adoption the 60 s
+                # disk cache would hide the new transcript for the rest
+                # of its TTL. Invalidating rewrites the cache with the
+                # fresh scan too, so the reads after adoption still see
+                # the session; the marker is deleted on adoption, so
+                # this only costs anything during a launch window.
+                from quiver.remote import supervise
+
+                if supervise.pending_launch(self.home):
+                    aggregator.invalidate_cache()
+                return aggregator.get_all_sessions(limit=None, use_cache=True)
         if status_of is None:
             from quiver.sessions.status import session_statuses
 

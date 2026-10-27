@@ -769,6 +769,50 @@ class TestHubWriteRoutes(unittest.TestCase):
         _, view = self._launch_view(launch_id)
         self.assertEqual((view["state"], view["key"]), ("started", "claude:s1"))
 
+    def test_successful_launch_wakes_the_catalog_loop(self):
+        # launch_new's prime can end while the catalog loop sleeps out
+        # its 10 s tick; the wake makes adoption look for the transcript
+        # at once instead.
+        with patch("quiver.remote.supervise.launch_new",
+                   return_value=(True, "launched", "qv-t")):
+            self._launch({"harness": "claude", "cwd": "/tmp", "prompt": "hi"})
+            self._wait_launch_threads()
+        self.assertTrue(self.srv.state._catalog_wake.is_set())
+
+    def test_failed_launch_leaves_the_catalog_loop_asleep(self):
+        with patch("quiver.remote.supervise.launch_new",
+                   return_value=(False, "nope", None)):
+            self._launch({"harness": "claude", "cwd": "/tmp", "prompt": "hi"})
+            self._wait_launch_threads()
+        self.assertFalse(self.srv.state._catalog_wake.is_set())
+
+    def test_pending_marker_forces_a_fresh_scan(self):
+        # While a launch's marker waits for adoption the aggregator's
+        # 60 s disk cache must be bypassed — the new transcript would
+        # stay invisible for the rest of its TTL. Invalidating (not
+        # use_cache=False) rewrites the cache, so the read after
+        # adoption still sees the session.
+        from quiver.remote import catalog as catalog_mod, supervise
+
+        home = Path(tempfile.mkdtemp())
+        folder = supervise._pending_dir(home)
+        folder.mkdir(parents=True)
+        (folder / "qv-x.json").write_text(
+            json.dumps({"launched_at": time.time()}))
+        cat = catalog_mod.Catalog(home)
+        with patch("quiver.sessions.aggregator.invalidate_cache") as inv, \
+             patch("quiver.sessions.aggregator.get_all_sessions",
+                   return_value=[]) as get:
+            cat.refresh()
+        inv.assert_called_once_with()
+        get.assert_called_once_with(limit=None, use_cache=True)
+        (folder / "qv-x.json").unlink()
+        with patch("quiver.sessions.aggregator.invalidate_cache") as inv, \
+             patch("quiver.sessions.aggregator.get_all_sessions",
+                   return_value=[]):
+            cat.refresh()
+        inv.assert_not_called()
+
     def test_launch_started_waits_for_catalog_row(self):
         with patch("quiver.remote.supervise.launch_new",
                    return_value=(True, "launched", "qv-t")):

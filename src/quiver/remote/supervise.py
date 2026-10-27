@@ -59,6 +59,11 @@ ATTACH_IDLE_S = 5.0
 # How long a fresh tmux pane must survive before launch_tmux trusts it.
 LAUNCH_SETTLE_S = 1.0
 
+# A launch marker whose transcript never shows is given up on after a
+# day: adopt_pending deletes it, and pending_launch stops counting it
+# (or the abandoned marker would keep scans uncached for a day).
+PENDING_MAX_AGE_S = 86400.0
+
 # How long attach waits for a resumed TUI to boot past its trust gate.
 # The phone's attach request times out at 15 s and the launch settle
 # comes first, so this stays well under it (a real resume boots in ~2 s).
@@ -1056,6 +1061,31 @@ def _pending_dir(home: Path | None) -> Path:
     return remote_dir_for(home) / "pending"
 
 
+def pending_launch(home: Path | None) -> bool:
+    """Whether an unadopted launch marker still counts. While one does,
+    a session scan must not come from the aggregator's 60 s disk cache —
+    the new transcript would stay invisible to ``adopt_pending`` for
+    the rest of the TTL. The marker is deleted on adoption and
+    ``adopt_pending`` abandons one after a day, so the window closes
+    itself."""
+    try:
+        markers = list(_pending_dir(home).glob("*.json"))
+    except OSError:
+        return False
+    now = time.time()
+    for marker in markers:
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            # Mid-write or corrupt: adopt_pending deletes it next pass.
+            return True
+        launched = float(data.get("launched_at") or 0) \
+            if isinstance(data, dict) else 0.0
+        if now - launched <= PENDING_MAX_AGE_S:
+            return True
+    return False
+
+
 def launch_new(
     home: Path | None,
     tool_name: str,
@@ -1355,7 +1385,7 @@ def adopt_pending(
             continue
         # Give up on markers older than a day: whatever launched either
         # never wrote a transcript or was missed by the parser.
-        if now - float(pending.get("launched_at") or 0) > 86400:
+        if now - float(pending.get("launched_at") or 0) > PENDING_MAX_AGE_S:
             marker.unlink(missing_ok=True)
             continue
         hit = _pending_match(home, pending, rows, claimed)
