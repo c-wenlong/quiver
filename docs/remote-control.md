@@ -378,9 +378,11 @@ stamps `origin` on its launch record — the launch links at once, so
 the task reads `agent_running` while it prepares, and adoption adds
 the session; `POST /v1/sessions/{id}/task` links by hand;
 `DELETE` unlinks one task (or every task, without a `task_ref`). `GET
-/v1/tasks` merges the store over what the sources list — today GitHub,
-the pinned repos' open issues and PRs behind the same 60-second `gh`
-cache `/v1/pulls` uses — so a row answers "what's happening on X": the
+/v1/tasks` merges the store over what the sources list — GitHub, the
+pinned repos' open issues and PRs behind the same 60-second `gh` cache
+`/v1/pulls` uses, and Linear (`remote/linear.py`), the issues assigned
+to the key's owner plus open issues in configured teams, behind the
+same minute cache — so a row answers "what's happening on X": the
 derived `state` (`open` → `in_progress` → `pr_open` → `merged|closed`),
 `sessions`, `agent_running` (a linked session is active, or its launch
 is still pending), `last_active_at`, and `pr` — for an issue the PR its
@@ -388,6 +390,31 @@ is still pending), `last_active_at`, and `pr` — for an issue the PR its
 after it leaves the open list. `/v1/pulls` rows carry `agent_running`
 from the same store, and `GET /v1/launches/{id}` shows a launch's
 `origin` while pending and after it settles.
+
+The Linear source is opt-in through a `linear` section in
+`~/.quiver/config/config.json`:
+
+```json
+"linear": {"key_ref": "${LINEAR_API_KEY}", "teams": ["QUI"]}
+```
+
+`key_ref` names a `${NAME}` in the MCP secrets store
+(`~/.quiver/secrets/mcp/.api_keys` — `printf %s "$KEY" | swe mcp secret
+set LINEAR_API_KEY` writes it); a literal key is refused because
+`config.json` stays credential-free. It defaults to
+`${LINEAR_API_KEY}`, and `teams` to none, so a bare `"linear": {}`
+reads the personal API key owner's assigned issues (`swe config set
+linear.teams '["QUI"]'` widens to those teams' open issues). Each
+issue becomes `{source: "linear", kind: "issue", project: <team key>,
+ref: "QUI-123", title, url}`, and its workflow state's type maps to the
+task state: `completed`/`canceled`/`duplicate` → `closed`, `started` →
+`in_progress`, everything else → `open`. The answer's `linear` block
+carries the source's env: `disabled` (no section), `ok`, `auth-required`
+(the ref won't resolve or the key was refused — `error` says which and
+stored Linear tasks keep their last-known state, the way `env_blocked`
+does for GitHub) or `upstream-error`. Reads only: launching never moves
+a Linear issue's workflow state — states are per-team there, so
+`issueUpdate` write-back is a later step.
 
 The phone shows queue-mode sends that are still waiting in a tray above
 the prompt box. `GET /v1/sessions/{id}/queue` lists them, oldest first:

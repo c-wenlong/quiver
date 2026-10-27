@@ -30,10 +30,10 @@ launch is still pending), ``sessions``, ``last_active_at`` and the
 ``pr_open``, ``merged`` or ``closed``. For an issue the linked PR is
 the one on its ``quiver/issue-<n>`` branch.
 
-``TaskSource`` is the seam other trackers plug into later: ``list()``
+``TaskSource`` is the seam other trackers plug into: ``list()``
 for what the source has open, ``get(ref)`` to refresh one stored task's
-state. GitHub is the first adapter; Linear and Notion refs validate and
-link today, and sit there until their adapters land.
+state. GitHub and Linear are live adapters (``remote/linear.py``);
+Notion refs still only validate and link.
 """
 
 from __future__ import annotations
@@ -47,6 +47,7 @@ from typing import Protocol
 from quiver.github import cli as ghcli
 from quiver.github import gh, manage, repos
 from quiver.paths import atomic_write_text, remote_dir_for
+from quiver.remote import linear as linear_mod
 from quiver.remote import protocol
 from quiver.webapp.pages import _github as G
 
@@ -376,19 +377,29 @@ def _refresh(args) -> bool:
 def list_view(state, args) -> tuple[int, dict]:
     """``GET /v1/tasks``: the store over what the sources list.
 
-    ``{tasks: [TaskRow], repos?: [per-repo failures], github,
+    ``{tasks: [TaskRow], repos?: [per-repo failures], github, linear,
     env_blocked?, machine, machine_id, fetched_at?}``. A ``TaskRow`` is
     the TaskRef fields plus ``id``, derived ``state``, ``sessions``,
     ``launches``, ``agent_running``, ``linked``, ``last_active_at``,
     ``created_at`` (linked tasks) and ``pr`` (the PR an issue's
     ``quiver/issue-<n>`` branch produced — open or merged — so the
     issue's ``pr_open``/``merged`` reads off one row).
+
+    Each source answers its env block — ``github`` as ``gh``'s, plus a
+    top-level ``env_blocked`` when it blocks; ``linear`` as its own
+    block (``disabled`` with no section, ``auth-required``/
+    ``upstream-error`` with the reason in ``error``). A blocked source
+    leaves its stored tasks showing their last-known state.
     """
     refresh = _refresh(args)
     stored = _load(state.home)
-    source = GitHubTasks(state.home, refresh=refresh)
-    env = source.probe()
+    sources = {"github": GitHubTasks(state.home, refresh=refresh),
+               "linear": linear_mod.LinearTasks(state.home,
+                                                refresh=refresh)}
+    env = sources["github"].probe()
+    lin = sources["linear"].probe()
     body = {"github": G.env_payload(env),
+            "linear": linear_mod.env_payload(lin),
             "machine": (state.machine or {}).get("name"),
             "machine_id": state.machine_id,
             "tasks": []}
@@ -396,7 +407,7 @@ def list_view(state, args) -> tuple[int, dict]:
     source_state: dict[str, str] = {}
     fetched = []
     if env.status == "ok":
-        listed = source.list()
+        listed = sources["github"].list()
         for item in listed["tasks"]:
             tid = task_id(item["task"])
             rows[tid] = {**item["task"], "id": tid,
@@ -410,6 +421,27 @@ def list_view(state, args) -> tuple[int, dict]:
             fetched.append(listed["fetched_at"])
     elif env.status in ("unavailable", "auth-required"):
         body["env_blocked"] = gh.env_error(env)
+
+    if lin.status == "ok":
+        listed = sources["linear"].list()
+        if listed.get("status") == "ok":
+            for item in listed["tasks"]:
+                tid = task_id(item["task"])
+                rows[tid] = {**item["task"], "id": tid,
+                             "sessions": [], "launches": [],
+                             "pr": item.get("pr"),
+                             "updated_at": item.get("updated_at")}
+                source_state[tid] = str(item.get("state") or "")
+            if listed.get("fetched_at") is not None:
+                fetched.append(listed["fetched_at"])
+        else:
+            # The probe passed but the fetch failed anyway: say so on
+            # the linear block and keep the stored rows' last state.
+            body["linear"] = {**body["linear"],
+                              "status": str(listed.get("status")
+                                            or "upstream-error"),
+                              "error": listed.get("error")
+                                       or "Linear is unreachable"}
 
     for tid, entry in stored.items():
         task = entry["task"]
@@ -425,24 +457,31 @@ def list_view(state, args) -> tuple[int, dict]:
         row["launches"] = list(entry["launches"])
         row["created_at"] = entry["created_at"]
 
+    readers = {}
     if env.status == "ok":
+        readers["github"] = sources["github"].get
+    if lin.status == "ok":
+        readers["linear"] = sources["linear"].get
+    if readers:
         # A stored task's own read sees what the open list can't: the
         # merged PR behind a ``quiver/issue-<n>`` branch, a closed
         # issue. Bounded and fanned — the store keeps every link ever
         # made, so old history keeps its last-known state rather than
-        # stall the whole answer behind serial gh reads.
+        # stall the whole answer behind serial source reads.
         recent = {
             task_id(e["task"]): e["task"]
             for e in sorted(
                 (e for e in stored.values()
-                 if e["task"].get("source") == "github"),
+                 if e["task"].get("source") in readers),
                 key=lambda e: e.get("last_active_at") or 0,
                 reverse=True,
             )[:MAX_REFRESH]
         }
         ids = list(recent)
         for tid, fresh in zip(
-                ids, G.fan(ids, lambda t: source.get(recent[t]))):
+                ids, G.fan(
+                    ids,
+                    lambda t: readers[recent[t]["source"]](recent[t]))):
             if not fresh:
                 continue
             row = rows[tid]
@@ -502,9 +541,14 @@ def _derive(kind, source_state: str, pr, linked: bool) -> str:
             return "closed"
         if pr_state == "open":
             return "pr_open"
-        return "in_progress" if linked else "open"
-    # card / page: a link is all there is to infer from, for now.
-    return "in_progress" if linked else "open"
+        # A source can also declare in_progress itself — a Linear issue
+        # in a "started" workflow state, with no agent linked at all.
+        return "in_progress" if linked or source_state == "in_progress" \
+            else "open"
+    # card / page: a link or the source's own word is all there is to
+    # infer from, for now.
+    return "in_progress" if linked or source_state == "in_progress" \
+        else "open"
 
 
 def _pending_launch_ids(state, stored: dict[str, dict]) -> set[str]:
