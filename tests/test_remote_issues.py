@@ -1,4 +1,5 @@
-"""remote/issues.py: POST /v1/issues/resolve on the hub.
+"""remote/issues.py: GET /v1/issues, the issue detail route, and
+POST /v1/issues/resolve on the hub.
 
 Nothing real runs: ``gh``, the worktree and ``launch_new`` are stubbed,
 so no network, no git remote and no harness process."""
@@ -16,11 +17,216 @@ from quiver.github import gh, manage, repos
 from quiver.github import issues as gh_issues
 from quiver.remote import issues as issues_mod
 from quiver.remote import protocol, sessionmeta
+from quiver.webapp.pages import _github as G
+from quiver.webapp.pages import repositories
 
 from tests.test_github_issues import RAW_ISSUE
 from tests.test_remote_hub import _Server, _session
 
 OK_ENV = gh.GhEnv(installed=True, authenticated=True, login="octocat")
+
+
+def _issue_row(number, author="octocat", title=None, **extra):
+    """A ``cli._issue_row`` entry, the shaped list row."""
+    return {"number": number, "title": title or f"Issue {number}",
+            "state": "open", "author": author, "labels": [],
+            "assignees": [], "comments": 0,
+            "updated_at": "2026-01-02T00:00:00Z",
+            "url": f"https://github.com/o/r/issues/{number}", **extra}
+
+
+def _stub_issues(name, state, limit):
+    rows = {"o/r": [_issue_row(5), _issue_row(7, author="other"),
+                    _issue_row(9, agent_running=True)],
+            "o/s": [_issue_row(3)]}.get(name, [])
+    return {"repo": name, "status": "ok", "issues": rows}
+
+
+class _Base(unittest.TestCase):
+    def setUp(self):
+        self.srv = _Server(sessions=[_session()])
+        self.addCleanup(self.srv.stop)
+        cred = self.srv.pair()
+        self.hdr = {"Authorization": f"Bearer {cred['credential']}"}
+        repos.add_pinned("o/r", manage.pins_file(self.srv.home))
+        repos.add_pinned("o/s", manage.pins_file(self.srv.home))
+        # The issues reads sit on the shared gh cache; tests stub the
+        # fetches per case, so nothing may survive from a prior one.
+        self.addCleanup(G.CACHE.clear)
+        G.CACHE.clear()
+
+    def _get(self, path):
+        status, data = self.srv.request("GET", path, headers=self.hdr)
+        return status, json.loads(data)
+
+
+class TestList(_Base):
+    @contextlib.contextmanager
+    def _stubs(self, env=OK_ENV, issues=None):
+        with patch("quiver.github.gh.probe_env", return_value=env), \
+             patch("quiver.github.cli._fetch_issues",
+                   side_effect=issues or _stub_issues) as lp:
+            yield lp
+
+    def test_lists_every_pin_with_the_mine_flag(self):
+        with self._stubs():
+            status, body = self._get("/v1/issues")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["github"]["login"], "octocat")
+        self.assertNotIn("env_blocked", body)
+        by_name = {r["name"]: r for r in body["repos"]}
+        self.assertEqual(set(by_name), {"o/r", "o/s"})
+        issues = {i["number"]: i for i in by_name["o/r"]["issues"]}
+        self.assertEqual(set(issues), {5, 7, 9})
+        self.assertEqual((issues[5]["mine"], issues[7]["mine"]),
+                         (True, False))
+        # ``agent_running`` rides a row through when the hub sends it.
+        self.assertIs(issues[9]["agent_running"], True)
+        self.assertNotIn("agent_running", issues[5])
+        self.assertIn("fetched_at", body)
+
+    def test_no_pins(self):
+        repos.remove_pinned("o/r", manage.pins_file(self.srv.home))
+        repos.remove_pinned("o/s", manage.pins_file(self.srv.home))
+        with self._stubs() as lp:
+            status, body = self._get("/v1/issues")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["repos"], [])
+        lp.assert_not_called()
+
+    def test_env_blocked_stops_before_any_fetch(self):
+        env = gh.GhEnv(installed=True, authenticated=False)
+        with self._stubs(env=env) as lp:
+            status, body = self._get("/v1/issues")
+        self.assertEqual(status, 200, body)
+        self.assertIn("gh auth login", body["env_blocked"])
+        self.assertEqual(body["repos"], [])
+        lp.assert_not_called()
+
+    def test_one_repo_failing_leaves_the_others(self):
+        def issues(name, state, limit):
+            if name == "o/s":
+                return {"repo": name, "status": "upstream-error",
+                        "issues": [], "error": "GitHub is down"}
+            return _stub_issues(name, state, limit)
+
+        with self._stubs(issues=issues):
+            status, body = self._get("/v1/issues")
+        self.assertEqual(status, 200, body)
+        by_name = {r["name"]: r for r in body["repos"]}
+        self.assertEqual(by_name["o/r"]["status"], "ok")
+        self.assertEqual(len(by_name["o/r"]["issues"]), 3)
+        self.assertEqual(by_name["o/s"]["status"], "upstream-error")
+        self.assertEqual(by_name["o/s"]["issues"], [])
+        self.assertIn("GitHub is down", by_name["o/s"]["error"])
+
+    def test_needs_a_paired_device(self):
+        status, _ = self.srv.request("GET", "/v1/issues")
+        self.assertEqual(status, 401)
+
+
+class TestDetail(_Base):
+    @contextlib.contextmanager
+    def _stubs(self, env=OK_ENV, fetched=None):
+        fetched = fetched or gh.GhResult(
+            "ok", data=gh_issues.shape(RAW_ISSUE, "o/r", self.srv.home))
+        with patch("quiver.github.gh.probe_env", return_value=env), \
+             patch("quiver.github.issues.fetch", return_value=fetched):
+            yield
+
+    def test_full_row_plus_detail_fields(self):
+        with self._stubs():
+            status, body = self._get("/v1/issues/o/r/5")
+        self.assertEqual(status, 200, body)
+        self.assertEqual((body["status"], body["repo"]), ("ok", "o/r"))
+        issue = body["issue"]
+        self.assertEqual(issue["number"], 5)
+        self.assertEqual(issue["title"], "Fix the thing")
+        self.assertEqual(issue["body"], "It breaks.\n\nSteps: run it.")
+        self.assertEqual(issue["labels"], ["bug", "ui"])
+        self.assertEqual(issue["assignees"], ["bob"])
+        self.assertEqual(issue["comments"][0]["author"], "carol")
+        self.assertEqual(issue["branch"], "quiver/issue-5")
+        self.assertTrue(issue["worktree"].endswith("o__r-issue5"))
+        self.assertTrue(issue["suggested_prompt"].startswith(
+            "Resolve o/r#5 — Fix the thing"))
+        self.assertIn(issue["worktree"], issue["suggested_prompt"])
+        self.assertIn("fetched_at", body)
+
+    def test_not_pinned_and_bad_path(self):
+        with self._stubs():
+            status, body = self._get("/v1/issues/other/repo/5")
+        self.assertEqual((status, body["error"]["code"]),
+                         (404, "not_pinned"))
+        with self._stubs():
+            status, body = self._get("/v1/issues/o/r/x")
+        self.assertEqual((status, body["error"]["code"]),
+                         (422, "bad_issue"))
+        status, body = self._get("/v1/issues/o/5")
+        self.assertEqual((status, body["error"]["code"]),
+                         (404, "not_found"))
+        # ``resolve`` is a POST route; a GET on it is no detail.
+        status, body = self._get("/v1/issues/resolve")
+        self.assertEqual((status, body["error"]["code"]),
+                         (404, "not_found"))
+
+    def test_gh_blocked_reports_instead_of_fetching(self):
+        env = gh.GhEnv(installed=True, authenticated=False)
+        with self._stubs(env=env):
+            status, body = self._get("/v1/issues/o/r/5")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["status"], "auth-required")
+        self.assertIsNone(body["issue"])
+        self.assertIn("gh auth login", body["error"])
+
+    def test_missing_issue_is_a_status_not_a_crash(self):
+        missing = gh.GhResult("not-found", error="no such issue")
+        with self._stubs(fetched=missing):
+            status, body = self._get("/v1/issues/o/r/404")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["status"], "not-found")
+        self.assertIsNone(body["issue"])
+        self.assertIn("no such issue", body["error"])
+
+    def test_a_bare_cached_row_still_carries_the_extra_fields(self):
+        """An entry written under ``("issue", hk, repo, n)`` without the
+        fields this route adds (``shape`` fills them on a real fetch)
+        still answers with branch, worktree and suggested_prompt."""
+        key = ("issue", G.home_key(self.srv.home), "o/r", "5")
+        G.CACHE.get(key, lambda: {
+            "repo": "o/r", "status": "ok",
+            "issue": {"number": 5, "title": "Fix the thing",
+                      "state": "open", "author": "alice",
+                      "url": "https://github.com/o/r/issues/5"}})
+        with self._stubs():
+            status, body = self._get("/v1/issues/o/r/5")
+        self.assertEqual(status, 200, body)
+        issue = body["issue"]
+        self.assertEqual(issue["branch"], "quiver/issue-5")
+        self.assertTrue(issue["worktree"].endswith("o__r-issue5"))
+        self.assertTrue(issue["suggested_prompt"].startswith(
+            "Resolve o/r#5"))
+
+    def test_needs_a_paired_device(self):
+        status, _ = self.srv.request("GET", "/v1/issues/o/r/5")
+        self.assertEqual(status, 401)
+
+
+class TestDropRepo(_Base):
+    def test_writes_invalidate_the_phone_reads(self):
+        """``repositories._drop_repo`` runs after a merge, rerun or
+        unpin; the phone's issue list and detail entries for the repo
+        must go with it."""
+        hk = G.home_key(self.srv.home)
+        list_key = ("issues", hk, "o/r")
+        detail_key = ("issue", hk, "o/r", "5")
+        for key in (list_key, detail_key):
+            G.CACHE.get(key, lambda: {"stale": True})
+        repositories._drop_repo(self.srv.home, "o/r")
+        fresh = {"fresh": True}
+        for key in (list_key, detail_key):
+            value, _at = G.CACHE.get(key, lambda: fresh)
+            self.assertIs(value, fresh, key)
 
 
 class TestResolveRoute(unittest.TestCase):

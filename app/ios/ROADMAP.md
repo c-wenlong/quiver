@@ -145,6 +145,19 @@ are server changes in `src/quiver/remote/`.
 - [x] Hub: `GET /v1/pulls` (list + viewer flags), `GET /v1/pulls/<o>/<r>/<n>` (detail), `POST /v1/pulls/<o>/<r>/<n>/open {harness, prompt?}` → `launch_id`, followed on `GET /v1/launches/<id>`; the adopted session pushes its chat onto the pulls stack
 - [ ] Mine/Review-requested push notifications once APNs lands
 
+### P12. Issues
+- [x] Own tab beside Pull requests, one section per pinned repo, filter chips with counts: All, Mine
+- [x] Issue row: state icon, number, title, author, comments count, labels (≤3), assignees (≤2), age; an "agent running" chip when the hub sends `agent_running` (absent field draws none)
+- [x] Repo section keeps its `status`/`error` when its fetch fails while the others still list
+- [x] Pull to refresh (`?refresh=1` bypasses the hub's `gh` cache); `env_blocked` shows the `gh` fix on an empty list
+- [x] Detail page: the row plus rendered body (the chat's Markdown); comments are a count for now
+- [x] Swipe Resolve and a context menu (Resolve with agent / Open on GitHub / Copy link) on the row — both open the same sheet, never a blind launch
+- [x] "Resolve with agent" sheet: "Starts in" card naming `repo · quiver/issue-<n>`, the harness icon grid, prompt field prefilled with `suggested_prompt` — a row's Resolve has no detail yet, so the sheet fetches it for the prefill and a blank field still lets the hub build the brief
+- [x] Hub: `GET /v1/issues` (list + `mine`), `GET /v1/issues/<o>/<r>/<n>` (detail), `POST /v1/issues/resolve {repo, number, harness, prompt?}` → `launch_id`, followed on `GET /v1/launches/<id>`; the adopted session pushes its chat onto the issues stack
+- [ ] Comments on the detail page
+- [ ] Closed-issue filter chip
+- [ ] "Assigned to you" push notifications once APNs lands
+
 ## Components
 
 - [ ] Status dot: active, needs you, error, idle, offline

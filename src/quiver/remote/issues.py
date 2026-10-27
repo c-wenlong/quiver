@@ -1,6 +1,16 @@
-"""Resolve a GitHub issue: ``POST /v1/issues/resolve``.
+"""GitHub issues on the phone: ``GET /v1/issues``,
+``GET /v1/issues/<o>/<r>/<n>`` and ``POST /v1/issues/resolve``.
 
-Body ``{repo: "owner/repo", number, harness, prompt?, context?}``. The
+The reads answer from the same 60-second ``gh`` cache the web app's
+Repositories page uses (``webapp/pages/_github.py``), per pinned repo,
+so the phone and the page agree and a slow ``gh`` shows up once. A
+repo's issue rows add ``mine`` (the hub's ``gh`` login authored it) so
+the client filters All/Mine without a second round trip; ``agent_running``
+may join a row when the hub can tell an agent is already on the issue —
+clients treat its absence as no chip.
+
+The resolve: body ``{repo: "owner/repo", number, harness, prompt?,
+context?}``. The
 hub checks what a client can act on straight away (a pinned repo, a
 harness that starts here, tmux, a signed-in ``gh``, no other resolve of
 the issue still starting: ``409 resolve_pending``) and answers ``202
@@ -29,10 +39,15 @@ from __future__ import annotations
 
 import threading
 
+from quiver.github import cli as ghcli
 from quiver.github import gh, manage, repos
 from quiver.github import issues as gh_issues
 from quiver.remote import catalog as catalog_mod
 from quiver.remote import protocol, sessionmeta, supervise
+from quiver.webapp.pages import _github as G
+
+# ``swe gh``'s list cap: open issues per pinned repo in one answer.
+LIST_LIMIT = 50
 
 # "Your context" is a paragraph or two typed on a phone or in a sheet.
 MAX_CONTEXT = 8_000
@@ -48,6 +63,127 @@ _CONTEXT_HEADER_ROOM = 80
 # session, or neither.
 _preparing: set[tuple[str, int]] = set()
 _preparing_lock = threading.Lock()
+
+
+def _refresh(args) -> bool:
+    """A query dict's ``refresh=1``/``refresh=true``."""
+    return str((args.get("refresh") or [""])[0]) in {"1", "true"}
+
+
+def _repo_arg(owner, name) -> str | None:
+    """``/v1/issues/<owner>/<repo>/...`` → ``owner/repo``, else None."""
+    return repos.normalize_repo_input(f"{owner}/{name}")
+
+
+def _number_arg(raw) -> int | None:
+    """A path's issue number: canonical digits, at most nine of them."""
+    if (not isinstance(raw, str) or not raw.isdigit()
+            or not raw.isascii() or len(raw) > 9):
+        return None
+    number = int(raw)
+    return number if number >= 1 else None
+
+
+# ------------------------------------------------------------------ reads
+
+def list(state, args) -> tuple[int, dict]:
+    """``GET /v1/issues``: every pinned repo's open issues.
+
+    ``{repos: [{name, status, issues, error?}], machine, machine_id,
+    github, env_blocked?, fetched_at}``; each issue is ``cli._issue_row``
+    plus ``mine``. A missing or signed-out ``gh`` answers ``env_blocked``
+    before any fetch, as ``swe gh`` stops on the same words."""
+    env = G.probe(state.home, refresh=_refresh(args))
+    pins = G.pinned(state.home)
+    body = {"github": G.env_payload(env),
+            "machine": (state.machine or {}).get("name"),
+            "machine_id": state.machine_id,
+            "repos": []}
+    if env.status in ("unavailable", "auth-required"):
+        body["env_blocked"] = gh.env_error(env)
+        return 200, body
+    if not pins:
+        return 200, body
+
+    def entry(name: str):
+        return G.CACHE.get(
+            ("issues", G.home_key(state.home), name),
+            lambda: _repo_issues(name, env.login),
+            refresh=_refresh(args),
+            ok=lambda e: e.get("status") == "ok")
+
+    names = [p["name"] for p in pins]
+    replies = G.fan(names, entry)
+    body["repos"] = [value for value, _at in replies]
+    if replies:
+        body["fetched_at"] = min(at for _value, at in replies)
+    return 200, body
+
+
+def _repo_issues(name: str, login: str) -> dict:
+    """One repo's list entry: ``_issue_row``s plus the viewer flag.
+
+    ``mine`` is the row's author matching the hub's ``gh`` login — the
+    authored reading ``gh pr status`` gives a pull, asked straight from
+    the row since issues carry no review flag to fetch alongside.
+    """
+    listed = ghcli._fetch_issues(name, "open", LIST_LIMIT)
+    if listed["status"] != "ok":
+        return {"name": name, "status": listed["status"], "issues": [],
+                "error": listed.get("error") or listed["status"]}
+    issues = [{**row, "mine": bool(login) and row.get("author") == login}
+              for row in listed["issues"]]
+    return {"name": name, "status": "ok", "issues": issues}
+
+
+def detail(state, owner: str, name: str, number_raw: str,
+           args) -> tuple[int, dict]:
+    """``GET /v1/issues/<o>/<r>/<n>``: one issue in full — body,
+    comments, the branch and worktree a resolve uses and the
+    ``suggested_prompt`` its sheet prefills (``github/issues.py``'s
+    ``shape``, which ``swe gh issue view --json`` also answers)."""
+    repo = _repo_arg(owner, name)
+    if repo is None:
+        return 400, protocol.error("bad_repo",
+                                   "issue path wants owner/repo")
+    number = _number_arg(number_raw)
+    if number is None:
+        return 422, protocol.error("bad_issue",
+                                   "number must be an issue number")
+    pinned = _pinned(state.home, repo)
+    if pinned is None:
+        return 404, protocol.error(
+            "not_pinned", f"{repo} is not pinned on the hub")
+    env = G.probe(state.home, refresh=_refresh(args))
+    base = {"github": G.env_payload(env), "repo": pinned,
+            "machine": (state.machine or {}).get("name"),
+            "machine_id": state.machine_id}
+    if env.status != "ok":
+        return 200, {**base, "status": env.status, "issue": None,
+                     "error": gh.env_error(env)}
+
+    def fetch():
+        result = gh_issues.fetch(pinned, number, state.home)
+        if result.status != "ok":
+            return {"repo": pinned, "status": result.status, "issue": None,
+                    "error": result.error or result.status}
+        return {"repo": pinned, "status": "ok", "issue": result.data}
+
+    value, at = G.CACHE.get(
+        ("issue", G.home_key(state.home), pinned, str(number)), fetch,
+        refresh=_refresh(args), ok=lambda v: v["status"] == "ok")
+    issue = value.get("issue")
+    if isinstance(issue, dict) and "suggested_prompt" not in issue:
+        # An entry another reader put under this key (a bare row, not
+        # ``shape``'s) still answers with the fields only this route adds.
+        worktree = manage.issue_worktree_path(pinned, number, state.home)
+        issue = {**issue,
+                 "branch": manage.issue_branch(number),
+                 "worktree": worktree,
+                 "suggested_prompt": gh_issues.build_prompt(
+                     pinned, issue, worktree)}
+        value = {**value, "issue": issue}
+    return 200, {**base, **value, "fetched_at": at}
 
 
 def parse_body(body) -> dict:

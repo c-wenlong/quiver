@@ -1,9 +1,12 @@
 import Foundation
 
-/// What a Sessions row offers on a swipe or a long press. Pure, so the
-/// rules for which action shows when are tested without a view.
+/// What a list row offers on a swipe or a long press. Session rows use
+/// the attach/pin/rename/fork set, which `leading`/`trailing`/`menu`
+/// build from a `SessionRow`; an issue row's only action is `resolve`,
+/// which the Issues page wires itself. Pure, so the rules for which
+/// action shows when are tested without a view.
 enum SessionAction: String, Hashable, Identifiable {
-    case attach, detach, pin, unpin, rename, fork
+    case attach, detach, pin, unpin, rename, fork, resolve
 
     var id: String { rawValue }
 
@@ -15,6 +18,7 @@ enum SessionAction: String, Hashable, Identifiable {
         case .unpin: "Unpin"
         case .rename: "Rename"
         case .fork: "Fork"
+        case .resolve: "Resolve"
         }
     }
 
@@ -26,6 +30,7 @@ enum SessionAction: String, Hashable, Identifiable {
         case .unpin: "pin.slash"
         case .rename: "pencil"
         case .fork: "arrow.triangle.branch"
+        case .resolve: "sparkles"
         }
     }
 

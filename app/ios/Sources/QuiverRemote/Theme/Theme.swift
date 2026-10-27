@@ -51,7 +51,7 @@ enum Theme {
 
     static func swipe(_ action: SessionAction) -> Color {
         switch action {
-        case .attach: swipeAttach
+        case .attach, .resolve: swipeAttach
         case .detach: swipeDetach
         case .pin, .unpin: swipePin
         case .rename: swipeRename

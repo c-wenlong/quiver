@@ -139,6 +139,7 @@ struct HubClient: Sendable {
         case "not_pinned": "That repo isn't pinned on this hub. Pin it with `swe gh repo add`."
         case "gh_unavailable": "GitHub's gh isn't signed in on the hub."
         case "open_pending": "An agent for this pull request is still starting in its worktree."
+        case "resolve_pending": "An agent for this issue is still starting in its worktree."
         case "needs_pairing": "Pair this phone with the hub to use the console."
         case "bad_key": "The hub didn't accept this phone's SSH key. Update the hub."
         default: fallback ?? "The hub answered with an error (\(status))."
@@ -185,6 +186,32 @@ struct HubClient: Sendable {
     static func repoPath(_ repo: String) -> String {
         repo.split(separator: "/", omittingEmptySubsequences: false)
             .map { encodeKey(String($0)) }.joined(separator: "/")
+    }
+
+    // MARK: Issues
+
+    /// `GET /v1/issues`: the hub's pinned repos, each with its open
+    /// issues. `refresh` skips the hub's one-minute `gh` cache.
+    func issues(refresh: Bool = false) async throws -> IssuesResponse {
+        try await send(request("GET", "/v1/issues",
+                               query: refresh ? ["refresh": "1"] : [:]))
+    }
+
+    /// `GET /v1/issues/<o>/<r>/<n>`: one issue in full — body, comments
+    /// and the prompt a resolve would start with.
+    func issue(repo: String, number: Int, refresh: Bool = false) async throws -> IssueResponse {
+        try await send(request("GET", "/v1/issues/\(Self.repoPath(repo))/\(number)",
+                               query: refresh ? ["refresh": "1"] : [:]))
+    }
+
+    /// `POST /v1/issues/resolve {repo, number, harness, prompt?}` → a
+    /// launch on branch `quiver/issue-<n>` in the issue's worktree; poll
+    /// `launch(_:)` for the session key, as for `startSession`. An empty
+    /// `prompt` lets the hub build its resolve brief.
+    func resolveIssue(repo: String, number: Int, harness: String, prompt: String) async throws -> LaunchStatus {
+        var body: [String: Any] = ["repo": repo, "number": number, "harness": harness]
+        if !prompt.isEmpty { body["prompt"] = prompt }
+        return try await send(request("POST", "/v1/issues/resolve", body: body))
     }
 
     func search(_ query: String, limit: Int = 50) async throws -> SearchResponse {

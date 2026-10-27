@@ -320,6 +320,8 @@ POST /v1/sessions/{id}/title         {title: string} → display name, "" clears
 POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill|detach {mode: now|when_idle|keep}
 POST /v1/sessions                    new session {machine, harness, cwd, prompt} → launch_id
 POST /v1/sessions/{id}/fork          {prompt?} new session from this one's history → launch_id
+GET  /v1/issues                      every pinned repo's open issues, each row plus `mine`
+GET  /v1/issues/<o>/<r>/<n>          one issue in full: row + body, comments, branch, worktree, suggested_prompt
 POST /v1/issues/resolve              {repo, number, harness, prompt?, context?} worktree + agent for a GitHub issue → launch_id
 GET  /v1/pulls                       every pinned repo's open PRs, each row plus `mine` and `review_requested`
 GET  /v1/pulls/<o>/<r>/<n>           one PR in full: row + body, per-check runs, reviews, worktree, suggested_prompt
@@ -547,6 +549,30 @@ failed `command.result` (echoing `launch_id`) turns the launch `failed`,
 and its `session.launched` names the new key. The hub refuses a
 satellite row without `can_fork`, which covers satellites too old to
 send the field or run the op.
+
+`GET /v1/issues` (`issues.py`) lists the open issues of every repo
+pinned on the hub: `{repos: [{name, status, issues, error?}], machine,
+machine_id, github, env_blocked?, fetched_at}`, the pulls shape. Each
+issue is the `swe gh issue --json` row — `number`, `title`, `state`,
+`author`, `labels`, `assignees`, `comments` (the count), `updated_at`,
+`url` — plus `mine`, true when the row's author is the hub's `gh` login,
+so the phone filters All/Mine without a second round trip. A row may
+also carry `agent_running` when the hub knows a resolve is already on
+the issue; clients show a chip only on `true` and treat its absence as
+none. One repo's failure stays in its `status`/`error` while the others
+answer; a missing or signed-out `gh` answers `env_blocked` before any
+fetch. The reads share the web app's 60-second `gh` cache
+(`webapp/pages/_github.py`), and a `refresh=1` bypasses it.
+
+`GET /v1/issues/<owner>/<repo>/<n>` answers one issue in full: the row
+plus `body`, `comments`, `branch` (`quiver/issue-<n>`), `worktree`
+(where a resolve puts the checkout) and `suggested_prompt` (the resolve
+brief `github/issues.build_prompt` writes — what the resolve sheet
+prefills). `400 bad_repo` for a malformed owner/repo, `422 bad_issue`
+for a non-number, `404 not_pinned` for a repo the hub doesn't pin; a
+`gh` failure answers `200 {status, issue: null, error}` — the row's
+`status` carries `gh`'s word (`not-found`, `upstream-error`), so the
+client renders it rather than a blank page.
 
 `POST /v1/issues/resolve {repo, number, harness, prompt?, context?}`
 (`issues.py`) starts an agent on a GitHub issue, on the hub machine

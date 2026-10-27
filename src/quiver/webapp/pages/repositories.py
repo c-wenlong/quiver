@@ -454,11 +454,12 @@ def blocked(pr: dict, auto: bool) -> tuple[str, str] | None:
 
 def _drop_repo(home, repo: str) -> None:
     """Forget the repo's board, focus surfaces and PR details — and the
-    phone's ``/v1/pulls`` reads — so every view of it reads GitHub
-    again after a merge."""
+    phone's ``/v1/pulls`` and ``/v1/issues`` reads — so every view of it
+    reads GitHub again after a merge."""
     hk = G.home_key(home)
     G.CACHE.drop(lambda k: isinstance(k, tuple) and len(k) > 2
-                 and k[0] in ("board", "focus", "pr", "pulls")
+                 and k[0] in ("board", "focus", "pr", "pulls",
+                              "issue", "issues")
                  and k[1] == hk and k[2] == repo)
 
 
