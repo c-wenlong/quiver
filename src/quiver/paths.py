@@ -200,6 +200,11 @@ def github_file_for(home: Path | None = None) -> Path:
     return config_dir_for(home) / "github.json"
 
 
+def config_file_for(home: Path | None = None) -> Path:
+    """The small credential-free ``config.json`` ``swe config`` edits."""
+    return config_dir_for(home) / "config.json"
+
+
 def backups_dir_for(home: Path | None = None) -> Path:
     return quiver_dir_for(home) / BACKUPS_SUBDIR
 
@@ -286,7 +291,7 @@ SKILL_CATALOGS_FILE = CONFIG_DIR / "skill_catalogs.json"
 SKILL_LINKS_FILE = CONFIG_DIR / "skill_links.json"
 PROVIDERS_REGISTRY_FILE = CONFIG_DIR / "providers.json"
 GITHUB_FILE = CONFIG_DIR / "github.json"
-CONFIG_FILE = CONFIG_DIR / "config.json"
+CONFIG_FILE = config_file_for()
 
 # Regenerable state: delete any of these and quiver rebuilds them.
 SESSION_CACHE_FILE = CACHE_DIR / "session_cache.json"
