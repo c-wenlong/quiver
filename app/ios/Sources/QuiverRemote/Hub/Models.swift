@@ -473,6 +473,98 @@ struct PullReview: Decodable, Hashable {
     let submittedAt: String?
 }
 
+// MARK: Issues (GET /v1/issues…)
+
+/// `GET /v1/issues`: each pinned repo's open issues.
+struct IssuesResponse: Decodable {
+    let repos: [IssueRepo]
+    let machine: String?
+    /// The hub's machine id, so the resolve sheet offers its harnesses.
+    let machineId: String?
+    let github: GhEnv?
+    /// Set when `gh` is missing or signed out on the hub: the page
+    /// shows this instead of the list.
+    let envBlocked: String?
+    let fetchedAt: Double?
+}
+
+/// One pinned repo's entry in the issues reply. A repo `gh` failed on
+/// lists with `status` and `error` and an empty `issues`.
+struct IssueRepo: Decodable, Identifiable {
+    let name: String
+    let status: String?
+    let issues: [IssueRow]?
+    let error: String?
+    var id: String { name }
+}
+
+/// One open issue's list row (`gh issue list`, shaped on the hub).
+struct IssueRow: Decodable, Identifiable {
+    let number: Int
+    let title: String?
+    /// "open" — the v1 list serves open issues only; closed may join
+    /// behind a filter later.
+    let state: String?
+    let author: String?
+    let labels: [String]?
+    let assignees: [String]?
+    /// The count, not the comments themselves.
+    let comments: Int?
+    /// ISO-8601 as `gh` prints it; `GitHubTime.date` parses it.
+    let updatedAt: String?
+    let url: String?
+    /// The hub's `gh` login authored it (the Mine filter).
+    let mine: Bool?
+    /// Sent only when the hub knows an agent is already on the issue;
+    /// absent on every older hub — the chip shows on `true` only.
+    let agentRunning: Bool?
+
+    var id: Int { number }
+}
+
+/// `GET /v1/issues/<o>/<r>/<n>`: one issue in full — the body, comments
+/// and the resolve fields the detail page and its sheet draw.
+struct IssueResponse: Decodable {
+    let github: GhEnv?
+    let repo: String?
+    let machine: String?
+    let machineId: String?
+    /// "ok", or `gh`'s outcome word ("not-found", "auth-required", …).
+    let status: String?
+    let issue: IssueDetail?
+    let error: String?
+    let fetchedAt: Double?
+}
+
+struct IssueDetail: Decodable {
+    let number: Int
+    let title: String?
+    let state: String?
+    let author: String?
+    let labels: [String]?
+    let assignees: [String]?
+    let url: String?
+    let body: String?
+    let createdAt: String?
+    let updatedAt: String?
+    let comments: [IssueComment]?
+    /// `quiver/issue-<n>`: the branch a resolve works on.
+    let branch: String?
+    /// Where the hub's `issue_worktree` puts the checkout — the resolve
+    /// sheet's "Starts in" line before the worktree exists.
+    let worktree: String?
+    /// The resolve brief the sheet's prompt field prefills.
+    let suggestedPrompt: String?
+}
+
+/// One issue comment; the v1 detail page counts them only.
+struct IssueComment: Decodable, Hashable {
+    let author: String?
+    let body: String?
+    let createdAt: String?
+    let url: String?
+}
+
 /// GitHub's ISO-8601 stamps (`updated_at` and friends), with or
 /// without fractional seconds.
 enum GitHubTime {

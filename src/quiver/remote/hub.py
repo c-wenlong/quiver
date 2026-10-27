@@ -1637,6 +1637,22 @@ class _Handler(BaseHTTPRequestHandler):
                 parts[2], args))
             return
 
+        if path == "/v1/issues":
+            # issues.py: every pinned repo's open issues, behind the cache.
+            self._send_json(*issues_mod.list(self._state, args))
+            return
+
+        if path.startswith("/v1/issues/"):
+            parts = path[len("/v1/issues/"):].split("/")
+            if len(parts) != 3:
+                self._send_error(404, "not_found", "unknown route")
+                return
+            # issues.py: one issue in full (body, comments, the prompt).
+            self._send_json(*issues_mod.detail(
+                self._state, unquote(parts[0]), unquote(parts[1]),
+                parts[2], args))
+            return
+
         if path == "/v1/events":
             after = self._sse_after(args)
             self._sse_stream(None, after, device_id=device_id)

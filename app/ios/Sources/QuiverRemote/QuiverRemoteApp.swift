@@ -47,8 +47,9 @@ struct MainTabs: View {
     @State private var sessionsPath: [Route] = []
     @State private var inboxPath: [Route] = []
     @State private var pullsPath: [Route] = []
+    @State private var issuesPath: [Route] = []
 
-    enum Tab { case sessions, inbox, pulls, usage }
+    enum Tab { case sessions, inbox, pulls, issues, usage }
 
     var body: some View {
         TabView(selection: $tab) {
@@ -71,6 +72,13 @@ struct MainTabs: View {
             .tabItem { Label("Pull requests", systemImage: "arrow.triangle.pull") }
             .tag(Tab.pulls)
 
+            NavigationStack(path: $issuesPath) {
+                IssuesView { issuesPath.append(.chat($0)) }
+                    .navigationDestination(for: Route.self, destination: destination)
+            }
+            .tabItem { Label("Issues", systemImage: "exclamationmark.circle") }
+            .tag(Tab.issues)
+
             NavigationStack {
                 UsageView()
             }
@@ -87,6 +95,10 @@ struct MainTabs: View {
             // Only the pulls stack pushes this: opening the session it
             // started pushes the chat on that same stack.
             PullDetailView(repo: repo, number: number) { pullsPath.append(.chat($0)) }
+        case .issue(let repo, let number):
+            // Same for the issues stack: a resolve's session pushes its
+            // chat there.
+            IssueDetailView(repo: repo, number: number) { issuesPath.append(.chat($0)) }
         }
     }
 }

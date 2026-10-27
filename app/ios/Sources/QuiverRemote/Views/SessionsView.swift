@@ -206,6 +206,9 @@ struct SessionsView: View {
             renaming = row
         case .fork:
             forking = row
+        case .resolve:
+            // Issues rows wire their own swipe; no session row offers it.
+            break
         }
     }
 
@@ -366,8 +369,11 @@ struct HubChip: View {
 }
 
 /// What a tab's navigation stack can push. `pull` only ever appears on
-/// the Pull requests stack.
-enum Route: Hashable { case chat(String), pull(repo: String, number: Int) }
+/// the Pull requests stack, `issue` on the Issues stack.
+enum Route: Hashable {
+    case chat(String), pull(repo: String, number: Int),
+         issue(repo: String, number: Int)
+}
 
 /// A search hit: the session row, then the matching transcript line with
 /// the matched words in the primary colour.
@@ -408,7 +414,7 @@ private struct SearchTrigger: Equatable {
 }
 
 /// A scroll of the list closes a swiped-open row, as `List` does.
-private struct CloseSwipesOnScroll: ViewModifier {
+struct CloseSwipesOnScroll: ViewModifier {
     let swipes: SwipeCoordinator
 
     func body(content: Content) -> some View {
