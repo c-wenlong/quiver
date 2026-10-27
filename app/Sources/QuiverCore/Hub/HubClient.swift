@@ -138,6 +138,41 @@ public struct HubClient: Sendable {
         return status == 202
     }
 
+    /// The machines the hub knows, its own first among them.
+    public func machines() async throws -> [HubMachine] {
+        try await send(request("GET", "/v1/machines"), as: HubMachinesResponse.self).machines
+    }
+
+    /// The JSON `POST /v1/issues/resolve` carries. `prompt` and
+    /// `context` go only when they hold text: an absent prompt means
+    /// "use your suggested one".
+    public static func resolveIssueBody(repo: String, number: Int, harness: String,
+                                        prompt: String?, context: String?) -> [String: any Sendable] {
+        var body: [String: any Sendable] = ["repo": repo, "number": number, "harness": harness]
+        if let prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            body["prompt"] = prompt
+        }
+        if let context, !context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            body["context"] = context
+        }
+        return body
+    }
+
+    /// Starts a session on the hub machine to resolve issue `number`:
+    /// the hub makes the `quiver/issue-<n>` worktree, sends the first
+    /// prompt and titles the session. Answers with the launch to poll.
+    public func resolveIssue(repo: String, number: Int, harness: String,
+                             prompt: String?, context: String?) async throws -> HubLaunchStatus {
+        try await send(request("POST", "/v1/issues/resolve",
+                               body: Self.resolveIssueBody(repo: repo, number: number, harness: harness,
+                                                           prompt: prompt, context: context)))
+    }
+
+    /// Where launch `id` stands.
+    public func launch(_ id: String) async throws -> HubLaunchStatus {
+        try await send(request("GET", "/v1/launches/\(Self.encodeKey(id))"))
+    }
+
     /// Trades a one-time token from `swe remote pair` for a credential.
     public func pair(token: String, name: String) async throws -> HubCredential {
         try await send(request("POST", "/v1/pair", body: ["token": token, "name": name]))

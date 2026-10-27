@@ -31,7 +31,12 @@ subtitle, and a footer with Skip setup, Back and Continue.
    with **Install…**, which opens swe's install commands for it, one per
    package manager. Each has **Install**, which runs it on the hub, and
    Copy; a manager that isn't on the hub's PATH is dimmed and says so in
-   place of Install. While one runs it reads "Installing…" and the other
+   place of Install. Under them sits the provider's "Get … from {host}"
+   vendor link (`website`) and, when the desktop app is on the machine
+   while the CLI is not, a note naming it (`app`) — both from the same
+   `swe install` catalog the Mac's `ProviderSetupSheet` reads. An agent
+   with no known install method gets a download card to the vendor site
+   instead. While one runs it reads "Installing…" and the other
    Install buttons wait, across a refresh or a trip to another page. A
    failure shows under the list with the end of the installer's output (in
    a card above the grid if the agent now reads as found anyway); a
@@ -91,7 +96,9 @@ refresh button reads everything again and starts the steps over.
   commands or paths. It also counts the harnesses setup's discovery would
   register (`preview.harness`), see below.
 - `install` (only when not installed) is that harness's `methods` from
-  `swe install --json`.
+  `swe install --json`, `website` its vendor link from the same catalog
+  (an http(s) URL or absent), and `app` the detected desktop app when one
+  is installed while the CLI is not.
 - `starred` is the registry's starred harnesses, in pin order. `error`
   is set when the registry couldn't be read.
 - `preview` is `swe setup --json`'s `data`, built in process by

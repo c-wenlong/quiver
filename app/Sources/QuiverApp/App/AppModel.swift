@@ -40,6 +40,28 @@ final class AppModel {
         }
     }
 
+    /// A hub session key whose chat the Sessions page opens next, then
+    /// clears. Set through `openSessionChat(key:)`.
+    var pendingChat: String?
+
+    /// Switches to Sessions and opens `key`'s chat there, for a session
+    /// started from elsewhere in the app (Resolve with agent). The page
+    /// switch waits until the card that asked has closed: `selection`
+    /// stays put while one covers the window.
+    func openSessionChat(key: String) {
+        pendingChat = key
+        whenUncovered { [weak self] in self?.selection = .sessions }
+    }
+
+    private func whenUncovered(_ action: @escaping @MainActor () -> Void) {
+        guard SheetOverlayRegistry.shared.anyCovered else { return action() }
+        withObservationTracking {
+            _ = SheetOverlayRegistry.shared.anyCovered
+        } onChange: {
+            Task { @MainActor [weak self] in self?.whenUncovered(action) }
+        }
+    }
+
     /// The sidebar pinned to an icon rail; hovering it floats it open.
     var sidebarCollapsed = UserDefaults.standard.bool(forKey: "sidebarCollapsed") {
         didSet { UserDefaults.standard.set(sidebarCollapsed, forKey: "sidebarCollapsed") }

@@ -70,6 +70,14 @@ function esc(s) {
   return d.innerHTML;
 }
 
+// RemoteMessage kinds the transcript styles. The hub already drops
+// unknown kinds at ingest; this is the second fence so a stale hub or
+// hostile journal entry can't smuggle classes or markup into a bubble.
+const MSG_KINDS = new Set([
+  "user", "assistant", "thinking", "tool_use", "tool_result",
+  "compaction", "system", "approval", "error",
+]);
+
 /* Minimal markdown-ish rendering: escape everything, then restore
  * fenced code blocks, inline code and bold. */
 function md(text) {
@@ -359,6 +367,43 @@ function renderSessions() {
   }
 }
 
+/* Harness logos, picked the way the iPhone app's HarnessIcon picks
+ * them: the hub's /harness-<id>.svg resolves the aliases and prefers
+ * the colour file, so probing <id>-color first and <id> after finds
+ * the logo and says whether it needs inverting. A probe runs once per
+ * id; a harness with no logo keeps its name. */
+const logoCache = {}; // id -> "wait" | {src, mono} | null
+
+function probeLogo(harness) {
+  const id = (harness || "").toLowerCase();
+  if (!id || logoCache[id] !== undefined) return;
+  logoCache[id] = "wait";
+  const color = new Image();
+  color.onload = () => logoReady(id, { src: color.src, mono: false });
+  color.onerror = () => {
+    const mono = new Image();
+    mono.onload = () => logoReady(id, { src: mono.src, mono: true });
+    mono.onerror = () => logoReady(id, null);
+    mono.src = `/harness-${encodeURIComponent(id)}.svg`;
+  };
+  color.src = `/harness-${encodeURIComponent(id)}-color.svg`;
+}
+
+function logoReady(id, logo) {
+  logoCache[id] = logo;
+  if (state.view === "sessions") renderSessions();
+  else if (state.view === "inbox") renderInbox();
+  updateWorking();
+}
+
+/* The logo <img> for a harness id once its probe has landed; "" while
+   it is in flight or when the harness has no logo (the name shows). */
+function harnessLogoImg(harness, cls, name) {
+  const logo = logoCache[(harness || "").toLowerCase()];
+  if (!logo || typeof logo === "string") return "";
+  return `<img class="${cls}${logo.mono ? " mono" : ""}" src="${escAttr(logo.src)}" alt="${escAttr(name)}">`;
+}
+
 /* One row: the card, with its swipe actions behind it (a right swipe
  * shows `lead`, a left swipe `trail`) and a ⋯ button that opens the
  * same actions in a sheet. Taps, swipes and the menu are wired once on
@@ -377,7 +422,7 @@ function sessionRowHtml(r, place) {
       <div class="dot st ${esc(st)}"></div>
       <div class="body">
         <div class="t">${esc(r.title || "(untitled)")}</div>
-        <div class="sub">${esc(r.agent || r.harness)} · ${esc(STATUS_LABEL[st] || st || "idle")} · ${esc(when)}${place ? ` · ${esc(place)}` : ""}</div>
+        <div class="sub">${harnessLogoImg(r.harness, "sub-logo", r.agent || r.harness) || esc(r.agent || r.harness)} · ${esc(STATUS_LABEL[st] || st || "idle")} · ${esc(when)}${place ? ` · ${esc(place)}` : ""}</div>
         ${detachPending(r.key) ? `<div class="sub note">Detaching when it finishes</div>` : ""}
       </div>
       <div class="own">${esc(r.ownership || "observed")}</div>
@@ -412,6 +457,7 @@ async function loadSessions() {
   if (status !== 200 || !data) { setConn("err"); return; }
   state.sessions = overlayRowEvents(overlayPins(data.sessions || [], mark), evMark);
   state.machines = data.machines || [];
+  for (const r of state.sessions) probeLogo(r.harness);
   settleDetaches();
   setConn(true);
   if (state.view === "sessions") renderSessions();
@@ -1491,18 +1537,49 @@ function dropPending() {
   state.pending = [];
 }
 
-// Three pulsing dots under the last message while the agent is
-// mid-turn, a send waits for its reply, or messages are still being
-// revealed.
+// The harness's logo (or its name) beside three pulsing dots under the
+// last message while the agent is mid-turn, a send waits for its
+// reply, or messages are still being revealed.
 function updateWorking() {
   const row = state.sessions.find((r) => r.key === state.currentKey);
   const on = !!state.currentKey &&
     ((row && row.status === "active") || state.awaitingReply || state.pending.length > 0);
   updateSendButton();
   const dots = el("chat-working");
+  if (on) setWorkingLead(row);
   if (dots.classList.contains("hidden") === !on) return;
   dots.classList.toggle("hidden", !on);
   if (on) scrollBottom();
+}
+
+/* The lead at the left of the working pill: the session's harness
+   logo once its probe lands, its name when the harness has none, and
+   just the dots while the probe is still in flight. */
+function setWorkingLead(row) {
+  const box = el("chat-working");
+  const name = (row && (row.agent || row.harness)) || "";
+  const id = ((row && row.harness) || "").toLowerCase();
+  if (id) probeLogo(id);
+  const logo = id ? logoCache[id] : null;
+  const kind = !id ? "none" : logo === null ? "name" : logo && logo.src ? "logo" : "wait";
+  const sig = `${id}|${kind}|${name}`;
+  if (box.dataset.lead === sig) return;
+  box.dataset.lead = sig;
+  box.setAttribute("aria-label", `${name || "agent"} is working`);
+  const old = box.querySelector(".work-lead");
+  if (old) old.remove();
+  if (kind === "name") {
+    const span = document.createElement("span");
+    span.className = "work-lead work-name";
+    span.textContent = name;
+    box.prepend(span);
+  } else if (kind === "logo") {
+    const img = new Image();
+    img.className = `work-lead work-logo${logo.mono ? " mono" : ""}`;
+    img.alt = "";
+    img.src = logo.src;
+    box.prepend(img);
+  }
 }
 
 /* ── diff pane ──────────────────────────────────────────────
@@ -1682,7 +1759,9 @@ function appendMessage(msg, seq, live = true) {
   }
   if (live && kind !== "user" && kind !== "tool_result") state.awaitingReply = false;
   const div = document.createElement("div");
-  div.className = `msg ${kind}`;
+  // A kind off the known list gets no CSS class — a hostile string
+  // could otherwise add one (e.g. `user`, faking your own bubble).
+  div.className = `msg ${MSG_KINDS.has(kind) ? kind : "unknown"}`;
   const role = { user: "you", assistant: "agent", thinking: "thought", error: "error" }[kind];
   if (kind === "compaction") {
     div.innerHTML = `<div class="text">— context compacted —</div>`;
@@ -1735,7 +1814,7 @@ function appendMessage(msg, seq, live = true) {
       });
     });
   } else {
-    div.innerHTML = `<div class="role">${role || kind}</div><div class="text">${md(msg.text)}</div>`;
+    div.innerHTML = `<div class="role">${esc(role || kind)}</div><div class="text">${md(msg.text)}</div>`;
   }
   if (live) div.classList.add("arrive");
   log.appendChild(div);
@@ -1828,10 +1907,19 @@ async function loadInbox() {
   const { status, data } = await api("/v1/inbox");
   if (status !== 200 || !data) return;
   const items = data.items || [];
+  state.inboxItems = items;
   state.inboxCount = items.length;
+  for (const it of items) probeLogo(it.harness);
   const badge = el("inbox-badge");
   badge.classList.toggle("hidden", !items.length);
   badge.textContent = items.length || "";
+  renderInbox();
+}
+
+/* Repaints the inbox rows from the cached list — logo probes landing
+ * call this instead of loadInbox so an image arrival never refetches. */
+function renderInbox() {
+  const items = state.inboxItems || [];
   if (state.view !== "inbox") return;
   el("inbox-list").innerHTML = items.length
     ? items.map((it) => `
@@ -1839,7 +1927,7 @@ async function loadInbox() {
         <div class="dot st ${esc(it.status)}"></div>
         <div class="body">
           <div class="t">${esc(it.title || "(untitled)")}</div>
-          <div class="sub">${esc(it.agent || it.harness)} · ${esc(STATUS_LABEL[it.status] || it.status)} · ${esc(relTime(it.last_active_at || 0))}</div>
+          <div class="sub">${harnessLogoImg(it.harness, "sub-logo", it.agent || it.harness) || esc(it.agent || it.harness)} · ${esc(STATUS_LABEL[it.status] || it.status)} · ${esc(relTime(it.last_active_at || 0))}</div>
         </div>
       </div>`).join("")
     : `<p class="dim">Nothing needs you.</p>`;

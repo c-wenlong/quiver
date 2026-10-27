@@ -1,4 +1,4 @@
-"""notify.py: config, action credential, ntfy formatting, bus loop."""
+"""notify.py: config, scoped approval tokens, ntfy formatting, bus loop."""
 
 import io
 import json
@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from quiver.remote import notify, pairing, protocol
+from quiver.remote import notify, pairing, protocol, sshkeys
 from quiver.remote.hub import GLOBAL_KEY, HubState
 
 
@@ -59,40 +59,159 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
 
-class TestActionCredential(unittest.TestCase):
+class TestReady(unittest.TestCase):
+    def test_ready_requires_enabled_url_topic(self):
+        self.assertTrue(notify.ready(
+            {"enabled": True, "url": "u", "topic": "t"}))
+        for cfg in (
+            {},
+            {"enabled": False, "url": "u", "topic": "t"},
+            {"enabled": True, "topic": "t"},
+            {"enabled": True, "url": "u"},
+            {"enabled": True, "url": "", "topic": "t"},
+        ):
+            self.assertFalse(notify.ready(cfg), cfg)
+
+
+class TestApprovalTokens(unittest.TestCase):
+    def setUp(self):
+        self.tokens = notify.ApprovalTokens()
+
+    def test_consume_bound_request_once(self):
+        tok = self.tokens.mint("k1", "r1")
+        self.assertTrue(self.tokens.consume(tok, "k1", "r1"))
+        # Single use: a second spend fails even with the right binding.
+        self.assertFalse(self.tokens.consume(tok, "k1", "r1"))
+
+    def test_wrong_session_or_request_rejected(self):
+        tok = self.tokens.mint("k1", "r1")
+        self.assertFalse(self.tokens.consume(tok, "k2", "r1"))
+        self.assertFalse(self.tokens.consume(tok, "k1", "r2"))
+        self.assertFalse(self.tokens.consume("bogus", "k1", "r1"))
+
+    def test_expired_token_rejected(self):
+        now = time.time()
+        tok = self.tokens.mint("k1", "r1", now=now)
+        later = now + self.tokens.TTL_S + 1
+        self.assertFalse(self.tokens.consume(tok, "k1", "r1", now=later))
+
+    def test_remint_same_request_supersedes(self):
+        old = self.tokens.mint("k1", "r1")
+        new = self.tokens.mint("k1", "r1")
+        self.assertFalse(self.tokens.consume(old, "k1", "r1"))
+        self.assertTrue(self.tokens.consume(new, "k1", "r1"))
+
+    def test_other_requests_tokens_coexist(self):
+        # Codex app-server approvals overlap on one session: minting B
+        # must not kill A's buttons.
+        a = self.tokens.mint("k1", "r1")
+        b = self.tokens.mint("k1", "r2")
+        self.assertTrue(self.tokens.consume(a, "k1", "r1"))
+        self.assertTrue(self.tokens.consume(b, "k1", "r2"))
+        # Other sessions' tokens are untouched either way.
+        other = self.tokens.mint("k2", "r9")
+        self.assertTrue(self.tokens.consume(other, "k2", "r9"))
+
+    def test_drop_retires_only_the_resolved_request(self):
+        a = self.tokens.mint("k1", "r1")
+        b = self.tokens.mint("k1", "r2")
+        self.tokens.drop("k1", "r1")
+        self.assertFalse(self.tokens.consume(a, "k1", "r1"))
+        self.assertTrue(self.tokens.consume(b, "k1", "r2"))
+
+    def test_drop_session_retires_tokens(self):
+        tok = self.tokens.mint("k1", "r1")
+        self.tokens.drop_session("k1")
+        self.assertFalse(self.tokens.consume(tok, "k1", "r1"))
+
+    def test_burn_on_mismatch(self):
+        # A mismatched request_id is a failed spend, not a free probe:
+        # the token is gone for its real binding too.
+        tok = self.tokens.mint("k1", "r1")
+        self.assertFalse(self.tokens.consume(tok, "k1", "rX"))
+        self.assertFalse(self.tokens.consume(tok, "k1", "r1"))
+
+
+class TestRetireActionCredential(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
-        self.cfg = _cfg(self.home)
 
-    def test_mints_device_row_and_stores(self):
-        cred = notify._action_credential(self.home, self.cfg)
-        self.assertEqual(len(cred) > 20, True)
-        device_id = self.cfg["action_device_id"]
+    def _legacy_cfg(self):
+        device_id = "deadbeef01"
+        cred = "legacy-cred"
+        with pairing._state_lock(self.home):
+            devices = pairing.load_devices(self.home)
+            devices[device_id] = {
+                "name": "ntfy-actions",
+                "credential_hash": pairing._hash_credential(cred),
+                "created_at": time.time(),
+                "last_seen_at": None,
+                "revoked_at": None,
+            }
+            pairing._save_devices(self.home, devices)
+        cfg = _cfg(self.home, action_device_id=device_id,
+                   action_credential=cred)
+        return cfg, device_id
+
+    def test_revokes_row_and_scrubs_config(self):
+        cfg, device_id = self._legacy_cfg()
+        notify.retire_action_credential(self.home, cfg)
         row = pairing.load_devices(self.home)[device_id]
-        self.assertEqual(row["name"], "ntfy-actions")
-        self.assertEqual(row["credential_hash"],
-                         pairing._hash_credential(cred))
-        # Persisted credential survives a reload.
-        self.assertEqual(notify.load_config(self.home)
-                         ["action_credential"], cred)
+        self.assertTrue(row["revoked_at"])
+        # The credential no longer resolves as a device.
+        self.assertIsNone(
+            pairing.device_for_credential(self.home, "legacy-cred"))
+        saved = notify.load_config(self.home)
+        self.assertNotIn("action_device_id", saved)
+        self.assertNotIn("action_credential", saved)
 
-    def test_reuses_existing_device(self):
-        cred = notify._action_credential(self.home, self.cfg)
-        again = notify._action_credential(self.home, self.cfg)
-        self.assertEqual(cred, again)
-        self.assertEqual(
-            len(pairing.load_devices(self.home)), 1)
+    def test_noop_without_legacy_keys(self):
+        cfg = _cfg(self.home)
+        notify.retire_action_credential(self.home, cfg)
+        self.assertEqual(pairing.load_devices(self.home), {})
 
-    def test_remints_after_revocation(self):
-        notify._action_credential(self.home, self.cfg)
-        old_id = self.cfg["action_device_id"]
-        pairing.revoke_device(self.home, old_id)
-        new_cred = notify._action_credential(self.home, self.cfg)
-        self.assertNotEqual(self.cfg["action_device_id"], old_id)
-        devices = pairing.load_devices(self.home)
-        self.assertEqual(len(devices), 2)
-        self.assertTrue(devices[old_id]["revoked_at"])
-        self.assertTrue(new_cred)
+    def test_unknown_device_still_scrubs(self):
+        cfg = _cfg(self.home, action_device_id="ghost",
+                   action_credential="c")
+        notify.retire_action_credential(self.home, cfg)
+        saved = notify.load_config(self.home)
+        self.assertNotIn("action_credential", saved)
+
+    def test_failed_revoke_keeps_fields_for_retry(self):
+        # Revoking before the save fails must not scrub the config —
+        # the fields are the only handle the next start has, and the
+        # exposed credential would stay live forever without them.
+        cfg, device_id = self._legacy_cfg()
+        with patch.object(
+            pairing, "revoke_device", side_effect=OSError("disk full")
+        ):
+            with patch("sys.stderr", io.StringIO()) as err:
+                notify.retire_action_credential(self.home, cfg)
+        self.assertIn("could not revoke", err.getvalue())
+        self.assertFalse(
+            pairing.load_devices(self.home)[device_id]["revoked_at"])
+        saved = notify.load_config(self.home)
+        self.assertEqual(saved["action_device_id"], device_id)
+        self.assertEqual(saved["action_credential"], "legacy-cred")
+        # The credential still resolves — retirement must retry.
+        self.assertIsNotNone(
+            pairing.device_for_credential(self.home, "legacy-cred"))
+
+    def test_keys_not_synced_still_scrubs(self):
+        # KeysNotSynced is raised *after* the revocation is saved, so
+        # the credential is dead and the fields can go; the leftover
+        # authorized_keys line is warned about, not retried here.
+        cfg, device_id = self._legacy_cfg()
+        with patch.object(
+            pairing, "revoke_device",
+            side_effect=sshkeys.KeysNotSynced("boom"),
+        ):
+            with patch("sys.stderr", io.StringIO()) as err:
+                notify.retire_action_credential(self.home, cfg)
+        self.assertIn("SSH key", err.getvalue())
+        saved = notify.load_config(self.home)
+        self.assertNotIn("action_device_id", saved)
+        self.assertNotIn("action_credential", saved)
 
 
 class TestHandle(unittest.TestCase):
@@ -108,7 +227,7 @@ class TestHandle(unittest.TestCase):
     def test_approval_event_sends_actions(self):
         ev = {"type": "approval.requested", "session": "k1",
               "data": {"request_id": "req-1", "prompt": "allow rm?"}}
-        self.n._handle(ev, self.cfg, "CRED")
+        self.n._handle(ev, self.cfg)
         self.assertEqual(len(self.posts), 1)
         post = self.posts[0]
         self.assertEqual(post["topic"], "qw")
@@ -122,11 +241,44 @@ class TestHandle(unittest.TestCase):
         self.assertEqual(act["method"], "POST")
         self.assertEqual(
             act["url"], "http://h:8477/v1/sessions/k1/approval")
-        self.assertEqual(
-            act["headers"]["Authorization"], "Bearer CRED")
         body = json.loads(act["body"])
         self.assertEqual(body, {"request_id": "req-1",
                                 "decision": "allow"})
+
+    def test_action_bearer_is_scoped_single_use_token(self):
+        ev = {"type": "approval.requested", "session": "k1",
+              "data": {"request_id": "req-1", "prompt": "allow rm?"}}
+        self.n._handle(ev, self.cfg)
+        # All three buttons share one minted token, not a device cred.
+        auths = {
+            a["headers"]["Authorization"] for a in self.posts[0]["actions"]
+        }
+        self.assertEqual(len(auths), 1)
+        token = auths.pop().removeprefix("Bearer ")
+        # Bound to exactly this (session, request_id); one spend.
+        self.assertTrue(
+            self.state.approval_tokens.consume(token, "k1", "req-1"))
+        self.assertFalse(
+            self.state.approval_tokens.consume(token, "k1", "req-1"))
+        # It never resolves as a device credential.
+        self.assertIsNone(
+            pairing.device_for_credential(self.home, token))
+
+    def test_approval_prompt_redacted(self):
+        ev = {"type": "approval.requested", "session": "k1",
+              "data": {"request_id": "req-1",
+                       "prompt": 'Allow Bash: curl -H "Authorization: '
+                                 'Bearer sk-abcdefghijklmnop" x'}}
+        self.n._handle(ev, self.cfg)
+        msg = self.posts[0]["message"]
+        self.assertNotIn("sk-abcdefghijklmnop", msg)
+        self.assertIn("[REDACTED]", msg)
+
+    def test_approval_prompt_capped(self):
+        ev = {"type": "approval.requested", "session": "k1",
+              "data": {"request_id": "req-1", "prompt": "x" * 500}}
+        self.n._handle(ev, self.cfg)
+        self.assertEqual(len(self.posts[0]["message"]), 280)
 
     def test_action_url_escapes_session_key(self):
         act = self.n._action("a b@c/d", "r", "allow", "Allow", "c")
@@ -142,7 +294,7 @@ class TestHandle(unittest.TestCase):
         for kind, label, prio, tag in cases:
             self.posts.clear()
             self.n._handle({"type": "notify", "session": "k1",
-                            "data": {"kind": kind}}, self.cfg, "c")
+                            "data": {"kind": kind}}, self.cfg)
             self.assertEqual(len(self.posts), 1, kind)
             post = self.posts[0]
             self.assertIn(label.lower(), post["title"])
@@ -151,12 +303,12 @@ class TestHandle(unittest.TestCase):
 
     def test_unknown_notify_kind_skipped(self):
         self.n._handle({"type": "notify", "session": "k1",
-                        "data": {"kind": "mystery"}}, self.cfg, "c")
+                        "data": {"kind": "mystery"}}, self.cfg)
         self.assertEqual(self.posts, [])
 
     def test_unrelated_event_skipped(self):
         self.n._handle({"type": "message.appended", "session": "k1",
-                        "data": {}}, self.cfg, "c")
+                        "data": {}}, self.cfg)
         self.assertEqual(self.posts, [])
 
     def test_session_title_prefers_catalog(self):
@@ -227,32 +379,49 @@ class TestRun(unittest.TestCase):
             target=lambda: (n.run(), done.set()), daemon=True).start()
         self.assertTrue(done.wait(3))
 
+    def test_partial_config_leaves_no_dead_subscriber(self):
+        # enabled but missing url/topic: run() must not leave the queue
+        # it subscribed sitting on the bus filling to the drop cap.
+        for cfg in ({"enabled": True},
+                    {"enabled": True, "url": "https://n.test"},
+                    {"enabled": True, "topic": "t"}):
+            notify.save_config(self.home, cfg)
+            state = _state(self.home)
+            n = notify.Notifier(state, "http://h:1",
+                                subscribe_key=GLOBAL_KEY)
+            n.subscribe()  # start() subscribes before producers spawn
+            done = threading.Event()
+            threading.Thread(
+                target=lambda: (n.run(), done.set()),
+                daemon=True).start()
+            self.assertTrue(done.wait(3))
+            self.assertEqual(state.bus._subs, [])
+
     def test_run_consumes_and_unsubscribes(self):
         _cfg(self.home)
         state = _state(self.home)
         n = notify.Notifier(state, "http://h:1", subscribe_key=GLOBAL_KEY)
         posts = []
         n._post = lambda cfg, payload: posts.append(payload)
-        with patch.object(notify, "_action_credential", return_value="c"):
-            t = threading.Thread(target=n.run, daemon=True)
-            t.start()
-            # Wait for subscribe before publishing.
-            for _ in range(100):
-                if state.bus._subs:
-                    break
-                time.sleep(0.01)
-            state.emit("k1", protocol.event(
-                "notify", "k1", "m1", {"kind": "finished"}))
-            for _ in range(100):
-                if posts:
-                    break
-                time.sleep(0.01)
-            self.assertEqual(len(posts), 1)
-            self.assertIn("finished", posts[0]["title"].lower())
-            state._stop.set()
-            t.join(timeout=3)
-            self.assertFalse(t.is_alive())
-            self.assertEqual(state.bus._subs, [])
+        t = threading.Thread(target=n.run, daemon=True)
+        t.start()
+        # Wait for subscribe before publishing.
+        for _ in range(100):
+            if state.bus._subs:
+                break
+            time.sleep(0.01)
+        state.emit("k1", protocol.event(
+            "notify", "k1", "m1", {"kind": "finished"}))
+        for _ in range(100):
+            if posts:
+                break
+            time.sleep(0.01)
+        self.assertEqual(len(posts), 1)
+        self.assertIn("finished", posts[0]["title"].lower())
+        state._stop.set()
+        t.join(timeout=3)
+        self.assertFalse(t.is_alive())
+        self.assertEqual(state.bus._subs, [])
 
     def test_early_subscribe_captures_events_before_run(self):
         # HubState.start() calls subscribe() before the producers spawn —
@@ -267,16 +436,14 @@ class TestRun(unittest.TestCase):
         state.emit("k1", protocol.event(
             "approval.requested", "k1", "m1",
             {"request_id": "req-early", "prompt": "run it?"}))
-        with patch.object(notify, "_action_credential",
-                          return_value="c"):
-            t = threading.Thread(target=n.run, daemon=True)
-            t.start()
-            for _ in range(100):
-                if posts:
-                    break
-                time.sleep(0.01)
-            state._stop.set()
-            t.join(timeout=3)
+        t = threading.Thread(target=n.run, daemon=True)
+        t.start()
+        for _ in range(100):
+            if posts:
+                break
+            time.sleep(0.01)
+        state._stop.set()
+        t.join(timeout=3)
         self.assertEqual(len(posts), 1)
         self.assertIn("approval", posts[0]["title"])
 
@@ -291,24 +458,23 @@ class TestRun(unittest.TestCase):
             raise OSError("ntfy down")
 
         n._post = boom
-        with patch.object(notify, "_action_credential", return_value="c"):
-            t = threading.Thread(target=n.run, daemon=True)
-            t.start()
-            for _ in range(100):
-                if state.bus._subs:
-                    break
-                time.sleep(0.01)
-            for _ in range(2):
-                state.emit("k1", protocol.event(
-                    "notify", "k1", "m1", {"kind": "finished"}))
-            for _ in range(100):
-                if len(calls) >= 2:
-                    break
-                time.sleep(0.01)
-            self.assertEqual(len(calls), 2)
-            self.assertTrue(t.is_alive())
-            state._stop.set()
-            t.join(timeout=3)
+        t = threading.Thread(target=n.run, daemon=True)
+        t.start()
+        for _ in range(100):
+            if state.bus._subs:
+                break
+            time.sleep(0.01)
+        for _ in range(2):
+            state.emit("k1", protocol.event(
+                "notify", "k1", "m1", {"kind": "finished"}))
+        for _ in range(100):
+            if len(calls) >= 2:
+                break
+            time.sleep(0.01)
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(t.is_alive())
+        state._stop.set()
+        t.join(timeout=3)
 
 
 class TestCmdNotify(unittest.TestCase):

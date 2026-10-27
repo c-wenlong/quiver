@@ -1,6 +1,10 @@
 # Remote control
 
-Status: design proposal. Nothing here exists yet.
+Status: shipped. R1–R5 all landed — `swe remote serve|setup|agent|pair|
+status|devices|attach|notify|ssh`, the hub-served PWA, the iOS app and
+the macOS app's Settings › Remote checklist all exist. This doc stays as
+the design record: what follows describes the build as it is, and the
+milestones table at the end is history, not a plan.
 
 Watch and steer CLI coding sessions (Claude Code, Codex, opencode and the
 rest of the registry) from a phone. Read the chat, send prompts, see new
@@ -316,6 +320,7 @@ POST /v1/sessions/{id}/title         {title: string} → display name, "" clears
 POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill|detach {mode: now|when_idle|keep}
 POST /v1/sessions                    new session {machine, harness, cwd, prompt} → launch_id
 POST /v1/sessions/{id}/fork          {prompt?} new session from this one's history → launch_id
+POST /v1/issues/resolve              {repo, number, harness, prompt?, context?} worktree + agent for a GitHub issue → launch_id
 GET  /v1/folders?path=                subfolders of one folder on the hub machine (new-session browser)
 GET  /v1/sessions/{id}/files?q=     paths under the session's folder for the prompt box's @ menu
 GET  /v1/launches/{launch_id}        pending|started|failed; started carries the session key
@@ -325,6 +330,7 @@ GET  /v1/app/overview                the web app's Overview (docs/web-app.md)
 GET  /v1/app/sessions                the web app's Sessions: catalog rows + usage
 GET  /v1/app/harnesses               the web app's Harnesses: swe list --scope=all rows
 GET  /app/                           the web app's pages, static
+GET  /harness-<id>.svg               a harness's bundled logo, static (aliases resolve, colour wins)
 POST /v1/inbox/dismiss               {key, last_active_at} → cleared for this device
 POST /v1/pair                        QR payload → device credential; optional {device:{kind,model,client,os}} metadata
 GET  /v1/devices/me                  this device's row: kind, model, client, os, node_name, display_name, timestamps
@@ -536,6 +542,40 @@ failed `command.result` (echoing `launch_id`) turns the launch `failed`,
 and its `session.launched` names the new key. The hub refuses a
 satellite row without `can_fork`, which covers satellites too old to
 send the field or run the op.
+
+`POST /v1/issues/resolve {repo, number, harness, prompt?, context?}`
+(`issues.py`) starts an agent on a GitHub issue, on the hub machine
+only. It answers what a client can fix at once with a 422: `bad_command`
+for a bad body, `not_pinned` for a repo not pinned on the hub (`swe gh
+repo add`), `not_launchable`, `launch_failed` (no tmux), and
+`gh_unavailable` when `gh` is missing or signed out, with the message
+saying which. A second resolve of an issue whose last one is still
+starting (preparing, or its pane not yet adopted) gets `409
+resolve_pending`: adoption has only the folder and start time to go on,
+so two launches waiting in one checkout could claim each other's
+sessions. Otherwise it answers `202 {launch_id, state: "pending",
+note: "preparing worktree"}` and does the rest on a thread, like a
+new-session launch. It reads the issue, then runs `swe gh issue
+worktree`'s `manage.issue_worktree`: the repo's bare mirror (cloned on
+first use), a fetch of its default branch, and branch
+`quiver/issue-<n>` checked out under
+`~/.quiver/worktrees/<owner>__<repo>-issue<n>`. A second resolve of the
+same issue resumes in that checkout. The harness then starts there under
+tmux with the client's `prompt`, or the one `swe gh issue view` shows as
+`suggested_prompt` when none was sent. A non-empty `context` is added as
+a "Context for this run" block either way, unless the client's prompt
+already holds that text.
+
+While the launch is pending, `GET /v1/launches/{launch_id}` reads as
+progress: `note` steps through "Cloning mirror…" (first run only),
+"Creating worktree quiver/issue-<n>…" and "Starting <harness>…", and
+`cwd` becomes the worktree. A failure at any step settles it `failed`
+with a readable note. The entry also carries `title`, `<owner>/<repo>#<n>
+<issue title>`: when `session.launched` adopts the new session, the hub
+stores that as the session's display name (as `POST
+/v1/sessions/{id}/title` would) and emits `session.meta` on the global
+stream only, since an event in the session's own journal before its
+tailer starts would make the tailer skip the first turn.
 
 `GET /v1/folders?path=` lists one folder's subfolders on the hub machine
 for the phone's folder browser: `{path, parent, folders: [{name, path}],
@@ -841,6 +881,16 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   channel instead of trusting sshd's first answer. Tailscale SSH is not
   used: its server side needs the open-source `tailscaled` on macOS,
   not Tailscale.app.
+- Notifications leave the tailnet: whatever an ntfy body carries is
+  readable by the ntfy host (and ntfy.sh's relay for iOS delivery), so
+  no full-power credential and no raw pane text goes in one. Approval
+  action buttons POST with a token minted per notification — bound to
+  (session, request_id), single-use, ten minutes, the resolved
+  request's token dropped while overlapping requests keep theirs —
+  which only the approval route accepts (`notify.ApprovalTokens`);
+  prompts run the transcript secret-redactor and a length cap first.
+  The legacy `ntfy-actions` device row those buttons used to carry is
+  revoked at every hub start, whether or not notifications still post.
 - Threat model for the README: the hub executes on your machines by
   design; the credential gates the app layer on top of the tailnet —
   per-device revocation is what "revoke my lost phone" means without

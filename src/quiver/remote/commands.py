@@ -67,7 +67,7 @@ _USAGE = f"""\
   {c('cyan', 'swe remote status [--host=H] [--port=N]')}  Probe the hub + list machines
   {c('cyan', 'swe remote devices [--revoke=<id>] [--requests] [--approve=<code>] [--deny=<code>]')}
                                   List/revoke devices and approve pair requests
-  {c('cyan', 'swe remote attach <session> [--mode=tmux|headless]')}
+  {c('cyan', 'swe remote attach <session> [--mode=auto|tmux|headless|serve|appserver]')}
                                   Move an observed session under supervision
   {c('cyan', 'swe remote notify [--ntfy=URL --topic=T] [--on|--off]')}
                                   Configure ntfy push notifications
@@ -480,7 +480,7 @@ def _cmd_status(flags: dict, json_view: bool) -> int:
     devices = pairing.load_devices()
     machines = catalog_mod.load_machines()
     if json_view:
-        return emit({
+        emit({
             "hub": info or {"ok": False},
             "hub_addr": f"{host}:{port}",
             "public_url": public_url or None,
@@ -490,6 +490,9 @@ def _cmd_status(flags: dict, json_view: bool) -> int:
                 for did, row in devices.items()
             ],
         })
+        # The envelope goes out either way; the exit code still reports
+        # reachability, like the pretty path below (docs/json-contracts.md).
+        return 0 if info is not None else 1
     if info is None:
         print(c("red", f"hub unreachable at {host}:{port}"))
         print(c("dim", f"  start it: swe remote serve --host={host}"))
@@ -627,6 +630,10 @@ def _cmd_attach(flags: dict, rest: list[str]) -> int:
     """Local attach: mark + relaunch; the hub reads the registry."""
     if not rest:
         print(c("red", "attach needs a session key or id"),
+              file=sys.stderr)
+        return 1
+    if len(rest) > 1:
+        print(c("red", f"unexpected args: {' '.join(rest[1:])}"),
               file=sys.stderr)
         return 1
     want = rest[0]
@@ -894,6 +901,9 @@ def _dispatch(sub: str, flags: dict, rest: list[str], json_view: bool) -> int:
             return 1
         return _cmd_status(flags, json_view)
     if sub == "devices":
+        if rest:
+            print(c("red", f"unexpected args: {' '.join(rest)}"), file=sys.stderr)
+            return 1
         return _cmd_devices(flags, json_view)
     if sub == "attach":
         return _cmd_attach(flags, rest)

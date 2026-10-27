@@ -16,9 +16,10 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from quiver import paths
-from quiver.console import c, sanitize, truncate
+from quiver.console import c, sanitize, sanitize_document, truncate
 from quiver.flags import expand_value_flags
 from quiver.github import catalog, gh, manage, repos
+from quiver.github import issues as issue_mod
 from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.table import Table
 
@@ -989,20 +990,29 @@ def _env_payload(env: gh.GhEnv) -> dict:
             "error": env.error or None}
 
 
-def _parse_common(rest: list[str],
-                  json_view: bool) -> tuple[dict, list[str]] | None:
-    """Split ``--repo=``/``--state=``/``--limit=``/``--web`` from positionals."""
+def _parse_common(rest: list[str], json_view: bool,
+                  extra: frozenset[str] = frozenset(),
+                  ) -> tuple[dict, list[str]] | None:
+    """Split ``--repo=``/``--state=``/``--limit=``/``--web`` from positionals.
+
+    ``extra`` adds value flags one command takes (``--body`` for
+    ``issue comment``); each lands in ``opts`` under its bare name. A
+    value is everything after the first ``=`` of its one argv token, so
+    free text such as ``--body=a --x=y`` arrives whole.
+    """
+    names = _VALUE_FLAGS | extra
     try:
-        args = expand_value_flags(rest, _VALUE_FLAGS)
+        args = expand_value_flags(rest, names)
     except ValueError as exc:
         print(c("red", str(exc)), file=error_stream(json_view))
         return None
     opts = {"repo": None, "state": None, "limit": None, "method": None,
             "web": False, "all": False, "auto": False, "failed": False}
+    opts.update({name[2:]: None for name in extra})
     pos = []
     i = 0
     while i < len(args):
-        if args[i] in _VALUE_FLAGS:
+        if args[i] in names:
             opts[args[i][2:]] = args[i + 1]
             i += 2
         elif args[i] == "--web":
@@ -1379,6 +1389,189 @@ def _cmd_pr_worktree(ref: str, opts: dict, json_view: bool) -> int:
     return 0
 
 
+# ------------------------------------------------------------------ issue
+
+
+_ISSUE_ONE = ("view", "comment", "worktree")
+
+
+def _cmd_issue(rest: list[str], json_view: bool) -> int:
+    """``swe gh issue [list]`` lists; ``view|comment|worktree <N|url>``
+    act on one issue (``issues.py`` holds the shared shaping)."""
+    parsed = _parse_common(rest, json_view, extra=frozenset({"--body"}))
+    if parsed is None:
+        return 1
+    opts, pos = parsed
+    if not pos or pos[0] not in _ISSUE_ONE:
+        # The list keeps its own parse, so it reads exactly as before.
+        return _list_command(
+            "issue",
+            lambda n, o: _fetch_issues(n, o["state"], _limit(o)),
+            _render_issue_table,
+            states=("open", "closed", "all"))(rest, json_view)
+    sub = pos[0]
+    err = error_stream(json_view)
+    if len(pos) != 2:
+        extra = " --body=<text>" if sub == "comment" else ""
+        print(c("red", f"Usage: swe gh issue {sub} <number|url>{extra}"),
+              file=err)
+        return 1
+    number = issue_mod.issue_number(pos[1])
+    if number is None:
+        print(c("red", "Want an issue number or its /issues/<N> URL"),
+              file=err)
+        return 1
+    if not opts["repo"] and "/issues/" in pos[1]:
+        # The URL names its repo; --repo still wins when given.
+        opts["repo"] = pos[1]
+    if sub != "comment" and opts["body"] is not None:
+        print(c("red", "--body goes with swe gh issue comment"), file=err)
+        return 1
+    if sub == "view":
+        return _cmd_issue_view(number, opts, json_view)
+    if sub == "comment":
+        return _cmd_issue_comment(number, opts, json_view)
+    return _cmd_issue_worktree(number, opts, json_view)
+
+
+def _issue_gate(opts: dict, json_view: bool, blocked) -> tuple:
+    """Probe ``gh`` and resolve the one repo. Returns ``(env, repo)``;
+    ``repo`` is None when blocked, after ``blocked(env, repo, msg)`` has
+    emitted the command's own failure envelope under ``--json``."""
+    err = error_stream(json_view)
+    env = gh.probe_env()
+    if env.status != "ok":
+        msg = _env_error(env)
+        print(c("red", f"  {msg}"), file=err)
+        if json_view:
+            blocked(env, None, msg)
+        return env, None
+    repo, res_err = _resolve_one(opts, json_view)
+    if repo is None and json_view:
+        blocked(env, None, res_err)
+    return env, repo
+
+
+def _render_issue_detail(issue: dict, repo: str) -> None:
+    open_ = issue["state"] == "open"
+    glyph, color = ("●", "green") if open_ else ("✓", "dim")
+    print(f"\n  {c(color, glyph)} {c('bold', sanitize(issue['title']))}")
+    meta = [issue["state"] or "-"]
+    if issue.get("author") and issue["author"] != "-":
+        meta.append(f"by {issue['author']}")
+    meta.append(_rel_at(issue.get("updated_at")))
+    print(f"  {c('cyan', '#' + str(issue['number']))} {c('dim', repo)}  "
+          f"{c('dim', ' · '.join(meta))}")
+    print(f"  {c('dim', issue['url'])}")
+    if issue["labels"]:
+        print(f"  {c('dim', 'labels:')} {', '.join(issue['labels'])}")
+    if issue["assignees"]:
+        print(f"  {c('dim', 'assignees:')} {', '.join(issue['assignees'])}")
+    body = (issue.get("body") or "").strip()
+    print()
+    for line in (sanitize_document(body) if body
+                 else c("dim", "(no description)")).splitlines():
+        print(f"  {line}")
+    comments = issue.get("comments") or []
+    if comments:
+        print(f"\n  {c('dim', f'Comments ({len(comments)})')}")
+        for item in comments:
+            print(f"\n    {c('cyan', item['author'])}  "
+                  f"{c('dim', _rel_at(item.get('created_at')))}")
+            for line in truncate(sanitize_document(item["body"].strip()),
+                                 600).splitlines():
+                print(f"    {line}")
+    print(f"\n  {c('dim', 'resolve on ' + issue['branch'] + ': swe gh issue worktree ' + str(issue['number']))}\n")
+
+
+def _cmd_issue_view(number: int, opts: dict, json_view: bool) -> int:
+    def blocked(env, repo, msg):
+        emit({**_env_emit(env), "repo": repo, "status": env.status
+              if env.status != "ok" else "error", "issue": None,
+              "error": msg})
+
+    env, repo = _issue_gate(opts, json_view, blocked)
+    if repo is None:
+        return 1
+    result = issue_mod.fetch(repo, number)
+    if result.status != "ok":
+        msg = result.error or "gh returned an invalid issue"
+        print(c("red", f"  {msg}"), file=error_stream(json_view))
+        if json_view:
+            emit({**_env_emit(env), "repo": repo, "status": result.status,
+                  "issue": None, "error": msg})
+        return 1
+    if json_view:
+        return emit({**_env_emit(env), "repo": repo, "status": "ok",
+                     "issue": result.data})
+    _render_issue_detail(result.data, repo)
+    return 0
+
+
+def _cmd_issue_comment(number: int, opts: dict, json_view: bool) -> int:
+    """Post ``--body`` as a comment. gh reads the body from stdin, so any
+    text survives; ``--body=`` itself keeps everything after its ``=``."""
+    def blocked(env, repo, msg):
+        emit({**_env_emit(env), "repo": repo, "status": env.status
+              if env.status != "ok" else "error", "issue": number,
+              "comment": None, "error": msg})
+
+    env, repo = _issue_gate(opts, json_view, blocked)
+    if repo is None:
+        return 1
+    body = opts["body"] or ""
+    if not body.strip():
+        msg = "The comment is empty: pass --body=<text>"
+        print(c("red", f"  {msg}"), file=error_stream(json_view))
+        if json_view:
+            blocked(env, repo, msg)
+        return 1
+    result = issue_mod.post_comment(repo, number, body, env.login)
+    if result.status != "ok":
+        msg = result.error or result.status
+        print(c("red", f"  Comment failed: {msg}"),
+              file=error_stream(json_view))
+        if json_view:
+            emit({**_env_emit(env), "repo": repo, "status": result.status,
+                  "issue": number, "comment": None, "error": msg})
+        return 1
+    if json_view:
+        return emit({**_env_emit(env), "repo": repo, "status": "ok",
+                     "issue": number, "comment": result.data})
+    where = result.data["url"] or f"{repo}#{number}"
+    print(c("green", f"  Commented on {repo}#{number}: ") + where + "\n")
+    return 0
+
+
+def _cmd_issue_worktree(number: int, opts: dict, json_view: bool) -> int:
+    """A branch ``quiver/issue-<n>`` off the default branch, checked out
+    under ``~/.quiver/worktrees`` (``manage.issue_worktree``)."""
+    def blocked(env, repo, msg):
+        emit({**_env_emit(env), "repo": repo, "issue": number,
+              "path": None, "branch": manage.issue_branch(number),
+              "created": False, "error": msg})
+
+    env, repo = _issue_gate(opts, json_view, blocked)
+    if repo is None:
+        return 1
+    made = manage.issue_worktree(repo, number)
+    if made.status != "ok":
+        if json_view:
+            blocked(env, repo, made.error)
+        else:
+            print(c("red", f"  {made.error}\n"))
+        return 1
+    data = made.data
+    if json_view:
+        return emit({**_env_emit(env), "repo": repo, "issue": number,
+                     **data})
+    state = "checked out" if data["created"] else "already at"
+    print(f"  {c('green', f'{repo}#{number}')} {c('cyan', data['branch'])} "
+          f"{state} {c('cyan', data['path'])}  "
+          f"{c('dim', 'off ' + data['base'])}\n")
+    return 0
+
+
 def _cmd_run(rest: list[str], json_view: bool) -> int:
     parsed = _parse_common(rest, json_view)
     if parsed is None:
@@ -1677,11 +1870,7 @@ def main(argv=None) -> int:
     if sub in ("pr", "prs", "pulls"):
         return _cmd_pr(rest, json_view)
     if sub in ("issue", "issues"):
-        return _list_command(
-            "issue",
-            lambda n, o: _fetch_issues(n, o["state"], _limit(o)),
-            _render_issue_table,
-            states=("open", "closed", "all"))(rest, json_view)
+        return _cmd_issue(rest, json_view)
     if sub in ("run", "runs", "actions", "ci"):
         return _cmd_run(rest, json_view)
     if sub in ("pages", "page"):

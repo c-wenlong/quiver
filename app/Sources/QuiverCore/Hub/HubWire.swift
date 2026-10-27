@@ -148,6 +148,54 @@ struct HubCommandResult: Decodable {
 /// holds the send until the agent's turn ends.
 struct HubSendAccepted: Decodable { let waiting: Bool? }
 
+/// A launch the hub accepted (`202` from `POST /v1/issues/resolve`) and
+/// what `GET /v1/launches/<id>` says of it since: `pending` while the
+/// hub works (`note` names the step), then `started` once its catalog
+/// lists `key`, `failed` with the reason in `note`, or `untracked` for a
+/// harness whose sessions the hub can't read.
+public struct HubLaunchStatus: Decodable, Sendable, Equatable {
+    public var launchId: String
+    public var state: String?
+    public var key: String?
+    public var note: String?
+    /// The launch waits for a satellite that is offline.
+    public var queued: Bool?
+
+    public init(launchId: String, state: String? = nil, key: String? = nil,
+                note: String? = nil, queued: Bool? = nil) {
+        self.launchId = launchId
+        self.state = state
+        self.key = key
+        self.note = note
+        self.queued = queued
+    }
+}
+
+/// One row of `GET /v1/machines`: the hub machine and its satellites.
+public struct HubMachine: Decodable, Sendable, Equatable, Identifiable {
+    public var id: String
+    public var name: String?
+    public var online: Bool?
+    /// Every harness swe detected there.
+    public var harnesses: [String]?
+    /// What a launch there accepts, in Provider visibility order; nil
+    /// from a hub older than launches.
+    public var launchable: [String]?
+
+    public init(id: String, name: String? = nil, online: Bool? = nil,
+                harnesses: [String]? = nil, launchable: [String]? = nil) {
+        self.id = id
+        self.name = name
+        self.online = online
+        self.harnesses = harnesses
+        self.launchable = launchable
+    }
+}
+
+struct HubMachinesResponse: Decodable {
+    let machines: [HubMachine]
+}
+
 /// `POST /v1/pair`: a pair token traded for this app's device credential.
 public struct HubCredential: Codable, Sendable, Equatable {
     public var deviceId: String
@@ -195,8 +243,24 @@ public struct HubError: LocalizedError, Equatable, Sendable {
         case "not_attachable": "This harness can't be attached."
         case "backlog_full": "Too many messages are waiting. Try again shortly."
         case "duplicate_client_id": "That message is already queued."
-        default: fallback.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "The hub answered with an error (\(status))."
+        // Resolve-an-issue refusals: the hub's own words name the repo or
+        // harness, so they win as sent (a repo name keeps its case).
+        case "not_pinned":
+            fallback ?? "The hub hasn't pinned this repo. Pin it there with swe gh repo add."
+        case "not_launchable":
+            fallback ?? "The hub can't start that harness."
+        case "gh_unavailable":
+            fallback ?? "gh isn't installed or signed in on the hub machine."
+        case "launch_failed":
+            fallback ?? "The hub couldn't start the session."
+        case "bad_command":
+            fallback ?? "The hub refused the request. Update swe on the hub."
+        default: fallback.map(capitalized) ?? "The hub answered with an error (\(status))."
         }
+    }
+
+    private static func capitalized(_ text: String) -> String {
+        text.prefix(1).uppercased() + text.dropFirst()
     }
 }
 

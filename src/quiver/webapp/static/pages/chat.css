@@ -1,5 +1,8 @@
-/* Sessions chat (chat.js): the PWA's chat in the web app's tokens. */
-.chat-page { max-width: 920px; padding-top: 0; }
+/* Sessions chat (chat.js): the PWA's chat in the web app's tokens.
+ * The page is the chat column (920px) beside the session rail. */
+.chat-page { max-width: 1264px; padding-top: 0; }
+.chat-dash { display: grid; grid-template-columns: minmax(0, 1fr) 240px; column-gap: 24px; }
+.chat-main { min-width: 0; }
 .chat-bar {
   position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 10px;
   padding: 20px 0 12px; margin-bottom: 14px; background: var(--panel); border-bottom: 1px solid var(--border);
@@ -21,7 +24,7 @@
 .chat-conn.on .dot { background: var(--accent-fill); }
 .chat-conn.on .caption { display: none; }
 .chat-conn.err .dot { background: var(--warning); }
-.chat-page > .card { margin-bottom: 14px; }
+.chat-main > .card { margin-bottom: 14px; }
 
 .chat-banner {
   flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px;
@@ -154,6 +157,45 @@ details.tool-run > summary {
   .chat-working span { animation: none; opacity: .6; }
 }
 
+/* Session rail (the Mac app's SessionRail): the Sessions list beside
+ * the chat, so another session is one click away. */
+.chat-rail {
+  align-self: start; position: sticky; top: 16px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+  padding: 8px; display: flex; flex-direction: column; gap: 8px;
+  max-height: calc(100vh - 40px); overflow-y: auto;
+}
+.cr-head { display: flex; align-items: center; gap: 4px; padding-left: 8px; }
+.cr-spacer { flex: 1; min-width: 6px; }
+.cr-btn {
+  width: 28px; height: 28px; flex: none; border-radius: 8px; border: 0; background: transparent;
+  color: var(--text-secondary); display: grid; place-items: center; cursor: pointer;
+}
+.cr-btn:hover { background: var(--hover); }
+.cr-btn svg { width: 14px; height: 14px; }
+.cr-btn.spinning svg { animation: spin 1s linear infinite; }
+.cr-list { display: flex; flex-direction: column; }
+.cr-day {
+  font-size: 12px; color: var(--text-muted); padding: 14px 8px 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cr-row {
+  display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px;
+  border: 0; border-radius: 8px; background: transparent; color: var(--text-nav);
+  font-size: 13px; cursor: pointer; text-align: left; width: 100%;
+}
+.cr-row:hover { background: var(--hover); }
+.cr-row.selected { background: var(--nav-active); color: var(--text-primary); }
+.cr-logo { flex: none; display: grid; place-items: center; }
+.cr-logo .logo { width: 14px; height: 14px; }
+.cr-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.cr-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+/* The list's badge colours (styles.css's .badge.status-*). */
+.cr-dot.status-active { background: var(--accent); }
+.cr-dot.status-error { background: var(--danger-text); }
+.cr-dot.status-approval, .cr-dot.status-followup, .cr-dot.status-interrupted { background: var(--warning-text); }
+.cr-note { font-size: 12px; color: var(--text-secondary); padding: 6px 8px; }
+
 /* Composer */
 .chat-composer {
   position: sticky; bottom: 12px; z-index: 3; display: flex; align-items: flex-end; gap: 8px; margin-top: 6px;
@@ -173,6 +215,21 @@ details.tool-run > summary {
 .chat-send {
   flex: none; height: 36px; padding: 0 16px; border: 0; border-radius: 10px; cursor: pointer;
   background: var(--text-primary); color: var(--card); font-size: 13px; font-weight: 500;
+}
+
+/* Narrow: the rail folds to a strip of session chips above the chat,
+ * with Refresh at its end (the GitHub rail's fold). */
+@media (max-width: 960px) {
+  .chat-dash { grid-template-columns: minmax(0, 1fr); }
+  .chat-rail {
+    order: -1; position: static; max-height: none; width: 100%; padding: 6px;
+    flex-direction: row; align-items: center; margin-bottom: 14px;
+  }
+  .cr-head { order: 2; padding-left: 0; }
+  .cr-head .caption { display: none; }
+  .cr-list { flex: 1; min-width: 0; flex-direction: row; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+  .cr-row { width: auto; flex: none; max-width: 220px; }
+  .cr-day { display: none; }
 }
 
 @media (max-width: 720px) {

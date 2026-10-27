@@ -176,6 +176,30 @@ public enum SessionLocation: String, Sendable, Equatable {
     }
 }
 
+extension SessionsModel {
+    /// The row a chat opens on for hub session `key` (`harness:id`): the
+    /// ledger's when it lists the session already, else one built from
+    /// the hub's row, so a session the hub just started opens before the
+    /// next listing finds its transcript. nil for a key with no harness.
+    public nonisolated static func chatRow(for key: String, rows: [Row], hub: HubSessionRow?,
+                                           now: Date = .now) -> Row? {
+        guard let colon = key.firstIndex(of: ":") else { return nil }
+        let harness = String(key[..<colon])
+        let id = String(key[key.index(after: colon)...])
+        guard !harness.isEmpty, !id.isEmpty else { return nil }
+        if let known = rows.first(where: {
+            $0.session.harness == harness && $0.session.id == id && $0.location == .local
+        }) {
+            return known
+        }
+        let info = SessionInfo(id: id, harness: harness,
+                               agent: hub?.agent ?? HarnessMark(harness).name,
+                               cwd: hub?.cwd, title: hub?.title, titleSource: nil,
+                               lastActiveAt: now, status: hub?.status, resume: nil)
+        return Row(session: info, usage: nil)
+    }
+}
+
 /// The Sessions page: every recent session, its cost from the ledger, and filters.
 @MainActor
 @Observable

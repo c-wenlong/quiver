@@ -425,6 +425,19 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--repo", "Repo as owner/name or a github.com URL"),
         ("--json", "Print the {schema, data} envelope"),
     ],
+    "gh issue comment": [
+        ("--body", "The comment text (one argument; reaches gh on stdin)"),
+        ("--repo", "Repo as owner/name or a github.com URL"),
+        ("--json", "Print the {schema, data} envelope"),
+    ],
+    "gh issue view": [
+        ("--repo", "Repo as owner/name or a github.com URL"),
+        ("--json", "Print the {schema, data} envelope"),
+    ],
+    "gh issue worktree": [
+        ("--repo", "Repo as owner/name or a github.com URL"),
+        ("--json", "Print the {schema, data} envelope"),
+    ],
     "gh run rerun": [
         ("--failed", "Re-run only the failed jobs"),
         ("--repo", "Repo as owner/name or a github.com URL"),
@@ -474,6 +487,8 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
         "sync": "gh sync",
         "pr merge": "gh pr merge", "run rerun": "gh run rerun",
         "inbox read": "gh inbox read",
+        "issue comment": "gh issue comment",
+        "issue view": "gh issue view", "issue worktree": "gh issue worktree",
     },
     "skills": {
         "link": "skills link", "unlink": "skills unlink",
@@ -564,6 +579,12 @@ _NESTED_SUBCOMMANDS: dict[tuple[str, str], list[tuple[str, str]]] = {
         ("view", "One PR: checks, reviews, merge state"),
         ("merge", "Merge a PR (squash by default)"),
         ("worktree", "Checkout the PR head under ~/.quiver/worktrees"),
+    ],
+    ("gh", "issue"): [
+        ("list", "List issues"),
+        ("view", "One issue: body, comments, resolve prompt"),
+        ("comment", "Comment on an issue (--body=TEXT)"),
+        ("worktree", "Branch quiver/issue-N under ~/.quiver/worktrees"),
     ],
     ("gh", "run"): [
         ("list", "List workflow runs"),

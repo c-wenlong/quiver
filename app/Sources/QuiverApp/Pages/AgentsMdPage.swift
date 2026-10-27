@@ -275,6 +275,9 @@ struct InstructionEditor: View {
     var monoSubtitle = false
     /// View-only: no mode tabs or save controls, just the text.
     var readOnly = false
+    /// Code, not prose: always the raw editor, with no Rich tab. A hook
+    /// script read as Markdown turns its docstring into paragraphs.
+    var rawOnly = false
     /// A Close button in the header, for the editor inside a sheet.
     var close: (() -> Void)? = nil
     var onSaved: () -> Void = {}
@@ -287,7 +290,7 @@ struct InstructionEditor: View {
     var body: some View {
         Card(title: title, subtitle: subtitle, monoSubtitle: monoSubtitle) {
             HStack(spacing: 8) {
-                if !readOnly {
+                if !readOnly && !rawOnly {
                     Tabs(options: [("raw", "Raw"), ("rich", "Rich")], selection: $mode, style: .segmented)
                 }
                 if document.isDirty {
@@ -337,13 +340,14 @@ struct InstructionEditor: View {
                 .font(Theme.caption).foregroundStyle(Theme.dangerText)
         }
         // Fills the card, and the card fills what the page has left.
-        let focused = mode == "raw" ? editing : richFocused
+        let raw = rawOnly || mode == "raw"
+        let focused = raw ? editing : richFocused
         Group {
             if readOnly {
                 TextEditor(text: .constant(document.text))
                     .font(Theme.font(size: 13, design: .monospaced))
                     .scrollContentBackground(.hidden)
-            } else if mode == "raw" {
+            } else if raw {
                 TextEditor(text: $document.text)
                     .font(Theme.font(size: 13, design: .monospaced))
                     .scrollContentBackground(.hidden)
@@ -356,7 +360,7 @@ struct InstructionEditor: View {
         .disabled(readOnly)
         .focusEffectDisabled()
         .padding(10)
-        .background(mode == "raw" ? Theme.code : Theme.field,
+        .background(raw ? Theme.code : Theme.field,
                     in: .rect(cornerRadius: Theme.controlRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
             .strokeBorder(focused ? Theme.borderHover : Theme.border, lineWidth: 1))

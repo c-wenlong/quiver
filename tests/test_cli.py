@@ -147,6 +147,28 @@ class ProvidersCliRoutingTest(unittest.TestCase):
         self.assertIs(COMMANDS["pv"], cmd_providers)
 
 
+class LazyRemoteImportTest(unittest.TestCase):
+    """#517: `import quiver.cli` must not pull `quiver.remote` in.
+
+    cli.py dispatches `swe remote` through a function-local import so
+    `swe version` and friends don't pay for sessions, reports and the
+    hub. The suite's own sys.modules is polluted by the remote tests, so
+    the check runs in a fresh interpreter.
+    """
+
+    def test_cli_import_leaves_remote_unloaded(self):
+        import subprocess
+        import sys
+        code = (
+            "import sys, quiver.cli\n"
+            "sys.exit(any(m == 'quiver.remote' or "
+            "m.startswith('quiver.remote.') for m in sys.modules))"
+        )
+        proc = subprocess.run([sys.executable, "-c", code],
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+
 class ProvidersHelpRouteTest(unittest.TestCase):
     """`swe providers --help` reaches the group's own fuller help, not
     the summary that ends by pointing back at `swe providers --help`."""

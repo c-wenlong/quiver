@@ -123,10 +123,11 @@ const settingsPage = {
   // Stale once Settings is opened again: a step can come undone (the
   // last phone revoked, the hub stopped), so each visit checks again.
   setup: null, setupBusy: false, setupCopied: null, setupStale: false,
-  query: "", status: "all",
+  query: "", status: "set", catalogQuery: "", catalog: false,
   // Remote writes: the minted ticket and which code it shows, the device
   // whose revoke is being confirmed, rows waiting on the hub, errors.
   ticket: null, target: "web", minting: false, pairError: null,
+  showsAllDevices: false,
   confirming: null, revoking: new Set(), revokeErrors: {}, timer: null,
   // Session search: a switch write in flight, its error, the poll that
   // runs while a pass does.
@@ -397,6 +398,7 @@ function inferenceTab() {
       <div class="set-keys-head"><div class="set-group-title">Keys and plans</div><div class="caption">${esc(subtitle)}</div></div>
       <div class="set-keys-actions">
         <button class="set-button" id="set-keys-reload"${p.keysBusy ? " disabled" : ""} title="Read the file again">${settingsIcon("rescan")}<span>Reload</span></button>
+        <button class="set-button" id="set-key-catalog"${prov.stamp == null ? " disabled" : ""}><span>Catalogue</span></button>
         <button class="set-button" id="set-key-add"${prov.stamp == null ? " disabled" : ""}>${settingsIcon("plus")}<span>Add key</span></button>
       </div>
     </div>
@@ -409,7 +411,49 @@ function inferenceTab() {
     </div>
     <div class="caption muted">${rows.length} ${rows.length === 1 ? "key" : "keys"} from ${providers.size} ${providers.size === 1 ? "provider" : "providers"}. Terminals already open keep the old values until you run <code>source ${esc(prov.path)}</code>. Checking keys, renaming, moving keys between providers, custom providers and coding plans stay in the Mac app.</div>
     ${settingsKeySheet()}
+    ${settingsCatalogSheet()}
   </div>`;
+}
+
+/* The Mac app's ProviderCatalogueSheet, API-key providers only (coding
+ * plans stay in the Mac app): search + a grid where a pick opens the
+ * Add-key editor with that provider chosen. */
+const PROVIDER_LOGOS = {
+  openai: "harness-openai.svg", anthropic: "harness-claude-color.svg",
+  gemini: "harness-gemini-color.svg", deepseek: "harness-deepseek-color.svg",
+  zai: "harness-zai.svg", minimax: "harness-minimax-color.svg",
+  kimi: "harness-kimi.svg", qwen: "harness-qwen-code-color.svg",
+  mimo: "harness-xiaomimimo.svg", xai: "harness-grok.svg",
+  stepfun: "harness-stepfun-color.svg", mistral: "harness-mistral-vibe-color.svg",
+  upstage: "harness-upstage-color.svg", vercel_gateway: "harness-vercel.svg",
+  opencode_zen: "harness-opencode-color.svg",
+};
+
+function settingsCatalogSheet() {
+  const p = settingsPage;
+  if (!p.catalog) return "";
+  const prov = p.data.providers;
+  const q = p.catalogQuery.trim().toLowerCase();
+  const rows = [...(prov.catalog || [])].sort((a, b) => a.name.localeCompare(b.name))
+    .filter((c) => !q || c.name.toLowerCase().includes(q) || c.env_vars.some((v) => v.toLowerCase().includes(q)));
+  const cell = (c) => {
+    const file = PROVIDER_LOGOS[c.id];
+    const logo = file
+      ? `<img class="set-cat-logo${file.endsWith("-color.svg") ? "" : " mono"}" src="/app/${file}" alt="">`
+      : `<span class="set-cat-logo set-cat-mono" aria-hidden="true">${esc(c.name.slice(0, 1))}</span>`;
+    return `<button class="set-cat-cell" data-cat-pick="${esc(c.id)}" title="Add ${esc(c.name)}'s key">
+      ${logo}<span class="set-cat-name">${esc(c.name)}${c.has_key ? ' <span class="badge">Set</span>' : ""}</span>
+      <span class="caption">${esc(c.env_vars.join(" · "))}</span></button>`;
+  };
+  return `<dialog class="sheet set-cat-sheet" id="set-cat-sheet" aria-labelledby="set-cat-title">
+    <div class="sheet-body">
+      <div class="sheet-title" id="set-cat-title">Provider catalogue</div>
+      <input class="field search" id="set-cat-search" type="search" placeholder="Search providers" value="${esc(p.catalogQuery)}" aria-label="Search providers">
+      <div class="set-cat-grid">${rows.length ? rows.map(cell).join("") : '<p class="empty">Nothing matches.</p>'}</div>
+      <div class="set-key-foot"><span class="caption count num">${rows.length} of ${(prov.catalog || []).length}</span><span class="set-key-spacer"></span>
+        <button class="set-button" data-cat-act="close">Close</button></div>
+    </div>
+  </dialog>`;
 }
 
 /* One row: the heading, the variable with its value masked (or revealed)
@@ -575,8 +619,13 @@ function remoteCards() {
   const viaTailnet = r.caller && r.caller.kind === "tailnet"
     ? `<p class="caption set-caller">This browser is signed in through Tailscale as the hub's owner, so it isn't a paired device: it isn't listed here and has nothing to revoke.</p>`
     : "";
+  // The Mac folds the list after two rows; the Pair row sits under it.
+  const shown = p.showsAllDevices ? live : live.slice(0, 2);
+  const fold = live.length > 2
+    ? `<button class="set-button set-fold" id="set-devices-fold" title="${p.showsAllDevices ? "Show only the first 2" : "Show every paired device"}">${p.showsAllDevices ? "Show less" : `Show ${live.length - 2} more`}</button><div class="set-divider"></div>`
+    : "";
   const devices = live.length
-    ? `<div class="set-card"><div class="set-card-title">Paired devices</div>${viaTailnet}${live.map(deviceRow).join('<div class="set-divider"></div>')}<div class="set-divider"></div>${pair}</div>`
+    ? `<div class="set-card"><div class="set-card-title">Paired devices</div>${viaTailnet}${shown.map(deviceRow).join('<div class="set-divider"></div>')}<div class="set-divider"></div>${fold}${pair}</div>`
     : `<div class="set-card"><div class="set-card-title">Paired devices</div>${viaTailnet}<p class="caption set-empty">No devices paired yet.</p>${pair}</div>`;
   const requests = (r.requests || []).length ? setCard([...r.requests.map((q) => setRow(q.name || "device",
       [q.node_name, q.login, q.peer_ip, `expires in ${Math.max(0, Math.round(q.expires_in_s / 60))} min`].filter(Boolean).join(" · "))),
@@ -776,12 +825,19 @@ function experimentalSection() {
   const status = `<div class="set-search-status">${esc(searchStatusLine(ss))}</div>`;
   const warn = problem
     ? `<div class="set-warning">${settingsIcon("warn")}<span>${esc(problem)}</span></div>` : "";
-  return setCard([
-    setRow("Session search", `${esc(detail)}${status}${warn}`,
-      `<span class="badge">Experimental</span>${setSwitch("session-search", !!ss.enabled,
-        { label: "Session search", disabled: p.searchBusy })}`,
-      { html: true }),
-  ]);
+  // The Mac's SessionSearchRow: resync and Clear search data ride the
+  // status line while the index is on, and stop answering mid-pass.
+  const actions = ss.enabled ? `<div class="set-search-actions">
+      <button class="icon-button set-key-icon" id="set-search-resync" title="Read every transcript again now" aria-label="Re-index every transcript"${ss.running || p.searchBusy ? " disabled" : ""}>${settingsIcon("rescan")}</button>
+      <button class="set-button" id="set-search-clear"${ss.running || p.searchBusy ? " disabled" : ""}>Clear search data</button>
+    </div>` : "";
+  return setGroup("Session index", "How Quiver finds what a session said, not only its titles and paths.",
+    setCard([
+      setRow("Session search", `${esc(detail)}${status}${warn}${actions}`,
+        `<span class="badge">Experimental</span>${setSwitch("session-search", !!ss.enabled,
+          { label: "Session search", disabled: p.searchBusy })}`,
+        { html: true }),
+    ]));
 }
 
 /* The line under the switch: Mac SearchIndexModel.statusLine's wording. */
@@ -824,6 +880,28 @@ async function settingsSetSearch(on) {
   if (!onSettingsPage()) return;
   paintSettings();
   document.querySelector('[data-switch="session-search"]')?.focus();
+  settingsPollSearch();
+}
+
+/* Resync and Clear search data, the two buttons on the index row. */
+async function settingsSearchAction(body, focus) {
+  const p = settingsPage;
+  p.searchBusy = true;
+  p.searchError = null;
+  const gen = ++p.searchGen;
+  paintSettings();
+  const { status, data } = await apiPost("/v1/app/settings/session_search", body);
+  p.searchBusy = false;
+  if (gen !== p.searchGen) return;
+  if (status === 200 && data && data.session_search) {
+    if (p.data) p.data.session_search = data.session_search;
+  } else {
+    p.searchError = (data && data.error && data.error.message)
+      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.");
+  }
+  if (!onSettingsPage()) return;
+  paintSettings();
+  if (focus) document.querySelector(focus)?.focus();
   settingsPollSearch();
 }
 
@@ -900,6 +978,10 @@ function bindSettings(section) {
     searchSwitch.onclick = () => settingsSetSearch(searchSwitch.getAttribute("aria-checked") !== "true");
     settingsPollSearch();
   }
+  const resync = panel.querySelector("#set-search-resync");
+  if (resync) resync.onclick = () => settingsSearchAction({ resync: true }, "#set-search-resync");
+  const clear = panel.querySelector("#set-search-clear");
+  if (clear) clear.onclick = () => settingsSearchAction({ clear: true }, "#set-search-clear");
   for (const btn of panel.querySelectorAll("[data-sidebar-all]")) {
     btn.onclick = () => {
       const all = (typeof SIDEBAR !== "undefined" ? SIDEBAR : []).flatMap(([, items]) => items.map(([id]) => id));
@@ -937,6 +1019,29 @@ function bindKeys() {
     p.keyEditor = { isNew: true, provider: "", envVar: "", value: "", show: false };
     settingsKeyRepaint("#set-key-provider");
   };
+  const cat = document.getElementById("set-key-catalog");
+  if (cat) cat.onclick = () => { p.catalog = true; p.catalogQuery = ""; settingsKeyRepaint("#set-cat-search"); };
+  const catSheet = document.getElementById("set-cat-sheet");
+  if (catSheet) {
+    if (!catSheet.open) catSheet.showModal();
+    catSheet.oncancel = (ev) => { ev.preventDefault(); p.catalog = false; settingsKeyRepaint("#set-key-catalog"); };
+    const catSearch = document.getElementById("set-cat-search");
+    catSearch.oninput = () => {
+      p.catalogQuery = catSearch.value;
+      const caret = catSearch.selectionStart;
+      settingsKeyRepaint("#set-cat-search");
+      const again = document.getElementById("set-cat-search");
+      if (again) { again.focus(); try { again.setSelectionRange(caret, caret); } catch { /* not text */ } }
+    };
+    for (const btn of catSheet.querySelectorAll("[data-cat-pick]")) {
+      btn.onclick = () => {
+        p.catalog = false;
+        p.keyEditor = { isNew: true, provider: btn.dataset.catPick, envVar: "", value: "", show: false };
+        settingsKeyRepaint("#set-key-value");
+      };
+    }
+    catSheet.querySelector('[data-cat-act="close"]').onclick = () => { p.catalog = false; settingsKeyRepaint("#set-key-catalog"); };
+  }
   for (const row of document.querySelectorAll("[data-key-open]")) {
     const open = (ev) => {
       if (ev.target.closest("button, a")) return;
@@ -1128,6 +1233,8 @@ function bindRemote() {
   if (sync) sync.onclick = () => settingsSyncGithub();
   const pair = document.getElementById("set-pair");
   if (pair) pair.onclick = () => settingsMint();
+  const devFold = document.getElementById("set-devices-fold");
+  if (devFold) devFold.onclick = () => { p.showsAllDevices = !p.showsAllDevices; settingsRepaintRemote("#set-devices-fold"); };
   for (const row of document.querySelectorAll("[data-device]")) {
     const id = row.dataset.device;
     for (const btn of row.querySelectorAll("[data-act]")) {

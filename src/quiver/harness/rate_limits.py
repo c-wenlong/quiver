@@ -1888,10 +1888,17 @@ def _read_cursor_cli_token(path: str | None = None) -> str | None:
 
 
 def _get_cursor_access_token() -> str | None:
-    """Editor store first, then the CLI's auth file (Linux), then its
-    keychain entry (macOS). All three hold the same kind of session JWT."""
-    return (_read_cursor_state_token() or _read_cursor_cli_token()
-            or _read_cursor_keychain_token())
+    """First usable session token: editor store, then the CLI's auth file
+    (Linux), then its keychain entry (macOS). The editor may keep its copy
+    as an opaque ``cursor-safe-storage:`` blob (Electron safeStorage), so
+    a value that doesn't decode as a JWT is skipped and the next source
+    tried."""
+    for read in (_read_cursor_state_token, _read_cursor_cli_token,
+                 _read_cursor_keychain_token):
+        token = read()
+        if token and _cursor_token_claims(token) is not None:
+            return token
+    return None
 
 
 def _cursor_token_claims(token: str) -> dict | None:
@@ -2402,9 +2409,16 @@ def _register_cursor() -> None:
         return _fetch_cursor()
 
     def signed_in() -> bool:
-        return bool(_read_cursor_state_token() or _read_cursor_cli_token()
-                    or _keychain_item_exists("-s", "cursor-access-token",
-                                             "-a", "cursor-user"))
+        # A stored blob the JWT decoder rejects (the editor's
+        # cursor-safe-storage value) is not a credential. The keychain
+        # entry is probed without ``-w``: reading it back to decode would
+        # read the secret and could prompt.
+        for read in (_read_cursor_state_token, _read_cursor_cli_token):
+            token = read()
+            if token and _cursor_token_claims(token) is not None:
+                return True
+        return _keychain_item_exists("-s", "cursor-access-token",
+                                     "-a", "cursor-user")
 
     register("cursor", fetch, signed_in=signed_in)
 

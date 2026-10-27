@@ -31,6 +31,17 @@ from quiver.paths import atomic_write_text, remote_dir_for
 # A pairing token is worthless within minutes of `swe remote pair`.
 TOKEN_TTL_S = 300
 
+# A device row's ``role`` is what its credential may do. ``phone`` is
+# the default — and the effective role of every row minted before roles
+# existed: session routes only. ``satellite`` may use ``/v1/agent/*``,
+# pinned to one ``machine_id`` at its first register. ``actions`` is
+# the ntfy action-button row: approval POSTs, never agent routes.
+DEVICE_ROLES = frozenset({"phone", "satellite", "actions"})
+
+# Roles a ``/v1/pair`` body may claim. ``actions`` is never wire-
+# claimable — the hub writes those rows itself for ntfy action buttons.
+PAIR_ROLES = DEVICE_ROLES - {"actions"}
+
 _DEVICES_BASENAME = "devices.json"
 _TOKENS_BASENAME = "pair_tokens.json"
 _REQUESTS_BASENAME = "pair_requests.json"
@@ -345,13 +356,16 @@ def _consume_token(home: Path | None, token: str) -> bool:
 
 def exchange(
     home: Path | str | None, token: str, name: str = "",
-    meta: dict | None = None,
+    meta: dict | None = None, role: str = "phone",
 ) -> dict | None:
     """``POST /v1/pair``: token → a fresh device credential, once.
 
     Returns ``{"device_id", "credential", "name"}`` or None for a bad or
     expired token. Token consumption and the device write happen under
     one lock so two requests can't spend the same token.
+
+    ``role`` is the client's claimed role — ``satellite`` is honored,
+    anything else mints a phone row.
     """
     home_path = Path(home) if home is not None else None
     if not token:
@@ -361,7 +375,11 @@ def exchange(
             return None
         device_id, credential = _mint_device(
             home_path, name,
-            extra={"paired_via": "token", **_clean_meta(meta)},
+            extra={
+                "paired_via": "token",
+                "role": role if role in PAIR_ROLES else "phone",
+                **_clean_meta(meta),
+            },
         )
     return {"device_id": device_id, "credential": credential, "name": name or "device"}
 
@@ -451,6 +469,40 @@ def update_device(home: Path | str | None, device_id: str, **fields) -> bool:
                 row[name] = value
         _save_devices(home_path, devices)
         return True
+
+
+def bind_machine(
+    home: Path | str | None, device_id: str, machine_id: str
+) -> str | None:
+    """Pin a satellite's device row to ``machine_id``; first write wins.
+
+    Returns the machine the row is bound to (the one just written, or
+    the earlier binding when a second machine tries). None only when
+    the device row is gone.
+    """
+    home_path = Path(home) if home is not None else None
+    with _state_lock(home_path):
+        devices = load_devices(home_path)
+        row = devices.get(device_id)
+        if row is None:
+            return None
+        bound = row.get("machine_id")
+        if bound:
+            return str(bound)
+        # A machine_id belongs to one live credential: a fresh satellite
+        # can't claim a machine another unrevoked device already speaks
+        # for. Revoking the old row frees the id — that is the
+        # credential-replacement path.
+        for other_id, other in devices.items():
+            if (
+                other_id != device_id
+                and str(other.get("machine_id") or "") == machine_id
+                and not other.get("revoked_at")
+            ):
+                return None
+        row["machine_id"] = machine_id
+        _save_devices(home_path, devices)
+        return machine_id
 
 
 def revoke_device(home: Path | str | None, device_id: str) -> bool:
@@ -612,6 +664,9 @@ def approve_request(
                 home_path, row["name"],
                 extra={
                     "paired_via": "tailscale",
+                    # The tailnet request flow is for phones; satellites
+                    # pair with a token (agent.pair_agent).
+                    "role": "phone",
                     "tailscale_node": row.get("node_id") or "",
                     "tailscale_login": row.get("login") or "",
                     "node_name": row.get("node_name") or "",
