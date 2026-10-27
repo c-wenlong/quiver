@@ -509,17 +509,23 @@ dialog .close { margin-left: auto; }
 })();
 </script>
 <script>
-// The services quiver works with drift up behind the hero as pixel art:
+// The harnesses and providers quiver works with drift up behind the hero as pixel art:
 // each logo is drawn once into a 14px grid, then scaled up unsmoothed.
 (function () {
   var canvas = document.getElementById("drift");
   var hero = document.querySelector(".hero");
   var tabs = document.querySelector(".tabs");
   if (!canvas || !canvas.getContext || !hero || !tabs) return;
-  var LOGOS = ("claude-color codex-color cursor gemini-color copilot devin droid opencode-color freebuff " +
-    "cline grok kimi qwen-code-color pi openai deepseek-color mistral-vibe-color groq cerebras " +
-    "fireworks-color perplexity-color meta-color nvidia-color cohere-color minimax-color zai " +
-    "vercel supabase linear notion sentry tailscale docker npm cloudflare-color mcp").split(" ");
+  // Every harness and inference provider in Settings › Providers.
+  var LOGOS = ("aider antigravity-color ark-color atlascloud augment baiducloud-color blackbox cerebras " +
+    "charm cheapestinference-color claude-color cline codex-color cohere-color commandcode-color " +
+    "continue copilot crush-color ctyun-color cursor deepseek-color devin droid featherless-color " +
+    "forge freebuff gemini-color github goose grok groq huaweicloud-color huggingface-color " +
+    "iflytek-color jdcloud-color kilo kimi kiro kwaikat llmgateway minimax-color " +
+    "mistral-vibe-color mthreads-color nebius ollama openai opencode-color openrouter-color " +
+    "perplexity-color pi poe qoder qoder-cn-color qwen-code-color scnet sensenova-color " +
+    "standardcompute-color stepfun-color synthetic taotoken tencentcloud-color ucloud-color " +
+    "unicom-color upstage-color vercel xiaomimimo zai zenmux").split(" ");
   var GRID = 14;
   var still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   var ctx = canvas.getContext("2d"), w = 0, h = 0, sprites = [], art = [], onScreen = true, last = 0;
