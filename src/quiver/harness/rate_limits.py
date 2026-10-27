@@ -36,10 +36,11 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from typing import Callable, Iterable
 
 from quiver import __version__
+from quiver.harness import remedies
 from quiver.console import c
 from quiver.harness.models import RateLimitInfo, _window
 from quiver.paths import RATE_LIMITS_CACHE_FILE
@@ -95,12 +96,20 @@ _SIGNED_IN: dict[str, tuple[RateLimitFetcher, Callable[[], bool], bool]] = {}
 SIGNED_OUT = "signed_out"
 FETCH_ERROR = "error"
 
+# tool_name → (fetcher, diagnose): a probe answering "which credential
+# problem explains this empty fetch" as a remedies status — signed-out,
+# auth-required, permission-required — or "ok"/None when a credential is
+# there and the fetch itself is what failed. Kept beside the fetcher it
+# describes so a stand-in fetcher never runs the real credential probe.
+_DIAGNOSE: dict[str, tuple[RateLimitFetcher, Callable[[], str | None]]] = {}
+
 
 def register(
     tool_name: str,
     fetcher: RateLimitFetcher,
     signed_in: Callable[[], bool] | None = None,
     empty_is_normal: bool = False,
+    diagnose: Callable[[], str | None] | None = None,
 ) -> None:
     """Register a rate limit fetcher for a tool.
 
@@ -110,10 +119,18 @@ def register(
     carries no reason. ``empty_is_normal`` is for a fetcher that can come
     back empty while signed in and healthy (Freebuff on an account with no
     GLM quota): there an empty answer is "nothing to report".
+
+    ``diagnose`` goes further than ``signed_in``: it names the credential
+    problem itself (``signed-out``, ``auth-required``,
+    ``permission-required``) so an empty fetch becomes an actionable
+    status, not just "error". It is asked only after an empty fetch, like
+    ``signed_in``.
     """
     _FETCHERS[tool_name] = fetcher
     if signed_in is not None:
         _SIGNED_IN[tool_name] = (fetcher, signed_in, empty_is_normal)
+    if diagnose is not None:
+        _DIAGNOSE[tool_name] = (fetcher, diagnose)
 
 
 def _no_reading_reason(
@@ -134,6 +151,56 @@ def _no_reading_reason(
     if empty_is_normal and not raised:
         return None
     return FETCH_ERROR
+
+
+def _failure_status(
+    tool_name: str,
+    fetcher: RateLimitFetcher,
+    raised: bool = False,
+    kinds: Iterable[str] = (),
+) -> str | None:
+    """The status an empty fetch reports on the issue boundary:
+    ``signed-out``, ``auth-required``, ``permission-required`` or
+    ``unavailable`` — or None when empty is normal for the tool
+    (Freebuff's no-quota account) or genuinely unknowable.
+
+    Credential verdicts win over fetch verdicts: a 401 on the way out is
+    noise next to "there is no token to send". ``kinds`` is what the
+    fetch's ``_fetch_json`` calls recorded on its own thread (see
+    ``_json_failures``): ``auth`` for a 401, anything else for an outage.
+    """
+    entry = _DIAGNOSE.get(tool_name)
+    credential_known = False
+    if entry is not None and entry[0] is fetcher:
+        try:
+            verdict = entry[1]()
+        except Exception:
+            verdict = None
+        if verdict in (remedies.SIGNED_OUT, remedies.AUTH_REQUIRED,
+                       remedies.PERMISSION_REQUIRED):
+            return verdict
+        # "ok" says a credential is there, so the fetch is what failed.
+        credential_known = verdict == remedies.OK
+    else:
+        probe_entry = _SIGNED_IN.get(tool_name)
+        if probe_entry is not None and probe_entry[0] is fetcher:
+            _fetcher, signed_in, empty_is_normal = probe_entry
+            try:
+                present = bool(signed_in())
+            except Exception:
+                present = None
+            if present is False:
+                return remedies.SIGNED_OUT
+            credential_known = present is True
+            if (present is True and empty_is_normal and not raised
+                    and "auth" not in kinds):
+                return None
+    if "auth" in kinds:
+        return remedies.AUTH_REQUIRED
+    if credential_known or kinds or raised:
+        return remedies.UNAVAILABLE
+    # No probe to judge by and nothing recorded: the old "unknown".
+    return None
 
 
 # A probe answers "is a credential there", never by reading a secret: a
@@ -325,6 +392,9 @@ def _fetch_json(
     either callback. HTTP errors from the SSL fallback do.
     """
     def handle_http_error(exc: urllib.error.HTTPError) -> None:
+        # "auth" tells the caller's status probe the credential was
+        # rejected; any other HTTP error is an outage like the network's.
+        _note_json_failure("auth" if exc.code == 401 else "network")
         if exc.code == 401 and on_401 is not None:
             try:
                 on_401()
@@ -350,6 +420,7 @@ def _fetch_json(
     except urllib.error.URLError as exc:
         # SSL cert verification failure — retry with unverified context
         if not isinstance(exc.reason, ssl.SSLError):
+            _note_json_failure("network")
             return None
     except ssl.SSLError:
         pass  # fall through to retry
@@ -359,6 +430,7 @@ def _fetch_json(
         # as JSONDecodeError. RecursionError is a deeply nested but valid
         # body. All three mean the reply could not be read, same as a
         # network failure — not a traceback at the caller.
+        _note_json_failure("network")
         return None
 
     # Retry with a bundled CA store, still fully verified. Without one
@@ -367,6 +439,7 @@ def _fetch_json(
     ctx = _verified_context()
     if ctx is None:
         _warn_untrusted_ca()
+        _note_json_failure("network")
         return None
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
@@ -379,6 +452,7 @@ def _fetch_json(
         # Same body-parse coverage as the first attempt: decode()
         # (UnicodeDecodeError) and json.loads() (JSONDecodeError, a
         # ValueError) must not escape as tracebacks.
+        _note_json_failure("network")
         return None
 
 
@@ -1816,6 +1890,27 @@ _CURSOR_EXTRAS_BUDGET = 3.0
 # this thread, so a fetcher's optional calls can end before its caller stops
 # waiting. Unset outside ``get_all_rate_limits``.
 _fetch_cutoff = threading.local()
+# Why the fetch running on this thread failed, as ``_fetch_json`` saw it:
+# "auth" on an HTTP 401, "network" for everything else (unreachable host,
+# timeout, unreadable body). A fetch worker reads it after an empty fetch
+# to tell a dead credential from an outage.
+_json_failures = threading.local()
+
+
+def _note_json_failure(kind: str) -> None:
+    kinds = getattr(_json_failures, "kinds", None)
+    if kinds is None:
+        kinds = _json_failures.kinds = []
+    kinds.append(kind)
+
+
+def _reset_json_failures() -> None:
+    _json_failures.kinds = []
+
+
+def _json_failure_kinds() -> list:
+    return list(getattr(_json_failures, "kinds", ()))
+
 # How long before that cutoff the optional calls are given up on, so the
 # reading is back in time.
 _EXTRAS_CUTOFF_MARGIN = 0.15
@@ -1954,6 +2049,64 @@ def _get_cursor_access_token() -> str | None:
         if token and _cursor_token_claims(token) is not None:
             return token
     return None
+
+
+def _diagnose_cursor_credentials(
+    candidates: tuple[str, ...] | None = None,
+) -> str | None:
+    """Cursor's credential verdict, as an issue status.
+
+    Runs the same fall-through ``_get_cursor_access_token`` does, but
+    names why it came back empty: no store at all (signed-out), a store
+    macOS will not let us read (permission-required), or a store holding
+    only an opaque, non-JWT blob — safeStorage-encrypted or worse
+    (auth-required: a stored login this build cannot use). ``ok`` means a
+    usable token was found and the fetch itself is what should be judged.
+
+    ``candidates`` pins the check to an extra account's ``state.vscdb``;
+    the CLI auth file and the keychain are the default account's, so a
+    pinned check never falls through to them.
+    """
+    denied = False
+    saw_opaque = False
+    for candidate in (candidates if candidates is not None
+                      else _CURSOR_STATE_DB_CANDIDATES):
+        path = os.path.expanduser(candidate)
+        if not os.path.isfile(path):
+            continue
+        if not os.access(path, os.R_OK):
+            denied = True
+            continue
+        value = _read_cursor_state_value("cursorAuth/accessToken", (candidate,))
+        if value is None:
+            continue
+        if _cursor_token_claims(value) is not None:
+            return remedies.OK
+        saw_opaque = True
+    if candidates is None:
+        # ``_read_cursor_cli_token`` swallows PermissionError like the
+        # other readers, so the denied file is probed before reading it —
+        # a file macOS will not open is permission-required, not
+        # signed-out.
+        cli_auth = os.path.expanduser(_CURSOR_CLI_AUTH_FILE)
+        if os.path.isfile(cli_auth) and not os.access(cli_auth, os.R_OK):
+            denied = True
+        token = _read_cursor_cli_token()
+        if token and _cursor_token_claims(token) is not None:
+            return remedies.OK
+        if _keychain_item_exists("-s", "cursor-access-token",
+                                 "-a", "cursor-user"):
+            return remedies.OK
+        if token:
+            # The CLI's stored token is unusable and nothing else decoded.
+            saw_opaque = True
+    if denied:
+        # A file we cannot read may hold the real token: the permission
+        # grant is the first fix, whatever the readable files hold.
+        return remedies.PERMISSION_REQUIRED
+    if saw_opaque:
+        return remedies.AUTH_REQUIRED
+    return remedies.SIGNED_OUT
 
 
 def _jwt_payload(token) -> dict | None:
@@ -2528,7 +2681,8 @@ def _register_cursor() -> None:
         return _keychain_item_exists("-s", "cursor-access-token",
                                      "-a", "cursor-user")
 
-    register("cursor", fetch, signed_in=signed_in)
+    register("cursor", fetch, signed_in=signed_in,
+             diagnose=_diagnose_cursor_credentials)
 
 
 # ---------------------------------------------------------------------------
@@ -2579,6 +2733,27 @@ def _read_devin_credentials(path: str | None = None) -> tuple[str, str] | None:
     if not isinstance(server, str) or not server.strip():
         server = _DEVIN_DEFAULT_API_SERVER
     return key.strip(), server.strip().rstrip("/")
+
+
+def _diagnose_devin_credentials(path: str | None = None) -> str | None:
+    """Devin's credential verdict, as an issue status.
+
+    Distinguishes a missing credentials file (signed-out) from one macOS
+    will not let us read (permission-required); a readable file that still
+    holds no usable key counts as signed-out — re-login is its fix either
+    way. ``ok`` means a key was read and the fetch itself should be judged.
+    """
+    expanded = os.path.expanduser(path or _DEVIN_CREDENTIALS_PATH)
+    try:
+        with open(expanded, "rb") as file:
+            file.read(1)
+    except PermissionError:
+        return remedies.PERMISSION_REQUIRED
+    except OSError:
+        # Missing, or a directory in the way: no credential either way.
+        return remedies.SIGNED_OUT
+    return (remedies.OK if _read_devin_credentials(path) is not None
+            else remedies.SIGNED_OUT)
 
 
 def _devin_unix_to_epoch(value) -> float:
@@ -2750,7 +2925,8 @@ def _register_devin() -> None:
         return _fetch_devin()
 
     register("devin", fetch,
-             signed_in=lambda: _read_devin_credentials() is not None)
+             signed_in=lambda: _read_devin_credentials() is not None,
+             diagnose=_diagnose_devin_credentials)
 
 
 # Tools whose fetchers list every quota window in ``RateLimitInfo.windows``.
@@ -2882,17 +3058,37 @@ def _load_cached_no_data_status() -> dict[str, str]:
         return {}
 
 
+def _load_cached_no_data_issues() -> dict[str, str]:
+    """The saved per-provider no-data statuses in the remedies vocabulary,
+    from the cache's ``no_data_issues`` map. Older swe files lack it; a
+    caller falls back to deriving one from ``no_data_status``."""
+    try:
+        with open(RATE_LIMITS_CACHE_FILE) as f:
+            data = json.load(f)
+        issues = data.get("no_data_issues") if isinstance(data, dict) else None
+        if not isinstance(issues, dict):
+            return {}
+        return {name: status for name, status in issues.items()
+                if isinstance(status, str)}
+    except Exception:
+        return {}
+
+
 def _save_cached(
     limits: dict[str, dict],
     updated_at: dict[str, float] | None = None,
     no_data: Iterable[str] | None = None,
     no_data_status: dict[str, str] | None = None,
+    no_data_issues: dict[str, str] | None = None,
 ) -> None:
     """Persist rate limits to disk cache.
 
     ``no_data_status`` gives the reason for some ``no_data`` names. It is
     a map of its own beside ``no_data`` so an older swe, which reads
     ``no_data`` values as timestamps, still parses the file.
+    ``no_data_issues`` carries the finer remedies-vocabulary status of the
+    same names so a stored ``auth-required`` does not degrade into an
+    outage on the next read.
     """
     try:
         RATE_LIMITS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -2914,6 +3110,12 @@ def _save_cached(
         }
         if reasons:
             payload["no_data_status"] = reasons
+        issues = {
+            name: status for name, status in (no_data_issues or {}).items()
+            if name in payload["no_data"]
+        }
+        if issues:
+            payload["no_data_issues"] = issues
         with open(RATE_LIMITS_CACHE_FILE, "w") as f:
             json.dump(payload, f)
     except Exception:
@@ -3025,6 +3227,7 @@ def get_all_rate_limits(
     refresh_failed: bool = False,
     cache_ttl: float | None = None,
     no_reading: dict[str, str] | None = None,
+    issues: dict[str, str] | None = None,
 ) -> dict[str, RateLimitInfo]:
     """Fetch rate limits for the selected registered tools.
 
@@ -3048,9 +3251,16 @@ def get_all_rate_limits(
     out of the result has no reading: ``SIGNED_OUT`` (no credential to
     read with) or ``FETCH_ERROR`` (credentials, but the fetch failed).
     Tools whose reason can't be told are left out of it too.
+
+    ``issues``, when given, is filled with the finer status the same
+    failures carry on the issue boundary — ``signed-out``,
+    ``auth-required``, ``permission-required`` or ``unavailable`` from the
+    ``remedies`` module — for tools left out of the result, plus
+    ``timeout``/``auth-required`` for the sentinel readings left in it.
     """
     result: dict[str, RateLimitInfo] = {}
     reasons: dict[str, str] = {}
+    statuses: dict[str, str] = {}
     # no_data markers served from cache this call, kept as saved.
     kept_empty: dict[str, float] = {}
 
@@ -3060,6 +3270,13 @@ def get_all_rate_limits(
                 name: reason for name, reason in reasons.items()
                 if name not in result
             })
+        if issues is not None:
+            for name, info in result.items():
+                if info.plan_type in ("auth-required", "timeout"):
+                    issues[name] = info.plan_type
+            for name, status in statuses.items():
+                if name not in result:
+                    issues[name] = status
         return result
 
     requested = None if tool_names is None else set(tool_names)
@@ -3157,6 +3374,19 @@ def get_all_rate_limits(
                 name: cached_reasons[name] for name in known_empty
                 if name in cached_reasons
             })
+            # Saved issues keep the fine status across reads; caches from
+            # before the map fall back to the coarse-to-fine mapping —
+            # "error" to "unavailable", "signed_out" to "signed-out".
+            cached_issues = _load_cached_no_data_issues()
+            statuses.update({
+                name: cached_issues.get(
+                    name,
+                    remedies.SIGNED_OUT
+                    if cached_reasons[name] == SIGNED_OUT
+                    else remedies.UNAVAILABLE)
+                for name in known_empty
+                if name in cached_reasons
+            })
             # An entry set aside for a refetch is not "nothing to report":
             # a leftover no_data marker must not stop its retry.
             served_empty = known_empty - set(upgrade_fallback) - result.keys()
@@ -3184,6 +3414,7 @@ def get_all_rate_limits(
 
     fetched: dict[str, RateLimitInfo | None] = {}
     fetched_reasons: dict[str, str] = {}
+    fetched_statuses: dict[str, str] = {}
     fetched_lock = threading.Lock()
 
     limit = _RATE_LIMIT_FETCH_DEADLINE if deadline is None else deadline
@@ -3191,11 +3422,13 @@ def get_all_rate_limits(
 
     def fetch_one(tool_name: str, fetcher: Callable) -> None:
         _fetch_cutoff.at = cutoff
+        _reset_json_failures()
         raised = False
         try:
             info = fetcher()
         except Exception:
             info, raised = None, True
+        kinds = _json_failure_kinds()
         with fetched_lock:
             fetched[tool_name] = info
         # The reading is in; the reason is extra and only asked while the
@@ -3203,10 +3436,15 @@ def get_all_rate_limits(
         # a timeout.
         if info or time.monotonic() >= cutoff:
             return
-        reason = _no_reading_reason(tool_name, fetcher, raised)
-        if reason:
-            with fetched_lock:
+        status = _failure_status(tool_name, fetcher, raised, kinds)
+        reason = (SIGNED_OUT if status == remedies.SIGNED_OUT
+                  else FETCH_ERROR if status is not None
+                  else _no_reading_reason(tool_name, fetcher, raised))
+        with fetched_lock:
+            if reason:
                 fetched_reasons[tool_name] = reason
+            if status:
+                fetched_statuses[tool_name] = status
 
     workers = [
         threading.Thread(target=fetch_one, args=item, daemon=True)
@@ -3220,6 +3458,7 @@ def get_all_rate_limits(
     with fetched_lock:
         completed = fetched.copy()
         completed_reasons = fetched_reasons.copy()
+        completed_statuses = fetched_statuses.copy()
     empty_fetchers: set[str] = set()
     # no_data entries carried over from a filtered run keep their own time.
     empty_fetchers_ts: dict[str, float] = {}
@@ -3248,6 +3487,8 @@ def get_all_rate_limits(
             empty_fetchers.add(tool_name)
             if tool_name in completed_reasons:
                 reasons[tool_name] = completed_reasons[tool_name]
+            if tool_name in completed_statuses:
+                statuses[tool_name] = completed_statuses[tool_name]
         elif tool_name not in result:
             # Missed the deadline: remember a marker so the cell reads …
             # instead of looking like a provider with nothing to report.
@@ -3305,6 +3546,8 @@ def get_all_rate_limits(
         if isinstance(saved_reasons, dict):
             for name, reason in saved_reasons.items():
                 if name not in fetcher_names:
+                    # Carried for the next save only; a filtered run must
+                    # not report another tool's stored failure as its own.
                     carried_reasons[name] = reason
         saved_no_data = disk.get("no_data")
         if isinstance(saved_no_data, dict):
@@ -3327,8 +3570,13 @@ def get_all_rate_limits(
         name: reasons[name] for name in empty_fetchers | set(kept_empty)
         if name in reasons
     }}
+    no_data_issues = {**{
+        name: statuses[name] for name in empty_fetchers | set(kept_empty)
+        if name in statuses
+    }}
     _save_cached(raw_cache, cache_updated_at, no_data=no_data_marks,
-                 no_data_status=no_data_reasons)
+                 no_data_status=no_data_reasons,
+                 no_data_issues=no_data_issues)
 
     return report()
 
@@ -3359,9 +3607,20 @@ class AccountUsageError(Exception):
     read: an outage, not a signed-out account (which returns None)."""
 
 
-def get_account_rate_limit(
-    tool_name: str, account_dir: str,
-) -> RateLimitInfo | None:
+@dataclass(frozen=True)
+class UsageOutcome:
+    """One usage read's verdict, in the ``remedies`` status vocabulary:
+    ``ok`` with a reading, or ``signed-out``, ``auth-required``,
+    ``permission-required``, ``unavailable`` or ``timeout`` — each a
+    different fix, where the old None/error collapse had none."""
+    status: str
+    limit: RateLimitInfo | None = None
+    # Why, for the CLI's human output. The app's card and Doctor rows use
+    # the REMEDIES table against ``status`` instead.
+    detail: str | None = None
+
+
+def get_account_usage(tool_name: str, account_dir: str) -> UsageOutcome:
     """Fetch one extra account's rate limit from its own files.
 
     ``account_dir`` is the account's data dir, never the shared one. The
@@ -3372,11 +3631,11 @@ def get_account_rate_limit(
     the aggregator gives its workers; missing it yields the same
     ``timeout`` marker a straggler gets there.
 
-    Returns None only for a signed-out account (no usable credential in
-    its own files). When credentials exist but the fetch fails or comes
-    back empty, ``AccountUsageError`` is raised so the caller can tell an
-    outage from a signed-out account rather than silently misreading one
-    as the other.
+    The credential verdict (``_diagnose_*``) comes first: it names a
+    missing, denied or opaque credential before any network call. A
+    credential that reads ``ok`` is followed by the fetch, whose own
+    ``_fetch_json`` failures split into ``auth-required`` (a 401 — the
+    stored login is stale) and ``unavailable`` (anything else).
     """
     if tool_name not in _ACCOUNT_CREDENTIALS:
         raise ValueError(
@@ -3385,48 +3644,74 @@ def get_account_rate_limit(
         )
     path = os.path.join(account_dir, *_ACCOUNT_CREDENTIALS[tool_name])
     if tool_name == "devin":
-        if _read_devin_credentials(path) is None:
-            return None
+        credential = _diagnose_devin_credentials(path)
 
         def fetcher() -> RateLimitInfo | None:
             return _fetch_devin(path)
     else:
-        if _read_cursor_state_token((path,)) is None:
-            return None
+        credential = _diagnose_cursor_credentials((path,))
 
         def fetcher() -> RateLimitInfo | None:
             return _fetch_cursor(path)
+    if credential != remedies.OK:
+        return UsageOutcome(status=credential)
 
     cutoff = time.monotonic() + _RATE_LIMIT_FETCH_DEADLINE
     box: list[RateLimitInfo | None] = []
     failures: list[Exception] = []
+    kinds: list[str] = []
 
     def work() -> None:
         _fetch_cutoff.at = cutoff
+        _reset_json_failures()
         try:
             box.append(fetcher())
         except Exception as exc:
             failures.append(exc)
+        finally:
+            kinds.extend(_json_failure_kinds())
 
     worker = threading.Thread(target=work, daemon=True)
     worker.start()
     worker.join(max(0.0, cutoff - time.monotonic()))
     if not box and not failures:
-        return RateLimitInfo(
-            tool_name=tool_name,
-            used_percent=0,
-            limit_reached=False,
-            reset_at=0.0,
-            plan_type="timeout",
-            window_seconds=0,
-        )
+        return UsageOutcome(
+            status=remedies.TIMEOUT,
+            limit=RateLimitInfo(
+                tool_name=tool_name,
+                used_percent=0,
+                limit_reached=False,
+                reset_at=0.0,
+                plan_type="timeout",
+                window_seconds=0,
+            ))
     info = box[0] if box else None
     if info is None:
         detail = f": {failures[0]}" if failures else ""
-        raise AccountUsageError(
-            f"couldn't read {tool_name} usage for this account{detail}")
+        return UsageOutcome(
+            status=(remedies.AUTH_REQUIRED if "auth" in kinds
+                    else remedies.UNAVAILABLE),
+            detail=f"couldn't read {tool_name} usage for this account{detail}")
     # Stamp the read time so the JSON carries when it was taken; a reading
     # that arrives already dated (a carried snapshot) keeps its own.
     if info.fetched_at <= 0:
         info.fetched_at = time.time()
-    return info
+    return UsageOutcome(
+        status=(info.plan_type
+                if info.plan_type in ("no-sub", "auth-required", "timeout")
+                else remedies.OK),
+        limit=info)
+
+
+def get_account_rate_limit(
+    tool_name: str, account_dir: str,
+) -> RateLimitInfo | None:
+    """The pre-``UsageOutcome`` contract over ``get_account_usage``: a
+    reading or None for signed-out, ``AccountUsageError`` for a failed
+    read. Callers that want the status should use ``get_account_usage``.
+    """
+    outcome = get_account_usage(tool_name, account_dir)
+    if outcome.limit is not None or outcome.status == remedies.SIGNED_OUT:
+        return outcome.limit
+    raise AccountUsageError(
+        outcome.detail or f"couldn't read {tool_name} usage for this account")

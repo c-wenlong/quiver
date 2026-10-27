@@ -568,11 +568,16 @@ class HarnessUsageCommandTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(out, "")
 
+    def _verdict(self, status, limit=None, detail=None):
+        from quiver.harness.rate_limits import UsageOutcome
+
+        return UsageOutcome(status=status, limit=limit, detail=detail)
+
     def test_json_emits_null_limit_when_signed_out(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
-                "quiver.harness.rate_limits.get_account_rate_limit",
-                return_value=None,
+                "quiver.harness.rate_limits.get_account_usage",
+                return_value=self._verdict("signed-out"),
             ):
                 code, out, _ = self._run(
                     ["devin", f"--account-dir={tmp}", "--json"])
@@ -580,7 +585,9 @@ class HarnessUsageCommandTest(unittest.TestCase):
         data = json.loads(out)["data"]
         self.assertEqual(data["name"], "devin")
         self.assertEqual(data["account_dir"], tmp)
+        self.assertEqual(data["status"], "signed-out")
         self.assertIsNone(data["limit"])
+        self.assertEqual(data["remedy"]["kind"], "relogin")
 
     def test_json_emits_the_list_row_limit_shape(self):
         from quiver.harness.models import RateLimitInfo
@@ -595,8 +602,8 @@ class HarnessUsageCommandTest(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
-                "quiver.harness.rate_limits.get_account_rate_limit",
-                return_value=limit,
+                "quiver.harness.rate_limits.get_account_usage",
+                return_value=self._verdict("ok", limit),
             ):
                 code, out, _ = self._run(
                     ["cursor", f"--account-dir={tmp}", "--json"])
@@ -609,27 +616,59 @@ class HarnessUsageCommandTest(unittest.TestCase):
     def test_human_output_says_not_signed_in(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
-                "quiver.harness.rate_limits.get_account_rate_limit",
-                return_value=None,
+                "quiver.harness.rate_limits.get_account_usage",
+                return_value=self._verdict("signed-out"),
             ):
                 code, out, _ = self._run(["devin", f"--account-dir={tmp}"])
         self.assertEqual(code, 0)
         self.assertIn("not signed in", out)
 
-    def test_an_outage_is_an_error_not_a_signed_out_reading(self):
-        from quiver.harness.rate_limits import AccountUsageError
-
+    def test_an_outage_is_a_typed_status_not_a_signed_out_reading(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
-                "quiver.harness.rate_limits.get_account_rate_limit",
-                side_effect=AccountUsageError(
-                    "couldn't read devin usage for this account"),
+                "quiver.harness.rate_limits.get_account_usage",
+                return_value=self._verdict(
+                    "unavailable",
+                    detail="couldn't read devin usage for this account"),
             ):
                 code, out, err = self._run(
                     ["devin", f"--account-dir={tmp}", "--json"])
         self.assertEqual(code, 1)
-        self.assertEqual(out, "")
-        self.assertIn("couldn't read devin usage", err)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["status"], "unavailable")
+        self.assertIsNone(data["limit"])
+        self.assertEqual(data["remedy"]["kind"], "retry")
+
+    def test_an_auth_failure_names_its_fix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "quiver.harness.rate_limits.get_account_usage",
+                return_value=self._verdict("auth-required"),
+            ):
+                code, out, err = self._run(
+                    ["devin", f"--account-dir={tmp}", "--json"])
+        # Failures still exit 1 like the old error path: readers from
+        # before `status` keep seeing a failed call, not a signed-out
+        # account. The document is emitted first either way.
+        self.assertEqual(code, 1)
+        data = json.loads(out)["data"]
+        self.assertEqual(data["status"], "auth-required")
+        # The account's own login is stale, so the remedy points at the
+        # account's data dir, not the default credentials file.
+        self.assertEqual(
+            data["remedy"]["command"],
+            f'XDG_DATA_HOME="{tmp}" devin auth login')
+
+    def test_human_output_prints_the_remedy_steps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "quiver.harness.rate_limits.get_account_usage",
+                return_value=self._verdict("auth-required"),
+            ):
+                code, out, _ = self._run(["devin", f"--account-dir={tmp}"])
+        self.assertEqual(code, 1)
+        self.assertIn("devin auth login", out)
+        self.assertNotIn("not signed in", out)
 
     def test_stdout_stays_pure_json_when_a_fetch_helper_warns(self):
         from quiver.harness.models import RateLimitInfo
@@ -641,11 +680,11 @@ class HarnessUsageCommandTest(unittest.TestCase):
 
         def noisy(name, account_dir):
             print("warning: something chatty on stdout")
-            return limit
+            return self._verdict("ok", limit)
 
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
-                "quiver.harness.rate_limits.get_account_rate_limit",
+                "quiver.harness.rate_limits.get_account_usage",
                 side_effect=noisy,
             ):
                 code, out, _ = self._run(
@@ -673,8 +712,8 @@ class HarnessUsageCommandTest(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
-                "quiver.harness.rate_limits.get_account_rate_limit",
-                return_value=limit,
+                "quiver.harness.rate_limits.get_account_usage",
+                return_value=self._verdict("ok", limit),
             ):
                 code, out, _ = self._run(["devin", f"--account-dir={tmp}"])
         self.assertEqual(code, 0)

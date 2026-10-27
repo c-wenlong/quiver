@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from quiver.harness.models import DoctorFinding
@@ -88,6 +89,54 @@ def install_method(name: str) -> str | None:
         if remover is not None and remover.via in usable:
             return remover.via
     return usable[0]
+
+
+def issue_findings(home: Path | None = None) -> list[DoctorFinding]:
+    """Usage problems the app recorded in ``~/.quiver/data/issues.json``.
+
+    The app's IssueStore is the source of truth for "this needs the
+    user"; each entry becomes a finding whose fix text comes from the
+    REMEDIES table, so ``swe doctor`` and the app describe the same fix.
+    All of them are warnings or info — a stale sign-in must never fail
+    doctor's exit status.
+    """
+    from quiver import paths
+    from quiver.harness.remedies import remedy_for
+
+    try:
+        raw = json.loads(paths.issues_file_for(home or Path.home()).read_text())
+    except (OSError, ValueError):
+        return []
+    issues = raw.get("issues") if isinstance(raw, dict) else None
+    if not isinstance(issues, dict):
+        return []
+    findings: list[DoctorFinding] = []
+    for issue_id, issue in sorted(issues.items()):
+        if not isinstance(issue, dict) or issue.get("resolved"):
+            continue
+        name = issue.get("harness")
+        status = issue.get("status")
+        if not isinstance(name, str) or not isinstance(status, str):
+            continue
+        stored = issue.get("remedy") if isinstance(issue.get("remedy"), dict) else None
+        # The table is authoritative — it may have learned a better fix
+        # since the app wrote the issue; the stored remedy is the fallback.
+        remedy = remedy_for(name, status) or stored or {}
+        summary = (stored or {}).get("summary") or remedy.get("summary")
+        message = summary or f"{name}: {status}"
+        account = issue.get("account")
+        if isinstance(account, str) and account:
+            message = f"{message} ({account})"
+        fix = remedy.get("command") or remedy.get("url")
+        if fix is None:
+            steps = remedy.get("steps")
+            if isinstance(steps, list) and steps:
+                fix = steps[0]
+        severity = ("info" if status in ("unavailable", "timeout")
+                    else "warning")
+        findings.append(DoctorFinding(
+            f"usage.{issue_id}", severity, message, fix, harness=name))
+    return findings
 
 
 def setup_findings(home: Path | None = None) -> list[DoctorFinding]:

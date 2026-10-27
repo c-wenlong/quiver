@@ -52,12 +52,32 @@ class HarnessRow:
     # Why ``rate_limit`` is null: "signed_out", "error", or None when there
     # is a reading or no reason is known (see ``get_all_rate_limits``).
     no_reading: str | None = None
+    # The actionable version of the same verdict: {"status", "remedy"}
+    # from the remedies vocabulary, or None on a healthy row.
+    issue: dict | None = None
 
     @classmethod
     def of(cls, name: str, info: dict, starred, archived: dict,
-           counts: dict, rate, no_reading: str | None = None) -> "HarnessRow":
+           counts: dict, rate, no_reading: str | None = None,
+           issue_status: str | None = None) -> "HarnessRow":
+        from quiver.harness.remedies import remedy_for
         from quiver.harness.tools import is_installed
 
+        # Sentinel plan types are a status, not a plan: they carry the
+        # issue a healthy reading would not. ``issue_status`` applies only
+        # to a row with no reading — it is why the reading is missing.
+        sentinel = (rate.plan_type
+                    if rate is not None
+                    else issue_status)
+        if sentinel not in ("auth-required", "timeout",
+                            "signed-out", "permission-required",
+                            "unavailable", "no-sub"):
+            sentinel = None
+        if sentinel == "no-sub":
+            # A plan state, not a failure: the card words it already.
+            sentinel = None
+        issue = ({"status": sentinel, "remedy": remedy_for(name, sentinel)}
+                 if sentinel is not None else None)
         if name in archived:
             state = "archived"
         elif name in starred:
@@ -80,6 +100,7 @@ class HarnessRow:
             installed=is_installed(info.get("command") or name),
             archived=archived.get(name),
             no_reading=None if rate is not None else no_reading,
+            issue=issue,
         )
 
     def to_json(self) -> dict:
@@ -99,6 +120,7 @@ class HarnessRow:
             "installed": self.installed,
             "archived": self.archived,
             "no_reading": self.no_reading,
+            "issue": self.issue,
         }
 
 
