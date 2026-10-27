@@ -412,7 +412,8 @@ task state: `completed`/`canceled`/`duplicate` → `closed`, `started` →
 carries the source's env: `disabled` (no section), `ok`, `auth-required`
 (the ref won't resolve or the key was refused — `error` says which and
 stored Linear tasks keep their last-known state, the way `env_blocked`
-does for GitHub) or `upstream-error`. Reads only: launching never moves
+does for GitHub), `bad-config` (a malformed setting, like a non-list
+`teams`) or `upstream-error`. Reads only: launching never moves
 a Linear issue's workflow state — states are per-team there, so
 `issueUpdate` write-back is a later step.
 

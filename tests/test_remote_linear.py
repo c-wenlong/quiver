@@ -227,6 +227,25 @@ class TestListAndGet(unittest.TestCase):
         team = seen["filter"]["or"][1]["team"]["key"]["in"]
         self.assertEqual(team, ["QUI", "ENG"])
 
+    def test_bad_teams_is_bad_config_not_a_crash(self):
+        """``swe config set linear.teams 5`` writes a scalar; a bare
+        ``"QUI"`` would otherwise iterate into ["Q","U","I"]. Neither
+        may raise or send a mangled filter."""
+        for raw in (5, "QUI", ["QUI", 7], {"k": "QUI"}, True):
+            _config(self.home, {"teams": raw})
+            with patch("quiver.remote.linear._graphql") as call:
+                out = linear.LinearTasks(self.home).list()
+            call.assert_not_called()  # never reaches the wire
+            self.assertEqual(out["status"], "bad-config", raw)
+            self.assertIn("list of team keys", out["error"])
+            self.assertEqual(out["tasks"], [])
+
+    def test_non_string_key_ref_is_bad_config(self):
+        _config(self.home, {"key_ref": 42})
+        env = linear.LinearTasks(self.home).probe()
+        self.assertEqual(env.status, "auth-required")
+        self.assertIn("key_ref", env.error)
+
     def test_list_failure_keeps_its_status(self):
         with self._stub([], status="upstream-error",
                         error="Linear answered HTTP 502"):
@@ -461,6 +480,23 @@ class TestTasksRoute(_Base):
             "linear:issue:qui:qui-12"]
         self.assertEqual(row["state"], "closed")
         self.assertTrue(row["agent_running"])
+
+    def test_bad_teams_reports_but_does_not_break_the_route(self):
+        """A malformed ``teams`` blocks the linear list only — GitHub
+        rows and the answer itself still come back."""
+        _config(self.srv.home, {"teams": "QUI"})
+        _secret(self.srv.home)
+
+        def fake(key, query, variables=None):
+            return linear.GraphQLResult(
+                "ok", data={"viewer": {"displayName": "Kai"}})
+
+        with self._stubs(fake):
+            status, body = self._get("/v1/tasks")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["linear"]["status"], "bad-config")
+        self.assertIn("team keys", body["linear"]["error"])
+        self.assertEqual(body["tasks"], [])
 
     def test_a_failed_list_reports_on_the_block(self):
         """probe ok but the fetch itself failed: the linear block says

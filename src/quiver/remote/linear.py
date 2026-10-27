@@ -245,7 +245,9 @@ class LinearTasks:
         ref = cfg.get("key_ref")
         if ref is None:
             ref = DEFAULT_KEY_REF
-        if not isinstance(ref, str) or not mcp_secrets.referenced_names(ref):
+        if not isinstance(ref, str):
+            return None, "linear.key_ref must be a ${NAME} reference"
+        if not mcp_secrets.referenced_names(ref):
             return None, (
                 "linear.key_ref must be a ${NAME} reference into the "
                 "secrets store, not the key itself — config.json is "
@@ -306,8 +308,13 @@ class LinearTasks:
 
     def _list(self) -> dict:
         cfg = load_section(self.home) or {}
-        teams = [t.strip() for t in cfg.get("teams") or []
-                 if isinstance(t, str) and t.strip()]
+        teams, bad = _teams(cfg.get("teams"))
+        if bad:
+            # A scalar or mixed ``teams`` (``swe config set`` takes one)
+            # must not crash the route — say what's wrong, as a missing
+            # key does, instead of iterating characters or raising.
+            return {"status": "bad-config", "tasks": [],
+                    "error": bad}
         key, error = self._api_key(cfg)
         if key is None:
             return {"status": "auth-required", "tasks": [],
@@ -394,3 +401,19 @@ def _list_filter(teams: list[str]) -> dict:
         return {**open_only,
                 "or": [mine, {"team": {"key": {"in": list(teams)}}}]}
     return {**open_only, **mine}
+
+
+def _teams(raw) -> tuple[list[str], str]:
+    """``(team keys, error)`` — the ``teams`` setting normalized.
+
+    Anything but a list of strings is the error, since a bare ``"QUI"``
+    would otherwise iterate into ``["Q", "U", "I"]`` and a number would
+    raise mid-route. Empty entries drop out.
+    """
+    if raw is None:
+        return [], ""
+    if not isinstance(raw, list) \
+            or not all(isinstance(t, str) for t in raw):
+        return [], ('linear.teams must be a list of team keys, '
+                    'e.g. ["QUI"]')
+    return [t.strip() for t in raw if t.strip()], ""
