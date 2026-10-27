@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   larger), a phone section with the iOS remote, and an FAQ. The clips
   live in `landing/media/`, and `scripts/docs_site.py` now copies
   `landing/` recursively.
+- **"Download for Mac" on the landing page.** The install buttons read the
+  latest GitHub release and, when it carries a `.dmg`, link straight to it
+  with the Apple mark. Until a release has one they keep pointing at the
+  install commands.
 
 ### Changed
 
