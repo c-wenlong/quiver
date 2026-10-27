@@ -30,6 +30,9 @@ const sessionsPage = {
   searchTimer: null, searchSeq: 0,
   // Where the list was scrolled when a chat opened, restored on the way back.
   scrollY: null,
+  // Keys with a control write in flight (their action button reads
+  // "Attaching…"/"Detaching…"), and the one-line result an action left.
+  acting: new Set(), actionNote: "",
 };
 
 const sessionChat = () => globalThis.SessionChat || null;
@@ -73,12 +76,15 @@ function sessionsHeader(busy) {
   const updated = d && d.scanned_at ? `<span class="caption">Updated ${Fmt.ago(d.scanned_at)}</span>` : "";
   const where = d && d.machine ? ` on ${d.machine} and its satellites` : "";
   return pageHeader("Sessions", `Sessions${where}, usage and estimated cost.`,
-    `${updated}<button class="icon-button${busy ? " spinning" : ""}" id="sessions-refresh" aria-label="Refresh" title="Refresh">${icon("rescan")}</button>`);
+    `${updated}<button class="tab" id="new-session">New session</button>
+    <button class="icon-button${busy ? " spinning" : ""}" id="sessions-refresh" aria-label="Refresh" title="Refresh">${icon("rescan")}</button>`);
 }
 
 function bindSessionsHeader() {
   const btn = document.getElementById("sessions-refresh");
   if (btn) btn.onclick = () => renderSessions("sessions", true);
+  const add = document.getElementById("new-session");
+  if (add) add.onclick = () => openNewSession();
 }
 
 function windowStart(win, now = Date.now() / 1000) {
@@ -190,6 +196,7 @@ function paintSessions() {
   const s = sessionsPage, d = s.data;
   const { kept, trivial } = filteredSessions();
   const notes = (d.notes || []).map((n) => `<div class="card"><p class="note">${esc(n)}</p></div>`).join("");
+  const actNote = s.actionNote ? `<div class="card"><p class="note">${esc(s.actionNote)}</p></div>` : "";
   const body = !d.sessions.length
     ? `<div class="card"><p class="empty">No sessions listed. Sessions from every harness on the hub machine, and on paired satellites, show here.</p></div>`
     : !kept.length
@@ -199,7 +206,7 @@ function paintSessions() {
   const footer = trivial || s.showTrivial ? trivialFooter(trivial) : "";
   document.getElementById("panel").innerHTML = `<div class="page">
     ${sessionsHeader(false)}
-    <div class="stack">${notes}${filterBar()}${searchNote(kept)}${summaryStrip(kept)}${body}${footer}</div>
+    <div class="stack">${notes}${actNote}${filterBar()}${searchNote(kept)}${summaryStrip(kept)}${body}${footer}</div>
   </div>
   <dialog class="sheet" id="session-sheet"></dialog>`;
   bindSessionsHeader();
@@ -300,9 +307,20 @@ function duration(seconds) {
   return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
+/* The lifecycle action a row offers, the phone's leading-swipe rule:
+ * detach an attached one, attach one the hub can take over (a kept pane
+ * attaches even mid-turn: it is adopted, nothing restarts). */
+function rowAction(r) {
+  if (r.ownership === "attached") return "detach";
+  const busy = r.status === "active" || r.status === "approval";
+  if ((r.attachable || r.kept) && (r.kept || !busy)) return "attach";
+  return "";
+}
+
 function sessionRow(r) {
   const badge = (STATUS_BADGE[r.status] ? `<span class="badge status-${r.status}">${STATUS_BADGE[r.status]}</span>` : "")
-    + (r.ownership === "attached" ? '<span class="badge ownership-attached" title="Runs under Quiver: you can send to it">Attached</span>' : "");
+    + (r.ownership === "attached" ? '<span class="badge ownership-attached" title="Runs under Quiver: you can send to it">Attached</span>' : "")
+    + (r.kept ? '<span class="badge" title="Detached, still running in tmux">Kept</span>' : "");
   const time = new Date(r.last_active_at * 1000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   const hit = sessionsPage.query.trim() ? transcriptHit(r.key) : null;
   const snippet = hit && (hit.marked || hit.snippet)
@@ -310,13 +328,22 @@ function sessionRow(r) {
   const second = [r.project, Fmt.harnessName(r.harness), r.remote ? r.machine : r.location,
     r.usage ? r.usage.models.map((m) => m.model).join(", ") : "", time, duration(r.duration_s)]
     .filter(Boolean).map(esc).join(" · ");
-  return `<button class="session-row" data-key="${esc(r.key)}">
+  const act = rowAction(r);
+  const acting = sessionsPage.acting.has(r.key);
+  const actHtml = act
+    ? `<button type="button" class="row-act" data-act="${act}" data-key="${esc(r.key)}"${acting ? " disabled" : ""}>${
+        acting ? (act === "attach" ? "Attaching…" : "Detaching…") : (act === "attach" ? "Attach" : "Detach")}</button>`
+    : "";
+  // Not a <button>: the row carries its own Attach/Detach button inside,
+  // and a button can't hold one. Click and Enter/Space act the same.
+  return `<div class="session-row" role="button" tabindex="0" data-key="${esc(r.key)}">
     <span class="session-logo" title="${esc(Fmt.harnessName(r.harness))}">${Fmt.logo(r.harness)}</span>
     <span class="session-main"><span class="session-title"><span class="ellipsis">${esc(r.title || r.id || "Untitled")}</span>${badge}</span>
       <span class="session-sub">${second}</span>${snippet}</span>
+    <span class="session-acts">${actHtml}</span>
     <span class="num-col num">${r.usage ? Fmt.tokens(r.usage.tokens) : "–"}</span>
     <span class="num-col num spend">${r.usage ? Fmt.dollars(r.usage.cost_usd) : "–"}</span>
-  </button>`;
+  </div>`;
 }
 
 function trivialFooter(count) {
@@ -375,6 +402,8 @@ function openSheet(r) {
     ${tmuxLine ? `<div class="caption">Attach from a terminal</div><div class="command-wrap"><pre class="command" id="tmux-line">${esc(tmuxLine)}</pre>
       <button type="button" class="icon-button command-copy" id="copy-tmux" aria-label="Copy attach command" title="Copy attach command">${Fmt.copyIcon()}</button></div>` : ""}
     <div class="sheet-actions">
+      ${(() => { const act = rowAction(r); return act
+        ? `<button type="button" class="tab" id="sheet-act">${act === "attach" ? "Attach" : "Detach"}</button>` : ""; })()}
       ${canOpenTerminal ? '<button type="button" class="tab" id="run-terminal">Run in terminal</button>' : ""}
       <button class="tab selected" value="close">Close</button>
     </div>
@@ -406,7 +435,98 @@ function openSheet(r) {
       }
     };
   }
+  const act = sheet.querySelector("#sheet-act");
+  if (act) {
+    act.onclick = (e) => {
+      e.preventDefault();
+      sheet.close();
+      if (rowAction(r) === "attach") attachRow(r); else detachClick(r);
+    };
+  }
   sheet.showModal();
+}
+
+/* --------------------------------------------------------- lifecycle */
+
+/* The same session control routes the chat uses, one hop per write. */
+function sessionControl(key, op, mode) {
+  const body = mode ? { op, mode } : { op };
+  return apiPost(`/v1/sessions/${encodeURIComponent(key)}/control`, body);
+}
+
+function controlErrorText(status, data, fallback) {
+  if (data && data.error && data.error.message) return data.error.message;
+  return status ? `The hub answered ${status}.` : fallback;
+}
+
+/* A finished write leaves the row's ownership stale until the next list:
+ * refetch rather than patch it, so badges and actions always agree. */
+async function runControl(r, op, mode, doneNote) {
+  const s = sessionsPage;
+  if (s.acting.has(r.key)) return;
+  s.acting.add(r.key);
+  paintSessions();
+  const { status, data } = await sessionControl(r.key, op, mode);
+  s.acting.delete(r.key);
+  if (status === 401) {
+    return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  }
+  if (status === 200 || status === 202) {
+    s.actionNote = doneNote || "";
+    renderSessions("sessions");
+    return;
+  }
+  s.actionNote = controlErrorText(status, data,
+    `Couldn't ${op === "attach" ? "attach it" : "detach it"}. Check the connection, then try again.`);
+  paintSessions();
+}
+
+function attachRow(r) {
+  const where = r.remote && r.machine ? ` on ${r.machine}` : "";
+  return runControl(r, "attach", null, `Attaching${where}…`);
+}
+
+function detachRow(r, mode) {
+  const where = r.remote && r.machine ? ` on ${r.machine}` : "";
+  const note = mode === "keep" ? `Detached — it keeps running in tmux${where}.`
+    : mode === "when_idle" ? "It detaches when the turn ends." : "";
+  return runControl(r, "detach", mode, note);
+}
+
+/* The chat's same three-way choice, stacked like the phone's: idle rows
+ * just detach when_idle, busy ones ask first since `now` cuts the turn. */
+function detachClick(r) {
+  const busy = r.status === "active" || r.status === "approval";
+  if (!busy) return detachRow(r, "when_idle");
+  const sheet = detachSheetEl();
+  const canKeep = r.tmux || r.mode === "tmux";
+  sheet.innerHTML = `<div class="sheet-body">
+    <div class="sheet-title">${Fmt.logo(r.harness)}<span>Detach ${esc(r.title || r.id || "session")}?</span></div>
+    <p class="note">It's working right now. Detaching now stops the turn; keeping it lets you attach to it from a terminal with tmux.</p>
+    <div class="sheet-actions detach-choices">
+      <button type="button" class="tab" data-mode="when_idle">Detach when it finishes</button>
+      ${canKeep ? '<button type="button" class="tab" data-mode="keep">Keep it running in tmux</button>' : ""}
+      <button type="button" class="tab detach-danger" data-mode="now">Detach now</button>
+      <button type="button" class="tab" data-mode="">Cancel</button>
+    </div></div>`;
+  for (const b of sheet.querySelectorAll("[data-mode]")) {
+    b.onclick = () => {
+      const mode = b.dataset.mode;
+      sheet.close();
+      if (mode) detachRow(r, mode);
+    };
+  }
+  if (!sheet.open) sheet.showModal();
+}
+
+function detachSheetEl() {
+  let sheet = document.getElementById("detach-sheet");
+  if (sheet) return sheet;
+  sheet = document.createElement("dialog");
+  sheet.id = "detach-sheet";
+  sheet.className = "sheet";
+  document.body.appendChild(sheet);
+  return sheet;
 }
 
 function bindSessionControls() {
@@ -441,13 +561,27 @@ function bindSessionControls() {
   }
   const byKey = new Map(s.data.sessions.map((r) => [r.key, r]));
   for (const row of document.querySelectorAll(".session-row")) {
-    row.onclick = () => {
+    const open = () => {
       const r = byKey.get(row.dataset.key);
       if (!r) return;
       // Without the chat script (it failed to load), a row keeps its sheet.
       if (!sessionChat()) return openSheet(r);
       s.scrollY = window.scrollY;
       location.hash = `#/sessions?chat=${encodeURIComponent(r.key)}`;
+    };
+    row.onclick = open;
+    row.onkeydown = (e) => {
+      if (e.target !== row || (e.key !== "Enter" && e.key !== " ")) return;
+      e.preventDefault();
+      open();
+    };
+  }
+  for (const btn of document.querySelectorAll(".row-act")) {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const r = byKey.get(btn.dataset.key);
+      if (!r) return;
+      if (btn.dataset.act === "attach") attachRow(r); else detachClick(r);
     };
   }
 }
@@ -493,4 +627,324 @@ async function sessionDetails(key) {
   }
   openSheet(r);
   return true;
+}
+
+/* ------------------------------------------------------- new session */
+
+/* The iPhone app's NewSessionView: machine, harness, folder and a first
+ * prompt, then POST /v1/sessions followed by /v1/launches/<id> polls
+ * until the hub names the session key and the chat can open. */
+const ns = {
+  machines: null,            // /v1/machines answer, cached per sheet open
+  machineId: null, harness: null, folder: "", prompt: "", query: "",
+  browse: null,              // {path, parent, folders, error, loading}
+  phase: "idle", message: "", seq: 0,  // idle|starting|waiting|started|failed|unconfirmed
+};
+
+function nsSheetEl() {
+  let sheet = document.getElementById("new-session-sheet");
+  if (sheet) return sheet;
+  sheet = document.createElement("dialog");
+  sheet.id = "new-session-sheet";
+  sheet.className = "sheet";
+  // Esc counts as Close: a poll in flight stops trusting its replies.
+  sheet.oncancel = () => { ns.seq++; ns.phase = "idle"; ns.message = ""; };
+  document.body.appendChild(sheet);
+  return sheet;
+}
+
+function nsBusy() {
+  return ns.phase === "starting" || ns.phase === "waiting" || ns.phase === "started";
+}
+
+/* The iPhone's NewSessionOptions: a machine offers `launchable`, falling
+ * back to every harness it detected on older hub versions. Machines
+ * that can launch nothing are left out, online ones first. */
+function nsMachines() {
+  return (ns.machines || [])
+    .filter((m) => (m.launchable || m.harnesses || []).length)
+    .sort((a, b) => ((b.online === true) - (a.online === true))
+      || String(a.name || a.id).localeCompare(String(b.name || b.id)));
+}
+
+function nsMachine() {
+  return nsMachines().find((m) => m.id === ns.machineId) || null;
+}
+
+function nsHarnesses() {
+  const m = nsMachine();
+  return m ? (m.launchable || m.harnesses || []) : [];
+}
+
+function nsHarnessName(m, h) {
+  const names = (m && m.harness_names) || {};
+  const raw = names[h] || h;
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+/* Recent folders on the chosen machine, most recent first, the session
+ * rows' cwd deduped; the box's words all have to match, any case. */
+function nsFolders(m) {
+  const mid = m ? m.id : "";
+  const seen = new Set(), out = [];
+  for (const r of (sessionsPage.data && sessionsPage.data.sessions) || []) {
+    const cwd = r.cwd;
+    if (!cwd || !cwd.startsWith("/")) continue;
+    const onMachine = mid ? (r.machine_id || "") === mid || (!r.machine_id && !r.remote) : true;
+    if (!onMachine || seen.has(cwd)) continue;
+    seen.add(cwd);
+    out.push(cwd);
+  }
+  const words = ns.query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  return words.length ? out.filter((p) => words.every((w) => p.toLowerCase().includes(w))) : out;
+}
+
+function nsReady() {
+  return !nsBusy() && ns.machineId != null && ns.harness != null
+    && ns.folder.trim().startsWith("/") && !!ns.prompt.trim();
+}
+
+function nsPaint() {
+  const sheet = nsSheetEl();
+  const machines = nsMachines();
+  const machine = nsMachine();
+  const busy = nsBusy();
+  const browse = ns.browse;
+  const untracked = machine && ns.harness
+    && (machine.untracked_harnesses || []).includes(ns.harness);
+  const machineChips = machines.length > 1 ? `<div class="ns-chips">${
+    machines.map((m) => `<button type="button" class="tab ns-chip${m.id === ns.machineId ? " selected" : ""}"
+      data-machine="${esc(m.id)}"${busy ? " disabled" : ""}>${esc(m.name || m.id)}${m.online === false ? " · offline" : ""}</button>`).join("")
+  }</div>` : "";
+  const harnessChips = nsHarnesses().map((h) => `<button type="button"
+      class="tab ns-chip${h === ns.harness ? " selected" : ""}" data-harness="${esc(h)}"${busy ? " disabled" : ""}>
+      ${Fmt.logo(h)}<span>${esc(nsHarnessName(machine, h))}</span></button>`).join("");
+  const folders = nsFolders(machine).slice(0, 6);
+  const browseUi = browse ? `<div class="ns-browse">
+      <div class="ns-path">${esc(browse.path || "…")}</div>
+      ${browse.loading ? '<p class="caption">Listing folders…</p>' : ""}
+      ${browse.error ? `<p class="error">${esc(browse.error)}</p>` : ""}
+      ${browse.parent ? `<button type="button" class="ns-folder" data-path="${esc(browse.parent)}">..</button>` : ""}
+      ${(browse.folders || []).map((f) => `<button type="button" class="ns-folder" data-path="${esc(f.path)}">${esc(f.name)}/</button>`).join("")}
+      ${!browse.loading && !browse.error ? `<div class="sheet-actions"><button type="button" class="tab selected" id="ns-browse-use">Use this folder</button></div>` : ""}
+    </div>` : "";
+  const note = ns.message ? `<p class="${ns.phase === "failed" ? "error" : "note"}">${esc(ns.message)}</p>` : "";
+  const startLabel = { starting: "Starting…", waiting: "Waiting for the session…", started: "Opening the chat…" }[ns.phase] || "Start";
+  sheet.innerHTML = `<div class="sheet-body">
+    <div class="sheet-title">New session</div>
+    ${machineChips}
+    ${machines.length && !machine ? '<p class="note">Pick a machine.</p>' : ""}
+    ${!machines.length ? `<p class="note">No machine can start a session. Update swe on the hub: a machine
+      offers the harnesses swe lists there, minus the ones switched off in Provider visibility.</p>` : ""}
+    <div class="caption">Harness</div>
+    <div class="ns-chips">${harnessChips}</div>
+    ${untracked ? `<p class="note">Quiver can't read ${esc(nsHarnessName(machine, ns.harness))} sessions yet: it starts, but no chat opens.</p>` : ""}
+    <div class="caption">Folder</div>
+    <input class="field ns-path-input" id="ns-folder" type="text" autocomplete="off" spellcheck="false"
+      placeholder="/absolute/path" value="${esc(ns.folder)}"${busy ? " disabled" : ""}>
+    <input class="field search" id="ns-query" type="search" placeholder="Recent folders on this machine — type to filter"
+      value="${esc(ns.query)}"${busy ? " disabled" : ""}>
+    <div class="ns-folders" id="ns-folders">
+      ${folders.map((p) => `<button type="button" class="ns-folder" data-path="${esc(p)}"${busy ? " disabled" : ""}>${esc(p)}</button>`).join("")
+        || '<p class="caption" style="padding:8px 10px">No recent folders match.</p>'}
+    </div>
+    <button type="button" class="link" id="ns-browse"${busy ? " disabled" : ""}>Browse this machine's folders…</button>
+    ${browseUi}
+    <div class="caption">First prompt</div>
+    <textarea class="field ns-prompt" id="ns-prompt" rows="3" placeholder="Describe the first task"${busy ? " disabled" : ""}>${esc(ns.prompt)}</textarea>
+    ${note}
+    <div class="sheet-actions">
+      <button type="button" class="tab" id="ns-cancel"${ns.phase === "started" ? " disabled" : ""}>${nsBusy() ? "Close" : "Cancel"}</button>
+      <button type="button" class="tab selected" id="ns-start"${nsReady() ? "" : " disabled"}>${esc(startLabel)}</button>
+    </div></div>`;
+  for (const b of sheet.querySelectorAll("[data-machine]")) {
+    b.onclick = () => {
+      if (b.dataset.machine === ns.machineId) return;
+      ns.machineId = b.dataset.machine;
+      ns.harness = null;
+      ns.browse = null;
+      nsPickHarness();
+      nsPaint();
+    };
+  }
+  for (const b of sheet.querySelectorAll("[data-harness]")) {
+    b.onclick = () => { ns.harness = b.dataset.harness; nsPaint(); };
+  }
+  for (const b of sheet.querySelectorAll(".ns-folder")) {
+    b.onclick = () => {
+      if (ns.browse) nsBrowse(b.dataset.path);   // inside the browser: descend
+      else { ns.folder = b.dataset.path; nsPaint(); }
+    };
+  }
+  const folderIn = sheet.querySelector("#ns-folder");
+  if (folderIn) folderIn.oninput = () => { ns.folder = folderIn.value; nsPaintStart(); };
+  const queryIn = sheet.querySelector("#ns-query");
+  if (queryIn) queryIn.oninput = () => { ns.query = queryIn.value; nsPaintLists(); };
+  const promptIn = sheet.querySelector("#ns-prompt");
+  if (promptIn) promptIn.oninput = () => { ns.prompt = promptIn.value; nsPaintStart(); };
+  const browseBtn = sheet.querySelector("#ns-browse");
+  if (browseBtn) browseBtn.onclick = () => nsBrowse(ns.folder.trim());
+  const use = sheet.querySelector("#ns-browse-use");
+  if (use) use.onclick = () => { ns.folder = ns.browse.path; ns.browse = null; nsPaint(); };
+  sheet.querySelector("#ns-cancel").onclick = () => {
+    ns.seq++;              // in-flight polls drop their replies
+    ns.phase = "idle"; ns.message = "";
+    sheet.close();
+  };
+  sheet.querySelector("#ns-start").onclick = nsStart;
+}
+
+/* Light repaints for keystrokes: only the folder list or the Start
+ * button's enabled state, so the focused field keeps its caret. */
+function nsPaintStart() {
+  const start = document.getElementById("ns-start");
+  if (start) start.disabled = !nsReady();
+}
+function nsPaintLists() {
+  const box = document.getElementById("ns-folders");
+  if (!box) return nsPaint();
+  const busy = nsBusy();
+  const folders = nsFolders(nsMachine()).slice(0, 6);
+  box.innerHTML = folders.map((p) => `<button type="button" class="ns-folder"
+      data-path="${esc(p)}"${busy ? " disabled" : ""}>${esc(p)}</button>`).join("")
+    || '<p class="caption" style="padding:8px 10px">No recent folders match.</p>';
+  for (const b of box.querySelectorAll(".ns-folder")) {
+    b.onclick = () => { ns.folder = b.dataset.path; nsPaint(); };
+  }
+}
+
+/* The iPhone's defaultHarness: the harness last used in that folder on
+ * that machine when it is on offer, else the first offer. */
+function nsPickHarness() {
+  const offered = nsHarnesses();
+  const mid = ns.machineId;
+  const last = ((sessionsPage.data && sessionsPage.data.sessions) || [])
+    .find((r) => (r.machine_id || "") === mid && r.cwd === ns.folder);
+  ns.harness = last && offered.includes(last.harness) ? last.harness : (offered[0] || null);
+}
+
+async function nsBrowse(path) {
+  ns.browse = ns.browse || {};
+  ns.browse.loading = true;
+  ns.browse.error = "";
+  nsPaint();
+  const m = ns.machineId || "";
+  // An empty path is the hub machine's home; only absolute ones go over.
+  const qp = path && path.startsWith("/") ? `path=${encodeURIComponent(path)}&` : "";
+  const { status, data } = await api(`/v1/folders?${qp}machine=${encodeURIComponent(m)}`);
+  if (!ns.browse) return;
+  ns.browse.loading = false;
+  if (status === 200 && data) {
+    ns.browse.path = data.path;
+    ns.browse.parent = data.parent || null;
+    ns.browse.folders = data.folders || [];
+    if (data.truncated) ns.browse.error = "This folder has too many entries to list fully.";
+    else ns.browse.error = "";
+  } else {
+    ns.browse.error = (data && data.error && data.error.message)
+      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.");
+    if (status === 401) {
+      ns.seq++;
+      nsSheetEl().close();
+      return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    }
+  }
+  nsPaint();
+}
+
+async function openNewSession() {
+  ns.machines = null;
+  ns.machineId = null;
+  ns.harness = null;
+  ns.folder = ns.folder || "";   // the last folder is a good next guess
+  ns.prompt = "";
+  ns.query = "";
+  ns.browse = null;
+  ns.phase = "idle";
+  ns.message = "";
+  ns.seq++;
+  const sheet = nsSheetEl();
+  nsPaint();
+  if (!sheet.open) sheet.showModal();
+  const { status, data } = await api("/v1/machines");
+  if (status === 401) {
+    sheet.close();
+    return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  }
+  if (status !== 200 || !data) {
+    ns.message = "Couldn't list the machines — the harness and folder pickers need it.";
+    nsPaint();
+    return;
+  }
+  ns.machines = data.machines || [];
+  const first = nsMachines()[0];
+  if (first && !ns.machineId) ns.machineId = first.id;
+  nsPickHarness();
+  nsPaint();
+}
+
+async function nsStart() {
+  if (!nsReady()) return;
+  const mine = ++ns.seq;
+  ns.phase = "starting";
+  ns.message = "";
+  nsPaint();
+  const body = { harness: ns.harness, cwd: ns.folder.trim(), prompt: ns.prompt.trim() };
+  if (ns.machineId) body.machine = ns.machineId;
+  const { status, data } = await apiPost("/v1/sessions", body);
+  if (mine !== ns.seq) return;
+  if (status === 401) {
+    nsSheetEl().close();
+    return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  }
+  if (!((status === 200 || status === 202) && data && data.launch_id)) {
+    ns.phase = "failed";
+    ns.message = controlErrorText(status, data, "Couldn't reach the hub. Check the connection, then try again.");
+    return nsPaint();
+  }
+  ns.phase = "waiting";
+  nsPaint();
+  const queued = data.queued === true;   // a satellite carries the launch
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  let launch = data;
+  for (let i = 0; i < 90; i++) {
+    if (launch.state === "started" && launch.key) {
+      ns.phase = "started";
+      nsPaint();
+      const key = launch.key;
+      const sheet = nsSheetEl();
+      ns.phase = "idle";
+      sheet.close();
+      // The list refetches behind the chat that is about to open.
+      renderSessions("sessions");
+      location.hash = `#/sessions?chat=${encodeURIComponent(key)}`;
+      return;
+    }
+    if (launch.state === "untracked") {
+      ns.phase = "unconfirmed";
+      ns.message = "Started. Quiver can't read this harness's sessions yet, so there's no chat to open. It keeps running under tmux on the machine.";
+      return nsPaint();
+    }
+    if (launch.state === "failed") {
+      ns.phase = "failed";
+      ns.message = launch.note ? `The session didn't start: ${launch.note}` : "The session didn't start.";
+      return nsPaint();
+    }
+    await sleep(1000);
+    if (mine !== ns.seq) return;
+    const { status: s, data: d } = await api(`/v1/launches/${encodeURIComponent(data.launch_id)}`);
+    if (mine !== ns.seq) return;
+    if (s === 200 && d) launch = d;
+    else if (s === 404) {
+      ns.phase = "failed";
+      ns.message = (d && d.error && d.error.message) || "The hub lost track of this launch.";
+      return nsPaint();
+    }
+    // A dropped poll is retried until the attempts run out.
+  }
+  ns.phase = "unconfirmed";
+  ns.message = queued
+    ? "Queued. It starts when that machine is online, then shows up in Sessions."
+    : "It started but hasn't shown up yet. It'll appear in Sessions when it does.";
+  nsPaint();
 }
