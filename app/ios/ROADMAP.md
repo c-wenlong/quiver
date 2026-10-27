@@ -159,6 +159,15 @@ are server changes in `src/quiver/remote/`.
 - [x] PWA Issues tab: list → detail (comments) → resolve sheet on the hub-served web app, the same loop browsers and Android get
 - [ ] "Assigned to you" push notifications once APNs lands
 
+### P13. Tasks — deferred
+
+- [ ] Work-items surface joining every source (GitHub, Linear) with the
+  hub's agent links. Design settled and deferred to #875: sources own
+  status, the hub owns links only, the same work in two sources merges
+  into one task. Build when a second source is in real use — the slim
+  variant (linked sessions on the Issues/Pulls detail views, no new tab)
+  may be enough.
+
 ## Components
 
 - [ ] Status dot: active, needs you, error, idle, offline
