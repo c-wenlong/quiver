@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is, the three ways in (terminal, Mac app, phone) and how to install
   it. `scripts/docs_site.py` copies it to the site root, and the README
   page moved from `/` to `/overview/`.
+- **The landing page shows the product.** It follows Orca's layout: a
+  tabbed hero tour, 15 feature cards that each play a short looping clip
+  of the Mac app or the CLI while on screen (click one to watch it
+  larger), a phone section with the iOS remote, and an FAQ. The clips
+  live in `landing/media/`, and `scripts/docs_site.py` now copies
+  `landing/` recursively.
 
 ### Changed
 
