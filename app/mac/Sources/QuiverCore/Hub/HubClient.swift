@@ -129,9 +129,9 @@ public struct HubClient: Sendable {
         return status == 202
     }
 
-    /// Answers approval `requestId` with `allow`, `always` or `deny`.
-    /// Returns true when the hub queued it for a satellite (202), whose
-    /// `command.result` follows.
+    /// Answers approval `requestId` with `allow`, `always`, `deny`, or a
+    /// menu row's digit. Returns true when the hub queued it for a
+    /// satellite (202), whose `command.result` follows.
     public func approve(_ key: String, requestId: String, decision: String) async throws -> Bool {
         let (_, status) = try await raw(request("POST", Self.sessionPath(key, "approval"),
                                                 body: ["request_id": requestId, "decision": decision]))

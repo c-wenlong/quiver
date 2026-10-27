@@ -11,7 +11,11 @@ public struct HubChatItem: Identifiable, Equatable, Sendable {
         case assistant(String)
         case thinking(String)
         case tool(HubToolCall, result: String?)
-        case approval(requestId: String, prompt: String, state: HubApprovalState)
+        /// `options` is the pane's numbered menu when the ask carried it;
+        /// `picked` is the decision the card lights as chosen (the row
+        /// answered here, or the resolved one once it names a row).
+        case approval(requestId: String, prompt: String, options: [HubApprovalOption],
+                      picked: String?, state: HubApprovalState)
         case compaction
         case system(String)
         case error(String)
@@ -143,6 +147,12 @@ public final class SessionChatModel {
     /// sent: a satellite's result doesn't repeat it.
     private var answers: [String: HubApprovalState] = [:]
     private var decisions: [String: String] = [:]
+    /// Approvals whose answer from here is still outstanding: set as the
+    /// `decide` POST leaves (a satellite's `command.result` can beat the
+    /// reply), cleared when a non-queued reply or that result closes it.
+    /// The web app's `dataset.queued`: a result settles only a request in
+    /// this set, and a rejection after the card resolved re-opens it.
+    private var pendingAnswers = Set<String>()
 
     struct Orphan: Equatable {
         var seq: Int
@@ -189,7 +199,8 @@ public final class SessionChatModel {
             if let rid = try? await hub.withClient({ [key] in try await $0.pendingApproval(key) }),
                gen == generation, !hasApproval(rid) {
                 items.append(HubChatItem(id: "approval-\(rid)", kind: .approval(
-                    requestId: rid, prompt: "Approval requested", state: answerState(rid))))
+                    requestId: rid, prompt: "Approval requested", options: [],
+                    picked: decisions[rid], state: answerState(rid))))
                 replayFloor = cursor
             }
         } catch is CancellationError {
@@ -360,21 +371,32 @@ public final class SessionChatModel {
         case "approval.requested":
             guard let req = env.decode(HubApprovalRequested.self), let rid = req.requestId else { return }
             let prompt = req.prompt ?? "Approval requested"
+            let options = req.options ?? []
             if let i = items.firstIndex(where: { $0.id == "approval-\(rid)" }) {
-                // The placeholder for a waiting approval learns its prompt.
-                if case .approval(_, _, let state) = items[i].kind {
-                    items[i].kind = .approval(requestId: rid, prompt: prompt, state: state)
+                // The placeholder for a waiting approval learns its prompt and menu.
+                if case .approval(_, _, _, _, let state) = items[i].kind {
+                    items[i].kind = .approval(requestId: rid, prompt: prompt, options: options,
+                                              picked: decisions[rid], state: state)
                 }
                 return
             }
-            items.append(HubChatItem(id: "approval-\(rid)", kind: .approval(requestId: rid, prompt: prompt,
-                                                                             state: answerState(rid))))
+            items.append(HubChatItem(id: "approval-\(rid)", kind: .approval(
+                requestId: rid, prompt: prompt, options: options,
+                picked: decisions[rid], state: answerState(rid))))
         case "approval.resolved":
             let res = env.decode(HubApprovalResolved.self)
             for i in items.indices {
-                guard case .approval(let rid, let prompt, _) = items[i].kind else { continue }
+                guard case .approval(let rid, let prompt, let options, let picked, _) = items[i].kind else { continue }
                 if (res?.requestId ?? "").isEmpty || res?.requestId == rid {
-                    items[i].kind = .approval(requestId: rid, prompt: prompt, state: .resolved(res?.decision))
+                    // The event's decision wins over a row picked here;
+                    // a bare resolve falls back to it (the web app's
+                    // [data-dec] match, then the .chosen mark).
+                    let state: HubApprovalState = .resolved(res?.decision ?? decisions[rid])
+                    items[i].kind = .approval(requestId: rid, prompt: prompt, options: options,
+                                              picked: lit(res?.decision, on: options, picked: picked,
+                                                          rid: rid),
+                                              state: state)
+                    answers[rid] = state
                 }
             }
         default:
@@ -391,16 +413,21 @@ public final class SessionChatModel {
             guard let req = env.decode(HubApprovalRequested.self), let rid = req.requestId else { return }
             var state = answerState(rid)
             if let i = items.firstIndex(where: { $0.id == "approval-\(rid)" }) {
-                if case .approval(_, _, let shown) = items[i].kind { state = shown }
+                if case .approval(_, _, _, _, let shown) = items[i].kind { state = shown }
                 items.remove(at: i)
             }
             insert(HubChatItem(id: "approval-\(rid)", kind: .approval(
-                requestId: rid, prompt: req.prompt ?? "Approval requested", state: state)), seq: seq)
+                requestId: rid, prompt: req.prompt ?? "Approval requested",
+                options: req.options ?? [], picked: decisions[rid], state: state)), seq: seq)
         case "approval.resolved":
             let res = env.decode(HubApprovalResolved.self)
             guard let rid = res?.requestId, let i = items.firstIndex(where: { $0.id == "approval-\(rid)" }),
-                  case .approval(_, let prompt, _) = items[i].kind else { return }
-            items[i].kind = .approval(requestId: rid, prompt: prompt, state: .resolved(res?.decision))
+                  case .approval(_, let prompt, let options, let picked, _) = items[i].kind else { return }
+            let state: HubApprovalState = .resolved(res?.decision ?? decisions[rid])
+            items[i].kind = .approval(requestId: rid, prompt: prompt, options: options,
+                                      picked: lit(res?.decision, on: options, picked: picked, rid: rid),
+                                      state: state)
+            answers[rid] = state
         default:
             break
         }
@@ -493,12 +520,21 @@ public final class SessionChatModel {
             return
         }
         if r.op == "approval", let rid = r.requestId {
-            setApproval(rid) { state in
-                guard case .resolved = state else {
-                    return r.ok == false ? .failed("Approval failed: \(r.note ?? "the satellite rejected it")")
-                        : .resolved(decisions[rid])
+            // The result closes only an answer sent from here; a request
+            // another client answered settles on approval.resolved, not
+            // on a result this card never asked for.
+            if pendingAnswers.remove(rid) != nil {
+                if r.ok == false {
+                    // Rejected after the card folded: it re-opens,
+                    // answerable with the failure note, and the stale
+                    // pick lights no row (the web app clears .chosen).
+                    decisions.removeValue(forKey: rid)
+                    setApproval(rid) { _ in
+                        .failed("Approval failed: \(r.note ?? "the satellite rejected it")")
+                    }
+                } else {
+                    setApproval(rid) { _ in .resolved(decisions[rid]) }
                 }
-                return state
             }
             return
         }
@@ -552,16 +588,21 @@ public final class SessionChatModel {
         }
     }
 
-    /// Answers an approval: `allow`, `always` or `deny`.
+    /// Answers an approval: `allow`, `always`, `deny`, or a menu row's
+    /// digit, posted to the hub as given.
     public func decide(_ requestId: String, _ decision: String) async {
         guard let i = items.firstIndex(where: { $0.id == "approval-\(requestId)" }),
-              case .approval(_, _, let state) = items[i].kind, state.answerable else { return }
+              case .approval(_, _, _, _, let state) = items[i].kind, state.answerable else { return }
         decisions[requestId] = decision
+        // Marked before the reply arrives: a satellite's command.result
+        // can beat it and must find the card waiting on it.
+        pendingAnswers.insert(requestId)
         setApproval(requestId) { _ in .submitting }
         do {
             let queued = try await hub.withClient { [key] in
                 try await $0.approve(key, requestId: requestId, decision: decision)
             }
+            if !queued { pendingAnswers.remove(requestId) }
             // An approval.resolved or command.result that raced the
             // answer already settled it: theirs wins.
             setApproval(requestId) { state in
@@ -569,18 +610,38 @@ public final class SessionChatModel {
                 return queued ? .queued : .resolved(decision)
             }
         } catch {
+            pendingAnswers.remove(requestId)
             setApproval(requestId) { state in
                 guard state == .submitting else { return state }
+                // The refused pick lights no row on the re-opened card.
+                decisions.removeValue(forKey: requestId)
                 return .failed("Approval failed: \(error.localizedDescription)")
             }
         }
     }
 
+    /// The decision a settled card lights as picked: the event's own
+    /// when it names a row the card shows (a menu digit on a menu card,
+    /// a semantic word without one), else the row already lit (the web
+    /// app's `[data-dec]` match falling back to `.chosen`), else the row
+    /// answered here.
+    private func lit(_ decision: String?, on options: [HubApprovalOption],
+                     picked: String?, rid: String) -> String? {
+        let menu = options.filter { $0.label?.isEmpty == false }
+        let rows = menu.isEmpty ? ["allow", "always", "deny"] : menu.map { $0.n ?? "" }
+        if let decision, rows.contains(decision) { return decision }
+        return picked ?? decisions[rid]
+    }
+
     private func setApproval(_ rid: String, _ next: (HubApprovalState) -> HubApprovalState) {
         guard let i = items.firstIndex(where: { $0.id == "approval-\(rid)" }),
-              case .approval(_, let prompt, let state) = items[i].kind else { return }
+              case .approval(_, let prompt, let options, let picked, let state) = items[i].kind else { return }
         let new = next(state)
-        items[i].kind = .approval(requestId: rid, prompt: prompt, state: new)
+        // A transition that keeps the state (a raced event already
+        // settled the card) leaves the lit pick alone — a stale local
+        // choice must not light the losing row under another verdict.
+        items[i].kind = .approval(requestId: rid, prompt: prompt, options: options,
+                                  picked: new == state ? picked : decisions[rid], state: new)
         answers[rid] = new
     }
 

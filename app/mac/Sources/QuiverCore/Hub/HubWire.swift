@@ -129,7 +129,24 @@ public struct HubMessagesPage: Decodable, Sendable, Equatable {
 
 struct HubStatusData: Decodable { let status: String? }
 struct HubOwnershipData: Decodable { let ownership: String? }
-struct HubApprovalRequested: Decodable { let requestId: String?; let prompt: String? }
+/// One row of the numbered menu the pane shows on `approval.requested`:
+/// `n` is the digit an answer posts as the decision, `label` the row's
+/// text. Older events and non-tmux approvals carry no `options` at all,
+/// where Allow / Always / Deny stand in.
+public struct HubApprovalOption: Codable, Sendable, Equatable {
+    public var n: String?
+    public var label: String?
+
+    public init(n: String? = nil, label: String? = nil) {
+        self.n = n
+        self.label = label
+    }
+}
+struct HubApprovalRequested: Decodable {
+    let requestId: String?
+    let prompt: String?
+    let options: [HubApprovalOption]?
+}
 struct HubApprovalResolved: Decodable { let requestId: String?; let decision: String? }
 /// What a command came to, after the hub (or a satellite) ran it: a
 /// send, a stop, an attach or an approval.
