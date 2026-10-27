@@ -40,6 +40,30 @@ class TestUpsert(unittest.TestCase):
         row = self.store.db.execute("SELECT session FROM events WHERE key='k2'").fetchone()
         self.assertEqual(row[0], "first")
 
+    def test_a_relabelling_record_renames_the_row_without_touching_its_figures(self):
+        def reread(key, total, relabels):
+            rec = _rec(key, total)
+            rec.event.model = "p/m"
+            rec.relabels_model = relabels
+            self.store.upsert(rec)
+
+        def row(key):
+            return self.store.db.execute(
+                "SELECT model, input FROM events WHERE key = ?", (key,)).fetchone()
+
+        for key, first, again, expected in (
+            ("tie", 5, 5, ("p/m", 5)), ("smaller", 5, 3, ("p/m", 5)), ("larger", 5, 9, ("p/m", 9)),
+        ):
+            self.store.upsert(_rec(key, first))
+            self.assertEqual(row(key), ("m", first), key)
+            reread(key, again, relabels=True)
+            self.assertEqual(row(key), expected, key)
+        # A plain re-read never renames a row.
+        self.store.upsert(_rec("plain", 5))
+        reread("plain", 5, relabels=False)
+        self.assertEqual(row("plain"), ("m", 5))
+        self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM events").fetchone()[0], 4)
+
     def test_main_copy_beats_sidechain_on_key_and_message_id(self):
         self.store.upsert(_rec("a", 100, msg="m1", sidechain=True))
         self.store.upsert(_rec("b", 10, msg="m1", sidechain=False))

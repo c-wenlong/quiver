@@ -30,7 +30,7 @@ func execute(_ sql: String, on url: URL) throws {
         #expect(first.sessionId == "ses_1")
         #expect(first.cwd == "/tmp/oc")
         #expect(first.accountHome == db.deletingLastPathComponent().path)
-        #expect(first.model == "claude-sonnet-4-5")
+        #expect(first.model == "anthropic/claude-sonnet-4-5")
         #expect(first.timestamp == Date(timeIntervalSince1970: 1_791_100_001))
         #expect(first.inputTokens == 100)
         #expect(first.outputTokens == 300)
@@ -105,7 +105,7 @@ func execute(_ sql: String, on url: URL) throws {
         #expect(events.count == 3)
         let v2 = try #require(events.first { $0.sessionId == "ses_v2" })
         #expect(v2.cwd == "/tmp/v2")
-        #expect(v2.model == "MiniMax-M3")
+        #expect(v2.model == "minimax/MiniMax-M3")
         #expect(v2.outputTokens == 10)
         #expect(v2.reasoningTokens == 4)
         #expect(v2.totalTokens == 8_323 + 10 + 4 + 479)
@@ -175,6 +175,157 @@ func execute(_ sql: String, on url: URL) throws {
             """, on: db)
         try await ledger.scan(roots: LedgerRoots(devinDatabases: [db]))
         #expect(await ledger.events(in: allTime).map(\.sessionId).contains("dev-9"))
+    }
+}
+
+/// The ledger names an OpenCode model `provider/model`. Both the legacy
+/// `message` rows (`providerID` beside `modelID`) and 2.x `session_message`
+/// ones (`model.providerID` beside `model.id`) carry the provider.
+@Suite struct LedgerOpenCodeModelNameTests {
+    private let v2Tables = """
+        CREATE TABLE `session_v2` (`id` text PRIMARY KEY, `directory` text NOT NULL, `time_updated` integer NOT NULL);
+        CREATE TABLE `session_message` (`id` text PRIMARY KEY, `session_id` text NOT NULL, `type` text NOT NULL,
+          `seq` integer NOT NULL, `time_created` integer NOT NULL, `time_updated` integer NOT NULL, `data` text NOT NULL);
+        INSERT INTO session_v2 VALUES ('ses_v2', '/tmp/v2', 1791100020000);
+
+        """
+
+    private func v2Reply(_ id: String, _ model: String) -> String {
+        """
+        INSERT INTO session_message VALUES ('\(id)', 'ses_v2', 'assistant', 7, 1791100021000, 1791100022000,
+          '{"model":\(model),"cost":0.002,"tokens":{"input":10,"output":1,"reasoning":0,"cache":{"read":0,"write":0}}}');
+
+        """
+    }
+
+    @Test func modelsCarryTheirProviderUnlessThereIsNone() throws {
+        let temp = try TempDir()
+        let db = temp.path("opencode/opencode.db")
+        try makeDatabase("opencode.sql", at: db)
+        try execute(v2Tables + v2Reply("v_plain", #"{"id":"MiniMax-M3","providerID":"minimax"}"#)
+            + v2Reply("v_bare", #"{"id":"bare-model"}"#)
+            + v2Reply("v_empty", #"{"id":"empty-provider","providerID":""}"#)
+            + v2Reply("v_slash", #"{"id":"nvidia/nemotron:free","providerID":"openrouter"}"#)
+            + v2Reply("v_none", "null")
+            + """
+            INSERT INTO message VALUES ('l_bare', 'ses_1', 1791100030000, 1791100030000,
+              '{"role":"assistant","modelID":"no-provider","tokens":{"input":5,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}');
+            """, on: db)
+        let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
+        #expect(try DatabaseSources.scanOpenCode(db, store: store))
+
+        let models = try Set(store.events(in: allTime).map(\.model))
+        #expect(models == [
+            "anthropic/claude-sonnet-4-5", "openai/gpt-5.4", "minimax/MiniMax-M3", "bare-model",
+            "empty-provider", "openrouter/nvidia/nemotron:free", "unknown", "no-provider",
+        ])
+        #expect(DatabaseSources.openCodeModel(provider: "openrouter", id: "openrouter/free")
+            == "openrouter/openrouter/free")
+        #expect(DatabaseSources.openCodeModel(provider: "openai", id: nil) == "unknown")
+    }
+
+    /// A ledger that holds bare model names (what the `v2` reader wrote)
+    /// reads the database again under the new key. Each event is keyed by
+    /// its message id, so it moves to its `provider/model` name in place:
+    /// no event is added, and no token or cent changes.
+    @Test func aLedgerFromTheBareNameReaderIsRenamedInPlaceWithoutDoubleCounting() throws {
+        let temp = try TempDir()
+        let db = temp.path("opencode/opencode.db")
+        try makeDatabase("opencode.sql", at: db)
+        try execute(v2Tables + v2Reply("v_one", #"{"id":"MiniMax-M3","providerID":"minimax"}"#), on: db)
+        let ledgerURL = temp.path("cache/ledger.sqlite")
+        func figures(_ store: LedgerStore) throws -> (events: Int, tokens: Int, cost: Double) {
+            let events = try store.events(in: allTime)
+            return (events.count, events.reduce(0) { $0 + $1.totalTokens },
+                    events.reduce(0) { $0 + ($1.costUSD ?? 0) })
+        }
+        let before: (events: Int, tokens: Int, cost: Double)
+        do {
+            let store = try LedgerStore(url: ledgerURL)
+            #expect(try DatabaseSources.scanOpenCode(db, store: store))
+            before = try figures(store)
+        }
+        #expect(before.events == 3)
+        // What the previous build left: bare names in the dimension rows
+        // and its scan state under the old key.
+        let raw = try SQLiteDatabase(url: ledgerURL)
+        try raw.execute("""
+            UPDATE dims SET model = substr(model, instr(model, '/') + 1) WHERE harness = 'opencode';
+            UPDATE meta SET key = replace(key, 'opencode-v3:', 'opencode-v2:');
+            """)
+        let store = try LedgerStore(url: ledgerURL)
+        #expect(Set(try store.modelsAndTiers().map(\.model)) == ["claude-sonnet-4-5", "gpt-5.4", "MiniMax-M3"])
+        let current = try #require(DatabaseSources.Fingerprint(db))
+        #expect(try store.meta("opencode-v2:\(db.path):fingerprint") == current.text)
+
+        #expect(try DatabaseSources.scanOpenCode(db, store: store))
+
+        let after = try figures(store)
+        #expect(after.events == before.events)
+        #expect(after.tokens == before.tokens)
+        #expect(after.cost == before.cost)
+        let renamed: Set = ["anthropic/claude-sonnet-4-5", "openai/gpt-5.4", "minimax/MiniMax-M3"]
+        #expect(Set(try store.events(in: allTime).map(\.model)) == renamed)
+        // The bare names' dimension rows went with their last event.
+        #expect(Set(try store.modelsAndTiers().map(\.model)) == renamed)
+        #expect(try store.meta("opencode-v3:\(db.path):fingerprint") == current.text)
+        // Settled: the next scan finds nothing moved.
+        #expect(try DatabaseSources.scanOpenCode(db, store: store) == false)
+    }
+
+    /// The ledger outlives its logs: a row whose source message is gone has
+    /// no provider to read, so it keeps the name it was logged under.
+    @Test func aRowWhoseSourceMessageIsGoneKeepsItsBareName() throws {
+        let temp = try TempDir()
+        let db = temp.path("opencode/opencode.db")
+        try makeDatabase("opencode.sql", at: db)
+        let ledgerURL = temp.path("cache/ledger.sqlite")
+        do {
+            let store = try LedgerStore(url: ledgerURL)
+            #expect(try DatabaseSources.scanOpenCode(db, store: store))
+        }
+        let raw = try SQLiteDatabase(url: ledgerURL)
+        try raw.execute("""
+            UPDATE dims SET model = substr(model, instr(model, '/') + 1) WHERE harness = 'opencode';
+            UPDATE meta SET key = replace(key, 'opencode-v3:', 'opencode-v2:');
+            """)
+        try execute("DELETE FROM message WHERE id = 'msg_a2'", on: db)
+        let store = try LedgerStore(url: ledgerURL)
+
+        #expect(try DatabaseSources.scanOpenCode(db, store: store))
+        #expect(try store.events(in: allTime).count == 2)
+        #expect(Set(try store.events(in: allTime).map(\.model)) == ["anthropic/claude-sonnet-4-5", "gpt-5.4"])
+        #expect(Set(try store.modelsAndTiers().map(\.model)) == ["anthropic/claude-sonnet-4-5", "gpt-5.4"])
+    }
+
+    /// A re-read that ties on totals still renames the row, one that
+    /// records fewer tokens never lowers them, one that records more
+    /// replaces them, and a read that does not ask to relabel changes
+    /// nothing.
+    @Test func aRelabellingReadMovesTheModelWhateverTheTotals() throws {
+        let temp = try TempDir()
+        let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
+        func event(_ model: String, tokens: Int) -> UsageEvent {
+            UsageEvent(harness: "opencode", accountHome: "/h", sessionId: "s", model: model,
+                       timestamp: utc("2026-10-01T00:00:00Z"), inputTokens: tokens)
+        }
+        try store.db.execute("BEGIN IMMEDIATE")
+        for (key, again) in [("tie", 5), ("smaller", 3), ("larger", 9)] {
+            try store.upsert(LedgerRecord(key: key, event: event("m", tokens: 5)))
+            try store.upsert(LedgerRecord(key: key, relabelsModel: true, event: event("p/m", tokens: again)))
+        }
+        try store.upsert(LedgerRecord(key: "plain", event: event("q", tokens: 5)))
+        try store.upsert(LedgerRecord(key: "plain", event: event("p/q", tokens: 5)))
+        try store.dropVacatedDims()
+        try store.db.execute("COMMIT")
+
+        let events = try store.events(in: allTime)
+        #expect(events.count == 4)
+        #expect(events.map(\.model).sorted() == ["p/m", "p/m", "p/m", "q"])
+        #expect(events.map(\.inputTokens).sorted() == [5, 5, 5, 9])
+        // The three relabelled rows left their dimension row ("m") behind
+        // empty, including the one whose figures were replaced too.
+        #expect(Set(try store.modelsAndTiers().map(\.model)) == ["p/m", "q"])
     }
 }
 

@@ -271,13 +271,79 @@ class LedgerTest(OpencodeV2Case):
         conn.close()
         records = {r.key: r.event for r in opencode_records(self.db)}
         self.assertEqual(set(records), {"opencode:msg_a", "opencode:m3"})
-        self.assertEqual(records["opencode:msg_a"].model, "grok-4.7")
+        self.assertEqual(records["opencode:msg_a"].model, "xai/grok-4.7")
         self.assertEqual(records["opencode:msg_a"].total, 30)
         new = records["opencode:m3"]
-        self.assertEqual((new.session, new.cwd, new.model), ("ses_new", "/work/new", "MiniMax-M3"))
+        self.assertEqual((new.session, new.cwd, new.model), ("ses_new", "/work/new", "minimax/MiniMax-M3"))
         self.assertEqual((new.input, new.output, new.reasoning, new.cache_read), (100, 10, 4, 50))
         self.assertEqual(new.cost, 0.002)
 
+
+    def test_models_are_provider_slash_model(self):
+        from quiver.ledger.parsers import opencode_model, opencode_records
+
+        conn = self.conn()
+        # 2.x: no provider recorded, an empty one, and an id with a slash of its own.
+        self.v2_row(conn, "n1", "ses_new", "assistant", 20,
+                    {**_assistant([]), "model": {"id": "bare-model"}}, T0 + 2000)
+        self.v2_row(conn, "n2", "ses_new", "assistant", 21,
+                    {**_assistant([]), "model": {"id": "empty-provider", "providerID": ""}}, T0 + 2100)
+        self.v2_row(conn, "n3", "ses_new", "assistant", 22,
+                    {**_assistant([]), "model": {"id": "nvidia/nemotron:free", "providerID": "openrouter"}},
+                    T0 + 2200)
+        # 1.x: the provider sits beside modelID.
+        conn.execute("INSERT INTO message VALUES ('l1', 'ses_old', ?, ?, ?)", (T0 - 7000, T0 - 7000, json.dumps({
+            "role": "assistant", "modelID": "gpt-5.4", "providerID": "openai",
+            "tokens": {"total": 5, "input": 5, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}}})))
+        conn.execute("INSERT INTO message VALUES ('l2', 'ses_old', ?, ?, ?)", (T0 - 6000, T0 - 6000, json.dumps({
+            "role": "assistant", "modelID": "no-provider",
+            "tokens": {"total": 5, "input": 5, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}}})))
+        conn.commit()
+        conn.close()
+        models = {r.key: r.event.model for r in opencode_records(self.db)}
+        self.assertEqual(models["opencode:n1"], "bare-model")
+        self.assertEqual(models["opencode:n2"], "empty-provider")
+        self.assertEqual(models["opencode:n3"], "openrouter/nvidia/nemotron:free")
+        self.assertEqual(models["opencode:l1"], "openai/gpt-5.4")
+        self.assertEqual(models["opencode:l2"], "no-provider")
+        self.assertEqual(opencode_model("openrouter", "openrouter/free"), "openrouter/openrouter/free")
+        self.assertEqual(opencode_model("openai", None), "unknown")
+        self.assertEqual(opencode_model(None, ""), "unknown")
+
+    def test_a_cursor_saved_before_provider_names_renames_the_rows_in_place(self):
+        """A ledger that holds bare model names under the ``#v2`` cursor
+        reads the database again, and each event moves to its
+        ``provider/model`` name: same keys, same tokens, same cost."""
+        import dataclasses
+
+        from quiver.ledger.parsers import opencode_records
+        from quiver.ledger.scan import scan
+        from quiver.ledger.models import LedgerRecord
+        from quiver.ledger.store import LedgerStore
+
+        store = LedgerStore(self.home / "ledger.sqlite")
+        self.addCleanup(store.db.close)
+        bare = {"opencode:msg_a": "grok-4.7", "opencode:m3": "MiniMax-M3"}
+        for rec in opencode_records(self.db):
+            store.upsert(LedgerRecord(rec.key, dataclasses.replace(rec.event, model=bare[rec.key])))
+        st = self.db.stat()
+        store.set_file_cursor(str(self.db) + "#v2", st.st_ino, st.st_size, st.st_mtime_ns, st.st_size)
+        store.db.commit()
+        before = store.db.execute(
+            "SELECT COUNT(*), SUM(input + output + cache_read + cache_write + reasoning),"
+            " TOTAL(cost) FROM events").fetchone()
+
+        result = scan(store, self.home)
+        self.assertEqual(result.records, 2)
+        after = store.db.execute(
+            "SELECT COUNT(*), SUM(input + output + cache_read + cache_write + reasoning),"
+            " TOTAL(cost) FROM events").fetchone()
+        self.assertEqual(after, before)
+        self.assertEqual(
+            dict(store.db.execute("SELECT key, model FROM events")),
+            {"opencode:msg_a": "xai/grok-4.7", "opencode:m3": "minimax/MiniMax-M3"})
+        self.assertEqual(sorted(store.models()), ["minimax/MiniMax-M3", "xai/grok-4.7"])
+        self.assertEqual(scan(store, self.home).files_read, 0)
 
     def test_a_cursor_saved_before_v2_reads_the_database_again(self):
         from quiver.ledger.scan import scan
@@ -291,7 +357,7 @@ class LedgerTest(OpencodeV2Case):
         store.db.commit()
         result = scan(store, self.home)
         self.assertEqual(result.records, 2)  # msg_a and the 2.x reply m3
-        self.assertIsNotNone(store.file_cursor(str(self.db) + "#v2"))
+        self.assertIsNotNone(store.file_cursor(str(self.db) + "#v3"))
 
 
 class TailTest(OpencodeV2Case):

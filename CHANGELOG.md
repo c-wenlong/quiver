@@ -64,6 +64,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **OpenCode models are named `provider/model` in both usage ledgers.**
+  The ledgers used the bare model id, so `glm-5.1` from the
+  `zai-coding-plan` plan and from `zai` read as one model. They now read
+  `zai-coding-plan/glm-5.1`, from OpenCode's `providerID` (2.x:
+  `model.providerID`), and keep the bare id when OpenCode stored no
+  provider. The next scan of each ledger reads every OpenCode row again
+  and renames its events in place: no event is added, and no token or
+  cost changes. A row whose message OpenCode has since deleted keeps its
+  bare name. Prices resolve as before, since they ignore the provider
+  prefix; three names now match their provider's own price entry
+  (`nebius/zai-org/GLM-5.2`, `groq/openai/gpt-oss-120b`,
+  `anthropic/claude-opus-5-5`) and none lost its price. A model that two
+  harnesses ran now shows as two rows on the Overview, Pricing and Models
+  pages when only one of them logs the provider.
 - **The landing page lives under `app/`.** It moved from `landing/` to
   `app/landing-page/`, next to the Swift apps. `scripts/docs_site.py`
   still copies it to the docs site root as is.

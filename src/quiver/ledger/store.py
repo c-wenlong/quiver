@@ -72,6 +72,9 @@ class LedgerStore:
         if row is not None:
             if _wins(rec.sidechain, new_total, bool(row[0]), row[1]):
                 self._write(rec)
+            elif rec.relabels_model:
+                self.db.execute("UPDATE events SET model = ? WHERE key = ? AND model != ?",
+                                (rec.event.model, rec.key, rec.event.model))
             return
         if rec.msg is not None:
             row = self.db.execute(

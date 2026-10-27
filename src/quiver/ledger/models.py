@@ -43,6 +43,10 @@ class LedgerRecord:
     event: UsageEvent
     msg: str | None = None
     sidechain: bool = False
+    # OpenCode: a re-read under an existing key that does not replace its
+    # row (the totals tied) still moves the row to this record's model, so
+    # a reader that names models differently renames old rows in place.
+    relabels_model: bool = False
 
 
 def json_int(value) -> int:
