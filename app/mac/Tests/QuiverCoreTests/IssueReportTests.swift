@@ -35,12 +35,12 @@ import Testing
     }
 
     @Test func diagnosticsListFindingsWithHomeAndEmailsMasked() {
-        let report = DoctorReport(ok: false, findings: [
+        let findings: [DoctorReport.Finding] = [
             .init(check: "links", severity: .warning,
                   message: "/Users/ana/.claude/skills is not linked for ana@example.com"),
-        ])
+        ]
         let text = IssueReport.diagnostics(version: "Quiver 1.1.1", os: "macOS 26.1",
-                                           doctor: report, home: "/Users/ana/", user: "ana")
+                                           findings: findings, home: "/Users/ana/", user: "ana")
         #expect(text == """
             Version: Quiver 1.1.1
             OS: macOS 26.1
@@ -50,9 +50,9 @@ import Testing
     }
 
     @Test func diagnosticsSayWhenDoctorIsCleanOrHasNotRun() {
-        let clean = IssueReport.diagnostics(version: "v", os: "o", doctor: DoctorReport(ok: true, findings: []))
+        let clean = IssueReport.diagnostics(version: "v", os: "o", findings: [])
         #expect(clean.hasSuffix("swe doctor: everything checks out"))
-        let none = IssueReport.diagnostics(version: "v", os: "o", doctor: nil)
+        let none = IssueReport.diagnostics(version: "v", os: "o", findings: nil)
         #expect(none.hasSuffix("swe doctor: not run yet"))
     }
 
@@ -61,6 +61,27 @@ import Testing
             "which npm is /etc/profiles/per-user/ana/bin/npm; /var/analytics and banana stay",
             home: "/Users/ana", user: "ana")
         #expect(text == "which npm is /etc/profiles/per-user/<user>/bin/npm; /var/analytics and banana stay")
+    }
+
+    @Test func accountNamesAreMaskedInChecksAndMessages() {
+        let findings: [DoctorReport.Finding] = [
+            .init(check: "usage.cursor/work/signed-out", severity: .warning,
+                  message: "Cursor (work) is signed out; claude-work and homework stay"),
+        ]
+        let text = IssueReport.diagnostics(version: "v", os: "o", findings: findings,
+                                           accounts: ["work", "claude-work", "ab"], home: "/Users/x", user: "x")
+        #expect(text.hasSuffix(
+            "warning usage.cursor/<account>/signed-out: Cursor (<account>) is signed out; <account> and homework stay"))
+    }
+
+    @Test func mergedPutsLiveIssuesFirstOncePerCheck() {
+        let live = DoctorReport.Finding(check: "usage.cursor/signed-out", severity: .warning, message: "live")
+        let report = DoctorReport(ok: false, findings: [
+            .init(check: "usage.cursor/signed-out", severity: .warning, message: "stale"),
+            .init(check: "npm.preferred", severity: .info, message: "npm"),
+        ])
+        #expect(IssueReport.merged(issues: [live], report: report)?.map(\.message) == ["live", "npm"])
+        #expect(IssueReport.merged(issues: [live], report: nil) == nil)
     }
 
     @Test func aRootHomeIsNotMasked() {

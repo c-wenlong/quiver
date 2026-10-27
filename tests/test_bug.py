@@ -52,6 +52,16 @@ class OsLineTests(unittest.TestCase):
                 mock.patch("platform.mac_ver", return_value=("26.1", ("", "", ""), "arm64")):
             self.assertEqual(bug.os_line(), "macOS 26.1")
 
+    def test_macos_without_a_release(self):
+        with mock.patch("platform.system", return_value="Darwin"), \
+                mock.patch("platform.mac_ver", return_value=("", ("", "", ""), "")):
+            self.assertEqual(bug.os_line(), "macOS")
+
+    def test_other_systems_use_name_and_release(self):
+        with mock.patch("platform.system", return_value="Windows"), \
+                mock.patch("platform.release", return_value="11"):
+            self.assertEqual(bug.os_line(), "Windows 11")
+
     def test_linux_uses_the_distro_name(self):
         with mock.patch("platform.system", return_value="Linux"), \
                 mock.patch("platform.freedesktop_os_release",

@@ -7,6 +7,12 @@ on:
   issues:
     types: [opened, edited]
 
+# One run per issue at a time, in order: an open and a quick edit must not
+# both add a label before either can see the other's.
+concurrency:
+  group: issue-labels-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
   issues: write
@@ -18,13 +24,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           sparse-checkout: scripts
-      # The body goes in through the environment, never into the script
-      # text, so nothing a reporter types can run.
+      # The script reads the body itself, so nothing a reporter types is
+      # ever part of the workflow's own text.
       - name: Label by Area
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           NUMBER: ${{ github.event.issue.number }}
-          BODY: ${{ github.event.issue.body }}
-          LABELS: ${{ toJSON(github.event.issue.labels.*.name) }}
         run: python3 scripts/issue_labels.py

@@ -51,15 +51,20 @@ public enum IssueReport {
         return line
     }
 
-    /// What Copy Diagnostics puts on the pasteboard: the versions and swe
-    /// doctor's findings. The home folder becomes ~, the user name in any
-    /// other path (Nix's /etc/profiles/per-user/<name>) becomes <user>, and
-    /// email addresses are masked, so a paste into a public issue names no one.
-    public static func diagnostics(version: String, os: String, doctor: DoctorReport?,
+    /// What Copy Diagnostics puts on the pasteboard: the versions and the
+    /// findings the Doctor card shows, nil when Doctor has not run. The
+    /// home folder becomes ~, the user name in any other path (Nix's
+    /// /etc/profiles/per-user/<name>) becomes <user>, each account name in a
+    /// check id or message becomes <account>, and email addresses are
+    /// masked, so a paste into a public issue names no one.
+    public static func diagnostics(version: String, os: String,
+                                   findings: [DoctorReport.Finding]?,
+                                   accounts: [String] = [],
                                    home: String = NSHomeDirectory(),
                                    user: String = NSUserName()) -> String {
         var lines = ["Version: \(version)", "OS: \(os)"]
-        switch doctor?.findings {
+        let mask = { (text: String) in redact(text, home: home, user: user, accounts: accounts) }
+        switch findings {
         case nil:
             lines.append("swe doctor: not run yet")
         case let findings? where findings.isEmpty:
@@ -67,14 +72,23 @@ public enum IssueReport {
         case let findings?:
             lines.append("swe doctor:")
             for finding in findings {
-                lines.append("  \(finding.severity.rawValue) \(finding.check): "
-                             + redact(finding.message, home: home, user: user))
+                lines.append("  \(finding.severity.rawValue) \(mask(finding.check)): \(mask(finding.message))")
             }
         }
         return lines.joined(separator: "\n")
     }
 
-    static func redact(_ text: String, home: String, user: String = "") -> String {
+    /// The Doctor card's rows: live issue findings first, then the report's,
+    /// one per check id, as `DoctorSection` lists them.
+    public static func merged(issues: [DoctorReport.Finding],
+                              report: DoctorReport?) -> [DoctorReport.Finding]? {
+        guard let report else { return nil }
+        var seen = Set<String>()
+        return (issues + report.findings).filter { seen.insert($0.check).inserted }
+    }
+
+    static func redact(_ text: String, home: String, user: String = "",
+                       accounts: [String] = []) -> String {
         var text = text
         // "/" or "" would turn every path into a ~.
         if home.count > 1 {
@@ -88,7 +102,16 @@ public enum IssueReport {
             text = text.replacingOccurrences(of: "(?<=/)\(name)(?=/|$|\\s)", with: "<user>",
                                              options: .regularExpression)
         }
-        return text.replacingOccurrences(of: #"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"#,
+        // Emails first, so an account named after one is masked whole.
+        text = text.replacingOccurrences(of: #"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"#,
                                          with: "<email>", options: .regularExpression)
+        // Whole names only, longest first so "work-2" goes before "work".
+        // Two letters or fewer would mask ordinary words.
+        for account in Set(accounts).filter({ $0.count > 2 }).sorted(by: { $0.count > $1.count }) {
+            let name = NSRegularExpression.escapedPattern(for: account)
+            text = text.replacingOccurrences(of: "(?<![A-Za-z0-9_-])\(name)(?![A-Za-z0-9_-])",
+                                             with: "<account>", options: [.regularExpression, .caseInsensitive])
+        }
+        return text
     }
 }

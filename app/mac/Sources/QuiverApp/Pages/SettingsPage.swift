@@ -397,9 +397,12 @@ private struct SettingsSectionView: View {
             }
             SettingsDivider()
             SettingRow(title: "Diagnostics",
-                       detail: "Versions and the Doctor findings above, for the report's diagnostics field. Your user name and email addresses are masked.") {
+                       detail: "Versions and the Doctor findings above, for the report's diagnostics field. Your user name, account names and email addresses are masked.") {
+                // Waits out a check or fix in flight, which would leave
+                // the copy without the report it is about to show.
                 CopyButton(help: "Copy diagnostics") { copyToPasteboard(Feedback.diagnostics(app: app)) }
                     .iconButton()
+                    .disabled(app.doctor.isBusy)
             }
         }
     }

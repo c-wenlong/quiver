@@ -1,6 +1,9 @@
 import importlib.util
+import json
 import re
+import subprocess
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,6 +46,35 @@ class AreaLabelTests(unittest.TestCase):
 
     def test_plan_leaves_an_issue_without_an_area_alone(self):
         self.assertEqual(issue_labels.plan("No form here", ["mac"]), ([], []))
+
+
+class MainTests(unittest.TestCase):
+    """main() plans from the issue as it is now, not from the event."""
+
+    def _run(self, body, labels):
+        view = json.dumps({"body": body, "labels": [{"name": n} for n in labels]})
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(command)
+            out = view if command[:3] == ["gh", "issue", "view"] else ""
+            return subprocess.CompletedProcess(command, 0, stdout=out, stderr="")
+
+        with mock.patch.dict("os.environ", {"REPO": "o/r", "NUMBER": "7"}), \
+                mock.patch.object(issue_labels.subprocess, "run", side_effect=fake_run):
+            status = issue_labels.main()
+        return status, calls
+
+    def test_edits_from_the_current_labels(self):
+        status, calls = self._run("### Area\n\nCLI (swe)\n", ["bug", "mac"])
+        self.assertEqual(status, 0)
+        self.assertEqual(calls[1], ["gh", "issue", "edit", "7", "--repo", "o/r",
+                                    "--add-label", "cli", "--remove-label", "mac"])
+
+    def test_nothing_to_change_makes_no_edit(self):
+        status, calls = self._run("### Area\n\nMac app\n", ["mac"])
+        self.assertEqual(status, 0)
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

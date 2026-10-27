@@ -69,6 +69,7 @@ struct QuiverApp: App {
                 Button("Request a Feature…") { Feedback.openIssueForm(.feature, app: model) }
                 Divider()
                 Button("Copy Diagnostics") { Feedback.copyDiagnostics(app: model) }
+                    .disabled(model.doctor.isBusy)
                 Divider()
                 Button("Quiver Documentation") { NSWorkspace.shared.open(IssueReport.documentation) }
             }
