@@ -365,7 +365,9 @@ struct HubChip: View {
     }
 }
 
-enum Route: Hashable { case chat(String) }
+/// What a tab's navigation stack can push. `pull` only ever appears on
+/// the Pull requests stack.
+enum Route: Hashable { case chat(String), pull(repo: String, number: Int) }
 
 /// A search hit: the session row, then the matching transcript line with
 /// the matched words in the primary colour.

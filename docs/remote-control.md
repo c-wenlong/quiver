@@ -321,6 +321,9 @@ POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach
 POST /v1/sessions                    new session {machine, harness, cwd, prompt} → launch_id
 POST /v1/sessions/{id}/fork          {prompt?} new session from this one's history → launch_id
 POST /v1/issues/resolve              {repo, number, harness, prompt?, context?} worktree + agent for a GitHub issue → launch_id
+GET  /v1/pulls                       every pinned repo's open PRs, each row plus `mine` and `review_requested`
+GET  /v1/pulls/<o>/<r>/<n>           one PR in full: row + body, per-check runs, reviews, worktree, suggested_prompt
+POST /v1/pulls/<o>/<r>/<n>/open      {harness, prompt?} detached PR-head worktree + agent → launch_id
 GET  /v1/folders?path=                subfolders of one folder on the hub machine (new-session browser)
 GET  /v1/sessions/{id}/files?q=     paths under the session's folder for the prompt box's @ menu
 GET  /v1/launches/{launch_id}        pending|started|failed; started carries the session key
@@ -578,6 +581,56 @@ stores that as the session's display name (as `POST
 /v1/sessions/{id}/title` would) and emits `session.meta` on the global
 stream only, since an event in the session's own journal before its
 tailer starts would make the tailer skip the first turn.
+
+`GET /v1/pulls` (`pulls.py`) lists the open pull requests of every repo
+pinned on the hub (`swe gh repo list`): `{repos: [{name, status, pulls,
+error?}], machine, machine_id, github, env_blocked?, fetched_at}`. Each
+pull is the `swe gh pr --json` row — `number`, `title`, `state`,
+`draft`, `author`, `branch`, `base`, `labels`, `mergeable`,
+`review_decision`, `checks`, `updated_at`, `url` — plus `mine` and
+`review_requested`, which `gh pr status` supplies, so the phone filters
+All / Mine / Review requested without a second round trip. When `gh pr
+status` fails the rows still list, with `review_requested` null rather
+than a guess. One repo's failure stays in its `status`/`error` while
+the others answer; a missing or signed-out `gh` answers `env_blocked`
+before any fetch, the same words `swe gh` stops on. The reads share the
+web app's 60-second `gh` cache (`webapp/pages/_github.py`), so the
+phone, the Repositories page and a `refresh=1` agree.
+
+`GET /v1/pulls/<owner>/<repo>/<n>` answers one PR in full: the list row
+plus `body`, per-check `check_runs`, `reviews`, `review_requests`,
+merge state and additions/deletions, and two fields a client shows
+before opening: `worktree` (where an open puts the checkout) and
+`suggested_prompt` (the review brief `github/pulls.build_prompt`
+writes). `400 bad_repo` for a malformed owner/repo, `422 bad_pr` for a
+non-number, `404 not_pinned` for a repo the hub doesn't pin; a `gh`
+failure answers `200 {status, pr: null, error}` — the row's `status`
+carries `gh`'s word (`not-found`, `upstream-error`), so the client
+renders it rather than a blank page.
+
+`POST /v1/pulls/<o>/<r>/<n>/open {harness, prompt?}` is a resolve for
+pull requests, run by the same asynchronous-launch shape: the hub
+answers what a client can fix at once — `400 bad_body`, `422 bad_repo`,
+`bad_pr`, `bad_command` (a `harness` that fails the name pattern or a
+`prompt` past the launch cap), `not_pinned`, `not_launchable`,
+`launch_failed` (no tmux), `gh_unavailable` (missing or signed out) —
+and `409 open_pending` while another open of the same PR is still
+starting in its worktree, the same reason `resolve_pending` exists.
+Otherwise `202 {launch_id, state: "pending", note: "preparing
+worktree"}` and the rest runs on a thread: read the PR (for the title
+and the default prompt), `manage.pr_worktree` — the repo's bare mirror
+cloned on first use, `refs/pull/<n>/head` fetched into a detached
+checkout under `~/.quiver/worktrees/<owner>__<repo>-pr<n>`, where a
+second open of the same PR resumes — then `supervise.launch_new` there
+with the client's `prompt`, or `build_prompt`'s review brief when none
+was sent. The launch's `note` steps through "Cloning mirror…" (first
+run only), "Checking out PR #<n>…" and "Starting <harness>…"; `cwd`
+becomes the worktree and `title` `<owner>/<repo>#<n> <pr title>`, which
+adoption stores as the session's display name exactly as a resolve's
+does. Two opens of PRs in one repo share the mirror's `FETCH_HEAD`, so
+the worktree calls serialize on a per-repo lock (the same one the web
+app's worktree action holds). A harness swe can't read still launches
+and settles `untracked`, as a resolve's does.
 
 `GET /v1/folders?path=` lists one folder's subfolders on the hub machine
 for the phone's folder browser: `{path, parent, folders: [{name, path}],

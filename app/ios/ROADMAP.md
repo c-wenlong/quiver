@@ -135,6 +135,16 @@ are server changes in `src/quiver/remote/`.
 - [ ] Face ID lock on or off
 - [ ] App and hub versions
 
+### P11. Pull requests
+- [x] Own tab, one section per pinned repo, filter chips with counts: All, Mine, Review requested
+- [x] PR row: number, title, author, branch, check rollup, review decision, mergeable state, labels, age, draft badge
+- [x] Repo section keeps its `status`/`error` when its fetch fails while the others still list
+- [x] Pull to refresh (`?refresh=1` bypasses the hub's `gh` cache); `env_blocked` shows the `gh` fix on an empty list
+- [x] Detail page: the row plus rendered body (the chat's Markdown), per-check runs, latest reviews, review requests, changed files and +/- counts, merge state
+- [x] "Open in session" sheet: harness picker from `/v1/sessions`' launchable set, prompt field prefilled with `suggested_prompt`
+- [x] Hub: `GET /v1/pulls` (list + viewer flags), `GET /v1/pulls/<o>/<r>/<n>` (detail), `POST /v1/pulls/<o>/<r>/<n>/open {harness, prompt?}` → `launch_id`, followed on `GET /v1/launches/<id>`; the adopted session pushes its chat onto the pulls stack
+- [ ] Mine/Review-requested push notifications once APNs lands
+
 ## Components
 
 - [ ] Status dot: active, needs you, error, idle, offline

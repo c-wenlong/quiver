@@ -46,8 +46,9 @@ struct MainTabs: View {
     @State private var tab: Tab = .sessions
     @State private var sessionsPath: [Route] = []
     @State private var inboxPath: [Route] = []
+    @State private var pullsPath: [Route] = []
 
-    enum Tab { case sessions, inbox, usage }
+    enum Tab { case sessions, inbox, pulls, usage }
 
     var body: some View {
         TabView(selection: $tab) {
@@ -64,6 +65,12 @@ struct MainTabs: View {
             .badge(app.inboxBadge)
             .tag(Tab.inbox)
 
+            NavigationStack(path: $pullsPath) {
+                PullsView().navigationDestination(for: Route.self, destination: destination)
+            }
+            .tabItem { Label("Pull requests", systemImage: "arrow.triangle.pull") }
+            .tag(Tab.pulls)
+
             NavigationStack {
                 UsageView()
             }
@@ -76,6 +83,10 @@ struct MainTabs: View {
     @ViewBuilder private func destination(_ route: Route) -> some View {
         switch route {
         case .chat(let key): ChatView(key: key)
+        case .pull(let repo, let number):
+            // Only the pulls stack pushes this: opening the session it
+            // started pushes the chat on that same stack.
+            PullDetailView(repo: repo, number: number) { pullsPath.append(.chat($0)) }
         }
     }
 }
