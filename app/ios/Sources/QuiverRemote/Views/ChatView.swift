@@ -83,7 +83,9 @@ private struct ChatBody: View {
                     .transition(.asymmetric(insertion: arrival(12), removal: .opacity))
                 }
                 if model.working, !model.loading {
-                    WorkingIndicator(harness: model.row?.harness, name: model.row?.harnessName ?? "agent")
+                    WorkingIndicator(harness: model.row?.harness,
+                                     name: model.row?.harnessName ?? "agent",
+                                     since: model.workingSince ?? Date())
                         .transition(arrival(8))
                 }
             }
@@ -350,20 +352,25 @@ private struct ChatItemView: View {
 }
 
 /// The harness's logo beside a cycling working verb, under the last
-/// message while the agent works; new messages land above it.
+/// message while the agent works; new messages land above it. `since`
+/// anchors the clock counting the turn's elapsed time under the pill.
 struct WorkingIndicator: View {
     let harness: String?
     let name: String
+    let since: Date
 
     var body: some View {
-        HStack(spacing: 8) {
-            HarnessIcon(harness: harness, name: name, size: 16)
-            WorkingVerb()
+        VStack(alignment: .center, spacing: 4) {
+            HStack(spacing: 8) {
+                HarnessIcon(harness: harness, name: name, size: 16)
+                WorkingVerb()
+            }
+            .font(Theme.caption)
+            .padding(.leading, 9).padding(.trailing, 12).frame(height: 30)
+            .background(Theme.card, in: .capsule)
+            .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
+            WorkingClock(since: since)
         }
-        .font(Theme.caption)
-        .padding(.leading, 9).padding(.trailing, 12).frame(height: 30)
-        .background(Theme.card, in: .capsule)
-        .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement()
         .accessibilityLabel("\(name) is working")
