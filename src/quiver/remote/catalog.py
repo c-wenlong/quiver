@@ -463,17 +463,6 @@ class Catalog:
             self._rows = rows
             self._status_as_of = started
             self._refreshed_at = time.time()
-        github_rows, alerts = self._poll_github()
-        if github_rows is not None:
-            for row in github_rows:
-                row.setdefault("machine_id", self.machine_id)
-            self._github_rows = github_rows
-        if self.on_github_alert is not None:
-            for row in alerts:
-                try:
-                    self.on_github_alert(row)
-                except Exception:
-                    pass  # a broken notifier must not stall a refresh
         return [row for _key, _s, row, _st in rows]
 
     def note_status(self, key: str, status: str, at: float) -> None:
@@ -533,41 +522,57 @@ class Catalog:
         now = time.time() if now is None else now
         return now - self._refreshed_at >= REFRESH_INTERVAL_S
 
-    def _poll_github(self) -> tuple[list[dict] | None, list[dict]]:
-        """``(rows, alerts)``: the unread GitHub listing this read, and
-        the rows in it whose thread just turned unread.
+    def poll_github(self) -> None:
+        """Fetch the unread GitHub listing, store its rows, and fire
+        ``on_github_alert`` once per thread that newly turned unread.
 
-        ``None`` rows mean the read failed — the last good listing and
-        the dedupe map both stay. The map keys ``gh_thread_id`` on the
-        thread's ``updated_at``, so a thread already seen unread at this
-        stamp can't alert again until GitHub moves it; the first
-        successful poll only baselines it.
+        Kept out of ``refresh()``: the session path — adoption, tail
+        sync — never waits on ``gh``; the catalog loop calls this after
+        its session work, on the same cadence. The fetch runs unlocked;
+        the dedupe and the row swap land under ``_meta_lock`` so two
+        overlapping callers can't compare against the same old map and
+        repeat an alert. A failed read changes nothing — the last good
+        rows and the dedupe map both stay. The first successful poll is
+        a silent baseline: a hub start must not re-push the whole
+        unread backlog.
         """
         if self.fetch_github is None:
-            return None, []
+            return
         try:
             rows = self.fetch_github()
         except Exception:
-            return None, []
+            return
         if not isinstance(rows, list):
-            return None, []
+            return
         rows = [
             r for r in rows
             if isinstance(r, dict) and str(r.get("key") or "")
         ]
-        prev = self._github_seen
-        seen: dict[str, str] = {}
-        alerts = []
-        for row in rows:
-            tid = str(row.get("gh_thread_id") or "")
-            if not tid:
-                continue
-            stamp = str(row.get("updated_at") or "")
-            seen[tid] = stamp
-            if prev is not None and prev.get(tid) != stamp:
-                alerts.append(row)
-        self._github_seen = seen
-        return rows, alerts
+        with self._meta_lock:
+            for row in rows:
+                row.setdefault("machine_id", self.machine_id)
+            prev = self._github_seen
+            seen: dict[str, str] = {}
+            alerts = []
+            for row in rows:
+                tid = str(row.get("gh_thread_id") or "")
+                if not tid:
+                    continue
+                stamp = str(row.get("updated_at") or "")
+                seen[tid] = stamp
+                # Dedupe on gh_thread_id + updated_at: a thread already
+                # seen unread at this stamp can't alert again until
+                # GitHub moves it.
+                if prev is not None and prev.get(tid) != stamp:
+                    alerts.append(row)
+            self._github_seen = seen
+            self._github_rows = rows
+        if self.on_github_alert is not None:
+            for row in alerts:
+                try:
+                    self.on_github_alert(row)
+                except Exception:
+                    pass  # a broken notifier must not stall the loop
 
     def inbox(
         self,

@@ -712,6 +712,9 @@ class HubState:
                 rows, as_of = self.catalog.tail_snapshot()
                 self.tail_manager.sync(rows, as_of=as_of)
                 supervise.reap_kept(self.home, self.catalog.session_for)
+                # GitHub last: a slow ``gh`` must never hold up adoption
+                # or tail sync, which don't need it.
+                self.catalog.poll_github()
             except Exception:
                 pass
             self._stop.wait(catalog_mod.REFRESH_INTERVAL_S)

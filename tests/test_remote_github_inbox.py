@@ -37,6 +37,16 @@ def _gh_row(**kw):
     return row
 
 
+def _raw(nid, unread=True, reason="review_requested",
+         typ="PullRequest"):
+    """One notification as GitHub's API returns it."""
+    return {"id": nid, "unread": unread, "reason": reason,
+            "updated_at": "2026-10-23T18:29:12Z",
+            "subject": {"title": "T", "type": typ, "url": None},
+            "repository": {"full_name": "o/a",
+                           "html_url": "https://github.com/o/a"}}
+
+
 class TestInboxRow(unittest.TestCase):
     """ghcli.inbox_row: the /v1/inbox ``github`` item shape."""
 
@@ -117,6 +127,7 @@ class TestMerge(_GithubCatalog):
             sessions=[_session(sid="f1", ts=now - 60)],
             statuses=["followup"])
         cat.refresh()
+        cat.poll_github()
         items = cat.inbox(now=now)
         self.assertEqual(
             [i["key"] for i in items],
@@ -126,12 +137,23 @@ class TestMerge(_GithubCatalog):
         self.assertEqual(row["machine_id"], "mbp")
         self.assertEqual(row["reason"], "review_requested")
 
+    def test_refresh_does_not_reach_for_github(self):
+        # The session path never waits on gh: the catalog loop polls
+        # GitHub separately, after its session work.
+        cat = self._cat()
+        calls = []
+        cat.fetch_github = lambda: calls.append(1) or []
+        cat.refresh()
+        self.assertEqual(calls, [])
+        cat.poll_github()
+        self.assertEqual(calls, [1])
+
     def test_unread_github_never_ages_out(self):
         from quiver.remote.catalog import INBOX_MAX_AGE_S
         now = 1_800_000_000.0
         old = "2026-09-01T00:00:00Z"  # way past the 3-day cutoff
         cat = self._cat(github=[_gh_row(nid="9", updated=old)])
-        cat.refresh()
+        cat.poll_github()
         keys = [i["key"] for i in cat.inbox(now=now)]
         self.assertEqual(keys, ["gh:9"])
         # And INBOX_MAX_AGE_S is genuinely past for this stamp.
@@ -141,11 +163,12 @@ class TestMerge(_GithubCatalog):
         cat = Catalog(Path(tempfile.mkdtemp()), machine_id="mbp",
                       fetch_sessions=list, status_of=lambda ss: [])
         cat.refresh()
+        cat.poll_github()
         self.assertEqual(cat.inbox(), [])
 
     def test_dismissal_hides_until_the_thread_updates(self):
         cat = self._cat(github=[_gh_row(nid="9")])
-        cat.refresh()
+        cat.poll_github()
         last = ghcli._parse_iso("2026-10-23T18:29:12Z")
         self.assertEqual(
             cat.inbox(dismissed={"gh:9": last}), [])
@@ -160,20 +183,20 @@ class TestMerge(_GithubCatalog):
         feed = [[_gh_row(nid="9")]]
         cat = self._cat()
         cat.fetch_github = lambda: [dict(r) for r in feed[0]]
-        cat.refresh()
+        cat.poll_github()
         self.assertEqual([i["key"] for i in cat.inbox()], ["gh:9"])
 
         def boom():
             raise OSError("gh exploded")
         cat.fetch_github = boom
-        cat.refresh()
+        cat.poll_github()
         self.assertEqual([i["key"] for i in cat.inbox()], ["gh:9"])
         cat.fetch_github = lambda: None
-        cat.refresh()
+        cat.poll_github()
         self.assertEqual([i["key"] for i in cat.inbox()], ["gh:9"])
         feed[0] = []
         cat.fetch_github = lambda: list(feed[0])
-        cat.refresh()
+        cat.poll_github()
         self.assertEqual(cat.inbox(), [])
 
 
@@ -188,7 +211,7 @@ class TestAlertDiff(_GithubCatalog):
     def test_first_poll_is_a_silent_baseline(self):
         cat = self._cat(github=[_gh_row(nid="9")])
         alerts = self._alerts(cat)
-        cat.refresh()
+        cat.poll_github()
         self.assertEqual(alerts, [])
 
     def test_new_unread_alerts_once_per_updated_at(self):
@@ -196,14 +219,14 @@ class TestAlertDiff(_GithubCatalog):
         cat = self._cat()
         cat.fetch_github = lambda: [dict(r) for r in feed[0]]
         alerts = self._alerts(cat)
-        cat.refresh()  # baseline: nothing to alert on
+        cat.poll_github()  # baseline: nothing to alert on
         feed[0] = [_gh_row(nid="9", updated="2026-10-23T18:29:12Z")]
-        cat.refresh()
+        cat.poll_github()
         self.assertEqual([r["gh_thread_id"] for r in alerts], ["9"])
-        cat.refresh()  # same stamp: no repeat
+        cat.poll_github()  # same stamp: no repeat
         self.assertEqual(len(alerts), 1)
         feed[0] = [_gh_row(nid="9", updated="2026-10-24T00:00:00Z")]
-        cat.refresh()
+        cat.poll_github()
         self.assertEqual(len(alerts), 2)
 
     def test_read_then_new_activity_alerts_again(self):
@@ -211,13 +234,13 @@ class TestAlertDiff(_GithubCatalog):
         cat = self._cat()
         cat.fetch_github = lambda: [dict(r) for r in feed[0]]
         alerts = self._alerts(cat)
-        cat.refresh()
+        cat.poll_github()
         feed[0] = [_gh_row(nid="9", updated="2026-10-23T18:29:12Z")]
-        cat.refresh()
+        cat.poll_github()
         feed[0] = []  # marked read: the thread leaves the listing
-        cat.refresh()
+        cat.poll_github()
         feed[0] = [_gh_row(nid="9", updated="2026-10-24T00:00:00Z")]
-        cat.refresh()
+        cat.poll_github()
         self.assertEqual(
             [r["updated_at"] for r in alerts],
             ["2026-10-23T18:29:12Z", "2026-10-24T00:00:00Z"])
@@ -227,14 +250,14 @@ class TestAlertDiff(_GithubCatalog):
         cat = self._cat()
         cat.fetch_github = lambda: [dict(r) for r in feed[0]]
         alerts = self._alerts(cat)
-        cat.refresh()
+        cat.poll_github()
         cat.fetch_github = lambda: None
-        cat.refresh()
+        cat.poll_github()
         cat.fetch_github = lambda: [dict(r) for r in feed[0]]
-        cat.refresh()
+        cat.poll_github()
         self.assertEqual(alerts, [])
 
-    def test_a_broken_alert_does_not_stall_refresh(self):
+    def test_a_broken_alert_does_not_stall_the_poll(self):
         cat = self._cat()
         cat.fetch_github = lambda: [_gh_row(nid="9")]
         calls = []
@@ -243,12 +266,11 @@ class TestAlertDiff(_GithubCatalog):
             calls.append(row)
             raise RuntimeError("notifier is on fire")
         cat.on_github_alert = boom
-        cat.refresh()  # baseline
+        cat.poll_github()  # baseline
         cat.fetch_github = lambda: [
             _gh_row(nid="9", updated="2026-10-24T00:00:00Z")]
-        rows = cat.refresh()
+        cat.poll_github()
         self.assertEqual(len(calls), 1)
-        self.assertIsInstance(rows, list)
 
 
 class TestUnreadRows(unittest.TestCase):
@@ -261,17 +283,9 @@ class TestUnreadRows(unittest.TestCase):
         self.addCleanup(p.stop)
         self.home = Path(tempfile.mkdtemp())
 
-    def _raw(self, nid, unread=True, reason="review_requested",
-             typ="PullRequest"):
-        return {"id": nid, "unread": unread, "reason": reason,
-                "updated_at": "2026-10-23T18:29:12Z",
-                "subject": {"title": "T", "type": typ, "url": None},
-                "repository": {"full_name": "o/a",
-                               "html_url": "https://github.com/o/a"}}
-
     def test_unread_rows_shape_and_skip_read(self):
-        FakeGh(self, notes=[self._raw("1"), self._raw("2", unread=False),
-                            self._raw("3", reason="comment")])
+        FakeGh(self, notes=[_raw("1"), _raw("2", unread=False),
+                            _raw("3", reason="comment")])
         rows = gh_inbox.unread_rows(self.home)
         self.assertEqual([r["gh_thread_id"] for r in rows], ["1", "3"])
         self.assertEqual(rows[0]["kind"], "github")
@@ -280,7 +294,7 @@ class TestUnreadRows(unittest.TestCase):
     def test_polls_fold_into_the_shared_cache(self):
         # The catalog polls on its 10 s cadence; the TtlCache turns that
         # into one ``gh api notifications`` per listing TTL.
-        self.gh = FakeGh(self, notes=[self._raw("1")])
+        self.gh = FakeGh(self, notes=[_raw("1")])
         gh_inbox.unread_rows(self.home)
         gh_inbox.unread_rows(self.home)
         listings = [c for c in self.gh.calls()
@@ -288,7 +302,7 @@ class TestUnreadRows(unittest.TestCase):
         self.assertEqual(len(listings), 1)
 
     def test_the_page_and_the_hub_share_the_probe(self):
-        self.gh = FakeGh(self, notes=[self._raw("1")])
+        self.gh = FakeGh(self, notes=[_raw("1")])
         ctx = SimpleNamespace(home=self.home, machine={"name": "m"})
         gh_inbox.unread_rows(self.home)
         gh_inbox.get(ctx, {})  # the page's all-rows listing is its own key
@@ -296,7 +310,7 @@ class TestUnreadRows(unittest.TestCase):
         self.assertEqual(len(auths), 1)
 
     def test_a_broken_env_answers_none_before_any_read(self):
-        fake = FakeGh(self, notes=[self._raw("1")], signed_out=True)
+        fake = FakeGh(self, notes=[_raw("1")], signed_out=True)
         self.assertIsNone(gh_inbox.unread_rows(self.home))
         self.assertEqual(
             [c for c in fake.calls() if c[:2] == ["api", "notifications"]],
@@ -318,6 +332,35 @@ class TestUnreadRows(unittest.TestCase):
         fetch.assert_not_called()
 
 
+class TestMarkReadUnion(unittest.TestCase):
+    """A row the hub's unread feed shows must clear even when the
+    page's all-rows listing crowded it out of ``LIMIT``."""
+
+    def setUp(self):
+        p = patch.object(G, "CACHE", G.TtlCache())
+        p.start()
+        self.addCleanup(p.stop)
+        self.ctx = SimpleNamespace(home=Path(tempfile.mkdtemp()),
+                                   machine={"name": "hub-box"})
+
+    def test_an_id_only_the_unread_listing_has_still_marks(self):
+        def fake_fetch(limit, fetch_all=False):
+            # all=true holds newer read rows; thread 9 lives only on
+            # the unread listing.
+            notes = [] if fetch_all else [_raw("9")]
+            return {"status": "ok", "notifications": notes}
+        fake = FakeGh(self, notes=[_raw("9")])
+        ok_env = gh.GhEnv(installed=True, authenticated=True)
+        with patch("quiver.github.cli._fetch_inbox",
+                   side_effect=fake_fetch), \
+                patch.object(gh, "probe_env", return_value=ok_env):
+            body = gh_inbox.post(self.ctx, "read", {"ids": ["9"]})
+        self.assertEqual(body["marked"], ["9"])
+        self.assertEqual(
+            fake.writes(),
+            [["api", "--method", "PATCH", "notifications/threads/9"]])
+
+
 class TestHubRoute(HubBase):
     """The merged feed over HTTP plus dismiss and mark-read wiring."""
 
@@ -327,22 +370,13 @@ class TestHubRoute(HubBase):
         p.start()
         self.addCleanup(p.stop)
 
-    def _note_raw(self, nid, unread=True):
-        return {"id": nid, "unread": unread,
-                "reason": "review_requested",
-                "updated_at": "2026-10-23T18:29:12Z",
-                "subject": {"title": "Review this", "type": "PullRequest",
-                            "url": None},
-                "repository": {"full_name": "o/a",
-                               "html_url": "https://github.com/o/a"}}
-
     def _wire(self):
         self.srv.state.catalog.fetch_github = (
             lambda: gh_inbox.unread_rows(self.srv.state.home))
-        self.srv.state.catalog.refresh()
+        self.srv.state.catalog.poll_github()
 
     def test_inbox_carries_the_github_row(self):
-        FakeGh(self, notes=[self._note_raw("1")])
+        FakeGh(self, notes=[_raw("1")])
         self._wire()
         status, data = self.srv.request(
             "GET", "/v1/inbox", headers=self.auth())
@@ -356,7 +390,7 @@ class TestHubRoute(HubBase):
         self.assertEqual(row["subject_type"], "pr")
 
     def test_dismiss_hides_github_row_per_device(self):
-        FakeGh(self, notes=[self._note_raw("1")])
+        FakeGh(self, notes=[_raw("1")])
         self._wire()
         phone, tablet = self.srv.pair(), self.srv.pair()
         hdr = lambda c: {"Authorization": f"Bearer {c['credential']}"}
@@ -373,7 +407,7 @@ class TestHubRoute(HubBase):
         self.assertIn("gh:1", keys(tablet))
 
     def test_mark_read_drops_the_row(self):
-        fake = FakeGh(self, notes=[self._note_raw("1")])
+        fake = FakeGh(self, notes=[_raw("1")])
         self._wire()
         auth = self.auth()
         status, data = self.srv.request(
@@ -385,7 +419,7 @@ class TestHubRoute(HubBase):
         self.assertEqual(
             fake.writes(),
             [["api", "--method", "PATCH", "notifications/threads/1"]])
-        self.srv.state.catalog.refresh()
+        self.srv.state.catalog.poll_github()
         items = json.loads(self.srv.request(
             "GET", "/v1/inbox", headers=auth)[1])["items"]
         self.assertNotIn("gh:1", [i["key"] for i in items])

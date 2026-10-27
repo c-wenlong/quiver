@@ -18,6 +18,11 @@ from quiver.webapp.pages import PageError
 from quiver.webapp.pages import _github as G
 
 LIMIT = 50  # GitHubModel.loadInbox -> swe gh inbox --limit=50 --all
+# The hub's feed can't cap at the page's LIMIT: an old unread thread
+# crowded out of the listing would vanish from /v1/inbox while still
+# unread — and unread rows must never age out. Ten pages of 100 covers
+# essentially every inbox while bounding the fetch.
+UNREAD_LIMIT = 1000
 
 
 def _key(home) -> tuple:
@@ -25,9 +30,6 @@ def _key(home) -> tuple:
 
 
 def _unread_key(home) -> tuple:
-    """The unread-only listing: the all-rows page can crowd an old
-    unread thread out of ``LIMIT``, but unread rows must never age out
-    of the hub's inbox, so the hub reads the unread endpoint."""
     return ("inbox-unread", G.home_key(home))
 
 
@@ -36,6 +38,16 @@ def _listing(home, refresh: bool = False) -> tuple[dict, float]:
         _key(home),
         lambda: ghcli._fetch_inbox(LIMIT, fetch_all=True),
         refresh=refresh, ok=lambda p: p.get("status") == "ok")
+
+
+def _unread_listing(home) -> tuple[dict, float]:
+    """The unread-only listing: the all-rows page can crowd an old
+    unread thread out of ``LIMIT``, but unread rows must never age out
+    of the hub's inbox, so the hub reads the unread endpoint."""
+    return G.CACHE.get(
+        _unread_key(home),
+        lambda: ghcli._fetch_inbox(UNREAD_LIMIT, fetch_all=False),
+        ok=lambda p: p.get("status") == "ok")
 
 
 def _drop(home) -> None:
@@ -56,10 +68,7 @@ def unread_rows(home) -> list[dict] | None:
     """
     if G.probe(home).status != "ok":
         return None
-    payload, _at = G.CACHE.get(
-        _unread_key(home),
-        lambda: ghcli._fetch_inbox(LIMIT, fetch_all=False),
-        ok=lambda p: p.get("status") == "ok")
+    payload, _at = _unread_listing(home)
     if payload.get("status") != "ok":
         return None
     rows = []
@@ -113,7 +122,14 @@ def post(ctx, action: str, body: dict) -> dict:
                             payload.get("error") or "GitHub returned "
                             + str(payload.get("status")))
         notes = payload.get("notifications") or []
+        # A thread the hub's unread-only feed shows must be markable
+        # even when newer read rows crowded it off this page's listing.
+        unread, _at2 = _unread_listing(home)
         listed = {str(n.get("id")) for n in notes}
+        listed |= {
+            str(n.get("id"))
+            for n in (unread.get("notifications") or [])
+        }
         unknown = [i for i in ids if i not in listed]
         if unknown:
             raise PageError(404, "unknown_notification",
