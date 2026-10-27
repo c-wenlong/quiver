@@ -17,6 +17,7 @@ hit answers without ever running ``gh``.
 import json
 import os
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -300,18 +301,33 @@ def mirror_path(repo: str, home: Path | None = None) -> Path:
     return mirrors_dir(home) / (repo.replace("/", "__") + ".git")
 
 
+# One lock per mirror path: two first-time resolves of one repo (the hub
+# runs each on its own thread) must not clone into the same folder, nor
+# use it while the other is still cloning.
+_MIRROR_LOCKS: dict[str, threading.RLock] = {}
+_MIRROR_LOCKS_GUARD = threading.Lock()
+
+
+def _mirror_lock(mirror: Path) -> threading.RLock:
+    with _MIRROR_LOCKS_GUARD:
+        return _MIRROR_LOCKS.setdefault(str(mirror), threading.RLock())
+
+
 def _ensure_mirror(repo: str,
                    home: Path | None) -> tuple[str, gh.GhResult | None]:
     """``(mirror, failure)``: clone the bare, blob-filtered mirror when
-    it is missing. ``failure`` is None once the mirror is there."""
+    it is missing. ``failure`` is None once the mirror is there. The
+    check and the clone run under the mirror's lock, so a second caller
+    waits for the first clone instead of racing it."""
     mirror = mirror_path(repo, home)
-    if not mirror.is_dir():
-        mirrors_dir(home).mkdir(parents=True, exist_ok=True)
-        result = gh.run_gh(
-            ["repo", "clone", repo, str(mirror), "--",
-             "--bare", "--filter=blob:none"], timeout=300)
-        if result.status != "ok":
-            return str(mirror), _fail("Clone failed", result)
+    with _mirror_lock(mirror):
+        if not mirror.is_dir():
+            mirrors_dir(home).mkdir(parents=True, exist_ok=True)
+            result = gh.run_gh(
+                ["repo", "clone", repo, str(mirror), "--",
+                 "--bare", "--filter=blob:none"], timeout=300)
+            if result.status != "ok":
+                return str(mirror), _fail("Clone failed", result)
     return str(mirror), None
 
 
@@ -413,15 +429,24 @@ def issue_worktree(repo: str, number, home: Path | None = None,
     ``data`` is ``{"path", "branch", "base", "created"}``, ``base`` the
     ``origin/<default>`` ref the branch was cut from. A failure's
     ``error`` names the step, as ``pr_worktree``'s does.
+
+    Everything runs under the mirror's lock: two resolves of one repo
+    at once would otherwise race the clone, or both update
+    ``refs/remotes/origin/<default>`` and one fail on git's ref lock.
     """
     def say(text: str) -> None:
         if progress is not None:
             progress(text)
 
-    number = int(number)
-    branch = issue_branch(number)
     if not mirror_path(repo, home).is_dir():
         say("Cloning mirror…")
+    with _mirror_lock(mirror_path(repo, home)):
+        return _issue_worktree_locked(repo, int(number), home, say)
+
+
+def _issue_worktree_locked(repo: str, number: int, home: Path | None,
+                           say: Callable[[str], None]) -> gh.GhResult:
+    branch = issue_branch(number)
     mirror, failed = _ensure_mirror(repo, home)
     if failed is not None:
         return failed

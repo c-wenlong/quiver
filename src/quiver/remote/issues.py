@@ -145,8 +145,10 @@ def request(state, body: dict | None) -> tuple[int, dict]:
     ref = (repo.lower(), cmd["number"])
     tree = manage.issue_worktree_path(repo, cmd["number"], state.home)
     with _preparing_lock:
-        if ref in _preparing or supervise.fork_blocker(
-                state.home, harness, tree):
+        # An untracked harness's marker is never adopted, so it guards
+        # nothing: only a tracked harness waits on it.
+        if ref in _preparing or (tracked and supervise.fork_blocker(
+                state.home, harness, tree)):
             return 409, protocol.error(
                 "resolve_pending",
                 f"an agent for {repo}#{cmd['number']} is still starting in "

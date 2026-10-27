@@ -189,6 +189,31 @@ class TestIssueWorktree(unittest.TestCase):
         self.assertFalse(
             Path(manage.issue_worktree_path("o/r", 9, self.home)).exists())
 
+    def test_two_first_resolves_share_one_clone(self):
+        # Two issues of a new repo at once: one clone, both checkouts.
+        import threading
+        import time
+
+        real = gh.run_gh
+
+        def slow_clone(*args, **kwargs):
+            time.sleep(0.3)
+            return real(*args, **kwargs)
+
+        results = {}
+        with patch("quiver.github.gh.run_gh", side_effect=slow_clone):
+            threads = [threading.Thread(
+                target=lambda n=n: results.update(
+                    {n: manage.issue_worktree("o/r", n, self.home)}))
+                for n in (7, 8)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(30)
+        self.assertEqual(self.clones, 1)
+        for n in (7, 8):
+            self.assertEqual(results[n].status, "ok", results[n].error)
+
     def test_clone_failure_names_the_step(self):
         with patch("quiver.github.gh.run_gh",
                    return_value=gh.GhResult("upstream-error",

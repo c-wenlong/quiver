@@ -44,7 +44,7 @@ class TestResolveRoute(unittest.TestCase):
 
     @contextlib.contextmanager
     def _stubs(self, env=OK_ENV, installed=True, tmux=True, fetched=None,
-               worktree=None, launch=None, blocker=None):
+               worktree=None, launch=None, blocker=None, tracked=True):
         fetched = fetched or gh.GhResult("ok", data=self.issue)
         with patch("quiver.remote.catalog.launch_command",
                    return_value="claude" if installed else None), \
@@ -56,6 +56,8 @@ class TestResolveRoute(unittest.TestCase):
                    return_value="/usr/bin/tmux" if tmux else None), \
              patch("quiver.remote.supervise.fork_blocker",
                    return_value=blocker), \
+             patch("quiver.remote.catalog.untracked",
+                   return_value=[] if tracked else ["claude"]), \
              patch("quiver.github.gh.probe_env", return_value=env), \
              patch("quiver.github.issues.fetch", return_value=fetched), \
              patch("quiver.github.manage.issue_worktree",
@@ -194,6 +196,15 @@ class TestResolveRoute(unittest.TestCase):
         with self._stubs() as (_wt, ln):
             status, _body = self._post(req)
         self.assertEqual(status, 202)
+
+    def test_an_untracked_harness_marker_blocks_nothing(self):
+        # Its marker is never adopted, so it must not hold the issue.
+        req = {"repo": "o/r", "number": 5, "harness": "claude"}
+        with self._stubs(blocker="qv-old", tracked=False) as (_wt, ln):
+            status, body = self._post(req)
+        self.assertEqual(status, 202, body)
+        self.assertEqual(self._view(body["launch_id"])["state"], "untracked")
+        ln.assert_called_once()
 
     def test_prompt_and_context_must_fit_with_the_header(self):
         cap = protocol.MAX_LAUNCH_PROMPT
