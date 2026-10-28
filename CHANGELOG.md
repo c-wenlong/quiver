@@ -94,6 +94,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Flatter Mac app window.** The page now fills the window to its edges
+  instead of sitting in a rounded, inset panel, split from the sidebar by
+  a hairline. The Quiver wordmark and the sidebar toggle moved up into the
+  traffic lights' row, and cards, blocks, fields, buttons and sheets have
+  smaller corner radii.
+
 - **The Plugins page opens on Explore.** In the Mac app and the web app,
   Explore is now the first tab and the view Plugins lands on: the
   catalog of every marketplace's plugins is what the page is for, and

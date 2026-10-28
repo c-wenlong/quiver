@@ -1,9 +1,8 @@
 import QuiverCore
 import SwiftUI
 
-/// The shell, after TokenTracker: a borderless sidebar on the window wash
-/// and the page in a rounded panel inset 8pt from the top and 12pt from the
-/// right and bottom.
+/// The shell: a borderless sidebar on the window wash and the page filling
+/// the rest of the window edge to edge, split from the sidebar by a hairline.
 struct MainWindow: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
@@ -98,11 +97,9 @@ struct MainWindow: View {
             // A page never sizes the window: it gets the panel's space.
             PanelFrame { PageView(section: model.selection ?? .overview) }
                 .background(Theme.panel)
-                .clipShape(.rect(cornerRadius: Theme.panelRadius))
-                .overlay(RoundedRectangle(cornerRadius: Theme.panelRadius).strokeBorder(Theme.border, lineWidth: 1))
-                .shadow(color: .black.opacity(0.05), radius: 1, y: 1)
-                .padding(.top, 8)
-                .padding([.trailing, .bottom], 12)
+                .overlay(alignment: .leading) {
+                    Theme.border.frame(width: 1)
+                }
         }
         .background(Theme.wash)
         .ignoresSafeArea(.container, edges: .top)
@@ -177,12 +174,16 @@ private struct Sidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Unclipped: in the rail the toggle sits past the traffic
+            // lights, over the page's top edge.
             header
             list
+                .frame(width: isExpanded ? width : Theme.sidebarCollapsedWidth,
+                       alignment: .leading)
+                .clipped()
         }
         .frame(width: isExpanded ? width : Theme.sidebarCollapsedWidth,
                alignment: .leading)
-        .clipped()
         // A floating rail covers the page: it needs the window surface,
         // a hairline edge and a shadow, fading in with the expansion.
         // The shadow sits on the surface only, so the labels stay crisp.
@@ -196,7 +197,7 @@ private struct Sidebar: View {
         }
         .frame(maxHeight: .infinity)
         // The sidebar runs to the very top of the window, pinned or
-        // floating; the content's top padding clears the traffic lights.
+        // floating; its header shares the traffic lights' row.
         .ignoresSafeArea(.container, edges: .top)
         .animation(animation, value: isExpanded)
         // The tracking area spans the full unclipped width, so where the
@@ -254,8 +255,7 @@ private struct Sidebar: View {
         }
             .padding(.leading, Theme.sidebarLeadingPadding)
             .padding(.trailing, Theme.sidebarTrailingPadding)
-            // Same spacing as between groups.
-            .padding(.top, Theme.gutter)
+            .padding(.top, 8)
             // Always laid out at full width; the rail clips the right
             // side instead of reflowing, so icons keep their position.
             .frame(width: width, alignment: .leading)
@@ -271,32 +271,31 @@ private struct Sidebar: View {
         }
     }
 
-    /// The wordmark and the collapse/expand button, pinned above the
-    /// scrolling list under the traffic lights. Laid out at full width
-    /// like the list, so the rail clips it the same way.
+    /// The wordmark and the collapse/expand button, in the title bar row
+    /// beside the traffic lights, pinned above the scrolling list. Laid
+    /// out at full width like the list; the wordmark fades in the rail.
     private var header: some View {
         ZStack(alignment: .leading) {
             Text("Quiver")
                 .font(Theme.font(size: 15, weight: .semibold))
                 .foregroundStyle(Theme.textStrong)
-                .padding(.leading, 8)
+                .lineLimit(1)
+                .padding(.leading, Theme.titleBarLeading)
                 .opacity(isExpanded ? 1 : 0)
                 .accessibilityHidden(!isExpanded)
             toggleRow
         }
-        .padding(.leading, Theme.sidebarLeadingPadding)
-        .padding(.trailing, Theme.sidebarTrailingPadding)
-        // Clear of the traffic lights.
-        .padding(.top, 28)
-        .frame(width: width, alignment: .leading)
-        .overlay(alignment: .bottom) {
-            Theme.border.frame(height: 1).opacity(scrolled ? 1 : 0)
+        .frame(width: width, height: Theme.titleBarHeight, alignment: .leading)
+        .overlay(alignment: .bottomLeading) {
+            Theme.border
+                .frame(width: isExpanded ? width : Theme.sidebarCollapsedWidth, height: 1)
+                .opacity(scrolled ? 1 : 0)
         }
     }
 
     /// The collapse/expand button: at the header's trailing edge while
-    /// the sidebar is open (pinned or hover-floating), over the icon
-    /// column in the collapsed rail, sliding between the two.
+    /// the sidebar is open (pinned or hover-floating), just past the
+    /// traffic lights in the collapsed rail, sliding between the two.
     @State private var hoveringToggle = false
 
     private var toggleRow: some View {
@@ -310,7 +309,7 @@ private struct Sidebar: View {
                 .frame(width: 18)
                 .foregroundStyle(Theme.textNav)
                 .padding(.horizontal, 8)
-                .frame(height: Theme.navRowHeight)
+                .frame(height: Theme.controlHeight)
                 .background(hoveringToggle ? Theme.hover : .clear,
                             in: .rect(cornerRadius: Theme.controlRadius))
                 .contentShape(.rect(cornerRadius: Theme.controlRadius))
@@ -321,7 +320,9 @@ private struct Sidebar: View {
         .onHover { hoveringToggle = $0 }
         .accessibilityLabel(label)
         .help("\(label) ⌃⌘S")
-        .frame(maxWidth: .infinity, alignment: isExpanded ? .trailing : .leading)
+        .padding(.leading, isExpanded
+            ? width - Theme.sidebarTrailingPadding - Theme.navIconPillWidth
+            : Theme.titleBarLeading - 8)
     }
 
     /// Only a collapsed sidebar reacts to the pointer: in after 0.12 s,
