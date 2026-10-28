@@ -43,6 +43,7 @@ const ICON = {
   calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
   pricing: '<circle cx="12" cy="12" r="9"/><path d="M15 9.5c-.5-1-1.6-1.5-3-1.5-1.7 0-3 .8-3 2s1.3 1.7 3 2 3 .9 3 2.1-1.3 1.9-3 1.9c-1.4 0-2.6-.6-3-1.6M12 6v2M12 16v2"/>',
   repositories: '<path d="M21 8 12 3 3 8v8l9 5 9-5zM3 8l9 5 9-5M12 13v8"/>',
+  tasks: '<path d="m4.2 5.4 1.6 1.6L8.5 4.3M4.2 11.4l1.6 1.6 2.7-2.7M4.2 17.4l1.6 1.6 2.7-2.7M11.5 6h8.5M11.5 12h8.5M11.5 18h8.5"/>',
   inbox: '<path d="M3 13h5l1 3h6l1-3h5M5 5h14l2 8v6H3v-6z"/>',
   accounts: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.5-3.5 3.2-5.5 6.5-5.5s6 2 6.5 5.5M16 4.8a3.5 3.5 0 0 1 0 6.4M18 14.8c2 .7 3.2 2.5 3.5 5.2"/>',
   harnesses: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 10 3 2-3 2M12 15h5"/>',
@@ -66,7 +67,7 @@ const icon = (name) =>
  * dimmed, so the map of the app is the same in both. */
 const SIDEBAR = [
   ["Usage", [["overview", "Overview"], ["sessions", "Sessions"], ["calendar", "Calendar"], ["pricing", "Pricing"]]],
-  ["GitHub", [["repositories", "Repositories"], ["inbox", "Inbox"]]],
+  ["GitHub", [["repositories", "Repositories"], ["tasks", "Tasks"], ["inbox", "Inbox"]]],
   ["Manage", [["accounts", "Accounts"], ["harnesses", "Harnesses"], ["compute", "Compute"]]],
   ["Primitives", [["plugins", "Plugins"], ["skills", "Skills"], ["agents", "AGENTS.md"], ["mcp", "MCP servers"], ["hooks", "Hooks"], ["models", "Models"]]],
   ["System", [["menubar", "Menu bar"], ["widgets", "Widgets"], ["status", "Service status"], ["settings", "Settings"]]],

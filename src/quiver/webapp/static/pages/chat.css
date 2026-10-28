@@ -224,7 +224,7 @@ details.tool-run > summary {
  * the chat, so another session is one click away. */
 .chat-rail {
   min-height: 0;
-  background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--card-radius);
   padding: 8px; display: flex; flex-direction: column; gap: 8px;
   overflow-y: auto;
 }

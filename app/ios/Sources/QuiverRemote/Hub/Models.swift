@@ -565,6 +565,108 @@ struct IssueComment: Decodable, Hashable {
     let url: String?
 }
 
+// MARK: Tasks (GET /v1/tasks…)
+
+/// `GET /v1/tasks`: the hub's work-item store over the sources' open
+/// items — GitHub pinned-repo issues and PRs, Linear cards when a key
+/// is configured — each row carrying the store's session/launch links.
+struct TasksResponse: Decodable {
+    let tasks: [TaskRow]
+    /// Per-repo fetch failures, the same shape `/v1/pulls` reports;
+    /// absent when every repo listed fine.
+    let repos: [TaskRepoFailure]?
+    let machine: String?
+    /// The hub's machine id, so the launch sheet offers its harnesses.
+    let machineId: String?
+    let github: GhEnv?
+    /// Linear's env block, shaped like `github`'s: `disabled` when no
+    /// `linear` section is configured, a blocking word with `error`
+    /// when the source can't be reached.
+    let linear: GhEnv?
+    /// Set when `gh` is missing or signed out on the hub. Stored GitHub
+    /// tasks still list, marked stale.
+    let envBlocked: String?
+    let fetchedAt: Double?
+}
+
+/// One pinned repo's failed fetch inside the tasks reply: its stored
+/// rows still list under their group.
+struct TaskRepoFailure: Decodable, Identifiable, Hashable {
+    let name: String
+    let status: String?
+    let error: String?
+    var id: String { name }
+}
+
+/// The PR fields a task row carries: for an issue the PR its
+/// `quiver/issue-<n>` branch produced (open or merged), for a pull
+/// the PR itself.
+struct TaskPr: Decodable, Hashable, Sendable {
+    let number: Int?
+    let title: String?
+    let state: String?
+    let draft: Bool?
+    let url: String?
+}
+
+/// One work item: the TaskRef fields plus the derived `state` ladder
+/// (`open` → `in_progress` → `pr_open` → `merged`|`closed`), the
+/// store's `sessions`/`launches` links and `agent_running` while a
+/// linked session is active or a launch still pending.
+struct TaskRow: Decodable, Identifiable, Hashable, Sendable {
+    let id: String
+    /// github | linear | notion
+    let source: String?
+    /// issue | pull | card | page — GitHub carries issue and pull only.
+    let kind: String?
+    /// The source's own id: "5" for GitHub, "QUI-123" for Linear.
+    let ref: String?
+    let title: String?
+    let url: String?
+    /// `owner/repo` for GitHub.
+    let repo: String?
+    /// The team/project key for non-GitHub sources.
+    let project: String?
+    let state: String?
+    /// Session keys linked to this task.
+    let sessions: [String]?
+    /// Launch ids still preparing or already adopted.
+    let launches: [String]?
+    /// True while a linked session is `active` or a launch is pending.
+    let agentRunning: Bool?
+    /// The store has links on this task.
+    let linked: Bool?
+    let lastActiveAt: Double?
+    let createdAt: Double?
+    /// The source's own stamp — ISO-8601 from GitHub and Linear both.
+    let updatedAt: String?
+    let pr: TaskPr?
+
+    /// The list's group key: the repo for GitHub, the project elsewhere.
+    var scope: String { repo ?? project ?? "" }
+    /// "o/r#5" for GitHub, "QUI-123" elsewhere.
+    var refLabel: String {
+        guard let ref, !ref.isEmpty else { return "" }
+        if source == "github", let repo, !repo.isEmpty { return "\(repo)#\(ref)" }
+        return ref
+    }
+    /// The GitHub issue/PR number, when the task is one.
+    var number: Int? { Int(ref ?? "") }
+    /// Terminal states: merged, or closed without one.
+    var isDone: Bool { state == "merged" || state == "closed" }
+    var updatedDate: Date? { GitHubTime.date(updatedAt) }
+
+    /// The `task_ref` `POST`/`DELETE /v1/sessions/<key>/task` accept.
+    var refBody: [String: Any] {
+        var body: [String: Any] = ["source": source ?? "", "kind": kind ?? "",
+                                 "ref": ref ?? "", "title": title ?? "",
+                                 "url": url ?? ""]
+        if let repo { body["repo"] = repo }
+        if let project { body["project"] = project }
+        return body
+    }
+}
+
 /// GitHub's ISO-8601 stamps (`updated_at` and friends), with or
 /// without fractional seconds.
 enum GitHubTime {

@@ -1539,6 +1539,10 @@
     const repo = GhUI.hashParams().get("repo");
     if (repo) {
       renderFocus(repo);
+      // A #/repositories?repo=…&pr=… link opens the PR sheet on the
+      // focus page — the route the Tasks page's PR card deep-links to.
+      const pr = GhUI.hashParams().get("pr");
+      if (pr) openPr(repo, pr);
       GhUI.poll("repositories", () => {
         if (!page.focus || page.focus.loading || page.focus.unpinned || sheetOpen()) return false;
         renderFocus(page.focus.repo);

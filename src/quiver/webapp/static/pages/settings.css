@@ -47,7 +47,7 @@
 
 /* A card of rows: label and description on the left, control on the right. */
 .set-card {
-  background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 4px 20px;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--card-radius); padding: 4px 20px;
   display: flex; flex-direction: column; min-width: 0;
 }
 .set-divider { height: 1px; background: var(--border); }
@@ -117,7 +117,7 @@
 /* Providers › Inference */
 .set-keys-head { display: flex; flex-direction: column; gap: 2px; }
 .set-filters .count { margin-left: auto; }
-.set-table { background: var(--card); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
+.set-table { background: var(--card); border: 1px solid var(--border); border-radius: var(--card-radius); overflow: hidden; }
 .set-key-row {
   display: grid; grid-template-columns: minmax(120px, 200px) minmax(0, 1fr) 100px 90px; gap: 12px; align-items: center;
   padding: 10px 16px; border-top: 1px solid var(--row-divider); font-size: 13px;
