@@ -563,7 +563,8 @@ def cmd_init(args) -> int:
 
     if hub_url is not None:
         if check_only:
-            print("--hub clones, so it can't be combined with --check")
+            print("--hub clones, so it can't be combined with --check",
+                  file=sys.stderr if json_view else sys.stdout)
             return 1
         from quiver.init.hub import HubError, clone_hub, public_url
 

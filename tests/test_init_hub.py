@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -62,6 +62,9 @@ class PublicUrlTest(unittest.TestCase):
                          "https://github.com/me/hub.git")
         self.assertEqual(public_url("git@github.com:me/hub.git"), "git@github.com:me/hub.git")
 
+    def test_a_malformed_url_still_loses_its_token(self):
+        self.assertNotIn("secret", public_url("https://me:secret@[broken/repo.git"))
+
 
 class CloneHubTest(unittest.TestCase):
     def test_unreachable_url_writes_nothing(self):
@@ -88,6 +91,27 @@ class CloneHubTest(unittest.TestCase):
             with self.assertRaises(HubError) as caught:
                 clone_hub(Path(tmp), "https://me:tok@h/r.git", run=fail)
         self.assertNotIn("tok", str(caught.exception))
+
+    def test_a_timed_out_clone_leaves_nothing_behind(self):
+        def run(argv, **kw):
+            if argv[1] == "ls-remote":
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            Path(argv[-1]).mkdir(parents=True)
+            (Path(argv[-1]) / "partial").write_text("x")
+            raise subprocess.TimeoutExpired(argv, 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            with self.assertRaisesRegex(HubError, "took longer"):
+                clone_hub(home, "https://h/r.git", run=run)
+            self.assertEqual(list(home.iterdir()), [])
+
+    def test_an_unreadable_hub_is_a_refusal_not_a_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".quiver").mkdir()
+            with mock.patch.object(Path, "iterdir", side_effect=PermissionError(13, "Permission denied")):
+                with self.assertRaisesRegex(HubError, "can't read ~/.quiver"):
+                    check_target(home)
 
     @unittest.skipUnless(GIT, "git not installed")
     def test_clones_a_real_repository(self):
@@ -151,6 +175,11 @@ class CmdInitHubTest(unittest.TestCase):
             code, out = self._run(home, ["--hub=x", "--check"])
             self.assertEqual(code, 1)
             self.assertFalse((home / ".quiver").exists())
+            err = io.StringIO()
+            with redirect_stderr(err):
+                code, out = self._run(home, ["--hub=x", "--check", "--json"])
+            self.assertEqual((code, out), (1, ""))
+            self.assertIn("--hub clones", err.getvalue())
 
 
 if __name__ == "__main__":

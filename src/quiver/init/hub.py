@@ -13,9 +13,11 @@ missing credential fails before anything is written.
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
 
 from quiver.paths import quiver_dir_for
 
@@ -30,15 +32,16 @@ class HubError(Exception):
 
 
 def public_url(url: str) -> str:
-    """``url`` safe to print: userinfo (a token in the URL) is dropped."""
-    try:
-        parts = urlsplit(url)
-    except ValueError:
-        return url
-    if not parts.scheme or "@" not in parts.netloc:
-        return url
-    host = parts.netloc.rpartition("@")[2]
-    return urlunsplit((parts.scheme, host, parts.path, "", ""))
+    """``url`` safe to print: userinfo (a token in the URL) is dropped.
+
+    A pattern rather than urlsplit, so a URL too malformed to parse still
+    loses its credentials. scp-style ``git@host:path`` has no ``://`` and
+    is left as is: ``git`` there is a login name, not a secret.
+    """
+    return _USERINFO.sub("", url)
+
+
+_USERINFO = re.compile(r"(?<=://)[^/?#]*@")
 
 
 def check_target(home: Path) -> None:
@@ -50,7 +53,11 @@ def check_target(home: Path) -> None:
         raise HubError("~/.quiver is a symlink; init will not clone through it")
     if not root.is_dir():
         raise HubError("~/.quiver is a file, not a folder")
-    if any(root.iterdir()):
+    try:
+        busy = any(root.iterdir())
+    except OSError as exc:
+        raise HubError(f"can't read ~/.quiver: {exc.strerror or exc}") from None
+    if busy:
         raise HubError(
             "~/.quiver already has files, so init will not clone over it. "
             "Run swe init without --hub to repair it, or move it aside first.")
@@ -73,7 +80,7 @@ def clone_hub(home: Path, url: str, run=subprocess.run) -> Path:
     if not url:
         raise HubError("--hub needs a git URL: swe init --hub=<url>")
     if url.startswith("-"):
-        raise HubError(f"not a git URL: {url}")
+        raise HubError(public_url(f"not a git URL: {url}"))
     check_target(home)
     shown = public_url(url)
     reach = _git(["ls-remote", "--exit-code", url, "HEAD"], REACH_TIMEOUT_S, run)
@@ -81,11 +88,29 @@ def clone_hub(home: Path, url: str, run=subprocess.run) -> Path:
     if reach.returncode not in (0, 2):
         detail = (reach.stderr or "").strip().splitlines()
         reason = f": {detail[-1]}" if detail else ""
-        raise HubError(f"can't reach {shown}{reason}".replace(url, shown))
+        raise HubError(public_url(f"can't reach {shown}{reason}"))
+    # Clone beside ~/.quiver and move it into place only once git is done,
+    # so a failed or timed-out clone never leaves a half-written hub that
+    # the next --hub run would refuse.
     root = quiver_dir_for(home)
-    cloned = _git(["clone", url, str(root)], CLONE_TIMEOUT_S, run)
-    if cloned.returncode != 0:
-        detail = (cloned.stderr or "").strip().splitlines()
-        reason = f": {detail[-1]}" if detail else ""
-        raise HubError(f"git clone {shown} failed{reason}".replace(url, shown))
+    try:
+        staging = Path(tempfile.mkdtemp(prefix=".quiver-clone-", dir=home))
+    except OSError as exc:
+        raise HubError(f"can't make a folder to clone into: {exc.strerror or exc}") from None
+    target = staging / "hub"
+    try:
+        cloned = _git(["clone", url, str(target)], CLONE_TIMEOUT_S, run)
+        if cloned.returncode != 0:
+            detail = (cloned.stderr or "").strip().splitlines()
+            reason = f": {detail[-1]}" if detail else ""
+            raise HubError(public_url(f"git clone {shown} failed{reason}"))
+        check_target(home)  # nothing appeared there while git ran
+        try:
+            if root.is_dir():
+                root.rmdir()  # the empty folder check_target allowed
+            target.rename(root)
+        except OSError as exc:
+            raise HubError(f"can't move the clone into ~/.quiver: {exc.strerror or exc}") from None
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
     return root
