@@ -667,8 +667,11 @@ private struct ActivityCard: View {
     /// The pointer is inside the grid at all: the bubble survives the gaps
     /// but goes when the grid is left.
     @State private var inGrid = false
-    /// Every drawn cell's frame in the grid's own coordinate space.
-    @State private var frames: [Date: CGRect] = [:]
+    /// The first row's top-left corner in the grid's own coordinate space.
+    /// Measured once on the rows block, which stays put while columns come
+    /// and go; the cells' frames follow from it (`HeatmapLayout`), since a
+    /// cell added after the first layout never reports its own.
+    @State private var rowsOrigin: CGPoint = .zero
     @State private var gridSize: CGSize = .zero
     @State private var bubbleSize: CGSize = .zero
 
@@ -678,6 +681,8 @@ private struct ActivityCard: View {
     var body: some View {
         let map = Heatmap(days: days, weeks: 26, now: Date(), calendar: .current)
         let weeks = map.columns.suffix(weekCount)
+        let columns = Array(weeks)
+        let layout = HeatmapLayout(cell: Theme.heatmapCell, gap: 3, gutter: 24, origin: rowsOrigin)
         Card(title: "Activity", subtitle: "Tokens a day, last \(weeks.count) weeks") {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 3) {
@@ -692,42 +697,55 @@ private struct ActivityCard: View {
                 // Measures the card's inner width without taking any height.
                 Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
                     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-                ForEach(0..<7, id: \.self) { weekday in
-                    HStack(spacing: 3) {
-                        Text(weekday % 2 == 1 ? Self.weekdayName(weekday) : "")
-                            .font(Theme.font(size: 10)).foregroundStyle(Theme.textSecondary)
-                            .frame(width: 24, alignment: .leading)
-                        ForEach(Array(weeks.enumerated()), id: \.offset) { _, column in
-                            if let cell = column[weekday] {
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(Theme.heatmap[cell.level])
-                                    .frame(width: Theme.heatmapCell, height: Theme.heatmapCell)
-                                    // A new day at this slot (the week window
-                                    // slides when the column count settles)
-                                    // must report its frame again: geometry
-                                    // alone would not have changed.
-                                    .id(cell.day)
-                                    .onGeometryChange(for: CGRect.self) {
-                                        $0.frame(in: .named("activityGrid"))
-                                    } action: { frames[cell.day] = $0 }
-                                    .onHover { inside in if inside { hovered = cell.day } }
-                            } else {
-                                Color.clear.frame(width: Theme.heatmapCell, height: Theme.heatmapCell)
+                // Same 3pt spacing as the outer stack, so the rows sit
+                // where they did; one view to measure for every cell.
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(0..<7, id: \.self) { weekday in
+                        HStack(spacing: 3) {
+                            Text(weekday % 2 == 1 ? Self.weekdayName(weekday) : "")
+                                .font(Theme.font(size: 10)).foregroundStyle(Theme.textSecondary)
+                                .fixedSize()
+                                // A cell tall at any zoom: a taller label
+                                // would stretch the row past the pitch
+                                // `HeatmapLayout` assumes.
+                                .frame(width: 24, height: Theme.heatmapCell, alignment: .leading)
+                            ForEach(Array(weeks.enumerated()), id: \.offset) { _, column in
+                                if let cell = column[weekday] {
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(Theme.heatmap[cell.level])
+                                        .frame(width: Theme.heatmapCell, height: Theme.heatmapCell)
+                                } else {
+                                    Color.clear.frame(width: Theme.heatmapCell, height: Theme.heatmapCell)
+                                }
                             }
                         }
                     }
                 }
+                .onGeometryChange(for: CGPoint.self) {
+                    $0.frame(in: .named("activityGrid")).origin
+                } action: { rowsOrigin = $0 }
             }
             .coordinateSpace(name: "activityGrid")
             .onGeometryChange(for: CGSize.self) { $0.size } action: { gridSize = $0 }
-            .onHover { inGrid = $0 }
+            // The cell under the pointer comes from the layout, not from
+            // per-cell hover regions; a gap keeps the last day.
+            .onContinuousHover(coordinateSpace: .named("activityGrid")) { phase in
+                switch phase {
+                case .active(let location):
+                    inGrid = true
+                    if let cell = layout.cell(at: location, columns: columns) { hovered = cell.day }
+                case .ended:
+                    inGrid = false
+                }
+            }
             // One bubble for the whole grid, drawn above it so no cell clips
             // it and nothing flickers between cells.
             .overlay {
                 if inGrid, let hovered,
                    let resolved = HeatmapHover.resolve(
-                    day: hovered, cells: weeks.joined().compactMap { $0 },
-                    frames: frames, gridSize: gridSize, bubbleSize: bubbleSize) {
+                    day: hovered, cells: columns.joined().compactMap { $0 },
+                    frames: layout.frames(columns: columns),
+                    gridSize: gridSize, bubbleSize: bubbleSize) {
                     bubble(for: resolved.cell, at: resolved.origin).transition(.opacity)
                 }
             }

@@ -127,3 +127,68 @@ import Testing
         #expect(resolved?.cell == nil && resolved?.origin == nil)
     }
 }
+
+@Suite struct HeatmapLayoutTests {
+    var calendar: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "Asia/Singapore")!
+        c.firstWeekday = 1
+        return c
+    }
+    // Wednesday 2026-10-28, 12:00 SGT.
+    let now = Date(timeIntervalSince1970: 1_793_160_000)
+    let layout = HeatmapLayout(cell: 12, gap: 3, gutter: 24, origin: CGPoint(x: 0, y: 19))
+
+    /// The Overview's window: the last 15 of 26 weeks, July to October.
+    var columns: [[Heatmap.Cell?]] {
+        Array(Heatmap(days: [], weeks: 26, now: now, calendar: calendar).columns.suffix(15))
+    }
+
+    /// The bug: only the 8 weeks of the first layout (Sep 6 on) had frames,
+    /// so July and August cells drew no bubble. Every drawn cell, the
+    /// leftmost columns included, now gets a frame and a bubble.
+    @Test func everyDrawnCellHasAFrameAndABubble() throws {
+        let columns = columns
+        let cells = columns.joined().compactMap { $0 }
+        let frames = layout.frames(columns: columns)
+        #expect(frames.count == cells.count)
+        let july = try #require(columns[0][0]?.day)
+        #expect(calendar.component(.month, from: july) == 7)
+        let grid = CGSize(width: 24 + 3 + 15 * 15, height: 19 + 7 * 15)
+        for cell in cells {
+            let resolved = HeatmapHover.resolve(
+                day: cell.day, cells: cells, frames: frames,
+                gridSize: grid, bubbleSize: CGSize(width: 150, height: 40))
+            #expect(resolved?.cell.day == cell.day)
+        }
+    }
+
+    /// Frames step 15pt a column and a row, after the label gutter and gap.
+    @Test func framesFollowTheGridMetrics() {
+        #expect(layout.frame(week: 0, weekday: 0) == CGRect(x: 27, y: 19, width: 12, height: 12))
+        #expect(layout.frame(week: 14, weekday: 6) == CGRect(x: 237, y: 109, width: 12, height: 12))
+    }
+
+    /// The pointer over a cell's middle finds that cell; over a gap, the
+    /// day labels, an undrawn future day or past the last column, nothing.
+    @Test func cellAtAPointRoundTripsAndSkipsGaps() throws {
+        let columns = columns
+        for (week, column) in columns.enumerated() {
+            for (weekday, cell) in column.enumerated() {
+                let frame = layout.frame(week: week, weekday: weekday)
+                let hit = layout.cell(at: CGPoint(x: frame.midX, y: frame.midY), columns: columns)
+                #expect(hit?.day == cell?.day)
+            }
+        }
+        let first = layout.frame(week: 0, weekday: 0)
+        #expect(layout.cell(at: CGPoint(x: first.maxX + 1, y: first.midY), columns: columns) == nil)
+        #expect(layout.cell(at: CGPoint(x: 10, y: first.midY), columns: columns) == nil)
+        #expect(layout.cell(at: CGPoint(x: first.midX, y: 5), columns: columns) == nil)
+        let past = layout.frame(week: 15, weekday: 0)
+        #expect(layout.cell(at: CGPoint(x: past.midX, y: past.midY), columns: columns) == nil)
+        // This week's Saturday is still ahead: drawn as blank, never hovered.
+        #expect(columns[14][6] == nil)
+        let saturday = layout.frame(week: 14, weekday: 6)
+        #expect(layout.cell(at: CGPoint(x: saturday.midX, y: saturday.midY), columns: columns) == nil)
+    }
+}
