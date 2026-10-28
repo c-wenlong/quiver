@@ -100,6 +100,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   traffic lights' row, and cards, blocks, fields, buttons and sheets have
   smaller corner radii.
 
+- **Flatter web app window.** The web app's page fills the browser to its
+  edges like the Mac app's, split from the sidebar by a hairline (on a
+  phone, under the page strip), instead of sitting in a rounded, inset
+  panel. The Quiver wordmark row is shorter, so the sidebar list starts
+  higher, and cards, blocks, fields, buttons and sheets have the Mac app's
+  smaller corner radii.
+
 - **The Plugins page opens on Explore.** In the Mac app and the web app,
   Explore is now the first tab and the view Plugins lands on: the
   catalog of every marketplace's plugins is what the page is for, and

@@ -17,7 +17,7 @@
 .cal-body { display: grid; grid-template-columns: minmax(0, 1fr) 248px; gap: 16px; align-items: start; }
 .cal-body.collapsed { grid-template-columns: minmax(0, 1fr); }
 .cal-main {
-  position: relative; background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+  position: relative; background: var(--card); border: 1px solid var(--border); border-radius: var(--card-radius);
   overflow: hidden; height: max(480px, calc(100vh - 200px));
 }
 .cal-empty {
@@ -116,7 +116,7 @@
 
 /* Side panel: mini month and legend */
 .cal-panel {
-  background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 12px;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--card-radius); padding: 12px;
   max-height: max(480px, calc(100vh - 200px)); overflow-y: auto;
 }
 .cal-mini { margin-bottom: 10px; }

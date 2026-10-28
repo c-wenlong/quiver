@@ -102,7 +102,7 @@
 .pl-source-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .pl-markets { display: flex; flex-direction: column; gap: 12px; }
 .pl-market {
-  background: var(--card); border: 1px solid var(--border); border-radius: 16px; overflow: hidden;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--card-radius); overflow: hidden;
   transition: border-color .15s;
 }
 .pl-market:hover { border-color: var(--border-strong); }
