@@ -25,6 +25,11 @@ public struct HubSessionRow: Codable, Sendable, Equatable {
     public var title: String?
     public var status: String?
     public var machineId: String?
+    /// The satellite's display name when the row is remote — the same
+    /// join the tasks page payload makes.
+    public var machine: String?
+    /// Epoch seconds; the link-session list sorts and ages by it.
+    public var lastActiveAt: Double?
     /// `attached` (runs under Quiver: writable) or `observed` (its
     /// terminal owns it: read-only here).
     public var ownership: String?
@@ -35,6 +40,7 @@ public struct HubSessionRow: Codable, Sendable, Equatable {
 
     public init(key: String, harness: String? = nil, agent: String? = nil, cwd: String? = nil,
                 title: String? = nil, status: String? = nil, machineId: String? = nil,
+                machine: String? = nil, lastActiveAt: Double? = nil,
                 ownership: String? = nil, attachable: Bool? = nil, remote: Bool? = nil) {
         self.key = key
         self.harness = harness
@@ -43,6 +49,8 @@ public struct HubSessionRow: Codable, Sendable, Equatable {
         self.title = title
         self.status = status
         self.machineId = machineId
+        self.machine = machine
+        self.lastActiveAt = lastActiveAt
         self.ownership = ownership
         self.attachable = attachable
         self.remote = remote
@@ -271,14 +279,28 @@ public struct HubMachine: Decodable, Sendable, Equatable, Identifiable {
     /// What a launch there accepts, in Provider visibility order; nil
     /// from a hub older than launches.
     public var launchable: [String]?
+    /// Each launchable harness's registry name, e.g. "Qwen Code".
+    public var harnessNames: [String: String]?
+    /// Launchable harnesses swe can't read sessions of: they start,
+    /// but no chat ever opens.
+    public var untrackedHarnesses: [String]?
 
     public init(id: String, name: String? = nil, online: Bool? = nil,
-                harnesses: [String]? = nil, launchable: [String]? = nil) {
+                harnesses: [String]? = nil, launchable: [String]? = nil,
+                harnessNames: [String: String]? = nil, untrackedHarnesses: [String]? = nil) {
         self.id = id
         self.name = name
         self.online = online
         self.harnesses = harnesses
         self.launchable = launchable
+        self.harnessNames = harnessNames
+        self.untrackedHarnesses = untrackedHarnesses
+    }
+
+    /// "dev-macbook-pro.local" reads as "dev-macbook-pro".
+    public var displayName: String {
+        let n = name ?? id
+        return n.hasSuffix(".local") ? String(n.dropLast(6)) : n
     }
 }
 
@@ -343,6 +365,10 @@ public struct HubError: LocalizedError, Equatable, Sendable {
             fallback ?? "gh isn't installed or signed in on the hub machine."
         case "launch_failed":
             fallback ?? "The hub couldn't start the session."
+        case "bad_cwd":
+            fallback ?? "That folder doesn't exist on the machine."
+        case "browse_unavailable":
+            fallback ?? "Only the hub machine's folders can be browsed."
         case "bad_command":
             fallback ?? "The hub refused the request. Update swe on the hub."
         default: fallback.map(capitalized) ?? "The hub answered with an error (\(status))."

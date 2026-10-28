@@ -88,7 +88,7 @@ Modelled on TokenTracker's Sessions page.
 - [x] Plugins: drift findings with one-click fixes (`swe find plugins --fix=<id>`) ([#142](https://github.com/c-wenlong/quiver/pull/142))
 - [x] Plugins Explore: every plugin in every marketplace, install, uninstall, enable and disable per harness (`swe plugins`); plugin skills listed there, not on Skills
 - [x] Harnesses: discover installed ones, star and archive them ([#144](https://github.com/c-wenlong/quiver/pull/144)); install and uninstall steps open from Settings › Providers › Harnesses
-- [ ] Launch a session in the right folder with one click
+- [x] Launch a session in the right folder with one click
 - [x] API keys: the provider keys in `~/.api_keys`, masked until revealed, edited in place; in Settings › Providers › Inference beside the inference plans
 
 ### M6. Menu bar, widgets and shipping

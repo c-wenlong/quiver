@@ -184,6 +184,85 @@ public struct HubClient: Sendable {
         try await send(request("POST", "/v1/pair", body: ["token": token, "name": name]))
     }
 
+    // MARK: Sessions' launch
+
+    /// The JSON `POST /v1/sessions` carries: a launchable harness, an
+    /// absolute folder, and the first prompt — the hub refuses a blank
+    /// one. `machine` targets a satellite; nil means the hub itself.
+    public static func launchBody(harness: String, cwd: String, prompt: String,
+                                  machine: String? = nil) -> [String: any Sendable] {
+        var body: [String: any Sendable] = ["harness": harness, "cwd": cwd, "prompt": prompt]
+        if let machine, !machine.isEmpty { body["machine"] = machine }
+        return body
+    }
+
+    /// `POST /v1/sessions`: start `harness` in `cwd` with `prompt`. The
+    /// 202 answer is the launch to poll through `launch(_:)` — the same
+    /// shape `resolveIssue` returns.
+    public func startSession(harness: String, cwd: String, prompt: String,
+                             machine: String? = nil) async throws -> HubLaunchStatus {
+        try await send(request("POST", "/v1/sessions",
+                               body: Self.launchBody(harness: harness, cwd: cwd,
+                                                     prompt: prompt, machine: machine)))
+    }
+
+    /// `POST /v1/pulls/<o>/<r>/<n>/open`: detached PR worktree + launch,
+    /// the resolve shape. Its `origin` links the adopted session to the
+    /// pull's task row, as an issue resolve's does.
+    public func openPull(owner: String, repo: String, number: Int, harness: String,
+                         prompt: String? = nil) async throws -> HubLaunchStatus {
+        var body: [String: any Sendable] = ["harness": harness]
+        if let prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            body["prompt"] = prompt
+        }
+        let path = "/v1/pulls/\(Self.encodeKey(owner))/\(Self.encodeKey(repo))/\(number)/open"
+        return try await send(request("POST", path, body: body))
+    }
+
+    /// `GET /v1/folders?path=`: subfolders of `path` (the hub user's home
+    /// when nil) on the hub machine — the new-session folder browser.
+    /// Satellites' folders can't be listed from the hub.
+    public func folders(path: String? = nil) async throws -> HubFolderListing {
+        var query: [String: String] = [:]
+        if let path, !path.isEmpty { query["path"] = path }
+        return try await send(request("GET", "/v1/folders", query: query))
+    }
+
+    // MARK: Tasks
+
+    /// `GET /v1/app/tasks`: the work-item store over the sources' lists
+    /// with the page joins (`session_rows`, `launch_rows`) the web app's
+    /// Tasks page reads. `refresh` skips the hub's one-minute `gh` cache.
+    public func appTasks(refresh: Bool = false) async throws -> HubTasksResponse {
+        try await send(request("GET", "/v1/app/tasks",
+                               query: refresh ? ["refresh": "1"] : [:]))
+    }
+
+    /// `GET /v1/app/tasks?harnesses=1`: what `POST /v1/issues/resolve`
+    /// and `…/pulls/open` can start on the hub, in Provider visibility
+    /// order — the task detail's New-agent-session picker.
+    public func taskHarnesses() async throws -> (harnesses: [HubTaskHarness], machine: String?) {
+        let reply = try await send(request("GET", "/v1/app/tasks", query: ["harnesses": "1"]),
+                                   as: HubTaskHarnesses.self)
+        return (reply.harnesses, reply.machine)
+    }
+
+    /// `POST /v1/sessions/<key>/task {task_ref}`: link a session to the
+    /// task by hand — a resolve or PR open links itself through the
+    /// launch's `origin`, so this covers sessions started outside a
+    /// task flow. `ref` is `HubTaskRow.refBody`.
+    public func linkTask(_ key: String, ref: [String: any Sendable]) async throws {
+        _ = try await raw(request("POST", Self.sessionPath(key, "task"),
+                                  body: ["task_ref": ref]))
+    }
+
+    /// `DELETE /v1/sessions/<key>/task {task_ref}`: drop this task's
+    /// link from the session.
+    public func unlinkTask(_ key: String, ref: [String: any Sendable]) async throws {
+        _ = try await raw(request("DELETE", Self.sessionPath(key, "task"),
+                                  body: ["task_ref": ref]))
+    }
+
     /// One session's live events after `last`, reconnecting with backoff
     /// until the consuming task is cancelled or the hub refuses the
     /// credential.

@@ -9,7 +9,7 @@ import Testing
         #expect(model.totalCount == AppSection.allCases.count)
         #expect(model.sections(in: .usage) == [.overview, .sessions, .calendar, .pricing])
         #expect(model.visibleGroups == SidebarGroup.allCases)
-        #expect(model.rows(in: .github).map(\.section) == [.repositories, .inbox])
+        #expect(model.rows(in: .github).map(\.section) == [.repositories, .tasks, .inbox])
     }
 
     @Test func overviewAccountsAndSettingsAreCore() {
@@ -42,6 +42,7 @@ import Testing
     @Test func aGroupWithEveryPageOffLeavesNoHeading() {
         let model = SidebarVisibilityModel(store: MemoryStore())
         model.setEnabled(.repositories, false)
+        model.setEnabled(.tasks, false)
         model.setEnabled(.inbox, false)
         #expect(model.sections(in: .github).isEmpty)
         #expect(!model.visibleGroups.contains(.github))
@@ -94,7 +95,7 @@ import Testing
         model.move("overview", before: nil)
         #expect(model.sections(in: .usage) == [.sessions, .calendar, .pricing, .overview])
         // The rest of the sidebar is untouched.
-        #expect(model.sections(in: .github) == [.repositories, .inbox])
+        #expect(model.sections(in: .github) == [.repositories, .tasks, .inbox])
         #expect(model.sections(in: .manage) == [.accounts, .harnesses, .compute])
     }
 
@@ -160,7 +161,7 @@ import Testing
         #expect(model.step(.calendar, by: -1) == .sessions)
         // Two away counts shown pages only.
         model.setEnabled(.pricing, false)
-        #expect(model.step(.calendar, by: 2) == .inbox)
+        #expect(model.step(.calendar, by: 2) == .tasks)
     }
 
     @Test func aHiddenPageOpenedDirectlyStepsFromItsOwnSlot() {
@@ -173,9 +174,10 @@ import Testing
     @Test func commandNumbersCoverTheFirstNineShownPages() {
         let model = SidebarVisibilityModel(store: MemoryStore())
         #expect(model.shortcutSections == [.overview, .sessions, .calendar, .pricing,
-                                           .repositories, .inbox, .accounts, .harnesses, .compute])
+                                           .repositories, .tasks, .inbox, .accounts, .harnesses])
         #expect(model.shortcutNumber(of: .overview) == 1)
-        #expect(model.shortcutNumber(of: .compute) == 9)
+        #expect(model.shortcutNumber(of: .harnesses) == 9)
+        #expect(model.shortcutNumber(of: .compute) == nil)
         #expect(model.shortcutNumber(of: .plugins) == nil)
     }
 
@@ -185,8 +187,8 @@ import Testing
         model.setEnabled(.inbox, false)
         #expect(model.shortcutNumber(of: .sessions) == nil)
         #expect(model.shortcutNumber(of: .calendar) == 2)
-        #expect(model.shortcutNumber(of: .compute) == 7)
-        #expect(model.shortcutNumber(of: model.rows(in: .primitives)[0].section) == 8)
+        #expect(model.shortcutNumber(of: .compute) == 8)
+        #expect(model.shortcutNumber(of: model.rows(in: .primitives)[0].section) == 9)
     }
 
     @Test func fewerThanNineShownPagesLeaveTheHighDigitsUnused() {

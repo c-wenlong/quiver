@@ -328,7 +328,7 @@ struct ResolveIssueSheet: View {
 /// One harness the hub can start: its logo and name, outlined when
 /// picked. The first-run sheet's agent tile, single-select, without the
 /// tick so four fit across.
-private struct HarnessTile: View {
+struct HarnessTile: View {
     var harness: String
     var isOn: Bool
     var pick: () -> Void

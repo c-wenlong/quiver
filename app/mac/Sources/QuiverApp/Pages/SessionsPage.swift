@@ -26,6 +26,8 @@ private struct SessionsContent: View {
     @Environment(AppModel.self) private var app
     @Bindable var model: SessionsModel
     @State private var detail: SessionsModel.Row?
+    /// The New session sheet is up.
+    @State private var showsNewSession = false
     /// The session whose chat is swapped in over the list.
     @State private var chat: SessionsModel.Row?
     /// The newest click, so a slower lookup for an older one can't land.
@@ -73,6 +75,11 @@ private struct SessionsContent: View {
         .quiverSheet(item: $detail) { row in
             SessionDetail(row: row, resume: { resume(row) }, close: { detail = nil })
         }
+        // A launch the sheet lands refreshes the list behind the chat
+        // it opens.
+        .quiverSheet(isPresented: $showsNewSession) {
+            NewSessionSheet()
+        }
         // Another page started a session (Resolve with agent) and asked
         // for its chat.
         .task(id: app.pendingChat) {
@@ -114,6 +121,12 @@ private struct SessionsContent: View {
 
     private var listPage: some View {
         Page(title: "Sessions", subtitle: "Local and cloud sessions, usage and estimated cost.") {
+            Button("New session", systemImage: "plus") {
+                showsNewSession = true
+            }
+                .secondaryButton()
+                .keyboardShortcut("n", modifiers: .command)
+                .hoverTip("Start a session on this Mac's hub (⌘N)")
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task {
                     await model.load(for: app.swePath)
