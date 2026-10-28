@@ -88,8 +88,12 @@ class View:
     scopes: dict = field(default_factory=dict)   # claude: ref -> every scope with a record
 
 
-def _err(errors: list, harness: str, detail: str, marketplace: str | None = None) -> None:
-    errors.append({"harness": harness, "marketplace": marketplace, "detail": detail})
+def _err(errors: list, harness: str, detail: str, marketplace: str | None = None,
+         path: Path | None = None) -> None:
+    error = {"harness": harness, "marketplace": marketplace, "detail": detail}
+    if path is not None:
+        error["path"] = str(path)
+    errors.append(error)
 
 
 def _public(location: str) -> str:
@@ -150,7 +154,9 @@ def _read_manifest(market: Market, candidates: list[Path], harness: str,
         return market
     if candidates:
         market.manifest = candidates[0]
-    _err(errors, harness, "no marketplace manifest on disk", market.name)
+    # The folder, so a reader can tell a hub that never reached this
+    # machine (#696) from a typo in one registration.
+    _err(errors, harness, "no marketplace manifest on disk", market.name, market.root)
     return market
 
 
