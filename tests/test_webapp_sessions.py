@@ -103,7 +103,11 @@ class TestTrivial(unittest.TestCase):
         # No usage at all: only for a harness this ledger reads, after a scan.
         self.assertTrue(sessions.is_trivial("codex", None, True))
         self.assertFalse(sessions.is_trivial("codex", None, False))
-        self.assertFalse(sessions.is_trivial("pi", None, True))
+        self.assertTrue(sessions.is_trivial("pi", None, True))
+        self.assertTrue(sessions.is_trivial("droid", None, True))
+        # Cursor's feed is not a local scan: an uncovered session is not
+        # judged empty.
+        self.assertFalse(sessions.is_trivial("cursor", None, True))
 
     def test_location(self):
         self.assertEqual(sessions.location("cursor", "bc-123"), "Cloud")

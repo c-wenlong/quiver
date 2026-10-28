@@ -20,10 +20,11 @@ from quiver.sessions.parsers import codex_thread_id
 _USAGE_LOG = {"claude", "codex", "opencode", "devin", "pi", "droid", "cline", "cursor", "grok-bot"}
 # Harnesses with no per-turn timing, judged on tokens alone.
 _NO_TIMING = {"cursor", "droid", "cline"}
-# Harnesses this ledger reads. A row of one of these with no usage at all,
-# once the ledger has scanned, is an accidental session; the app's list
-# also has pi, droid and cline, which this port does not read yet.
-LEDGER_HARNESSES = {"claude", "codex", "opencode", "devin"}
+# Harnesses this ledger reads (SessionFilter.localLogHarnesses). A row of
+# one of these with no usage at all, once the ledger has scanned, is an
+# accidental session; cursor and grok-bot are feed-only, so a session the
+# poll never covered is not judged empty.
+LEDGER_HARNESSES = {"claude", "codex", "opencode", "devin", "pi", "droid", "cline"}
 
 _CLOUD = {"grok-bot", "devin-cloud"}
 

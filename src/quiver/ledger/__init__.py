@@ -7,6 +7,9 @@ price lookup) follow the Swift code; each module names the file it ports.
 Its store is ``~/.quiver/data/web-ledger/``, never the Mac app's
 ``data/ledger/``, so the two can run on one machine without sharing a file.
 
-Not ported yet: Cursor's usage feed and the Pi, Droid and Cline session
-files, so on a machine that uses those the Mac's totals run higher.
+Every source the Mac ledger reads is covered: Claude and Codex logs, the
+OpenCode and Devin databases, the Pi logs, the Droid and Cline
+session-total files, and Cursor's usage feed (polled through
+``rate_limits.fetch_cursor_usage_events`` — the reader behind
+``swe harness usage-events cursor --json`` — rather than a subprocess).
 """

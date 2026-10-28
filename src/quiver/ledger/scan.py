@@ -4,19 +4,26 @@
 Claude transcripts only grow, so each is read on from where the last scan
 stopped. A Codex rollout carries state from its first line (model, replay
 gate, the totals it has seen), so a changed rollout is read whole; its
-keys make that idempotent. OpenCode and Devin databases are read whole
-when their files change, also keyed.
+keys make that idempotent. Pi logs and the Droid and Cline session files
+are read whole when they change, also keyed — the session files hold one
+authoritative total each, so a re-read replaces and a now-empty file
+deletes. OpenCode and Devin databases are read whole when their files
+change. Cursor's usage is not a file: ``feed`` polls it, gated to the
+app's cadence inside ``poll()``.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import stat
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from quiver.ledger import parsers
+from quiver.ledger import feed, parsers
+from quiver.ledger.models import LedgerRecord
 from quiver.ledger.store import LedgerStore
 from quiver.paths import quiver_dir_for
 
@@ -37,14 +44,20 @@ def _homes(home: Path, vendor: str, default: str) -> list[Path]:
     return [p for p in out if p.is_dir()]
 
 
-def _jsonl_files(root: Path) -> list[Path]:
-    """Every ``*.jsonl`` under ``root``, skipping hidden entries, by path."""
+def _files(root: Path, suffix: str) -> list[Path]:
+    """Every file under ``root`` whose name ends in ``suffix``, skipping
+    hidden entries, by path."""
     found: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
         found += [Path(dirpath) / f for f in filenames
-                  if f.endswith(".jsonl") and not f.startswith(".")]
+                  if f.endswith(suffix) and not f.startswith(".")]
     return sorted(found)
+
+
+def _jsonl_files(root: Path) -> list[Path]:
+    """Every ``*.jsonl`` under ``root``, skipping hidden entries, by path."""
+    return _files(root, ".jsonl")
 
 
 def _stat(path: Path):
@@ -79,6 +92,18 @@ def scan(store: LedgerStore, home: Path | None = None) -> ScanResult:
                 _scan_whole(store, path, result,
                             lambda p=path, a=str(codex_home): parsers.codex_file_records(p, a))
 
+    for pi_home in _homes(home, "pi", ".pi"):
+        for path in _jsonl_files(pi_home / "agent" / "sessions"):
+            real = os.path.realpath(path)
+            if real in seen:
+                continue
+            seen.add(real)
+            # Read whole like a Codex rollout: the cwd a `session` line
+            # sets must reach the message lines after it, and the keys
+            # make the re-read idempotent.
+            _scan_whole(store, path, result,
+                        lambda p=path, a=str(pi_home): parsers.pi_file_records(p, a))
+
     # The opencode cursor's key names its reader: one saved by a build that
     # read only the legacy tables (no suffix) must not skip the 2.x rows it
     # missed, and one saved before models carried their provider (``#v2``)
@@ -91,6 +116,30 @@ def scan(store: LedgerStore, home: Path | None = None) -> ScanResult:
         if db.is_file():
             _scan_whole(store, db, result, lambda d=db, r=reader: r(d),
                         companions=[Path(str(db) + "-wal")], key_suffix=key)
+
+    for droid_home in _homes(home, "droid", ".factory"):
+        for path in _files(droid_home / "sessions", ".settings.json"):
+            _scan_session_file(store, path, str(droid_home), result,
+                               parsers.droid_session_totals,
+                               watched=parsers.droid_transcript(path))
+
+    for cline_home in _homes(home, "cline", ".cline"):
+        for path in _files(cline_home / "data" / "sessions", ".json"):
+            # ``<id>/<id>.json`` only: the stem must equal its session
+            # directory, which the sibling ``.messages.json`` fails — it
+            # is the transcript, not the file totals are read from.
+            if path.stem != path.parent.name:
+                continue
+            _scan_session_file(store, path, str(cline_home), result,
+                               parsers.cline_session_totals)
+
+    # Cursor's usage feed is a poll, not a file: it gates itself to the
+    # app's cadence inside poll() (``CursorUsageFeed.keepFresh``), and a
+    # missed round keeps the stored rows.
+    try:
+        result.records += feed.poll(store, home, errors=result.errors)
+    except Exception as exc:  # a failed poll must not sink the scan
+        result.errors.append(f"cursor feed: {exc}")
 
     store.set_meta("scanned_at", str(time.time()))
     store.db.commit()
@@ -109,7 +158,7 @@ def _scan_claude_file(store: LedgerStore, path: Path, account: str,
     offset = 0
     try:
         if cursor is not None:
-            c_inode, _c_size, _c_mtime, c_offset, c_fp = cursor
+            c_inode, _c_size, _c_mtime, c_offset, c_fp, _c_state = cursor
             if tuple(cursor[:3]) == (inode, size, mtime):
                 return
             # Appended to: read on. Replaced, truncated or rewritten in
@@ -173,5 +222,61 @@ def _scan_whole(store: LedgerStore, path: Path, result: ScanResult, read,
         store.upsert(rec)
     result.records += len(records)
     store.set_file_cursor(key, inode, size, mtime, size)
+    result.files_read += 1
+    store.db.commit()
+
+
+def _stamp(path: Path) -> list | None:
+    """``WatchedStamp``: a sibling's ``(inode, size, mtime, ctime)``, or
+    ``None`` when it is absent — its absence is part of the stamp, so the
+    file appearing or vanishing re-reads its session file too."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    if not stat.S_ISREG(st.st_mode):
+        return None
+    return [st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns]
+
+
+def _scan_session_file(store: LedgerStore, path: Path, account: str,
+                       result: ScanResult, parse,
+                       watched: Path | None = None) -> None:
+    """One session-total file, re-read whole whenever it could have
+    changed (``scanSessionFile``).
+
+    The cursor's ``state`` slot keeps the file's own ctime — inode, size
+    and mtime can all survive an in-place rewrite, ctime cannot — and the
+    watched sibling's stamp, so a transcript that moved re-reads the pair.
+    A record replaces whatever the file said before (the key is
+    authoritative); a file that now reports no usage deletes its old
+    event. The cursor is saved only after a clean parse, so a corrupt
+    file is retried, never skipped."""
+    try:
+        st = path.stat()
+    except OSError:
+        return
+    if not stat.S_ISREG(st.st_mode):
+        return
+    key = str(path)
+    state = json.dumps({"changed": st.st_ctime_ns,
+                        "watched": _stamp(watched) if watched is not None else None})
+    cursor = store.file_cursor(key)
+    if (cursor is not None
+            and tuple(cursor[:3]) == (st.st_ino, st.st_size, st.st_mtime_ns)
+            and cursor[5] == state):
+        return
+    try:
+        totals = parse(path, account)
+    except Exception as exc:  # a corrupt file must not stop the scan
+        result.errors.append(f"{path}: {exc}")
+        return
+    if isinstance(totals, LedgerRecord):
+        store.upsert(totals)
+        result.records += 1
+    elif isinstance(totals, parsers.Empty):
+        store.delete(totals.key)
+    store.set_file_cursor(key, st.st_ino, st.st_size, st.st_mtime_ns,
+                          st.st_size, state=state)
     result.files_read += 1
     store.db.commit()

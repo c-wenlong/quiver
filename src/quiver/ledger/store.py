@@ -46,10 +46,19 @@ class LedgerStore:
             CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
             INSERT OR IGNORE INTO meta (k, v) VALUES ('schema', '{SCHEMA}');
         """)
-        # Stores made before read cursors were fingerprinted.
+        # Stores made before read cursors were fingerprinted, and before
+        # session files borrowed the cursor's state slot for a watched
+        # sibling's stamp.
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(files)")}
         if "fp" not in columns:
             self.db.execute("ALTER TABLE files ADD COLUMN fp TEXT")
+        if "state" not in columns:
+            self.db.execute("ALTER TABLE files ADD COLUMN state TEXT")
+        # Session-total events never count toward long-context surcharges.
+        # Old rows are correct with the 0 default, so no schema bump.
+        event_columns = {row[1] for row in self.db.execute("PRAGMA table_info(events)")}
+        if "session_total" not in event_columns:
+            self.db.execute("ALTER TABLE events ADD COLUMN session_total INTEGER NOT NULL DEFAULT 0")
         self.db.commit()
 
     def close(self) -> None:
@@ -57,25 +66,38 @@ class LedgerStore:
 
     # -- writes ------------------------------------------------------------
 
-    def upsert(self, rec: LedgerRecord) -> None:
-        """Keep one copy per response.
+    def upsert(self, rec: LedgerRecord) -> bool:
+        """Keep one copy per response. Returns true when a row was
+        inserted or changed; a re-fetch of the same event under the same
+        key is a no-op (``LedgerStore.upsert``).
 
-        Same key: a non-sidechain copy beats a sidechain one; otherwise
-        the larger total wins and a tie keeps the first seen. A sidechain
-        copy also collides on its message id alone, because a sub-agent
-        transcript can replay a parent message under a new request id.
+        Same key: an authoritative record is its source's latest word and
+        replaces whenever any stored figure differs; a non-sidechain copy
+        otherwise beats a sidechain one, then the larger total wins and a
+        tie keeps the first seen. A sidechain copy also collides on its
+        message id alone, because a sub-agent transcript can replay a
+        parent message under a new request id.
         """
         new_total = rec.event.total
         row = self.db.execute(
             f"SELECT sidechain, {_TOTAL} FROM events WHERE key = ?", (rec.key,)
         ).fetchone()
         if row is not None:
+            if rec.authoritative:
+                # The source's own figure always wins, but only a changed
+                # figure is a write (``sameEvent``).
+                if self._same_event(rec):
+                    return False
+                self._write(rec)
+                return True
             if _wins(rec.sidechain, new_total, bool(row[0]), row[1]):
                 self._write(rec)
-            elif rec.relabels_model:
-                self.db.execute("UPDATE events SET model = ? WHERE key = ? AND model != ?",
-                                (rec.event.model, rec.key, rec.event.model))
-            return
+                return True
+            if rec.relabels_model:
+                return self.db.execute(
+                    "UPDATE events SET model = ? WHERE key = ? AND model != ?",
+                    (rec.event.model, rec.key, rec.event.model)).rowcount > 0
+            return False
         if rec.msg is not None:
             row = self.db.execute(
                 f"SELECT key, sidechain, {_TOTAL} FROM events"
@@ -86,32 +108,96 @@ class LedgerStore:
                 if _wins(rec.sidechain, new_total, bool(row[1]), row[2]):
                     self.db.execute("DELETE FROM events WHERE key = ?", (row[0],))
                     self._write(rec)
-                return
+                    return True
+                return False
         self._write(rec)
+        if rec.authoritative:
+            self._delete_lookalikes(rec)
+        return True
+
+    def _same_event(self, rec: LedgerRecord) -> bool:
+        """Whether the row under ``rec.key`` already stores the same
+        figures and dimensions (``sameEvent``): only then is an
+        authoritative re-read a no-op rather than a write."""
+        e = rec.event
+        row = self.db.execute(
+            "SELECT sidechain, input, output, cache_read, cache_write, cache_write_1h,"
+            " reasoning, session_total, cost, ts, harness, account, session, cwd, model,"
+            " tier FROM events WHERE key = ?", (rec.key,)).fetchone()
+        if row is None:
+            return False
+        cost_matches = e.cost is None if row[8] is None else e.cost == row[8]
+        return (row[0] == int(rec.sidechain)
+                and row[1] == e.input and row[2] == e.output and row[3] == e.cache_read
+                and row[4] == e.cache_write and row[5] == e.cache_write_1h
+                and row[6] == e.reasoning and row[7] == int(e.session_total)
+                and cost_matches and row[9] == e.ts
+                and row[10] == e.harness and row[11] == e.account
+                and row[12] == e.session and (row[13] or "") == (e.cwd or "")
+                and row[14] == e.model and (row[15] or "") == (e.tier or ""))
+
+    def _delete_lookalikes(self, rec: LedgerRecord) -> None:
+        """Drop the row an older key scheme left for this same event
+        (``deleteSameEvent``/``selectSameEventAnyProfile``): the Cursor
+        feed once keyed on the token counts it reported, so a correction
+        keyed a new row, and the old one must go or it double-counts."""
+        e = rec.event
+        if rec.account_spans_profiles:
+            # The counts-bearing key was this record's key plus
+            # ":<input>:<output>"; rebuilding it from a candidate's own
+            # counts reproduces the key only when the candidate is the
+            # same account's same event — another account's lookalike
+            # (same day bucket, model and instant) keeps its own account
+            # in the string and survives. The account dim is deliberately
+            # not matched: a sibling profile's stale row is the same event.
+            rows = self.db.execute(
+                "SELECT key, input, output FROM events WHERE ts = ? AND key != ?"
+                " AND msg IS NULL AND harness = ? AND session = ?"
+                " AND COALESCE(cwd, '') = ? AND model = ? AND COALESCE(tier, '') = ?",
+                (e.ts, rec.key, e.harness, e.session, e.cwd or "", e.model,
+                 e.tier or "")).fetchall()
+            for cand_key, cand_in, cand_out in rows:
+                if cand_key == f"{rec.key}:{cand_in}:{cand_out}":
+                    self.db.execute("DELETE FROM events WHERE key = ?", (cand_key,))
+        else:
+            self.db.execute(
+                "DELETE FROM events WHERE harness = ? AND account = ? AND session = ?"
+                " AND COALESCE(cwd, '') = ? AND model = ? AND COALESCE(tier, '') = ?"
+                " AND ts = ? AND key != ? AND msg IS NULL",
+                (e.harness, e.account, e.session, e.cwd or "", e.model,
+                 e.tier or "", e.ts, rec.key))
 
     def _write(self, rec: LedgerRecord) -> None:
         e = rec.event
         self.db.execute(
             "INSERT OR REPLACE INTO events (key, msg, sidechain, harness, account, session,"
             " cwd, model, tier, ts, input, output, cache_read, cache_write, cache_write_1h,"
-            " reasoning, cost) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " reasoning, session_total, cost) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (rec.key, rec.msg, int(rec.sidechain), e.harness, e.account, e.session, e.cwd,
              e.model, e.tier, e.ts, e.input, e.output, e.cache_read, e.cache_write,
-             e.cache_write_1h, e.reasoning, e.cost),
+             e.cache_write_1h, e.reasoning, int(e.session_total), e.cost),
         )
 
+    def delete(self, key: str) -> None:
+        """Drop the event under ``key`` when there is one — used by
+        session-total sources whose file now reports nothing, so stale
+        spend clears (``LedgerStore.delete``)."""
+        self.db.execute("DELETE FROM events WHERE key = ?", (key,))
+
     def file_cursor(self, path: str) -> tuple | None:
-        """``(inode, size, mtime_ns, offset, fp)`` from the last read;
-        ``fp`` fingerprints the bytes read so far (see scan.py)."""
+        """``(inode, size, mtime_ns, offset, fp, state)`` from the last
+        read; ``fp`` fingerprints the bytes read so far (see scan.py) and
+        ``state`` is a session file's watched-sibling stamp."""
         return self.db.execute(
-            "SELECT inode, size, mtime_ns, offset, fp FROM files WHERE path = ?", (path,)
+            "SELECT inode, size, mtime_ns, offset, fp, state FROM files WHERE path = ?",
+            (path,),
         ).fetchone()
 
     def set_file_cursor(self, path: str, inode: int, size: int, mtime_ns: int,
-                        offset: int, fp: str | None = None) -> None:
+                        offset: int, fp: str | None = None, state: str | None = None) -> None:
         self.db.execute(
-            "INSERT OR REPLACE INTO files (path, inode, size, mtime_ns, offset, fp)"
-            " VALUES (?,?,?,?,?,?)", (path, inode, size, mtime_ns, offset, fp),
+            "INSERT OR REPLACE INTO files (path, inode, size, mtime_ns, offset, fp, state)"
+            " VALUES (?,?,?,?,?,?,?)", (path, inode, size, mtime_ns, offset, fp, state),
         )
 
     def meta(self, key: str) -> str | None:
@@ -144,7 +230,7 @@ class LedgerStore:
             args.append(end)
         sql = f"""
             SELECT e.harness, e.model, COALESCE(e.tier, ''), CAST(e.ts / 900 AS INTEGER),
-                CASE WHEN t.n IS NOT NULL
+                CASE WHEN t.n IS NOT NULL AND e.session_total = 0
                      AND e.input + e.cache_read + e.cache_write > t.n THEN 1 ELSE 0 END,
                 e.cost IS NOT NULL,
                 SUM(e.input), SUM(e.output), SUM(e.cache_read), SUM(e.cache_write),
@@ -162,7 +248,7 @@ class LedgerStore:
         self._load_thresholds(thresholds)
         return self.db.execute(f"""
             SELECT e.harness, e.session, e.model, COALESCE(e.tier, ''),
-                CASE WHEN t.n IS NOT NULL
+                CASE WHEN t.n IS NOT NULL AND e.session_total = 0
                      AND e.input + e.cache_read + e.cache_write > t.n THEN 1 ELSE 0 END,
                 e.cost IS NOT NULL,
                 SUM(e.input), SUM(e.output), SUM(e.cache_read), SUM(e.cache_write),
