@@ -30,6 +30,16 @@ launch is still pending), ``sessions``, ``last_active_at`` and the
 ``pr_open``, ``merged`` or ``closed``. For an issue the linked PR is
 the one on its ``quiver/issue-<n>`` branch.
 
+A stored task the sources can't read this round — the source is
+blocked or down, or the task sits outside the ``MAX_REFRESH`` window
+and off the open list — derives its state from what its source last
+said, not from linkage alone. That memory is a separate cache,
+``cache/task_states.json`` (``task_id → {state, pr}``): written only
+when a fresh read changes a stored task's state, read only when no
+fresh read happened, and regenerable, so ``tasks.json`` stays links
+only. Each row's ``state_source`` says which it got: ``live``,
+``cached`` (last known) or ``links`` (nothing ever read).
+
 ``TaskSource`` is the seam other trackers plug into: ``list()``
 for what the source has open, ``get(ref)`` to refresh one stored task's
 state. GitHub and Linear are live adapters (``remote/linear.py``);
@@ -46,7 +56,8 @@ from typing import Protocol
 
 from quiver.github import cli as ghcli
 from quiver.github import gh, manage, repos
-from quiver.paths import atomic_write_text, remote_dir_for
+from quiver.paths import (atomic_write_text, remote_dir_for,
+                          task_states_cache_for)
 from quiver.remote import linear as linear_mod
 from quiver.remote import protocol
 from quiver.webapp.pages import _github as G
@@ -79,6 +90,10 @@ _lock = threading.Lock()
 def tasks_file(home: Path | str | None = None) -> Path:
     return remote_dir_for(
         Path(home) if home is not None else None) / _BASENAME
+
+
+def states_file(home: Path | str | None = None) -> Path:
+    return task_states_cache_for(Path(home) if home is not None else None)
 
 
 # ------------------------------------------------------------------ refs
@@ -285,6 +300,55 @@ def unlink(home: Path | str | None, session_key: str,
         return left
 
 
+# ------------------------------------------------------------------ states
+
+def _load_states(home: Path | str | None) -> dict[str, dict]:
+    """``task_id → {state, pr}``, what each stored task's source last
+    said; a corrupt or missing cache reads empty."""
+    try:
+        data = json.loads(states_file(home).read_text(encoding="utf-8"))
+        rows = data.get("states") if isinstance(data, dict) else None
+    except Exception:
+        return {}
+    if not isinstance(rows, dict):
+        return {}
+    out: dict[str, dict] = {}
+    for tid, entry in rows.items():
+        if not isinstance(entry, dict) \
+                or not isinstance(entry.get("state"), str):
+            continue
+        pr = entry.get("pr")
+        out[str(tid)] = {"state": entry["state"],
+                         "pr": dict(pr) if isinstance(pr, dict) else None}
+    return out
+
+
+def _remember(home: Path | str | None, fresh: dict[str, dict]) -> None:
+    """Persist the fresh reads that changed a stored task's last-known
+    state. The comparison runs again under the lock, so a concurrent
+    poll that already wrote the same state costs no second write; a
+    write also drops tasks the store no longer holds, read under the
+    same lock so a slow poll can't prune a task linked while it ran.
+    Best-effort: a cache that can't be written only loses the memory,
+    never the read.
+    """
+    with _lock:
+        cached = _load_states(home)
+        changed = {tid: entry for tid, entry in fresh.items()
+                   if cached.get(tid) != entry}
+        if not changed:
+            return
+        cached.update(changed)
+        keep = set(_load(home))
+        cached = {tid: e for tid, e in cached.items() if tid in keep}
+        try:
+            atomic_write_text(
+                states_file(home), json.dumps({"states": cached}, indent=1),
+                private=True)
+        except OSError:
+            pass
+
+
 # ------------------------------------------------------------------ routes
 
 def launch_linked(state, launch_id: str, origin) -> None:
@@ -383,13 +447,16 @@ def list_view(state, args) -> tuple[int, dict]:
     ``launches``, ``agent_running``, ``linked``, ``last_active_at``,
     ``created_at`` (linked tasks) and ``pr`` (the PR an issue's
     ``quiver/issue-<n>`` branch produced — open or merged — so the
-    issue's ``pr_open``/``merged`` reads off one row).
+    issue's ``pr_open``/``merged`` reads off one row) and
+    ``state_source`` (``live``, ``cached`` or ``links``; see
+    ``_last_known``).
 
     Each source answers its env block — ``github`` as ``gh``'s, plus a
     top-level ``env_blocked`` when it blocks; ``linear`` as its own
     block (``disabled`` with no section, ``auth-required``/
     ``upstream-error`` with the reason in ``error``). A blocked source
-    leaves its stored tasks showing their last-known state.
+    leaves its stored tasks showing their last-known state, from the
+    state cache.
     """
     refresh = _refresh(args)
     stored = _load(state.home)
@@ -405,6 +472,11 @@ def list_view(state, args) -> tuple[int, dict]:
             "tasks": []}
     rows: dict[str, dict] = {}
     source_state: dict[str, str] = {}
+    # Tasks a source listed this round, and those whose PR a read
+    # answered outright: a listed issue with no open PR on its branch
+    # may still have a merged one the open list can't see.
+    on_list: set[str] = set()
+    pr_read: set[str] = set()
     fetched = []
     if env.status == "ok":
         listed = sources["github"].list()
@@ -415,6 +487,9 @@ def list_view(state, args) -> tuple[int, dict]:
                          "pr": item.get("pr"),
                          "updated_at": item.get("updated_at")}
             source_state[tid] = str(item.get("state") or "")
+            on_list.add(tid)
+            if item.get("pr") is not None:
+                pr_read.add(tid)
         if listed.get("repos"):
             body["repos"] = listed["repos"]
         if listed.get("fetched_at") is not None:
@@ -432,6 +507,9 @@ def list_view(state, args) -> tuple[int, dict]:
                              "pr": item.get("pr"),
                              "updated_at": item.get("updated_at")}
                 source_state[tid] = str(item.get("state") or "")
+                on_list.add(tid)
+                if item.get("pr") is not None:
+                    pr_read.add(tid)
             if listed.get("fetched_at") is not None:
                 fetched.append(listed["fetched_at"])
         else:
@@ -492,6 +570,10 @@ def list_view(state, args) -> tuple[int, dict]:
                 source_state[tid] = str(fresh["state"])
             if fresh.get("pr"):
                 row["pr"] = fresh["pr"]
+            if "pr" in fresh:
+                pr_read.add(tid)
+
+    _last_known(state.home, stored, rows, source_state, on_list, pr_read)
 
     sessions_row = {str(r.get("key")): r for r in state.catalog.rows()}
     active = {k for k, r in sessions_row.items()
@@ -501,6 +583,7 @@ def list_view(state, args) -> tuple[int, dict]:
     for tid, row in rows.items():
         row.setdefault("pr", None)
         row.setdefault("updated_at", None)
+        row.setdefault("state_source", "live")
         sessions = row.get("sessions") or []
         launches = row.get("launches") or []
         row["linked"] = bool(sessions or launches)
@@ -523,6 +606,48 @@ def list_view(state, args) -> tuple[int, dict]:
     if fetched:
         body["fetched_at"] = min(fetched)
     return 200, body
+
+
+def _last_known(home, stored: dict[str, dict], rows: dict[str, dict],
+                source_state: dict[str, str], on_list: set[str],
+                pr_read: set[str]) -> None:
+    """Fill each stored task a source didn't read this round from the
+    state cache, and remember the fresh reads that changed one.
+
+    A stored task is fresh when a source's list or ``get`` gave it a
+    state; its ``{state, pr}`` then goes to the cache, written only if
+    it differs from what the cache holds, so a quiet poll writes
+    nothing. A fresh read that couldn't see the PR (the branch lookup
+    failed, or only the open list read it) keeps the remembered one,
+    except an open PR the open list no longer shows. One without a
+    fresh read takes its cached state and PR and reads
+    ``state_source: cached``; with no cache entry either, ``links``.
+    """
+    cached = _load_states(home)
+    fresh: dict[str, dict] = {}
+    for tid in stored:
+        row = rows[tid]
+        if source_state.get(tid):
+            row["state_source"] = "live"
+            last_pr = (cached.get(tid) or {}).get("pr")
+            if row.get("pr") is None and tid not in pr_read and last_pr \
+                    and not (tid in on_list
+                             and last_pr.get("state") == "open"):
+                row["pr"] = last_pr
+            entry = {"state": source_state[tid], "pr": row.get("pr")}
+            if cached.get(tid) != entry:
+                fresh[tid] = entry
+            continue
+        last = cached.get(tid)
+        if last is None:
+            row["state_source"] = "links"
+            continue
+        source_state[tid] = last["state"]
+        if row.get("pr") is None:
+            row["pr"] = last["pr"]
+        row["state_source"] = "cached"
+    if fresh:
+        _remember(home, fresh)
 
 
 def _derive(kind, source_state: str, pr, linked: bool) -> str:
@@ -689,28 +814,34 @@ class GitHubTasks:
             return {"status": result.status,
                     "error": result.error or result.status}
         issue = result.data
-        return {"status": "ok",
-                "state": str(issue.get("state") or "").lower(),
-                "title": issue.get("title") or "",
-                "url": issue.get("url") or "",
-                "pr": self._linked_pr(repo, issue.get("number"))}
+        out = {"status": "ok",
+               "state": str(issue.get("state") or "").lower(),
+               "title": issue.get("title") or "",
+               "url": issue.get("url") or ""}
+        ok, pr = self._linked_pr(repo, issue.get("number"))
+        if ok:
+            # No ``pr`` key at all when the branch lookup failed, so the
+            # caller keeps what it knew rather than read "no PR".
+            out["pr"] = pr
+        return out
 
-    def _linked_pr(self, repo: str, number) -> dict | None:
-        """The PR ``quiver/issue-<n>`` produced, in any state — the
-        open list only sees open ones, and a resolved issue's PR is
-        usually merged."""
+    def _linked_pr(self, repo: str, number) -> tuple[bool, dict | None]:
+        """``(answered, pr)``: the PR ``quiver/issue-<n>`` produced, in
+        any state — the open list only sees open ones, and a resolved
+        issue's PR is usually merged. ``answered`` is False when ``gh``
+        failed, so "no PR" and "couldn't tell" stay apart."""
         result = gh.run_json([
             "pr", "list", "--repo", repo, "--head",
             manage.issue_branch(number), "--state", "all",
             "--limit", "1", "--json", ghcli._PR_FIELDS])
         if result.status != "ok" or not isinstance(result.data, list):
-            return None
+            return False, None
         for raw in result.data:
             if isinstance(raw, dict):
                 pr = ghcli._pr_row(raw)
                 if _same_repo_head(repo, pr):
-                    return _pr_brief(pr)
-        return None
+                    return True, _pr_brief(pr)
+        return True, None
 
 
 def _same_repo_head(name: str, pr: dict) -> bool:
