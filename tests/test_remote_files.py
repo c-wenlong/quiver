@@ -190,7 +190,7 @@ class TestBudget(_Tmp):
     def test_folder_read_stops_at_deadline_before_sorting(self):
         for i in range(600):
             _touch(self.root, f"f{i:03}.txt")
-        fd = files._open_dir(str(self.root), "")
+        fd = files.open_dir(str(self.root), "")
         try:
             items, cut = files._read_dir(fd, time.monotonic() - 1)
         finally:
@@ -201,7 +201,7 @@ class TestBudget(_Tmp):
     def test_folder_read_capped(self):
         for i in range(10):
             _touch(self.root, f"f{i}.txt")
-        fd = files._open_dir(str(self.root), "")
+        fd = files.open_dir(str(self.root), "")
         try:
             with patch.object(files, "MAX_FILES", 4):
                 items, cut = files._read_dir(fd, time.monotonic() + 60)

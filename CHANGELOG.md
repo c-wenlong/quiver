@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the URL never reaches the terminal
   ([#696](https://github.com/c-wenlong/quiver/issues/696)).
 
+- **Hub route for previewing a page file.** `GET
+  /v1/sessions/{key}/preview?path=` returns one `.html`, `.htm` or `.svg`
+  file from a session's working folder as it is on disk now, for the
+  phone's coming Preview button on tool cards that write a page. It
+  reuses the `@` file search's folder confinement (no absolute paths,
+  no `..`, no symlink out, opened without following links), reads only
+  regular files up to 2 MB, needs a paired device, and answers with a
+  `Content-Security-Policy` that blocks scripts and network.
+
 - **Slash commands in the web app's chat.** Typing `/` at the start of a
   session's prompt box lists the commands that session's harness runs —
   the phone app's "/" menu on the web: built-ins plus user, project,
