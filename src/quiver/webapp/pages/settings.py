@@ -84,7 +84,6 @@ from quiver.webapp.pages._secrets import mask
 ACTIONS = ("pair", "revoke", "session_search", "sync", "key_set", "key_remove", "key_value")
 # A pasted key, generously: the longest real ones are a few hundred bytes.
 VALUE_MAX = 16384
-DEVICE_ID_MAX = 64
 # The hub's id for the owner's own tailnet device (hub._owner_device).
 TAILNET_PREFIX = "tailnet:"
 
@@ -200,6 +199,7 @@ def _first_pass(home: Path) -> None:
 
 def _remote(ctx) -> dict:
     from quiver.remote import pairing
+    from quiver.remote import devices as remote_devices
 
     state = ctx.state
     saved = _hub_config(ctx)
@@ -218,7 +218,8 @@ def _remote(ctx) -> dict:
         "caller": _caller(ctx),
         "hub_addr": hub_addr,
         "public_url": public_url,
-        "devices": _devices(ctx, pairing.load_devices(ctx.home)),
+        "devices": remote_devices.rows(
+            ctx.home, ctx.device_id, pairing.load_devices(ctx.home)),
         "requests": pairing.list_requests(ctx.home),
         "token_ttl_s": int(pairing.TOKEN_TTL_S),
     }
@@ -231,24 +232,6 @@ def _caller(ctx) -> dict:
     if did.startswith(TAILNET_PREFIX):
         return {"kind": "tailnet", "node": did[len(TAILNET_PREFIX):]}
     return {"kind": "device" if did else "none", "device_id": did or None}
-
-
-def _devices(ctx, devices: dict) -> list[dict]:
-    """``swe remote status --json``'s device rows, plus who is asking.
-
-    ``device_view`` carries the pairing-time identity fields (kind,
-    model, client, os, node_name) and the user's ``display_name`` — a
-    rename saved on the phone must show up here too."""
-    from quiver.remote import pairing
-
-    return [
-        {
-            **pairing.device_view(did, row),
-            "paired_via": row.get("paired_via") or "token",
-            "this_device": did == ctx.device_id,
-        }
-        for did, row in devices.items()
-    ]
 
 
 def _hub_config(ctx) -> dict:
@@ -303,40 +286,15 @@ def _mint(ctx) -> dict:
 
 
 def _revoke(ctx, body: dict) -> dict:
-    from quiver.remote import pairing
-
-    device_id = body.get("device_id")
-    if not isinstance(device_id, str) or not device_id or len(device_id) > DEVICE_ID_MAX:
-        raise PageError(400, "bad_device", "device_id must be a paired device's id")
-    if device_id.startswith(TAILNET_PREFIX):
-        # The owner's tailnet sign-in isn't a pairing: there is no row to
-        # revoke, and this must never read as signing anything out.
-        raise PageError(400, "not_paired",
-                        "That's a Tailscale sign-in, not a paired device. There is nothing to revoke.")
-    devices = pairing.load_devices(ctx.home)
-    row = devices.get(device_id)
-    if row is None:
-        raise PageError(404, "unknown_device", "No paired device has that id.")
-    if row.get("revoked_at"):
-        raise PageError(409, "already_revoked", f"{row.get('name') or 'That device'} is already signed out.")
-    if device_id == ctx.device_id and body.get("confirm_this_device") is not True:
-        raise PageError(409, "confirm_this_device",
-                        "That's the device you're using. Confirm to sign it out of the hub.")
-    from quiver.remote import sshkeys
+    """``{"device_id", "confirm_this_device"?}`` signs one paired device
+    out of the hub — the same refusal set the remote protocol's
+    ``POST /v1/devices/revoke`` applies (``remote/devices.py``)."""
+    from quiver.remote import devices as remote_devices
 
     try:
-        revoked = pairing.revoke_device(ctx.home, device_id)
-    except sshkeys.KeysNotSynced as exc:
-        raise PageError(500, "ssh_key_left",
-                        f"Signed out, but its SSH key is still in ~/.ssh/authorized_keys: {exc}") from exc
-    if not revoked:
-        raise PageError(404, "unknown_device", "No paired device has that id.")
-    devices = pairing.load_devices(ctx.home)
-    return {
-        "revoked": device_id,
-        "this_device": device_id == ctx.device_id,
-        "devices": _devices(ctx, devices),
-    }
+        return remote_devices.revoke(ctx.home, ctx.device_id, body)
+    except remote_devices.Refused as exc:
+        raise PageError(exc.status, exc.code, exc.message) from exc
 
 
 # -- providers --------------------------------------------------------------

@@ -36,6 +36,7 @@ from quiver.paths import atomic_write_text, remote_dir_for
 from quiver.remote import (
     attachments,
     catalog as catalog_mod,
+    devices as devices_mod,
     injected as injected_mod,
     dismissals,
     files as files_mod,
@@ -1541,6 +1542,11 @@ class _Handler(BaseHTTPRequestHandler):
             })
             return
 
+        if path == "/v1/devices":
+            self._send_json(
+                200, devices_mod.view(self._state.home, device_id))
+            return
+
         if path == "/v1/devices/me":
             self._device_me(device_id)
             return
@@ -1839,6 +1845,10 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/v1/devices/rename":
             self._device_rename(device_id)
+            return
+
+        if path == "/v1/devices/revoke":
+            self._device_revoke(device_id)
             return
 
         if path == "/v1/ssh/key":
@@ -3229,6 +3239,20 @@ class _Handler(BaseHTTPRequestHandler):
             "device_id": device_id,
             "name": str(row.get("display_name") or row.get("name") or ""),
         })
+
+    def _device_revoke(self, device_id: str) -> None:
+        """``POST /v1/devices/revoke`` ``{device_id, confirm_this_device?}``:
+        sign one paired device out — the web Settings action's refusal
+        set, shared in ``devices.py``."""
+        body = self._read_body()
+        if body is None:
+            self._send_error(400, "bad_body", "unreadable JSON body")
+            return
+        try:
+            self._send_json(
+                200, devices_mod.revoke(self._state.home, device_id, body))
+        except devices_mod.Refused as exc:
+            self._send_error(exc.status, exc.code, exc.message)
 
     def _ssh_key(self, device_id: str) -> None:
         """``POST /v1/ssh/key`` ``{public_key}``: store this device's SSH
