@@ -4,6 +4,7 @@ cleanup an authoritative write performs."""
 
 import json
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -125,6 +126,39 @@ class TestFeedPoll(unittest.TestCase):
             count = self.store.db.execute("SELECT COUNT(*) FROM events").fetchone()[0]
             self.assertEqual(count, 1, status)
 
+    def test_unavailable_and_incomplete_leave_a_note(self):
+        """The misses a page can act on surface in ``errors``; the rows
+        the feed already stored are kept either way (the app's surfaced
+        status through ``lastError``/the log)."""
+        feed.poll(self.store, self.home, now=T0,
+                  fetch=self._fetch(([_event()], "acct-1", "ok")))
+        errors = []
+        feed.poll(self.store, self.home, now=T0 + feed.INTERVAL_S,
+                  fetch=self._fetch(([], None, "unavailable")), errors=errors)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("unavailable", errors[0])
+        self.assertEqual(self.store.db.execute(
+            "SELECT COUNT(*) FROM events").fetchone()[0], 1)
+        errors.clear()
+        # incomplete still ingests what arrived — the same key re-upsert
+        # is a no-op — but the truncated window is noted.
+        feed.poll(self.store, self.home, now=T0 + 2 * feed.INTERVAL_S,
+                  fetch=self._fetch(([_event()], "acct-1", "incomplete")),
+                  errors=errors)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("page cap", errors[0])
+        self.assertEqual(self.store.db.execute(
+            "SELECT COUNT(*) FROM events").fetchone()[0], 1)
+
+    def test_signed_out_and_auth_required_stay_quiet(self):
+        """A signed-out or expired profile is a normal state, not a note
+        — the machine without a sign-in would nag otherwise."""
+        errors = []
+        for i, status in enumerate(("signed-out", "auth-required")):
+            feed.poll(self.store, self.home, now=T0 + i * feed.INTERVAL_S,
+                      fetch=self._fetch(([], None, status)), errors=errors)
+        self.assertEqual(errors, [])
+
     def test_incomplete_ingests_but_the_mark_stays(self):
         feed.poll(self.store, self.home, now=T0,
                   fetch=self._fetch(([_event()], "acct-1", "incomplete")))
@@ -178,13 +212,117 @@ class TestFeedPoll(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("cursor feed", errors[0])
 
-    def test_scan_polls_the_feed(self):
-        with mock.patch.object(feed, "_default_fetch",
-                               self._fetch(([_event()], "acct-1", "ok"))):
+    def test_scan_leaves_the_feed_alone(self):
+        """``scan`` reads files only — the web app polls the feed in the
+        background (``keepFresh``), so a scan never fetches."""
+        fetch = self._fetch(([_event()], "acct-1", "ok"))
+        with mock.patch.object(feed, "_default_fetch", fetch):
             scan(self.store, self.home)
-        row = self.store.db.execute(
-            "SELECT harness, session FROM events").fetchone()
-        self.assertEqual(row, ("cursor", "conv-1"))
+        self.assertEqual(self.calls, [])
+        self.assertIsNone(self.store.db.execute(
+            "SELECT key FROM events").fetchone())
+
+    def test_due_gates_on_the_saved_polled_at(self):
+        self.assertTrue(feed.due(self.store, now=T0))
+        feed.poll(self.store, self.home, now=T0,
+                  fetch=self._fetch(([], "acct-1", "ok")))
+        self.assertFalse(feed.due(self.store, now=T0 + 1))
+        self.assertTrue(feed.due(self.store, now=T0 + feed.INTERVAL_S))
+
+    def test_rounds_on_one_file_are_serialized(self):
+        """Two stores on the same file share the round lock: a second
+        poll waits, then sees the first's fresh polled_at and skips
+        fetching (``CursorUsageFeed``'s actor ordering)."""
+        other = LedgerStore(self.store.path)
+        self.addCleanup(other.close)
+        entered = threading.Event()
+        release = threading.Event()
+        done = []
+
+        def slow(state_db, since, now):
+            entered.set()
+            release.wait(30)
+            return "ok", [_event()], "acct-1"
+
+        first = threading.Thread(
+            target=lambda: done.append(
+                feed.poll(self.store, self.home, now=T0, fetch=slow)),
+            daemon=True)
+        first.start()
+        self.assertTrue(entered.wait(10))
+        second = threading.Thread(
+            target=lambda: done.append(
+                feed.poll(other, self.home, now=T0 + feed.INTERVAL_S / 2,
+                          fetch=self._fetch(([_event()], "acct-1", "ok")))),
+            daemon=True)
+        second.start()
+        # Held out of the first round's progress read-modify-write.
+        second.join(0.2)
+        self.assertTrue(second.is_alive())
+        release.set()
+        first.join(30)
+        second.join(30)
+        self.assertEqual(sorted(done), [0, 1])
+        # The waiting round saw polled_at fresh and never fetched.
+        self.assertEqual(self.calls, [])
+
+
+class TestFeedScheduling(unittest.TestCase):
+    """``WebApp`` runs the poll off the page lock (``keepFresh``)."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        (self.home / "Library" / "Application Support" / "Cursor").mkdir(parents=True)
+        from quiver.webapp.api import WebApp
+        self.webapp = WebApp(self.home, download_prices=False)
+        self.addCleanup(self.webapp.close)
+
+    def test_the_poll_runs_off_the_page_lock(self):
+        entered = threading.Event()
+        release = threading.Event()
+        threads = []
+
+        def slow(state_db, since, now):
+            threads.append(threading.current_thread().name)
+            entered.set()
+            release.wait(30)
+            return "ok", [_event()], "acct-1"
+
+        with mock.patch.object(feed, "_default_fetch", slow):
+            self.webapp._ensure(True)
+            self.assertTrue(entered.wait(10))
+            # _ensure returned while the fetch still blocks, and the
+            # fetch is on the feed's own thread — not the page lock's.
+            self.assertEqual(threads, ["ledger-cursor-feed"])
+            release.set()
+            self.webapp._feed_thread.join(30)
+        self.assertEqual(self.webapp._store.db.execute(
+            "SELECT COUNT(*) FROM events").fetchone()[0], 1)
+
+    def test_feed_notes_reach_the_page(self):
+        def down(state_db, since, now):
+            return "unavailable", [], None
+
+        with mock.patch.object(feed, "_default_fetch", down):
+            self.webapp._ensure(True)
+            self.webapp._feed_thread.join(30)
+        self.assertIn("unavailable", "; ".join(self.webapp._notes()))
+
+    def test_a_second_ensure_does_not_start_a_second_round(self):
+        calls = []
+
+        def fetch(state_db, since, now):
+            calls.append(1)
+            return "ok", [], "acct-1"
+
+        with mock.patch.object(feed, "_default_fetch", fetch):
+            self.webapp._ensure(True)
+            self.webapp._feed_thread.join(30)
+            self.webapp._ensure(True)
+            if self.webapp._feed_thread is not None:
+                self.webapp._feed_thread.join(30)
+        # The second round found polled_at fresh and did not even start.
+        self.assertEqual(len(calls), 1)
 
 
 class TestLookalikeCleanup(unittest.TestCase):

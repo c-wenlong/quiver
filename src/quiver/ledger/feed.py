@@ -16,6 +16,7 @@ import json
 import math
 import os
 import re
+import threading
 import time
 from pathlib import Path
 
@@ -29,8 +30,9 @@ from quiver.paths import quiver_dir_for
 # on an old page is still picked up (re-ingest is idempotent).
 WINDOW_S = 180 * 86400
 OVERLAP_S = 2 * 86400
-# The app's keepFresh cadence: the scan calls poll() on every read, so the
-# round is limited inside the store rather than by a timer elsewhere.
+# The app's keepFresh cadence: ``WebApp`` starts a background round when
+# this much time has passed, and the gate inside ``poll()`` is the check
+# both the scheduler and any direct caller go through.
 INTERVAL_S = 15 * 60
 
 # The scan's `meta` slot for `cache/cursor-feed.json` — same contents as
@@ -111,17 +113,57 @@ def _progress(store: LedgerStore) -> dict:
     return progress
 
 
+# One in-flight round per store file — ``CursorUsageFeed``'s actor
+# serializes its rounds the same way. The web app's background round runs
+# on its own connection, so ordering here is what keeps progress's
+# read-modify-write from interleaving with another poller's.
+_POLL_LOCKS: dict[str, threading.Lock] = {}
+_POLL_LOCKS_GUARD = threading.Lock()
+
+
+def _round_lock(store: LedgerStore) -> threading.Lock:
+    with _POLL_LOCKS_GUARD:
+        return _POLL_LOCKS.setdefault(
+            os.path.realpath(store.path), threading.Lock())
+
+
+def due(store: LedgerStore, now: float | None = None) -> bool:
+    """Whether ``keepFresh`` would start a round now — the caller's cheap
+    check before it spends a thread and a second connection on one."""
+    now = time.time() if now is None else now
+    return now - (_progress(store).get("polled_at") or 0) >= INTERVAL_S
+
+
+def _note(errors: list | None, message: str) -> None:
+    """One copy of a surfaced status line in the round's notes — two
+    accounts reporting the same thing reads as one page note, not two."""
+    if errors is not None and message not in errors:
+        errors.append(message)
+
+
 def poll(store: LedgerStore, home: Path | None = None, *, fetch=None,
          now: float | None = None, errors: list | None = None) -> int:
     """Fetch every Cursor account's feed once and ingest it, returning
     how many rows changed (``CursorUsageFeed.poll``).
 
+    Rounds are serialized on the store's file: a scan on the caller's own
+    connection and this round's can never interleave, and a round that
+    starts just after another sees its fresh ``polled_at`` and returns
+    early rather than fetching again.
+
     Two profiles can sign in to the same Cursor account, so a reply's
     ``account_id`` that a sibling already imported this round is skipped:
     the events would key identically anyway. Any other per-account miss —
     signed out, an expired session, the endpoint down — keeps the stored
-    rows, is noted and retried next round.
+    rows and is retried next round; the misses a page can act on
+    (``unavailable``, a truncated ``incomplete`` window) leave a note.
     """
+    with _round_lock(store):
+        return _poll(store, home, fetch=fetch, now=now, errors=errors)
+
+
+def _poll(store: LedgerStore, home: Path | None = None, *, fetch=None,
+          now: float | None = None, errors: list | None = None) -> int:
     home = Path(home) if home is not None else Path.home()
     now = time.time() if now is None else now
     progress = _progress(store)
@@ -159,9 +201,17 @@ def poll(store: LedgerStore, home: Path | None = None, *, fetch=None,
         # signed-out / auth-required / unavailable all keep the stored
         # data — and, because ``seen`` only records an id after its
         # import ran, an expired profile never blocks a working sibling
-        # on the same account.
+        # on the same account. Of the misses only ``unavailable`` earns a
+        # note: a signed-out profile is a normal state, while a down
+        # endpoint explains rows that stopped moving.
         if status not in ("ok", "incomplete"):
+            if status == "unavailable":
+                _note(errors, "cursor feed: the usage endpoint is "
+                              "unavailable; keeping the stored rows")
             continue
+        if status == "incomplete":
+            _note(errors, "cursor feed: part of the window hit the page "
+                          "cap; ingesting what arrived")
         # The key is the account when the fetcher reports one, the
         # profile's home when it cannot. Two profiles on one account
         # therefore write the same keys, and ``accountHome`` stays with

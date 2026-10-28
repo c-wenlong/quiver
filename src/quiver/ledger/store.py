@@ -26,6 +26,7 @@ def ledger_path_for(home: Path | None = None) -> Path:
 class LedgerStore:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = path
         self.db = sqlite3.connect(str(path), timeout=30, check_same_thread=False)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(f"""

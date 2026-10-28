@@ -9,6 +9,7 @@ the summary happen in the page, as in the app.
 
 from __future__ import annotations
 
+import glob
 import os
 from pathlib import Path
 
@@ -29,9 +30,13 @@ LEDGER_HARNESSES = {"claude", "codex", "opencode", "devin", "pi", "droid", "clin
 _CLOUD = {"grok-bot", "devin-cloud"}
 
 
-def is_trivial(harness: str, usage: dict | None, scanned: bool) -> bool:
+def is_trivial(harness: str, usage: dict | None, scanned: bool,
+               covered: bool = True) -> bool:
     """A short or empty session the page hides by default: no tokens, or
-    at most two responses inside a minute with under 100 output tokens."""
+    at most two responses inside a minute with under 100 output tokens.
+    With no usage at all the judgement needs a scan that actually reached
+    this row's source — ``covered`` (``ledger_covers``), not just the
+    harness being one the ledger reads."""
     if harness not in _USAGE_LOG:
         return False
     if usage is not None:
@@ -42,7 +47,38 @@ def is_trivial(harness: str, usage: dict | None, scanned: bool) -> bool:
         return (usage["events"] <= 2
                 and usage["last_ts"] - usage["first_ts"] < 60
                 and usage["output"] + usage["reasoning"] < 100)
-    return scanned and harness in LEDGER_HARNESSES
+    return scanned and covered and harness in LEDGER_HARNESSES
+
+
+def ledger_covers(row: dict, home: Path | None = None) -> bool:
+    """Whether the ledger's source walk reaches this row's own file.
+
+    The catalog is wider than the ledger for two harnesses:
+    ``parse_cline`` also lists the legacy ``data/state/taskHistory.json``
+    index the scan never reads, and ``parse_droid`` a transcript whose
+    ``.settings.json`` sibling never existed. A row from one of those
+    sources is unread, not accidental, and stays visible. ``parse_pi``
+    and the ledger read the same ``agent/sessions`` tree, so every pi
+    row is covered by definition."""
+    harness = str(row.get("harness") or "")
+    if harness not in ("cline", "droid"):
+        return True
+    sid = str(row.get("id") or "")
+    if not sid or os.sep in sid or (os.altsep and os.altsep in sid):
+        return False
+    account = row.get("account_home")
+    if account:
+        base = Path(account)
+    else:
+        home = Path(home) if home is not None else Path.home()
+        base = home / (".cline" if harness == "cline" else ".factory")
+    if harness == "cline":
+        # The scan reads ``data/sessions/<id>/<id>.json`` only; the
+        # taskHistory index alone does not cover the row.
+        return (base / "data" / "sessions" / sid / f"{sid}.json").is_file()
+    # ``<project>/<sid>.settings.json`` beside the session's transcript.
+    return any((base / "sessions").glob(
+        f"*/{glob.escape(sid)}.settings.json"))
 
 
 def location(harness: str, session_id: str | None) -> str:
@@ -151,10 +187,12 @@ def _usage_for(harness: str, sid: str, usage: dict, threads: dict) -> dict | Non
 
 
 def build(rows: list[dict], usage: dict[tuple[str, str], dict], hub_machine_id: str,
-          machines: dict[str, dict], scanned: bool) -> list[dict]:
+          machines: dict[str, dict], scanned: bool,
+          home: Path | None = None) -> list[dict]:
     """``scanned`` is a clean ledger scan: a session with no usage after
     one is accidental; after a scan that couldn't read every source it
-    may only be unread, so it stays visible."""
+    may only be unread, so it stays visible. ``home`` is the machine's
+    home dir for ``ledger_covers``'s source checks."""
     projects: dict[tuple[bool, str | None], str | None] = {}
     threads = _codex_threads(usage)
     out = []
@@ -200,7 +238,9 @@ def build(rows: list[dict], usage: dict[tuple[str, str], dict], hub_machine_id: 
             "kept": bool(row.get("kept")),
             "usage": u and {k: v for k, v in u.items() if k != "cwd"},
             "duration_s": (u["last_ts"] - u["first_ts"]) if u else None,
-            "trivial": is_trivial(harness, u, scanned) if here else False,
+            "trivial": (is_trivial(harness, u, scanned,
+                                   covered=ledger_covers(row, home))
+                        if here else False),
         })
     out.sort(key=lambda r: (r["last_active_at"], r["key"] or ""), reverse=True)
     return out

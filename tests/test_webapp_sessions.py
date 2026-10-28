@@ -108,6 +108,9 @@ class TestTrivial(unittest.TestCase):
         # Cursor's feed is not a local scan: an uncovered session is not
         # judged empty.
         self.assertFalse(sessions.is_trivial("cursor", None, True))
+        # And nor is a row whose own source the scan never read, even
+        # under a harness the ledger covers elsewhere.
+        self.assertFalse(sessions.is_trivial("cline", None, True, covered=False))
 
     def test_location(self):
         self.assertEqual(sessions.location("cursor", "bc-123"), "Cloud")
@@ -169,6 +172,56 @@ class TestCodexResume(unittest.TestCase):
         [row] = sessions.build(rows, usage, "hub", {}, scanned=True)
         self.assertEqual(row["usage"]["tokens"], 1300)
         self.assertEqual((row["usage"]["first_ts"], row["duration_s"]), (100, 900))
+
+
+class TestLedgerCoverage(unittest.TestCase):
+    """``ledger_covers``: the catalog lists more than the ledger scans
+    for cline (the legacy taskHistory index) and droid (a transcript
+    whose settings file is missing); those rows are unread, not
+    accidental. ``parse_pi`` and the ledger read the same tree."""
+
+    def _build(self, home, harness, sid, **extra):
+        row = {"key": f"{harness}:{sid}", "id": sid, "harness": harness,
+               "machine_id": "hub", "cwd": "/w", "last_active_at": 1, **extra}
+        [built] = sessions.build([row], {}, "hub", {}, scanned=True, home=home)
+        return built
+
+    def test_cline_taskhistory_row_stays_visible(self):
+        home = Path(tempfile.mkdtemp())
+        state = home / ".cline" / "data" / "state"
+        state.mkdir(parents=True)
+        (state / "taskHistory.json").write_text(json.dumps([
+            {"id": "legacy-1", "task": "old"}]))
+        self.assertFalse(self._build(home, "cline", "legacy-1")["trivial"])
+
+    def test_a_cline_manifest_row_is_judged(self):
+        home = Path(tempfile.mkdtemp())
+        d = home / ".cline" / "data" / "sessions" / "s2"
+        d.mkdir(parents=True)
+        (d / "s2.json").write_text("{}")
+        self.assertTrue(self._build(home, "cline", "s2")["trivial"])
+
+    def test_a_cline_row_under_an_account_home_uses_that_home(self):
+        home = Path(tempfile.mkdtemp())
+        profile = home / ".quiver" / "accounts" / "cline" / "p1" / "home"
+        d = profile / "data" / "sessions" / "s3"
+        d.mkdir(parents=True)
+        (d / "s3.json").write_text("{}")
+        self.assertTrue(
+            self._build(home, "cline", "s3", account_home=str(profile))["trivial"])
+
+    def test_a_droid_row_needs_its_settings_file(self):
+        home = Path(tempfile.mkdtemp())
+        proj = home / ".factory" / "sessions" / "proj"
+        proj.mkdir(parents=True)
+        (proj / "abc.jsonl").write_text("{}\n")
+        self.assertFalse(self._build(home, "droid", "abc")["trivial"])
+        (proj / "abc.settings.json").write_text("{}")
+        self.assertTrue(self._build(home, "droid", "abc")["trivial"])
+
+    def test_pi_rows_are_covered_by_definition(self):
+        home = Path(tempfile.mkdtemp())
+        self.assertTrue(self._build(home, "pi", "anything")["trivial"])
 
 
 class TestCarefulJudgement(unittest.TestCase):

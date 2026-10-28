@@ -8,8 +8,10 @@ keys make that idempotent. Pi logs and the Droid and Cline session files
 are read whole when they change, also keyed — the session files hold one
 authoritative total each, so a re-read replaces and a now-empty file
 deletes. OpenCode and Devin databases are read whole when their files
-change. Cursor's usage is not a file: ``feed`` polls it, gated to the
-app's cadence inside ``poll()``.
+change. Cursor's usage is not a file: the web app polls it in the
+background on the feed's own cadence (``CursorUsageFeed.keepFresh``), so
+a scan never waits on network replies and a missed round keeps the
+stored rows.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from quiver.ledger import feed, parsers
+from quiver.ledger import parsers
 from quiver.ledger.models import LedgerRecord
 from quiver.ledger.store import LedgerStore
 from quiver.paths import quiver_dir_for
@@ -132,14 +134,6 @@ def scan(store: LedgerStore, home: Path | None = None) -> ScanResult:
                 continue
             _scan_session_file(store, path, str(cline_home), result,
                                parsers.cline_session_totals)
-
-    # Cursor's usage feed is a poll, not a file: it gates itself to the
-    # app's cadence inside poll() (``CursorUsageFeed.keepFresh``), and a
-    # missed round keeps the stored rows.
-    try:
-        result.records += feed.poll(store, home, errors=result.errors)
-    except Exception as exc:  # a failed poll must not sink the scan
-        result.errors.append(f"cursor feed: {exc}")
 
     store.set_meta("scanned_at", str(time.time()))
     store.db.commit()
