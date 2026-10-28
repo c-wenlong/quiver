@@ -1,3 +1,4 @@
+import AppKit
 import QuiverCore
 import SwiftUI
 
@@ -174,14 +175,17 @@ private struct Sidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Unclipped: in the rail the toggle sits past the traffic
-            // lights, over the page's top edge.
-            header
+            Color.clear.frame(height: headerHeight)
             list
                 .frame(width: isExpanded ? width : Theme.sidebarCollapsedWidth,
                        alignment: .leading)
                 .clipped()
         }
+        // Over the list, not above it: the list's scroll view reaches up
+        // into the title bar and would otherwise lie on top of the toggle
+        // and take its clicks. Unclipped, so in the rail the toggle sits
+        // past the traffic lights, over the page's top edge.
+        .overlay(alignment: .topLeading) { header }
         .frame(width: isExpanded ? width : Theme.sidebarCollapsedWidth,
                alignment: .leading)
         // A floating rail covers the page: it needs the window surface,
@@ -203,12 +207,15 @@ private struct Sidebar: View {
         // The tracking area spans the full unclipped width, so where the
         // pointer is decides "inside": collapsed, only the icon strip
         // arms the expansion — a pointer crossing the rail to reach the
-        // page's left edge never floats the panel over its target. Once
+        // page's left edge never floats the panel over its target. The
+        // header row is left out: in full screen the rail's toggle sits
+        // there, and a float would slide it away from the click. Once
         // floating, the whole expanded panel keeps itself hovered.
         .onContinuousHover { phase in
             switch phase {
             case .active(let location):
-                hover(isExpanded || location.x <= Theme.sidebarHoverWidth)
+                hover(isExpanded
+                    || (location.x <= Theme.sidebarHoverWidth && location.y > headerHeight))
             case .ended:
                 hover(false)
             }
@@ -271,58 +278,54 @@ private struct Sidebar: View {
         }
     }
 
+    /// The window's title bar, read from AppKit: the header sizes and
+    /// places itself by it.
+    @State private var titleBar = TitleBar()
+
+    /// The first x clear of the traffic lights; in full screen, where they
+    /// are hidden, the nav icons' column.
+    private var titleBarLeading: CGFloat {
+        titleBar.isFullScreen ? Theme.sidebarLeadingPadding + 8 : Theme.titleBarLeading
+    }
+
+    /// The title bar's height, so the header centres on the traffic lights.
+    private var headerHeight: CGFloat { max(Theme.titleBarHeight, titleBar.height) }
+
     /// The wordmark and the collapse/expand button, in the title bar row
-    /// beside the traffic lights, pinned above the scrolling list. Laid
-    /// out at full width like the list; the wordmark fades in the rail.
+    /// beside the traffic lights, pinned over the top of the list.
     private var header: some View {
-        ZStack(alignment: .leading) {
+        HStack(spacing: 4) {
             Text("Quiver")
                 .font(Theme.font(size: 15, weight: .semibold))
                 .foregroundStyle(Theme.textStrong)
-                .lineLimit(1)
-                .padding(.leading, Theme.titleBarLeading)
+                .fixedSize()
+                // The rail folds the wordmark away so the toggle slides
+                // over to where it began.
+                .frame(width: isExpanded ? nil : 0, alignment: .leading)
+                .clipped()
                 .opacity(isExpanded ? 1 : 0)
                 .accessibilityHidden(!isExpanded)
             toggleRow
         }
-        .frame(width: width, height: Theme.titleBarHeight, alignment: .leading)
+        .padding(.leading, isExpanded ? titleBarLeading : titleBarLeading - 8)
+        .frame(width: width, height: headerHeight, alignment: .leading)
         .overlay(alignment: .bottomLeading) {
             Theme.border
                 .frame(width: isExpanded ? width : Theme.sidebarCollapsedWidth, height: 1)
                 .opacity(scrolled ? 1 : 0)
         }
+        .background(TitleBarReader(titleBar: $titleBar))
     }
 
-    /// The collapse/expand button: at the header's trailing edge while
-    /// the sidebar is open (pinned or hover-floating), just past the
-    /// traffic lights in the collapsed rail, sliding between the two.
-    @State private var hoveringToggle = false
-
+    /// The collapse/expand button: right after the wordmark while the
+    /// sidebar is open (pinned or hover-floating), alone at the row's
+    /// start in the collapsed rail.
     private var toggleRow: some View {
-        let label = model.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
-        return Button {
+        SidebarToggle(label: model.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar") {
             toggleExpansion()
             model.sidebarCollapsed = expansion.collapsed
-        } label: {
-            Image(systemName: "sidebar.left")
-                .font(Theme.font(size: 15, weight: .regular))
-                .frame(width: 18)
-                .foregroundStyle(Theme.textNav)
-                .padding(.horizontal, 8)
-                .frame(height: Theme.controlHeight)
-                .background(hoveringToggle ? Theme.hover : .clear,
-                            in: .rect(cornerRadius: Theme.controlRadius))
-                .contentShape(.rect(cornerRadius: Theme.controlRadius))
         }
-        // The shared plain button: the app's own focus ring on keyboard
-        // focus, no stuck blue ring after a click.
-        .plainButton(cornerRadius: Theme.controlRadius)
-        .onHover { hoveringToggle = $0 }
-        .accessibilityLabel(label)
-        .help("\(label) ⌃⌘S")
-        .padding(.leading, isExpanded
-            ? width - Theme.sidebarTrailingPadding - Theme.navIconPillWidth
-            : Theme.titleBarLeading - 8)
+        .frame(width: Theme.navIconPillWidth, height: Theme.controlHeight)
     }
 
     /// Only a collapsed sidebar reacts to the pointer: in after 0.12 s,
@@ -470,6 +473,141 @@ private struct NavItem: View {
         .onHover { hovering = $0 }
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityValue(badge > 0 ? "\(badge) unread" : "")
+    }
+}
+
+/// The sidebar toggle as an AppKit button. In the title bar row a SwiftUI
+/// button never fires: AppKit lets the window's root hosting view treat a
+/// click there as a window drag, and in a hosting view of its own the
+/// press still never completed. An NSButton tracks the click itself and
+/// never moves the window, like the traffic lights.
+private struct SidebarToggle: NSViewRepresentable {
+    var label: String
+    var action: () -> Void
+
+    func makeNSView(context: Context) -> ToggleButton {
+        ToggleButton()
+    }
+
+    func updateNSView(_ button: ToggleButton, context: Context) {
+        button.run = action
+        // Here, not once at init, so it follows View › Zoom.
+        button.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: Theme.scaled(15), weight: .regular))
+        button.setAccessibilityLabel(label)
+        button.toolTip = "\(label) ⌃⌘S"
+    }
+
+    final class ToggleButton: NSButton {
+        var run: () -> Void = {}
+        private var hovering = false { didSet { updateLayer() } }
+
+        init() {
+            super.init(frame: .zero)
+            isBordered = false
+            title = ""
+            imagePosition = .imageOnly
+            contentTintColor = NSColor(Theme.textNav)
+            // Tab reaches it with Keyboard navigation on; a click never
+            // makes an NSButton first responder, so no ring sticks.
+            focusRingType = .default
+            wantsLayer = true
+            layer?.cornerRadius = Theme.controlRadius
+            target = self
+            action = #selector(fire)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+        @objc private func fire() { run() }
+
+        override var wantsUpdateLayer: Bool { true }
+
+        override func updateLayer() {
+            super.updateLayer()
+            // Resolved here so the fill follows light and dark.
+            layer?.backgroundColor = hovering ? NSColor(Theme.hover).cgColor : nil
+        }
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override var focusRingMaskBounds: NSRect { bounds }
+
+        override func drawFocusRingMask() {
+            NSBezierPath(roundedRect: bounds, xRadius: Theme.controlRadius,
+                         yRadius: Theme.controlRadius).fill()
+        }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(rect: .zero,
+                options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                owner: self))
+            // A new area sends no exit for a pointer the button slid out
+            // from under, so read where the pointer is now.
+            if let window {
+                hovering = bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+            }
+        }
+
+        override func mouseEntered(with event: NSEvent) { hovering = true }
+        override func mouseExited(with event: NSEvent) { hovering = false }
+    }
+}
+
+/// The window's title bar: its height (0 in full screen) and whether
+/// the window is in full screen, where the traffic lights are hidden.
+private struct TitleBar: Equatable {
+    var height: CGFloat = 0
+    var isFullScreen = false
+}
+
+/// Reports its window's `TitleBar` on attach and on every full-screen
+/// change.
+private struct TitleBarReader: NSViewRepresentable {
+    @Binding var titleBar: TitleBar
+
+    func makeNSView(context: Context) -> View {
+        let view = View()
+        view.report = { titleBar = $0 }
+        return view
+    }
+
+    func updateNSView(_ view: View, context: Context) {
+        view.report = { titleBar = $0 }
+    }
+
+    final class View: NSView {
+        var report: ((TitleBar) -> Void)?
+        private var last: TitleBar?
+        private var observers: [NSObjectProtocol] = []
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers = []
+            guard let window else { return }
+            for name in [NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
+                observers.append(NotificationCenter.default.addObserver(
+                    forName: name, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.update() }
+                })
+            }
+            update()
+        }
+
+        private func update() {
+            guard let window else { return }
+            let titleBar = TitleBar(
+                height: window.frame.height - window.contentLayoutRect.height,
+                isFullScreen: window.styleMask.contains(.fullScreen))
+            guard titleBar != last else { return }
+            last = titleBar
+            // Not mid-update: the first report lands while SwiftUI is
+            // still attaching the view.
+            DispatchQueue.main.async { [report] in report?(titleBar) }
+        }
     }
 }
 

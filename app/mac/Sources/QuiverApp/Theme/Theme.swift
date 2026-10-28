@@ -154,8 +154,8 @@ enum Theme {
     static let gutter: CGFloat = 16
     /// The icon rail: wide enough to clear the traffic lights (~x 68).
     static let sidebarCollapsedWidth: CGFloat = 72
-    /// The row the traffic lights sit in, which the sidebar's wordmark and
-    /// toggle share, and the first x clear of the lights in it.
+    /// The sidebar header's least height (it grows to the window's real
+    /// title bar) and the first x clear of the traffic lights in it.
     static let titleBarHeight: CGFloat = 30
     static let titleBarLeading: CGFloat = 80
     /// Leading keeps the icons put; trailing hugs the panel.
