@@ -57,11 +57,13 @@ final class TasksModel {
     /// The detail page's row, live as the list refreshes under it.
     func task(_ id: String) -> TaskRow? { tasks.first { $0.id == id } }
 
-    /// True when the row's source reported blocked this fetch: what it
+    /// True when the row's source or repo failed this fetch: what it
     /// shows is last-known state, and the row says so.
     func stale(_ task: TaskRow) -> Bool {
         switch task.source {
-        case "github": envBlocked != nil
+        case "github":
+            envBlocked != nil
+                || (task.repo.map { repo in failedRepos.contains { $0.name == repo } } ?? false)
         case "linear": linearBlocked != nil
         default: false
         }

@@ -320,16 +320,34 @@ struct TaskSessionSheet: View {
             post = { try await client.startSession(machine: machine.id, harness: harness, cwd: folder, prompt: text) }
         }
         let key = await flow.run(post: post, fetch: { try await client.launch($0) })
-        guard let key, !Task.isCancelled else { return }
-        if !worktreeLaunch {
-            // A plain session links by hand; the worktree routes carry
-            // `origin` and link on adoption. Best-effort either way.
-            try? await client.linkTask(key, task: task)
+        if !worktreeLaunch, let launchId = flow.launchId {
+            // A worktree launch's `origin` links on adoption; a plain
+            // one links here, and keeps linking after this sheet is
+            // gone — a cancel or a slow adoption still lands the link
+            // when the launch names its session.
+            Self.linkWhenAdopted(client: client, launchId: launchId, task: task)
         }
+        guard let key, !Task.isCancelled else { return }
         await app.refresh()
         guard !Task.isCancelled else { return }
         onStarted(key)
         dismiss()
+    }
+
+    /// Watches an accepted launch until it names its session, then posts
+    /// the task link. Detached so it outlives the sheet's own task.
+    private static func linkWhenAdopted(client: HubClient, launchId: String, task: TaskRow) {
+        Task.detached {
+            for _ in 0..<300 {
+                let status = try? await client.launch(launchId)
+                if let key = status?.key, status?.state == "started" {
+                    try? await client.linkTask(key, task: task)
+                    return
+                }
+                if status?.state == "failed" || status?.state == "untracked" { return }
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
     }
 }
 
@@ -351,7 +369,6 @@ struct LinkSessionSheet: View {
     var onLinked: () -> Void
 
     @State private var query = ""
-    @State private var rows: [SessionRow] = []
     /// The key being linked right now; keeps one tap from posting twice.
     @State private var busy: String?
     @State private var error: String?
@@ -362,11 +379,12 @@ struct LinkSessionSheet: View {
     }
 
     /// Sessions not linked yet, matching every word of the query on
-    /// title, harness or folder, newest first.
+    /// title, harness or folder, newest first. Read live off `app` so a
+    /// session that lands while the sheet is open joins the list.
     private var candidates: [SessionRow] {
         let linked = Set(task.sessions ?? [])
         let words = query.lowercased().split(whereSeparator: \.isWhitespace)
-        return rows
+        return app.displaySessions
             .filter { !linked.contains($0.key) }
             .filter { row in
                 guard !words.isEmpty else { return true }
@@ -397,7 +415,7 @@ struct LinkSessionSheet: View {
                 .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
                 .padding(.top, 4)
 
-                if rows.isEmpty {
+                if app.displaySessions.isEmpty {
                     StateCard(icon: "link", title: "No sessions to link",
                               message: "Sessions show up here once the hub lists them.")
                 } else if candidates.isEmpty {
@@ -428,7 +446,7 @@ struct LinkSessionSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             }
         }
-        .onAppear { rows = app.displaySessions }
+        .task { await app.refresh() }
     }
 
     private func link(_ row: SessionRow) {

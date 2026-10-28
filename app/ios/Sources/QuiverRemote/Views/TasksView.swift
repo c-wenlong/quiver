@@ -90,10 +90,13 @@ struct TasksView: View {
         .navigationTitle("Tasks")
         .task(id: app.hub?.id) { await model.load(client: app.client) }
         // The chat opens after the sheet is gone, so the push isn't
-        // lost under the dismiss animation.
+        // lost under the dismiss animation. Any launch — landed or
+        // still pending — can change the links and running flags, so
+        // the list reloads either way.
         .sheet(item: $launching, onDismiss: {
             if let key = startedKey { onStarted(key) }
             startedKey = nil
+            Task { await model.load(client: app.client, refresh: true) }
         }) { task in
             TaskSessionSheet(task: task, machineId: model.machineId) { startedKey = $0 }
         }
@@ -124,10 +127,9 @@ struct TasksView: View {
                     Text("On \(model.machine ?? app.hubName): \(message)")
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    let synced = RelativeTime.short(model.fetchedAt)
-                    Text(synced.isEmpty
-                         ? "The \(source) rows are the last synced list."
-                         : "The \(source) rows are the last synced list, from \(synced) ago.")
+                    // `fetched_at` is the earliest reply across sources,
+                    // not this one's last sync — so no age is claimed.
+                    Text("The \(source) rows are the last synced list.")
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

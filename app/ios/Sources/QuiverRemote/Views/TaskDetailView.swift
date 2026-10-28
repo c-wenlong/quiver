@@ -64,10 +64,13 @@ struct TaskDetailView: View {
         }
         .task { if !model.loaded { await model.load(client: app.client) } }
         // The chat opens after the sheet is gone, so the push isn't
-        // lost under the dismiss animation.
+        // lost under the dismiss animation. Any launch — landed or
+        // still pending — can change the links and running flags, so
+        // the task reloads either way.
         .sheet(item: $launching, onDismiss: {
             if let key = startedKey { onRoute(.chat(key)) }
             startedKey = nil
+            Task { await model.load(client: app.client, refresh: true) }
         }) { task in
             TaskSessionSheet(task: task, machineId: model.machineId) { startedKey = $0 }
         }

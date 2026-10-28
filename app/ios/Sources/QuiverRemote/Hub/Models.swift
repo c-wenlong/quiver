@@ -601,7 +601,7 @@ struct TaskRepoFailure: Decodable, Identifiable, Hashable {
 /// The PR fields a task row carries: for an issue the PR its
 /// `quiver/issue-<n>` branch produced (open or merged), for a pull
 /// the PR itself.
-struct TaskPr: Decodable, Hashable {
+struct TaskPr: Decodable, Hashable, Sendable {
     let number: Int?
     let title: String?
     let state: String?
@@ -613,7 +613,7 @@ struct TaskPr: Decodable, Hashable {
 /// (`open` → `in_progress` → `pr_open` → `merged`|`closed`), the
 /// store's `sessions`/`launches` links and `agent_running` while a
 /// linked session is active or a launch still pending.
-struct TaskRow: Decodable, Identifiable, Hashable {
+struct TaskRow: Decodable, Identifiable, Hashable, Sendable {
     let id: String
     /// github | linear | notion
     let source: String?
