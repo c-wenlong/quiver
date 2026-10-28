@@ -557,6 +557,8 @@ to use their own login state and environment."""
   {c('cyan', 'swe init --migrate')}          Move a pre-0.2.7 ~/.config/swe into ~/.quiver
   {c('cyan', 'swe init --yes')}              Register every new harness without asking
                                (also the non-terminal default)
+  {c('cyan', 'swe init --hub=<git url>')}     Clone your hub repo as ~/.quiver first, then link
+                               (only into a missing or empty ~/.quiver)
 
   {c('dim', 'Collision: -n means dry-run here and on swe install, but fetch-fresh-data on swe list.')}
 

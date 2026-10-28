@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe init --hub=<git url>` brings your hub onto a new machine.** It
+  checks the URL with `git ls-remote`, clones it as `~/.quiver` with your
+  URL as `origin`, then links it into every harness as a plain `swe init`
+  does. It only clones into a missing or empty `~/.quiver`; an existing
+  one is left alone and plain `swe init` repairs it instead. A token in
+  the URL never reaches the terminal
+  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
+
 - **Hub route for previewing a page file.** `GET
   /v1/sessions/{key}/preview?path=` returns one `.html`, `.htm` or `.svg`
   file from a session's working folder as it is on disk now, for the
