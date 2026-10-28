@@ -160,6 +160,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`swe init` builds and repairs every hub folder.** It used to create
+  only `skills/` and `backups/`, so a hub that reached a second machine
+  as a bare `AGENTS.md` never got `plugins/`, `hooks/` or `mcp/`. The
+  hub's folders are now one list in `paths.py` (`HUB_SUBDIRS`), and init
+  creates whichever are missing on a new or existing `~/.quiver` without
+  touching files already there
+  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
 - **Every Activity heatmap cell shows its numbers on hover again.** The
   Overview's card first lays out 8 weeks while its width is still 0,
   then widens to about 15; the columns added then (July and August on a
