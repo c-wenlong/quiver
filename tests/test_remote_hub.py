@@ -2639,6 +2639,144 @@ class TestDeviceSelfService(unittest.TestCase):
         self.assertEqual(row["os"], "iOS 18.5")
 
 
+class TestDeviceList(unittest.TestCase):
+    """GET /v1/devices and POST /v1/devices/revoke (remote/devices.py,
+    the same logic the web Settings page delegates to)."""
+
+    def setUp(self):
+        self.srv = _Server(sessions=[])
+        self.addCleanup(self.srv.stop)
+        self.cred = self.srv.pair()
+        self.auth = {"Authorization": f"Bearer {self.cred['credential']}"}
+
+    def test_devices_requires_auth(self):
+        status, _ = self.srv.request("GET", "/v1/devices")
+        self.assertEqual(status, 401)
+
+    def test_devices_lists_and_marks_this_one(self):
+        other = self.srv.pair()
+        status, data = self.srv.request(
+            "GET", "/v1/devices", headers=self.auth)
+        self.assertEqual(status, 200)
+        rows = {d["id"]: d for d in json.loads(data)["devices"]}
+        me = rows[self.cred["device_id"]]
+        phone = rows[other["device_id"]]
+        self.assertTrue(me["this_device"])
+        self.assertFalse(phone["this_device"])
+        # The caller's authenticated request refreshed its own row;
+        # a device that never called stays None.
+        self.assertIsNotNone(me["last_seen_at"])
+        self.assertIsNone(phone["last_seen_at"])
+        self.assertEqual(phone["paired_via"], "token")
+        self.assertFalse(phone["revoked"])
+        self.assertNotIn("credential_hash", phone)
+        self.assertNotIn("credential", phone)
+
+    def test_devices_includes_pending_requests(self):
+        pairing.request_pair(
+            self.srv.home,
+            {"node_id": "n1", "node_name": "pixel", "login": "me@x"},
+            "pixel")
+        status, data = self.srv.request(
+            "GET", "/v1/devices", headers=self.auth)
+        self.assertEqual(status, 200)
+        reqs = json.loads(data)["requests"]
+        self.assertEqual(len(reqs), 1)
+        self.assertEqual(reqs[0]["node_name"], "pixel")
+        # Codes and secrets never leave the hub in a list.
+        self.assertFalse(
+            {"code", "poll_secret", "poll_secret_hash"} & set(reqs[0]))
+
+    def test_revoke_requires_auth(self):
+        status, _ = self.srv.request(
+            "POST", "/v1/devices/revoke", {"device_id": "x"})
+        self.assertEqual(status, 401)
+
+    def test_revoke_another_device(self):
+        other = self.srv.pair()
+        status, data = self.srv.request(
+            "POST", "/v1/devices/revoke",
+            {"device_id": other["device_id"]}, headers=self.auth)
+        self.assertEqual(status, 200, data)
+        body = json.loads(data)
+        self.assertEqual(body["revoked"], other["device_id"])
+        self.assertFalse(body["this_device"])
+        rows = {d["id"]: d for d in body["devices"]}
+        self.assertTrue(rows[other["device_id"]]["revoked"])
+        # The revoked credential is dead; ours still works.
+        status, _ = self.srv.request(
+            "GET", "/v1/devices",
+            headers={"Authorization": f"Bearer {other['credential']}"})
+        self.assertEqual(status, 401)
+        status, _ = self.srv.request(
+            "GET", "/v1/devices", headers=self.auth)
+        self.assertEqual(status, 200)
+
+    def test_revoke_refusals(self):
+        other = self.srv.pair()
+        pairing.revoke_device(self.srv.home, other["device_id"])
+        for body, code, want in (
+            ({}, 400, "bad_device"),
+            ({"device_id": 7}, 400, "bad_device"),
+            ({"device_id": "x" * 65}, 400, "bad_device"),
+            ({"device_id": "0123456789abcdef"}, 404, "unknown_device"),
+            ({"device_id": "tailnet:n1"}, 400, "not_paired"),
+            ({"device_id": other["device_id"]}, 409, "already_revoked"),
+        ):
+            status, data = self.srv.request(
+                "POST", "/v1/devices/revoke", body, headers=self.auth)
+            self.assertEqual(
+                (status, json.loads(data)["error"]["code"]),
+                (code, want), body)
+
+    def test_revoke_this_device_needs_confirm(self):
+        for body in (
+            {"device_id": self.cred["device_id"]},
+            {"device_id": self.cred["device_id"],
+             "confirm_this_device": "yes"},
+        ):
+            status, data = self.srv.request(
+                "POST", "/v1/devices/revoke", body, headers=self.auth)
+            self.assertEqual(status, 409)
+            self.assertEqual(
+                json.loads(data)["error"]["code"], "confirm_this_device")
+        row = pairing.load_devices(self.srv.home)[self.cred["device_id"]]
+        self.assertFalse(row["revoked_at"])
+        status, data = self.srv.request(
+            "POST", "/v1/devices/revoke",
+            {"device_id": self.cred["device_id"],
+             "confirm_this_device": True}, headers=self.auth)
+        self.assertEqual(status, 200, data)
+        self.assertTrue(json.loads(data)["this_device"])
+        # We just signed ourselves out.
+        status, _ = self.srv.request(
+            "GET", "/v1/devices", headers=self.auth)
+        self.assertEqual(status, 401)
+
+    def test_revoke_owner_tailnet_device(self):
+        # The hub owner's own tailnet sign-in can revoke a paired
+        # device, but its own tailnet: id is a sign-in, not a pairing.
+        other = self.srv.pair()
+        self.srv.state.owner_login = "dev@github"
+        self.srv.state.allowed_hosts = {"127.0.0.1"}
+        self.srv.state.whois = lambda ip: dict(_MAC)
+        self.srv.state._whois_cache.clear()  # the pairs cached a miss
+        hdrs = {"Content-Type": "application/json",
+                "X-Quiver-Pair": "1", "Host": "127.0.0.1"}
+        status, data = self.srv.request(
+            "POST", "/v1/devices/revoke",
+            {"device_id": other["device_id"]}, headers=hdrs)
+        self.assertEqual(status, 200, data)
+        self.assertFalse(json.loads(data)["this_device"])
+        status, data = self.srv.request(
+            "POST", "/v1/devices/revoke",
+            {"device_id": "tailnet:nMAC", "confirm_this_device": True},
+            headers=hdrs)
+        self.assertEqual(status, 400)
+        self.assertEqual(
+            json.loads(data)["error"]["code"], "not_paired")
+
+
 class TestServeEntry(unittest.TestCase):
     def test_serve_keyboard_interrupt_returns_0(self):
         from quiver.remote import hub as hub_mod

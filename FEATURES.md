@@ -78,7 +78,7 @@ hosts the hub; the PWA and the iOS app are its clients.
 | Feature | Mac | Web | iOS | Notes |
 | --- | --- | --- | --- | --- |
 | Pair a device | host | yes | yes | Tailscale, pair token, QR scan, 6-digit approval |
-| Devices list and revoke | yes | yes | planned | Mac and Web: Settings. iOS P8 still needs a device-list and revoke route |
+| Devices list and revoke | yes | yes | planned | Mac and Web: Settings. The hub route (`GET /v1/devices`, `POST /v1/devices/revoke`) now serves it; the iOS client list and Remove item remain |
 | Launch a new session | planned | yes | yes | Web and iOS have general new-session sheets; Mac's one-click launch is the open M5 item |
 | Machine switcher | - | - | planned | iOS P4: one machine today |
 | Machine vitals | yes | yes | planned | Compute page on Mac and Web; iOS P9 carries the samples over the hub |
