@@ -148,13 +148,16 @@ enum Theme {
 
     // MARK: Shape and size (tokens.json `core.radius`, `size`, `space`)
 
-    static let panelRadius: CGFloat = 16
-    static let cardRadius: CGFloat = 16
-    static let controlRadius: CGFloat = 8
+    static let cardRadius: CGFloat = 10
+    static let controlRadius: CGFloat = 6
     static let cardPadding: CGFloat = 20
     static let gutter: CGFloat = 16
     /// The icon rail: wide enough to clear the traffic lights (~x 68).
     static let sidebarCollapsedWidth: CGFloat = 72
+    /// The row the traffic lights sit in, which the sidebar's wordmark and
+    /// toggle share, and the first x clear of the lights in it.
+    static let titleBarHeight: CGFloat = 30
+    static let titleBarLeading: CGFloat = 80
     /// Leading keeps the icons put; trailing hugs the panel.
     static let sidebarLeadingPadding: CGFloat = 8
     static let sidebarTrailingPadding: CGFloat = 4
@@ -175,14 +178,14 @@ enum Theme {
     static let controlMedium: CGFloat = 32
     /// `control.field`: search fields, selects, text fields.
     static let fieldHeight: CGFloat = 36
-    static let fieldRadius: CGFloat = 8
-    static let selectRadius: CGFloat = 6
+    static let fieldRadius: CGFloat = 6
+    static let selectRadius: CGFloat = 5
     static let iconButton: CGFloat = 36
-    static let iconButtonRadius: CGFloat = 12
+    static let iconButtonRadius: CGFloat = 8
     static let usageTrackHeight: CGFloat = 6
     static let heatmapCell: CGFloat = 12
     /// Inset panels and code blocks inside a card, a step under `cardRadius`.
-    static let blockRadius: CGFloat = 12
+    static let blockRadius: CGFloat = 7
     /// Chips and the hover shape on small text buttons.
     static let smallRadius: CGFloat = 4
     /// The filled or stroked status dot.
@@ -197,9 +200,9 @@ enum Theme {
     /// A small form sheet's padding and width.
     static let formSheetPadding: CGFloat = 20
     static let formSheetWidth: CGFloat = 420
-    /// A sheet card's corners (`radius.2xl`, as TokenTracker's dialogs)
+    /// A sheet card's corners
     /// and the room it keeps from the window's edges.
-    static let dialogRadius: CGFloat = 16
+    static let dialogRadius: CGFloat = 12
     static let sheetMargin: CGFloat = 24
     /// A sheet fades in over `motion.duration.fade` and settles from 98%
     /// over `motion.duration.dialog`, both on `motion.easing.emphasized`.
@@ -259,7 +262,7 @@ extension NSColor {
 
 // MARK: - Surfaces
 
-/// A card: one hairline on `bg.card`, 16pt radius, 20pt padding, and an
+/// A card: one hairline on `bg.card`, 10pt radius, 20pt padding, and an
 /// optional sentence-case title at 14/500.
 struct Card<Content: View, Accessory: View>: View {
     var title: String?

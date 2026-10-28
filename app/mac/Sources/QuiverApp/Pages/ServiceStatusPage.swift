@@ -360,7 +360,7 @@ private extension ServiceStatus {
     }
 }
 
-/// TokenTracker's `status-row`: 20pt padding, 16pt radius, a hairline that
+/// TokenTracker's `status-row`: 20pt padding, the card radius, a hairline that
 /// strengthens on hover, the 16pt logo and the name at 16/500, and the
 /// state under it as an 8pt dot and a label. A card that `hasDetails`
 /// opens them as a sheet on a click the row's buttons don't take, so one
