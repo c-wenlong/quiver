@@ -160,6 +160,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The web app's Plugins page says once where missing marketplaces were
+  looked for.** A `~/.claude/settings.json` from another machine can
+  register several marketplaces whose folders are not on this one, and
+  the page printed "no marketplace manifest on disk" once per name. Each
+  harness now gets one line naming them and the folder they were looked
+  in, and swe's catalog errors carry that folder as `path`
+  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
 - **`swe init` builds and repairs every hub folder.** It used to create
   only `skills/` and `backups/`, so a hub that reached a second machine
   as a bare `AGENTS.md` never got `plugins/`, `hooks/` or `mcp/`. The
