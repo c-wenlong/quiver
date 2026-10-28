@@ -704,7 +704,11 @@ private struct ActivityCard: View {
                         HStack(spacing: 3) {
                             Text(weekday % 2 == 1 ? Self.weekdayName(weekday) : "")
                                 .font(Theme.font(size: 10)).foregroundStyle(Theme.textSecondary)
-                                .frame(width: 24, alignment: .leading)
+                                .fixedSize()
+                                // A cell tall at any zoom: a taller label
+                                // would stretch the row past the pitch
+                                // `HeatmapLayout` assumes.
+                                .frame(width: 24, height: Theme.heatmapCell, alignment: .leading)
                             ForEach(Array(weeks.enumerated()), id: \.offset) { _, column in
                                 if let cell = column[weekday] {
                                     RoundedRectangle(cornerRadius: 2)
