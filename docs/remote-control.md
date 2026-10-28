@@ -825,8 +825,8 @@ for a symlink after the check can't lead outside. A symlink that stays
 inside the folder is followed. Both the requested name and the resolved
 name must end in `.html`, `.htm` or `.svg` (any case), only a regular
 file is read, and the cap is 2 MB. The answer is the raw bytes with
-`Content-Type` `text/html; charset=utf-8` or `image/svg+xml`,
-`Cache-Control: no-store`, `Last-Modified`, `X-Content-Type-Options:
+`Content-Type` `text/html; charset=utf-8` or `image/svg+xml` (from the
+resolved name, so a link keeps its target's type), `Cache-Control: no-store`, `Last-Modified`, `X-Content-Type-Options:
 nosniff`, and `Content-Security-Policy: default-src 'none'; style-src
 'unsafe-inline'; img-src data:; font-src data:; media-src data:;
 base-uri 'none'; form-action 'none'; sandbox`, so even a browser that

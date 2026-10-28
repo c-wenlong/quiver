@@ -98,8 +98,7 @@ def read(cwd: str, rel: str) -> Preview:
             422, "bad_path",
             "path must be relative to the working folder, without ..",
         )
-    ctype = content_type(rel)
-    if ctype is None:
+    if content_type(rel) is None:
         raise FilesError(
             415, "unsupported_type", "only .html, .htm and .svg preview",
         )
@@ -111,8 +110,11 @@ def read(cwd: str, rel: str) -> Preview:
         )
     if real == root:
         raise FilesError(422, "not_a_file", f"not a file: {rel}")
-    if content_type(real) is None:
-        # A link inside the folder whose target isn't a page file.
+    # The type of what is served: a link inside the folder may name an
+    # .svg that is really an .html, and a target that isn't a page
+    # file at all is refused.
+    ctype = content_type(real)
+    if ctype is None:
         raise FilesError(
             415, "unsupported_type", "only .html, .htm and .svg preview",
         )

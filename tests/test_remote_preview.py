@@ -83,6 +83,17 @@ class TestRead(_Tmp):
         os.symlink(self.proj / "out" / "page.html", self.proj / "alias.html")
         self.assertEqual(preview.read(str(self.proj), "alias.html").body, PAGE)
 
+    def test_link_between_page_types_uses_target_type(self):
+        (self.proj / "logo.svg").write_text("<svg/>")
+        os.symlink(self.proj / "out" / "page.html", self.proj / "alias.svg")
+        os.symlink(self.proj / "logo.svg", self.proj / "alias.html")
+        self.assertEqual(preview.read(str(self.proj), "alias.svg").content_type,
+                         "text/html; charset=utf-8")
+        self.assertEqual(
+            preview.read(str(self.proj), "alias.html").content_type,
+            "image/svg+xml",
+        )
+
     def test_link_to_other_type_inside(self):
         (self.proj / ".env").write_text("TOKEN=x")
         os.symlink(self.proj / ".env", self.proj / "env.html")
