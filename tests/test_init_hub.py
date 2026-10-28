@@ -152,6 +152,24 @@ class RegisterMarketplacesTest(unittest.TestCase):
         self.assertEqual(got, [("claude", "mine", None)])
         self.assertEqual(ran, [["claude", "plugin", "marketplace", "add", str(market)]])
 
+    def test_a_remote_only_marketplace_is_registered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".claude").mkdir()
+            market = home / ".quiver" / "plugins" / "far"
+            (market / ".claude-plugin").mkdir(parents=True)
+            (market / ".claude-plugin" / "marketplace.json").write_text(
+                '{"name": "far", "plugins": [{"name": "r", "source": '
+                '{"source": "github", "repo": "o/r"}}]}\n')
+            ran = []
+
+            def run(argv, **kw):
+                ran.append(argv)
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            got = register_marketplaces(home, run=run)
+        self.assertEqual(got, [("claude", "far", None)])
+        self.assertEqual(ran, [["claude", "plugin", "marketplace", "add", str(market)]])
+
     def test_a_missing_cli_is_reported_not_raised(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
