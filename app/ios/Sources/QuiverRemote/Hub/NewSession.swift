@@ -77,6 +77,12 @@ final class LaunchFlow {
 
     private(set) var phase: Phase = .idle
 
+    /// The launch id the hub accepted, set before the polling starts:
+    /// a caller that needs the launch to outlive the sheet (the task
+    /// linker's delayed adoption) reads it even when `run` never
+    /// answers a session key.
+    private(set) var launchId: String?
+
     /// Starting, waiting, or started and about to open the chat: Start
     /// stays off the whole time, so one tap can't launch twice.
     var busy: Bool {
@@ -95,6 +101,7 @@ final class LaunchFlow {
              interval: Duration = .seconds(1)) async -> String? {
         guard !busy else { return nil }
         phase = .starting
+        launchId = nil
         let accepted: LaunchStatus
         do {
             accepted = try await post()
@@ -102,6 +109,7 @@ final class LaunchFlow {
             phase = .failed((error as? HubError)?.message ?? error.localizedDescription)
             return nil
         }
+        launchId = accepted.launchId
         if Task.isCancelled { phase = .idle; return nil }
         phase = .waiting
         var status = accepted

@@ -217,6 +217,32 @@ struct HubClient: Sendable {
         return try await send(request("POST", "/v1/issues/resolve", body: body))
     }
 
+    // MARK: Tasks
+
+    /// `GET /v1/tasks`: the hub's work-item store over the sources' open
+    /// items — GitHub issues and PRs from the pinned repos, Linear when a
+    /// key is configured. `refresh` skips the one-minute `gh` cache.
+    func tasks(refresh: Bool = false) async throws -> TasksResponse {
+        try await send(request("GET", "/v1/tasks",
+                               query: refresh ? ["refresh": "1"] : [:]))
+    }
+
+    /// `POST /v1/sessions/<key>/task {task_ref}`: link a session to the
+    /// task by hand — a resolve or PR open links itself through the
+    /// launch's `origin`, so this covers the sessions the user started
+    /// outside a task flow.
+    func linkTask(_ key: String, task: TaskRow) async throws {
+        _ = try await raw(request("POST", "/v1/sessions/\(Self.encodeKey(key))/task",
+                                  body: ["task_ref": task.refBody]))
+    }
+
+    /// `DELETE /v1/sessions/<key>/task {task_ref}`: drop this task's link
+    /// from the session.
+    func unlinkTask(_ key: String, task: TaskRow) async throws {
+        _ = try await raw(request("DELETE", "/v1/sessions/\(Self.encodeKey(key))/task",
+                                  body: ["task_ref": task.refBody]))
+    }
+
     func search(_ query: String, limit: Int = 50) async throws -> SearchResponse {
         try await send(request("GET", "/v1/search", query: ["q": query, "limit": "\(limit)"]))
     }

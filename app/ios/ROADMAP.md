@@ -159,14 +159,38 @@ are server changes in `src/quiver/remote/`.
 - [x] PWA Issues tab: list → detail (comments) → resolve sheet on the hub-served web app, the same loop browsers and Android get
 - [ ] "Assigned to you" push notifications once APNs lands
 
-### P13. Tasks — deferred
+### P13. Tasks
 
-- [ ] Work-items surface joining every source (GitHub, Linear) with the
-  hub's agent links. Design settled and deferred to #875: sources own
-  status, the hub owns links only, the same work in two sources merges
-  into one task. Build when a second source is in real use — the slim
-  variant (linked sessions on the Issues/Pulls detail views, no new tab)
-  may be enough.
+The work-items surface from #875: every source's open issues and pull
+requests, joined to the agent sessions the hub links to them, on one
+tab. `GET /v1/tasks` hands back the store rows: `state` derived by the
+source (open → in progress → PR open → merged, or closed), the linked
+session keys and pending launches, `agent_running`, `last_active_at`,
+and per-source env blocks so a missing token explains an empty page.
+
+- [x] Tasks tab between Inbox and Pulls: filter chips (All / Running /
+  PR open / Done) with counts, repo-or-project grouped hairline cards,
+  rows with a kind glyph + `o/r#5` ref + title + state label, a `●
+  Agent` mark on `agent_running`, pull to refresh, and an amber
+  blocked-source banner (failed repos and auth-required envs) that
+  marks the rows below it stale
+- [x] Task detail pushed on the tasks stack: ref + title header, a
+  state stepper (pull tasks skip the PR rung, closed swaps the last
+  rung), a Sessions card joining the task's keys to `GET /v1/sessions`
+  rows that push their chats, the linked PR card pushing
+  `PullDetailView`/`IssueDetailView`, "New agent session" and "Open on
+  GitHub"
+- [x] Row actions (`SessionAction.newSession`, amber like Resolve):
+  Copy link writes the `quiver://issue` deep link for GitHub issues,
+  Open on GitHub, New session
+- [x] "Link a session" sheet on the detail posts `POST
+  /v1/sessions/<key>/task`; a non-GitHub task's launch sheet links the
+  session it starts (a GitHub issue/pull launch's `origin` links on
+  adoption)
+- [x] Client: `tasks()`, `linkTask`, `unlinkTask` in `HubClient`;
+  `TasksModel` filters, groups and marks stale rows
+- [ ] Merge the same work filed in two sources into one task (the
+  hub's keying job, when a second source is in real use)
 
 ## Components
 

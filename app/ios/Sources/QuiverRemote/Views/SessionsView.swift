@@ -206,8 +206,9 @@ struct SessionsView: View {
             renaming = row
         case .fork:
             forking = row
-        case .resolve:
-            // Issues rows wire their own swipe; no session row offers it.
+        case .resolve, .newSession:
+            // Issue and task rows wire their own swipes; no session row
+            // offers either.
             break
         }
     }
@@ -369,10 +370,11 @@ struct HubChip: View {
 }
 
 /// What a tab's navigation stack can push. `pull` only ever appears on
-/// the Pull requests stack, `issue` on the Issues stack.
+/// the Pull requests stack, `issue` on the Issues stack, `task` on the
+/// Tasks stack — which can also push all three from its detail page.
 enum Route: Hashable {
     case chat(String), pull(repo: String, number: Int),
-         issue(repo: String, number: Int)
+         issue(repo: String, number: Int), task(String)
 }
 
 /// A search hit: the session row, then the matching transcript line with

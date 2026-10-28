@@ -1,0 +1,468 @@
+import SwiftUI
+
+/// The task detail's "New agent session" sheet. A GitHub issue or pull
+/// goes through the worktree routes (`resolve`/`open`), whose launch
+/// `origin` links the adopted session to the task itself; any other
+/// task gets a plain session in a picked folder and the sheet links it
+/// by hand once the hub names it. Either way a blank prompt lets the
+/// hub build its brief.
+struct TaskSessionSheet: View {
+    @Environment(AppModel.self) private var app
+    @Environment(\.dismiss) private var dismiss
+    let task: TaskRow
+    /// The hub's machine id, from the tasks reply; worktrees live
+    /// there, so only its harnesses are on offer.
+    let machineId: String?
+    var onStarted: (String) -> Void
+
+    @State private var harness: String?
+    /// A harness the user tapped stays: the folder default only
+    /// improves the *default*.
+    @State private var harnessTouched = false
+    @State private var prompt: String
+    @State private var folder: String?
+    @State private var showAllFolders = false
+    @State private var folderQuery = ""
+    @State private var browsePath: [FolderBrowse] = []
+    @State private var flow = LaunchFlow()
+    /// The running launch, so Cancel or a swipe-down stops it before it
+    /// can open a chat behind a sheet that is gone.
+    @State private var launch: Task<Void, Never>?
+    /// The session list as it was when the sheet opened, for the
+    /// harness last used in the picked folder.
+    @State private var rows: [SessionRow] = []
+
+    private static let foldersShown = 4
+
+    /// `(repo, number)` when the task maps onto a worktree route.
+    private var issueRoute: (repo: String, number: Int)? {
+        guard task.source == "github", task.kind == "issue",
+              let repo = task.repo, let number = task.number else { return nil }
+        return (repo, number)
+    }
+
+    private var pullRoute: (repo: String, number: Int)? {
+        guard task.source == "github", task.kind == "pull",
+              let repo = task.repo, let number = task.number else { return nil }
+        return (repo, number)
+    }
+
+    /// A worktree launch links itself through `origin` on adoption.
+    private var worktreeLaunch: Bool { issueRoute != nil || pullRoute != nil }
+
+    init(task: TaskRow, machineId: String?, onStarted: @escaping (String) -> Void) {
+        self.task = task
+        self.machineId = machineId
+        self.onStarted = onStarted
+        _prompt = State(initialValue: task.source == "github" ? "" : Self.prefill(task))
+    }
+
+    /// The first prompt a non-GitHub task gets: its ref, title and link.
+    private static func prefill(_ task: TaskRow) -> String {
+        var text = "Work on \(task.refLabel.isEmpty ? "this task" : task.refLabel): \(task.title ?? "")"
+        if let url = task.url, !url.isEmpty { text += "\n\(url)" }
+        return text
+    }
+
+    /// The machine the worktree or session lives on: the hub itself.
+    private var machine: Machine? {
+        app.machines.first { $0.id == machineId } ?? app.machines.first
+    }
+
+    var body: some View {
+        NavigationStack(path: $browsePath) {
+            PageScroll {
+                if let machine {
+                    startsIn(machine)
+                    harnessSection(machine)
+                    promptSection
+                    if !worktreeLaunch { folderSection(machine) }
+                    startSection(machine)
+                } else {
+                    StateCard(icon: "terminal", title: "No machine can start a session",
+                              message: "Update swe on the hub. A machine offers the harnesses swe lists there, minus the ones switched off in Quiver's Provider visibility.")
+                }
+            }
+            .navigationTitle("New agent session")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        launch?.cancel()
+                        dismiss()
+                    }
+                }
+            }
+            .navigationDestination(for: FolderBrowse.self) { place in
+                FolderBrowserView(machineId: place.machineId, path: place.path) { picked in
+                    if let machine = app.machines.first(where: { $0.id == place.machineId }) {
+                        folder = picked
+                        if !harnessTouched {
+                            harness = NewSessionOptions.defaultHarness(
+                                folder: picked, machineId: machine.id,
+                                offered: NewSessionOptions.harnesses(on: machine),
+                                sessions: rows)
+                        }
+                    }
+                    browsePath = []
+                }
+            }
+        }
+        .interactiveDismissDisabled(flow.busy)
+        .onAppear {
+            rows = app.sessions
+            guard harness == nil, let machine else { return }
+            let offered = NewSessionOptions.harnesses(on: machine)
+            if !worktreeLaunch, folder == nil {
+                folder = NewSessionOptions.folders(on: machine.id, sessions: rows).first
+            }
+            harness = NewSessionOptions.defaultHarness(
+                folder: folder, machineId: machine.id, offered: offered, sessions: rows)
+        }
+        .onDisappear { launch?.cancel() }
+    }
+
+    private func startsIn(_ machine: Machine) -> some View {
+        let icon: String
+        let where_: String
+        if let r = issueRoute {
+            icon = "exclamationmark.circle"
+            where_ = "\(r.repo) · quiver/issue-\(r.number)"
+        } else if let r = pullRoute {
+            icon = "arrow.triangle.pull"
+            where_ = "\(r.repo)#\(r.number) worktree"
+        } else {
+            icon = "folder"
+            where_ = folder.map(FolderRow.name) ?? "Pick a folder below"
+        }
+        return Card(padding: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: icon).font(.system(size: 15)).foregroundStyle(Theme.textSecondary).frame(width: 20)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Starts in").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    Text(where_)
+                        .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Text("on \(machine.displayName)")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+            }
+            .padding(.vertical, Theme.rowVertical).padding(.horizontal, Theme.rowHorizontal)
+        }
+        .padding(.top, 4)
+    }
+
+    @ViewBuilder private func harnessSection(_ machine: Machine) -> some View {
+        let offered = NewSessionOptions.harnesses(on: machine)
+        GroupLabel(text: "Harness", trailing: harness.map { NewSessionOptions.name($0, on: machine, sessions: rows) })
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 48, maximum: 48), spacing: 8)], alignment: .leading, spacing: 8) {
+            ForEach(offered, id: \.self) { h in
+                let selected = h == harness
+                let name = NewSessionOptions.name(h, on: machine, sessions: rows)
+                Button { harness = h; harnessTouched = true } label: {
+                    HarnessIcon(harness: h, name: name, size: 24)
+                        .font(.system(size: 10))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                        .frame(width: 48, height: 48)
+                        .background(selected ? Theme.selected : Theme.card, in: .rect(cornerRadius: Theme.blockRadius))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius)
+                            .strokeBorder(selected ? Theme.textPrimary : Theme.border, lineWidth: selected ? 1.5 : 1))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(name)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
+        if let harness, machine.untrackedHarnesses?.contains(harness) == true {
+            Text("Quiver can't read \(NewSessionOptions.name(harness, on: machine, sessions: rows)) sessions yet: it starts, but no chat opens.")
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
+        }
+    }
+
+    private var promptSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            GroupLabel(text: "First prompt")
+            TextField("Describe the first task", text: $prompt, axis: .vertical)
+                .lineLimit(4...10)
+                .font(Theme.body)
+                .foregroundStyle(Theme.textPrimary)
+                .padding(12)
+                .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
+            if worktreeLaunch {
+                Text("Leave it empty and the hub writes the brief from the \(issueRoute != nil ? "issue" : "pull request").")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
+            }
+        }
+    }
+
+    /// The folder a plain session starts in: recent folders on the
+    /// machine, with the browser for anywhere else. GitHub tasks never
+    /// see this — their worktree is the hub's choice.
+    @ViewBuilder private func folderSection(_ machine: Machine) -> some View {
+        let folders = NewSessionOptions.folders(on: machine.id, sessions: rows)
+        let searching = !folderQuery.trimmingCharacters(in: .whitespaces).isEmpty
+        let matches = NewSessionOptions.matching(folders, query: folderQuery)
+        HStack(spacing: 14) {
+            Text(folders.isEmpty ? "Folder" : "Folder · \(folders.count) recent")
+                .font(Theme.groupLabel).foregroundStyle(Theme.textSecondary)
+            Spacer(minLength: 8)
+            Button {
+                browsePath = [FolderBrowse(machineId: machine.id, path: folder.map(FolderRow.parent))]
+            } label: {
+                Label("Browse", systemImage: "folder.badge.magnifyingglass")
+            }
+            .disabled(flow.busy)
+            if folders.count > Self.foldersShown && !searching {
+                Button(showAllFolders ? "Show fewer" : "Show all") { showAllFolders.toggle() }
+            }
+        }
+        .font(Theme.control)
+        .foregroundStyle(Theme.textPrimary)
+        .buttonStyle(.plain)
+        .padding(.horizontal, 4)
+        .padding(.top, 14)
+        if folders.isEmpty {
+            Text("No recent folders. Browse to pick any folder on \(machine.displayName).")
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary).padding(.horizontal, 4)
+        } else {
+            if searching || folders.count > Self.foldersShown {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(Theme.textMuted)
+                    TextField("Search folders", text: $folderQuery)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    if searching {
+                        Button { folderQuery = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.textMuted) }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Clear search")
+                    }
+                }
+                .font(Theme.body)
+                .padding(.horizontal, 12)
+                .frame(height: Theme.controlHeight + 4)
+                .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
+            }
+            let shown = searching || showAllFolders ? matches : Array(matches.prefix(Self.foldersShown))
+            if shown.isEmpty {
+                Text("No recent folder matches. Browse to find it.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).padding(.horizontal, 4)
+            } else {
+                CardList(data: shown.map(TaskFolder.init)) { choice in
+                    Button {
+                        folder = choice.path
+                        if !harnessTouched {
+                            harness = NewSessionOptions.defaultHarness(
+                                folder: choice.path, machineId: machine.id,
+                                offered: NewSessionOptions.harnesses(on: machine),
+                                sessions: rows)
+                        }
+                    } label: {
+                        FolderRow(path: choice.path, selected: choice.path == folder)
+                    }
+                    .buttonStyle(RowButtonStyle())
+                    .disabled(flow.busy)
+                }
+            }
+        }
+    }
+
+    private func startSection(_ machine: Machine) -> some View {
+        let ready = harness != nil && (worktreeLaunch || folder != nil)
+        return VStack(alignment: .leading, spacing: 8) {
+            Button { launch = Task { await start(machine) } } label: {
+                HStack(spacing: 8) {
+                    if flow.busy { ProgressView().controlSize(.small).tint(Theme.primaryForeground) }
+                    Text(flow.phase == .waiting ? "Waiting for the session" : flow.opening ? "Opening the chat" : flow.busy ? "Starting" : "Start session")
+                }
+            }
+            .primaryButton()
+            .disabled(!ready || flow.busy)
+            if case .failed(let message) = flow.phase {
+                Text(message).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if case .unconfirmed(let message) = flow.phase {
+                Text(message).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(footnote(machine))
+                .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func footnote(_ machine: Machine) -> String {
+        if let r = issueRoute {
+            return "Runs under tmux on \(machine.displayName) on branch quiver/issue-\(r.number) in a worktree of \(r.repo). The chat opens once the session shows up."
+        }
+        if pullRoute != nil {
+            return "Runs under tmux on \(machine.displayName) in a checkout of the PR's head. The chat opens once the session shows up."
+        }
+        return "Runs under tmux on \(machine.displayName) and links to this task once the session shows up. The chat opens then."
+    }
+
+    private func start(_ machine: Machine) async {
+        guard let client = app.client, let harness else { return }
+        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let post: () async throws -> LaunchStatus
+        if let r = issueRoute {
+            post = { try await client.resolveIssue(repo: r.repo, number: r.number, harness: harness, prompt: text) }
+        } else if let r = pullRoute {
+            post = { try await client.openPull(repo: r.repo, number: r.number, harness: harness, prompt: text) }
+        } else {
+            guard let folder else { return }
+            post = { try await client.startSession(machine: machine.id, harness: harness, cwd: folder, prompt: text) }
+        }
+        let key = await flow.run(post: post, fetch: { try await client.launch($0) })
+        if !worktreeLaunch, let launchId = flow.launchId {
+            // A worktree launch's `origin` links on adoption; a plain
+            // one links here, and keeps linking after this sheet is
+            // gone — a cancel or a slow adoption still lands the link
+            // when the launch names its session.
+            Self.linkWhenAdopted(client: client, launchId: launchId, task: task)
+        }
+        guard let key, !Task.isCancelled else { return }
+        await app.refresh()
+        guard !Task.isCancelled else { return }
+        onStarted(key)
+        dismiss()
+    }
+
+    /// Watches an accepted launch until it names its session, then posts
+    /// the task link. Detached so it outlives the sheet's own task.
+    private static func linkWhenAdopted(client: HubClient, launchId: String, task: TaskRow) {
+        Task.detached {
+            for _ in 0..<300 {
+                let status = try? await client.launch(launchId)
+                if let key = status?.key, status?.state == "started" {
+                    try? await client.linkTask(key, task: task)
+                    return
+                }
+                if status?.state == "failed" || status?.state == "untracked" { return }
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+    }
+}
+
+/// A folder path as an Identifiable for the sheet's card list (the
+/// new-session page's own wrapper is file-private).
+private struct TaskFolder: Identifiable {
+    let path: String
+    var id: String { path }
+}
+
+/// The task detail's "Link a session" sheet: the sessions the hub
+/// knows, minus the ones already linked, newest first. A pick posts
+/// `POST /v1/sessions/<key>/task` and refreshes the list behind it.
+struct LinkSessionSheet: View {
+    @Environment(AppModel.self) private var app
+    @Environment(\.dismiss) private var dismiss
+    let task: TaskRow
+    /// Called after a link lands, so the list refetches.
+    var onLinked: () -> Void
+
+    @State private var query = ""
+    /// The key being linked right now; keeps one tap from posting twice.
+    @State private var busy: String?
+    @State private var error: String?
+
+    init(task: TaskRow, onLinked: @escaping () -> Void) {
+        self.task = task
+        self.onLinked = onLinked
+    }
+
+    /// Sessions not linked yet, matching every word of the query on
+    /// title, harness or folder, newest first. Read live off `app` so a
+    /// session that lands while the sheet is open joins the list.
+    private var candidates: [SessionRow] {
+        let linked = Set(task.sessions ?? [])
+        let words = query.lowercased().split(whereSeparator: \.isWhitespace)
+        return app.displaySessions
+            .filter { !linked.contains($0.key) }
+            .filter { row in
+                guard !words.isEmpty else { return true }
+                let hay = "\(row.displayTitle) \(row.harnessName) \(row.cwd ?? "")".lowercased()
+                return words.allSatisfy { hay.contains($0) }
+            }
+            .sorted { ($0.lastActiveAt ?? 0) > ($1.lastActiveAt ?? 0) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            PageScroll {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(Theme.textMuted)
+                    TextField("Search sessions", text: $query)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    if !query.isEmpty {
+                        Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.textMuted) }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Clear search")
+                    }
+                }
+                .font(Theme.body)
+                .padding(.horizontal, 12)
+                .frame(height: Theme.controlHeight + 4)
+                .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
+                .padding(.top, 4)
+
+                if app.displaySessions.isEmpty {
+                    StateCard(icon: "link", title: "No sessions to link",
+                              message: "Sessions show up here once the hub lists them.")
+                } else if candidates.isEmpty {
+                    Text("No session matches.").font(Theme.caption).foregroundStyle(Theme.textSecondary).padding(.horizontal, 4)
+                } else {
+                    CardList(data: candidates) { row in
+                        Button { link(row) } label: {
+                            HStack(spacing: 0) {
+                                SessionRowView(row: row)
+                                if busy == row.key {
+                                    ProgressView().controlSize(.small)
+                                        .padding(.trailing, Theme.rowHorizontal)
+                                }
+                            }
+                        }
+                        .buttonStyle(RowButtonStyle())
+                        .disabled(busy != nil)
+                    }
+                }
+                if let error {
+                    Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                        .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 4)
+                }
+            }
+            .navigationTitle("Link a session")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            }
+        }
+        .task { await app.refresh() }
+    }
+
+    private func link(_ row: SessionRow) {
+        guard let client = app.client, busy == nil else { return }
+        busy = row.key
+        error = nil
+        Task {
+            do {
+                try await client.linkTask(row.key, task: task)
+            } catch {
+                self.error = (error as? HubError)?.message ?? error.localizedDescription
+                busy = nil
+                return
+            }
+            onLinked()
+            dismiss()
+        }
+    }
+}
