@@ -207,12 +207,15 @@ private struct Sidebar: View {
         // The tracking area spans the full unclipped width, so where the
         // pointer is decides "inside": collapsed, only the icon strip
         // arms the expansion — a pointer crossing the rail to reach the
-        // page's left edge never floats the panel over its target. Once
+        // page's left edge never floats the panel over its target. The
+        // header row is left out: in full screen the rail's toggle sits
+        // there, and a float would slide it away from the click. Once
         // floating, the whole expanded panel keeps itself hovered.
         .onContinuousHover { phase in
             switch phase {
             case .active(let location):
-                hover(isExpanded || location.x <= Theme.sidebarHoverWidth)
+                hover(isExpanded
+                    || (location.x <= Theme.sidebarHoverWidth && location.y > headerHeight))
             case .ended:
                 hover(false)
             }
@@ -505,8 +508,9 @@ private struct SidebarToggle: NSViewRepresentable {
             title = ""
             imagePosition = .imageOnly
             contentTintColor = NSColor(Theme.textNav)
-            focusRingType = .none
-            refusesFirstResponder = true
+            // Tab reaches it with Keyboard navigation on; a click never
+            // makes an NSButton first responder, so no ring sticks.
+            focusRingType = .default
             wantsLayer = true
             layer?.cornerRadius = Theme.controlRadius
             target = self
@@ -527,12 +531,24 @@ private struct SidebarToggle: NSViewRepresentable {
 
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+        override var focusRingMaskBounds: NSRect { bounds }
+
+        override func drawFocusRingMask() {
+            NSBezierPath(roundedRect: bounds, xRadius: Theme.controlRadius,
+                         yRadius: Theme.controlRadius).fill()
+        }
+
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
             trackingAreas.forEach(removeTrackingArea)
             addTrackingArea(NSTrackingArea(rect: .zero,
                 options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
                 owner: self))
+            // A new area sends no exit for a pointer the button slid out
+            // from under, so read where the pointer is now.
+            if let window {
+                hovering = bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+            }
         }
 
         override func mouseEntered(with event: NSEvent) { hovering = true }
