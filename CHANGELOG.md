@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe init --hub=<git url>` brings your hub onto a new machine.** It
+  checks the URL with `git ls-remote`, clones it as `~/.quiver` with your
+  URL as `origin`, then links it into every harness as a plain `swe init`
+  does. It only clones into a missing or empty `~/.quiver`; an existing
+  one is left alone and plain `swe init` repairs it instead. A token in
+  the URL never reaches the terminal
+  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
+
 - **Slash commands in the web app's chat.** Typing `/` at the start of a
   session's prompt box lists the commands that session's harness runs —
   the phone app's "/" menu on the web: built-ins plus user, project,
