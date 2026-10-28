@@ -190,6 +190,30 @@ class CmdInitTest(unittest.TestCase):
             self.assertTrue(skills_link.is_symlink())
             self.assertEqual(Path(skills_link.readlink()), skills_dir(home))
 
+    def test_init_creates_every_hub_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _fake_home(tmp)
+            code, _ = self._run(home, [])
+            self.assertEqual(code, 0)
+            for name in ("skills", "plugins", "hooks", "mcp", "backups"):
+                self.assertTrue((quiver_dir(home) / name).is_dir(), name)
+
+    def test_init_repairs_a_half_built_hub(self):
+        # #696: a second machine had ~/.quiver with only AGENTS.md and an
+        # empty skills/. Init adds the missing folders and keeps the rest.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _fake_home(tmp)
+            skills_dir(home).mkdir(parents=True)
+            agents_file(home).write_text("mine\n")
+            _, out = self._run(home, ["--check"])
+            self.assertIn("plugins/", out)
+            self.assertFalse((quiver_dir(home) / "plugins").exists())
+            code, _ = self._run(home, [])
+            self.assertEqual(code, 0)
+            for name in ("plugins", "hooks", "mcp"):
+                self.assertTrue((quiver_dir(home) / name).is_dir(), name)
+            self.assertEqual(agents_file(home).read_text(), "mine\n")
+
     def test_existing_file_blocks_without_force(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _fake_home(tmp)

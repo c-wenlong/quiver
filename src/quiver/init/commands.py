@@ -12,7 +12,7 @@ from quiver.console import c
 from quiver.flags import expand_value_flags
 from quiver.json_output import emit, take_json_flag
 from quiver.multiselect import Choice, _supported, multiselect
-from quiver.paths import backup_tree
+from quiver.paths import backup_tree, hub_dirs_for
 from quiver.prompt import read_line
 from quiver.init.hooks import load_registry, plan_hooks
 from quiver.init.manage import (
@@ -177,20 +177,22 @@ def _print_paths(title: str, rows: list[tuple[LinkStatus, str]], home: Path) -> 
 
 
 def _ensure_scaffold(home: Path, check_only: bool) -> list[str]:
-    """Create the .quiver directory, seed file, and skills dir if absent."""
+    """Create the .quiver directory, seed files and hub folders if absent.
+
+    Run on an existing ~/.quiver this is the repair: it adds whichever hub
+    folders are missing and never touches a file that is already there.
+    """
     import os
 
     notes = []
-    root, agents, skills, backups = (
-        quiver_dir(home),
-        agents_file(home),
-        skills_dir(home),
-        backups_dir(home),
-    )
+    root, agents = quiver_dir(home), agents_file(home)
+    dirs = [(root, "~/.quiver")]
+    dirs += [(path, f"{path.name}/") for path in hub_dirs_for(home)]
+    dirs.append((backups_dir(home), "backups/"))
     # lexists, not exists: a dangling symlink is invisible to exists() but a
     # mkdir/write through it lands wherever the link points — possibly far
     # outside ~/.quiver. A scaffold path that is any symlink is left alone.
-    for path, label in ((root, "~/.quiver"), (skills, "skills/"), (backups, "backups/")):
+    for path, label in dirs:
         if not os.path.lexists(path):
             notes.append(f"create {label}")
             if not check_only:
