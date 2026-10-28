@@ -139,6 +139,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   higher, and cards, blocks, fields, buttons and sheets have the Mac app's
   smaller corner radii.
 
+- **The web app's chat renders agent Markdown.** Messages used to pass
+  through a minimal renderer that only restored fenced code, inline code
+  and bold — tables showed as raw pipes and headings as raw hashes. The
+  chat now runs a port of the phone's block parser
+  (`app/ios/Sources/QuiverRemote/Hub/Markdown.swift`): headings, bullet
+  and numbered lists (nested, with task boxes), quotes, rules, fenced
+  code and tables become real markup. A table wider than the message
+  scrolls sideways inside its own box (bounded at 24 columns and 200
+  rows, with a note for the rest), a lone `![alt](src)` image or a
+  harness-drawn `<json-render>` view folds into a note chip, and a link
+  to the agent's own files — like the ones Codex ends a turn with —
+  shows as a file name instead of a dead link.
+
 - **The Plugins page opens on Explore.** In the Mac app and the web app,
   Explore is now the first tab and the view Plugins lands on: the
   catalog of every marketplace's plugins is what the page is for, and

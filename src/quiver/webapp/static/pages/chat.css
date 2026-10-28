@@ -106,6 +106,60 @@ body.chat-open .panel { display: flex; min-height: 0; overflow: hidden; }
   overflow-x: auto; white-space: pre; font-size: 12px;
 }
 .msg pre.code code { background: transparent; padding: 0; }
+
+/* Rich agent markdown (chat.js's port of the phone's Markdown): blocks
+ * inside .text — paragraphs, headings, list items, quotes, rules,
+ * tables in a sideways-scrolling box, and the note chips that stand in
+ * for images and harness-drawn views. */
+.msg .text p { margin: 0 0 6px; }
+.msg .text > :last-child { margin-bottom: 0; }
+.msg .md-h { color: var(--text-primary); font-weight: 600; margin: 8px 0 4px; }
+.msg .md-h:first-child { margin-top: 0; }
+.msg .md-h1 { font-size: 17px; }
+.msg .md-h2 { font-size: 15px; }
+.msg .md-h3 { font-size: 14px; }
+.msg .md-h4 { font-size: 13px; }
+.msg .md-li { display: flex; gap: 6px; margin: 2px 0; }
+.msg .md-marker {
+  flex: none; min-width: 14px; text-align: right;
+  color: var(--text-secondary); font-variant-numeric: tabular-nums;
+}
+.msg .md-marker input { margin: 0; vertical-align: middle; }
+.msg .md-li-text { flex: 1; min-width: 0; }
+.msg blockquote {
+  margin: 4px 0; padding-left: 10px;
+  border-left: 3px solid var(--border-strong); color: var(--text-secondary);
+}
+.msg hr { border: 0; border-top: 1px solid var(--border); margin: 8px 0; }
+.msg .text a { color: var(--link); }
+/* A Markdown table in a hairline box, as the phone's TableBlock: when
+ * it is wider than the message it scrolls sideways inside the box, so
+ * the chat itself never does. Cells cap at 240px and wrap past it. */
+.msg .md-table {
+  margin: 6px 0; max-width: 100%; overflow-x: auto;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+}
+.msg .md-table table { border-collapse: collapse; font-size: 13px; }
+.msg .md-table th, .msg .md-table td {
+  padding: 6px 10px; text-align: left; vertical-align: top; max-width: 240px;
+}
+.msg .md-table th { background: var(--subtle); font-weight: 600; color: var(--text-primary); }
+.msg .md-table td { border-top: 1px solid var(--border); }
+.msg .md-table .al-c { text-align: center; }
+.msg .md-table .al-r { text-align: right; }
+.msg .md-table-note { padding: 0 10px 6px; font-size: 12px; color: var(--text-muted); }
+/* The quiet card for what the browser can't draw: a lone ![alt](src)
+ * image or a harness's <json-render> view. */
+.msg .md-note {
+  display: flex; align-items: center; gap: 10px; margin: 6px 0; padding: 8px 12px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--card);
+}
+.msg .md-note svg { width: 14px; height: 14px; flex: none; color: var(--text-secondary); }
+.msg .md-note-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.msg .md-note-sub {
+  font-size: 12px; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .arrive { animation: chat-arrive .25s ease-out; }
 @keyframes chat-arrive { from { opacity: 0; transform: translateY(10px); } }
 
