@@ -14,7 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   URL as `origin`, then links it into every harness as a plain `swe init`
   does. It only clones into a missing or empty `~/.quiver`; an existing
   one is left alone and plain `swe init` repairs it instead. A token in
-  the URL never reaches the terminal
+  the URL never reaches the terminal. Each marketplace under the hub's
+  `plugins/` is then registered with Claude Code and Codex through their
+  own `plugin marketplace add`, the same fix `swe find plugins` offers
   ([#696](https://github.com/c-wenlong/quiver/issues/696)).
 
 - **Hub route for previewing a page file.** `GET

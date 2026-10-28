@@ -11,7 +11,8 @@ from pathlib import Path
 from unittest import mock
 
 from quiver.init import commands as init_commands
-from quiver.init.hub import HubError, check_target, clone_hub, public_url
+from quiver.init.hub import (HubError, check_target, clone_hub, public_url,
+                              register_marketplaces)
 
 GIT = shutil.which("git")
 
@@ -127,8 +128,54 @@ class CloneHubTest(unittest.TestCase):
             self.assertEqual(remote, str(src))
 
 
+class RegisterMarketplacesTest(unittest.TestCase):
+    def _hub_with_plugin(self, home: Path) -> Path:
+        market = home / ".quiver" / "plugins" / "mine"
+        (market / ".claude-plugin").mkdir(parents=True)
+        (market / ".claude-plugin" / "marketplace.json").write_text(
+            '{"name": "mine", "plugins": [{"name": "p", "source": "./p"}]}\n')
+        (market / "p" / ".claude-plugin").mkdir(parents=True)
+        (market / "p" / ".claude-plugin" / "plugin.json").write_text('{"name": "p"}\n')
+        return market
+
+    def test_each_hub_marketplace_is_added_through_the_harness_cli(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".claude").mkdir()
+            market = self._hub_with_plugin(home)
+            ran = []
+
+            def run(argv, **kw):
+                ran.append(argv)
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            got = register_marketplaces(home, run=run)
+        self.assertEqual(got, [("claude", "mine", None)])
+        self.assertEqual(ran, [["claude", "plugin", "marketplace", "add", str(market)]])
+
+    def test_a_missing_cli_is_reported_not_raised(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".claude").mkdir()
+            self._hub_with_plugin(home)
+            got = register_marketplaces(home, run=mock.Mock(side_effect=FileNotFoundError))
+        self.assertEqual(got, [("claude", "mine", "claude is not on PATH")])
+
+    def test_no_harness_installed_means_nothing_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self._hub_with_plugin(home)
+            run = mock.Mock()
+            self.assertEqual(register_marketplaces(home, run=run), [])
+        run.assert_not_called()
+
+
 @unittest.skipUnless(GIT, "git not installed")
 class CmdInitHubTest(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch("quiver.init.hub.register_marketplaces", return_value=[])
+        self.register = patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _run(self, home: Path, args):
         with mock.patch.object(Path, "home", staticmethod(lambda: home)):
             buf = io.StringIO()
@@ -153,6 +200,7 @@ class CmdInitHubTest(unittest.TestCase):
             link = home / ".claude" / "CLAUDE.md"
             self.assertTrue(link.is_symlink())
             self.assertEqual(link.read_text(), "# from the hub\n")
+            self.register.assert_called_once_with(home)
 
     def test_init_refuses_to_clone_over_an_existing_hub(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -164,6 +212,7 @@ class CmdInitHubTest(unittest.TestCase):
             code, out = self._run(home, [f"--hub={src}"])
             self.assertEqual(code, 1)
             self.assertIn("already has files", out)
+            self.register.assert_not_called()
             self.assertEqual((home / ".quiver" / "AGENTS.md").read_text(), "mine\n")
 
     def test_hub_needs_the_equals_form_and_no_check(self):
