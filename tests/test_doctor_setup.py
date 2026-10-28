@@ -112,6 +112,31 @@ class SetupFindingsTest(unittest.TestCase):
         self.assertEqual(len(got), 1)
         self.assertIn("managed by Nix", got[0].fix)
 
+    def test_a_cli_registered_marketplace_gets_the_remove_command(self):
+        self._declare(["nus"])
+        plugins = self.home / ".claude" / "plugins"
+        plugins.mkdir()
+        (plugins / "known_marketplaces.json").write_text(json.dumps({
+            "added": {"source": {"source": "directory",
+                                 "path": str(self.home / "gone" / "added")}}}))
+        got = [f for f in self.findings({"claude": {"command": "claude"}})
+               if f.check == "setup.marketplace-missing"]
+        self.assertEqual(len(got), 1)
+        self.assertIn("drop nus from ~/.claude/settings.json", got[0].fix)
+        self.assertIn("claude plugin marketplace remove added", got[0].fix)
+        self.assertNotIn("drop added", got[0].fix)
+
+    def test_an_unreadable_harness_says_the_check_did_not_finish(self):
+        self._declare(["nus"])
+        plugins = self.home / ".claude" / "plugins"
+        plugins.mkdir()
+        (plugins / "installed_plugins.json").write_text("not json")
+        got = self.findings({"claude": {"command": "claude", "display_name": "Claude Code"}})
+        checks = {f.check: f for f in got}
+        self.assertNotIn("setup.marketplace-missing", checks)
+        self.assertIn("Couldn't check Claude Code's marketplaces",
+                      checks["setup.marketplace-unchecked"].message)
+
     def test_present_marketplace_folders_are_quiet(self):
         self._declare(["here"], present=["here"])
         got = self.findings({"claude": {"command": "claude"}})
