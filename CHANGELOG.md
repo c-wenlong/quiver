@@ -153,6 +153,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mac app sidebar toggle works in a normal window.** Since the toggle
+  moved into the traffic lights' row, a click on it in a window that was
+  not full screen did nothing: the sidebar list or the page reached up
+  under it and took the click, and the title bar treated a click there
+  as a window drag. The toggle is now a native button drawn over the
+  list. In full screen, where the traffic lights are hidden, the wordmark
+  and toggle sit at the left edge, and the toggle now follows the
+  wordmark instead of the sidebar's trailing edge.
+
 - **A unit test could freeze the whole Swift suite.** In
   `clearWaitsForACallInsideTheLock` the clearer ran as `Task.detached`,
   so `store.clear()` parked a cooperative-pool worker on `storeLock`
