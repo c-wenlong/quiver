@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The web app's chat shows the tmux pane and can detach.** A session
+  Quiver runs under tmux shows its `qv-…` name in the chat's top bar;
+  a click copies `tmux attach -t qv-…`. The bar's Detach button offers
+  the phone's three choices: detach when the turn finishes, keep it
+  running in tmux, or detach now. A kept session says it is still
+  running and offers Reattach, which takes the live pane back, mid-turn
+  included. `/v1/sessions` rows carry the supervised `mode`, the `tmux`
+  name and `kept`, and so do `session.ownership` events. The details
+  sheet adds the pane, its attach command and, on a macOS hub, Run in
+  terminal ([#850](https://github.com/c-wenlong/quiver/pull/850)).
+
 - **`swe init --hub=<git url>` brings your hub onto a new machine.** It
   checks the URL with `git ls-remote`, clones it as `~/.quiver` with your
   URL as `origin`, then links it into every harness as a plain `swe init`
