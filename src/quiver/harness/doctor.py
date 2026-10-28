@@ -188,4 +188,50 @@ def setup_findings(home: Path | None = None) -> list[DoctorFinding]:
                 "setup.unlinked", "warning",
                 f"{title} doesn't read {' or '.join(wanted)} yet",
                 "swe init", harness=name, action="init"))
+    findings.extend(marketplace_findings(home, registry))
+    return findings
+
+
+# The file each plugin-capable harness registers marketplaces in.
+_MARKETPLACE_CONFIG = {"claude": ".claude/settings.json", "codex": ".codex/config.toml"}
+
+
+def marketplace_findings(home: Path, registry: dict | None = None) -> list[DoctorFinding]:
+    """One warning per harness whose registered folder marketplaces are gone.
+
+    A settings file synced from another machine can name
+    ``~/.quiver/plugins/<name>`` folders that never reached this one (#696).
+    Only ``directory`` marketplaces count: a git or GitHub one with no
+    manifest yet is fetched by the harness itself. When the settings file
+    is a Nix store link, editing it would fail, so the fix says where the
+    change belongs instead.
+    """
+    import os
+
+    from quiver.harness.models import display_name
+    from quiver.plugins.catalog import read_views
+
+    findings: list[DoctorFinding] = []
+    for name, view in read_views(home, []).items():
+        missing = sorted(m.name for m in view.markets.values()
+                         if m.source_type == "directory" and m.root is not None
+                         and not m.root.is_dir())
+        if not missing:
+            continue
+        title = display_name((registry or {}).get(name) or {}) or name
+        listed = ", ".join(missing)
+        config = home / _MARKETPLACE_CONFIG.get(name, "")
+        if name in _MARKETPLACE_CONFIG and os.path.realpath(config).startswith("/nix/store/"):
+            fix = (f"~/{_MARKETPLACE_CONFIG[name]} is managed by Nix: copy the folders "
+                   "onto this machine or drop them from your Nix config")
+        elif name in _MARKETPLACE_CONFIG:
+            fix = (f"copy the folders onto this machine, or drop them from "
+                   f"~/{_MARKETPLACE_CONFIG[name]}")
+        else:
+            fix = "copy the folders onto this machine"
+        findings.append(DoctorFinding(
+            "setup.marketplace-missing", "warning",
+            f"{title} registers {len(missing)} marketplace folder"
+            f"{'s' if len(missing) != 1 else ''} missing on this machine: {listed}",
+            fix, harness=name))
     return findings

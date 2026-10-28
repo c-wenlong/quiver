@@ -69,6 +69,54 @@ class SetupFindingsTest(unittest.TestCase):
         states = {"old": {"agents": "create"}, "keep": {"agents": "keep"}}
         self.assertEqual(self.findings(registry, states), [])
 
+    def _declare(self, names, present=()):
+        """A claude settings.json naming hub folder marketplaces."""
+        (self.hub() / "AGENTS.md").write_text("# shared\n")
+        claude = self.home / ".claude"
+        claude.mkdir(exist_ok=True)
+        markets = {name: {"source": {"source": "directory",
+                                     "path": str(self.home / ".quiver" / "plugins" / name)}}
+                   for name in names}
+        markets["remote"] = {"source": {"source": "github", "repo": "o/r"}}
+        settings = claude / "settings.json"
+        settings.write_text(json.dumps({"extraKnownMarketplaces": markets}))
+        for name in present:
+            (self.home / ".quiver" / "plugins" / name).mkdir(parents=True)
+        return settings
+
+    def test_missing_marketplace_folders_fold_into_one_warning(self):
+        # #696: a synced settings.json named hub folders this machine lacks.
+        self._declare(["nus", "design", "here"], present=["here"])
+        registry = {"claude": {"command": "claude", "display_name": "Claude Code"}}
+        got = [f for f in self.findings(registry)
+               if f.check == "setup.marketplace-missing"]
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0].harness, "claude")
+        self.assertEqual(got[0].severity, "warning")
+        # The github marketplace is fetched by claude itself, so not listed.
+        self.assertIn("Claude Code registers 2 marketplace folders missing "
+                      "on this machine: design, nus", got[0].message)
+        self.assertIn("~/.claude/settings.json", got[0].fix)
+
+    def test_a_nix_managed_settings_file_says_so(self):
+        settings = self._declare(["nus"])
+        store = self.home / "nix" / "store"
+        store.mkdir(parents=True)
+        real = store / "settings.json"
+        settings.rename(real)
+        settings.symlink_to(real)
+        registry = {"claude": {"command": "claude"}}
+        with mock.patch("os.path.realpath", return_value="/nix/store/abc-settings.json"):
+            got = [f for f in self.findings(registry)
+                   if f.check == "setup.marketplace-missing"]
+        self.assertEqual(len(got), 1)
+        self.assertIn("managed by Nix", got[0].fix)
+
+    def test_present_marketplace_folders_are_quiet(self):
+        self._declare(["here"], present=["here"])
+        got = self.findings({"claude": {"command": "claude"}})
+        self.assertNotIn("setup.marketplace-missing", [f.check for f in got])
+
     def test_json_carries_action(self):
         self.assertEqual(self.findings({})[0].to_json()["action"], "setup")
 
