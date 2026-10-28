@@ -198,20 +198,42 @@ class TestStore(unittest.TestCase):
                          {"c": {"state": "closed", "pr": None}})
 
     def test_remember_writes_changes_and_drops_unstored_tasks(self):
+        i_tid = tasks_mod.task_id(ISSUE_REF)
+        p_tid = tasks_mod.task_id(PULL_REF)
+        tasks_mod.link(self.home, ISSUE_REF, session_key="claude:s1")
+        tasks_mod.link(self.home, PULL_REF, session_key="claude:s2")
         tasks_mod._remember(self.home, {
-            "a": {"state": "open", "pr": None},
-            "b": {"state": "closed", "pr": None}}, ["a", "b"])
-        # "b" left the store; the next write forgets it.
+            i_tid: {"state": "open", "pr": None},
+            p_tid: {"state": "closed", "pr": None}})
+        # The pull left the store; the next write forgets it.
+        tasks_mod.unlink(self.home, "claude:s2")
         tasks_mod._remember(self.home, {
-            "a": {"state": "closed", "pr": None}}, ["a"])
+            i_tid: {"state": "closed", "pr": None}})
         self.assertEqual(tasks_mod._load_states(self.home),
-                         {"a": {"state": "closed", "pr": None}})
+                         {i_tid: {"state": "closed", "pr": None}})
+
+    def test_remember_prunes_against_the_store_as_it_is_now(self):
+        """A slow poll that started before a task was linked must not
+        prune that task's entry, which a newer poll already wrote."""
+        i_tid = tasks_mod.task_id(ISSUE_REF)
+        p_tid = tasks_mod.task_id(PULL_REF)
+        tasks_mod.link(self.home, ISSUE_REF, session_key="claude:s1")
+        tasks_mod.link(self.home, PULL_REF, session_key="claude:s2")
+        tasks_mod._remember(self.home, {
+            p_tid: {"state": "merged", "pr": None}})
+        # The older poll only knew the issue.
+        tasks_mod._remember(self.home, {
+            i_tid: {"state": "closed", "pr": None}})
+        self.assertEqual(set(tasks_mod._load_states(self.home)),
+                         {i_tid, p_tid})
 
     def test_remember_survives_an_unwritable_cache(self):
+        tasks_mod.link(self.home, ISSUE_REF, session_key="claude:s1")
         with patch("quiver.remote.tasks.atomic_write_text",
                    side_effect=OSError("read-only")):
             tasks_mod._remember(self.home, {
-                "a": {"state": "open", "pr": None}}, ["a"])
+                tasks_mod.task_id(ISSUE_REF): {"state": "open",
+                                               "pr": None}})
         self.assertEqual(tasks_mod._load_states(self.home), {})
 
 
@@ -466,6 +488,49 @@ class TestTasksRoute(_Base):
                          ("in_progress", "live"))
         self.assertEqual(self._states()[tid],
                          {"state": "open", "pr": None})
+
+    def test_a_failed_pr_lookup_keeps_the_remembered_pr(self):
+        """``issue view`` answering while the branch's ``pr list``
+        fails says nothing about the PR: the merged one stays."""
+        tasks_mod.link(self.srv.home, ISSUE_REF, session_key="claude:s1")
+        tid = tasks_mod.task_id(ISSUE_REF)
+        with self._stubs(run_json=self._closed_with_merged_pr):
+            self._task(tid)
+
+        def pr_list_fails(args, **kw):
+            if args[:2] == ["pr", "list"]:
+                return gh.GhResult("upstream-error", error="502")
+            return self._closed_with_merged_pr(args, **kw)
+
+        G.CACHE.clear()
+        with self._stubs(run_json=pr_list_fails):
+            row = self._task(tid)
+        self.assertEqual((row["state"], row["state_source"]),
+                         ("merged", "live"))
+        self.assertEqual(self._states()[tid]["pr"]["state"], "merged")
+        G.CACHE.clear()
+        with self._stubs(env=gh.GhEnv(installed=True,
+                                      authenticated=False)):
+            row = self._task(tid)
+        self.assertEqual((row["state"], row["state_source"]),
+                         ("merged", "cached"))
+
+    def test_an_open_pr_gone_from_the_open_list_is_forgotten(self):
+        """The open list rules out an open PR on the branch, so a
+        remembered open one goes; it can't rule out a merged one."""
+        tasks_mod.link(self.srv.home, ISSUE_REF, session_key="claude:s1")
+        tid = tasks_mod.task_id(ISSUE_REF)
+        pr = {**_row(9), "branch": "quiver/issue-5"}
+        with self._stubs(pulls=lambda name, login: {
+                "name": name, "status": "ok", "pulls": [pr]}):
+            self.assertEqual(self._task(tid)["state"], "pr_open")
+        self.assertEqual(self._states()[tid]["pr"]["state"], "open")
+        G.CACHE.clear()
+        with patch.object(tasks_mod, "MAX_REFRESH", 0), self._stubs():
+            row = self._task(tid)
+        self.assertEqual(row["state"], "in_progress")
+        self.assertIsNone(row["pr"])
+        self.assertIsNone(self._states()[tid]["pr"])
 
     def test_listed_rows_read_live(self):
         with self._stubs():
