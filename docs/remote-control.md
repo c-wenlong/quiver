@@ -160,6 +160,7 @@ remote/
   journal.py     # per-session seq-numbered event log (replay on reconnect)
   hub.py         # http.server ThreadingHTTPServer: REST + SSE, device auth
   files.py       # @-mention paths under a session's folder (/v1/sessions/{id}/files)
+  preview.py     # one .html/.svg file from a session's folder (/v1/sessions/{id}/preview)
   agent.py       # satellite daemon: dial hub, run local tail/inject
   notify.py      # needs-you/finished/error/GitHub-unread fan-out via ntfy
   launchd.py     # serve --install: the hub as a per-user LaunchAgent
@@ -332,6 +333,7 @@ POST /v1/sessions/{id}/task          {task_ref} link a work item to this session
 DELETE /v1/sessions/{id}/task        {task_ref}? unlink one task, or all without a ref
 GET  /v1/folders?path=                subfolders of one folder on the hub machine (new-session browser)
 GET  /v1/sessions/{id}/files?q=     paths under the session's folder for the prompt box's @ menu
+GET  /v1/sessions/{id}/preview?path= one .html/.htm/.svg file from the session's folder, for Preview
 GET  /v1/launches/{launch_id}        pending|started|failed; started carries the session key
 GET  /v1/machines · /v1/usage · /v1/search?q=
 GET  /v1/inbox                       pending decisions; ?done=1 adds finished-today
@@ -809,6 +811,32 @@ folder), `422 cwd_missing` (it no longer exists or isn't a folder), `403
 not_readable`, and `422 files_unavailable` for a satellite's session,
 whose disk the hub can't read and whose command journal has no way to
 answer a request yet.
+
+`GET /v1/sessions/{id}/preview?path=` (`preview.py`) returns one page
+file from the session's working folder as it is on disk now, for the
+Preview button on a tool card that wrote it. `path` is relative to the
+working folder (a client holding a tool call's absolute path strips the
+session's `cwd` first). The route shares the `@` search's confinement:
+an absolute path, a `..` part (either slash) or a NUL is refused before
+anything touches disk; the path is resolved with `realpath` and must
+stay inside the resolved working folder; then the file is opened one
+folder at a time from that root with `O_NOFOLLOW`, so a part swapped
+for a symlink after the check can't lead outside. A symlink that stays
+inside the folder is followed. Both the requested name and the resolved
+name must end in `.html`, `.htm` or `.svg` (any case), only a regular
+file is read, and the cap is 2 MB. The answer is the raw bytes with
+`Content-Type` `text/html; charset=utf-8` or `image/svg+xml`,
+`Cache-Control: no-store`, `Last-Modified`, `X-Content-Type-Options:
+nosniff`, and `Content-Security-Policy: default-src 'none'; style-src
+'unsafe-inline'; img-src data:; font-src data:; media-src data:;
+base-uri 'none'; form-action 'none'; sandbox`, so even a browser that
+opens the response directly runs no script, loads nothing over the
+network and gets an opaque origin. Errors use the JSON error shape:
+`404 unknown_session`, `422 bad_path` (empty, absolute, `..`, NUL, or
+over 4096 characters), `415 unsupported_type`, `403 outside_folder`,
+`404 not_found`, `422 not_a_file` (a folder, FIFO or device), `413
+too_large`, `403 not_readable`, the `@` search's `bad_cwd` and
+`cwd_missing`, and `422 preview_unavailable` for a satellite's session.
 
 `GET /v1/search?q=&limit=` (`search.py`) puts each matching session in
 the first tier it qualifies for: its title holds the query (whole, or
