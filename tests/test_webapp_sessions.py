@@ -407,15 +407,156 @@ class TestChatScript(unittest.TestCase):
         out = self.run_js(
             "return [T.md('<img src=x onerror=alert(1)> **bold** `a<b`'),"
             " T.md('before\\n```python\\nx = 1\\n```\\nafter')];")
-        self.assertEqual(out[0], "&lt;img src=x onerror=alert(1)&gt; <strong>bold</strong> <code>a&lt;b</code>")
-        self.assertEqual(out[1], 'before<pre class="code"><code>x = 1</code></pre>after')
+        self.assertEqual(out[0], "<p>&lt;img src=x onerror=alert(1)&gt; <strong>bold</strong> <code>a&lt;b</code></p>")
+        self.assertEqual(out[1], '<p>before</p><pre class="code"><code>x = 1</code></pre><p>after</p>')
 
     def test_code_keeps_its_markers(self):
         out = self.run_js(
             "return [T.md('```js\\nconst s = \"**keep**\"; // `tick`\\n```'),"
             " T.md('`**raw**` and **bold**')];")
         self.assertEqual(out[0], '<pre class="code"><code>const s = &quot;**keep**&quot;; // `tick`</code></pre>')
-        self.assertEqual(out[1], "<code>**raw**</code> and <strong>bold</strong>")
+        self.assertEqual(out[1], "<p><code>**raw**</code> and <strong>bold</strong></p>")
+
+    def test_inline_links_escapes_and_labels(self):
+        """The phone hands inline text to AttributedString(markdown:), so
+        <url> autolinks, & in a query, emphasis inside a link label and
+        \\-escaped markers all behave the CommonMark way."""
+        out = self.run_js(r"""
+          return {
+            angle: T.md('See <https://example.com/report> for details.'),
+            query: T.md('Open https://x.test/?a=1&b=2 now'),
+            label: T.md('[**Report**](https://example.com) and [a_b](x)'),
+            escaped: T.md('\\_literal\\_ and \\*not bold\\* and C:\\\\d'),
+          };""")
+        self.assertEqual(
+            out["angle"],
+            '<p>See &lt;<a href="https://example.com/report" target="_blank" rel="noopener">'
+            "https://example.com/report</a>&gt; for details.</p>")
+        self.assertIn('href="https://x.test/?a=1&amp;b=2"', out["query"])
+        self.assertEqual(
+            out["label"],
+            '<p><a href="https://example.com" target="_blank" rel="noopener">'
+            "<strong>Report</strong></a> and <code>a_b</code></p>")
+        self.assertEqual(
+            out["escaped"], "<p>_literal_ and *not bold* and C:\\d</p>")
+
+    def test_tables_render_as_tables(self):
+        """The phone's Markdown.parse cases: header, separator aligns,
+        escaped \\| cells, and what is not a table."""
+        out = self.run_js(r"""
+          return {
+            html: T.md('| Resource | Action |\n|---|---|\n'
+              + '| Cloud Scheduler `toolbox-v2-db-sync` | sync |\n'
+              + '| Remove the `*-dsn` secrets \\| after revoking. | revoke |'),
+            aligns: T.separatorAlignments('| :--- | :---: | ---: |'),
+            rule: T.separatorAlignments('---'),
+            notSep: T.separatorAlignments('| a | b |'),
+            cells: T.cells('| `C:\\Users\\alice` | \\d+ \\| x |'),
+          };""")
+        self.assertIn("<th>Resource</th><th>Action</th>", out["html"])
+        self.assertIn("<td>Cloud Scheduler <code>toolbox-v2-db-sync</code></td>", out["html"])
+        self.assertIn("<td>Remove the <code>*-dsn</code> secrets | after revoking.</td>", out["html"])
+        self.assertEqual(out["aligns"], ["l", "c", "r"])
+        self.assertIsNone(out["rule"], "a lone rule is not a table separator")
+        self.assertIsNone(out["notSep"])
+        self.assertEqual(out["cells"], ["`C:\\Users\\alice`", "\\d+ | x"])
+
+    def test_table_is_bounded(self):
+        """A malformed or huge table can't build millions of cells: 24
+        columns and 200 rows, with a note for the rest."""
+        out = self.run_js(r"""
+          const wide = '| ' + Array.from({length: 30}, (_, i) => 'h' + i).join(' | ') + ' |\n'
+            + '|' + '---|'.repeat(30) + '\n| ' + Array.from({length: 30}, (_, i) => 'c' + i).join(' | ') + ' |';
+          const deep = '| a |\n|---|\n' + '| 1 |\n'.repeat(205);
+          return [T.md(wide), T.md(deep)];""")
+        self.assertIn("6 more columns not shown", out[0])
+        self.assertIn("5 more rows not shown", out[1])
+        self.assertNotIn("c24", out[0])
+
+    def test_headings_lists_quotes_rules_and_code(self):
+        """Markdown.parse's structural test, ported from the phone suite."""
+        out = self.run_js(
+            "return T.mdBlocks('## Plan\\n1. First\\n2. Second\\n  continued\\n"
+            "- nested parent\\n  - child\\n> quoted\\n---\\n"
+            "```swift\\nlet x = 1\\n```\\n#not a heading');")
+        self.assertEqual(out, [
+            {"t": "h", "level": 2, "text": "Plan"},
+            {"t": "li", "indent": 0, "marker": "1.", "text": "First"},
+            {"t": "li", "indent": 0, "marker": "2.", "text": "Second\ncontinued"},
+            {"t": "li", "indent": 0, "marker": "•", "text": "nested parent"},
+            {"t": "li", "indent": 1, "marker": "•", "text": "child"},
+            {"t": "quote", "text": "quoted"},
+            {"t": "hr"},
+            {"t": "code", "lang": "swift", "code": "let x = 1"},
+            {"t": "p", "text": "#not a heading"},
+        ])
+
+    def test_heading_text_keeps_its_hashes(self):
+        out = self.run_js(
+            "return [T.heading('## C#'), T.heading('## #123'), T.heading('## Title ##'),"
+            " T.heading('#'), T.heading('###')];")
+        self.assertEqual(out, [[2, "C#"], [2, "#123"], [2, "Title"], None, None])
+
+    def test_blocks_indented_under_a_list_item(self):
+        """A fence or table indented under a list item parses as its own
+        block, and a fence's lines lose the fence's indent."""
+        out = self.run_js(
+            "return T.mdBlocks('1. Run\\n   ```\\n   make test\\n   ```\\n"
+            "2. Then\\n   | a | b |\\n   |---|---|\\n   | 1 | 2 |');")
+        self.assertEqual(len(out), 4)
+        self.assertEqual(out[0], {"t": "li", "indent": 0, "marker": "1.", "text": "Run"})
+        self.assertEqual(out[1], {"t": "code", "lang": "", "code": "make test"})
+        self.assertEqual(out[2]["t"], "li")
+        self.assertEqual(out[3]["t"], "table")
+        self.assertEqual(out[3]["rows"], [["1", "2"]])
+
+    def test_agent_coded_text_folds_to_notes(self):
+        """<json-render> views and lone images become note chips; inline
+        images read as *Image: alt*; unclosed fences still render."""
+        out = self.run_js(r"""
+          return {
+            rendered: T.md('<json-render>{"root":"d","elements":{}}</json-render>'),
+            trailing: T.mdBlocks('<json-render>{}</json-render> Saved successfully.'),
+            underItem: T.mdBlocks('- Result\n  <json-render>{}</json-render>\n- Chart\n  ![c](c.png)'),
+            img: T.md('Done.\n\n![Backfill outcomes](/Users/k/Downloads/outcomes.png)'),
+            inlineImg: T.inlineImagesAsText('see ![chart](a.png) here'),
+            codeImg: T.inlineImagesAsText('write `![chart](a.png)` or ![b](b.png)'),
+            escImg: T.inlineImagesAsText('literal \\![x](y.png)'),
+            two: T.imageLine('![first](a.png)![second](b.png)'),
+            tasks: T.md('- [ ] **Privacy (your call).**\n- [x] Shipped'),
+            fence: T.mdBlocks('```\nhalf'),
+          };""")
+        self.assertIn("Rendered view", out["rendered"])
+        self.assertEqual(out["trailing"], [
+            {"t": "rendered", "body": "<json-render>{}</json-render>"},
+            {"t": "p", "text": "Saved successfully."}])
+        self.assertEqual(out["underItem"], [
+            {"t": "li", "indent": 0, "marker": "•", "text": "Result"},
+            {"t": "rendered", "body": "<json-render>{}</json-render>"},
+            {"t": "li", "indent": 0, "marker": "•", "text": "Chart"},
+            {"t": "img", "alt": "c", "src": "c.png"}])
+        self.assertIn("Backfill outcomes", out["img"])
+        self.assertIn("outcomes.png · on the machine", out["img"])
+        self.assertEqual(out["inlineImg"], "see *Image: chart* here")
+        self.assertEqual(out["codeImg"], "write `![chart](a.png)` or *Image: b*")
+        self.assertEqual(out["escImg"], "literal \\![x](y.png)")
+        self.assertIsNone(out["two"])
+        self.assertIn('<input type="checkbox" disabled>', out["tasks"])
+        self.assertIn('<input type="checkbox" disabled checked>', out["tasks"])
+        self.assertEqual(out["fence"], [{"t": "code", "lang": "", "code": "half"}])
+
+    def test_local_file_links_show_as_file_names(self):
+        """A link to the agent's own files opens nothing on the web
+        either: its label shows as a file name (the phone's code-intent
+        rule), while web links stay links."""
+        out = self.run_js(
+            "return T.md('Read [AGENTS.md](/Users/k/.quiver/AGENTS.md), "
+            "[ai.py](finance/ai.py) and [PR](https://github.com/x/y/pull/1). "
+            "Plus https://example.com/a plain.');")
+        self.assertIn("<code>AGENTS.md</code>", out)
+        self.assertIn("<code>ai.py</code>", out)
+        self.assertIn('<a href="https://github.com/x/y/pull/1" target="_blank" rel="noopener">PR</a>', out)
+        self.assertIn('<a href="https://example.com/a" target="_blank" rel="noopener">https://example.com/a</a>', out)
 
     def test_codex_patches_from_the_decoder_render_as_diffs(self):
         """args_full exactly as tail.py journals a codex apply_patch: a
