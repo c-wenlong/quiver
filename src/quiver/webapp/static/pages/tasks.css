@@ -1,0 +1,47 @@
+/* Tasks (tasks.js), on top of github.css's .gh-* vocabulary. */
+
+/* The state ladder: numbered rungs joined by a line; a rung behind the
+ * task's state is ticked, the rung at it is outlined, the rest dim. */
+.tk-steps { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tk-step {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px;
+  border: 1px solid var(--border); border-radius: 999px; font-size: 12px;
+  color: var(--text-muted); background: var(--card); white-space: nowrap;
+}
+.tk-step .tk-num { width: 16px; height: 16px; border-radius: 50%; background: var(--subtle);
+  border: 1px solid var(--border-strong); display: grid; place-items: center; font-size: 11px; }
+.tk-step.done { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, var(--border)); }
+.tk-step-check { width: 16px; height: 16px; }
+.tk-step.at { color: var(--text-primary); font-weight: 500; border-color: var(--border-strong); }
+.tk-line { flex: 1 1 12px; min-width: 10px; max-width: 28px; border-top: 1px solid var(--border-strong); }
+
+/* The running chip on a row and in the tab strip. */
+.tk-running { flex: none; }
+.tk-running .gh-ico { width: 12px; height: 12px; }
+
+.badge.tk-merged { color: var(--gh-purple); }
+.badge.tk-closed { color: var(--danger-text); }
+
+/* A detail card's inner list: session and PR rows share the inbox's
+ * note rows, minus the unread weighting. */
+.tk-card { gap: 12px; }
+.tk-card .gh-note:first-of-type { border-top: 1px solid var(--row-divider); }
+.tk-logo { flex: none; margin-top: 2px; }
+.tk-still { cursor: default; }
+
+/* The two actions ride at the foot of the Sessions card. */
+.tk-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* The Link session picker's scrollable candidate list. */
+.tk-pick { max-height: 300px; overflow-y: auto; margin: 0 -4px; }
+.tk-link-go { flex: none; height: 28px; align-self: center; margin-right: 4px; }
+
+/* The stale note above stored rows while a source is blocked. */
+.tk-stale { display: flex; align-items: center; gap: 6px; padding: 0 4px; }
+.tk-stale .gh-ico { width: 12px; height: 12px; }
+
+@media (max-width: 720px) {
+  .tk-steps { gap: 4px; }
+  .tk-step { padding: 0 8px; }
+  .tk-row-side .badge { display: none; }
+}
