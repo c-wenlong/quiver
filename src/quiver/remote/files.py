@@ -115,17 +115,32 @@ def for_session(
     limit: int,
 ) -> dict:
     """The route's answer for one catalog row; raises ``FilesError``."""
+    cwd = local_cwd(row, hub_machine_id=hub_machine_id, machines=machines,
+                    code="files_unavailable", what="file search")
+    return search(cwd, query, limit)
+
+
+def local_cwd(
+    row: dict,
+    *,
+    hub_machine_id: str,
+    machines: dict[str, dict],
+    code: str,
+    what: str,
+) -> str:
+    """The working folder of a session on the hub's own disk. A
+    satellite's session raises ``422 <code>``: the hub can't read that
+    disk. No absolute folder raises ``422 bad_cwd``."""
     mid = str(row.get("machine_id") or "")
     if row.get("remote") or (mid and mid != hub_machine_id):
         name = str((machines.get(mid) or {}).get("name") or mid or "?")
         raise FilesError(
-            422, "files_unavailable",
-            f"file search isn't available for sessions on {name} yet",
+            422, code, f"{what} isn't available for sessions on {name} yet",
         )
     cwd = row.get("cwd")
     if not isinstance(cwd, str) or not cwd.startswith("/") or "\x00" in cwd:
         raise FilesError(422, "bad_cwd", "this session has no working folder")
-    return search(cwd, query, limit)
+    return cwd
 
 
 def search(cwd: str, query: str, limit: int = DEFAULT_LIMIT) -> dict:
@@ -187,7 +202,10 @@ def inside(root: str, real: str) -> bool:
     return real == root or real.startswith(root.rstrip("/") + "/")
 
 
-def _safe_rel(rel: str) -> bool:
+def safe_rel(rel: str) -> bool:
+    """Whether ``rel`` is a non-empty relative path with no ``..`` part
+    (either slash counts) and no NUL. A syntax check only: ``confine``
+    still has to resolve it."""
     if not rel or rel.startswith("/") or "\x00" in rel:
         return False
     return ".." not in rel.replace("\\", "/").split("/")
@@ -197,7 +215,7 @@ def confine(root: str, rel: str) -> str | None:
     """The real path of ``rel`` under ``root`` (a ``resolve_root``
     result), or None when ``rel`` is absolute, has a ``..`` part, or
     resolves outside ``root`` once symlinks are followed."""
-    if not _safe_rel(rel):
+    if not safe_rel(rel):
         return None
     real = os.path.realpath(os.path.join(root, rel))
     return real if inside(root, real) else None
@@ -443,7 +461,7 @@ def _from_git(
         if n % 256 == 255 and time.monotonic() > deadline:
             cut = True
             break
-        if not _safe_rel(rel) or not _utf8(rel):
+        if not safe_rel(rel) or not _utf8(rel):
             continue
         parent = rel.rpartition("/")[0]
         # Every folder on the way must resolve inside root; walk up so
@@ -495,7 +513,7 @@ _DIR_FLAGS = (
 )
 
 
-def _open_dir(root: str, rel_dir: str) -> int | None:
+def open_dir(root: str, rel_dir: str) -> int | None:
     """An fd for ``root/rel_dir`` opened one part at a time, each relative
     to the folder before it and refusing a symlink, so a folder swapped
     for a link after it was queued can't lead the walk outside root."""
@@ -571,7 +589,7 @@ def _walk(root: str, deadline: float) -> tuple[list[_Entry], bool]:
         opened += 1
         if _before_open is not None:
             _before_open(rel_dir)
-        fd = _open_dir(root, rel_dir)
+        fd = open_dir(root, rel_dir)
         if fd is None:
             continue
         try:

@@ -140,6 +140,15 @@ class TestBuilt(_CatalogHome, unittest.TestCase):
         official = [m for s in body["sources"] for m in s["marketplaces"] if m["name"] == "official"]
         self.assertEqual([m["tag"] for m in official], ["github", "git"])
 
+    def test_a_missing_folder_is_written_from_home(self):
+        inside = {"harness": "claude", "marketplace": "nus", "detail": "x",
+                  "path": str(self.home / ".quiver" / "plugins" / "nus")}
+        self.assertEqual(page._error(inside, self.home)["short_path"], "~/.quiver/plugins/nus")
+        outside = {**inside, "path": "/srv/plugins/nus"}
+        self.assertEqual(page._error(outside, self.home)["short_path"], "/srv/plugins/nus")
+        plain = {"harness": "codex", "marketplace": None, "detail": "unreadable"}
+        self.assertEqual(page._error(plain, self.home), plain)
+
     def test_display_names_overlay_names_rows(self):
         cfg = self.home / ".quiver" / "config" / "plugin-display-names.json"
         _write(cfg, json.dumps({"marketplaces": {"official": "Official"},
