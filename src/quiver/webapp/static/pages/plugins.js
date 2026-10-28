@@ -465,7 +465,11 @@ function problemLines(errors) {
   const folded = [...missing].map(([harness, rows]) => {
     const where = rows.map((p) => p.short_path || p.path || "");
     const parents = new Set(where.map((w) => w.replace(/\/[^/]*$/, "/")));
-    const names = parents.size === 1 && where[0]
+    // The shared parent says it all only when each folder is named after
+    // its marketplace; Claude's installLocation and Codex's local source
+    // can name any folder, and then each path has to be shown.
+    const named = rows.every((p, i) => where[i].endsWith(`/${p.marketplace}`));
+    const names = parents.size === 1 && named
       ? `${rows.map((p) => p.marketplace).join(", ")} (looked in ${[...parents][0]})`
       : rows.map((p, i) => where[i] ? `${p.marketplace} (${where[i]})` : p.marketplace).join(", ");
     const n = rows.length === 1 ? "1 registered marketplace is" : `${rows.length} registered marketplaces are`;
