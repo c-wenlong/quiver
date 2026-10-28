@@ -1,0 +1,206 @@
+import Foundation
+import Observation
+
+/// The tasks page's data: one fetch per open, pull to refresh. Kept out
+/// of `AppModel`'s 15 s poll, as issues and pulls are — the hub already
+/// serves the list from its one-minute `gh` cache.
+@MainActor @Observable
+final class TasksModel {
+    private(set) var tasks: [TaskRow] = []
+    /// Pinned repos whose fetch failed (`repos` in the reply): their
+    /// stored rows still list; the page also shows the error itself.
+    private(set) var failedRepos: [TaskRepoFailure] = []
+    private(set) var machine: String?
+    private(set) var machineId: String?
+    /// `gh` missing or signed out on the hub (`env_blocked`): GitHub rows
+    /// are the last-known ones and read as stale.
+    private(set) var envBlocked: String?
+    /// Linear's blocking state with its reason (`auth-required`,
+    /// `bad-config`, `upstream-error`), nil when ok, disabled or absent.
+    private(set) var linearBlocked: String?
+    private(set) var fetchedAt: Double?
+    private(set) var error: String?
+    private(set) var loaded = false
+    /// Bumped per load: an on-open fetch and a pull-to-refresh can
+    /// overlap, and only the newer one's reply may land.
+    @ObservationIgnored private var generation = 0
+
+    func load(client: HubClient?, refresh: Bool = false) async {
+        guard let client else { return }
+        generation += 1
+        let gen = generation
+        do {
+            let body = try await client.tasks(refresh: refresh)
+            guard gen == generation else { return }
+            tasks = body.tasks
+            failedRepos = body.repos ?? []
+            machine = body.machine
+            machineId = body.machineId
+            envBlocked = body.envBlocked
+            fetchedAt = body.fetchedAt
+            error = nil
+            let status = body.linear?.status
+            linearBlocked = switch status {
+            case nil, "ok", "disabled": nil
+            default: body.linear?.error ?? status ?? "Linear is unreachable"
+            }
+        } catch let e as HubError {
+            guard gen == generation else { return }
+            error = e.message
+        } catch {
+            guard gen == generation else { return }
+            self.error = error.localizedDescription
+        }
+        loaded = true
+    }
+
+    /// The detail page's row, live as the list refreshes under it.
+    func task(_ id: String) -> TaskRow? { tasks.first { $0.id == id } }
+
+    /// True when the row's source reported blocked this fetch: what it
+    /// shows is last-known state, and the row says so.
+    func stale(_ task: TaskRow) -> Bool {
+        switch task.source {
+        case "github": envBlocked != nil
+        case "linear": linearBlocked != nil
+        default: false
+        }
+    }
+}
+
+/// Grouping and counting for the tasks page, pure so tests can feed it
+/// hub rows without an actor.
+enum TaskGrouping {
+    /// The scope sections as the page draws them under `filter`: the
+    /// repo for GitHub rows, the project elsewhere, ordered by the most
+    /// recently active task each holds — the reply is already sorted by
+    /// `last_active_at`, so first sight of a scope is its rank.
+    static func sections(of tasks: [TaskRow], filter: TaskFilter) -> [TaskSection] {
+        var order: [String] = []
+        var buckets: [String: [TaskRow]] = [:]
+        for task in tasks where filter.includes(task) {
+            let scope = task.scope.isEmpty ? "Other" : task.scope
+            if buckets[scope] == nil { order.append(scope) }
+            buckets[scope, default: []].append(task)
+        }
+        return order.map { TaskSection(name: $0, rows: buckets[$0] ?? [], error: nil) }
+    }
+
+    /// `filter`'s matching count across every task — the filter chips.
+    static func count(_ tasks: [TaskRow], filter: TaskFilter) -> Int {
+        tasks.filter(filter.includes).count
+    }
+}
+
+/// One section of the tasks page: a repo or project's matching rows, or
+/// the fetch error a failed repo reports.
+struct TaskSection: Identifiable {
+    let name: String
+    let rows: [TaskRow]?
+    let error: String?
+    var id: String { name }
+}
+
+/// The tasks page's row filters: everything, what an agent is on, the
+/// issues whose PR is open plus the pull rows themselves (a pull task
+/// is an open PR by definition until it lands), and the terminal states.
+enum TaskFilter: String, CaseIterable, Identifiable {
+    case all, running, prOpen, done
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: "All"
+        case .running: "Running"
+        case .prOpen: "PR open"
+        case .done: "Done"
+        }
+    }
+
+    func includes(_ task: TaskRow) -> Bool {
+        switch self {
+        case .all: true
+        case .running: task.agentRunning == true
+        case .prOpen: task.state == "pr_open" || (task.kind == "pull" && !task.isDone)
+        case .done: task.isDone
+        }
+    }
+}
+
+extension TaskRow {
+    /// The state word the row and detail show: `in_progress` and
+    /// `pr_open` as the stepper's labels, anything unknown as Open.
+    var stateLabel: String {
+        switch state {
+        case "in_progress": "In progress"
+        case "pr_open": "PR open"
+        case "merged": "Merged"
+        case "closed": "Closed"
+        default: "Open"
+        }
+    }
+
+    /// "GitHub issue · o/r", "Linear · QUI" — the source line under a
+    /// detail's title.
+    var sourceLine: String {
+        switch source {
+        case "github":
+            let what = kind == "pull" ? "pull request" : "issue"
+            return "GitHub \(what)\(repo.map { " · \($0)" } ?? "")"
+        case "linear":
+            return "Linear\(project.map { " · \($0)" } ?? "")"
+        default:
+            return [source, kind].compactMap { $0 }.joined(separator: " ").capitalized
+        }
+    }
+
+    /// What Copy link writes: the app's `quiver://issue` deep link for
+    /// a GitHub issue (so it opens back inside the app), the task's own
+    /// URL for anything else.
+    var copyLink: URL? {
+        if source == "github", kind == "issue",
+           let repo, let number {
+            return IssueLink(repo: repo, number: number).url
+        }
+        return url.flatMap(URL.init)
+    }
+}
+
+/// The state stepper the detail page draws: rungs with which are
+/// reached and which is current. Pure so the ladder rules — a pull's
+/// lifecycle skips "PR open" (the task is the PR), `closed` replaces
+/// the terminal rung — are tested without a view.
+enum TaskStepper {
+    struct Step: Equatable, Identifiable {
+        let title: String
+        /// The task passed this rung on its way to `current`.
+        let reached: Bool
+        /// The task sits here now.
+        let current: Bool
+        var id: String { title }
+    }
+
+    /// `open → in progress → PR open → merged` for issues and cards;
+    /// `open → in progress → merged` for pulls. `closed` keeps the
+    /// ladder's shape with "Closed" as the terminal rung — how far a
+    /// hand-closed task got isn't inferable, so only its ends are lit.
+    static func steps(for task: TaskRow) -> [Step] {
+        let pull = task.kind == "pull"
+        var rungs = pull ? ["Open", "In progress", "Merged"]
+                         : ["Open", "In progress", "PR open", "Merged"]
+        let order = pull ? ["open", "in_progress", "merged"]
+                         : ["open", "in_progress", "pr_open", "merged"]
+        let last = rungs.count - 1
+        if task.state == "closed" {
+            rungs[last] = "Closed"
+            return rungs.enumerated().map {
+                Step(title: $1, reached: $0 == 0 || $0 == last, current: $0 == last)
+            }
+        }
+        let index = order.firstIndex(of: task.state ?? "open") ?? 0
+        return rungs.enumerated().map {
+            Step(title: $1, reached: $0 <= index, current: $0 == index)
+        }
+    }
+}
