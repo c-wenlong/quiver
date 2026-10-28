@@ -124,7 +124,8 @@ class CmdInitHubTest(unittest.TestCase):
             self.assertTrue((quiver / ".git").is_dir())
             self.assertTrue((quiver / "plugins" / "mine").is_dir())
             # Folders the hub lacked are created by the scaffold repair.
-            self.assertTrue((quiver / "skills").is_dir())
+            for name in ("skills", "hooks", "mcp"):
+                self.assertTrue((quiver / name).is_dir(), name)
             link = home / ".claude" / "CLAUDE.md"
             self.assertTrue(link.is_symlink())
             self.assertEqual(link.read_text(), "# from the hub\n")
