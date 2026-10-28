@@ -72,7 +72,8 @@ final class AppModel {
         let pinMark = pins.mark
         do {
             async let s = client.sessions()
-            async let i = client.inbox()
+            // done=1 so the Inbox's "Finished today" rows ship with it.
+            async let i = client.inbox(done: true)
             let (sessionsBody, inboxBody) = try await (s, i)
             guard hub == pairedAtStart else { return }
             let fetched = pins.overlay(sessionsBody.sessions, fetchedFrom: pinMark)
@@ -258,20 +259,27 @@ final class AppModel {
 
     // MARK: Inbox
 
-    /// Items still waiting on you. The hub's inbox has no age cutoff, so
-    /// follow-ups past `Staleness.window` don't count here.
+    /// Items still waiting on you: approvals and follow-ups. The hub
+    /// already dropped stale rows and this device's dismissals, so the
+    /// phone doesn't re-filter either.
     var waitingOnYou: [InboxItem] {
-        inbox.filter {
-            ($0.sessionStatus == .approval || ($0.sessionStatus == .followup && Staleness.isFresh($0.lastActiveAt)))
-                && !dismissals.isDismissed($0.key, at: $0.lastActiveAt)
-        }
+        inbox.filter { $0.sessionStatus == .approval || $0.sessionStatus == .followup }
     }
 
-    /// Inbox rows cleared on this phone; shared by the Inbox page and the
-    /// tab badge so both agree.
-    let dismissals = InboxDismissals()
-
     var inboxBadge: Int { waitingOnYou.count }
+
+    /// Clears an inbox row for this device (`POST /v1/inbox/dismiss`):
+    /// gone at once, and the hub keeps it out until the row's
+    /// `last_active_at` moves past the stamp sent — new activity brings
+    /// it back on every device. A refused post refetches, restoring it.
+    func dismissInbox(_ item: InboxItem) async {
+        inbox.removeAll { $0.key == item.key }
+        do {
+            _ = try await onSameHub { try await $0.dismissInbox(item.key, lastActiveAt: item.dismissStamp) }
+        } catch {
+            await refresh()
+        }
+    }
 
     // MARK: Pairing
 
@@ -499,6 +507,65 @@ struct PendingPairing {
 }
 
 // MARK: Grouping
+
+/// The Inbox page's sections. The hub decides which rows ship — an
+/// approval at any age, fresh follow-ups and errors, `done` rows when
+/// asked, unread GitHub threads — so this only sorts what arrived. An
+/// unfamiliar status lands in Waiting on you rather than vanishing.
+enum InboxGrouping {
+    /// The section a row belongs in, in page order.
+    enum Section: CaseIterable {
+        case waiting, errors, github, finished
+        var title: String {
+            switch self {
+            case .waiting: "Waiting on you"
+            case .errors: "Errors"
+            case .github: "GitHub"
+            case .finished: "Finished today"
+            }
+        }
+        /// The "Clear …" menu item: "Clear errors", "Clear GitHub".
+        var clearTitle: String {
+            switch self {
+            case .waiting: "waiting on you"
+            case .errors: "errors"
+            case .github: "GitHub"
+            case .finished: "finished"
+            }
+        }
+    }
+
+    static func section(of item: InboxItem) -> Section {
+        if item.isGitHub { return .github }
+        switch item.sessionStatus {
+        case .error, .interrupted: return .errors
+        case .done: return .finished
+        default: return .waiting
+        }
+    }
+
+    /// `items` bucketed by section, sections in page order.
+    static func groups(_ items: [InboxItem]) -> [(Section, [InboxItem])] {
+        var grouped: [Section: [InboxItem]] = [:]
+        for item in items { grouped[section(of: item), default: []].append(item) }
+        return Section.allCases.compactMap { s in grouped[s].map { (s, $0) } }
+    }
+}
+
+/// What an unread GitHub notification row says it is.
+enum GitHubReason {
+    static func label(_ reason: String?) -> String {
+        switch reason {
+        case "review_requested": "Review requested"
+        case "assignee", "assigned": "Assigned to you"
+        case "mention": "Mentioned"
+        case "comment": "New comment"
+        case "ci_fail": "CI failing"
+        case nil: "GitHub"
+        default: reason!.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+}
 
 struct SessionGroup: Identifiable {
     let id: String

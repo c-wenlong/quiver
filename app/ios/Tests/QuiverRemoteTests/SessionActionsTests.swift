@@ -16,23 +16,24 @@ final class SessionActionsTests: XCTestCase {
 
     func testWhichActionsShowForEachState() {
         let watching = row("w")
-        XCTAssertEqual(SessionAction.leading(watching), [.attach])
+        XCTAssertEqual(SessionAction.leading(watching), [.attach, .open])
         XCTAssertEqual(SessionAction.trailing(watching), [.pin, .rename, .fork])
 
-        // Busy and only watched: nothing to take over yet.
-        XCTAssertEqual(SessionAction.leading(row("b", status: "active")), [])
-        XCTAssertEqual(SessionAction.leading(row("n", attachable: false)), [])
+        // Busy and only watched: nothing to take over yet, but the swipe
+        // still opens the chat.
+        XCTAssertEqual(SessionAction.leading(row("b", status: "active")), [.open])
+        XCTAssertEqual(SessionAction.leading(row("n", attachable: false)), [.open])
 
         let attached = row("a", status: "active", ownership: "attached")
-        XCTAssertEqual(SessionAction.leading(attached), [.detach])
+        XCTAssertEqual(SessionAction.leading(attached), [.detach, .open])
 
         let pinnedNoFork = row("p", canFork: nil, pinnedAt: 5)
         XCTAssertEqual(SessionAction.trailing(pinnedNoFork), [.unpin, .rename], "no can_fork, no Fork")
-        XCTAssertEqual(SessionAction.menu(attached), [.detach, .pin, .rename, .fork])
+        XCTAssertEqual(SessionAction.menu(attached), [.detach, .open, .pin, .rename, .fork])
     }
 
     func testEveryActionHasASymbolThatExists() {
-        for action in [SessionAction.attach, .detach, .pin, .unpin, .rename, .fork] {
+        for action in [SessionAction.attach, .detach, .open, .pin, .unpin, .rename, .fork, .clear] {
             XCTAssertNotNil(UIImage(systemName: action.symbol), action.symbol)
         }
     }

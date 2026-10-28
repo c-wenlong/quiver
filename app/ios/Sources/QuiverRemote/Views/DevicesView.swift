@@ -1,51 +1,67 @@
 import SwiftUI
 
-/// P8: approve another device's pair request by typing its code.
-/// (Listing and removing paired devices needs a hub route; see
-/// app/ios/ROADMAP.md, P8.)
+/// P8: approve another device's pair request by typing its code, and
+/// every device the hub has paired — with a Remove for the ones that
+/// shouldn't be in any more (`POST /v1/devices/revoke`).
 struct DevicesView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
     @State private var requests: [PendingPairRequest] = []
-    @State private var loaded = false
-    @State private var error: String?
+    @State private var devices: [PairedDevice] = []
+    @State private var requestsLoaded = false
+    @State private var devicesLoaded = false
+    @State private var requestsError: String?
+    @State private var devicesError: String?
+    /// A device mid-revoke; its Remove button waits for the post.
+    @State private var busyId: String?
+    /// The device a Remove confirmation is open for.
+    @State private var removing: PairedDevice?
+    @State private var actionError: String?
 
     var body: some View {
         PageScroll {
-            Text("Type the code shown on the new device.")
+            Text("Type the code shown on a new device to approve it. Devices paired before are below; remove any you don't recognise.")
                 .font(Theme.body).foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 4)
-            if !loaded {
+            if !requestsLoaded {
                 LoadingRow(text: "Loading requests")
-            } else if let error {
-                StateCard(icon: "exclamationmark.triangle", title: "Couldn't load requests", message: error, tone: .error,
-                          actionTitle: "Try again") { Task { await load() } }
-            } else if requests.isEmpty {
-                StateCard(icon: "iphone.and.arrow.forward", title: "No pending requests",
-                          message: "Start pairing on the new device; its request shows up here.")
-            } else {
+            } else if let requestsError {
+                StateCard(icon: "exclamationmark.triangle", title: "Couldn't load requests", message: requestsError, tone: .error,
+                          actionTitle: "Try again") { Task { await loadRequests() } }
+            } else if !requests.isEmpty {
                 GroupLabel(text: "Pending requests")
                 ForEach(requests) { r in
-                    PairRequestCard(request: r) { await load() }
+                    PairRequestCard(request: r) { await loadRequests() }
                 }
             }
-            GroupLabel(text: "This device")
-            CardList(data: [ThisDevice(app: app)]) { d in
-                HStack(spacing: 12) {
-                    Image(systemName: "iphone").font(.system(size: 16)).foregroundStyle(Theme.textSecondary).frame(width: 20)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(d.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
-                        Text(d.detail).font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
-                    }
-                    Spacer()
-                }
-                .padding(.vertical, Theme.rowVertical).padding(.horizontal, Theme.rowHorizontal)
+            GroupLabel(text: "Devices")
+            if !devicesLoaded {
+                LoadingRow(text: "Loading devices")
+            } else if let devicesError {
+                StateCard(icon: "exclamationmark.triangle", title: "Couldn't load devices", message: devicesError, tone: .error,
+                          actionTitle: "Try again") { Task { await loadDevices() } }
+            } else {
+                CardList(data: devices) { device in row(device) }
+            }
+            if let actionError {
+                Text(actionError).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                    .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 4)
             }
         }
-        .navigationTitle("Pair requests")
+        .navigationTitle("Pair requests and devices")
         .navigationBarTitleDisplayMode(.large)
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         .refreshable { await load() }
+        .confirmationDialog(removing.map { "Remove \($0.label)?" } ?? "Remove device?",
+                            isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+                            titleVisibility: .visible, presenting: removing) { device in
+            Button("Remove", role: .destructive) { Task { await revoke(device) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { device in
+            Text(device.isSatellite
+                 ? "This machine's sessions stop reaching the hub; it would need a new pair token to come back."
+                 : "It will need to pair again before it can see this hub.")
+        }
         .task {
             while !Task.isCancelled {
                 await load()
@@ -55,24 +71,106 @@ struct DevicesView: View {
     }
 
     private func load() async {
+        await loadRequests()
+        await loadDevices()
+    }
+
+    private func loadRequests() async {
         guard let client = app.client else { return }
         do {
             requests = try await client.pairRequests()
-            error = nil
+            requestsError = nil
         } catch {
-            self.error = (error as? HubError)?.message ?? error.localizedDescription
+            requestsError = (error as? HubError)?.message ?? error.localizedDescription
         }
-        loaded = true
+        requestsLoaded = true
     }
-}
 
-private struct ThisDevice: Identifiable {
-    let id = "this"
-    let name: String
-    let detail: String
-    @MainActor init(app: AppModel) {
-        name = app.hub?.credential.name ?? "This iPhone"
-        detail = "Paired with \(app.hub?.baseURL.host ?? "the hub")"
+    private func loadDevices() async {
+        guard let client = app.client else { return }
+        do {
+            let listed = try await client.devices()
+            // Live devices first; a revoked row stays listed so a Remove
+            // shows it took, sorted by most recently seen.
+            devices = listed.sorted {
+                let a = selfDevice($0), b = selfDevice($1)
+                if a != b { return a }
+                if ($0.revoked == true) != ($1.revoked == true) { return $0.revoked != true }
+                return ($0.lastSeenAt ?? 0) > ($1.lastSeenAt ?? 0)
+            }
+            devicesError = nil
+        } catch let error as HubError where error.status == 404 {
+            devicesError = "This hub can't list devices yet. Update it, and this page shows everyone paired."
+        } catch {
+            devicesError = (error as? HubError)?.message ?? error.localizedDescription
+        }
+        devicesLoaded = true
+    }
+
+    /// Whether the row is the pairing this phone holds on the hub now.
+    private func selfDevice(_ device: PairedDevice) -> Bool {
+        device.thisDevice == true || device.id == app.hub?.credential.deviceId
+    }
+
+    @ViewBuilder private func row(_ device: PairedDevice) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: device.symbol).font(.system(size: 16)).foregroundStyle(Theme.textSecondary).frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(device.label).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    if selfDevice(device) {
+                        Text("This device").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                            .padding(.horizontal, 6).padding(.vertical, 1)
+                            .background(Theme.subtle, in: .capsule)
+                    }
+                }
+                Text(detail(of: device))
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+            }
+            Spacer()
+            if device.revoked == true {
+                Text("Removed").font(Theme.caption).foregroundStyle(Theme.textMuted)
+            } else if !selfDevice(device) {
+                Button {
+                    removing = device
+                } label: {
+                    if busyId == device.id {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Remove").font(Theme.control).foregroundStyle(Theme.dangerText)
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(busyId != nil)
+            }
+        }
+        .padding(.vertical, Theme.rowVertical).padding(.horizontal, Theme.rowHorizontal)
+    }
+
+    /// The kind/OS/client bits plus when the hub last heard from it.
+    private func detail(of device: PairedDevice) -> String {
+        var bits = [device.isSatellite ? "machine" : nil, device.os, device.client, device.nodeName]
+            .compactMap { $0 }
+        let seen = RelativeTime.short(device.lastSeenAt)
+        bits.append(seen.isEmpty ? "never seen" : seen == "now" ? "seen just now" : "last seen \(seen) ago")
+        return bits.joined(separator: " · ")
+    }
+
+    private func revoke(_ device: PairedDevice) async {
+        guard let client = app.client else { return }
+        busyId = device.id
+        actionError = nil
+        defer { busyId = nil }
+        do {
+            try await client.revokeDevice(id: device.id)
+            // Mark it at once; the next poll's sort drops it to the foot.
+            if let i = devices.firstIndex(where: { $0.id == device.id }) {
+                devices[i].revoked = true
+            }
+        } catch {
+            actionError = (error as? HubError)?.message ?? error.localizedDescription
+        }
+        await loadDevices()
     }
 }
 

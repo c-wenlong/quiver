@@ -36,7 +36,7 @@ Status words:
 | Pull requests | yes | yes | yes | Mac and Web: inside Repositories, with merge, rerun and "Open in session". iOS: own tab and detail page |
 | Issues, resolve with agent | yes | yes | yes | iOS: own tab plus a Resolve sheet; Mac: detail sheet and ResolveIssueSheet |
 | Tasks | - | yes | yes | No Mac page yet |
-| Inbox | yes | yes | yes | Pending decisions. iOS badges count only "Waiting on you" |
+| Inbox | yes | yes | yes | Pending decisions. iOS badges count only "Waiting on you"; dismissals live on the hub per device |
 
 ## Manage
 
@@ -78,7 +78,7 @@ hosts the hub; the PWA and the iOS app are its clients.
 | Feature | Mac | Web | iOS | Notes |
 | --- | --- | --- | --- | --- |
 | Pair a device | host | yes | yes | Tailscale, pair token, QR scan, 6-digit approval |
-| Devices list and revoke | yes | yes | planned | Mac and Web: Settings. The hub route (`GET /v1/devices`, `POST /v1/devices/revoke`) now serves it; the iOS client list and Remove item remain |
+| Devices list and revoke | yes | yes | yes | Mac and Web: Settings. iOS: under the hub chip menu |
 | Launch a new session | planned | yes | yes | Web and iOS have general new-session sheets; Mac's one-click launch is the open M5 item |
 | Machine switcher | - | - | planned | iOS P4: one machine today |
 | Machine vitals | yes | yes | planned | Compute page on Mac and Web; iOS P9 carries the samples over the hub |

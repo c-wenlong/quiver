@@ -844,15 +844,64 @@ final class ReviewFixTests: XCTestCase {
         XCTAssertEqual(groups.map(\.title), ["~/work/a/projects/api", "~/work/b/projects/api"])
     }
 
-    @MainActor
-    func testClearingAnOldSessionSticks() {
-        UserDefaults.standard.removeObject(forKey: "quiver.inbox.dismissed.v2")
-        let d = InboxDismissals()
-        let monthAgo = Date().timeIntervalSince1970 - 30 * 86_400
-        d.dismiss("claude:old", at: monthAgo)
-        XCTAssertTrue(d.isDismissed("claude:old", at: monthAgo))
-        XCTAssertTrue(InboxDismissals().isDismissed("claude:old", at: monthAgo), "survives a relaunch")
-        XCTAssertFalse(d.isDismissed("claude:old", at: monthAgo + 1), "new activity brings it back")
+    func testInboxGroupingSortsWhatTheHubShips() {
+        let now = Date().timeIntervalSince1970
+        let item = { (key: String, status: String) in
+            InboxItem(key: key, machineId: "m1", harness: "claude", agent: nil, title: key, cwd: "/w",
+                      status: status, lastActiveAt: now - 60, requestId: nil)
+        }
+        var gh = item("gh:9", "github")
+        gh.kind = "github"
+        gh.repo = "o/r"
+        gh.reason = "review_requested"
+        gh.url = "https://github.com/o/r/pull/9"
+        let groups = InboxGrouping.groups([
+            item("a", "approval"), item("f", "followup"), item("e", "error"),
+            item("i", "interrupted"), item("d", "done"), gh, item("x", "paused"),
+        ])
+        XCTAssertEqual(groups.map(\.0), [.waiting, .errors, .github, .finished])
+        XCTAssertEqual(groups[0].1.map(\.key), ["a", "f", "x"], "an unfamiliar status waits rather than vanishes")
+        XCTAssertEqual(groups[1].1.map(\.key), ["e", "i"])
+        XCTAssertEqual(groups[2].1.map(\.key), ["gh:9"])
+        XCTAssertEqual(groups[3].1.map(\.key), ["d"])
+        XCTAssertTrue(gh.isGitHub)
+        XCTAssertEqual(GitHubReason.label(gh.reason), "Review requested")
+        XCTAssertEqual(GitHubReason.label("ci_fail"), "CI failing")
+        XCTAssertEqual(GitHubReason.label(nil), "GitHub")
+    }
+
+    func testInboxItemDecodesGitHubFieldsAndDismissStamp() throws {
+        let json = #"""
+        {"items":[{"key":"claude:1","status":"followup","last_active_at":7},
+                  {"key":"gh:55","kind":"github","repo":"o/r","subject_type":"pr","title":"PR 55",
+                   "reason":"assignee","url":"https://github.com/o/r/pull/55","status":"github",
+                   "unread":true,"last_active_at":9.5}]}
+        """#
+        let items = try Hub.decoder.decode(InboxResponse.self, from: Data(json.utf8)).items
+        XCTAssertFalse(items[0].isGitHub)
+        XCTAssertEqual(items[0].dismissStamp, 7)
+        XCTAssertTrue(items[1].isGitHub)
+        XCTAssertEqual(items[1].repo, "o/r")
+        XCTAssertEqual(items[1].dismissStamp, 9.5)
+    }
+
+    func testPairedDeviceDecodesAndLabels() throws {
+        let json = #"""
+        {"devices":[
+          {"id":"d1","name":"iPhone","display_name":"Kai's phone","kind":"iphone","model":"iPhone16,2",
+           "client":"Quiver Remote 1.0","os":"iOS 26","node_name":"iphone.tail","paired_via":"tailscale",
+           "role":"phone","created_at":1,"last_seen_at":9,"revoked":false,"this_device":true},
+          {"id":"d2","name":"mini","role":"satellite","machine_id":"mini","last_seen_at":null},
+          {"id":"d3","revoked":true}]}
+        """#
+        let devices = try Hub.decoder.decode(DevicesResponse.self, from: Data(json.utf8)).devices
+        XCTAssertEqual(devices[0].label, "Kai's phone")
+        XCTAssertEqual(devices[0].symbol, "iphone")
+        XCTAssertEqual(devices[0].thisDevice, true)
+        XCTAssertTrue(devices[1].isSatellite)
+        XCTAssertEqual(devices[1].symbol, "desktopcomputer")
+        XCTAssertEqual(devices[2].label, "Device")
+        XCTAssertEqual(devices[2].revoked, true)
     }
 }
 

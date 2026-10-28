@@ -1,13 +1,14 @@
 import Foundation
 
 /// What a list row offers on a swipe or a long press. Session rows use
-/// the attach/pin/rename/fork set, which `leading`/`trailing`/`menu`
+/// the attach/open/pin/rename/fork set, which `leading`/`trailing`/`menu`
 /// build from a `SessionRow`; an issue row's only action is `resolve`,
 /// which the Issues page wires itself; a task row's is `newSession`,
-/// which the Tasks page wires. Pure, so the rules for which action
-/// shows when are tested without a view.
+/// which the Tasks page wires; an inbox row's is `clear`, which the
+/// Inbox page wires. Pure, so the rules for which action shows when are
+/// tested without a view.
 enum SessionAction: String, Hashable, Identifiable {
-    case attach, detach, pin, unpin, rename, fork, resolve, newSession
+    case attach, detach, open, pin, unpin, rename, fork, clear, resolve, newSession
 
     var id: String { rawValue }
 
@@ -15,10 +16,12 @@ enum SessionAction: String, Hashable, Identifiable {
         switch self {
         case .attach: "Attach"
         case .detach: "Detach"
+        case .open: "Open"
         case .pin: "Pin"
         case .unpin: "Unpin"
         case .rename: "Rename"
         case .fork: "Fork"
+        case .clear: "Clear"
         case .resolve: "Resolve"
         case .newSession: "New session"
         }
@@ -28,19 +31,23 @@ enum SessionAction: String, Hashable, Identifiable {
         switch self {
         case .attach: "link"
         case .detach: "eye"
+        case .open: "text.bubble"
         case .pin: "pin"
         case .unpin: "pin.slash"
         case .rename: "pencil"
         case .fork: "arrow.triangle.branch"
+        case .clear: "archivebox"
         case .resolve, .newSession: "sparkles"
         }
     }
 
-    /// Swipe right: take the session over, or hand it back.
+    /// Swipe right: take the session over or hand it back, else open the
+    /// chat — the edge action stays the takeover, with Open beside it on
+    /// a half swipe; a row that can't attach offers Open alone.
     static func leading(_ row: SessionRow) -> [SessionAction] {
-        if row.isAttached { return [.detach] }
-        if row.canAttach { return [.attach] }
-        return []
+        if row.isAttached { return [.detach, .open] }
+        if row.canAttach { return [.attach, .open] }
+        return [.open]
     }
 
     /// Swipe left, the first one at the edge (a full swipe runs it).

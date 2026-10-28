@@ -27,9 +27,12 @@ struct Machine: Codable, Identifiable, Hashable {
     }
 }
 
-/// The hub keeps a follow-up flagged forever. Past this age it no longer
-/// counts as waiting on you: it still shows, but not in amber or in the
-/// "Needs you" counts.
+/// The session list's own freshness window, the same 3 days as the
+/// hub's `INBOX_MAX_AGE_S` on `catalog.inbox`. Session rows carry no
+/// hub-computed age flag, so the Sessions page keeps applying this to
+/// `last_active_at`: a follow-up or error past it still lists, but not
+/// in amber or under "Needs you". The Inbox itself no longer re-ages
+/// anything: the hub cut off and undismissed rows before they shipped.
 enum Staleness {
     static let window: Double = 3 * 86_400
     static func isFresh(_ ts: Double?, now: Double = Date().timeIntervalSince1970) -> Bool {
@@ -146,6 +149,11 @@ struct SessionsResponse: Codable {
     let serverTime: Double?
 }
 
+/// One `GET /v1/inbox` row. The hub applies its cutoff and this
+/// device's dismissals before these ship: approvals always arrive,
+/// follow-ups, errors and interrupts only while fresh, `done` rows
+/// (finished since the hub's midnight) only on `?done=1`. A row that
+/// would be dismissed or stale never reaches the phone.
 struct InboxItem: Codable, Identifiable, Hashable {
     let key: String
     let machineId: String?
@@ -156,11 +164,23 @@ struct InboxItem: Codable, Identifiable, Hashable {
     let status: String?
     let lastActiveAt: Double?
     let requestId: String?
+    /// "github" on an unread GitHub notification row; session rows omit it.
+    var kind: String? = nil
+    /// GitHub rows: "o/r", the reason word ("review_requested", …) and
+    /// the thread URL to open.
+    var repo: String? = nil
+    var reason: String? = nil
+    var url: String? = nil
 
     var id: String { key }
     var displayTitle: String { (title?.isEmpty == false ? title : nil) ?? "Untitled session" }
     var harnessName: String { agent ?? harness ?? "agent" }
     var sessionStatus: SessionStatus { SessionStatus(raw: status) }
+    /// An unread GitHub thread (`gh:<thread id>`): no chat opens, the
+    /// row opens `url` instead.
+    var isGitHub: Bool { kind == "github" || status == "github" }
+    /// What a dismiss posts back as `last_active_at`.
+    var dismissStamp: Double { lastActiveAt ?? 0 }
 }
 
 struct InboxResponse: Codable { let items: [InboxItem] }
@@ -256,6 +276,57 @@ struct PendingPairRequest: Decodable, Identifiable, Hashable {
 }
 
 struct PairRequestsResponse: Decodable { let requests: [PendingPairRequest] }
+
+/// One `GET /v1/devices` row: the hub's `device_view` of a pairing —
+/// every field but `id` optional, since a device paired before a field
+/// existed (or a browser that couldn't report it) just lacks it.
+struct PairedDevice: Decodable, Identifiable, Hashable {
+    let id: String
+    /// The name given at pairing.
+    let name: String?
+    /// A name set later with `POST /v1/devices/rename`; wins over `name`.
+    var displayName: String? = nil
+    /// iphone | ipad | mac | browser | android | windows | linux | unknown
+    var kind: String? = nil
+    /// Hardware model a native client reported ("iPhone16,2").
+    var model: String? = nil
+    /// "Quiver Remote 1.0", "Safari 18", …
+    var client: String? = nil
+    var os: String? = nil
+    /// The Tailscale node the pairing request came from.
+    var nodeName: String? = nil
+    /// phone | satellite; rows minted before roles count as phones.
+    var role: String? = nil
+    /// A satellite's machine id, when the hub bound one.
+    var machineId: String? = nil
+    var pairedVia: String? = nil
+    var createdAt: Double? = nil
+    /// Refreshed on every authenticated request.
+    var lastSeenAt: Double? = nil
+    var revoked: Bool? = nil
+    /// Sent when the route marks the caller's own row.
+    var thisDevice: Bool? = nil
+
+    var label: String {
+        if let displayName, !displayName.isEmpty { return displayName }
+        return name?.isEmpty == false ? name! : "Device"
+    }
+    var isSatellite: Bool { role == "satellite" || machineId != nil }
+    /// The SF Symbol for its kind; a satellite reads as a computer.
+    var symbol: String {
+        if isSatellite { return "desktopcomputer" }
+        switch kind {
+        case "iphone": return "iphone"
+        case "ipad": return "ipad"
+        case "mac": return "macbook"
+        case "browser": return "globe"
+        case "android", "windows", "linux": return "desktopcomputer"
+        default: return "iphone"
+        }
+    }
+}
+
+struct DevicesResponse: Decodable { let devices: [PairedDevice] }
 
 struct SendAccepted: Decodable { let ok: Bool?; let waiting: Bool? }
 
