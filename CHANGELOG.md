@@ -160,6 +160,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Stored tasks keep their last-known state when a source can't be
+  read.** A linked issue last seen closed or merged read `in_progress`
+  again on `GET /v1/tasks` while `gh` was signed out, Linear was down,
+  or the task had dropped past the 24 most recently active tasks, since
+  its state was guessed from its links alone. The hub now remembers
+  each stored task's last reported state and PR in
+  `~/.quiver/cache/task_states.json`, written only when a fresh read
+  changes it, and serves that when no fresh read is possible. Every
+  task row gains `state_source` (`live`, `cached` or `links`) so a
+  client can show a cached row as last known. `tasks.json` still holds
+  links only.
+
 - **Mac app sidebar toggle works in a normal window.** Since the toggle
   moved into the traffic lights' row, a click on it in a window that was
   not full screen did nothing: the sidebar list or the page reached up

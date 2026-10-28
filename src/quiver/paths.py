@@ -97,6 +97,12 @@ def session_status_cache_file_for(home: Path | None = None) -> Path:
     return cache_dir_for(home) / "session_status_cache.json"
 
 
+def task_states_cache_for(home: Path | None = None) -> Path:
+    """The last state each stored task's source reported, which
+    ``GET /v1/tasks`` serves while that source can't be read."""
+    return cache_dir_for(home) / "task_states.json"
+
+
 def account_homes_for(vendor: str, home: Path | None = None) -> list[Path]:
     """Each Quiver account home for ``vendor``, sorted for stable order.
 

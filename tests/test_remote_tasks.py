@@ -186,6 +186,34 @@ class TestStore(unittest.TestCase):
         self.assertEqual(entry["sessions"], [])
         self.assertEqual(entry["launches"], [])
 
+    def test_state_cache_reads_empty_when_corrupt(self):
+        path = tasks_mod.states_file(self.home)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{not json", encoding="utf-8")
+        self.assertEqual(tasks_mod._load_states(self.home), {})
+        path.write_text(json.dumps({"states": {
+            "a": {"state": 7}, "b": "x",
+            "c": {"state": "closed", "pr": "junk"}}}), encoding="utf-8")
+        self.assertEqual(tasks_mod._load_states(self.home),
+                         {"c": {"state": "closed", "pr": None}})
+
+    def test_remember_writes_changes_and_drops_unstored_tasks(self):
+        tasks_mod._remember(self.home, {
+            "a": {"state": "open", "pr": None},
+            "b": {"state": "closed", "pr": None}}, ["a", "b"])
+        # "b" left the store; the next write forgets it.
+        tasks_mod._remember(self.home, {
+            "a": {"state": "closed", "pr": None}}, ["a"])
+        self.assertEqual(tasks_mod._load_states(self.home),
+                         {"a": {"state": "closed", "pr": None}})
+
+    def test_remember_survives_an_unwritable_cache(self):
+        with patch("quiver.remote.tasks.atomic_write_text",
+                   side_effect=OSError("read-only")):
+            tasks_mod._remember(self.home, {
+                "a": {"state": "open", "pr": None}}, ["a"])
+        self.assertEqual(tasks_mod._load_states(self.home), {})
+
 
 class _Base(unittest.TestCase):
     def setUp(self):
@@ -333,6 +361,120 @@ class TestTasksRoute(_Base):
             "github:issue:o/r:5"]
         self.assertTrue(row["agent_running"])
         self.assertEqual(row["state"], "in_progress")
+        # Never read, nothing cached: the state is the links' guess.
+        self.assertEqual(row["state_source"], "links")
+
+    @staticmethod
+    def _closed_with_merged_pr(args, **kw):
+        if args[:2] == ["issue", "view"]:
+            return gh.GhResult("ok", data={
+                "number": 5, "title": "Fix the thing", "state": "CLOSED",
+                "url": "https://github.com/o/r/issues/5"})
+        if args[:2] == ["pr", "list"]:
+            return gh.GhResult("ok", data=[{
+                "number": 9, "title": "PR 9", "state": "MERGED",
+                "isDraft": False, "headRefName": "quiver/issue-5",
+                "url": "https://github.com/o/r/pull/9"}])
+        return gh.GhResult("not-found")
+
+    def _states(self):
+        return tasks_mod._load_states(self.srv.home)
+
+    def test_blocked_source_serves_the_last_known_state(self):
+        """A merged issue stays merged while ``gh`` is signed out,
+        rather than reading ``in_progress`` off its link again."""
+        tasks_mod.link(self.srv.home, ISSUE_REF, session_key="claude:s1")
+        tid = tasks_mod.task_id(ISSUE_REF)
+        with self._stubs(run_json=self._closed_with_merged_pr):
+            row = self._task(tid)
+        self.assertEqual((row["state"], row["state_source"]),
+                         ("merged", "live"))
+        path = tasks_mod.states_file(self.srv.home)
+        self.assertEqual(path.name, "task_states.json")
+        self.assertEqual(path.parent.name, "cache")
+        self.assertEqual(oct(os.stat(path).st_mode & 0o777), "0o600")
+        self.assertEqual(self._states()[tid]["state"], "closed")
+        # tasks.json stays links only.
+        stored = json.loads(tasks_mod.tasks_file(
+            self.srv.home).read_text(encoding="utf-8"))["tasks"][tid]
+        self.assertNotIn("state", stored)
+        self.assertNotIn("pr", stored)
+
+        G.CACHE.clear()
+        env = gh.GhEnv(installed=True, authenticated=False)
+        with self._stubs(env=env):
+            row = self._task(tid)
+        self.assertEqual((row["state"], row["state_source"]),
+                         ("merged", "cached"))
+        self.assertEqual(row["pr"]["number"], 9)
+        self.assertEqual(row["pr"]["state"], "merged")
+
+    def test_a_quiet_poll_writes_nothing(self):
+        tasks_mod.link(self.srv.home, ISSUE_REF, session_key="claude:s1")
+        writes = []
+        real = tasks_mod.atomic_write_text
+
+        def spy(path, text, **kw):
+            if Path(path) == tasks_mod.states_file(self.srv.home):
+                writes.append(text)
+            return real(path, text, **kw)
+
+        with patch("quiver.remote.tasks.atomic_write_text",
+                   side_effect=spy), \
+                self._stubs(run_json=self._closed_with_merged_pr):
+            self._get("/v1/tasks")
+            self._get("/v1/tasks?refresh=1")
+            self._get("/v1/tasks")
+        self.assertEqual(len(writes), 1)
+
+    def test_outside_the_refresh_window_reads_the_cache(self):
+        """The source answers, but the task is off the open list and
+        past ``MAX_REFRESH``: no read this round, so the cache speaks."""
+        tasks_mod.link(self.srv.home, ISSUE_REF, session_key="claude:s1")
+        tid = tasks_mod.task_id(ISSUE_REF)
+        no_issues = lambda name, state, limit: {
+            "repo": name, "status": "ok", "issues": []}
+        with self._stubs(issues=no_issues,
+                         run_json=self._closed_with_merged_pr):
+            self._task(tid)
+        G.CACHE.clear()
+        with patch.object(tasks_mod, "MAX_REFRESH", 0), \
+                self._stubs(issues=no_issues):
+            row = self._task(tid)
+        self.assertEqual((row["state"], row["state_source"]),
+                         ("merged", "cached"))
+
+    def test_a_reopened_issue_updates_the_cache(self):
+        tasks_mod.link(self.srv.home, ISSUE_REF, session_key="claude:s1")
+        tid = tasks_mod.task_id(ISSUE_REF)
+        closed = lambda args, **kw: (
+            gh.GhResult("ok", data={
+                "number": 5, "title": "Fix the thing", "state": "CLOSED",
+                "url": "https://github.com/o/r/issues/5"})
+            if args[:2] == ["issue", "view"] else gh.GhResult("ok", data=[]))
+        no_issues = lambda name, state, limit: {
+            "repo": name, "status": "ok", "issues": []}
+        with self._stubs(issues=no_issues, run_json=closed):
+            self.assertEqual(self._task(tid)["state"], "closed")
+        self.assertEqual(self._states()[tid],
+                         {"state": "closed", "pr": None})
+        # Back on the open list; the per-task read fails this round.
+        G.CACHE.clear()
+        with self._stubs():
+            row = self._task(tid)
+        self.assertEqual((row["state"], row["state_source"]),
+                         ("in_progress", "live"))
+        self.assertEqual(self._states()[tid],
+                         {"state": "open", "pr": None})
+
+    def test_listed_rows_read_live(self):
+        with self._stubs():
+            _s, body = self._get("/v1/tasks")
+        self.assertTrue(body["tasks"])
+        self.assertEqual({t["state_source"] for t in body["tasks"]},
+                         {"live"})
+        # Nothing is stored, so nothing is remembered.
+        self.assertFalse(tasks_mod.states_file(self.srv.home).exists())
 
     def test_needs_a_paired_device(self):
         status, _ = self.srv.request("GET", "/v1/tasks")
