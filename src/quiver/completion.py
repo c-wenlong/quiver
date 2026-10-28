@@ -398,6 +398,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--json", "With --check, print link states as JSON"),
         ("--force", "Replace real files too (backed up first)"),
         ("--migrate", "Move a pre-0.2.7 ~/.config/swe into ~/.quiver"),
+        ("--hub=", "Clone your hub repo as ~/.quiver first"),
         ("--yes", "Register every new harness without asking"),
     ],
     "setup": [
