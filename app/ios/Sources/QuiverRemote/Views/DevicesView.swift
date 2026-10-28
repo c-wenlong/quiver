@@ -162,7 +162,7 @@ struct DevicesView: View {
         actionError = nil
         defer { busyId = nil }
         do {
-            try await client.revokeDevice(id: device.id)
+            try await client.revokeDevice(id: device.id, confirmThisDevice: device.thisDevice ?? false)
             // Mark it at once; the next poll's sort drops it to the foot.
             if let i = devices.firstIndex(where: { $0.id == device.id }) {
                 devices[i].revoked = true

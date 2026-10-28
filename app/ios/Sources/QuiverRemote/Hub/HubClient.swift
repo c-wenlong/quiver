@@ -432,8 +432,12 @@ struct HubClient: Sendable {
     }
 
     /// `POST /v1/devices/revoke {device_id}`: the device can't use its
-    /// credential again and would have to pair fresh.
-    func revokeDevice(id: String) async throws {
-        _ = try await raw(request("POST", "/v1/devices/revoke", body: ["device_id": id]))
+    /// credential again and would have to pair fresh. Removing the caller's
+    /// own row takes `confirm_this_device: true`, or the hub refuses with
+    /// 409 `confirm_this_device`; the Remove dialog is that confirmation.
+    func revokeDevice(id: String, confirmThisDevice: Bool = false) async throws {
+        var body: [String: Any] = ["device_id": id]
+        if confirmThisDevice { body["confirm_this_device"] = true }
+        _ = try await raw(request("POST", "/v1/devices/revoke", body: body))
     }
 }
