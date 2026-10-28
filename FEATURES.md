@@ -22,9 +22,9 @@ Status words:
 
 | Feature | Mac | Web | iOS | Notes |
 | --- | --- | --- | --- | --- |
-| Overview | yes | yes | - | Tokens, cost, harness split, daily activity, top models |
+| Overview | yes | yes | part | Mac and Web: tokens, cost, harness split, daily activity, top models. iOS: the Usage tab has limits and spend; harness split, daily activity and top models are missing |
 | Sessions | yes | yes | yes | Web: "Copy resume command" instead of Resume, no Devin-cloud or account-profile rows yet. iOS: the hub's remote sessions grouped by machine and folder |
-| Session chat | yes | yes | yes | Transcript, composer (Queue/Steer/Stop), approvals. Web opens the remote PWA's chat; iOS observe and attach is the app's core |
+| Session chat | yes | yes | yes | Transcript, composer (Queue/Steer/Stop), approvals. Web renders its own chat page (`static/pages/chat.js`); iOS observe and attach is the app's core |
 | Calendar | yes | yes | - | |
 | Pricing | yes | yes | - | |
 
@@ -78,8 +78,8 @@ hosts the hub; the PWA and the iOS app are its clients.
 | Feature | Mac | Web | iOS | Notes |
 | --- | --- | --- | --- | --- |
 | Pair a device | host | yes | yes | Tailscale, pair token, QR scan, 6-digit approval |
-| Devices list and revoke | - | - | planned | `swe remote devices` is CLI-only until the hub route lands (iOS P8) |
-| Launch a new session | planned | part | yes | Web launches from the resolve sheets; iOS has a general sheet; Mac's one-click launch is the open M5 item |
+| Devices list and revoke | yes | yes | planned | Mac and Web: Settings. iOS P8 still needs a device-list and revoke route |
+| Launch a new session | planned | yes | yes | Web and iOS have general new-session sheets; Mac's one-click launch is the open M5 item |
 | Machine switcher | - | - | planned | iOS P4: one machine today |
 | Machine vitals | yes | yes | planned | Compute page on Mac and Web; iOS P9 carries the samples over the hub |
 | Push notifications | - | - | part | ntfy today; APNs planned |
@@ -102,7 +102,7 @@ owes the other the same change; say so in the row's Notes until it is paid.
 | MCP redaction and the managed server repo | `McpRedaction`, `SecretText.maskingKeys`, `McpServerRepo` | `src/quiver/webapp/pages/mcp.py` |
 | Plugin drift severity | `CatalogPlugin.worstDrift` | `src/quiver/webapp/pages/plugins.py` |
 | OpenCode model naming | `openCodeModel` | `src/quiver/ledger/parsers.py` |
-| Chat rendering: Markdown, diffs, tool cards | Mac chat views, and iOS's own SwiftUI set | `src/quiver/webapp/static/app.js` (`md`, `renderDiff`) and `chat.js` |
+| Chat rendering: Markdown, diffs, tool cards | Mac chat views, and iOS's own SwiftUI set | `src/quiver/webapp/static/pages/chat.js` and `src/quiver/remote/web/app.js` (`md`, `renderDiff` in each) |
 
 The iOS app shares only the protocol DTOs with the Mac app today; its
 decoding lives on the hub. So a Swift-side bug repeats on iOS only where
