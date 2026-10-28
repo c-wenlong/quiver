@@ -218,16 +218,18 @@
     const stored = tasks().length;
     const rows = tasks().filter(filterOf().test);
     const failed = (d.repos || []).map((r) => ({ name: r.repo || r.name, error: r.error || r.status }));
+    // The refresh error outranks the empty states: an "empty" answer is
+    // still an answer, and this is why the next read didn't land.
+    const error = page.error ? `<div class="card"><div class="gh-error-row"><span class="error">${esc(page.error)}</span></div></div>` : "";
     if (!stored && !failed.length) {
       // A blocked source with no store is the offer card alone; a fresh
       // hub is the empty state.
-      if (blocked) return cards.join("");
-      return [...cards, `<div class="card"><div class="gh-empty">${ico("stack", "gh-muted")}<span>No tasks yet. Tasks are the issues and pull requests your agents touch — resolve an issue or open a PR from Repositories, or link a running session to one.</span>
+      if (blocked) return [...cards, error].join("");
+      return [...cards, error, `<div class="card"><div class="gh-empty">${ico("stack", "gh-muted")}<span>No tasks yet. Tasks are the issues and pull requests your agents touch — resolve an issue or open a PR from Repositories, or link a running session to one.</span>
         <a class="gh-button" href="#/repositories">${ico("expand")}<span>Repositories</span></a></div></div>`].join("");
     }
     const stale = blocked && stored
       ? `<div class="caption gh-muted tk-stale">${ico("refresh", "gh-small")}<span>Last known state — a source isn't answering, so this is what the store remembers.</span></div>` : "";
-    const error = page.error ? `<div class="card"><div class="gh-error-row"><span class="error">${esc(page.error)}</span></div></div>` : "";
     const body = rows.length || failed.length
       ? listGroups(rows, failed)
       : emptyCard(FILTER_EMPTY[page.filter] || "No tasks.");
@@ -535,23 +537,28 @@
 
   async function linkSession(t, key) {
     if (page.busy.has("link:" + key)) return;
+    const x = page.link;
     page.busy.add("link:" + key);
-    if (page.link) page.link.error = null;
+    if (x) x.error = null;
     paint();
     const { status, data } = await GhUI.post(
       `/v1/sessions/${encodeURIComponent(key)}/task`, { task_ref: refOf(t) });
     page.busy.delete("link:" + key);
+    /* The reply may land after the panel was swapped for another (or the
+     * user moved to another task): only the panel that asked is touched. */
     if (status !== 200 || !data) {
-      if (page.link) {
-        page.link.error = status === 401
+      if (x && page.link === x) {
+        x.error = status === 401
           ? "The hub doesn't know this browser's credential. It may have been revoked."
           : GhUI.failMessage(status, data);
         if (onTasks()) paint();
       }
       return;
     }
-    page.action = null;
-    page.link = null;
+    if (page.link === x) {
+      page.action = null;
+      page.link = null;
+    }
     if (onTasks()) load(true);
   }
 
@@ -564,10 +571,14 @@
       `/v1/sessions/${encodeURIComponent(key)}/task`, { task_ref: refOf(t) });
     page.busy.delete("unlink:" + key);
     if (status !== 200 || !data) {
-      page.actionError = status === 401
-        ? "The hub doesn't know this browser's credential. It may have been revoked."
-        : GhUI.failMessage(status, data);
-      if (onTasks()) paint();
+      /* The error belongs to this task's detail, not the one the user
+       * may have moved to. */
+      if (onTasks() && selectedId() === t.id) {
+        page.actionError = status === 401
+          ? "The hub doesn't know this browser's credential. It may have been revoked."
+          : GhUI.failMessage(status, data);
+        paint();
+      }
       return;
     }
     if (onTasks()) load(true);
