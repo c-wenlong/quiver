@@ -389,9 +389,15 @@ derived `state` (`open` → `in_progress` → `pr_open` → `merged|closed`),
 `sessions`, `agent_running` (a linked session is active, or its launch
 is still pending), `last_active_at`, and `pr` — for an issue the PR its
 `quiver/issue-<n>` branch produced, so a merged PR reads `merged` even
-after it leaves the open list. `/v1/pulls` rows carry `agent_running`
-from the same store, and `GET /v1/launches/{id}` shows a launch's
-`origin` while pending and after it settles.
+after it leaves the open list. A stored task no source can read this
+round (the source is blocked or down, or the task is past the 24 most
+recently active and off the open list) keeps the state its source last
+reported, from `cache/task_states.json`, and says so with
+`state_source: cached`; that cache is written only when a fresh read
+changes a task's state, and `tasks.json` itself stays links only.
+`/v1/pulls` rows carry `agent_running` from the same store, and `GET
+/v1/launches/{id}` shows a launch's `origin` while pending and after it
+settles.
 
 The Linear source is opt-in through a `linear` section in
 `~/.quiver/config/config.json`:
