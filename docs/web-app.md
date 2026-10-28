@@ -98,6 +98,10 @@ already do, through satellites; that is a later step.
 5. Writes for the Manage pages.
 6. Calendar, Compute, Models, Pricing, Service status.
 
+The GitHub pages shipped alongside that list: Repositories and Inbox
+(docs/web-app/repositories.md) and Tasks (docs/web-app/tasks.md) — the
+work-items surface over the hub's task store.
+
 Mac-only parts stay native whatever happens here: the menu bar, widgets,
 notifications, and opening a terminal.
 
