@@ -160,6 +160,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The web app's Plugins page says once where missing marketplaces were
+  looked for.** A `~/.claude/settings.json` from another machine can
+  register several marketplaces whose folders are not on this one, and
+  the page printed "no marketplace manifest on disk" once per name. Each
+  harness now gets one line naming them and the folder they were looked
+  in, and swe's catalog errors carry that folder as `path`
+  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
 - **Mac app sidebar toggle works in a normal window.** Since the toggle
   moved into the traffic lights' row, a click on it in a window that was
   not full screen did nothing: the sidebar list or the page reached up

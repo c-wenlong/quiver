@@ -445,6 +445,35 @@ function isOpen(id) {
   return needleOf(page.query) ? !page.closedInSearch.has(id) : page.expanded.has(id);
 }
 
+/* swe's words for a registered marketplace whose folder is not here
+   (`_read_manifest` in src/quiver/plugins/catalog.py). A settings.json
+   from another machine names several at once, so each harness gets one
+   line naming them and where they were looked for, as the Mac app does. */
+const MISSING_MANIFEST = "no marketplace manifest on disk";
+
+function problemLines(errors) {
+  const missing = new Map();
+  const lines = [];
+  for (const p of errors) {
+    if (p.detail === MISSING_MANIFEST && p.marketplace) {
+      if (!missing.has(p.harness)) missing.set(p.harness, []);
+      missing.get(p.harness).push(p);
+      continue;
+    }
+    lines.push(`${[Fmt.harnessName(p.harness), p.marketplace].filter(Boolean).join(", ")}: ${p.detail}`);
+  }
+  const folded = [...missing].map(([harness, rows]) => {
+    const where = rows.map((p) => p.short_path || p.path || "");
+    const parents = new Set(where.map((w) => w.replace(/\/[^/]*$/, "/")));
+    const names = parents.size === 1 && where[0]
+      ? `${rows.map((p) => p.marketplace).join(", ")} (looked in ${[...parents][0]})`
+      : rows.map((p, i) => where[i] ? `${p.marketplace} (${where[i]})` : p.marketplace).join(", ");
+    const n = rows.length === 1 ? "1 registered marketplace is" : `${rows.length} registered marketplaces are`;
+    return `${Fmt.harnessName(harness)}: ${n} missing on this machine: ${names}`;
+  });
+  return [...folded, ...lines];
+}
+
 function exploreBody() {
   const d = page.data.explore;
   const err = page.error.explore ? errorCard(page.error.explore) : "";
@@ -459,8 +488,9 @@ function exploreBody() {
       value="${esc(page.query)}" autocomplete="off" spellcheck="false">
     <span class="caption count num">${distinct(sources)} of ${d.total} plugins</span>
   </div>`;
-  const problems = d.errors.length ? `<div class="card pl-problems">${d.errors.map((p) =>
-    `<div class="pl-label warn">${svg("warn")}<span>${esc([Fmt.harnessName(p.harness), p.marketplace].filter(Boolean).join(", "))}: ${esc(p.detail)}</span></div>`).join("")}</div>` : "";
+  const lines = problemLines(d.errors);
+  const problems = lines.length ? `<div class="card pl-problems">${lines.map((text) =>
+    `<div class="pl-label warn">${svg("warn")}<span>${esc(text)}</span></div>`).join("")}</div>` : "";
   let list;
   if (d.total === 0) {
     list = iconCard("puzzle", "No plugin marketplaces registered in Claude Code, Codex or Cursor.", "muted-label");
