@@ -27,6 +27,7 @@ import sqlite3
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from email.utils import formatdate
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 
@@ -41,6 +42,7 @@ from quiver.remote import (
     inject,
     notify,
     pairing,
+    preview as preview_mod,
     protocol,
     search as search_mod,
     sessionmeta,
@@ -1758,6 +1760,9 @@ class _Handler(BaseHTTPRequestHandler):
             if sep and action == "files":
                 self._files(key, args)
                 return
+            if sep and action == "preview":
+                self._preview(key, args)
+                return
             if sep and action == "queue":
                 if self._state.catalog.row_for(key) is None:
                     self._send_error(
@@ -2180,6 +2185,41 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(exc.status, exc.code, exc.message)
             return
         self._send_json(200, body)
+
+    def _preview(self, key: str, args) -> None:
+        """``GET /v1/sessions/{id}/preview?path=``: one ``.html``,
+        ``.htm`` or ``.svg`` file from the session's working folder, as
+        it is on disk now, for the phone's Preview sheet
+        (``preview.py``)."""
+        row = self._state.catalog.row_for(key)
+        if row is None:
+            self._send_error(404, "unknown_session", "no such session")
+            return
+        try:
+            got = preview_mod.for_session(
+                row,
+                hub_machine_id=self._state.machine_id,
+                machines=catalog_mod.load_machines(self._state.home),
+                path=str((args.get("path") or [""])[0]),
+            )
+        except files_mod.FilesError as exc:
+            self._send_error(exc.status, exc.code, exc.message)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", got.content_type)
+        self.send_header("Content-Length", str(len(got.body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header(
+            "Last-Modified", formatdate(got.mtime, usegmt=True)
+        )
+        self.send_header("Content-Security-Policy", preview_mod.CSP)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.end_headers()
+        try:
+            self.wfile.write(got.body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _launch(self) -> None:
         """``POST /v1/sessions``: start a harness on the hub or a satellite.
