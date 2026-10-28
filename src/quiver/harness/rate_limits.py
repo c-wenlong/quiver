@@ -2091,7 +2091,10 @@ def _cursor_safe_storage_key() -> bytes | None:
 
     Absent off macOS, when the item is missing, when the read times out
     or is refused, and for a while after any read that may have shown the
-    access dialog (see ``_CURSOR_SAFE_STORAGE_BACKOFF``).
+    access dialog (see ``_CURSOR_SAFE_STORAGE_BACKOFF``). The app reads
+    several Cursor accounts at once, each in its own ``swe``, so the read
+    runs under a lock shared by every process: only one of them can put
+    the dialog up, and the others find its backoff once they get in.
     """
     global _cursor_safe_storage_key_cache
     if _cursor_safe_storage_key_cache is not None:
@@ -2099,6 +2102,32 @@ def _cursor_safe_storage_key() -> bytes | None:
     if not _is_macos() or not shutil.which("security"):
         return None
     backoff = _cursor_safe_storage_backoff_file()
+    import fcntl
+    try:
+        backoff.parent.mkdir(parents=True, exist_ok=True)
+        lock = open(backoff.with_name("cursor_safe_storage.lock"), "a")
+    except OSError:
+        return None
+    with lock:
+        deadline = time.monotonic() + _CURSOR_SAFE_STORAGE_TIMEOUT
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    return None  # another process is still asking
+                time.sleep(0.05)
+            except OSError:
+                return None
+        key = _read_cursor_safe_storage_key(backoff)
+    if key is not None:
+        _cursor_safe_storage_key_cache = key
+    return key
+
+
+def _read_cursor_safe_storage_key(backoff) -> bytes | None:
+    """``_cursor_safe_storage_key``'s keychain read, run under its lock."""
     try:
         if time.time() - os.path.getmtime(backoff) < _CURSOR_SAFE_STORAGE_BACKOFF:
             return None
@@ -2119,7 +2148,6 @@ def _cursor_safe_storage_key() -> bytes | None:
     if result is None or result.returncode not in (0, _SECURITY_ITEM_NOT_FOUND):
         # Timed out on the dialog, or the user refused it.
         try:
-            backoff.parent.mkdir(parents=True, exist_ok=True)
             backoff.touch()
         except OSError:
             pass
@@ -2127,9 +2155,8 @@ def _cursor_safe_storage_key() -> bytes | None:
     password = (result.stdout or "").strip()
     if result.returncode != 0 or not password:
         return None
-    _cursor_safe_storage_key_cache = hashlib.pbkdf2_hmac(
+    return hashlib.pbkdf2_hmac(
         "sha1", password.encode("utf-8"), b"saltysalt", 1003, 16)
-    return _cursor_safe_storage_key_cache
 
 
 def _aes_128_cbc_decrypt(key: bytes, iv: bytes, data: bytes) -> bytes | None:

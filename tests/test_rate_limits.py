@@ -5806,6 +5806,25 @@ class CursorSafeStorageTest(unittest.TestCase):
                         self.rl._decrypt_cursor_safe_storage(self._BLOB))
                 run.assert_not_called()
 
+    def test_one_process_at_a_time_may_put_the_dialog_up(self):
+        """While another ``swe`` holds the lock (the app reads several
+        Cursor accounts at once), this one gives up without asking."""
+        import fcntl
+        self.backoff.parent.mkdir(parents=True)
+        lock_path = self.backoff.with_name("cursor_safe_storage.lock")
+        with open(lock_path, "a") as holder, \
+             patch.object(self.rl, "_CURSOR_SAFE_STORAGE_TIMEOUT", 0.1), \
+             self._security() as run:
+            fcntl.flock(holder, fcntl.LOCK_EX)
+            self.assertIsNone(self.rl._decrypt_cursor_safe_storage(self._BLOB))
+            run.assert_not_called()
+            fcntl.flock(holder, fcntl.LOCK_UN)
+            if self.rl._load_libcrypto() is not None:
+                self.assertEqual(
+                    self.rl._decrypt_cursor_safe_storage(self._BLOB),
+                    self._JWT)
+                run.assert_called_once()
+
     def test_backoff_expires(self):
         self._needs_libcrypto()
         self.backoff.parent.mkdir(parents=True)
