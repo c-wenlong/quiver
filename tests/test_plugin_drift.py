@@ -215,6 +215,17 @@ class UnregisteredTest(_FakeHome, unittest.TestCase):
         found = self.drift(harnesses=("claude",))
         self.assertEqual([f.kind for f in found], ["unregistered"])
 
+    def test_a_remote_only_marketplace_is_unregistered_too(self):
+        # Every plugin comes from git, so quiver_plugins finds nothing in it,
+        # but the marketplace itself still needs registering.
+        remote = self.home / ".quiver" / "plugins" / "far"
+        _write(remote / ".claude-plugin" / "marketplace.json", json.dumps(
+            {"name": "far", "plugins": [{"name": "r", "source": {
+                "source": "github", "repo": "o/r"}}]}))
+        found = [(f.harness, f.marketplace, f.kind) for f in self.drift()]
+        self.assertEqual(found, [("claude", "far", "unregistered"),
+                                 ("codex", "far", "unregistered")])
+
     def test_dir_with_spaces_is_quoted(self):
         spaced = self.home / ".quiver" / "plugins" / "my mk"
         shutil.copytree(self.market, spaced, symlinks=True)
