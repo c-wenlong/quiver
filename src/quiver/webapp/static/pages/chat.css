@@ -132,11 +132,12 @@ body.chat-open .panel { display: flex; min-height: 0; overflow: hidden; }
 }
 .msg hr { border: 0; border-top: 1px solid var(--border); margin: 8px 0; }
 .msg .text a { color: var(--link); }
-/* A Markdown table in a hairline box, as the phone's TableBlock: when
- * it is wider than the message it scrolls sideways inside the box, so
- * the chat itself never does. Cells cap at 240px and wrap past it. */
+/* A Markdown table in a hairline box, as the phone's TableBlock: the
+ * box hugs the table's own width, and when the table is wider than the
+ * message it scrolls sideways inside the box, so the chat itself never
+ * does. Cells cap at 240px and wrap past it. */
 .msg .md-table {
-  margin: 6px 0; max-width: 100%; overflow-x: auto;
+  margin: 6px 0; width: fit-content; max-width: 100%; overflow-x: auto;
   border: 1px solid var(--border); border-radius: 8px; background: var(--card);
 }
 .msg .md-table table { border-collapse: collapse; font-size: 13px; }
@@ -152,6 +153,7 @@ body.chat-open .panel { display: flex; min-height: 0; overflow: hidden; }
  * image or a harness's <json-render> view. */
 .msg .md-note {
   display: flex; align-items: center; gap: 10px; margin: 6px 0; padding: 8px 12px;
+  width: fit-content; max-width: 100%;
   border: 1px solid var(--border); border-radius: 10px; background: var(--card);
 }
 .msg .md-note svg { width: 14px; height: 14px; flex: none; color: var(--text-secondary); }
