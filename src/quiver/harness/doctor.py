@@ -188,4 +188,81 @@ def setup_findings(home: Path | None = None) -> list[DoctorFinding]:
                 "setup.unlinked", "warning",
                 f"{title} doesn't read {' or '.join(wanted)} yet",
                 "swe init", harness=name, action="init"))
+    findings.extend(marketplace_findings(home, registry))
+    return findings
+
+
+# The file each plugin-capable harness declares marketplaces in. Claude
+# also keeps the ones `claude plugin marketplace add` registered in
+# plugins/known_marketplaces.json, which its own remove command edits.
+_MARKETPLACE_CONFIG = {"claude": ".claude/settings.json", "codex": ".codex/config.toml"}
+
+
+def _declared_in_settings(home: Path, harness: str) -> set[str]:
+    """Names Claude's settings.json declares; the rest came from the CLI."""
+    if harness != "claude":
+        return set()
+    try:
+        data = json.loads((home / _MARKETPLACE_CONFIG["claude"]).read_text())
+    except (OSError, ValueError):
+        return set()
+    extra = data.get("extraKnownMarketplaces") if isinstance(data, dict) else None
+    return set(extra) if isinstance(extra, dict) else set()
+
+
+def marketplace_findings(home: Path, registry: dict | None = None) -> list[DoctorFinding]:
+    """One warning per harness whose registered folder marketplaces are gone.
+
+    A settings file synced from another machine can name
+    ``~/.quiver/plugins/<name>`` folders that never reached this one (#696).
+    Only ``directory`` marketplaces count: a git or GitHub one with no
+    manifest yet is fetched by the harness itself. When the settings file
+    is a Nix store link, editing it would fail, so the fix says where the
+    change belongs instead. A harness whose files could not be read gets a
+    warning saying the check did not finish, rather than silence.
+    """
+    import os
+
+    from quiver.harness.models import display_name
+    from quiver.plugins.catalog import read_views
+
+    def title(name: str) -> str:
+        return display_name((registry or {}).get(name) or {}) or name
+
+    errors: list = []
+    views = read_views(home, errors)
+    findings: list[DoctorFinding] = []
+    for name in sorted({e["harness"] for e in errors} - set(views)):
+        detail = next(e["detail"] for e in errors if e["harness"] == name)
+        findings.append(DoctorFinding(
+            "setup.marketplace-unchecked", "warning",
+            f"Couldn't check {title(name)}'s marketplaces: {detail}", harness=name))
+    for name, view in views.items():
+        missing = sorted(m.name for m in view.markets.values()
+                         if m.source_type == "directory" and m.root is not None
+                         and not m.root.is_dir())
+        if not missing:
+            continue
+        listed = ", ".join(missing)
+        declared = _declared_in_settings(home, name) if name == "claude" else set(missing)
+        in_file = [m for m in missing if m in declared]
+        by_cli = [m for m in missing if m not in declared]
+        config = home / _MARKETPLACE_CONFIG.get(name, "")
+        if name in _MARKETPLACE_CONFIG and in_file and \
+                os.path.realpath(config).startswith("/nix/store/"):
+            fix = (f"~/{_MARKETPLACE_CONFIG[name]} is managed by Nix: copy the folders "
+                   "onto this machine or drop them from your Nix config")
+        elif name in _MARKETPLACE_CONFIG:
+            ways = []
+            if in_file:
+                ways.append(f"drop {', '.join(in_file)} from ~/{_MARKETPLACE_CONFIG[name]}")
+            ways += [f"{name} plugin marketplace remove {m}" for m in by_cli]
+            fix = "copy the folders onto this machine, or " + "; ".join(ways)
+        else:
+            fix = "copy the folders onto this machine"
+        findings.append(DoctorFinding(
+            "setup.marketplace-missing", "warning",
+            f"{title(name)} registers {len(missing)} marketplace folder"
+            f"{'s' if len(missing) != 1 else ''} missing on this machine: {listed}",
+            fix, harness=name))
     return findings

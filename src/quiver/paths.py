@@ -3,7 +3,8 @@
 Everything quiver owns lives under one root, ``~/.quiver``. That root holds two
 kinds of thing and they are separated so the whole directory can be a git repo:
 
-  authored     AGENTS.md, .linkignore, skills/, hooks/, config/   worth versioning
+  authored     AGENTS.md, .linkignore, skills/, plugins/, hooks/,  worth versioning
+               mcp/, config/
   regenerable  cache/, backups/              gitignored
   credentials  secrets/                      gitignored, mode 700
 
@@ -77,6 +78,16 @@ def hooks_dir_for(home: Path | None = None) -> Path:
 def plugins_dir_for(home: Path | None = None) -> Path:
     """The user's own plugin marketplaces, one subdirectory per marketplace."""
     return quiver_dir_for(home) / PLUGINS_SUBDIR
+
+
+# The authored folders every hub has, in the order `swe init` reports them.
+# Init creates any that are missing, so a hub that reached a second machine
+# as a bare AGENTS.md ends up the same shape as one that grew in place (#696).
+HUB_SUBDIRS = (SKILLS_SUBDIR, PLUGINS_SUBDIR, HOOKS_SUBDIR, MCP_SUBDIR)
+
+
+def hub_dirs_for(home: Path | None = None) -> list[Path]:
+    return [quiver_dir_for(home) / name for name in HUB_SUBDIRS]
 
 
 def config_dir_for(home: Path | None = None) -> Path:

@@ -171,7 +171,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   task row gains `state_source` (`live`, `cached` or `links`) so a
   client can show a cached row as last known. `tasks.json` still holds
   links only.
-
+- **`swe doctor` names registered marketplace folders missing on this
+  machine.** A `~/.claude/settings.json` or `~/.codex/config.toml` synced
+  from another machine can register `directory` marketplaces whose
+  folders never arrived. Doctor's Setup section now gives one warning per
+  harness listing them, with a fix that names the file to edit, or says
+  the file is managed by Nix when it is a store link
+  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
+- **The web app's Plugins page says once where missing marketplaces were
+  looked for.** A `~/.claude/settings.json` from another machine can
+  register several marketplaces whose folders are not on this one, and
+  the page printed "no marketplace manifest on disk" once per name. Each
+  harness now gets one line naming them and the folder they were looked
+  in, and swe's catalog errors carry that folder as `path`
+  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
+- **`swe init` builds and repairs every hub folder.** It used to create
+  only `skills/` and `backups/`, so a hub that reached a second machine
+  as a bare `AGENTS.md` never got `plugins/`, `hooks/` or `mcp/`. The
+  hub's folders are now one list in `paths.py` (`HUB_SUBDIRS`), and init
+  creates whichever are missing on a new or existing `~/.quiver` without
+  touching files already there
+  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
 - **Mac app sidebar toggle works in a normal window.** Since the toggle
   moved into the traffic lights' row, a click on it in a window that was
   not full screen did nothing: the sidebar list or the page reached up
@@ -180,7 +200,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list. In full screen, where the traffic lights are hidden, the wordmark
   and toggle sit at the left edge, and the toggle now follows the
   wordmark instead of the sidebar's trailing edge.
-
 - **Every Activity heatmap cell shows its numbers on hover again.** The
   Overview's card first lays out 8 weeks while its width is still 0,
   then widens to about 15; the columns added then (July and August on a

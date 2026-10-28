@@ -273,7 +273,9 @@ class MalformedTest(_CatalogHome, unittest.TestCase):
         self._write_claude()
         catalog = self.catalog()
         self.assertIn({"harness": "claude", "marketplace": "elsewhere",
-                       "detail": "no marketplace manifest on disk"}, catalog["errors"])
+                       "detail": "no marketplace manifest on disk",
+                       "path": str(self.home / ".quiver" / "plugins" / "elsewhere")},
+                      catalog["errors"])
         # A hub path, so it would be the app's Local section, with nothing in it.
         elsewhere = self.mkt("elsewhere", catalog)
         self.assertTrue(elsewhere["hub"])
