@@ -310,6 +310,9 @@ struct TaskDetailPage: View {
         panel = .new
         linkError = nil
         guard harnesses == nil else { return }
+        // A nil harnesses means unanswered — clear the last failure so
+        // this retry draws the spinner instead of the stale error.
+        harnessesError = nil
         Task {
             do {
                 let (offered, _) = try await app.hub.withClient { try await $0.taskHarnesses() }
@@ -320,7 +323,8 @@ struct TaskDetailPage: View {
                 }
             } catch is CancellationError {
             } catch {
-                harnesses = []
+                // Leave harnesses nil: a failed ask isn't an empty answer,
+                // and reopening the panel must be allowed to retry.
                 harnessesError = (error as? HubError)?.message ?? error.localizedDescription
             }
         }

@@ -49,11 +49,16 @@ struct TasksPage: View {
                     Task { await model.load(hub: app.hub, refresh: true) }
                 }
             }
+            if let failed = model.githubFailed {
+                blockedBanner(source: "GitHub", message: failed)
+            }
             if let blocked = model.linearBlocked {
                 blockedBanner(source: "Linear", message: blocked)
             }
             if let error = model.error, model.tasks.isEmpty, model.failedRepos.isEmpty {
-                if model.githubSetup == nil, model.linearBlocked == nil {
+                if model.githubSetup == nil, model.linearBlocked == nil,
+                   model.githubFailed == nil
+                {
                     ErrorCard(message: error, actionTitle: "Refresh") {
                         Task { await model.load(hub: app.hub, refresh: true) }
                     }
@@ -93,7 +98,7 @@ struct TasksPage: View {
     @ViewBuilder private var listContent: some View {
         let sections = TaskGrouping.sections(of: model.tasks, filter: model.filter)
         if model.tasks.isEmpty, model.failedRepos.isEmpty {
-            if model.envBlocked == nil {
+            if model.envBlocked == nil, model.githubFailed == nil {
                 Card {
                     VStack(alignment: .leading, spacing: 10) {
                         Label("No tasks yet.", systemImage: "tray")
@@ -107,7 +112,9 @@ struct TasksPage: View {
                 }
             }
         } else {
-            if model.envBlocked != nil || model.linearBlocked != nil {
+            if model.envBlocked != nil || model.githubFailed != nil
+                || model.linearBlocked != nil
+            {
                 Label("Last known state — a source isn't answering, so this is what the store remembers.",
                       systemImage: "clock.arrow.circlepath")
                     .font(Theme.caption).foregroundStyle(Theme.textMuted)

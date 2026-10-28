@@ -591,6 +591,18 @@ class TestLinkRoutes(_Base):
         self.assertEqual(set(body["unlinked"]),
                          {"github:issue:o/r:5", "github:pull:o/r:7"})
 
+    def test_unlinking_a_gone_session_still_works(self):
+        """A linked session key survives in the store after the catalog
+        drops the session; DELETE must still remove the link."""
+        tasks_mod.link(self.srv.home, ISSUE_REF, session_key="claude:gone")
+        self.assertIsNone(self.srv.state.catalog.row_for("claude:gone"))
+        status, body = self._delete(
+            "/v1/sessions/claude:gone/task", {"task_ref": ISSUE_REF})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["unlinked"], ["github:issue:o/r:5"])
+        self.assertNotIn("github:issue:o/r:5",
+                         tasks_mod._load(self.srv.home))
+
     def test_bad_ref_and_missing_session(self):
         status, body = self._post(
             "/v1/sessions/claude:s1/task", {"task_ref": {"source": "x"}})
@@ -599,8 +611,10 @@ class TestLinkRoutes(_Base):
         status, _ = self._post("/v1/sessions/nope:1/task",
                                {"task_ref": ISSUE_REF})
         self.assertEqual(status, 404)
-        status, _ = self._delete("/v1/sessions/nope:1/task")
-        self.assertEqual(status, 404)
+        # Linking still needs a catalogued session, but unlinking an
+        # unknown key just confirms there is nothing left linked.
+        status, body = self._delete("/v1/sessions/nope:1/task")
+        self.assertEqual((status, body["unlinked"]), (200, []))
         status, body = self._post("/v1/sessions/claude:s1/task", {})
         self.assertEqual((status, body["error"]["code"]),
                          (422, "bad_command"))

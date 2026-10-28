@@ -229,8 +229,9 @@ import Testing
 }
 
 @Suite struct TaskStepperTests {
-    private func row(kind: String? = "issue", state: String? = "open") -> HubTaskRow {
-        HubTaskRow(id: "t", source: "github", kind: kind, ref: "5",
+    private func row(source: String? = "github", kind: String? = "issue",
+                     state: String? = "open") -> HubTaskRow {
+        HubTaskRow(id: "t", source: source, kind: kind, ref: "5",
                    title: "t", url: "u", repo: "o/r", project: nil,
                    state: state, sessions: nil, launches: nil,
                    agentRunning: false, linked: nil, lastActiveAt: nil,
@@ -254,6 +255,21 @@ import Testing
         let steps = TaskStepper.steps(for: row(kind: "pull", state: "in_progress"))
         #expect(steps.map(\.title) == ["Open", "In progress", "Merged"])
         #expect(steps[1] == step("In progress", true, true))
+    }
+
+    @Test func nonGithubLaddersSkipThePrRung() {
+        // Linear/Notion issues and cards can never produce a PR, so the
+        // rung must not exist — same rule the web page's `rungs()` uses.
+        let linear = TaskStepper.steps(for: row(source: "linear", state: "in_progress"))
+        #expect(linear.map(\.title) == ["Open", "In progress", "Merged"])
+        #expect(linear[1] == step("In progress", true, true))
+        let notion = TaskStepper.steps(
+            for: row(source: "notion", kind: "card", state: "in_progress"))
+        #expect(notion.map(\.title) == ["Open", "In progress", "Merged"])
+        // A closed non-GitHub task still lands on the Closed rung.
+        let closed = TaskStepper.steps(for: row(source: "linear", state: "closed"))
+        #expect(closed.last == step("Closed", true, true))
+        #expect(closed.map(\.reached) == [true, false, true])
     }
 
     @Test func closedReplacesTheTerminalRung() {
@@ -566,6 +582,35 @@ extension HubStubbed {
         #expect(model.linearBlocked == "no key")
         #expect(model.error == nil)
         // The failed repo's rows are last-known; a healthy one's aren't.
+        #expect(model.stale(model.tasks[0]) == false)
+    }
+
+    @Test func anUpstreamGithubFailureMarksRowsStale() async throws {
+        /// `gh auth status` timed out: no `env_blocked`, no per-repo
+        /// failures — but the GitHub list never refreshed, so the rows
+        /// are last-known and must say so. `githubSetup` stays nil: a
+        /// failed probe isn't a login problem.
+        HubStub.handler = { req in
+            req.url?.path == "/v1/app/tasks"
+                ? (200, Data(#"{"tasks": [{"id": "github:issue:o/r:5", "source": "github", "kind": "issue", "repo": "o/r", "ref": "5", "title": "Fix the thing", "state": "open"}], "machine": "kai", "machine_id": "m-1", "github": {"status": "upstream-error", "error": "gh auth status timed out"}, "linear": {"status": "disabled"}}"#.utf8))
+                : (404, Data())
+        }
+        let model = TasksModel()
+        await model.load(hub: try hub())
+        #expect(model.githubSetup == nil)
+        #expect(model.envBlocked == nil)
+        #expect(model.failedRepos.isEmpty)
+        #expect(model.githubFailed == "gh auth status timed out")
+        #expect(model.stale(model.tasks[0]))
+    }
+
+    @Test func aHealthyGithubLeavesRowsFresh() async throws {
+        HubStub.handler = { req in
+            req.url?.path == "/v1/app/tasks" ? (200, Data(Self.listJSON.utf8)) : (404, Data())
+        }
+        let model = TasksModel()
+        await model.load(hub: try hub())
+        #expect(model.githubFailed == nil)
         #expect(model.stale(model.tasks[0]) == false)
     }
 

@@ -2124,11 +2124,10 @@ class _Handler(BaseHTTPRequestHandler):
             stem = path[len("/v1/sessions/"):]
             key_part, _, action = stem.rpartition("/")
             if action == "task":
+                # No catalog check: the task store keeps linked keys past
+                # the session's life, so unlinking one must still work
+                # after the catalog has forgotten it.
                 key = unquote(key_part)
-                if self._state.catalog.row_for(key) is None:
-                    self._send_error(
-                        404, "unknown_session", "no such session")
-                    return
                 self._send_json(*tasks_mod.unlink_request(
                     self._state, key, self._read_body()))
                 return

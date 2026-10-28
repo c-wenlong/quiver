@@ -66,7 +66,7 @@ struct NewSessionSheet: View {
     }
 
     private var ready: Bool {
-        harness != nil && !machinesPending
+        (harness.map { offered.contains($0) } ?? false) && !machinesPending
             && folder.trimmingCharacters(in: .whitespaces).hasPrefix("/")
             && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -124,7 +124,7 @@ struct NewSessionSheet: View {
                 } else {
                     SelectMenu(label: "On", symbol: "desktopcomputer",
                                options: machines.map { ($0.id, machineTitle($0)) },
-                               selection: Binding(get: { machineId ?? "" },
+                               selection: Binding(get: { machine?.id ?? "" },
                                                   set: { pick(machine: $0) }),
                                width: 280)
                 }
@@ -401,14 +401,18 @@ struct NewSessionSheet: View {
             machines = NewSessionOptions.machines(listed)
             sessions = rows
             machinesError = nil
+            // The default comes from the filtered list — when the hub
+            // can't launch but a satellite can, the satellite is the
+            // pick, not the hub id the listing happened to name first.
             if machineId == nil || !(machines ?? []).contains(where: { $0.id == machineId }) {
-                machineId = hubMachineId ?? (machines ?? []).first?.id
+                machineId = (machines ?? []).first(where: { $0.id == hubMachineId })?.id
+                    ?? (machines ?? []).first?.id
             }
             if folder.isEmpty {
-                folder = NewSessionOptions.folders(on: machineId ?? "", sessions: rows).first ?? ""
+                folder = NewSessionOptions.folders(on: machine?.id ?? "", sessions: rows).first ?? ""
             }
             if harness == nil {
-                harness = NewSessionOptions.defaultHarness(folder: folder, machineId: machineId ?? "",
+                harness = NewSessionOptions.defaultHarness(folder: folder, machineId: machine?.id ?? "",
                                                          offered: offered, sessions: rows)
             }
         } catch is CancellationError {
@@ -423,7 +427,13 @@ struct NewSessionSheet: View {
         machineId = id
         let folders = NewSessionOptions.folders(on: id, sessions: sessions)
         folder = folders.first ?? ""
-        harnessFromFolder()
+        // A hand-picked harness survives the switch only while the new
+        // machine offers it; otherwise re-default — `offered` already
+        // reads the machine just selected.
+        if let harness, offered.contains(harness) { return }
+        harness = NewSessionOptions.defaultHarness(
+            folder: folder, machineId: id, offered: offered, sessions: sessions)
+        harnessTouched = false
     }
 
     private func pick(folder path: String) {
@@ -432,12 +442,13 @@ struct NewSessionSheet: View {
     }
 
     /// A folder change re-defaults the harness unless the user picked
-    /// one by hand — the harness last used there wins when offered.
+    /// one by hand — and the hand-pick only holds while it's on offer.
     private func harnessFromFolder() {
-        guard !harnessTouched else { return }
+        if harnessTouched, let harness, offered.contains(harness) { return }
         harness = NewSessionOptions.defaultHarness(
             folder: folder.trimmingCharacters(in: .whitespaces),
-            machineId: machineId ?? "", offered: offered, sessions: sessions)
+            machineId: machine?.id ?? "", offered: offered, sessions: sessions)
+        harnessTouched = false
     }
 
     private func useBrowsed() {
@@ -447,18 +458,19 @@ struct NewSessionSheet: View {
     }
 
     private func start() async {
-        guard let harness else { return }
+        guard let harness, offered.contains(harness), let machine else { return }
         let cwd = folder.trimmingCharacters(in: .whitespaces)
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard cwd.hasPrefix("/"), !text.isEmpty else { return }
         let hub = app.hub
-        // The hub is the default machine; a satellite is named.
-        let machine = machineId == hubMachineId ? nil : machineId
+        // The hub is the default machine; a satellite is named — the
+        // resolved machine's id, not whatever the picker stored.
+        let target = machine.id == hubMachineId ? nil : machine.id
         let key = await flow.run(
             post: {
                 try await hub.withClient {
                     try await $0.startSession(harness: harness, cwd: cwd,
-                                              prompt: text, machine: machine)
+                                              prompt: text, machine: target)
                 }
             },
             fetch: { id in try await hub.withClient { try await $0.launch(id) } })

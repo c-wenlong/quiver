@@ -422,16 +422,17 @@ public enum TaskStepper {
         public var id: String { title }
     }
 
-    /// `open → in progress → PR open → merged` for issues and cards;
-    /// `open → in progress → merged` for pulls. `closed` keeps the
-    /// ladder's shape with "Closed" as the terminal rung — how far a
+    /// `open → in progress → (PR open) → merged`: only a GitHub issue's
+    /// own PR stands between "an agent is on it" and done — a pull IS
+    /// its PR, and Linear/Notion ladders end at started. `closed` keeps
+    /// the ladder's shape with "Closed" as the terminal rung — how far a
     /// hand-closed task got isn't inferable, so only its ends are lit.
     public static func steps(for task: HubTaskRow) -> [Step] {
-        let pull = task.kind == "pull"
-        var rungs = pull ? ["Open", "In progress", "Merged"]
-                         : ["Open", "In progress", "PR open", "Merged"]
-        let order = pull ? ["open", "in_progress", "merged"]
-                         : ["open", "in_progress", "pr_open", "merged"]
+        let viaPR = task.source == "github" && task.kind == "issue"
+        var rungs = viaPR ? ["Open", "In progress", "PR open", "Merged"]
+                          : ["Open", "In progress", "Merged"]
+        let order = viaPR ? ["open", "in_progress", "pr_open", "merged"]
+                          : ["open", "in_progress", "merged"]
         let last = rungs.count - 1
         if task.state == "closed" {
             rungs[last] = "Closed"
@@ -467,6 +468,10 @@ public final class TasksModel {
     /// `gh` missing or signed out on the hub (`env_blocked`): GitHub
     /// rows are the last-known ones and read as stale.
     public private(set) var envBlocked: String?
+    /// `gh`'s probe itself failed (`github.status == "upstream-error"` —
+    /// e.g. an `auth status` timeout): no setup card fixes it, but the
+    /// GitHub list didn't refresh either, so its rows are last-known.
+    public private(set) var githubFailed: String?
     /// Linear's blocking state with its reason (`auth-required`,
     /// `bad-config`, `upstream-error`), nil when ok, disabled or absent.
     public private(set) var linearBlocked: String?
@@ -497,6 +502,9 @@ public final class TasksModel {
             machineId = body.machineId
             github = body.github
             envBlocked = body.envBlocked
+            githubFailed = github?.status == "upstream-error"
+                ? (github?.error ?? "GitHub did not answer this refresh.")
+                : nil
             error = nil
             let status = body.linear?.status
             linearBlocked = switch status {
@@ -518,7 +526,7 @@ public final class TasksModel {
 
     /// The blocking env state the page's setup card covers — gh missing
     /// or signed out on the hub. nil while probing, ok, or upstream
-    /// trouble (the probe failed, not the login — the list stays up).
+    /// trouble — a failed probe earns `githubFailed`, not a setup ask.
     public var githubSetup: GhEnv.Status? {
         switch github?.status {
         case "unavailable": .unavailable
@@ -532,7 +540,7 @@ public final class TasksModel {
     public func stale(_ task: HubTaskRow) -> Bool {
         switch task.source {
         case "github":
-            envBlocked != nil
+            envBlocked != nil || githubFailed != nil
                 || (task.repo.map { repo in failedRepos.contains { $0.name == repo } } ?? false)
         case "linear": linearBlocked != nil
         default: false
