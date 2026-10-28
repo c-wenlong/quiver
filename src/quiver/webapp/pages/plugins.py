@@ -391,6 +391,15 @@ def _plugin(plugin: dict, names: dict, actionable=()) -> dict:
     }
 
 
+def _error(error: dict, home: Path) -> dict:
+    """One catalog problem, with its folder written from ``~`` when it has one."""
+    if not error.get("path"):
+        return error
+    path = Path(error["path"])
+    short = f"~/{path.relative_to(home)}" if path.is_relative_to(home) else str(path)
+    return {**error, "short_path": short}
+
+
 def explore(home: Path) -> dict:
     """The Explore tab's data: the catalog's plugins once, keyed by ref,
     and the sources, marketplaces and rows that place them."""
@@ -406,7 +415,7 @@ def explore(home: Path) -> dict:
     return {
         "harnesses": catalog["harnesses"],
         "actions": catalog["actions"],
-        "errors": catalog["errors"],
+        "errors": [_error(e, home) for e in catalog["errors"]],
         "total": len(plugins),
         "plugins": plugins,
         "sources": sources(catalog, plugins, names),
