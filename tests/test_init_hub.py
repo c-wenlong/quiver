@@ -187,6 +187,26 @@ class RegisterMarketplacesTest(unittest.TestCase):
         run.assert_not_called()
 
 
+class RegisterOutputTest(unittest.TestCase):
+    def _print(self, results):
+        buf = io.StringIO()
+        with mock.patch("quiver.init.hub.register_marketplaces", return_value=results), \
+             redirect_stdout(buf):
+            init_commands._register_hub_marketplaces(Path("/nowhere"))
+        return buf.getvalue()
+
+    def test_each_result_gets_a_line_and_failures_a_retry_hint(self):
+        out = self._print([("claude", "mine", None),
+                           ("codex", "mine", "codex is not on PATH")])
+        self.assertIn("mine registered in claude", out)
+        self.assertIn("mine not registered in codex: codex is not on PATH", out)
+        self.assertIn("swe find plugins", out)
+
+    def test_nothing_to_register_prints_nothing(self):
+        self.assertEqual(self._print([]), "")
+        self.assertNotIn("--fix", self._print([("claude", "mine", None)]))
+
+
 @unittest.skipUnless(GIT, "git not installed")
 class CmdInitHubTest(unittest.TestCase):
     def setUp(self):
