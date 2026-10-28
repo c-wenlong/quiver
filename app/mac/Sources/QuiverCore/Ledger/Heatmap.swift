@@ -54,6 +54,60 @@ public struct Heatmap: Sendable, Equatable {
     }
 }
 
+/// Where the drawn cells sit, worked out from the grid's fixed metrics
+/// instead of measured per cell. Per-cell measuring missed every column
+/// added after the first layout: the card first lays out 8 weeks (width
+/// still 0), then widens to about 15, and the added cells never reported
+/// a frame, so hovering them drew no bubble.
+public struct HeatmapLayout: Sendable, Equatable {
+    /// One cell's side.
+    public var cell: CGFloat
+    /// The space between cells, and between the day labels and the first column.
+    public var gap: CGFloat
+    /// The day-label column left of the first week.
+    public var gutter: CGFloat
+    /// The first row's top-left corner (its day label's), in grid coordinates.
+    public var origin: CGPoint
+
+    public init(cell: CGFloat, gap: CGFloat, gutter: CGFloat, origin: CGPoint) {
+        self.cell = cell
+        self.gap = gap
+        self.gutter = gutter
+        self.origin = origin
+    }
+
+    /// The cell for `week` (0 is the leftmost drawn column) and `weekday`.
+    public func frame(week: Int, weekday: Int) -> CGRect {
+        CGRect(x: origin.x + gutter + gap + CGFloat(week) * (cell + gap),
+               y: origin.y + CGFloat(weekday) * (cell + gap),
+               width: cell, height: cell)
+    }
+
+    /// Every drawn cell's frame, keyed by its day.
+    public func frames(columns: [[Heatmap.Cell?]]) -> [Date: CGRect] {
+        var frames: [Date: CGRect] = [:]
+        for (week, column) in columns.enumerated() {
+            for (weekday, cell) in column.enumerated() {
+                if let cell { frames[cell.day] = frame(week: week, weekday: weekday) }
+            }
+        }
+        return frames
+    }
+
+    /// The drawn cell under a point in grid coordinates; nil over a gap,
+    /// the labels, an undrawn day or outside the columns.
+    public func cell(at point: CGPoint, columns: [[Heatmap.Cell?]]) -> Heatmap.Cell? {
+        let x = point.x - origin.x - gutter - gap
+        let y = point.y - origin.y
+        guard x >= 0, y >= 0 else { return nil }
+        let pitch = cell + gap
+        let week = Int(x / pitch), weekday = Int(y / pitch)
+        guard x - CGFloat(week) * pitch < cell, y - CGFloat(weekday) * pitch < cell,
+              week < columns.count, weekday < columns[week].count else { return nil }
+        return columns[week][weekday]
+    }
+}
+
 /// Which cell the hover bubble belongs to and where it goes. Pure so every
 /// cell in a grid can be exercised at once.
 public enum HeatmapHover {

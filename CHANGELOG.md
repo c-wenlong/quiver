@@ -153,6 +153,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Every Activity heatmap cell shows its numbers on hover again.** The
+  Overview's card first lays out 8 weeks while its width is still 0,
+  then widens to about 15; the columns added then (July and August on a
+  late-October grid) never reported a frame, so hovering them drew no
+  bubble, and some earlier frames went stale. The cell frames and the
+  cell under the pointer now come from the grid's fixed metrics
+  (`HeatmapLayout` in QuiverCore), with one measured origin for the
+  rows.
 - **A unit test could freeze the whole Swift suite.** In
   `clearWaitsForACallInsideTheLock` the clearer ran as `Task.detached`,
   so `store.clear()` parked a cooperative-pool worker on `storeLock`
