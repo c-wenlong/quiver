@@ -167,6 +167,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   harness listing them, with a fix that names the file to edit, or says
   the file is managed by Nix when it is a store link
   ([#696](https://github.com/c-wenlong/quiver/issues/696)).
+- **`swe init` builds and repairs every hub folder.** It used to create
+  only `skills/` and `backups/`, so a hub that reached a second machine
+  as a bare `AGENTS.md` never got `plugins/`, `hooks/` or `mcp/`. The
+  hub's folders are now one list in `paths.py` (`HUB_SUBDIRS`), and init
+  creates whichever are missing on a new or existing `~/.quiver` without
+  touching files already there
+  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
 - **Mac app sidebar toggle works in a normal window.** Since the toggle
   moved into the traffic lights' row, a click on it in a window that was
   not full screen did nothing: the sidebar list or the page reached up
@@ -175,7 +182,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list. In full screen, where the traffic lights are hidden, the wordmark
   and toggle sit at the left edge, and the toggle now follows the
   wordmark instead of the sidebar's trailing edge.
-
 - **Every Activity heatmap cell shows its numbers on hover again.** The
   Overview's card first lays out 8 weeks while its width is still 0,
   then widens to about 15; the columns added then (July and August on a
