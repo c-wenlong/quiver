@@ -160,6 +160,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`swe doctor` names registered marketplace folders missing on this
+  machine.** A `~/.claude/settings.json` or `~/.codex/config.toml` synced
+  from another machine can register `directory` marketplaces whose
+  folders never arrived. Doctor's Setup section now gives one warning per
+  harness listing them, with a fix that names the file to edit, or says
+  the file is managed by Nix when it is a store link
+  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
 - **The web app's Plugins page says once where missing marketplaces were
   looked for.** A `~/.claude/settings.json` from another machine can
   register several marketplaces whose folders are not on this one, and
