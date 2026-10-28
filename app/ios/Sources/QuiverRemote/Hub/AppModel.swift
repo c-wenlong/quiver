@@ -84,7 +84,9 @@ final class AppModel {
             }
             machines = sessionsBody.machines ?? machines
             rememberName(machines.first?.displayName, of: pairedAtStart)
-            inbox = inboxBody.items
+            // Overlay dismissals still in flight: a response captured
+            // before the hub saw the POST would resurrect a cleared row.
+            inbox = dismissals.overlay(inboxBody.items)
             refreshedAt = Date()
             connection = .online
             loadError = nil
@@ -259,24 +261,34 @@ final class AppModel {
 
     // MARK: Inbox
 
-    /// Items still waiting on you: approvals and follow-ups. The hub
-    /// already dropped stale rows and this device's dismissals, so the
-    /// phone doesn't re-filter either.
+    /// Items still waiting on you — the same set the Inbox page files
+    /// under "Waiting on you", so the badge and the page always agree.
+    /// The hub already dropped stale rows and this device's dismissals.
     var waitingOnYou: [InboxItem] {
-        inbox.filter { $0.sessionStatus == .approval || $0.sessionStatus == .followup }
+        inbox.filter { InboxGrouping.section(of: $0) == .waiting }
     }
 
     var inboxBadge: Int { waitingOnYou.count }
 
+    /// Dismissals posted but possibly not yet reflected in a fetched
+    /// list (the same race `PinLedger` covers for pins). Mirrors the
+    /// hub's rule: a fetched row whose activity stamp is at or before
+    /// the dismissed stamp is filtered; one that moved past it has new
+    /// activity and legitimately returns, which retires the entry.
+    private var dismissals = DismissalLedger()
+
     /// Clears an inbox row for this device (`POST /v1/inbox/dismiss`):
     /// gone at once, and the hub keeps it out until the row's
     /// `last_active_at` moves past the stamp sent — new activity brings
-    /// it back on every device. A refused post refetches, restoring it.
+    /// it back on every device. A refused post drops the ledger entry
+    /// and refetches, restoring the row.
     func dismissInbox(_ item: InboxItem) async {
         inbox.removeAll { $0.key == item.key }
+        dismissals.choose(item.key, stamp: item.dismissStamp)
         do {
             _ = try await onSameHub { try await $0.dismissInbox(item.key, lastActiveAt: item.dismissStamp) }
         } catch {
+            dismissals.drop(item.key)
             await refresh()
         }
     }
@@ -332,6 +344,7 @@ final class AppModel {
         sessions = []
         machines = []
         inbox = []
+        dismissals = DismissalLedger()
         loadError = nil
         refreshedAt = nil
         pendingDetaches = [:]
@@ -549,6 +562,34 @@ enum InboxGrouping {
         var grouped: [Section: [InboxItem]] = [:]
         for item in items { grouped[section(of: item), default: []].append(item) }
         return Section.allCases.compactMap { s in grouped[s].map { (s, $0) } }
+    }
+}
+
+/// Dismissals this phone posted but a concurrently fetched inbox list
+/// may not reflect yet — the same race `PinLedger` covers for pins. An
+/// entry filters fetched rows whose `lastActiveAt` has not moved past
+/// the stamp posted to `POST /v1/inbox/dismiss`; a row that did move
+/// past it has new activity, returns legitimately, and retires the entry.
+struct DismissalLedger {
+    private(set) var stamps: [String: Double] = [:]
+
+    mutating func choose(_ key: String, stamp: Double) { stamps[key] = stamp }
+    mutating func drop(_ key: String) { stamps[key] = nil }
+
+    /// `items` minus rows a still-in-flight dismiss already cleared;
+    /// entries retire once the hub ships a row newer than the stamp.
+    mutating func overlay(_ items: [InboxItem]) -> [InboxItem] {
+        guard !stamps.isEmpty else { return items }
+        var out: [InboxItem] = []
+        out.reserveCapacity(items.count)
+        for item in items {
+            guard let stamp = stamps[item.key] else { out.append(item); continue }
+            if item.dismissStamp > stamp {
+                stamps[item.key] = nil
+                out.append(item)
+            }
+        }
+        return out
     }
 }
 

@@ -885,6 +885,30 @@ final class ReviewFixTests: XCTestCase {
         XCTAssertEqual(items[1].dismissStamp, 9.5)
     }
 
+    func testDismissalLedgerCoversARefreshThatMissedThePost() {
+        let item = { (key: String, at: Double) in
+            InboxItem(key: key, machineId: "m1", harness: "claude", agent: nil, title: key, cwd: "/w",
+                      status: "done", lastActiveAt: at, requestId: nil)
+        }
+        var ledger = DismissalLedger()
+        ledger.choose("claude:1", stamp: 100)
+
+        // A response captured before the dismiss reached the hub still
+        // ships the row at its old stamp — the ledger filters it.
+        XCTAssertTrue(ledger.overlay([item("claude:1", 100), item("claude:2", 50)])
+            .map(\.key) == ["claude:2"])
+        // New activity past the stamp brings the row back and retires
+        // the entry, so a later fetch at the same stamp lists again.
+        XCTAssertEqual(ledger.overlay([item("claude:1", 140)]).map(\.key), ["claude:1"])
+        XCTAssertEqual(ledger.overlay([item("claude:1", 140)]).map(\.key), ["claude:1"],
+                       "the retired entry must not filter the resurrected row")
+
+        // A refused post drops the entry so the row returns.
+        ledger.choose("claude:3", stamp: 10)
+        ledger.drop("claude:3")
+        XCTAssertEqual(ledger.overlay([item("claude:3", 5)]).map(\.key), ["claude:3"])
+    }
+
     func testPairedDeviceDecodesAndLabels() throws {
         let json = #"""
         {"devices":[

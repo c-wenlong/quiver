@@ -32,15 +32,16 @@ struct InboxView: View {
         .refreshable { await app.refresh() }
         .navigationTitle("Inbox")
         .toolbar {
-            let clearable = app.inbox.filter { $0.sessionStatus != .approval }
+            // Each section clears its non-approval rows — approvals
+            // can't be dismissed and must never be swept up in a batch.
+            let clearable = groups.map { ($0.0, $0.1.filter { $0.sessionStatus != .approval }) }
+                .filter { !$0.1.isEmpty }
             if !clearable.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        ForEach(groups, id: \.0) { section, items in
-                            if section != .waiting {
-                                Button("Clear \(section.clearTitle)") {
-                                    items.forEach { dismiss($0) }
-                                }
+                        ForEach(clearable, id: \.0) { section, items in
+                            Button("Clear \(section.clearTitle)") {
+                                items.forEach { dismiss($0) }
                             }
                         }
                     } label: { Text("Clear").font(Theme.control) }
