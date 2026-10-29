@@ -21,6 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offers its `last_models` entry alone. Part of
   [#914](https://github.com/c-wenlong/quiver/issues/914).
 
+- **Mac app: the launch sheets pick a model from a menu.** New session,
+  Resolve issue and a task's New agent session swap the free-text
+  Model field for a menu: "Harness default" (no `model` sent), the
+  harness's recent models newest first from `recent_models`, then
+  "Other…", which opens a field for a typed id. It starts on the newest
+  model, as the field's prefill did. A picked "Harness default" or
+  typed id survives a harness or machine switch; a picked model the new
+  harness hasn't run re-defaults instead of travelling to it. A hub
+  without `recent_models` offers its `last_models` entry alone. Part of
+  [#914](https://github.com/c-wenlong/quiver/issues/914).
+
 - **Remote iPhone app: Preview on tool cards that write a page.** When
   a tool call writes or edits an `.html`, `.htm` or `.svg` file inside
   the session's folder (Write, Edit, MultiEdit, a Codex patch and the

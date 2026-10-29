@@ -315,20 +315,24 @@ public struct HubTaskHarness: Decodable, Sendable, Equatable, Identifiable {
     /// until the effort picker ships.
     public var launchEffort: Bool?
     /// The hub ledger's most recent model for this harness — the Model
-    /// field's prefill ("" when none ran).
+    /// menu's default ("" when none ran). The head of `recentModels`.
     public var lastModel: String?
+    /// This harness's recently used models, newest first (at most 5):
+    /// the Model menu's entries. nil from a hub older than the menu.
+    public var recentModels: [String]?
 
     public var id: String { name }
 
     public init(name: String, displayName: String? = nil, tracked: Bool? = nil,
                 launchModel: Bool? = nil, launchEffort: Bool? = nil,
-                lastModel: String? = nil) {
+                lastModel: String? = nil, recentModels: [String]? = nil) {
         self.name = name
         self.displayName = displayName
         self.tracked = tracked
         self.launchModel = launchModel
         self.launchEffort = launchEffort
         self.lastModel = lastModel
+        self.recentModels = recentModels
     }
 }
 
@@ -720,8 +724,8 @@ public enum NewSessionOptions {
 }
 
 /// The launch sheets' Model row: whether a machine or harness row can
-/// take a `model` pick at launch, what the field prefills, and what the
-/// POST body carries. Pure, so tests feed it rows.
+/// take a `model` pick at launch, which recent models its menu lists,
+/// and what the POST body carries. Pure, so tests feed it rows.
 ///
 /// The row hides rather than disables for a build that doesn't report
 /// the launch fields (`model_at_launch` on a machine row,
@@ -742,20 +746,30 @@ public enum LaunchOptions {
         return machine?.modelAtLaunch?.contains(harness) == true
     }
 
-    /// `machine`'s most recent ledger model for `harness`, the field's
-    /// prefill ("" when none ran).
-    public static func lastModel(_ harness: String?, on machine: HubMachine?) -> String {
-        guard let harness else { return "" }
-        return machine?.lastModels?[harness] ?? ""
+    /// `machine`'s recently used models for `harness`, newest first: the
+    /// Model menu's entries. A hub older than `recent_models` sends only
+    /// `last_models`, which makes a one-item list.
+    public static func recentModels(_ harness: String?, on machine: HubMachine?) -> [String] {
+        guard let harness, let machine else { return [] }
+        // A row with `recent_models` answers alone, even by leaving the
+        // harness out; only a row without the key falls back.
+        return recentModels(machine.recentModels.map { $0[harness] ?? [] },
+                            last: machine.lastModels?[harness])
     }
 
-    /// The field's refill on a harness or machine change: nil for an
-    /// edited field (its text, even a clear back to the prefill, is the
-    /// user's own and stays), else the machine's last-used model for
-    /// the harness — empty when none ran.
-    public static func modelText(edited: Bool, _ harness: String?, on machine: HubMachine?) -> String? {
-        guard !edited else { return nil }
-        return lastModel(harness, on: machine)
+    /// A task-harness row's recent models, read the same way.
+    public static func recentModels(of row: HubTaskHarness?) -> [String] {
+        guard let row else { return [] }
+        return recentModels(row.recentModels, last: row.lastModel)
+    }
+
+    /// `recent` when the hub sent it, else `last` alone; blanks and
+    /// repeats dropped so the menu never lists an empty or doubled row.
+    static func recentModels(_ recent: [String]?, last: String?) -> [String] {
+        var seen = Set<String>()
+        return (recent ?? [last ?? ""])
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
     /// What the POST body's `model` is: `text` trimmed, or nil when
@@ -763,5 +777,82 @@ public enum LaunchOptions {
     public static func model(_ text: String, supported: Bool) -> String? {
         let pick = text.trimmingCharacters(in: .whitespaces)
         return supported && !pick.isEmpty ? pick : nil
+    }
+}
+
+/// One entry of the launch sheets' Model menu (#914).
+public enum ModelChoice: Hashable, Sendable {
+    /// Send no `model`: the harness starts on its own default.
+    case harnessDefault
+    /// One of the harness's recently used models.
+    case recent(String)
+    /// A typed model id, in the field the menu shows under it.
+    case other
+
+    public var title: String {
+        switch self {
+        case .harnessDefault: "Harness default"
+        case .recent(let model): model
+        case .other: "Other…"
+        }
+    }
+}
+
+/// The Model menu's state on a launch sheet: the choice, the "Other…"
+/// field's text, and whether the user picked (so a harness or machine
+/// switch knows what to keep). Pure, so tests drive it.
+public struct ModelPick: Equatable, Sendable {
+    public private(set) var choice: ModelChoice
+    /// The "Other…" field's text; sent only while `choice` is `.other`.
+    public var otherText: String
+    /// Set by `pick(_:)`, the menu's own binding; cleared by a re-default.
+    public private(set) var picked: Bool
+
+    public init(recent: [String] = []) {
+        choice = Self.defaultChoice(recent)
+        otherText = ""
+        picked = false
+    }
+
+    /// The menu's entries in order: "Harness default", each recent model
+    /// newest first, then "Other…".
+    public static func options(_ recent: [String]) -> [ModelChoice] {
+        [.harnessDefault] + recent.map(ModelChoice.recent) + [.other]
+    }
+
+    /// The untouched menu's choice: the newest recent model, else
+    /// "Harness default" — what the old free-text field prefilled.
+    public static func defaultChoice(_ recent: [String]) -> ModelChoice {
+        recent.first.map(ModelChoice.recent) ?? .harnessDefault
+    }
+
+    /// The user chose `choice` from the menu.
+    public mutating func pick(_ choice: ModelChoice) {
+        self.choice = choice
+        picked = true
+    }
+
+    /// Re-reads the menu after a harness or machine change, `recent`
+    /// being the new pair's list.
+    public mutating func refit(_ recent: [String]) {
+        // A picked default or Other stays; a picked recent model stays only if the new list has it; else re-default.
+        switch choice {
+        case .harnessDefault where picked, .other where picked: return
+        case .recent(let model) where picked && recent.contains(model): return
+        default:
+            choice = Self.defaultChoice(recent)
+            picked = false
+        }
+    }
+
+    /// What the POST body's `model` is: the chosen recent model or the
+    /// trimmed typed one, nil for the default, a blank Other, or a
+    /// launch that can't take a pick.
+    public func model(supported: Bool) -> String? {
+        switch choice {
+        case .harnessDefault: nil
+        case .recent(let model): LaunchOptions.model(model, supported: supported)
+        case .other: LaunchOptions.model(otherText, supported: supported)
+        }
     }
 }
