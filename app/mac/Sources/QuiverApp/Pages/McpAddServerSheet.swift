@@ -292,21 +292,16 @@ struct McpAddServerSheet: View {
                 error = "Two values would be saved as the secret \(twice). Rename one of them."
                 return
             }
-            var pairs: [(String, String)] = []
-            for variable in filled {
-                var value = variable.value
-                if variable.secret && !value.hasPrefix("${") {
-                    let secretName = mcpSecretName(server: name, key: variable.key)
-                    try await app.swe.mcpSecretSet(name: secretName, value: value)
-                    value = "${\(secretName)}"
-                }
-                pairs.append((variable.key, value))
+            if let owner = Self.secretOwner(of: secretNames, adding: name, existing: existing) {
+                error = "\(owner.server) already keeps a secret as \(owner.secret). Pick another name for this server."
+                return
             }
-            if bearer {
-                try await app.swe.mcpSecretSet(name: tokenRef, value: token.trimmingCharacters(in: .whitespaces))
-                token = ""
-                pairs.append(("Authorization", "Bearer ${\(tokenRef)}"))
-            }
+            // The whole spec is built before any secret is stored, so
+            // nothing past this point can refuse with secrets left behind.
+            let pairs: [(String, String)] = filled.map { variable in
+                (variable.key, variable.secret && !variable.value.hasPrefix("${")
+                    ? "${\(mcpSecretName(server: name, key: variable.key))}" : variable.value)
+            } + (bearer ? [("Authorization", "Bearer ${\(tokenRef)}")] : [])
             let spec: McpServerSpec
             if kind == .command {
                 guard let words, !words.isEmpty else { return }
@@ -317,12 +312,43 @@ struct McpAddServerSheet: View {
                     url: url.trimmingCharacters(in: .whitespaces),
                     transport: sse ? "sse" : "http", headers: pairs))
             }
+            // The secrets go in before the add: swe refuses an add whose
+            // ${NAME} has no value yet, and writes each harness's config
+            // with the values filled in.
+            for variable in stored {
+                try await app.swe.mcpSecretSet(name: mcpSecretName(server: name, key: variable.key),
+                                               value: variable.value)
+            }
+            if bearer {
+                try await app.swe.mcpSecretSet(name: tokenRef, value: token.trimmingCharacters(in: .whitespaces))
+            }
             _ = try await app.swe.mcpAdd(spec, to: picked.sorted(), force: force)
+            // Kept until the add lands, so a refused one can be retried
+            // without typing the token again.
+            token = ""
             await reload()
             dismiss()
         } catch {
             self.error = error.localizedDescription
         }
+    }
+}
+
+extension McpAddServerSheet {
+    /// The server other than `name` whose secret one of `names` would
+    /// overwrite: its env and header keys, and a bearer token's TOKEN,
+    /// named the way this sheet names them. Two servers can still share
+    /// one, as `foo-bar` and `foo_bar` both store FOO_BAR_KEY.
+    static func secretOwner(of names: [String], adding name: String,
+                            existing: [McpServer]) -> (secret: String, server: String)? {
+        let wanted = Set(names)
+        for server in existing where server.name != name {
+            for key in server.envKeys + server.headerKeys + ["TOKEN"] {
+                let secret = mcpSecretName(server: server.name, key: key)
+                if wanted.contains(secret) { return (secret, server.name) }
+            }
+        }
+        return nil
     }
 }
 
