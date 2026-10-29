@@ -791,7 +791,11 @@ private struct ApprovalCard: View {
                 Circle().fill(Theme.warning).frame(width: 7, height: 7)
                 Text(title).font(Theme.control).foregroundStyle(isOpen ? Theme.warningText : Theme.textSecondary)
             }
-            Text(RichText.inline(prompt)).font(Theme.body).foregroundStyle(Theme.textPrimary)
+            // Verbatim, never markdown: `rm *.log *.tmp` must not lose its
+            // stars to italics, nor a link's text hide where it goes. This
+            // is what Allow agrees to.
+            Text(verbatim: prompt).font(Theme.monoBody).foregroundStyle(Theme.textPrimary)
+                .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             if isOpen {
                 HStack(spacing: 8) {
