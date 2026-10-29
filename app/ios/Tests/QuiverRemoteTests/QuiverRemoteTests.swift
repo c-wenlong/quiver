@@ -1060,18 +1060,105 @@ final class NewSessionOptionsTests: XCTestCase {
         XCTAssertNil(NewSessionOptions.modelPick("x", for: "claude", on: machine("m2", name: "old")))
     }
 
-    func testModelTextRefillsOnlyAnUneditedField() {
+    private func modelMachine() -> Machine {
+        var m = machine("m1", name: "mac", launchable: ["claude", "codex", "gemini", "pi"])
+        m.modelAtLaunch = ["claude", "codex", "pi"]
+        m.recentModels = ["claude": ["opus", "sonnet", "haiku"], "codex": ["gpt-5", "sonnet"]]
+        m.lastModels = ["claude": "opus", "codex": "gpt-5"]
+        return m
+    }
+
+    func testModelMenuListsDefaultRecentsNewestFirstThenOther() {
+        let m = modelMachine()
+        XCTAssertEqual(NewSessionOptions.modelChoices("claude", on: m),
+                       [.harnessDefault, .recent("opus"), .recent("sonnet"), .recent("haiku"), .other])
+        // A harness with no recent models still offers Default and Other.
+        XCTAssertEqual(NewSessionOptions.modelChoices("pi", on: m), [.harnessDefault, .other])
+        XCTAssertEqual(NewSessionOptions.defaultModelChoice("claude", on: m), .recent("opus"))
+        XCTAssertEqual(NewSessionOptions.defaultModelChoice("pi", on: m), .harnessDefault)
+        XCTAssertEqual(NewSessionOptions.recentModels(nil, on: m), [])
+        XCTAssertEqual(ModelChoice.other.label, "Other\u{2026}")
+        XCTAssertEqual(ModelChoice.harnessDefault.label, "Harness default")
+    }
+
+    func testModelMenuFallsBackToLastModelsOnAnOldHub() {
         var m = machine("m1", name: "mac", launchable: ["claude", "codex"])
-        m.lastModels = ["claude": "a", "codex": "b"]
-        // A fresh field takes the prefill, and retakes it on a change.
-        XCTAssertEqual(NewSessionOptions.modelText(edited: false, for: "claude", on: m), "a")
-        XCTAssertEqual(NewSessionOptions.modelText(edited: false, for: "codex", on: m), "b")
-        // A harness with no remembered model refills empty, not nil.
-        XCTAssertEqual(NewSessionOptions.modelText(edited: false, for: "pi", on: m), "")
-        // An edited field keeps whatever the user left, including a
-        // clear back to what the prefill showed: the flag, not the
-        // text, says the field was touched.
-        XCTAssertNil(NewSessionOptions.modelText(edited: true, for: "claude", on: m))
+        m.modelAtLaunch = ["claude", "codex"]
+        m.lastModels = ["claude": "opus", "codex": ""]
+        XCTAssertNil(m.recentModels)
+        XCTAssertEqual(NewSessionOptions.recentModels("claude", on: m), ["opus"])
+        XCTAssertEqual(NewSessionOptions.recentModels("codex", on: m), [])
+        // A newer hub's list wins, with blanks and repeats dropped.
+        m.recentModels = ["claude": ["sonnet", "", "sonnet", "opus"]]
+        XCTAssertEqual(NewSessionOptions.recentModels("claude", on: m), ["sonnet", "opus"])
+        XCTAssertEqual(NewSessionOptions.recentModels("codex", on: m), [])
+    }
+
+    func testUntouchedMenuFollowsTheHarnessesNewestModel() {
+        let m = modelMachine()
+        var sel = ModelSelection()
+        sel.follow("claude", on: m)
+        XCTAssertEqual(sel.choice, .recent("opus"))
+        XCTAssertEqual(sel.model(for: "claude", on: m), "opus")
+        sel.follow("codex", on: m)
+        XCTAssertEqual(sel.choice, .recent("gpt-5"))
+        sel.follow("pi", on: m)
+        XCTAssertEqual(sel.choice, .harnessDefault)
+        XCTAssertNil(sel.model(for: "pi", on: m))
+        XCTAssertFalse(sel.touched)
+    }
+
+    func testAPickedDefaultOrOtherSurvivesASwitch() {
+        let m = modelMachine()
+        var sel = ModelSelection()
+        sel.follow("claude", on: m)
+        sel.choose(.harnessDefault)
+        sel.follow("codex", on: m)
+        XCTAssertEqual(sel.choice, .harnessDefault)
+        XCTAssertNil(sel.model(for: "codex", on: m))
+
+        sel.choose(.other)
+        sel.otherText = "  my-model  "
+        sel.follow("claude", on: m)
+        XCTAssertEqual(sel.choice, .other)
+        XCTAssertEqual(sel.model(for: "claude", on: m), "my-model")
+        // An empty Other field sends nothing, and still stays.
+        sel.otherText = "   "
+        XCTAssertNil(sel.model(for: "claude", on: m))
+        sel.follow("codex", on: m)
+        XCTAssertEqual(sel.choice, .other)
+    }
+
+    func testAPickedRecentModelStaysOnlyWhileTheNewHarnessListsIt() {
+        let m = modelMachine()
+        var sel = ModelSelection()
+        sel.follow("claude", on: m)
+        sel.choose(.recent("sonnet"))
+        // Codex lists sonnet too, so the pick stays.
+        sel.follow("codex", on: m)
+        XCTAssertEqual(sel.choice, .recent("sonnet"))
+        XCTAssertEqual(sel.model(for: "codex", on: m), "sonnet")
+        // Codex never ran haiku: re-default instead of sending it.
+        sel.follow("claude", on: m)
+        sel.choose(.recent("haiku"))
+        sel.follow("codex", on: m)
+        XCTAssertEqual(sel.choice, .recent("gpt-5"))
+        XCTAssertFalse(sel.touched)
+        // Re-defaulted means untouched again: the next switch follows.
+        sel.follow("claude", on: m)
+        XCTAssertEqual(sel.choice, .recent("opus"))
+    }
+
+    func testModelSelectionSendsNothingForAHarnessThatCantTakeOne() {
+        var m = modelMachine()
+        m.recentModels?["gemini"] = ["gemini-3-pro"]
+        var sel = ModelSelection()
+        sel.follow("gemini", on: m)
+        XCTAssertEqual(sel.choice, .recent("gemini-3-pro"))
+        XCTAssertNil(sel.model(for: "gemini", on: m))
+        sel.choose(.other)
+        sel.otherText = "x"
+        XCTAssertNil(sel.model(for: "gemini", on: m))
     }
 
     func testDecodesHubLaunchAndMachineRows() throws {
@@ -1092,6 +1179,10 @@ final class NewSessionOptionsTests: XCTestCase {
         XCTAssertEqual(newer.modelAtLaunch, ["claude", "codex"])
         XCTAssertEqual(newer.effortAtLaunch, ["claude"])
         XCTAssertEqual(newer.lastModels?["claude"], "claude-opus-4-1")
+        XCTAssertNil(newer.recentModels)
+        let recent = try Hub.decoder.decode(Machine.self, from: Data(
+            #"{"id":"m3","model_at_launch":["claude"],"recent_models":{"claude":["claude-opus-4-1","claude-sonnet-4-5"]},"last_models":{"claude":"claude-opus-4-1"}}"#.utf8))
+        XCTAssertEqual(recent.recentModels?["claude"], ["claude-opus-4-1", "claude-sonnet-4-5"])
         let listing = try Hub.decoder.decode(FolderListing.self, from: Data(
             #"{"path":"/Users/k","parent":"/Users","folders":[{"name":"Projects","path":"/Users/k/Projects"}],"truncated":false}"#.utf8))
         XCTAssertEqual(listing.folders.map(\.name), ["Projects"])

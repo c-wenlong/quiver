@@ -246,11 +246,8 @@ struct OpenPullSheet: View {
 
     @State private var harness: String?
     @State private var prompt: String
-    @State private var model = ""
-    /// The field's own binding sets this on any keystroke, so even a
-    /// clear back to the prefill counts: a harness change must not
-    /// overwrite what the user left.
-    @State private var modelEdited = false
+    /// The Model menu; `follow` re-defaults it on a harness change.
+    @State private var model = ModelSelection()
     @State private var flow = LaunchFlow()
     @State private var launch: Task<Void, Never>?
     /// The session list as it was when the sheet opened, for the
@@ -278,7 +275,7 @@ struct OpenPullSheet: View {
                     startsIn(machine)
                     harnessSection(machine)
                     ModelField(machine: machine, harness: harness,
-                               text: Binding(get: { model }, set: { model = $0; modelEdited = true }),
+                               selection: $model,
                                sessions: rows, disabled: flow.busy)
                     promptSection
                     startSection(machine)
@@ -316,12 +313,10 @@ struct OpenPullSheet: View {
         .onDisappear { launch?.cancel() }
     }
 
-    /// The Model field's prefill after a harness change: an unedited
-    /// field takes the machine's last-used model for the new harness,
-    /// an edited one keeps what the user left.
+    /// The Model menu after a harness change; `ModelSelection.follow`
+    /// says which picks survive it.
     private func refillModel(on machine: Machine) {
-        guard let next = NewSessionOptions.modelText(edited: modelEdited, for: harness, on: machine) else { return }
-        model = next
+        model.follow(harness, on: machine)
     }
 
     private func startsIn(_ machine: Machine) -> some View {
@@ -412,7 +407,7 @@ struct OpenPullSheet: View {
     private func start(_ machine: Machine) async {
         guard let client = app.client, let harness else { return }
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        let pick = NewSessionOptions.modelPick(model, for: harness, on: machine)
+        let pick = model.model(for: harness, on: machine)
         let key = await flow.run(
             post: { try await client.openPull(repo: repo, number: detail.number, harness: harness, prompt: text, model: pick) },
             fetch: { try await client.launch($0) })

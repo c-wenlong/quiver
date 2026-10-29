@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote iPhone app: a Model menu on every launch sheet.** New
+  session, Resolve issue, Open PR in session and a task's New agent
+  session replace the free-text Model field with a menu: Harness
+  default (sends no model), the machine's recent models for the
+  harness newest first, and Other, which opens a field for a typed
+  model id. It starts on the newest recent model. A harness or machine
+  switch keeps a picked Harness default or Other, keeps a picked
+  recent model only when the new harness lists it, and otherwise
+  moves to the new harness's newest. A hub older than `recent_models`
+  offers its `last_models` entry alone. Part of
+  [#914](https://github.com/c-wenlong/quiver/issues/914).
+
 - **Remote iPhone app: Preview on tool cards that write a page.** When
   a tool call writes or edits an `.html`, `.htm` or `.svg` file inside
   the session's folder (Write, Edit, MultiEdit, a Codex patch and the

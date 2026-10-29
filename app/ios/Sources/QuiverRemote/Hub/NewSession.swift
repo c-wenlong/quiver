@@ -64,20 +64,33 @@ enum NewSessionOptions {
         return machine.modelAtLaunch?.contains(harness) == true
     }
 
-    /// The model `machine` last ran `harness` with, for the field's
-    /// prefill.
+    /// The model `machine` last ran `harness` with.
     static func lastModel(_ harness: String?, on machine: Machine) -> String? {
         guard let harness, let model = machine.lastModels?[harness], !model.isEmpty else { return nil }
         return model
     }
 
-    /// The Model field's refill on a harness or machine change: nil for
-    /// an edited field (its text, even a clear back to the prefill, is
-    /// the user's own and stays), else the harness's last-used model,
-    /// empty when it has none.
-    static func modelText(edited: Bool, for harness: String?, on machine: Machine) -> String? {
-        guard !edited else { return nil }
-        return lastModel(harness, on: machine) ?? ""
+    /// The Model menu's recent entries for `harness`, newest first: the
+    /// row's `recent_models`, or on a hub older than that field a
+    /// one-item list from `last_models`. Blanks and repeats are dropped.
+    static func recentModels(_ harness: String?, on machine: Machine) -> [String] {
+        guard let harness else { return [] }
+        let raw = machine.recentModels.map { $0[harness] ?? [] }
+            ?? lastModel(harness, on: machine).map { [$0] } ?? []
+        var seen = Set<String>()
+        return raw.filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
+    /// The Model menu's entries in order: Harness default, the recent
+    /// models newest first, then Other.
+    static func modelChoices(_ harness: String?, on machine: Machine) -> [ModelChoice] {
+        [.harnessDefault] + recentModels(harness, on: machine).map(ModelChoice.recent) + [.other]
+    }
+
+    /// An untouched menu's selection: the newest recent model, else the
+    /// harness's own default.
+    static func defaultModelChoice(_ harness: String?, on machine: Machine) -> ModelChoice {
+        recentModels(harness, on: machine).first.map(ModelChoice.recent) ?? .harnessDefault
     }
 
     /// What the launch posts as `model`: the trimmed pick, or nil when
@@ -98,6 +111,63 @@ enum NewSessionOptions {
 
     private static func newestFirst(_ rows: [SessionRow]) -> [SessionRow] {
         rows.sorted { ($0.lastActiveAt ?? 0) > ($1.lastActiveAt ?? 0) }
+    }
+}
+
+/// One entry in a launch sheet's Model menu.
+enum ModelChoice: Hashable {
+    /// Sends no `model`: the harness starts on its own default.
+    case harnessDefault
+    /// One of the machine's recent models for the harness.
+    case recent(String)
+    /// A typed model id, from the field the menu shows under it.
+    case other
+
+    var label: String {
+        switch self {
+        case .harnessDefault: "Harness default"
+        case .recent(let model): model
+        case .other: "Other…"
+        }
+    }
+}
+
+/// A launch sheet's Model menu: the choice, the Other field's text, and
+/// whether the user picked anything. Pure, so tests can drive it.
+struct ModelSelection: Equatable {
+    private(set) var choice: ModelChoice = .harnessDefault
+    var otherText = ""
+    /// Set by a pick from the menu; an untouched menu follows the
+    /// harness's newest model.
+    private(set) var touched = false
+
+    mutating func choose(_ choice: ModelChoice) {
+        self.choice = choice
+        touched = true
+    }
+
+    /// Run on every harness or machine change.
+    mutating func follow(_ harness: String?, on machine: Machine) {
+        // A pick survives a switch (Harness default and Other always, a recent model only while the new harness lists it); anything else re-defaults.
+        if touched {
+            switch choice {
+            case .harnessDefault, .other: return
+            case .recent(let model):
+                if NewSessionOptions.recentModels(harness, on: machine).contains(model) { return }
+            }
+        }
+        choice = NewSessionOptions.defaultModelChoice(harness, on: machine)
+        touched = false
+    }
+
+    /// What the launch posts as `model`: nil for Harness default, an
+    /// empty Other field, or a harness that can't take a pick.
+    func model(for harness: String?, on machine: Machine) -> String? {
+        switch choice {
+        case .harnessDefault: nil
+        case .recent(let model): NewSessionOptions.modelPick(model, for: harness, on: machine)
+        case .other: NewSessionOptions.modelPick(otherText, for: harness, on: machine)
+        }
     }
 }
 
