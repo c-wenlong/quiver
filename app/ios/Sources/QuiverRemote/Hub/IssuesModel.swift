@@ -6,6 +6,8 @@ import Observation
 /// hub already serves them from its one-minute `gh` cache.
 @MainActor @Observable
 final class IssuesModel {
+    /// The page's filter chip, kept here so it outlives the view.
+    var filter: IssueFilter = .all
     private(set) var repos: [IssueRepo] = []
     private(set) var machine: String?
     private(set) var machineId: String?

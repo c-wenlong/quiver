@@ -6,6 +6,8 @@ import Observation
 /// already serves them from its one-minute `gh` cache.
 @MainActor @Observable
 final class PullsModel {
+    /// The page's filter chip, kept here so it outlives the view.
+    var filter: PullFilter = .all
     private(set) var repos: [PullRepo] = []
     private(set) var machine: String?
     private(set) var machineId: String?

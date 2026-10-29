@@ -47,13 +47,17 @@ struct MainTabs: View {
     @State private var sessionsPath: [Route] = []
     @State private var inboxPath: [Route] = []
     @State private var tasksPath: [Route] = []
-    @State private var pullsPath: [Route] = []
-    @State private var issuesPath: [Route] = []
+    @State private var githubPath: [Route] = []
+    @State private var githubSection: GitHubSection = .issues
     /// The Tasks page's model lives here so the task detail the stack
     /// pushes reads the same reply.
     @State private var tasksModel = TasksModel()
+    @State private var issuesModel = IssuesModel()
+    @State private var pullsModel = PullsModel()
 
-    enum Tab { case sessions, inbox, tasks, pulls, issues, usage }
+    /// Five tabs: iPhone moves a sixth and beyond behind "More", so
+    /// Issues and Pull requests share one GitHub tab with a switch.
+    enum Tab { case sessions, inbox, tasks, github, usage }
 
     var body: some View {
         TabView(selection: $tab) {
@@ -79,19 +83,14 @@ struct MainTabs: View {
             .tabItem { Label("Tasks", systemImage: "checklist") }
             .tag(Tab.tasks)
 
-            NavigationStack(path: $pullsPath) {
-                PullsView()
-                    .navigationDestination(for: Route.self) { destination($0, onStarted: { pullsPath.append(.chat($0)) }) }
+            NavigationStack(path: $githubPath) {
+                GitHubView(section: $githubSection, issues: issuesModel, pulls: pullsModel) {
+                    githubPath.append(.chat($0))
+                }
+                .navigationDestination(for: Route.self) { destination($0, onStarted: { githubPath.append(.chat($0)) }) }
             }
-            .tabItem { Label("Pull requests", systemImage: "arrow.triangle.pull") }
-            .tag(Tab.pulls)
-
-            NavigationStack(path: $issuesPath) {
-                IssuesView { issuesPath.append(.chat($0)) }
-                    .navigationDestination(for: Route.self) { destination($0, onStarted: { issuesPath.append(.chat($0)) }) }
-            }
-            .tabItem { Label("Issues", systemImage: "exclamationmark.circle") }
-            .tag(Tab.issues)
+            .tabItem { Label("GitHub", systemImage: "chevron.left.forwardslash.chevron.right") }
+            .tag(Tab.github)
 
             NavigationStack {
                 UsageView()
@@ -104,19 +103,20 @@ struct MainTabs: View {
             app.startRefreshing()
         }
         // A `quiver://issue/<o>/<r>/<n>` link opens the detail on the
-        // issues stack, over whatever was there.
+        // GitHub stack, on its Issues side, over whatever was there.
         .onChange(of: app.pendingIssue) { _, link in openIssue(link) }
     }
 
     private func openIssue(_ link: IssueLink?) {
         guard let link else { return }
         app.pendingIssue = nil
-        tab = .issues
-        issuesPath = [.issue(repo: link.repo, number: link.number)]
+        tab = .github
+        githubSection = .issues
+        githubPath = [.issue(repo: link.repo, number: link.number)]
     }
 
     /// `onStarted` is the stack's own chat push: a launch begun on the
-    /// Tasks stack pushes its chat there too, not on Pulls or Issues.
+    /// Tasks stack pushes its chat there too, not on the GitHub stack.
     @ViewBuilder private func destination(_ route: Route, onStarted: @escaping (String) -> Void) -> some View {
         switch route {
         case .chat(let key): ChatView(key: key)

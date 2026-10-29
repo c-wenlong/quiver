@@ -214,6 +214,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The iPhone app's tab bar fits again.** The Tasks tab made six tabs,
+  and iPhone shows four plus "More" past five, so Issues and Usage were
+  hidden behind More and `quiver://issue` links landed inside it.
+  Issues and Pull requests now share one GitHub tab with an Issues /
+  Pull requests switch at the top, each side keeping what it loaded,
+  and issue links open GitHub on its Issues side
+  ([#875](https://github.com/c-wenlong/quiver/issues/875)).
 - **Tasks say what the source says, and say when GitHub didn't
   answer.** The web Tasks page and the iPhone Tasks tab showed the
   hub's internal ladder as each task's status, so an issue whose agent
