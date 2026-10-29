@@ -774,6 +774,16 @@ _TAIL_PROBES = {
     _probe_pi: (_pi_transcript, _pi_walk),
 }
 
+
+def transcript_path(session: Session, ctx: dict) -> str:
+    """The file ``session``'s tail probe reads, or "" when its harness
+    has no tail probe or the file is gone. ``ctx`` is a dict the caller
+    keeps across one pass over many sessions, so each harness root is
+    indexed once."""
+    tail = _TAIL_PROBES.get(_PROBES.get(session.tool_name))
+    return tail[0](session, ctx) if tail is not None else ""
+
+
 # Modules whose code decides a cached tail verdict.
 _TAIL_CACHE_MODULES = ("quiver.sessions.parse_cache", "quiver.sessions.status")
 _PHASES = (None, "error", "aborted", "midturn", "finished")

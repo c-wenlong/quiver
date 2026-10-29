@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote hub: session rows say which model each session runs.**
+  `/v1/sessions` rows, the hub's own and a satellite's, carry `model`,
+  the model of the newest reply in the session's transcript (left out
+  when unknown), and `model_modes`, the supervised modes in which the
+  `model` control op can switch it (`["tmux"]` for Claude Code and
+  Codex, `[]` elsewhere). Claude Code, Codex and Pi transcripts are read
+  from the tail and cached per file in
+  `cache/session_model_cache.json`, so an unchanged transcript costs a
+  `stat` per refresh; OpenCode, Kilo and Devin ask their database once
+  per session whenever its activity time moves. Junk names (Claude's
+  `<synthetic>`, Devin's `compactor`) are skipped for the reply before.
+  Part of [#643](https://github.com/c-wenlong/quiver/issues/643).
+
 - **Remote iPhone app: a Model menu on every launch sheet.** New
   session, Resolve issue, Open PR in session and a task's New agent
   session replace the free-text Model field with a menu: Harness
