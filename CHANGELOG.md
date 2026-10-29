@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe setup` asks for your hub repo.** While `~/.quiver` is missing or
+  empty, the wizard's first step asks for your hub repo's URL, beside
+  the note "Fork a hub repo first (or use it as a template for a
+  private copy), then paste your fork's URL." A blank answer starts an
+  empty hub as before; a URL that can't be cloned says why and asks
+  again. `swe setup --hub=<git url>` (or `--hub <git url>`) clones it
+  first in every mode, so `--apply`, `--json` and the wizard then run on
+  your hub. It is the same clone as `swe init --hub`: checked with `git
+  ls-remote`, never over an existing `~/.quiver`, no token in any
+  output, and the hub's plugin marketplaces registered afterwards.
+  Under `--json` a refusal goes to stderr and exits 1, and the document
+  gains `hub: {can_clone, demo_url, cloned}`. The demo hub link is one
+  constant, `DEMO_HUB_URL` in `init/hub.py`, shown only once it is set
+  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
+
 - **Remote iPhone app: a Model menu on every launch sheet.** New
   session, Resolve issue, Open PR in session and a task's New agent
   session replace the free-text Model field with a menu: Harness

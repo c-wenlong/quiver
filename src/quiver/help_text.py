@@ -608,6 +608,11 @@ to use their own login state and environment."""
   {c('cyan', 'swe setup --apply')}            Apply safe discovery changes without prompts
   {c('cyan', 'swe setup --json')}             Print the discovery preview as JSON
   {c('cyan', 'swe setup --non-interactive')}  Preview without prompts or writes
+  {c('cyan', 'swe setup --hub=<git url>')}    Clone your hub repo as ~/.quiver first, then
+                               run any of the above (~/.quiver must be missing or empty)
+
+  While ~/.quiver is missing or empty, the wizard first asks for your hub repo's
+  URL; a blank answer starts an empty hub.
 
   Provider credentials remain external. Use {c('cyan', 'swe providers info <name>')} for the
   expected key file and environment variable; harness OAuth remains harness-owned."""
