@@ -85,13 +85,25 @@ const MSG_KINDS = new Set([
 ]);
 
 /* Minimal markdown-ish rendering: escape everything, then restore
- * fenced code blocks, inline code and bold. */
+ * fenced code blocks (with their language's highlighting), inline code
+ * and bold. Fences split out before escaping so hl() sees raw text.
+ * The opening line is the info string: its first word is the language
+ * tag (c# included); the rest stays metadata, never code. A fence
+ * closed on its opening line keeps that line as content instead. */
 function md(text) {
-  let t = esc(text || "");
-  t = t.replace(/```([\s\S]*?)```/g, (_m, code) => `<pre class="code"><code>${code.replace(/^\n+|\n+$/g, "")}</code></pre>`);
-  t = t.replace(/`([^`\n]+)`/g, "<code>$1</code>");
-  t = t.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
-  return t;
+  return String(text || "").split(/(```[\s\S]*?```)/).map((part) => {
+    const fence = part.match(/^```([^\n]*)\n([\s\S]*)```$/);
+    if (fence) {
+      const lang = fence[1].trim().split(/\s+/)[0];
+      return `<pre class="code"><code>${hl(fence[2].replace(/\n+$/, ""), lang)}</code></pre>`;
+    }
+    const same = part.match(/^```([^`\n]*)```$/);
+    if (same) return `<pre class="code"><code>${esc(same[1])}</code></pre>`;
+    let t = esc(part);
+    t = t.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+    t = t.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+    return t;
+  }).join("");
 }
 
 async function api(path, opts = {}) {
@@ -1592,6 +1604,497 @@ function setWorkingLead(row) {
   }
 }
 
+/* ── syntax highlighting ─────────────────────────────────────
+   The code a transcript shows — shell commands, tool arguments, file
+   bodies and fenced blocks — tokenised by a small hand-rolled scanner
+   (the page has no build step, so no highlighter library). The same
+   rules live in src/quiver/webapp/static/pages/chat.js and, in Swift, in
+   app/mac/Sources/QuiverCore/Syntax/SyntaxHighlight.swift; keep the
+   three in step. Token classes live in styles.css. */
+
+const tkPattern = (k, src, boundary, flags) => ({ k, r: new RegExp(src, flags || "y"), b: !!boundary });
+const tkSet = (s) => new Set(s.split(" "));
+
+/* A language spec: comment/string delimiters, word sets and extra
+ * patterns. At each position the scanner tries, in order: line-number
+ * prefix, line comment, block comment, string, patterns, number,
+ * keyword-ish word. Anything unmatched is plain text. */
+function langSpec(over) {
+  const s = Object.assign({
+    line: [], block: [],
+    strings: ["'", '"'],
+    multiline: null,   // delimiters allowed to span newlines
+    noEscape: null,    // delimiters where \ does not escape
+    strPrefix: null,   // an optional run before a delimiter (r"", f'')
+    keyAfter: false,   // a string followed by `:` is a key (JSON)
+    number: /0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|(?:\d[\d_]*\.?[\d_]*|\.\d[\d_]*)(?:[eE][+-]?\d+)?/y,
+    keywords: null, builtins: null, constants: null, variables: null,
+    patterns: [],      // [{k, r, b?}] tried before words; b = needs a break before
+    call: false,       // name( → builtin (a call site)
+    caps: false,       // Capitalised word → builtin (a type)
+    fold: false,       // word sets match case-insensitively (SQL, dockerfile)
+  }, over);
+  /* fold lowercases the word before lookup; the sets fold too, so
+   * SQL's lowercase tables and dockerfile's uppercase both work. */
+  if (s.fold) {
+    for (const k of ["keywords", "builtins", "constants", "variables"]) {
+      if (s[k]) s[k] = new Set([...s[k]].map((w) => w.toLowerCase()));
+    }
+  }
+  return s;
+}
+
+/* `kws` is the C family's shared shape: line and block comments, strings,
+ * words with keyword/constant sets, call sites and Capitalised types. */
+function cLang(kws, extra) {
+  return langSpec(Object.assign({
+    line: ["//"], block: [["/*", "*/"]],
+    keywords: tkSet(kws),
+    constants: tkSet("true false null nil nullptr None TRUE FALSE"),
+    call: true, caps: true,
+    patterns: [
+      tkPattern("tk-m", String.raw`@[A-Za-z_][\w.]*`, true),   // decorators, annotations
+      tkPattern("tk-m", String.raw`#[A-Za-z_][\w!]*`, true),   // C #include, rust attrs
+      tkPattern("tk-v", String.raw`\$\w+`, true),              // php
+    ],
+  }, extra || {}));
+}
+
+const JS_COMMON = {
+  line: ["//"], block: [["/*", "*/"]],
+  strings: ["'", '"', "`"], multiline: ["`"],
+  constants: tkSet("true false null undefined NaN Infinity"),
+  builtins: tkSet("console window document global globalThis process require module exports fetch Promise Symbol Math JSON Object Array String Number Boolean BigInt Map Set WeakMap WeakSet Reflect Proxy Date RegExp Error TypeError RangeError SyntaxError parseInt parseFloat isNaN isFinite setTimeout setInterval clearTimeout clearInterval queueMicrotask structuredClone Intl"),
+  call: true, caps: true,
+  patterns: [tkPattern("tk-m", String.raw`@[A-Za-z_][\w.]*`, true)],
+};
+
+const LANGS = {
+  bash: langSpec({
+    line: ["#"],
+    multiline: ["'", '"'], noEscape: ["'"],
+    keywords: tkSet("if then else elif fi for while until do done case esac function select in time coproc break continue return exit"),
+    builtins: tkSet("cd echo printf read test source eval exec export local declare typeset readonly set unset shift trap wait alias unalias umask ulimit getopts command builtin type hash dirs pushd popd jobs fg bg kill disown suspend logout true false let mapfile readarray enable help caller sudo doas env xargs nohup nice install"),
+    patterns: [
+      tkPattern("tk-v", String.raw`\$\{(?:[^}"'\\]|\\.)*\}|\$[A-Za-z_]\w*|\$[@#?$!*0-9_-]+`),
+      tkPattern("tk-b", String.raw`\[(?=\s)`, true),
+      tkPattern("tk-m", String.raw`-{1,2}[A-Za-z][\w=-]*`, true),
+    ],
+  }),
+  dockerfile: langSpec({
+    line: ["#"],
+    keywords: tkSet("FROM RUN CMD ENTRYPOINT COPY ADD WORKDIR EXPOSE ENV ARG LABEL USER VOLUME SHELL HEALTHCHECK ONBUILD STOPSIGNAL AS"),
+    fold: true,
+    patterns: [tkPattern("tk-v", String.raw`\$\{?\w+\}?`)],
+  }),
+  python: langSpec({
+    line: ["#"],
+    strings: ["'''", '"""', "'", '"'],
+    multiline: ["'''", '"""'],
+    strPrefix: /[rRfFbBuU]{1,3}/y,
+    keywords: tkSet("and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield match case"),
+    builtins: tkSet("print len range str int float bool bytes list dict set tuple frozenset object type isinstance issubclass enumerate zip map filter sorted reversed min max sum any all abs round divmod pow input open super property staticmethod classmethod getattr setattr hasattr delattr callable iter next repr format chr ord hex bin oct id vars dir exec eval compile globals locals breakpoint hash slice memoryview bytearray complex"),
+    constants: tkSet("True False None NotImplemented Ellipsis"),
+    variables: tkSet("self cls"),
+    patterns: [
+      tkPattern("tk-m", String.raw`@[A-Za-z_][\w.]*`, true),
+      tkPattern("tk-b", String.raw`__\w+__`),
+    ],
+    number: /0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|(?:\d[\d_]*\.?[\d_]*|\.\d[\d_]*)(?:[eE][+-]?\d+)?[jJ]?/y,
+  }),
+  javascript: langSpec(Object.assign({}, JS_COMMON, {
+    keywords: tkSet("await async break case catch class const continue debugger default delete do else export extends finally for from function get if import in instanceof let new of return set static super switch this throw try typeof var void while with yield"),
+  })),
+  typescript: langSpec(Object.assign({}, JS_COMMON, {
+    keywords: tkSet("await async abstract as break case catch class const continue debugger declare default delete do else enum export extends finally for from function get if implements import in instanceof infer interface is keyof let namespace new of private protected public readonly return satisfies set static super switch this throw try type typeof using var void while with yield"),
+  })),
+  json: langSpec({
+    strings: ['"'], keyAfter: true,
+    keywords: tkSet("true false null"),
+  }),
+  css: langSpec({
+    block: [["/*", "*/"]],
+    number: /\d[\d.]*(?:px|em|rem|%|vh|vw|vmin|vmax|s|ms|fr|deg|turn|ch|ex|lh|cm|mm|in|pt|pc|dppx)?/y,
+    patterns: [
+      tkPattern("tk-k", String.raw`@[\w-]+`),                       // @media and friends
+      tkPattern("tk-b", String.raw`--[\w-]+`),                      // --custom-property
+      /* [^{};\s] keeps whitespace positions O(1): retried at each
+       * space, an unbounded run would rescan to the next { } ; —
+       * quadratic on a declaration block with a long indent. */
+      tkPattern("tk-m", String.raw`[^{};\s][^{};]{0,300}(?=\s*\{)`, true), // a selector before {
+      tkPattern("tk-n", String.raw`#[0-9a-fA-F]{3,8}\b`),           // #rrggbb
+      tkPattern("tk-b", String.raw`[a-zA-Z-][\w-]*(?=\s*:)`, true), // a property before :
+      tkPattern("tk-v", String.raw`[.#:][\w-]+`),                   // .class, #id, :pseudo
+      tkPattern("tk-k", String.raw`!\w+`),                          // !important
+    ],
+  }),
+  html: langSpec({
+    strings: ['"', "'"],
+    block: [["<!--", "-->"]],
+    number: null,
+    patterns: [
+      tkPattern("tk-k", String.raw`<![A-Za-z]+|<\?[\w:-]*|\?>`),
+      tkPattern("tk-k", String.raw`<\/?[A-Za-z][\w:-]*|\/?>`),
+      tkPattern("tk-b", String.raw`[\w:-]+(?==)`),
+      tkPattern("tk-n", String.raw`&[\w#]+;`),
+    ],
+  }),
+  yaml: langSpec({
+    line: ["#"],
+    keywords: tkSet("true false yes no on off null"),
+    patterns: [
+      tkPattern("tk-b", String.raw`[\w."'\[\]-]+(?=\s*:(?:\s|$))`, true),
+      tkPattern("tk-v", String.raw`[&*][\w-]+`, true),
+    ],
+  }),
+  toml: langSpec({
+    line: ["#"],
+    strings: ['"""', "'''", '"', "'"],
+    multiline: ['"""', "'''"],
+    keywords: tkSet("true false"),
+    number: /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?|\d{4}-\d{2}-\d{2}|\d{2}:\d{2}:\d{2}(?:\.\d+)?|0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|[+-]?(?:\d[\d_]*\.?[\d_]*|\.\d[\d_]*)(?:[eE][+-]?\d+)?|\b(?:inf|nan)\b/y,
+    patterns: [
+      tkPattern("tk-k", String.raw`^[ \t]*\[{1,2}[^\]\n]+\]{1,2}`, false, "my"),
+      tkPattern("tk-b", String.raw`[\w.-]+(?=\s*=)`, true),
+    ],
+  }),
+  sql: langSpec({
+    line: ["--"], block: [["/*", "*/"]],
+    strings: ["'", '"', "`"],
+    keywords: tkSet("select from where and or not in is null like between join inner left right outer full cross on group by order having limit offset insert into values update set delete create alter drop table index view trigger procedure function if exists unique primary key foreign references default check constraint union all distinct as case when then else end cast with recursive returning begin commit rollback transaction grant revoke vacuum explain analyze asc desc fetch first next only"),
+    builtins: tkSet("count sum avg min max coalesce now date datetime substr substring length upper lower trim abs round concat replace nullif ifnull current_timestamp current_date current_user row_number rank dense_rank over partition"),
+    constants: tkSet("true false"),
+    call: true, fold: true,
+  }),
+  ruby: langSpec({
+    line: ["#"], block: [["=begin", "=end"]],
+    strings: ["'", '"', "`"],
+    keywords: tkSet("def end class module if else elsif unless while until do begin rescue ensure raise return yield lambda proc require include extend attr_accessor attr_reader attr_writer puts print p gets self nil true false super private protected public initialize new each for in case when then break next redo retry loop and or not alias undef"),
+    caps: true,
+    patterns: [
+      tkPattern("tk-v", String.raw`@{1,2}\w+|\$\w+`),
+      tkPattern("tk-v", String.raw`:[a-zA-Z_]\w*[!?=]?`),
+    ],
+  }),
+  php: langSpec({
+    line: ["//", "#"], block: [["/*", "*/"]],
+    keywords: tkSet("function echo if else elseif foreach while do for switch case break continue return class extends implements interface trait use namespace new public private protected static const var global fn try catch finally throw instanceof clone yield from match readonly enum abstract final print include require list unset isset empty array or and xor as declare"),
+    constants: tkSet("true false null TRUE FALSE NULL"),
+    call: true, caps: true,
+    patterns: [
+      tkPattern("tk-k", String.raw`<\?(?:php|=)?|\?>`),
+      tkPattern("tk-v", String.raw`\$\w+`),
+    ],
+  }),
+  c: cLang("auto break case char const continue default do double else enum extern float for goto if inline int long register restrict return short signed sizeof static struct switch typedef union unsigned void volatile while bool true false"),
+  cpp: cLang("alignas alignof and asm auto bool break case catch char char8_t char16_t char32_t class compl concept const consteval constexpr constinit const_cast continue co_await co_return co_yield decltype default delete do double dynamic_cast else enum explicit export extern false float for friend goto if inline int long mutable namespace new noexcept nullptr operator or private protected public register reinterpret_cast requires return short signed sizeof static static_assert static_cast struct switch template this thread_local throw true try typedef typeid typename union unsigned using virtual void volatile wchar_t while xor override final"),
+  java: cLang("abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for goto if implements import instanceof int interface long native new package private protected public record return sealed short static strictfp super switch synchronized this throw throws transient try void volatile while yield permits var true false null"),
+  kotlin: cLang("as break class continue do else false for fun if in interface is null object package return super this throw true try typealias val var when while by catch companion constructor data delegate enum external finally get import init inline inner internal lateinit noinline open operator out override private protected public reified sealed suspend tailrec vararg where crossinline actual expect const abstract annotation"),
+  swift: cLang("associatedtype associativity async await actor break case catch class continue convenience default defer deinit didSet do dynamic else enum extension fallthrough fileprivate final for func get guard if import in indirect infix init inout internal is isolated lazy let mutating nil nonisolated open operator optional override postfix precedencegroup prefix private protocol public repeat required rethrows return self Self set some static struct subscript super switch throw throws try typealias unowned var weak where while willSet true false"),
+  rust: cLang("as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true try type unsafe use where while abstract become box do final macro override priv typeof unsized virtual yield", {
+    strings: ['"'],
+    patterns: [
+      tkPattern("tk-s", String.raw`'(?:\\.|[^\\'])'`),
+      tkPattern("tk-v", String.raw`'[a-zA-Z_]\w*`),
+      tkPattern("tk-m", String.raw`#!?\[[^\]\n]*\]|#\w+`),
+      tkPattern("tk-b", String.raw`[a-zA-Z_]\w*!`),
+    ],
+  }),
+  go: cLang("break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var true false iota nil", {
+    strings: ["'", '"', "`"], multiline: ["`"],
+    builtins: tkSet("string int int8 int16 int32 int64 uint uint8 uint16 uint32 uint64 uintptr byte rune float32 float64 complex64 complex128 bool error any comparable append cap close complex copy delete imag len make new panic print println real recover"),
+  }),
+  csharp: cLang("abstract as base bool break byte case catch char checked class const continue decimal default delegate do double else enum event explicit extern false finally fixed float for foreach goto if implicit in int interface internal is lock long namespace new null object operator out override params private protected public readonly record ref required return sbyte sealed short sizeof stackalloc static string struct switch this throw true try typeof uint ulong unchecked unsafe ushort using var virtual void volatile while init file"),
+};
+
+/* Fence tags and file extensions onto the language table. Anything not
+ * listed renders plain ("text" is an explicit opt-out). */
+const LANG_ALIASES = {
+  sh: "bash", shell: "bash", zsh: "bash", fish: "bash", ksh: "bash",
+  bashrc: "bash", zshrc: "bash", shellscript: "bash",
+  py: "python", python3: "python",
+  js: "javascript", jsx: "javascript", node: "javascript", mjs: "javascript", cjs: "javascript",
+  ts: "typescript", tsx: "typescript", mts: "typescript", cts: "typescript",
+  json5: "json", jsonc: "json", jsonl: "json",
+  scss: "css", less: "css",
+  htm: "html", svg: "html", xhtml: "html", xml: "html", xsl: "html", plist: "html", vue: "html", svelte: "html",
+  yml: "yaml",
+  rb: "ruby", rake: "ruby", gemfile: "ruby",
+  "c++": "cpp", cplusplus: "cpp", cc: "cpp", cxx: "cpp", hpp: "cpp", hh: "cpp", h: "cpp",
+  "c#": "csharp", cs: "csharp",
+  kt: "kotlin", kts: "kotlin",
+  rs: "rust",
+  golang: "go",
+  diff: "diff", patch: "diff",
+  containerfile: "dockerfile",
+  makefile: "bash", gnumakefile: "bash", mk: "bash",
+  ini: "bash", env: "bash", cfg: "bash", conf: "bash",
+  md: "text", markdown: "text", plaintext: "text", txt: "text", log: "text",
+};
+
+/* Basenames that carry a language without an extension. */
+const PATH_LANGS = {
+  dockerfile: "dockerfile", containerfile: "dockerfile",
+  makefile: "bash", gnumakefile: "bash", rakefile: "ruby", gemfile: "ruby",
+  ".bashrc": "bash", ".zshrc": "bash", ".bash_profile": "bash", ".zprofile": "bash",
+  ".profile": "bash", ".env": "bash", ".gitignore": "bash", ".dockerignore": "bash",
+};
+
+function langName(tag) {
+  const t = String(tag || "").trim().toLowerCase().replace(/^\./, "").split(/[ \t]/)[0];
+  if (!t) return "";
+  if (Object.hasOwn(LANG_ALIASES, t)) return LANG_ALIASES[t];
+  return Object.hasOwn(LANGS, t) ? t : "";
+}
+
+function langFromPath(path) {
+  const base = String(path || "").split("/").pop().toLowerCase();
+  if (Object.hasOwn(PATH_LANGS, base)) return PATH_LANGS[base];
+  const dot = base.lastIndexOf(".");
+  if (dot < 0) return "";
+  return langName(base.slice(dot + 1)) || "";
+}
+
+/* Read/View output carries the file's own line numbers (`  12→code`,
+ * or cat -n's `12<TAB>code`): when nearly every line starts with one,
+ * each number becomes a meta token and the rest is the file's code. */
+const NUMBERED_LINE = /^[ \t]*\d+[→|\t]/;
+function isNumbered(code) {
+  const lines = code.split("\n").filter((l) => l.trim());
+  if (lines.length < 3) return false;
+  return lines.filter((l) => NUMBERED_LINE.test(l)).length / lines.length >= 0.8;
+}
+
+/* The string starting at i: its end index (prefix included), whether
+ * its delimiter was found, and the delimiter itself; or null. A
+ * 1-char delimiter unclosed by end of line stops before the newline
+ * unless the language lets it wrap (bash's, js's backtick). */
+function stringAt(s, i, sp) {
+  let d = "", pre = "";
+  for (const q of sp.strings) {
+    if (s.startsWith(q, i)) { d = q; break; }
+  }
+  if (!d && sp.strPrefix) {
+    sp.strPrefix.lastIndex = i;
+    const m = sp.strPrefix.exec(s);
+    if (m && m[0]) {
+      for (const q of sp.strings) {
+        if (s.startsWith(q, i + m[0].length)) { d = q; pre = m[0]; break; }
+      }
+    }
+  }
+  if (!d) return null;
+  const multi = !!(sp.multiline && sp.multiline.includes(d));
+  const escapable = !sp.noEscape || !sp.noEscape.includes(d);
+  let j = i + pre.length + d.length;
+  while (j < s.length) {
+    const c = s[j];
+    if (escapable && c === "\\") { j += 2; continue; }
+    if (s.startsWith(d, j)) return { end: j + d.length, closed: true, d, multi, escapable };
+    if (c === "\n" && !multi) return { end: j, closed: false, d, multi, escapable };
+    j += 1;
+  }
+  return { end: s.length, closed: false, d, multi, escapable };
+}
+
+/* [tokenClass, text] pairs covering `code` end to end; "" class = plain.
+ * `ctx` carries an unfinished comment or multiline string between calls
+ * ({s: {k, close, esc} | null}): diff rows and numbered output scan one
+ * line at a time, and a token open at the line's end resumes inside the
+ * next chunk the way it would have without the break. */
+function scanBlock(code, sp, ctx) {
+  const toks = [];
+  const n = code.length;
+  let i = 0, plain = "";
+  const emit = (k, j) => {
+    if (k === "") { plain += code.slice(i, j); }
+    else {
+      if (plain) { toks.push(["", plain]); plain = ""; }
+      toks.push([k, code.slice(i, j)]);
+    }
+    i = j;
+  };
+  /* A pattern flagged `b` only fires after whitespace or punctuation,
+   * so `foo-bar` is not a flag and `input:hover` not a YAML key. */
+  const atBreak = () => i === 0 || " \t\n;|&(){}<>=,".includes(code[i - 1]);
+  /* Resume a token left open by the previous chunk: run to its
+   * delimiter (escapes skipped inside strings) or the chunk's end. */
+  if (ctx.s) {
+    const s0 = ctx.s;
+    let j = 0;
+    while (j < n) {
+      if (s0.esc && code[j] === "\\") { j += 2; continue; }
+      if (code.startsWith(s0.close, j)) { j += s0.close.length; ctx.s = null; break; }
+      j += 1;
+    }
+    emit(s0.k, j);
+  }
+  while (i < n) {
+    let hit = false;
+    for (const c of sp.line) {
+      if (code.startsWith(c, i)) {
+        const e = code.indexOf("\n", i);
+        emit("tk-c", e < 0 ? n : e); hit = true; break;
+      }
+    }
+    if (hit) continue;
+    for (const pair of sp.block) {
+      if (code.startsWith(pair[0], i)) {
+        const e = code.indexOf(pair[1], i + pair[0].length);
+        if (e < 0) {
+          emit("tk-c", n);
+          ctx.s = { k: "tk-c", close: pair[1], esc: false };
+        } else emit("tk-c", e + pair[1].length);
+        hit = true; break;
+      }
+    }
+    if (hit) continue;
+    const sa = stringAt(code, i, sp);
+    if (sa) {
+      let k = "tk-s";
+      if (sp.keyAfter) {
+        let j = sa.end;
+        while (j < n && " \t".includes(code[j])) j++;
+        if (code[j] === ":") k = "tk-b";
+      }
+      if (!sa.closed && sa.multi) ctx.s = { k, close: sa.d, esc: sa.escapable };
+      emit(k, sa.end); continue;
+    }
+    for (const p of sp.patterns) {
+      if (p.b && !atBreak()) continue;
+      p.r.lastIndex = i;
+      const m = p.r.exec(code);
+      if (m && m.index === i && m[0]) { emit(p.k, i + m[0].length); hit = true; break; }
+    }
+    if (hit) continue;
+    if (sp.number) {
+      sp.number.lastIndex = i;
+      const m = sp.number.exec(code);
+      if (m && m[0]) { emit("tk-n", i + m[0].length); continue; }
+    }
+    if (/[A-Za-z_$]/.test(code[i])) {
+      let j = i + 1;
+      while (j < n && /[\w$]/.test(code[j])) j++;
+      const w = code.slice(i, j);
+      const key = sp.fold ? w.toLowerCase() : w;
+      let k = "";
+      if (sp.keywords && sp.keywords.has(key)) k = "tk-k";
+      else if (sp.constants && sp.constants.has(key)) k = "tk-n";
+      else if (sp.variables && sp.variables.has(key)) k = "tk-v";
+      else if (sp.builtins && sp.builtins.has(key)) k = "tk-b";
+      else if (sp.call && code[j] === "(") k = "tk-b";
+      else if (sp.caps && w[0] >= "A" && w[0] <= "Z") k = "tk-b";
+      emit(k, j); continue;
+    }
+    plain += code[i]; i++;
+  }
+  if (plain) toks.push(["", plain]);
+  return toks;
+}
+
+/* Whole-input scan. Numbered output splits at each line so a line
+ * number is never swallowed by a multiline token reaching across it —
+ * the number peels off first, then the open token resumes. */
+function scanCode(code, sp, numbered, ctx) {
+  ctx = ctx || { s: null };
+  if (!numbered) return scanBlock(code, sp, ctx);
+  const toks = [];
+  code.split("\n").forEach((ln, idx) => {
+    if (idx) toks.push(["", "\n"]);
+    let off = 0;
+    const m = NUMBERED_LINE.exec(ln.slice(0, 16));
+    if (m) { toks.push(["tk-m", m[0]]); off = m[0].length; }
+    for (const t of scanBlock(ln.slice(off), sp, ctx)) toks.push(t);
+  });
+  return toks;
+}
+
+/* Escaped, span-wrapped HTML for `code` in `lang` (a fence tag or a
+ * language id); unknown and empty langs stay plain. `diff` colours by
+ * line sigil the way the patch view does. `ctx` threads multiline
+ * state between calls (the diff rows below). */
+function hl(code, lang, ctx) {
+  const name = langName(lang);
+  if (!name || name === "text" || name === "diff") {
+    if (ctx) ctx.s = null;
+    if (!name || name === "text") return esc(code);
+    return code.split("\n").map((ln) => {
+      const k = ln.startsWith("+") && !ln.startsWith("+++") ? "diff-add"
+        : ln.startsWith("-") && !ln.startsWith("---") ? "diff-del"
+        : /^(@@|\*\*\*|diff |index |--- |\+\+\+ )/.test(ln) ? "tk-m" : "";
+      return k ? `<span class="${k}">${esc(ln)}</span>` : esc(ln);
+    }).join("\n");
+  }
+  return scanCode(code, LANGS[name], isNumbered(code), ctx)
+    .map(([k, t]) => (k ? `<span class="${k}">${esc(t)}</span>` : esc(t)))
+    .join("");
+}
+
+/* ── tool args ─────────────────────────────────────────────── */
+
+const filePathOf = (obj) =>
+  obj.file_path || obj.path || obj.filename || obj.notebook_path || obj.filePath || "";
+
+/* A shell word shown the way it could be pasted back: bare when safe,
+ * single-quoted when it holds whitespace or shell syntax, so a
+ * ["bash","-lc","echo hi"] array reads as `bash -lc 'echo hi'`. */
+const shQuote = (s) => /^[A-Za-z0-9_@%+=:,./~-]+$/.test(s) ? String(s)
+  : `'${String(s).replace(/'/g, "'\\''")}'`;
+
+/* The tool's args as readable text plus a language: a shell command
+ * leaves its JSON wrapper, a file's contents go under their own
+ * language, and everything else becomes pretty-printed JSON (the card
+ * used to show the raw one-line blob). Mirrors ToolDisplay.readable in
+ * the Mac app; keep them in step. */
+function readableArgs(tool) {
+  const full = String(tool.args_full || "");
+  if (!full) return null;
+  let obj;
+  try { obj = JSON.parse(full); } catch { return { text: full, lang: "" }; }
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return { text: full, lang: "json" };
+  for (const key of ["command", "cmd", "script"]) {
+    const v = obj[key];
+    if (typeof v === "string") return { text: v, lang: "bash" };
+    if (Array.isArray(v)) return { text: v.map(shQuote).join(" "), lang: "bash" };
+  }
+  const file = filePathOf(obj);
+  for (const key of ["content", "new_source", "code", "source"]) {
+    if (typeof obj[key] === "string" && obj[key]) {
+      return { text: obj[key], lang: file ? langFromPath(file) : "" };
+    }
+  }
+  let pretty = full;
+  try { pretty = JSON.stringify(obj, null, 2); } catch { /* keep raw */ }
+  return { text: pretty, lang: "json" };
+}
+
+/* A tool card's output language, stored on the card so its result can
+ * colour as the file it came from. Only read-ish calls claim one —
+ * Edit's "file updated" note is prose, not the file. */
+const READISH = /read|view|cat/i;
+const PATH_ARG_KEYS = new Set([
+  "file_path", "path", "filename", "notebook_path", "filePath",
+  "offset", "limit", "start_line", "end_line", "view_range",
+]);
+function toolOutLang(tool) {
+  let obj;
+  try { obj = JSON.parse(tool.args_full); } catch { return ""; }
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return "";
+  const path = filePathOf(obj);
+  if (!path) return "";
+  const name = String(tool.name || "");
+  if (READISH.test(name)) return langFromPath(path);
+  if (Object.keys(obj).every((k) => PATH_ARG_KEYS.has(k))) return langFromPath(path);
+  return "";
+}
+
+function looksJson(text) {
+  const t = String(text || "").trim();
+  if (!t || (t[0] !== "{" && t[0] !== "[")) return false;
+  try { const v = JSON.parse(t); return v !== null && typeof v === "object"; }
+  catch { return false; }
+}
+
 /* ── diff pane ──────────────────────────────────────────────
    Edit/Write tool calls carry parseable file args in args_full —
    render them as a unified diff instead of raw JSON. */
@@ -1620,6 +2123,7 @@ function diffLines(oldText, newText) {
 }
 
 function renderDiff(filePath, oldText, newText) {
+  const lang = langFromPath(filePath);
   const d = diffLines(oldText, newText);
   const frag = document.createElement("div");
   frag.className = "diff";
@@ -1629,28 +2133,43 @@ function renderDiff(filePath, oldText, newText) {
     f.textContent = filePath;
     frag.appendChild(f);
   }
-  const emit = (lines, cls, sign) => {
+  /* A diff row: the line's own code highlighted in the file's language;
+   * the add/del tint stays on the row's background (meta rows are
+   * prose, not code). stOld/stNew thread multiline comment and string
+   * state through the old and new files separately, so a /* open on
+   * one row still comments out the next. */
+  const stOld = { s: null }, stNew = { s: null };
+  const emit = (lines, cls, sign, st) => {
     for (const ln of lines) {
       const row = document.createElement("div");
       row.className = `diff-line ${cls}`;
-      row.textContent = `${sign} ${ln}`;
+      row.innerHTML = cls === "diff-meta" ? esc(`${sign} ${ln}`) : hl(`${sign} ${ln}`, lang, st);
       frag.appendChild(row);
     }
   };
+  /* A context line exists in both files: show it through the new
+   * side's state, and walk the old side over it silently too. */
+  const ctx = (ln, sign) => {
+    emit([ln], "diff-ctx", sign, stNew);
+    hl(`${sign} ${ln}`, lang, stOld);
+  };
   const top = d.ctxTop.slice(-3);
   if (d.ctxTop.length > 3) emit([`+ ${d.ctxTop.length - 3} unchanged`], "diff-meta", "");
-  emit(top, "diff-ctx", " ");
-  emit(d.del, "diff-del", "-");
-  emit(d.add, "diff-add", "+");
+  for (const ln of top) ctx(ln, " ");
+  emit(d.del, "diff-del", "-", stOld);
+  emit(d.add, "diff-add", "+", stNew);
   if (d.ctxBot.length) {
-    emit(d.ctxBot.slice(0, 2), "diff-ctx", " ");
+    for (const ln of d.ctxBot.slice(0, 2)) ctx(ln, " ");
     if (d.ctxBot.length > 2) emit([`+ ${d.ctxBot.length - 2} more`], "diff-meta", "");
   }
   return frag;
 }
 
 function renderPatch(filePath, patch) {
-  /* Raw patch text (codex apply_patch): color by line sigil. */
+  /* Raw patch text (codex apply_patch): color by line sigil, with the
+   * file's language inside the changed lines. A hunk header jumps to
+   * unrelated code, so any token left open resets there. */
+  const lang = langFromPath(filePath);
   const frag = document.createElement("div");
   frag.className = "diff";
   if (filePath) {
@@ -1659,15 +2178,23 @@ function renderPatch(filePath, patch) {
     f.textContent = filePath;
     frag.appendChild(f);
   }
+  const stOld = { s: null }, stNew = { s: null };
   for (const ln of String(patch || "").split("\n").slice(0, 400)) {
+    const kind = ln.startsWith("+") ? "diff-add"
+      : ln.startsWith("-") ? "diff-del"
+      : ln.startsWith("@@") || ln.startsWith("***") ? "diff-meta"
+      : "diff-ctx";
     const row = document.createElement("div");
-    row.className =
-      "diff-line " +
-      (ln.startsWith("+") ? "diff-add"
-        : ln.startsWith("-") ? "diff-del"
-        : ln.startsWith("@@") ? "diff-meta"
-        : "diff-ctx");
-    row.textContent = ln;
+    row.className = `diff-line ${kind}`;
+    if (kind === "diff-meta") {
+      stOld.s = stNew.s = null;
+      row.textContent = ln;
+    } else if (kind === "diff-ctx") {
+      row.innerHTML = hl(ln, lang, stNew);
+      hl(ln, lang, stOld);
+    } else {
+      row.innerHTML = hl(ln, lang, kind === "diff-del" ? stOld : stNew);
+    }
     frag.appendChild(row);
   }
   return frag;
@@ -1713,8 +2240,9 @@ function appendMessage(msg, seq, live = true) {
     const card = toolCards.get(msg.result_ref);
     const body = card.querySelector(".tool-body");
     if (body && msg.text) {
+      const outLang = card.dataset.lang || (looksJson(msg.text) ? "json" : "");
       const pre = document.createElement("pre");
-      pre.textContent = msg.text.slice(0, 8000);
+      pre.innerHTML = hl(msg.text.slice(0, 8000), outLang);
       body.appendChild(pre);
     }
     return;
@@ -1728,11 +2256,15 @@ function appendMessage(msg, seq, live = true) {
     if (diff) {
       d.classList.add("has-diff");
       body.appendChild(diff);
-    } else if (msg.tool.args_full) {
-      const pre = document.createElement("pre");
-      pre.textContent = msg.tool.args_full.slice(0, 8000);
-      body.appendChild(pre);
+    } else {
+      const readable = readableArgs(msg.tool);
+      if (readable) {
+        const pre = document.createElement("pre");
+        pre.innerHTML = hl(readable.text.slice(0, 8000), readable.lang);
+        body.appendChild(pre);
+      }
     }
+    d.dataset.lang = toolOutLang(msg.tool);
     if (msg.tool.call_id) toolCards.set(msg.tool.call_id, d);
     if (live) d.classList.add("arrive");
     log.appendChild(d);

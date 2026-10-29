@@ -96,6 +96,37 @@ enum Theme {
     static let dangerText = Color(light: "#dc2626", dark: "#f53b3a")
     static let warningText = Color(light: "#a16207", dark: "#facc15")
 
+    /// A diff row's tint: added green, removed red, at the web app's
+    /// `.diff-add`/`.diff-del` alpha.
+    static let diffAdded = Color(light: "#00a5581f", dark: "#00ec7e1f")
+    static let diffRemoved = Color(light: "#dc26261f", dark: "#f53b3a1f")
+
+    /// Syntax token colours, GitHub's light/dark pairs — the web app's
+    /// `--tk-*` variables carry the same values.
+    static let syntaxKeyword = Color(light: "#cf222e", dark: "#ff7b72")
+    static let syntaxString = Color(light: "#0a3069", dark: "#a5d6ff")
+    static let syntaxNumber = Color(light: "#0550ae", dark: "#79c0ff")
+    static let syntaxBuiltin = Color(light: "#8250df", dark: "#d2a8ff")
+    static let syntaxVariable = Color(light: "#953800", dark: "#ffa657")
+    static let syntaxComment = Color(light: "#6e7781", dark: "#8b949e")
+    static let syntaxMeta = Color(light: "#116329", dark: "#7ee787")
+
+    /// The colour a `SyntaxToken.Kind` paints with.
+    static func syntax(_ kind: SyntaxToken.Kind) -> Color {
+        switch kind {
+        case .keyword: return syntaxKeyword
+        case .string: return syntaxString
+        case .number: return syntaxNumber
+        case .builtin: return syntaxBuiltin
+        case .variable: return syntaxVariable
+        case .comment: return syntaxComment
+        case .meta: return syntaxMeta
+        case .added: return success
+        case .removed: return dangerText
+        case .plain: return textPrimary
+        }
+    }
+
     /// Heatmap steps, empty to busiest.
     static let heatmap: [Color] = [
         Color(light: "#ebedf0", dark: "#121212"),

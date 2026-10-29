@@ -297,6 +297,16 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .92em;
 .diff-meta { color: var(--dim); font-style: italic; padding: 3px 10px; }
 details.tool.has-diff > summary { color: var(--text); }
 
+/* Syntax tokens (app.js's hl()): one class per kind, GitHub dark values —
+ * the same colours the web app's --tk-* dark variables carry. */
+.tk-k { color: #ff7b72; }
+.tk-s { color: #a5d6ff; }
+.tk-n { color: #79c0ff; }
+.tk-b { color: #d2a8ff; }
+.tk-v { color: #ffa657; }
+.tk-c { color: #8b949e; }
+.tk-m { color: #7ee787; }
+
 /* issues */
 .issues-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .issues-head button { padding: 6px 12px; font-size: .85rem; flex: 0 0 auto; }

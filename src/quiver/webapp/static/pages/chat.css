@@ -208,6 +208,16 @@ details.tool-run > summary {
 .diff-del { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger-text); }
 .diff-meta { color: var(--text-muted); font-style: italic; padding: 3px 10px; }
 
+/* Syntax tokens (chat.js's hl()): one class per token kind, colours in
+ * styles.css's --tk-* variables. */
+.tk-k { color: var(--tk-keyword); }
+.tk-s { color: var(--tk-string); }
+.tk-n { color: var(--tk-number); }
+.tk-b { color: var(--tk-builtin); }
+.tk-v { color: var(--tk-variable); }
+.tk-c { color: var(--tk-comment); }
+.tk-m { color: var(--tk-meta); }
+
 /* Approval cards */
 .msg.approval {
   border: 1px solid var(--border); border-left: 3px solid var(--warning); border-radius: 12px;

@@ -12,6 +12,10 @@
   --border: rgba(6,6,6,.1); --border-strong: rgba(6,6,6,.18); --row-divider: rgba(6,6,6,.08);
   --accent: #059669; --accent-fill: #10b981;
   --interactive: #317cff; --link: #317cff;
+  /* Syntax token colours (the .tk-* classes), GitHub's light pairs;
+   * Theme.swift's syntax* colours are the same values by name. */
+  --tk-keyword: #cf222e; --tk-string: #0a3069; --tk-number: #0550ae;
+  --tk-builtin: #8250df; --tk-variable: #953800; --tk-comment: #6e7781; --tk-meta: #116329;
   --success: #00a558; --warning: #f58e3a; --danger: #f53b3a;
   --warning-text: #a16207; --danger-text: #dc2626; --usage-track: rgba(13,13,13,.06);
   --heat-0: #ebedf0; --heat-1: #a7f3d0; --heat-2: #6ee7b7; --heat-3: #34d399; --heat-4: #10b981;
@@ -31,6 +35,8 @@
     --text-muted: rgba(255,255,255,.52); --text-label: rgba(255,255,255,.52); --text-tab: rgba(255,255,255,.52); --table-header: rgba(255,255,255,.52);
     --border: rgba(255,255,255,.08); --border-strong: rgba(255,255,255,.16); --row-divider: rgba(255,255,255,.04);
     --interactive: #4489ff; --link: #49b0ff;
+    --tk-keyword: #ff7b72; --tk-string: #a5d6ff; --tk-number: #79c0ff;
+    --tk-builtin: #d2a8ff; --tk-variable: #ffa657; --tk-comment: #8b949e; --tk-meta: #7ee787;
     --success: #00ec7e; --warning: #f58e3a; --danger: #f53b3a;
     --warning-text: #facc15; --danger-text: #f53b3a; --usage-track: rgba(255,255,255,.05);
     --heat-0: #121212; --heat-1: #065f46; --heat-2: #059669; --heat-3: #10b981; --heat-4: #34d399;
@@ -46,6 +52,8 @@
   --text-muted: rgba(255,255,255,.52); --text-label: rgba(255,255,255,.52); --text-tab: rgba(255,255,255,.52); --table-header: rgba(255,255,255,.52);
   --border: rgba(255,255,255,.08); --border-strong: rgba(255,255,255,.16); --row-divider: rgba(255,255,255,.04);
   --interactive: #4489ff; --link: rgba(73,176,255,.85);
+  --tk-keyword: #ff7b72; --tk-string: #a5d6ff; --tk-number: #79c0ff;
+  --tk-builtin: #d2a8ff; --tk-variable: #ffa657; --tk-comment: #8b949e; --tk-meta: #7ee787;
   --success: #00ec7e; --warning: #f58e3a; --danger: #f53b3a;
   --warning-text: #facc15; --danger-text: #f53b3a; --usage-track: rgba(255,255,255,.05);
   --heat-0: #121212; --heat-1: #065f46; --heat-2: #059669; --heat-3: #10b981; --heat-4: #34d399;
