@@ -112,11 +112,11 @@ def _setup_help():
   {c('cyan', 'swe setup --json')}       Print the discovery preview as JSON
   {c('cyan', 'swe setup --non-interactive')}  Preview without prompts or writes
   {c('cyan', 'swe setup --hub=<git url>')}  Clone your hub repo as ~/.quiver first, then
-                                carry on with any of the above. ~/.quiver must
-                                be missing or empty; fork a hub repo first
+                                carry on with any of the above. Only while
+                                ~/.quiver has no hub yet; fork a hub repo first
 
 {c('bold', 'Steps')}
-  First, only while ~/.quiver is missing or empty: your hub repo's URL
+  First, only while ~/.quiver has no hub yet: your hub repo's URL
   (a blank answer starts an empty hub, as before)
   1. Discover and register AI coding CLI harnesses
   2. Check LLM provider credential coverage without storing secrets

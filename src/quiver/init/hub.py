@@ -6,9 +6,14 @@ grew on their first machine). Cloning it as ``~/.quiver`` gives a second
 machine the same AGENTS.md, skills, plugins, hooks and MCP config, with the
 user's URL as ``origin`` so they push to their own hub from day one (#696).
 
-Init never clones over something: ``~/.quiver`` has to be absent or an empty
-directory. The URL is checked with ``git ls-remote`` first, so a typo or a
-missing credential fails before anything is written.
+swe never clones over a hub or over a file: ``~/.quiver`` has to be absent,
+or a folder with no hub in it yet (no ``AGENTS.md``, no ``.git``). What the
+app, the remote hub and earlier swe runs write there on their own (caches,
+the usage ledgers, pairing state) does not count, since a hub's
+``.gitignore`` keeps all of it out of git. The clone is moved in around it,
+and a path that exists on both sides stops the clone before anything moves.
+The URL is checked with ``git ls-remote`` first, so a typo or a missing
+credential fails before anything is written.
 """
 
 from __future__ import annotations
@@ -54,8 +59,14 @@ def public_url(url: str) -> str:
 _USERINFO = re.compile(r"(?<=://)[^/?#]*@")
 
 
+# Either one means ~/.quiver already holds a hub: the seed or cloned
+# AGENTS.md, or a repository of its own.
+HUB_MARKERS = ("AGENTS.md", ".git")
+
+
 def check_target(home: Path) -> None:
-    """Raise unless ``~/.quiver`` can be cloned into: absent or an empty dir."""
+    """Raise unless ``~/.quiver`` can take a clone: absent, or a folder with
+    no hub in it yet. Machine-local state already there is fine."""
     root = quiver_dir_for(home)
     if not os.path.lexists(root):
         return
@@ -64,13 +75,59 @@ def check_target(home: Path) -> None:
     if not root.is_dir():
         raise HubError("~/.quiver is a file, not a folder")
     try:
-        busy = any(root.iterdir())
+        names = {entry.name for entry in root.iterdir()}
     except OSError as exc:
         raise HubError(f"can't read ~/.quiver: {exc.strerror or exc}") from None
-    if busy:
+    found = [name for name in HUB_MARKERS if name in names]
+    if found:
         raise HubError(
-            "~/.quiver already has files, so swe will not clone over it. "
-            "Run swe init without --hub to repair it, or move it aside first.")
+            f"~/.quiver already has a hub (it has {' and '.join(found)}), so swe will "
+            "not clone over it. Run swe init without --hub to repair it, or move it "
+            "aside first.")
+
+
+def _plan_merge(src: Path, dest: Path, rel: str = "") -> list[tuple[Path, Path]]:
+    """The renames that move ``src``'s contents into ``dest`` without
+    overwriting anything: a whole entry where ``dest`` has nothing by that
+    name, a walk into a folder both sides have. Raises HubError naming the
+    first path both sides have that isn't a folder on both."""
+    moves = []
+    for entry in sorted(src.iterdir(), key=lambda p: p.name):
+        there = dest / entry.name
+        shown = f"{rel}{entry.name}"
+        if not os.path.lexists(there):
+            moves.append((entry, there))
+        elif (entry.is_dir() and not entry.is_symlink()
+              and there.is_dir() and not there.is_symlink()):
+            moves += _plan_merge(entry, there, f"{shown}/")
+        else:
+            raise HubError(
+                f"~/.quiver/{shown} is on this machine and in the hub, so swe will "
+                "not clone over it. Move it aside, then try again.")
+    return moves
+
+
+def _move_in(clone: Path, root: Path) -> None:
+    """Move the finished clone into ``~/.quiver``: a plain rename while it
+    is absent, else entry by entry around what is already there. Every
+    collision is found before anything moves, and a rename that fails puts
+    back the ones before it, so no half-merged hub is left behind."""
+    if not os.path.lexists(root):
+        clone.rename(root)
+        return
+    moves = _plan_merge(clone, root)
+    done: list[tuple[Path, Path]] = []
+    try:
+        for src, dest in moves:
+            src.rename(dest)
+            done.append((src, dest))
+    except OSError:
+        for src, dest in reversed(done):
+            try:
+                dest.rename(src)
+            except OSError:
+                pass
+        raise
 
 
 def can_clone(home: Path) -> bool:
@@ -124,11 +181,9 @@ def clone_hub(home: Path, url: str, run=subprocess.run) -> Path:
             detail = (cloned.stderr or "").strip().splitlines()
             reason = f": {detail[-1]}" if detail else ""
             raise HubError(public_url(f"git clone {shown} failed{reason}"))
-        check_target(home)  # nothing appeared there while git ran
+        check_target(home)  # no hub appeared there while git ran
         try:
-            if root.is_dir():
-                root.rmdir()  # the empty folder check_target allowed
-            target.rename(root)
+            _move_in(target, root)
         except OSError as exc:
             raise HubError(f"can't move the clone into ~/.quiver: {exc.strerror or exc}") from None
     finally:
