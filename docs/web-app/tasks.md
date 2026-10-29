@@ -55,9 +55,13 @@ The joins, always present:
   `linked` still counts it.
 
 `GET /v1/app/tasks?harnesses=1` does not touch the task list at all: it
-answers `{"harnesses": [{name, display_name, tracked}], machine}` —
+answers `{"harnesses": [{name, display_name, tracked, launch_model,
+launch_effort, last_model}], machine}` —
 `catalog.launchable_harnesses`, the same list the Repositories page's
-PR sheet and the phone's new-session sheet offer.
+PR sheet and the phone's new-session sheet offer. `launch_model` says
+the harness takes a `model` pick at launch and `last_model` (the
+ledger's most recent model for it, `""` when none) prefills the sheet's
+Model field; `launch_effort` rides along, unused here so far.
 
 ## The page
 
@@ -85,7 +89,10 @@ card deep-links into the Repositories page's PR sheet
 added to that route).
 
 **Actions.** On a GitHub issue or pull, "New agent session" asks for a
-harness (`?harnesses=1`) and an optional first message, then posts to
+harness (`?harnesses=1`), an optional model (a free-text field shown
+only when the picked harness reports `launch_model`, prefilled with its
+`last_model`; empty sends no `model` key) and an optional first
+message, then posts to
 `POST /v1/issues/resolve` (issues) or `POST /v1/pulls/<o>/<r>/<n>/open`
 (pulls) — both stamp the launch's `origin`, so the session that lands
 links itself to the task on adoption. The panel polls
