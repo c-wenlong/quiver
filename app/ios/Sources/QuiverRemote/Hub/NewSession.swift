@@ -71,14 +71,13 @@ enum NewSessionOptions {
         return model
     }
 
-    /// The Model field's refill on a harness change. `filled` is what the
-    /// sheet last prefilled: `text` still matching it means the field
-    /// holds only a default and refills freely, while anything else is
-    /// the user's own typing and stays.
-    static func modelText(text: String, filled: String, for harness: String?, on machine: Machine) -> (text: String, filled: String) {
-        guard text == filled else { return (text, filled) }
-        let next = lastModel(harness, on: machine) ?? ""
-        return (next, next)
+    /// The Model field's refill on a harness or machine change: nil for
+    /// an edited field (its text, even a clear back to the prefill, is
+    /// the user's own and stays), else the harness's last-used model,
+    /// empty when it has none.
+    static func modelText(edited: Bool, for harness: String?, on machine: Machine) -> String? {
+        guard !edited else { return nil }
+        return lastModel(harness, on: machine) ?? ""
     }
 
     /// What the launch posts as `model`: the trimmed pick, or nil when

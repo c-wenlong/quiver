@@ -249,9 +249,10 @@ struct ResolveIssueSheet: View {
     @State private var harnessTouched = false
     @State private var prompt: String
     @State private var model = ""
-    /// What the Model field last prefilled: `model` differing from it
-    /// means the user typed, so a harness change must not overwrite.
-    @State private var modelFilled = ""
+    /// The field's own binding sets this on any keystroke, so even a
+    /// clear back to the prefill counts: a harness change must not
+    /// overwrite what the user left.
+    @State private var modelEdited = false
     @State private var flow = LaunchFlow()
     @State private var launch: Task<Void, Never>?
     /// The session list as it was when the sheet opened, for the
@@ -283,7 +284,9 @@ struct ResolveIssueSheet: View {
                 if let machine {
                     startsIn(machine)
                     harnessSection(machine)
-                    ModelField(machine: machine, harness: harness, text: $model, sessions: rows, disabled: flow.busy)
+                    ModelField(machine: machine, harness: harness,
+                               text: Binding(get: { model }, set: { model = $0; modelEdited = true }),
+                               sessions: rows, disabled: flow.busy)
                     promptSection
                     startSection(machine)
                 } else {
@@ -314,13 +317,12 @@ struct ResolveIssueSheet: View {
         .onDisappear { launch?.cancel() }
     }
 
-    /// The Model field's prefill after a harness change: an untouched
-    /// field takes the machine's last-used model for the new harness, a
-    /// typed one keeps what the user wrote.
+    /// The Model field's prefill after a harness change: an unedited
+    /// field takes the machine's last-used model for the new harness,
+    /// an edited one keeps what the user left.
     private func refillModel(on machine: Machine) {
-        let next = NewSessionOptions.modelText(text: model, filled: modelFilled, for: harness, on: machine)
-        model = next.text
-        modelFilled = next.filled
+        guard let next = NewSessionOptions.modelText(edited: modelEdited, for: harness, on: machine) else { return }
+        model = next
     }
 
     /// Same default as the new-session sheet: the harness last run in

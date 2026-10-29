@@ -1057,22 +1057,18 @@ final class NewSessionOptionsTests: XCTestCase {
         XCTAssertNil(NewSessionOptions.modelPick("x", for: "claude", on: machine("m2", name: "old")))
     }
 
-    func testModelTextRefillsOnlyAnUntouchedField() {
+    func testModelTextRefillsOnlyAnUneditedField() {
         var m = machine("m1", name: "mac", launchable: ["claude", "codex"])
         m.lastModels = ["claude": "a", "codex": "b"]
         // A fresh field takes the prefill, and retakes it on a change.
-        var r = NewSessionOptions.modelText(text: "", filled: "", for: "claude", on: m)
-        XCTAssertEqual(r.text, "a")
-        r = NewSessionOptions.modelText(text: r.text, filled: r.filled, for: "codex", on: m)
-        XCTAssertEqual(r.text, "b")
-        // Typed text is the user's: a harness change never overwrites it.
-        r = NewSessionOptions.modelText(text: "mine", filled: "b", for: "claude", on: m)
-        XCTAssertEqual(r.text, "mine")
-        XCTAssertEqual(r.filled, "b")
-        // A cleared field counts as typed: it stays empty rather than
-        // refilling.
-        r = NewSessionOptions.modelText(text: "", filled: "b", for: "claude", on: m)
-        XCTAssertEqual(r.text, "")
+        XCTAssertEqual(NewSessionOptions.modelText(edited: false, for: "claude", on: m), "a")
+        XCTAssertEqual(NewSessionOptions.modelText(edited: false, for: "codex", on: m), "b")
+        // A harness with no remembered model refills empty, not nil.
+        XCTAssertEqual(NewSessionOptions.modelText(edited: false, for: "pi", on: m), "")
+        // An edited field keeps whatever the user left, including a
+        // clear back to what the prefill showed: the flag, not the
+        // text, says the field was touched.
+        XCTAssertNil(NewSessionOptions.modelText(edited: true, for: "claude", on: m))
     }
 
     func testDecodesHubLaunchAndMachineRows() throws {
