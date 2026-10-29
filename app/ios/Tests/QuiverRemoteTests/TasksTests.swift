@@ -10,7 +10,7 @@ final class TasksDecodingTests: XCTestCase {
         {"id": "github:issue:o/r:5", "source": "github", "kind": "issue",
          "repo": "o/r", "ref": "5", "title": "Fix the thing",
          "url": "https://github.com/o/r/issues/5",
-         "state": "in_progress", "sessions": ["claude@/w:abc"],
+         "state": "in_progress", "status": "Agent running", "sessions": ["claude@/w:abc"],
          "launches": ["l-1"], "agent_running": true, "linked": true,
          "last_active_at": 1767323000.0, "created_at": 1767320000.0,
          "updated_at": "2026-01-02T03:04:05Z",
@@ -56,6 +56,8 @@ final class TasksDecodingTests: XCTestCase {
         XCTAssertEqual(issue.refLabel, "o/r#5")
         XCTAssertEqual(issue.number, 5)
         XCTAssertEqual(issue.state, "in_progress")
+        XCTAssertEqual(issue.status, "Agent running")
+        XCTAssertEqual(issue.stateLabel, "Agent running")
         XCTAssertEqual(issue.sessions, ["claude@/w:abc"])
         XCTAssertEqual(issue.agentRunning, true)
         XCTAssertEqual(issue.linked, true)
@@ -153,9 +155,19 @@ final class TaskRowTests: XCTestCase {
         XCTAssertEqual(row("a", kind: "issue").sourceLine, "GitHub issue · o/r")
         XCTAssertEqual(row("a", kind: "pull").sourceLine, "GitHub pull request · o/r")
         XCTAssertEqual(row("a", source: "linear", repo: nil, project: "QUI").sourceLine, "Linear · QUI")
-        XCTAssertEqual(row("a", state: "in_progress").stateLabel, "In progress")
+        // The ladder is never the text (#875): an issue whose agent has
+        // finished reads Open, a running one Agent running.
+        XCTAssertEqual(row("a", state: "in_progress", running: false).stateLabel, "Open")
+        XCTAssertEqual(row("a", state: "in_progress", running: true).stateLabel, "Agent running")
         XCTAssertEqual(row("a", state: "pr_open").stateLabel, "PR open")
         XCTAssertEqual(row("a", state: "weird").stateLabel, "Open")
+        // The hub's own status wins, in the source's words.
+        var linear = row("a", source: "linear", repo: nil, project: "QUI", state: "in_progress")
+        linear.status = "In Review"
+        XCTAssertEqual(linear.stateLabel, "In Review")
+        // An older hub sends no status: started Linear work still reads so.
+        linear.status = nil
+        XCTAssertEqual(linear.stateLabel, "Started")
         // A ref under a repo reads "o/r#5"; a bare ref stays itself.
         XCTAssertEqual(row("a", ref: "QUI-1", repo: nil, project: "QUI").refLabel, "QUI-1")
     }
@@ -190,7 +202,7 @@ final class TaskStepperTests: XCTestCase {
 
     func testIssueLadderReachesUpToTheState() {
         XCTAssertEqual(rungs(row(state: "pr_open")),
-                       [step("Open", true, false), step("In progress", true, false),
+                       [step("Open", true, false), step("Agent", true, false),
                         step("PR open", true, true), step("Merged", false, false)])
         XCTAssertEqual(rungs(row(state: "merged")).last,
                        step("Merged", true, true))
@@ -199,15 +211,16 @@ final class TaskStepperTests: XCTestCase {
 
     func testNonGithubIssueLadderSkipsThePrRung() {
         // Only a GitHub issue's own PR can stand between "an agent is
-        // on it" and done; Linear cards and Notion pages end at started.
+        // on it" and done; Linear cards and Notion pages use their own
+        // started and done.
         let steps = rungs(row(state: "in_progress", source: "linear"))
-        XCTAssertEqual(steps.map(\.title), ["Open", "In progress", "Merged"])
+        XCTAssertEqual(steps.map(\.title), ["Open", "Started", "Done"])
     }
 
     func testPullLadderSkipsThePrRung() {
         let steps = rungs(row(kind: "pull", state: "in_progress"))
-        XCTAssertEqual(steps.map(\.title), ["Open", "In progress", "Merged"])
-        XCTAssertEqual(steps[1], step("In progress", true, true))
+        XCTAssertEqual(steps.map(\.title), ["Open", "Agent", "Merged"])
+        XCTAssertEqual(steps[1], step("Agent", true, true))
     }
 
     func testClosedReplacesTheTerminalRung() {

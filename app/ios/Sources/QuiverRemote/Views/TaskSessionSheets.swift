@@ -341,7 +341,11 @@ struct TaskSessionSheet: View {
             for _ in 0..<300 {
                 let status = try? await client.launch(launchId)
                 if let key = status?.key, status?.state == "started" {
-                    try? await client.linkTask(key, task: task)
+                    if (try? await client.linkTask(key, task: task)) != nil {
+                        await MainActor.run {
+                            NotificationCenter.default.post(name: .taskLinked, object: nil)
+                        }
+                    }
                     return
                 }
                 if status?.state == "failed" || status?.state == "untracked" { return }
@@ -349,6 +353,12 @@ struct TaskSessionSheet: View {
             }
         }
     }
+}
+
+extension Notification.Name {
+    /// A task link landed outside a sheet (a plain launch adopted after
+    /// its sheet closed): the Tasks pages reload to show it.
+    static let taskLinked = Notification.Name("QuiverRemote.taskLinked")
 }
 
 /// A folder path as an Identifiable for the sheet's card list (the

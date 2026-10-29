@@ -328,6 +328,7 @@ class LinearTasks:
             if isinstance(result.data, dict) else None
         nodes = issues.get("nodes") if isinstance(issues, dict) else []
         tasks = [{"task": _ref(node), "state": _task_state(node),
+                  "status_name": _status_name(node),
                   "updated_at": node.get("updatedAt")}
                  for node in nodes or [] if isinstance(node, dict)]
         return {"status": "ok", "tasks": tasks}
@@ -363,6 +364,7 @@ class LinearTasks:
             return {"status": "not-found",
                     "error": f"Linear has no issue {ref}"}
         return {"status": "ok", "state": _task_state(issue),
+                "status_name": _status_name(issue),
                 "title": issue.get("title") or "",
                 "url": issue.get("url") or "",
                 "description": issue.get("description") or "",
@@ -390,6 +392,13 @@ def _task_state(node: dict) -> str:
     stype = str(state.get("type") or "").lower() \
         if isinstance(state, dict) else ""
     return _STATE_MAP.get(stype, "open")
+
+
+def _status_name(node: dict) -> str:
+    """The workflow state's own name ("In Review"), what Linear shows."""
+    state = node.get("state")
+    name = state.get("name") if isinstance(state, dict) else None
+    return name.strip() if isinstance(name, str) else ""
 
 
 def _list_filter(teams: list[str]) -> dict:

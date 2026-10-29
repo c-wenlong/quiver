@@ -210,6 +210,8 @@ class TestListAndGet(unittest.TestCase):
         self.assertEqual(rows["QUI-12"]["task"]["project"], "QUI")
         self.assertEqual(rows["QUI-12"]["state"], "open")
         self.assertEqual(rows["QUI-13"]["state"], "in_progress")
+        # The workflow state's own name, which the task row shows.
+        self.assertEqual(rows["QUI-12"]["status_name"], "Todo")
         self.assertEqual(rows["QUI-12"]["updated_at"],
                          "2026-02-03T04:05:06.000Z")
 
