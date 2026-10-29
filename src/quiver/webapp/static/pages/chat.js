@@ -1566,7 +1566,7 @@ const SessionChat = (() => {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg></button>` : ""}`;
     setConn(chat.connState || "connecting");
     const chip = $("chat-tmux");
-    if (chip) Fmt.copyTick(chip, () => `tmux attach -t ${(chat.row || {}).tmux}`);
+    if (chip) Fmt.copyTick(chip, () => `tmux attach -t ${Fmt.shellWord((chat.row || {}).tmux || "")}`);
     const detachBtn = $("chat-detach");
     if (detachBtn) detachBtn.onclick = openDetachSheet;
     const details = $("chat-details");
@@ -1652,7 +1652,7 @@ const SessionChat = (() => {
       const where = r.remote && r.machine ? ` on ${r.machine}` : "";
       const [title, note, go] = kept
         ? ["Reattach to the running tmux session?",
-          `The pane ${r.tmux || ""} is still alive${esc(where)}: attach takes it back as it is, mid-turn included. Nothing is stopped or relaunched.`,
+          `The pane ${esc(r.tmux || "")} is still alive${esc(where)}: attach takes it back as it is, mid-turn included. Nothing is stopped or relaunched.`,
           "Reattach"]
         : ["Attach this session?",
           `Attach stops ${esc(harnessLabel(r) || "the harness")} in the terminal running this session${esc(where)},
