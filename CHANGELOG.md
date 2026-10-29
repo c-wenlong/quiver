@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote iPhone app: the chat header and the session list show the
+  model.** A session's chat header adds the model after its folder, and
+  each session row adds it after the last-active time, both from the
+  hub row's `model` (the newest reply's model). The provider path and a
+  date stamp are dropped, so `anthropic/claude-opus-4-5` and
+  `claude-opus-4-5-20251101` both read `claude-opus-4-5`. Nothing shows
+  when the hub doesn't know the model or is older than the field. Part
+  of [#643](https://github.com/c-wenlong/quiver/issues/643).
+
 - **Remote hub: session rows say which model each session runs.**
   `/v1/sessions` rows, the hub's own and a satellite's, carry `model`,
   the model of the newest reply in the session's transcript (left out

@@ -23,6 +23,12 @@ struct ChatView: View {
                     HStack(spacing: 4) {
                         HarnessIcon(harness: row?.harness, name: row?.harnessName ?? "", size: 11)
                         Text(SessionGrouping.shortDir(row?.cwd))
+                        // The folder gives way first: the model shows
+                        // nowhere else on this screen.
+                        if let model = row?.modelLabel {
+                            Text("· \(model)").layoutPriority(1)
+                                .accessibilityLabel("Model \(model)")
+                        }
                     }
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }

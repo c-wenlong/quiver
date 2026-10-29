@@ -111,8 +111,14 @@ struct SessionRow: Codable, Identifiable, Hashable {
     var pinnedAt: Double? = nil
     /// The harness can start a fork of this session.
     var canFork: Bool? = nil
+    /// The model of the newest reply in the transcript, as the harness
+    /// names it ("claude-opus-4-5-20251101", "anthropic/claude-opus-4-5").
+    /// Nil when the hub doesn't know it, or is older than the field.
+    var model: String? = nil
 
     var id: String { key }
+    /// `model` short enough for a header or a list row, or nil.
+    var modelLabel: String? { ModelLabel.short(model) }
     var displayTitle: String { (title?.isEmpty == false ? title : nil) ?? "Untitled session" }
     var isPinned: Bool { pinned == true }
     /// A name set on the hub replaces the harness's title.
@@ -140,6 +146,30 @@ struct SessionRow: Codable, Identifiable, Hashable {
     var needsYouNow: Bool {
         sessionStatus == .approval || (sessionStatus == .followup && Staleness.isFresh(lastActiveAt))
     }
+}
+
+/// How a session's model reads on screen.
+enum ModelLabel {
+    /// The model id without its provider path or date stamp:
+    /// "anthropic/claude-opus-4-5" and "claude-opus-4-5-20251101" both
+    /// read "claude-opus-4-5", "openrouter/nvidia/nemotron-3:free" reads
+    /// "nemotron-3:free". Nil for a missing or blank one, so the views
+    /// show nothing rather than a placeholder.
+    static func short(_ raw: String?) -> String? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        var name = trimmed.split(separator: "/").last.map(String.init) ?? trimmed
+        if let dash = name.lastIndex(of: "-"), dash > name.startIndex {
+            let stamp = name[name.index(after: dash)...]
+            if stamp.count == 8, stamp.allSatisfy(\.isASCIIDigit) {
+                name = String(name[..<dash])
+            }
+        }
+        return name
+    }
+}
+
+private extension Character {
+    var isASCIIDigit: Bool { ("0"..."9").contains(self) }
 }
 
 /// `POST .../pin` and `.../title` answer this; `session.meta` carries it.
