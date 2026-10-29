@@ -111,10 +111,15 @@ def launchable_harnesses() -> list[dict]:
     """What ``POST /v1/sessions`` can start here, in Provider visibility
     order: every harness ``swe list`` shows (not archived) whose command
     is on PATH, minus the ones switched off in the Mac app's Settings.
-    Each item is ``{name, command, display_name, tracked}``; ``tracked``
-    is false for a harness swe has no session parser for (qwen-code): it
-    starts, but no session ever shows up to open as a chat."""
+    Each item is ``{name, command, display_name, tracked, launch_model,
+    launch_effort}``; ``tracked`` is false for a harness swe has no
+    session parser for (qwen-code): it starts, but no session ever shows
+    up to open as a chat. ``launch_model``/``launch_effort`` are true
+    when ``supervise.launch_tuning_error`` would accept the field — a
+    verified ``/model <v>``/``/effort <v>`` TUI command, the only
+    launch-time mechanism a tmux pane has."""
     from quiver.harness import registry
+    from quiver.remote import slash_builtins
 
     try:
         reg = registry.load_registry_readonly()
@@ -137,6 +142,8 @@ def launchable_harnesses() -> list[dict]:
             "command": command,
             "display_name": str(entry.get("display_name") or name),
             "tracked": name in parsers,
+            "launch_model": slash_builtins.launch_op_ok(name, "model"),
+            "launch_effort": slash_builtins.launch_op_ok(name, "effort"),
         }))
     out.sort(key=lambda pair: pair[0])
     return [item for _rank, item in out]
@@ -170,6 +177,93 @@ def harness_names(launchable: list[dict]) -> dict[str, str]:
 
 def untracked(launchable: list[dict]) -> list[str]:
     return [item["name"] for item in launchable if not item["tracked"]]
+
+
+def launch_op_names(launchable: list[dict], op: str) -> list[str]:
+    """Harnesses whose launch honours ``model``/``effort`` (``launch_<op>``)."""
+    return [item["name"] for item in launchable if item.get(f"launch_{op}")]
+
+
+def reads_launch_options(row: dict | None) -> bool:
+    """Whether a satellite's build applies ``model``/``effort`` on the
+    launch, fork and attach commands it is sent.
+
+    The release that understands those fields is the one that started
+    reporting ``model_at_launch`` on its machine row, so the field's
+    presence is the version check: an older agent accepts the command
+    and silently drops the pick, which is exactly what this gate exists
+    to prevent.
+    """
+    return isinstance((row or {}).get("model_at_launch"), list)
+
+
+# ``last_used_models`` is asked once per catalog refresh (~10 s per
+# machine) while the ledger only moves on session events, so the
+# answer is cached behind the db+WAL file signature: an idle machine
+# pays two stats, not a whole-table scan.
+_last_models_cache: dict[str, tuple[tuple, dict[str, str]]] = {}
+_last_models_lock = threading.Lock()
+
+
+def _ledger_signature(path: Path) -> tuple:
+    """``(mtime_ns, size)`` of the ledger db and its WAL, or None each."""
+    sig = []
+    for candidate in (path, path.with_name(path.name + "-wal")):
+        try:
+            st = candidate.stat()
+        except OSError:
+            sig.append(None)
+        else:
+            sig.append((st.st_mtime_ns, st.st_size))
+    return tuple(sig)
+
+
+def last_used_models(home: Path | str | None = None) -> dict[str, str]:
+    """``harness`` → the model its most recent ledger event ran.
+
+    The web ledger already records the model of every past session, so
+    "last used" is one read of it — no new persistence. A machine with
+    no ledger (or a locked one) simply has no history to offer.
+    """
+    import sqlite3
+
+    from quiver.ledger.store import ledger_path_for
+
+    path = ledger_path_for(Path(home) if home is not None else None)
+    key = str(path)
+    # The signature rides into the cache with the answer: taken before
+    # the query so a mid-query write re-reads next call rather than
+    # serving a stale map until the next change.
+    sig = _ledger_signature(path)
+    with _last_models_lock:
+        hit = _last_models_cache.get(key)
+        if hit is not None and hit[0] == sig:
+            return dict(hit[1])
+    rows = []
+    try:
+        # Read-only: this path must never create the store itself.
+        db = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
+    except (sqlite3.Error, ValueError):
+        db = None
+    if db is not None:
+        try:
+            # SQLite's bare-column rule: the ``model`` comes from the
+            # row the MAX matched — each harness's latest event.
+            rows = db.execute(
+                "SELECT harness, model, MAX(ts) FROM events"
+                " WHERE model != '' GROUP BY harness"
+            ).fetchall()
+        except sqlite3.Error:
+            rows = []
+        finally:
+            db.close()
+    result = {h: m for h, m, _ts in rows if h and m}
+    with _last_models_lock:
+        # Throwaway HOMEs in tests would grow the map forever otherwise.
+        if len(_last_models_cache) >= 64:
+            _last_models_cache.clear()
+        _last_models_cache[key] = (sig, result)
+    return result
 
 
 def launch_command(harness: str) -> str | None:
@@ -206,6 +300,9 @@ def local_machine(home: Path | str | None = None) -> dict:
 
     ``launchable`` is what the phone's new-session sheet offers, in order
     (``launchable_harnesses``); ``harness_names`` names each one.
+    ``model_at_launch``/``effort_at_launch`` name the harnesses whose
+    launches accept ``model``/``effort``; ``last_models`` prefills the
+    picker with the ledger's most recent model per harness.
     """
     harnesses = detected_harnesses()
     launchable = launchable_harnesses()
@@ -219,6 +316,9 @@ def local_machine(home: Path | str | None = None) -> dict:
         "launchable": [item["name"] for item in launchable],
         "harness_names": harness_names(launchable),
         "untracked_harnesses": untracked(launchable),
+        "model_at_launch": launch_op_names(launchable, "model"),
+        "effort_at_launch": launch_op_names(launchable, "effort"),
+        "last_models": last_used_models(home),
     }
 
 

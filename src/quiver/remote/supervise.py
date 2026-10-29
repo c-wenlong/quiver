@@ -582,6 +582,8 @@ def attach(
     last_append_at: float | None,
     status: str,
     mode: str = "auto",
+    model: str | None = None,
+    effort: str | None = None,
 ) -> tuple[bool, str]:
     """observed → attached: relaunch under the supervisor.
 
@@ -590,15 +592,35 @@ def attach(
     a session can go active between list and tap. The whole handoff —
     already-attached check, writer replacement, registry write — runs
     under the registry lock so concurrent attaches cannot split it.
+
+    ``model``/``effort`` are the same pick a launch takes: checked
+    against the resolved channel (``channel_tuning_error``), typed into
+    a tmux pane after boot, recorded on the supervised entry either way
+    so the channel's own mechanism — headless ``--model``, appserver's
+    ``turn/start`` overrides, serve's model object — can carry it.
     """
     flags = resume_flags(session)
     with _registry_lock(home):
-        if session_key in _load_registry(home):
+        current = _load_registry(home).get(session_key)
+        if current is not None:
+            # Idempotent — but a pick is a request for the session to
+            # run that value, and a live pane's launch-time apply can't
+            # be redone: a pick differing from the recorded one is
+            # refused rather than silently dropped.
+            changed = [op for op, want in
+                       (("model", model), ("effort", effort))
+                       if want and want != str(current.get(op) or "")]
+            if changed:
+                ops = " and ".join(f"/{op}" for op in changed)
+                return False, (
+                    f"already attached; {ops} can only be picked on a "
+                    "fresh attach — detach the session and attach again")
             return True, "already attached"
         # A tmux session kept running by an earlier detach is taken back
         # as it is, mid-turn or not: launching here would start a second
         # run of the same session next to it.
-        adopted = _adopt_kept_locked(home, session_key, session)
+        adopted = _adopt_kept_locked(home, session_key, session,
+                                     model=model, effort=effort)
         if adopted is not None:
             return adopted
         if status == "active":
@@ -639,6 +661,10 @@ def attach(
         binary = _MODE_BINARY.get(mode)
         if binary and shutil.which(binary) is None:
             return False, f"{binary} is not installed"
+        blocked = channel_tuning_error(mode, session.tool_name,
+                                       model, effort)
+        if blocked:
+            return False, blocked
 
         meta = {
             "mode": mode,
@@ -647,6 +673,9 @@ def attach(
             "cwd": session.path or "",
             "attached_at": time.time(),
         }
+        for field, value in (("model", model), ("effort", effort)):
+            if value:
+                meta[field] = value
         if mode in {"headless", "serve", "appserver"}:
             # The original terminal still owns a writer process — stop
             # it before claiming the session or both sides write. The
@@ -685,11 +714,18 @@ def attach(
         # gate with "No, exit" selected: the tailer read it as an
         # approval and the phone's next Enter quit claude. Get past it
         # before anyone can write to the pane.
-        if boot_pane(name, timeout=ATTACH_BOOT_S) is None:
+        settled = boot_pane(name, timeout=ATTACH_BOOT_S)
+        if settled is None:
             kill(name)
             return False, f"{binary} did not finish starting under tmux"
         if not tmux_alive(name):
             return False, f"{binary} exited while starting under tmux"
+        if (model or effort) and not _send_launch_controls(
+                name, model, effort, before=settled):
+            kill(name)
+            return False, (
+                "attached under tmux but the launch controls could not "
+                "be delivered — attach again or send them by hand")
         meta["tmux"] = name
         _stop_local_writers(session, writers)
         _mark_locked(home, session_key, meta)
@@ -974,7 +1010,8 @@ def _kept_state(row: dict) -> str:
 
 
 def _adopt_kept_locked(
-    home: Path | None, session_key: str, session: Session
+    home: Path | None, session_key: str, session: Session,
+    *, model: str | None = None, effort: str | None = None,
 ) -> tuple[bool, str] | None:
     """Take a kept tmux session back under supervision, registry lock held.
 
@@ -984,6 +1021,11 @@ def _adopt_kept_locked(
     now runs something else is refused rather than launched over. The
     supervised row is written before the kept one is removed (see
     ``keep``).
+
+    A ``model``/``effort`` pick is honoured only when it matches what
+    the kept run was launched with: typing ``/model`` into a live,
+    possibly mid-turn pane is not the launch-time apply the pick asks
+    for, so a different value is refused rather than silently dropped.
     """
     _reconcile_locked(home)
     kept_rows = _load_kept(home)
@@ -1000,6 +1042,15 @@ def _adopt_kept_locked(
         return False, (
             f"tmux session {name} no longer runs this session; close it "
             f"(tmux kill-session -t {name}) and attach again"
+        )
+    changed = [op for op, want in (("model", model), ("effort", effort))
+               if want and want != str(row.get(op) or "")]
+    if changed:
+        ops = " and ".join(f"/{op}" for op in changed)
+        return False, (
+            f"the kept tmux session {name} is still running; {ops} can "
+            "only be picked on a fresh attach — detach the session "
+            "and attach again"
         )
     meta = {k: v for k, v in row.items()
             if k not in {"pane_pid", "kept_at"}}
@@ -1113,6 +1164,138 @@ def pending_launch(home: Path | None) -> bool:
     return False
 
 
+def launch_tuning_error(
+    tool_name: str, model: str | None, effort: str | None
+) -> str:
+    """The refusal note when ``tool_name``'s launch can't honour
+    ``model``/``effort``, else "".
+
+    A launch is always a tmux pane, so the only mechanism is typing
+    ``/op <v>`` into it — allowed only where ``slash_builtins`` verifies
+    the TUI runs the command with an argument (claude and codex for
+    ``model``, claude for ``effort``). Anything else would send the text
+    to the model as a prompt, so the field is refused rather than
+    silently dropped — the same honesty an injector answers with
+    ``unsupported_control``.
+    """
+    from quiver.remote import slash_builtins
+
+    missing = [
+        op for op, value in (("model", model), ("effort", effort))
+        if value and not slash_builtins.launch_op_ok(tool_name, op)
+    ]
+    if not missing:
+        return ""
+    ops = " and ".join(f"/{op}" for op in missing)
+    return (
+        f"{tool_name} launches can't take {ops}: its TUI has no "
+        f"verified {ops} command"
+    )
+
+
+def channel_tuning_error(
+    mode: str, tool_name: str, model: str | None, effort: str | None
+) -> str:
+    """The refusal note when a resolved attach mode can't honour
+    ``model``/``effort``, else "" — the attach-side twin of
+    ``launch_tuning_error``.
+
+    ``tmux`` is a launch pane, so the TUI-builtin rule applies.
+    ``headless`` is claude print mode: ``--model`` rides every
+    invocation's argv, but no effort flag exists. ``appserver`` and
+    ``serve`` take the pick on their own wire fields — ``turn/start``'s
+    ``model``/``effort`` overrides, and ``prompt_async``'s
+    ``{providerID, modelID}`` plus ``variant``. Serve's model object is
+    the one shape constraint a client can't guess, so a ``model``
+    without its ``provider/model`` form is refused rather than
+    silently dropped — the same honesty an injector answers with
+    ``unsupported_control``.
+    """
+    if mode == "tmux":
+        return launch_tuning_error(tool_name, model, effort)
+    if mode == "headless":
+        if effort:
+            return ("claude headless can't take /effort: print-mode "
+                    "turns have no effort flag")
+        return ""
+    if mode == "serve":
+        if model and "/" not in model:
+            return ("opencode serve can't take /model "
+                    f"{model!r}: the channel needs a provider/model "
+                    "value")
+        return ""
+    if mode == "appserver":
+        return ""
+    if model or effort:
+        missing = [op for op, value in (("model", model), ("effort", effort))
+                   if value]
+        ops = " and ".join(f"/{op}" for op in missing)
+        return (f"{tool_name} on the {mode} channel can't take {ops}: "
+                f"the channel has no verified control for it")
+    return ""
+
+
+def _send_launch_controls(
+    name: str,
+    model: str | None,
+    effort: str | None,
+    *,
+    before: str,
+) -> bool:
+    """Type each picked ``/model``/``/effort`` into a settled pane,
+    checking each one actually left the input box.
+
+    A bare ``send_text`` only proves tmux took the keys — a TUI can
+    swallow the Enter behind fast-typed text and leave ``/model opus``
+    sitting in the input, where the next send would merge into it. So
+    each control goes through the same checked delivery the first
+    prompt gets (``_deliver``), and the pane re-settles between
+    controls so a TUI still applying one is never typed over.
+    ``before`` is the settled frame the first control is checked
+    against.
+    """
+    from quiver.remote import inject
+
+    frame = before
+    for op, value in (("model", model), ("effort", effort)):
+        if not value:
+            continue
+        if not _deliver(
+                name, inject.control_text(op, value), before=frame):
+            return False
+        frame = boot_pane(name)
+        if frame is None:
+            return False
+    return True
+
+
+def _prime_launch(
+    name: str,
+    prompt: str,
+    model: str | None,
+    effort: str | None,
+) -> bool:
+    """Boot the pane, apply launch-time ``/model``/``/effort``, type the
+    prompt — in that order, so the first turn runs on the picked model.
+
+    The command text is the injector's own (``inject.control_text``), so
+    a launch types exactly what the control op would. ``prime_pane``
+    then re-waits for a settled frame — real settle time for the TUI to
+    apply the switch — before delivering the prompt. False when the
+    pane never settled or a send could not be delivered.
+    """
+    if model or effort:
+        settled = boot_pane(name)
+        if settled is None:
+            return False
+        if not _send_launch_controls(
+                name, model, effort, before=settled):
+            return False
+    if not prompt:
+        return True
+    return prime_pane(name, prompt)
+
+
 def launch_new(
     home: Path | None,
     tool_name: str,
@@ -1122,6 +1305,8 @@ def launch_new(
     known_ids: list[str] | None = None,
     launch_id: str = "",
     binary: str | None = None,
+    model: str | None = None,
+    effort: str | None = None,
 ) -> tuple[bool, str, str | None]:
     """``POST /v1/sessions``: start a fresh harness run under tmux.
 
@@ -1133,9 +1318,15 @@ def launch_new(
     ``launch_id`` rides the marker into the supervised entry, so the hub
     can tell the phone which session its launch became. ``binary`` is the
     harness's registry command (``cursor`` runs as ``cursor-agent``);
-    without it the session tool name is the binary.
+    without it the session tool name is the binary. ``model``/``effort``
+    are typed into the pane once it is up (``launch_tuning_error`` names
+    the harnesses that can't take them); they ride the marker into the
+    supervised entry as launch bookkeeping.
     Returns ``(ok, note, tmux_name)``.
     """
+    blocked = launch_tuning_error(tool_name, model, effort)
+    if blocked:
+        return False, blocked, None
     binary = binary or launch_tool_name(tool_name)
     if not binary or not shutil.which(binary):
         return False, f"{tool_name} is not installed on this machine", None
@@ -1160,13 +1351,21 @@ def launch_new(
             "exclude": list(known_ids or []),
             "launched_at": time.time(),
             "launch_id": launch_id,
+            "model": model or "",
+            "effort": effort or "",
         }))
     except OSError:
         pass
-    if prompt and not prime_pane(name, prompt):
-        return True, (
-            "launched under tmux but the prompt could not be "
-            "delivered — attach from a terminal or retry"
+    if not _prime_launch(name, prompt, model, effort):
+        what = "the launch controls or prompt" if (model or effort) \
+            else "the prompt"
+        # Nothing was delivered, so no turn will ever start: the record
+        # says failed rather than leaving the phone polling a pending
+        # launch. The pane itself stays up for a terminal attach.
+        return False, (
+            f"launched under tmux but {what} could not be "
+            "delivered — the pane is still up; attach from a "
+            "terminal or retry"
         ), name
     return True, "launched under tmux; the session appears on refresh", name
 
@@ -1180,6 +1379,8 @@ def launch_fork(
     known_ids: list[str] | None = None,
     launch_id: str = "",
     expect_id: str = "",
+    model: str | None = None,
+    effort: str | None = None,
 ) -> tuple[bool, str, str | None]:
     """``POST /v1/sessions/{key}/fork``: run ``argv`` (``fork.fork_argv``)
     under tmux in the source's folder, tracked like ``launch_new``.
@@ -1189,8 +1390,13 @@ def launch_fork(
     the source (a new rollout under the same thread) out of adoption too.
     ``expect_id`` is the new session's id when the command line set it
     (claude ``--session-id``): adoption then waits for exactly that id.
+    ``model``/``effort`` are typed into the pane once it is up, as in
+    ``launch_new``.
     Returns ``(ok, note, tmux_name)``.
     """
+    blocked = launch_tuning_error(source.tool_name, model, effort)
+    if blocked:
+        return False, blocked, None
     binary = argv[0] if argv else ""
     if not binary or not shutil.which(binary):
         return False, f"{source.tool_name} is not installed on this machine", None
@@ -1220,6 +1426,8 @@ def launch_fork(
                 "expect_id": expect_id,
                 "launched_at": time.time(),
                 "launch_id": launch_id,
+                "model": model or "",
+                "effort": effort or "",
             }))
         except OSError:
             pass
@@ -1228,11 +1436,17 @@ def launch_fork(
         return False, (
             f"tmux is not available, or {binary} exited right after launch"
         ), None
-    if prompt:
-        if not prime_pane(name, prompt):
-            return True, (
-                "forked under tmux, but the prompt could not be "
-                "delivered; attach from a terminal or retry"
+    if prompt or model or effort:
+        if not _prime_launch(name, prompt, model, effort):
+            what = "the launch controls or prompt" if (model or effort) \
+                else "the prompt"
+            # Same failed-launch reporting as launch_new: nothing was
+            # delivered, so the phone must not poll a pending launch
+            # for a prompt that never landed.
+            return False, (
+                f"forked under tmux, but {what} could not be "
+                "delivered; the pane is still up — attach from a "
+                "terminal or retry"
             ), name
     elif boot_pane(name) is None:
         # No prompt to type, but the pane must still get past a trust
@@ -1419,7 +1633,7 @@ def adopt_pending(
         if hit is None:
             continue
         key = hit
-        mark(home, key, {
+        meta = {
             "mode": "tmux",
             "tmux": str(pending.get("tmux") or ""),
             "tool_name": str(pending.get("tool_name") or ""),
@@ -1427,7 +1641,13 @@ def adopt_pending(
             "cwd": str(pending.get("cwd") or ""),
             "attached_at": now,
             "launch_id": str(pending.get("launch_id") or ""),
-        })
+        }
+        # The launch-time pick stays on the record as bookkeeping; a
+        # session's *current* model is a transcript/ledger question.
+        for field in ("model", "effort"):
+            if pending.get(field):
+                meta[field] = str(pending[field])
+        mark(home, key, meta)
         marker.unlink(missing_ok=True)
         adopted.append(key)
     return adopted

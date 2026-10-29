@@ -114,6 +114,19 @@ class TestOpencodeServe(unittest.TestCase):
         sent = self.calls[-1][2]["parts"][0]["text"]
         self.assertTrue(sent.startswith("@/tmp/a.png"))
 
+    def test_send_rides_the_attach_pick_on_wire_fields(self):
+        session = _session()
+        meta = {**_meta("serve", "opencode"),
+                "model": "acme/kimi-k3", "effort": "high"}
+        supervise.mark(self.home, "opencode:s1", meta)
+        res = self._injector().send(
+            session, {"text": "hi", "mode": "queue"}, "idle")
+        self.assertTrue(res.ok)
+        payload = self.calls[-1][2]
+        self.assertEqual(payload["model"],
+                         {"providerID": "acme", "modelID": "kimi-k3"})
+        self.assertEqual(payload["variant"], "high")
+
     def test_send_steer_degrades_when_active(self):
         session = _session()
         supervise.mark(self.home, "opencode:s1", _meta("serve", "opencode"))
@@ -382,6 +395,18 @@ class TestCodexAppServer(unittest.TestCase):
             start["params"]["input"],
             [{"type": "text", "text": "hello"}],
         )
+
+    def test_send_rides_the_attach_pick_as_turn_overrides(self):
+        meta = {**_meta("appserver", "codex"),
+                "model": "gpt-5", "effort": "high"}
+        supervise.mark(self.home, "codex:k", meta)
+        res = self._injector().send(
+            self.session, {"text": "go", "mode": "queue"}, "idle")
+        self.assertTrue(res.ok, res.note)
+        start = self.procs[0].writes[-1]
+        self.assertEqual(start["method"], "turn/start")
+        self.assertEqual(start["params"]["model"], "gpt-5")
+        self.assertEqual(start["params"]["effort"], "high")
 
     def test_send_queue_refuses_when_active(self):
         supervise.mark(self.home, "codex:k", _meta("appserver", "codex"))

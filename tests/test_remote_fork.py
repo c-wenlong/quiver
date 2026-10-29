@@ -123,10 +123,16 @@ class TestForkCommandLines(unittest.TestCase):
         self.assertFalse(row["can_fork"])
 
     def test_body_validation(self):
-        self.assertEqual(fork_mod.parse_fork_body({}), "")
-        self.assertEqual(fork_mod.parse_fork_body({"prompt": "  "}), "")
-        self.assertEqual(fork_mod.parse_fork_body({"prompt": "go"}), "go")
-        for bad in ({"prompt": 3}, {"prompt": "x" * 40_000}):
+        self.assertEqual(fork_mod.parse_fork_body({}), {
+            "prompt": "", "model": None, "effort": None})
+        self.assertEqual(fork_mod.parse_fork_body({"prompt": "  "}), {
+            "prompt": "", "model": None, "effort": None})
+        self.assertEqual(
+            fork_mod.parse_fork_body(
+                {"prompt": "go", "model": "opus", "effort": "high"}),
+            {"prompt": "go", "model": "opus", "effort": "high"})
+        for bad in ({"prompt": 3}, {"prompt": "x" * 40_000},
+                    {"model": 5}, {"effort": "two words"}):
             with self.assertRaises(ValueError):
                 fork_mod.parse_fork_body(bad)
 
@@ -137,6 +143,7 @@ class TestForkRoute(unittest.TestCase):
         self.srv = _Hub([
             _session("abc", path=self.proj),
             _session("o1", "opencode", path=self.proj),
+            _session(CODEX_ID, "codex", path=self.proj),
             _session("gone", path="/no/such/folder/anywhere"),
         ])
         self.addCleanup(self.srv.stop)
@@ -190,6 +197,19 @@ class TestForkRoute(unittest.TestCase):
         self.assertEqual(launch["state"], "failed")
         self.assertEqual(launch["note"], "claude exited")
 
+    def test_fork_carries_the_pick(self):
+        with patch.object(fork_mod, "start",
+                          return_value=(True, "forked")) as start:
+            status, body = self._fork("claude:abc", {
+                "prompt": "next", "model": "opus", "effort": "high"})
+            self._wait()
+        self.assertEqual(status, 202, body)
+        kw = start.call_args[1]
+        self.assertEqual((kw["model"], kw["effort"]), ("opus", "high"))
+        _s, view = self.srv.request(
+            "GET", f"/v1/launches/{body['launch_id']}")
+        self.assertEqual((view["model"], view["effort"]), ("opus", "high"))
+
     def test_refusals(self):
         with patch.object(fork_mod, "start") as start:
             cases = [
@@ -197,6 +217,10 @@ class TestForkRoute(unittest.TestCase):
                 ("opencode:o1", {}, 409, "fork_unsupported"),
                 ("claude:gone", {}, 422, "bad_cwd"),
                 ("claude:abc", {"prompt": 5}, 422, "bad_command"),
+                ("claude:abc", {"model": "two words"}, 422, "bad_command"),
+                # codex forks, but its TUI has no verified /effort.
+                (f"codex:{CODEX_ID}", {"effort": "high"},
+                 409, "unsupported_launch_option"),
             ]
             for key, body, code, err in cases:
                 with self.subTest(key=key):
@@ -508,10 +532,14 @@ class TestForkWritersAndSatellites(unittest.TestCase):
         with patch.object(fork_mod, "start",
                           return_value=(True, "forked")) as start:
             ok, note, _deg = ag._execute(
-                "claude:abc", "fork", {"prompt": "go", "launch_id": "l5"})
+                "claude:abc", "fork",
+                {"prompt": "go", "launch_id": "l5",
+                 "model": "opus", "effort": "high"})
         self.assertTrue(ok)
         self.assertEqual(start.call_args[0][1].session_id, "abc")
         self.assertEqual(start.call_args[0][3:], ("go", "l5"))
+        self.assertEqual(start.call_args[1]["model"], "opus")
+        self.assertEqual(start.call_args[1]["effort"], "high")
         ok, note, _deg = ag._execute("claude:ghost", "fork", {})
         self.assertFalse(ok)
         self.assertIn("unknown session", note)
@@ -535,9 +563,14 @@ class TestSatelliteForkRoute(unittest.TestCase):
 
     def test_routes_through_the_command_journal(self):
         self._push(True)
+        # The satellite advertises launch-option support, the same
+        # fields its own agent reports.
+        catalog_mod.upsert_machine(self.srv.home, {
+            "id": "sat-m1", "model_at_launch": ["claude"],
+            "effort_at_launch": ["claude"]})
         status, body = self.srv.request(
             "POST", "/v1/sessions/claude%3Ar1%40sat-m1/fork",
-            {"prompt": "go"})
+            {"prompt": "go", "model": "opus", "effort": "high"})
         self.assertEqual(status, 202, body)
         self.assertTrue(body["queued"])
         replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
@@ -545,6 +578,8 @@ class TestSatelliteForkRoute(unittest.TestCase):
         self.assertEqual(cmd["session"], "claude:r1")
         self.assertEqual(cmd["data"]["op"], "fork")
         self.assertEqual(cmd["data"]["prompt"], "go")
+        self.assertEqual(cmd["data"]["model"], "opus")
+        self.assertEqual(cmd["data"]["effort"], "high")
         self.assertEqual(cmd["data"]["launch_id"], body["launch_id"])
         # The satellite's failure settles the launch the phone polls.
         self.srv.request("POST", "/v1/agent/events", {
@@ -585,6 +620,25 @@ class TestSatelliteForkRoute(unittest.TestCase):
                     "POST", "/v1/sessions/claude%3Ar1%40sat-m1/fork", {})
                 self.assertEqual(status, 409, body)
                 self.assertEqual(body["error"]["code"], "fork_unsupported")
+
+    def test_pick_refused_when_the_satellite_is_too_old(self):
+        # The agent reads picks only since the release that reports
+        # model_at_launch; without it a fork would drop them silently.
+        self._push(True)
+        status, body = self.srv.request(
+            "POST", "/v1/sessions/claude%3Ar1%40sat-m1/fork",
+            {"prompt": "go", "model": "opus"})
+        self.assertEqual(status, 409, body)
+        self.assertEqual(body["error"]["code"], "unsupported_launch_option")
+        self.assertIn("too old", body["error"]["message"])
+        self.assertEqual(self.srv.state.launches, {})
+        replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+        self.assertEqual(
+            [c for c in replay if c["data"]["op"] == "fork"], [])
+        # No pick: the same old agent forks as before.
+        status, body = self.srv.request(
+            "POST", "/v1/sessions/claude%3Ar1%40sat-m1/fork", {})
+        self.assertEqual(status, 202, body)
 
 
 if __name__ == "__main__":

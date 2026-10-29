@@ -126,3 +126,19 @@ CUSTOM_CHANNELS: dict[str, frozenset] = {
     "codex": frozenset({"tmux", "appserver"}),
     "opencode": frozenset({"tmux"}),
 }
+
+
+def launch_op_ok(harness: str, op: str) -> bool:
+    """Whether a fresh tmux pane of ``harness`` takes ``/<op> <value>``.
+
+    Only a verified built-in whose argument skips its picker counts:
+    typing ``/model sonnet`` into a TUI that does not know the command
+    sends it to the model as prompt text, which is worse than refusing
+    the pick. ``/compact``-style arg-less commands are never a launch
+    control either way.
+    """
+    return any(
+        item.name == op and item.argument_required
+        and "tmux" in item.channels
+        for item in BUILTINS.get(harness, ())
+    )

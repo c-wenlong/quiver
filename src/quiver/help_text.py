@@ -728,6 +728,11 @@ to use their own login state and environment."""
                                             tmux with resume flags.
                                             {c('cyan', '--mode=headless')} sends
                                             each prompt via claude -p instead.
+                                            {c('cyan', '--model=<m>')} and
+                                            {c('cyan', '--effort=<e>')} pick the
+                                            launch tuning the channel can
+                                            honour (tmux/headless/serve/
+                                            appserver take model).
   {c('cyan', 'swe remote agent --hub=URL [--token=T]')}   Satellite: pushes this
                                             machine's catalog + transcript
                                             events to the hub and runs the
