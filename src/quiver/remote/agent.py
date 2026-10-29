@@ -389,16 +389,7 @@ class RemoteAgent:
         """Re-read what this machine can launch; True when it changed, so
         a Provider visibility change reaches the hub without a restart."""
         launchable = catalog_mod.launchable_harnesses()
-        fields = {
-            "launchable": [item["name"] for item in launchable],
-            "harness_names": catalog_mod.harness_names(launchable),
-            "untracked_harnesses": catalog_mod.untracked(launchable),
-            "model_at_launch": catalog_mod.launch_op_names(
-                launchable, "model"),
-            "effort_at_launch": catalog_mod.launch_op_names(
-                launchable, "effort"),
-            "last_models": catalog_mod.last_used_models(self.home),
-        }
+        fields = catalog_mod.launch_fields(launchable, self.home)
         if all(self.machine.get(k) == v for k, v in fields.items()):
             return False
         self.machine.update(fields)

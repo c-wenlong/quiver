@@ -331,19 +331,23 @@ def rerun(ctx, repo: str, run: str, failed: bool) -> dict:
 
 def harnesses() -> list[dict]:
     """``{name, display_name, tracked, launch_model, launch_effort,
-    last_model}`` for each harness the hub can start, in Provider
+    last_model, recent_models}`` for each harness the hub can start, in Provider
     visibility order (``catalog.launchable_harnesses``, what the phone's
-    new-session sheet offers). ``last_model`` is the ledger's most recent
-    model for the harness ("" when none), the picker's default."""
+    new-session sheet offers). ``recent_models`` is the harness's
+    recently used models, newest first (at most 5); ``last_model`` is
+    its head ("" when none), the picker's default."""
     from quiver.remote import catalog as catalog_mod
 
-    last = catalog_mod.last_used_models()
+    launchable = catalog_mod.launchable_harnesses()
+    recent = catalog_mod.recent_models(
+        None, [h["name"] for h in launchable])
     return [{"name": h["name"], "display_name": h["display_name"],
              "tracked": h["tracked"],
              "launch_model": h["launch_model"],
              "launch_effort": h["launch_effort"],
-             "last_model": last.get(h["name"], "")}
-            for h in catalog_mod.launchable_harnesses()]
+             "last_model": (recent.get(h["name"]) or [""])[0],
+             "recent_models": recent.get(h["name"], [])}
+            for h in launchable]
 
 
 def _worktree_args(home, body: dict) -> tuple[str, str]:

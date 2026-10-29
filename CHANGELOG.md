@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote launches start on a picked model, with each harness's recent
+  models to pick from.** `POST /v1/sessions`, `POST /v1/issues/resolve`
+  and `POST /v1/pulls/<o>/<r>/<n>/open` put an optional `model` on the
+  harness's command line, as a new `capabilities.model` entry in
+  harness.json declares (claude, cursor, pi and devin `--model`, codex
+  and cline `-m`, droid a per-launch `--settings` file, opencode
+  `opencode mini -m provider/model`). A harness with no such entry
+  answers `409 unsupported_launch_option` instead of starting on its
+  default. Machine rows and the web app's `?harnesses=1` lists gain
+  `recent_models`: up to five recently used models per launchable
+  harness, newest first, read from the usage ledger without internal
+  names like Devin's `compactor` or Cursor's `default`, and OpenCode
+  names completed to `provider/model`. Part of
+  [#914](https://github.com/c-wenlong/quiver/issues/914); the client
+  pickers come next.
+
 - **A "Fan off temperature" for the Compute fan rule.** The popover's
   first field is now "Fan on temperature", and a second field under it
   picks where the held fans drop back to macOS. Until a temperature is
