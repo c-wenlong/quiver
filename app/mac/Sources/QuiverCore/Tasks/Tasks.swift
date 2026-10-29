@@ -476,6 +476,9 @@ public final class TasksModel {
     /// `bad-config`, `upstream-error`), nil when ok, disabled or absent.
     public private(set) var linearBlocked: String?
     public private(set) var error: String?
+    /// The last load found this Mac's hub not answering (`hub_down`):
+    /// stopped, or still starting after a restart.
+    public private(set) var hubDown = false
     public private(set) var loaded = false
     /// The rows' filter, shared by the list's chips.
     public var filter: TaskFilter = .all
@@ -506,6 +509,7 @@ public final class TasksModel {
                 ? (github?.error ?? "GitHub did not answer this refresh.")
                 : nil
             error = nil
+            hubDown = false
             let status = body.linear?.status
             linearBlocked = switch status {
             case nil, "ok", "disabled": nil
@@ -514,11 +518,31 @@ public final class TasksModel {
         } catch let e as HubError {
             guard gen == generation else { return }
             error = e.message
+            hubDown = e.code == "hub_down"
         } catch {
             guard gen == generation else { return }
             self.error = error.localizedDescription
+            hubDown = false
         }
         loaded = true
+    }
+
+    /// Loads, then keeps trying while this Mac's hub is down, so the page
+    /// fills in once the hub is up rather than keeping its error until
+    /// Refresh. The hub restarts on every app install and at login, and
+    /// can take a while to answer. Waits 3 s, doubling to 30 s; ends when
+    /// the calling task is cancelled (the page went away).
+    public func loadUntilHubAnswers(
+        hub: LocalHub,
+        pause: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    ) async {
+        await load(hub: hub)
+        var wait = 3
+        while hubDown {
+            do { try await pause(.seconds(wait)) } catch { return }
+            await load(hub: hub)
+            wait = min(wait * 2, 30)
+        }
     }
 
     /// The detail page's row, live as the list refreshes under it.

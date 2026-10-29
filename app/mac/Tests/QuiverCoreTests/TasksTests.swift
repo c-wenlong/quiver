@@ -585,6 +585,40 @@ extension HubStubbed {
         #expect(model.stale(model.tasks[0]) == false)
     }
 
+    @Test func aHubThatIsStillStartingIsRetriedUntilItAnswers() async throws {
+        // The hub restarts on every app install: the first loads find it
+        // down, and the page fills in once it answers, with no Refresh.
+        HubStub.handler = { req in
+            req.url?.path == "/v1/app/tasks" ? (200, Data(Self.listJSON.utf8)) : (404, Data())
+        }
+        let store = HubDeviceStore(url: dir.appending(path: "\(UUID().uuidString)/app-device.json"))
+        try store.save(HubCredential(deviceId: "d1", credential: "secret"), for: "127.0.0.1:8477")
+        let locator = FakeLocator(address: nil)
+        let hub = LocalHub(locator: locator, store: store) {
+            HubClient(baseURL: $0, credential: $1, session: HubStub.session())
+        }
+        let model = TasksModel()
+        let waits = WaitLog()
+        await model.loadUntilHubAnswers(hub: hub) { wait in
+            await waits.add(wait)
+            // Up after the second wait.
+            if await waits.count == 2 { locator.address = "127.0.0.1:8477" }
+        }
+        #expect(await waits.all == [.seconds(3), .seconds(6)])
+        #expect(model.hubDown == false)
+        #expect(model.error == nil)
+        #expect(model.tasks.map(\.id) == ["github:issue:o/r:5"])
+    }
+
+    @Test func aCancelledRetryStopsWithTheHubStillDown() async throws {
+        let hub = LocalHub(locator: FakeLocator(address: nil),
+                           store: HubDeviceStore(url: dir.appending(path: "\(UUID().uuidString)/d.json")))
+        let model = TasksModel()
+        await model.loadUntilHubAnswers(hub: hub) { _ in throw CancellationError() }
+        #expect(model.hubDown)
+        #expect(model.error == "This Mac's hub isn't running. Start it in Settings › Remote.")
+    }
+
     @Test func anUpstreamGithubFailureMarksRowsStale() async throws {
         /// `gh auth status` timed out: no `env_blocked`, no per-repo
         /// failures — but the GitHub list never refreshed, so the rows
@@ -675,4 +709,11 @@ extension HubStubbed {
         #expect(model.busy.isEmpty)
     }
 }
+}
+
+/// The waits `loadUntilHubAnswers` asked for, in order.
+private actor WaitLog {
+    private(set) var all: [Duration] = []
+    var count: Int { all.count }
+    func add(_ wait: Duration) { all.append(wait) }
 }
